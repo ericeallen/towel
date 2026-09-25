@@ -795,16 +795,17 @@ class _Resolver:
     def _read_hand_index(self, root: Path) -> _HandIndex:
         """Every hand application of the project under ``root``, by the definitions it is given.
 
-        It reads the program's files (``program_directories``), less the
-        directories the run excludes, which are no part of the program. A
+        It reads the program's files (``program_directories``), those the run
+        excludes included: excluded code is left unchanged, not unseen. A
         file that does not parse here may run on a newer Python and apply a
-        decorator there, so meeting one refuses the run. Past the consumer
-        scan's limit the project cannot be read whole, and the index says so.
+        decorator there, so meeting one refuses the run, unless the run
+        excludes it. Past the consumer scan's limit the project cannot be
+        read whole, and the index says so.
         """
         by_target: Dict[_Target, List[_Application]] = {}
         by_name: Dict[str, List[_Application]] = {}
         count = 0
-        for parent, files in program_directories(root, self._cache.excluded_names):
+        for parent, files in program_directories(root):
             for name in files:
                 if not name.endswith(".py"):
                     continue
@@ -813,8 +814,8 @@ class _Resolver:
                     return _HandIndex({}, {}, complete=False)
                 module = self._load(os.path.join(parent, name))
                 if module is None:
-                    refuse_unparsed_file(Path(parent, name), root)
-                    continue  # Gone since the walk, or unreadable: it applies nothing to read.
+                    refuse_unparsed_file(Path(parent, name), root, self._cache.excluded_names)
+                    continue  # Excluded, gone, or not text: it applies nothing that can be read.
                 for application, spelled in _hand_calls(module):
                     targets = self._argument_targets(module, spelled, application.slot)
                     if targets is None:

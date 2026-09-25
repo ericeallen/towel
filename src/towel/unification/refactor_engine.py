@@ -361,12 +361,15 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 as a parameter, each site giving its own, instead of declining
                 the pair (default: False). A builtin every site reads alike is
                 still read bare.
-            excluded_directories: Directory names to skip in directory mode, such
-                as a package that carries its own test suite. The program's
-                import model reads nothing in them either, which is how a stray
-                copy of a package that makes its name ambiguous is set aside;
-                what an import that enters one runs is then unknown, and no
-                host whose import would enter one is taken.
+            excluded_directories: Names of directories, or of files, to leave
+                unchanged, matched at any depth, such as a package's own test
+                suite. The checks that read the whole program still read them,
+                and one that does not parse is taken for no part of the program
+                (``towel.program_files``). The program's import model reads
+                nothing in an excluded directory, which is how a stray copy of a
+                package that makes its name ambiguous is set aside; what an
+                import that enters one runs is then unknown, and no host whose
+                import would enter one is taken.
             cross_module_helpers: Share a helper between duplicates in different
                 modules, importing it from the one that hosts it into the others
                 (default: False). Off, only duplicates within one module are

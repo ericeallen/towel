@@ -49,7 +49,7 @@ such file, a module of a package under refactoring. Import edges are read with
 running here too, could not build it either. It may still run on a newer
 Python, so a run refuses before it starts when such a file is part of the
 program (``towel.program_files``); the only ones this scan can meet are
-outside it: a stub, an environment, a directory the run excludes. A dynamic
+outside it: a stub, an environment, a file the run excludes. A dynamic
 import is invisible here, as it is to the checker.
 """
 

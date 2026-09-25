@@ -615,7 +615,7 @@ class PairEvaluation(
     def _project_writes(self, path: str) -> ProjectWrites:
         """The own writes into module namespaces of the project holding ``path``, read once per engine.
 
-        The directories the run excludes are no part of the program, and are not read.
+        What the run excludes is read too; a file it excludes that does not parse is passed over.
         """
         root = self._project_root_in_run(path)
         writes = self._namespace_writes.get(str(root))

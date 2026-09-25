@@ -66,7 +66,7 @@ from typing import (
     Union,
 )
 
-from ..program_files import program_files, refuse_unparsed_file, unparsed_file_refusal
+from ..program_files import program_files, refuse_unparsed_file
 from ..project_layout import find_project_root
 from ..source_text import read_source
 from .bounded_cache import BoundedCache
@@ -183,8 +183,9 @@ def _module_name(path: Path) -> str:
 def _read_setup(root: Path, excluded_names: AbstractSet[str] = frozenset()) -> _Setup:
     """What decides rewriting in the project at ``root``; ``_UNKNOWN`` where the project cannot say.
 
-    Only the program's files are read (``program_files``), less the
-    directories ``excluded_names`` names.
+    The program's files are read (``program_files``), those the run excludes
+    included; ``excluded_names`` says which files that do not parse are no
+    part of the program.
     """
     if _declares_pytest_plugin(root):
         return _UNKNOWN
@@ -192,7 +193,7 @@ def _read_setup(root: Path, excluded_names: AbstractSet[str] = frozenset()) -> _
     if located is None:
         return _UNKNOWN
     config_dir, config = located
-    if _configures_below(root, excluded_names):
+    if _configures_below(root):
         return _UNKNOWN
     options = _arguments(config.get("addopts", []))
     if options is None:
@@ -322,9 +323,9 @@ def _read_options(options: Sequence[str]) -> Tuple[bool, Optional[List[str]]]:
     return rewriting, [plugin for plugin in plugins if not plugin.startswith("no:")]
 
 
-def _configures_below(root: Path, excluded_names: AbstractSet[str] = frozenset()) -> bool:
+def _configures_below(root: Path) -> bool:
     """Whether a directory below ``root`` holds pytest configuration an invocation there would read."""
-    for path in program_files(root, excluded_names):
+    for path in program_files(root):
         if path.parent == root or path.name not in _CONFIG_NAMES:
             continue
         try:
@@ -345,12 +346,12 @@ def _plugin_marks(
     a ``register_assert_rewrite`` call statement with literal names.
     Anywhere else pytest may or may not run it. A file that does not parse
     here may run on a newer Python and mark modules there, so it refuses the
-    run; one that does not decode runs nowhere.
+    run unless the run excludes it; one that does not decode runs nowhere.
     """
     sure: Set[str] = set()
     uncertain: Set[str] = set()
     root_conftest = os.path.realpath(config_dir / "conftest.py")
-    for path in program_files(root, excluded_names):
+    for path in program_files(root):
         if path.suffix != ".py":
             continue
         try:
@@ -358,14 +359,15 @@ def _plugin_marks(
         except OSError:
             continue
         except (UnicodeError, ValueError, SyntaxError):
-            refuse_unparsed_file(path, root)
-            continue  # It does not decode in its declared encoding, so it cannot run.
+            refuse_unparsed_file(path, root, excluded_names)
+            continue  # Excluded, or not text in its declared encoding: it marks nothing.
         if "pytest_plugins" not in source and "register_assert_rewrite" not in source:
             continue
         try:
             tree = ast.parse(source)
         except (SyntaxError, ValueError) as error:
-            raise unparsed_file_refusal(path, error, root) from error
+            refuse_unparsed_file(path, root, excluded_names, error)
+            continue  # Excluded: taken at the user's word as no part of the program.
         found = _marks_in(tree)
         if found is None:
             return None

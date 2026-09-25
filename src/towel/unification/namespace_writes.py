@@ -151,18 +151,18 @@ def scan_project_writes(
 ) -> ProjectWrites:
     """The writes into module namespaces that the Python files under ``root`` make.
 
-    It reads the program's files (``program_directories``), less the
-    directories ``excluded_names`` names, which the run excludes and so are
-    no part of the program; stubs never run and are not read. A file that
-    does not parse here refuses the run (:func:`_file_writes`). Past the
-    consumer scan's limit the project cannot be read whole, and the answer
-    says so rather than claim no write exists.
+    It reads the program's files (``program_directories``), those the run
+    excludes included, since a test suite left unchanged still patches what
+    it patches; stubs never run and are not read. A file that does not parse
+    here refuses the run unless ``excluded_names`` names it
+    (:func:`_file_writes`). Past the consumer scan's limit the project cannot
+    be read whole, and the answer says so rather than claim no write exists.
     """
     project = root.resolve()
     by_path: Dict[Path, List[NamespaceWrite]] = {}
     by_name: Dict[str, List[NamespaceWrite]] = {}
     count = 0
-    for parent, files in program_directories(project, excluded_names):
+    for parent, files in program_directories(project):
         for name in files:
             if not name.endswith(".py"):
                 continue
@@ -170,7 +170,7 @@ def scan_project_writes(
             if count > MAXIMUM_FILES:
                 return ProjectWrites(project, {}, {}, complete=False)
             path = Path(parent, name)
-            scanned = _file_writes(path, project)
+            scanned = _file_writes(path, project, excluded_names)
             if scanned is None:
                 continue
             for target, writes in scanned.by_path.items():
@@ -191,12 +191,15 @@ class _FileWrites:
     by_name: Mapping[str, Tuple[NamespaceWrite, ...]]
 
 
-def _file_writes(path: Path, root: Path) -> Optional[_FileWrites]:
+def _file_writes(
+    path: Path, root: Path, excluded_names: AbstractSet[str] = frozenset()
+) -> Optional[_FileWrites]:
     """What ``path`` writes into module namespaces; None when it cannot be read or writes nothing.
 
     A file that names no form of write is not parsed. One that does and does
     not parse here may run on a newer Python and write there, so it refuses
-    the run; one that does not decode runs nowhere, and writes nothing.
+    the run, unless the run excludes it; one that does not decode runs
+    nowhere, and writes nothing.
     """
     try:
         data = path.read_bytes()
@@ -206,9 +209,9 @@ def _file_writes(path: Path, root: Path) -> Optional[_FileWrites]:
         return None
     try:
         tree = ast.parse(data, filename=str(path))
-    except (SyntaxError, ValueError):
-        refuse_unparsed_file(path, root)
-        return None  # It does not decode in its declared encoding, so it cannot run.
+    except (SyntaxError, ValueError) as error:
+        refuse_unparsed_file(path, root, excluded_names, error)
+        return None  # Excluded, or not text in its declared encoding: it writes nothing.
     resolved = path.resolve()
     scanner = _WriteScanner(resolved, tree, _shown(resolved, root))
     scanner.visit(tree)

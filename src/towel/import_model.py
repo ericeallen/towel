@@ -1322,7 +1322,8 @@ def _read_module(path: Path) -> _Module:
         # run on a newer Python, so a dry or preview run refuses before reading
         # the model when a file of the program does not parse here
         # (``towel.program_files``); the model still meets one in a build
-        # output, a second copy it reads only to see that it is there.
+        # output, a second copy it reads only to see that it is there, and in
+        # a file ``--exclude`` names by its own name.
         return _Module(None, False)
     return _scan(tree, path)
 

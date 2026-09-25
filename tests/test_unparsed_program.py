@@ -18,10 +18,11 @@ Round 4 of the 1.772 audit (P1-2, P1-3) found Towel on 3.11 skipping a file
 of a 3.12 project as one that cannot run. The file applied a recompiling
 decorator by hand, or patched ``len`` into a module in a test, and Towel,
 not having seen it, changed what the program computes. Every whole-program
-scan now reads the same files (``towel.program_files``), leaves out what
-``--exclude`` names, and refuses on meeting a file it cannot parse; a run
-refuses before anything is written, naming each file and the parser's
-complaint, with two remedies.
+scan now reads the same files (``towel.program_files``) and refuses on
+meeting a file it cannot parse; a run refuses before anything is written,
+naming each file and the parser's complaint, with two remedies that each
+clear it. What ``--exclude`` names is still read, as evidence; only a file
+it names that does not parse is taken for no part of the program.
 
 The stand-in for newer syntax is PEP 810's lazy import (Python 3.15), which
 every supported Python rejects; the test that uses real 3.12 syntax runs on
@@ -32,6 +33,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
+import io
 import sys
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
@@ -40,13 +43,15 @@ import pytest
 
 from tests.test_cli_integration import invoke
 from towel import program_files as program
-from towel.cli import _directory_name
+from towel.cli import _excluded_name
 from towel.consumers import consumers_of
 from towel.declared_python import declared_newest_python, python_upper_bound
 from towel.import_model import build_import_model
 from towel.program_files import (
+    excluded_by,
     parse_failure,
     program_files,
+    refuse_unparsed_file,
     refuse_unparsed_program,
     unparsed_program_files,
 )
@@ -134,9 +139,7 @@ def test_the_stand_in_for_newer_syntax_does_not_parse_here() -> None:
 # -- the files of the program ---------------------------------------------------
 
 
-def test_the_program_leaves_out_tool_directories_environments_and_exclusions(
-    tmp_path: Path,
-) -> None:
+def test_the_program_leaves_out_tool_directories_and_environments(tmp_path: Path) -> None:
     _write(
         tmp_path,
         {
@@ -158,10 +161,10 @@ def test_the_program_leaves_out_tool_directories_environments_and_exclusions(
         "pkg/a.py",
         "pkg/data/fixture.py",
     ]
-    assert _relative(list(program_files(tmp_path, {"data"})), tmp_path) == [
-        ".github/tool.py",
-        "pkg/a.py",
-    ]
+    # What --exclude names is read like the rest; it only says which unparsed files to pass over.
+    assert excluded_by(tmp_path / "pkg/data/fixture.py", tmp_path, {"data"})
+    assert excluded_by(tmp_path / "pkg/a.py", tmp_path, {"a.py"})
+    assert not excluded_by(tmp_path / "pkg/a.py", tmp_path, {"data", "b.py"})
 
 
 @pytest.mark.parametrize(
@@ -226,11 +229,13 @@ def test_the_hand_application_index_refuses_a_file_that_does_not_parse(tmp_path:
         _first(tmp_path)
 
 
-def test_the_hand_application_index_reads_nothing_excluded(tmp_path: Path) -> None:
+def test_the_hand_application_index_still_reads_what_is_excluded(tmp_path: Path) -> None:
+    # An excluded directory is left unchanged, not unseen; its unparsed file is passed over.
     _project(tmp_path, {"extras/fast.py": HAND_APPLIED, "extras/bad.py": NEWER})
-    assert _first(tmp_path, ("extras",)) is None
-    (tmp_path / "extras" / "bad.py").unlink()
-    assert _first(tmp_path) == "numba.njit", "the control: the application is seen when read"
+    assert _first(tmp_path, ("extras",)) == "numba.njit"
+    assert _first(tmp_path, ("bad.py",)) == "numba.njit"
+    with pytest.raises(UnparsedProgramError, match=r"extras/bad\.py"):
+        _first(tmp_path)
 
 
 def test_the_namespace_scan_refuses_a_file_that_does_not_parse(tmp_path: Path) -> None:
@@ -239,12 +244,25 @@ def test_the_namespace_scan_refuses_a_file_that_does_not_parse(tmp_path: Path) -
         scan_project_writes(tmp_path)
 
 
-def test_the_namespace_scan_reads_nothing_excluded(tmp_path: Path) -> None:
+def test_the_namespace_scan_still_reads_what_is_excluded(tmp_path: Path) -> None:
     _project(tmp_path, {"tests/test_b.py": PATCHES_LEN, "tests/bad.py": NEWER + PATCHES_LEN})
     module = (tmp_path / "pkg" / "b.py").resolve()
-    assert scan_project_writes(tmp_path, frozenset({"tests"})).into(module) == ()
-    (tmp_path / "tests" / "bad.py").unlink()
-    assert [write.name for write in scan_project_writes(tmp_path).into(module)] == ["len"]
+    written = scan_project_writes(tmp_path, frozenset({"tests"})).into(module)
+    assert [write.name for write in written] == ["len"]
+    with pytest.raises(UnparsedProgramError, match=r"tests/bad\.py"):
+        scan_project_writes(tmp_path)
+
+
+def test_a_scan_that_cannot_parse_what_this_module_can_still_refuses(tmp_path: Path) -> None:
+    """Under ``-W error`` an invalid escape fails a scan's parse; the check ignores warnings."""
+    path = tmp_path / "m.py"
+    path.write_text('x = "\\d"\n')
+    refuse_unparsed_file(path, tmp_path)  # It parses here.
+    with pytest.raises(UnparsedProgramError, match=r"m\.py: line 1: invalid escape"):
+        refuse_unparsed_file(
+            path, tmp_path, error=SyntaxError("invalid escape", ("m.py", 1, 5, ""))
+        )
+    refuse_unparsed_file(path, tmp_path, {"m.py"}, SyntaxError("invalid escape"))  # excluded
 
 
 def _rewrites(root: Path, excluded: frozenset[str] = frozenset()) -> Optional[bool]:
@@ -263,13 +281,14 @@ def test_the_assert_rewriting_scan_refuses_a_file_that_does_not_parse(tmp_path: 
         _rewrites(tmp_path)
 
 
-def test_the_assert_rewriting_scan_reads_nothing_excluded(tmp_path: Path) -> None:
+def test_the_assert_rewriting_scan_still_reads_what_is_excluded(tmp_path: Path) -> None:
     _project(
         tmp_path, {"pytest.ini": "[pytest]\n", "plugins/marks.py": "pytest_plugins = ['pkg.a']\n"}
     )
-    assert _rewrites(tmp_path) is None, "a mark pytest may or may not load: unknown"
-    (tmp_path / "plugins" / "bad.py").write_text(NEWER)
-    assert _rewrites(tmp_path, frozenset({"plugins"})) is False
+    (tmp_path / "plugins" / "bad.py").write_text(NEWER + "pytest_plugins = ['pkg.b']\n")
+    assert _rewrites(tmp_path, frozenset({"plugins"})) is None, "a mark pytest may load: unknown"
+    (tmp_path / "plugins" / "marks.py").unlink()
+    assert _rewrites(tmp_path, frozenset({"bad.py"})) is False, "the control: nothing marks pkg.a"
 
 
 def test_a_file_that_does_not_parse_is_no_consumer_and_refuses_the_run_first(
@@ -311,8 +330,9 @@ def test_the_refusal_names_the_file_the_complaint_and_both_remedies(tmp_path: Pa
     text = _refusal(tmp_path / "pkg")
     assert "  tests/test_b.py: line 1: invalid syntax" in text
     assert "Run Towel on a Python that parses it: the newest Python" in text
-    assert "--exclude tests." in text and "if it is not meant to run" in text
-    refuse_unparsed_program(tmp_path / "pkg", ["tests"])  # and the remedy works
+    assert "--exclude test_b.py." in text and "if it is not meant to run" in text
+    refuse_unparsed_program(tmp_path / "pkg", ["test_b.py"])  # and the remedy works
+    refuse_unparsed_program(tmp_path / "pkg", ["tests"])  # and so does its directory
 
 
 @pytest.mark.parametrize(
@@ -340,15 +360,60 @@ def test_the_refusal_names_the_newest_python_the_project_declares(
     assert remedy in _refusal(tmp_path)
 
 
-def test_a_file_no_exclusion_can_reach_is_named_so(tmp_path: Path) -> None:
-    _project(tmp_path, {"conftest.py": NEWER, "pkg/sub/__init__.py": "", "pkg/sub/bad.py": NEWER})
-    text = _refusal(tmp_path / "pkg" / "sub")
-    assert "--exclude" in text and "--exclude sub" not in text and "--exclude pkg" not in text
-    assert "conftest.py, pkg/sub/bad.py: --exclude cannot leave this out" in text
+def test_a_file_at_the_project_root_is_excluded_by_its_name(tmp_path: Path) -> None:
+    """unidecode keeps a Python 2 ``benchmark.py`` at its root, which no directory holds."""
+    _project(tmp_path, {"benchmark.py": "print 'fast'\n"})
+    text = _refusal(tmp_path)
+    assert "  benchmark.py: line 1: Missing parentheses in call to 'print'" in text
+    assert "leave it out: --exclude benchmark.py. Towel then refactors no directory" in text
+    refuse_unparsed_program(tmp_path, ["benchmark.py"])
+
+
+@pytest.mark.parametrize(
+    ("files", "target", "suggested"),
+    [
+        ({"conftest.py": NEWER}, "pkg", ["conftest.py"]),
+        ({"pkg/sub/__init__.py": "", "pkg/sub/bad.py": NEWER}, "pkg/sub", ["bad.py"]),
+        (
+            {"data/cases/a.py": NEWER, "data/cases/b.py": NEWER, "data/c.py": NEWER},
+            ".",
+            ["c.py", "cases"],
+        ),
+        ({"pkg/fast.py": NEWER}, ".", ["fast.py"]),
+        ({"pkg/fast.py": NEWER}, "pkg/kernels.py", ["fast.py"]),
+        ({"pkg/sub/__init__.py": NEWER}, ".", ["sub"]),
+        ({"pkg/__init__.py": NEWER}, "pkg", ["__init__.py"]),
+    ],
+    ids=[
+        "root file",
+        "in the target",
+        "shared directory",
+        "package code",
+        "beside a file target",
+        "initializer",
+        "target initializer",
+    ],
+)
+def test_every_suggested_exclusion_clears_the_refusal(
+    tmp_path: Path, files: Dict[str, str], target: str, suggested: List[str]
+) -> None:
+    _project(tmp_path, files)
+    goal = tmp_path / target
+    text = _refusal(goal)
+    assert " ".join(f"--exclude {name}" for name in suggested) + "." in text
+    assert "no --exclude leaves out" not in text
+    refuse_unparsed_program(goal, suggested)
+
+
+def test_the_file_being_refactored_is_never_excluded(tmp_path: Path) -> None:
+    _project(tmp_path, {"pkg/broken.py": NEWER})
+    target = tmp_path / "pkg" / "broken.py"
+    assert "pkg/broken.py: the file the run was given to refactor" in _refusal(target)
+    assert "fix it, or run Towel on a Python that parses it" in _refusal(target, ("broken.py",))
 
 
 def test_an_exclusion_of_the_target_itself_is_refused(tmp_path: Path) -> None:
-    # The scans would then read none of the code the run changes.
+    # The run would change what it was told to leave alone.
     _project(tmp_path, {})
     for target in (tmp_path / "pkg", tmp_path / "pkg" / "kernels.py"):
         with pytest.raises(ValueError, match=r"--exclude pkg would leave out"):
@@ -399,17 +464,21 @@ def test_setup_cfg_classifiers_declare_the_newest_python(tmp_path: Path) -> None
     [
         ("data", "data"),
         ("tests/", "tests"),
-        ("tests/data", None),
-        ("tests/**/hooks", None),
-        ("*", None),
+        ("benchmark.py", "benchmark.py"),
+        ("tests/data", "pass --exclude data"),
+        ("tests/data/bad.py", "pass --exclude bad.py"),
+        ("tests/**/hooks", "pass --exclude hooks"),
+        ("*.py", None),
     ],
 )
-def test_exclude_takes_a_directory_name(given: str, taken: Optional[str]) -> None:
-    if taken is not None:
-        assert _directory_name(given) == taken
+def test_exclude_takes_a_directory_or_file_name(given: str, taken: Optional[str]) -> None:
+    if taken is not None and "pass" not in taken:
+        assert _excluded_name(given) == taken
         return
-    with pytest.raises(argparse.ArgumentTypeError, match="takes the name of a directory"):
-        _directory_name(given)
+    with pytest.raises(argparse.ArgumentTypeError) as refused:
+        _excluded_name(given)
+    assert "takes the name of a directory or a file" in str(refused.value)
+    assert taken is None or taken in str(refused.value)
 
 
 # -- the command line, in every mode --------------------------------------------
@@ -439,6 +508,80 @@ def test_every_mode_refuses_before_writing_anything(tmp_path: Path, mode: str) -
     assert "--exclude" in ran.stderr
     assert not output.exists()
     assert {path: path.read_bytes() for path in before} == before
+
+
+def _refactored(root: Path, target: str, excluded: Tuple[str, ...], cross_module: bool) -> int:
+    engine = UnificationRefactorEngine(
+        min_lines=3, excluded_directories=excluded, cross_module_helpers=cross_module
+    )
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        results, _ = engine.refactor_directory_to_fixed_point(
+            str(root / target), str(root / target), progress="none"
+        )
+    return sum(applied for applied, _ in results.values())
+
+
+def test_an_excluded_test_suite_still_declines_a_change_its_patch_would_notice(
+    tmp_path: Path,
+) -> None:
+    """``--exclude tests`` keeps the tests unchanged; their ``mock.patch`` of ``len`` still counts."""
+    files = {
+        "pyproject.toml": '[project]\nname = "pkg"\nversion = "0"\n',
+        "pkg/__init__.py": "",
+        "pkg/a.py": DESCRIBE.format(name="a"),
+        "pkg/b.py": DESCRIBE.format(name="b"),
+    }
+    patched = _write(tmp_path / "patched", {**files, "tests/test_b.py": PATCHES_LEN})
+    assert _refactored(patched, "pkg", ("tests",), cross_module=True) > 0
+    assert "count = len(items)" in (patched / "pkg" / "b.py").read_text(), "len stays in pkg.b"
+    control = _write(tmp_path / "control", files)
+    assert _refactored(control, "pkg", ("tests",), cross_module=True) > 0
+    assert "len(items)" not in (control / "pkg" / "b.py").read_text(), "the control moves it"
+
+
+def test_an_excluded_hand_application_still_declines_the_function_it_decorates(
+    tmp_path: Path,
+) -> None:
+    kernels = tmp_path / "hand" / "pkg" / "kernels.py"
+    hand = _project(tmp_path / "hand", {"extras/fast.py": HAND_APPLIED})
+    (hand / "pkg" / "a.py").unlink()
+    (hand / "pkg" / "b.py").unlink()
+    assert _refactored(hand, ".", ("extras",), cross_module=False) == 0
+    assert kernels.read_text() == KERNELS
+    (hand / "extras" / "fast.py").unlink()
+    assert _refactored(hand, ".", ("extras",), cross_module=False) == 1, "the control"
+
+
+@pytest.mark.parametrize("excluded", ["tests", "test_b.py"])
+def test_an_excluded_file_that_does_not_parse_no_longer_refuses(
+    tmp_path: Path, excluded: str
+) -> None:
+    project = _project(tmp_path / "proj", {"tests/test_b.py": NEWER + PATCHES_LEN})
+    output = tmp_path / "out"
+    ran = invoke(
+        [
+            "dry",
+            str(project),
+            str(output),
+            "--no-types",
+            "--no-interactive",
+            "--progress",
+            "none",
+            "--exclude",
+            excluded,
+        ]
+    )
+    assert ran.status == 0, ran.stderr
+    assert "Refusing" not in ran.stderr
+    assert (output / "tests" / "test_b.py").read_text() == NEWER + PATCHES_LEN
+
+
+def test_a_root_file_named_in_the_refusal_is_cleared_on_the_command_line(tmp_path: Path) -> None:
+    project = _project(tmp_path / "proj", {"benchmark.py": NEWER})
+    arguments = ["preview", str(project), "--progress", "none"]
+    refused = invoke(arguments)
+    assert refused.status == 1 and "--exclude benchmark.py." in refused.stderr
+    assert invoke([*arguments, "--exclude", "benchmark.py"]).status == 0
 
 
 @pytest.mark.skipif(sys.version_info >= (3, 12), reason="3.12 parses the PEP 701 f-string")

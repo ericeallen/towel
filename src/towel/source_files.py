@@ -69,6 +69,8 @@ def python_sources(
 
     Hidden directories and ``TOOL_DIRECTORIES`` are skipped by name, an
     environment by what it holds (:func:`is_environment`), whatever its name.
+    ``excluded`` names directories and files to leave out, matched by name at
+    any depth below ``directory``.
 
     Prune directories before entering them: ignored source, especially an
     environment's incompatible fixtures, is outside both extraction and rename
@@ -101,6 +103,6 @@ def python_sources(
         )
         for name in filenames:
             path = root / name
-            if _is_python_source(path):
+            if name not in ignored and _is_python_source(path):
                 found.append(path)
     return sorted(found)

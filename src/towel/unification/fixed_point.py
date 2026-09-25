@@ -302,8 +302,9 @@ class FixedPointDrivers(Materialization):
 
         Some checks read the whole program for what could make a change
         unsafe, and a file of it that does not parse on this interpreter may
-        run on a newer one, unseen (``towel.program_files``). The directories
-        the run excludes are no part of the program.
+        run on a newer one, unseen (``towel.program_files``). What the run
+        excludes is still read, and a file it excludes that does not parse is
+        taken for no part of the program.
         """
         refuse_unparsed_program(target, self.import_graph.excluded_names)
 

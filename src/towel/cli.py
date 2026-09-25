@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, journals_covering, pending_journal_remedy, recover
 from towel.diagnostics import LOG, Settings, configure_stderr_logging
-from towel.program_files import refuse_unparsed_program
+from towel.program_files import is_exclusion_name, refuse_unparsed_program
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source, source_lines
 from towel.source_files import python_sources
@@ -255,26 +255,22 @@ def _warn_about_retired_flags(args: argparse.Namespace) -> None:
         )
 
 
-def _directory_name(value: str) -> str:
-    """An argparse type for ``--exclude``: the name of a directory, which matches it at any depth.
+def _excluded_name(value: str) -> str:
+    """An argparse type for ``--exclude``: a directory's or a file's name, matched at any depth.
 
-    A path or a pattern matches no directory's name, so given one the flag
-    would leave out nothing, silently; it is refused, naming the directory
-    name to pass instead. A trailing separator, as a shell completes a
-    directory, is dropped.
+    A path or a pattern matches no name, so given one the flag would leave
+    out nothing, silently; it is refused, naming what to pass instead: the
+    last part of a path, whether it names a directory or a file. A trailing
+    separator, as a shell completes a directory, is dropped.
     """
     name = value.rstrip("/" + os.sep)
-    if name and not any(mark in name for mark in ("/", os.sep, "*", "?", "[")):
+    if is_exclusion_name(name):
         return name
     last = Path(name).name if name else ""
-    instead = (
-        f"; for {value}, pass --exclude {last}"
-        if last and not any(mark in last for mark in "*?[")
-        else ""
-    )
+    instead = f"; for {value}, pass --exclude {last}" if is_exclusion_name(last) else ""
     raise argparse.ArgumentTypeError(
-        f"--exclude takes the name of a directory, not a path or a pattern, and leaves out every"
-        f" directory of that name{instead}"
+        "--exclude takes the name of a directory or a file, not a path or a pattern, and leaves"
+        f" out every directory or file of that name{instead}"
     )
 
 
@@ -284,11 +280,11 @@ def _add_exclude_flag(parser: argparse.ArgumentParser) -> None:
         "--exclude",
         action="append",
         default=[],
-        type=_directory_name,
-        metavar="DIRECTORY",
-        help="Directory name to leave out of the program (repeatable), at any depth, e.g. data:"
-        " Towel neither changes nor reads any directory of that name, and takes it that nothing"
-        " there is part of the program",
+        type=_excluded_name,
+        metavar="NAME",
+        help="Name of a directory or file to leave unchanged (repeatable), at any depth, e.g."
+        " tests or benchmark.py; checks that read the whole program still read it, and one"
+        " there that does not parse is taken for no part of the program",
     )
 
 
