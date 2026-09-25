@@ -56,6 +56,13 @@ import ``shop`` without the module hatch, or the subpackage setuptools,
 leaves out of the wheel. Their modules left out may borrow from the ones
 that ship, never the reverse.
 
+A package in ``REFUSED`` holds a file written for a newer Python than any
+Towel supports, stored as ``.pynew`` (``tests.hostile_execution``): Towel
+must refuse the run before writing anything, naming that file, since what it
+does is unseen (``towel.program_files``). The two ``xf9up_`` packages are the
+round-4 audit's P1-2 and P1-3, where such a file hid a decorator applied by
+hand and a test's patch of ``len``.
+
 A package runs with ``--cross-module`` unless ``WITHOUT_CROSS_MODULE`` names
 it: then only duplicates within a module are paired, as ``towel dry`` pairs
 them by default. One in ``TYPED`` runs with the checker its
@@ -68,14 +75,16 @@ yet fixed: a strict expected failure whose transformed state is not pinned.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import shutil
 import tempfile
 from typing import Dict
 
 import pytest
 
-from tests.hostile_execution import module_faces, observe
+from tests.hostile_execution import copy_fixture_tree, module_faces, observe
 from tests.hostile_refactoring import refactor_package, with_known_defects
+from towel.unification.exceptions import UnparsedProgramError
 from tests.test_cli_integration import invoke
 
 CASES = Path(__file__).parent / "hostile_crossfile"
@@ -171,6 +180,15 @@ REJECTED = {
     "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite",
 }
 
+REFUSED: Dict[str, str] = {
+    # Round-4 audit P1-2: pkg/fast.py applies a recompiling decorator to
+    # kernels.first by hand, in syntax no supported Python parses.
+    "xf9up_newer_syntax_hides_hand_decoration": "pkg/fast.py",
+    # Round-4 audit P1-3: tests/test_b.py patches len into pkg.b, likewise.
+    "xf9up_newer_syntax_test_hides_builtin_patch": "tests/test_b.py",
+}
+"""Packages whose run Towel refuses before writing anything, with the file the refusal names."""
+
 TYPED = frozenset(
     {
         # The round-3 audit's typed cases: refactored with the strict checker
@@ -194,8 +212,9 @@ TYPED = frozenset(
 )
 """Packages run with the checker their ``pyproject.toml`` configures."""
 
-WITHOUT_CROSS_MODULE = TYPED
-"""Packages run without ``--cross-module``: every typed one so far, as the audit ran them."""
+WITHOUT_CROSS_MODULE = TYPED | {"xf9up_newer_syntax_hides_hand_decoration"}
+"""Packages run without ``--cross-module``: every typed one so far, as the audit ran them, and
+the default-mode refusal."""
 
 KNOWN_DEFECTS: Dict[str, str] = {}
 """Packages whose defect is reported and not yet fixed, each with its reason from
@@ -231,8 +250,14 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
     with tempfile.TemporaryDirectory(prefix="towel-hostile-xf-") as directory:
         before = Path(directory) / "before"
         after = Path(directory) / "after"
-        shutil.copytree(CASES / case, before)
-        shutil.copytree(CASES / case, after)
+        copy_fixture_tree(CASES / case, before)
+        copy_fixture_tree(CASES / case, after)
+        if case in REFUSED:
+            with pytest.raises(UnparsedProgramError, match=re.escape(f"  {REFUSED[case]}: line ")):
+                refactor_package(after / "pkg", cross_module=case not in WITHOUT_CROSS_MODULE)
+            assert _python_files(after) == _python_files(before)
+            assert _run(after) == _run(before)
+            return
         results = refactor_package(
             after / "pkg", cross_module=case not in WITHOUT_CROSS_MODULE, typed=case in TYPED
         )
