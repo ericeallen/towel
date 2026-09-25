@@ -45,12 +45,17 @@ from typing import List, Optional, Sequence, Tuple
 import pytest
 
 from tests.hostile_refactoring import refactor_script
+from towel.diagnostics import Settings
+from towel.formatting import BlackSettings, SnippetFormatter, black_formatter, ruff_formatter
 from towel.unification.block_comments import (
     CommentConflict,
     SiteComments,
     merge_comments,
     site_comments,
 )
+from towel.unification.refactor_engine import UnificationRefactorEngine
+
+SERIAL = Settings.from_environ({"TOWEL_WORKERS": "1"})
 
 HOSTILE = Path(__file__).parent / "hostile_cases"
 
@@ -219,7 +224,7 @@ def f2(rows):
 def test_a_region_at_module_level_reaches_a_module_helper_only_if_it_covers_it(
     prelude: str, postlude: str, expected: Optional[str]
 ) -> None:
-    assert _pair_verdict(_MODULE.format(prelude=prelude, postlude=postlude), 0, 3) == expected
+    assert _pair_verdict(_MODULE.format(prelude=prelude, postlude=postlude), 1, 2) == expected
 
 
 def test_a_region_closed_between_the_sites_leaves_the_second_outside() -> None:
@@ -227,7 +232,7 @@ def test_a_region_closed_between_the_sites_leaves_the_second_outside() -> None:
         "\n\ndef f2", "\n# fmt: on\n\ndef f2"
     )
     # Only the first site is kept off by Black, and the helper is not.
-    assert _pair_verdict(source, 0, 3) == "directive_around_block"
+    assert _pair_verdict(source, 1, 2) == "directive_around_block"
 
 
 _CLASS = """
@@ -267,7 +272,7 @@ def test_a_region_in_a_class_reaches_a_method_helper_only_if_it_covers_it(
     top: str, middle: str, home: Optional[str], expected: Optional[str]
 ) -> None:
     text = textwrap.dedent(_CLASS.format(top=top, middle=middle)).lstrip()
-    blocks = [body[0:3] for body in _bodies(text)]
+    blocks = [body[1:3] for body in _bodies(text)]
     assert _verdict(text, blocks, home_class=home) == expected
 
 
@@ -424,3 +429,205 @@ def test_the_reproducers_lint_and_layout_are_what_they_were(tmp_path: Path) -> N
     for region in _regions(before.read_text(encoding="utf-8")):
         assert _kept(region, text), "\n".join(region)
     assert re.search(r"1,   0,   0,", text)
+
+
+# -- The layout a formatter directive keeps ---------------------------------------
+
+_MATRIX = """
+def g1(rows):
+    head = rows[:1]
+    # fmt: off
+    matrix = [
+        1,   0,   0,
+        0,   1,   0,
+        0,   0,   1,
+    ]
+    total = sum(rows)   *   len(matrix)
+    tag = "grid"
+    # fmt: on
+    print("m", total, tag)
+    return head
+
+
+def g2(rows):
+    head = rows[:1]
+    # fmt: off
+    matrix = [
+        1,   0,   0,
+        0,   1,   0,
+        0,   0,   1,
+    ]
+    total = sum(rows)   *   len(matrix)
+    tag = "grid"
+    # fmt: on
+    print("n", total, tag)
+    return head
+"""
+
+
+def _refactored(
+    tmp_path: Path, source: str, formatter: Optional[str] = None, name: str = "m.py"
+) -> Tuple[str, UnificationRefactorEngine]:
+    path = tmp_path / name
+    path.write_text(textwrap.dedent(source).lstrip(), encoding="utf-8")
+    snippet: Optional[SnippetFormatter] = None
+    if formatter == "black":
+        snippet = black_formatter(BlackSettings())
+    elif formatter == "ruff":
+        snippet = ruff_formatter(path)
+    engine = UnificationRefactorEngine(min_lines=3, settings=SERIAL, snippet_formatter=snippet)
+    proposals = engine.analyze_file(str(path))
+    if not proposals:
+        return path.read_text(encoding="utf-8"), engine
+    return engine.apply_refactoring(str(path), proposals[0]), engine
+
+
+def _helper_text(result: str) -> str:
+    lines = result.split("\n")
+    (helper,) = [
+        node
+        for node in ast.walk(ast.parse(result))
+        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+    ]
+    return "\n".join(lines[helper.lineno - 1 : helper.end_lineno])
+
+
+@pytest.mark.parametrize("formatter", [None, "black", "ruff"])
+def test_the_layout_fmt_off_keeps_is_written_into_the_helper_as_it_was(
+    tmp_path: Path, formatter: Optional[str]
+) -> None:
+    """Round 4: the matrix Black was kept off came back on one line, rendered by ``ast.unparse``."""
+    if formatter is not None and importlib.util.find_spec(formatter) is None:
+        pytest.skip(f"{formatter} absent")
+    source = textwrap.dedent(_MATRIX).lstrip()
+    result, _ = _refactored(tmp_path, source, formatter)
+    helper = _helper_text(result)
+    for region in _regions(source):
+        assert _kept(region, helper), helper
+    # Only the helper holds the lines now.
+    assert result.count("1,   0,   0,") == 1
+
+
+def test_a_line_fmt_skip_keeps_is_written_as_it_was(tmp_path: Path) -> None:
+    source = """
+    def g1(rows):
+        total = 0
+        for row in rows:
+            total += row  *  2  # fmt: skip
+        print(total)
+        return total + 1
+
+
+    def g2(rows):
+        total = 0
+        for row in rows:
+            total += row  *  2  # fmt: skip
+        print(total)
+        return total + 2
+    """
+    result, _ = _refactored(
+        tmp_path, source, "black" if importlib.util.find_spec("black") else None
+    )
+    assert "        total += row  *  2  # fmt: skip" in _helper_text(result).split("\n")
+
+
+def test_a_region_around_both_blocks_that_reaches_the_helper_keeps_it_all(tmp_path: Path) -> None:
+    """A module whose Black is off from its top keeps the helper as the sites wrote it."""
+    source = """
+    # fmt: off
+    def g1(rows):
+        head = rows[:1]
+        total = sum(rows)   *   2
+        print("m",   total)
+        return head
+
+
+    def g2(rows):
+        head = rows[1:]
+        total = sum(rows)   *   2
+        print("m",   total)
+        return head
+    """
+    result, _ = _refactored(tmp_path, source)
+    helper = _helper_text(result).split("\n")
+    assert "    total = sum(rows)   *   2" in helper and '    print("m",   total)' in helper
+
+
+@pytest.mark.parametrize(
+    "difference, reason",
+    [
+        # A parameter would stand in a kept line, as no site wrote it.
+        (('tag = "grid"', 'tag = "cell"'), "layout_not_kept"),
+        # The same code, laid out differently.
+        (("        0,   0,   1,", "        0,0,1,"), "layout_not_kept"),
+    ],
+)
+def test_a_kept_layout_the_sites_do_not_share_declines_the_pair(
+    tmp_path: Path, difference: Tuple[str, str], reason: str
+) -> None:
+    source = textwrap.dedent(_MATRIX).lstrip()
+    second = source.index("def g2")
+    source = source[:second] + source[second:].replace(*difference, 1)
+    result, engine = _refactored(tmp_path, source)
+    assert result == source
+    assert reason in engine.declined_pairs
+
+
+def test_a_method_helper_keeps_the_layout_only_at_whole_levels(tmp_path: Path) -> None:
+    """A method helper is re-indented by levels of four, which an aligned line would not survive."""
+    method = """
+    class Grid:
+        def g1(self, rows):
+            head = rows[:1]
+            # fmt: off
+            matrix = [1, 0,
+                      0, 1]
+            total = sum(rows)   *   len(matrix)
+            # fmt: on
+            print("m", total, self.scale)
+            return head
+
+        def g2(self, rows):
+            head = rows[:1]
+            # fmt: off
+            matrix = [1, 0,
+                      0, 1]
+            total = sum(rows)   *   len(matrix)
+            # fmt: on
+            print("n", total, self.scale)
+            return head
+    """
+    result, engine = _refactored(tmp_path, method)
+    assert result == textwrap.dedent(method).lstrip()
+    assert "layout_not_kept" in engine.declined_pairs
+    aligned = method.replace("                      0, 1]", "                0, 1]")
+    result, _ = _refactored(tmp_path, aligned, name="aligned.py")
+    # The method body is at the sites' own indentation, so the lines are as written.
+    helper = _helper_text(result).split("\n")
+    assert "        matrix = [1, 0," in helper and "            0, 1]" in helper
+
+
+def test_a_formatter_that_does_not_read_the_directive_is_not_used(tmp_path: Path) -> None:
+    """Black does not read ``autopep8: off``; its formatting would lose the layout, so it is dropped."""
+    if importlib.util.find_spec("black") is None:
+        pytest.skip("black absent")
+    source = textwrap.dedent(_MATRIX).lstrip().replace("fmt: off", "autopep8: off")
+    source = source.replace("fmt: on", "autopep8: on")
+    result, _ = _refactored(tmp_path, source, "black")
+    assert result.count("1,   0,   0,") == 1
+    assert "        1,   0,   0," in _helper_text(result).split("\n")
+
+
+@requires_ruff
+def test_the_matrix_fixture_keeps_its_layout_through_a_fixed_point_run(tmp_path: Path) -> None:
+    """The hostile fixture of the matrix shape, refactored as the battery does."""
+    source = HOSTILE / "r9dr_fmt_off_layout_moves_verbatim.py"
+    after = tmp_path / "m.py"
+    shutil.copy(source, after)
+    assert refactor_script(after) > 0
+    # The formatter still keeps off the lines the helper now holds.
+    assert _ruff("format", "--isolated", "--quiet", str(after))[0] == 0
+    text = after.read_text(encoding="utf-8")
+    for region in _regions(source.read_text(encoding="utf-8")):
+        assert _kept(region, text), "\n".join(region)
+    assert text.count("        count += row  *  2  # fmt: skip") == 1

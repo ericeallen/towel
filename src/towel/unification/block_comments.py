@@ -51,12 +51,20 @@ no directive may stand on a line the block shares with code that stays at
 the call site (``a = 1; b = 2  # noqa`` with the block at ``b``): the
 directive governs the whole line, and splicing the call in parts it from
 some of that code (``DIRECTIVE_ON_SHARED_LINE``).
+
+A formatter directive (``fmt: off`` to ``fmt: on``, ``fmt: skip``) keeps
+the layout of the statements it covers, which ``ast.unparse`` would not.
+Those statements are written into the helper from the first site's own
+text, uniformly re-indented (``ProtectedSpan``, ``_spliced``); the sites
+must keep the same statements, written alike, with no parameter standing
+in them, and the text must survive re-indentation (``LAYOUT_NOT_KEPT``).
 """
 
 from __future__ import annotations
 
 import ast
 import bisect
+import dataclasses
 import functools
 import io
 import re
@@ -190,6 +198,36 @@ class SiteComments:
     # regexes that reaches into it, which moving it would end
     # (``_exclusion_moves``); or empty.
     excluded_across: str = ""
+    # The statements of the block whose layout a formatter directive in it
+    # keeps (``_protected_spans``), which the helper must hold byte for byte.
+    protected: Tuple["ProtectedSpan", ...] = ()
+    # Why the layout a formatter directive in the block keeps cannot be
+    # carried into a helper; or empty.
+    unkept_layout: str = ""
+    # The whole block as one span, for a formatter's region around it that
+    # also reaches the helper, which must then hold all of it byte for byte;
+    # None with the reason in ``whole_unkept`` when it cannot. Read only when
+    # ``around`` holds such a region.
+    whole: Optional["ProtectedSpan"] = None
+    whole_unkept: str = ""
+
+
+@dataclass(frozen=True)
+class ProtectedSpan:
+    """Statements a formatter directive keeps the layout of, from ``first`` to ``last`` of one list.
+
+    ``text`` is their lines as written, without the first statement's
+    indentation; ``shape`` their structure (``canonical_dump``), which the
+    helper's statements must share for that text to be theirs; ``lines``
+    their first and last line in the site's module.
+    """
+
+    first: NodePath
+    last: NodePath
+    text: Tuple[str, ...]
+    shape: str
+    detail: str
+    lines: Tuple[int, int] = (0, 0)
 
 
 Home = Tuple[str, str]
@@ -248,10 +286,20 @@ class HelperComment:
 
 @dataclass(frozen=True)
 class HelperComments:
-    """The comments a helper carries; paths count statements from ``body_offset``."""
+    """The comments a helper carries; paths count statements from ``body_offset``.
+
+    ``verbatim`` are the statements whose layout a formatter directive kept
+    at the sites, written into the helper as the first site wrote them.
+    """
 
     body_offset: int = 0
     comments: Tuple[HelperComment, ...] = ()
+    verbatim: Tuple[ProtectedSpan, ...] = ()
+
+    @property
+    def carried(self) -> bool:
+        """Whether the helper holds anything its plain rendering would not."""
+        return bool(self.comments or self.verbatim)
 
 
 class ConflictKind(Enum):
@@ -263,6 +311,7 @@ class ConflictKind(Enum):
     DIRECTIVE_AROUND_BLOCK = "directive_around_block"
     EXCLUDED_BLOCK_START = "excluded_block_start"
     DIRECTIVE_ON_SHARED_LINE = "directive_on_shared_line"
+    LAYOUT_NOT_KEPT = "layout_not_kept"
 
 
 @dataclass(frozen=True)
@@ -761,6 +810,11 @@ class _BlockIndex:
             self._starts_by_line.setdefault(entry.start[0], []).append(entry)
         self._statements = [entry for entry in located if _statement_like(entry.node)]
 
+    @property
+    def statements(self) -> Sequence[_Located]:
+        """The block's statements and ``except`` clauses, nested ones included."""
+        return self._statements
+
     def starting_at(self, position: Position) -> Optional[_Located]:
         """The outermost node starting at ``position``."""
         return self._by_start.get(position)
@@ -952,6 +1006,12 @@ def site_comments(
     start = _excluded_start(block, in_block)
     directed = _directive_before(lines, first_line)
     shared = shared_lines(lines, block)
+    whole: Optional[ProtectedSpan] = None
+    whole_unkept = ""
+    kept_around = next((surrounding for surrounding in around if surrounding.layout), None)
+    if kept_around is not None:
+        found = _whole_span(block, lines, kept_around.detail)
+        whole, whole_unkept = (None, found) if isinstance(found, str) else (found, "")
     bare = SiteComments(
         argument_lines=arguments,
         around=around,
@@ -960,22 +1020,15 @@ def site_comments(
         directed_start=directed,
         shared_line_directive=_shared_line_directive(shared, excluded, ()),
         excluded_across=across,
+        whole=whole,
+        whole_unkept=whole_unkept,
     )
     if index is None or not commented:
         return bare
     first = (first_line, _column(lines[first_line - 1], block[0].col_offset))
     tokens = _block_tokens(lines, first, last_line)
     if tokens is None:
-        return SiteComments(
-            argument_lines=arguments,
-            unreadable=True,
-            around=around,
-            excluded=excluded,
-            excluded_start=start,
-            directed_start=directed,
-            shared_line_directive=bare.shared_line_directive,
-            excluded_across=across,
-        )
+        return dataclasses.replace(bare, unreadable=True)
     positions = [
         position for position, token in enumerate(tokens) if token.kind == tokenize.COMMENT
     ]
@@ -1012,15 +1065,13 @@ def site_comments(
             )
         )
     moved = _with_region_reach(comments)
-    return SiteComments(
-        moved,
-        arguments,
-        around=around,
-        excluded=excluded,
-        excluded_start=start,
-        directed_start=directed,
+    protected, unkept = _protected_spans(block, lines, tokens, index, moved)
+    return dataclasses.replace(
+        bare,
+        comments=moved,
         shared_line_directive=_shared_line_directive(shared, excluded, moved),
-        excluded_across=across,
+        protected=protected,
+        unkept_layout=unkept,
     )
 
 
@@ -1542,17 +1593,27 @@ def _same_level(opener: BlockComment, closer: BlockComment, family: _Region) -> 
     )
 
 
-def _region_pairs(
-    comments: Sequence[BlockComment],
-) -> Tuple[Dict[int, FrozenSet[int]], Optional[BlockComment]]:
-    """The lines each region of ``comments`` closed within them reaches, and the first left unmatched.
+@dataclass(frozen=True)
+class _Regions:
+    """The regions of a block's comments: what each closed one reaches, and which it pairs."""
 
-    Keyed by the positions of both its opener and its closer, and read for
-    every family whose tool reads the comment. An opener left open, or a
-    comment its tool might read as a closer that closes nothing here, is a
-    region crossing the block's edge (``directive_outlives_block``).
+    # The lines each region reaches, keyed by the positions of its opener and closer.
+    reach: Dict[int, FrozenSet[int]]
+    # The opener and closer positions of each region closed within the block, with its family.
+    closed: Tuple[Tuple[int, int, _Region], ...]
+    # The first region directive left unmatched, if any.
+    unmatched: Optional[BlockComment]
+
+
+def _region_pairs(comments: Sequence[BlockComment]) -> _Regions:
+    """The regions of ``comments``, read for every family whose tool reads each comment.
+
+    An opener left open, or a comment its tool might read as a closer that
+    closes nothing here, is a region crossing the block's edge
+    (``directive_outlives_block``).
     """
     reach: Dict[int, FrozenSet[int]] = {}
+    closed: List[Tuple[int, int, _Region]] = []
     unmatched: List[BlockComment] = []
     for family in _REGION_FAMILIES:
         opened: List[int] = []
@@ -1578,8 +1639,13 @@ def _region_pairs(
                 region = _lines_between(comments[start].line, comment.line)
                 reach[start] = reach.get(start, frozenset()) | region
                 reach[position] = reach.get(position, frozenset()) | region
+                closed.append((start, position, family))
         unmatched.extend(comments[position] for position in opened)
-    return reach, min(unmatched, key=lambda comment: comment.line) if unmatched else None
+    return _Regions(
+        reach,
+        tuple(closed),
+        min(unmatched, key=lambda comment: comment.line) if unmatched else None,
+    )
 
 
 def _with_region_reach(comments: Sequence[BlockComment]) -> Tuple[BlockComment, ...]:
@@ -1588,7 +1654,7 @@ def _with_region_reach(comments: Sequence[BlockComment]) -> Tuple[BlockComment, 
     A region left open, or closed without being opened, reaches past the
     block and declines it anyway (``_region_imbalance``).
     """
-    reach, _ = _region_pairs(comments)
+    reach = _region_pairs(comments).reach
     return tuple(
         (
             BlockComment(
@@ -1604,6 +1670,217 @@ def _with_region_reach(comments: Sequence[BlockComment]) -> Tuple[BlockComment, 
             else comment
         )
         for position, comment in enumerate(comments)
+    )
+
+
+# -- Layout a formatter is kept off ----------------------------------------------
+#
+# ``ast.unparse`` renders a helper in its own layout, and the formatter then
+# formats it. Code a formatter directive kept at its layout would lose it, so
+# such statements are written into the helper from the site's own text,
+# uniformly re-indented, and the pair declines where that cannot be done.
+
+# A directive at the end of a line that keeps a formatter off the statement it
+# ends: Black's and ruff's ``fmt: skip``, ruff's trailing ``fmt: off`` (measured
+# on 0.16.9), and yapf's trailing ``yapf: disable``.
+_KEPT_STATEMENT = re.compile(
+    r"\#\s*fmt\s*:\s*(?:skip|off)\b|\#\s*yapf\s*:\s*disable\b", re.IGNORECASE
+)
+
+
+def _siblings(
+    statements: Sequence[ast.AST], first: NodePath, last: NodePath
+) -> Optional[List[ast.stmt]]:
+    """The statements from ``first`` to ``last`` of one statement list; None when they are not that."""
+    if first.steps[:-1] != last.steps[:-1] or first.statement != last.statement and first.steps:
+        return None
+    if not first.steps:
+        found: Sequence[ast.AST] = statements[first.statement : last.statement + 1]
+        kinds = (type(found[0]).__name__, type(found[-1]).__name__) if found else ()
+    else:
+        (field_name, low, _), (other_field, high, _) = first.steps[-1], last.steps[-1]
+        parent, _, exact = _resolve(
+            statements, NodePath(first.statement, first.kind, first.steps[:-1])
+        )
+        body = getattr(parent, field_name, None)
+        if not exact or field_name != other_field or not isinstance(body, list):
+            return None
+        found = body[low : high + 1]
+        kinds = (type(found[0]).__name__, type(found[-1]).__name__) if found else ()
+    wanted = (
+        first.steps[-1][2] if first.steps else first.kind,
+        last.steps[-1][2] if last.steps else last.kind,
+    )
+    if not found or kinds != wanted or not all(isinstance(node, ast.stmt) for node in found):
+        return None
+    return [node for node in found if isinstance(node, ast.stmt)]
+
+
+def _shape(statements: Sequence[ast.AST]) -> str:
+    return "\n".join(canonical_dump(statement) for statement in statements)
+
+
+def _span_of(
+    block: Sequence[ast.stmt],
+    first: NodePath,
+    last: NodePath,
+    lines: Sequence[str],
+    tokens: Sequence[_Token],
+    detail: str,
+) -> Union[ProtectedSpan, str]:
+    """The span from ``first`` to ``last`` with its text, or why that text cannot be carried.
+
+    Each line must hold the first statement's indentation, a statement or
+    decorator starting its first line and nothing but a comment following
+    the last; no tab may indent it, and no string may run across its lines,
+    since re-indenting would change the string.
+    """
+    nodes = _siblings(block, first, last)
+    if nodes is None:
+        return f"{detail}: its statements are not one list"
+    start, end = _start_of(nodes[0]), nodes[-1].end_lineno or nodes[-1].lineno
+    opening = lines[start - 1]
+    prefix = opening[: len(opening) - len(opening.lstrip(" \t"))]
+    column = _column(lines[nodes[0].lineno - 1], nodes[0].col_offset)
+    if start == nodes[0].lineno and column != len(prefix):
+        return f"{detail}: line {start} holds code before it"
+    closing = lines[end - 1].rstrip("\r\n")
+    rest = closing[_column(closing, nodes[-1].end_col_offset or 0) :].strip()
+    if rest and not rest.startswith("#"):
+        return f"{detail}: line {end} holds code after it"
+    if any(
+        token.start[0] != token.end[0] and start <= token.start[0] <= end
+        for token in tokens
+        if token.kind != tokenize.COMMENT
+    ):
+        return f"{detail}: a string runs across its lines, which re-indenting would change"
+    text: List[str] = []
+    for line in lines[start - 1 : end]:
+        raw = line.rstrip("\r\n")
+        indentation = raw[: len(raw) - len(raw.lstrip(" \t"))]
+        if "\t" in indentation:
+            return f"{detail}: a tab indents it"
+        if raw.startswith(prefix):
+            text.append(raw[len(prefix) :])
+        elif raw.strip():
+            return f"{detail}: a line of it is indented less than its first statement"
+        else:
+            text.append("")
+    return ProtectedSpan(first, last, tuple(text), _shape(nodes), detail, (start, end))
+
+
+def _next_path(block: Sequence[ast.stmt], path: NodePath, step: int) -> Optional[NodePath]:
+    """The statement ``step`` places after (or before) the one at ``path`` in its list, if any."""
+    if not path.steps:
+        index = path.statement + step
+        if 0 <= index < len(block):
+            return NodePath(index, type(block[index]).__name__)
+        return None
+    field_name, index, _ = path.steps[-1]
+    parent, _, exact = _resolve(block, NodePath(path.statement, path.kind, path.steps[:-1]))
+    body = getattr(parent, field_name, None)
+    if not exact or not isinstance(body, list) or not 0 <= index + step < len(body):
+        return None
+    neighbour = body[index + step]
+    return NodePath(
+        path.statement,
+        path.kind,
+        path.steps[:-1] + ((field_name, index + step, type(neighbour).__name__),),
+    )
+
+
+def _protected_spans(
+    block: Sequence[ast.stmt],
+    lines: Sequence[str],
+    tokens: Sequence[_Token],
+    index: _BlockIndex,
+    comments: Sequence[BlockComment],
+) -> Tuple[Tuple[ProtectedSpan, ...], str]:
+    """The statements a formatter directive in the block keeps the layout of, or why they cannot move.
+
+    A formatter's region closed within the block keeps the statements
+    between its ends; a directive keeping a formatter off one statement
+    keeps that statement, which must be a simple one alone on its lines.
+    A span inside another is carried with it.
+    """
+    spans: List[ProtectedSpan] = []
+    for start, end, family in _region_pairs(comments).closed:
+        if not family.layout:
+            continue
+        opener, closer = comments[start], comments[end]
+        detail = f"line {opener.line}: {opener.text}"
+        if opener.anchor.placement is Placement.CLOSING:
+            continue  # it opens at the end of a body, and its closer ends it
+        if opener.anchor.placement is not Placement.LEADING:
+            return (), f"{detail} does not stand between statements"
+        first = opener.anchor.node
+        if closer.anchor.placement is Placement.CLOSING:
+            last: Optional[NodePath] = closer.anchor.node
+        elif closer.anchor.placement is Placement.LEADING:
+            last = _next_path(block, closer.anchor.node, -1)
+        else:
+            return (), f"{detail} is closed where no statement ends"
+        if last is None or _siblings(block, first, last) is None:
+            if first == closer.anchor.node:
+                continue  # nothing between its ends
+            return (), f"{detail} does not keep whole statements"
+        span = _span_of(block, first, last, lines, tokens, detail)
+        if isinstance(span, str):
+            return (), span
+        spans.append(span)
+    for comment in comments:
+        if comment.anchor.own_line or not _KEPT_STATEMENT.search(comment.text):
+            continue
+        detail = f"line {comment.line}: {comment.text}"
+        holder = index.innermost_statement_on(comment.line)
+        if holder is None:
+            continue
+        if _clauses(holder.node):
+            return (), f"{detail} keeps a clause's header, which a helper cannot hold alone"
+        if any(
+            other is not holder
+            and other.depth == holder.depth
+            and other.start[0] <= holder.end[0]
+            and holder.start[0] <= other.end[0]
+            for other in index.statements
+        ):
+            return (), f"{detail} ends a line holding more than one statement"
+        span = _span_of(block, holder.path, holder.path, lines, tokens, detail)
+        if isinstance(span, str):
+            return (), span
+        spans.append(span)
+    # One span for each set of statements, however many families keep it.
+    unique = list({span.lines: span for span in reversed(spans)}.values())
+    kept = [
+        span
+        for span in unique
+        if not any(
+            other.lines != span.lines
+            and other.lines[0] <= span.lines[0]
+            and span.lines[1] <= other.lines[1]
+            for other in unique
+        )
+    ]
+    return tuple(sorted(kept, key=lambda span: span.lines)), ""
+
+
+def _whole_span(
+    block: Sequence[ast.stmt], lines: Sequence[str], detail: str
+) -> Union[ProtectedSpan, str]:
+    """The whole block as a span a formatter's region around it keeps, or why it cannot be carried."""
+    first_line, last_line = block[0].lineno, block[-1].end_lineno or block[-1].lineno
+    tokens = _block_tokens(
+        lines, (first_line, _column(lines[first_line - 1], block[0].col_offset)), last_line
+    )
+    if tokens is None:
+        return f"{detail}: the block's tokens cannot be read"
+    return _span_of(
+        block,
+        NodePath(0, type(block[0]).__name__),
+        NodePath(len(block) - 1, type(block[-1]).__name__),
+        lines,
+        tokens,
+        detail,
     )
 
 
@@ -1721,7 +1998,7 @@ def _directives(
 
 def _region_imbalance(site: SiteComments) -> Optional[BlockComment]:
     """The first region directive of site whose region crosses the block's edge."""
-    return _region_pairs(site.comments)[1]
+    return _region_pairs(site.comments).unmatched
 
 
 def directive_conflict(
@@ -1735,8 +2012,9 @@ def directive_conflict(
     that becomes an argument of its call, which is written at the call site,
     where the directive does not reach; no ignore above a site's block may
     govern its first statement, since it stays above the call that takes
-    the statement's place; and a region a directive opens or closes must
-    not reach past the block.
+    the statement's place; a region a directive opens or closes must
+    not reach past the block; and the lines a formatter directive keeps must
+    be the same at every site, and the helper's own (``_kept_layout``).
     """
     for site in sites:
         if site.unreadable:
@@ -1785,7 +2063,109 @@ def directive_conflict(
             )
         if site.excluded_across:
             return CommentConflict(ConflictKind.DIRECTIVE_OUTLIVES_BLOCK, site.excluded_across)
-    return None
+        if site.unkept_layout:
+            return CommentConflict(ConflictKind.LAYOUT_NOT_KEPT, site.unkept_layout)
+    kept = _kept_layout(statements, [site.protected for site in sites])
+    return kept if isinstance(kept, CommentConflict) else None
+
+
+def _kept_layout(
+    statements: Sequence[ast.AST], spans_by_site: Sequence[Sequence[ProtectedSpan]]
+) -> Union[Tuple[ProtectedSpan, ...], CommentConflict]:
+    """The spans the helper holds as the sites wrote them, or why it cannot hold them.
+
+    Every site must keep the same statements, written alike, and the
+    helper's statements there must be the sites' own: a parameter standing
+    in them would change the text a formatter directive kept.
+    """
+    reference = tuple(spans_by_site[0]) if spans_by_site else ()
+    for spans in spans_by_site[1:]:
+        if [(span.first, span.last) for span in spans] != [
+            (span.first, span.last) for span in reference
+        ]:
+            example = (tuple(spans) or reference)[0]
+            return CommentConflict(
+                ConflictKind.LAYOUT_NOT_KEPT,
+                f"{example.detail}: the sites keep the layout of different statements",
+            )
+        for ours, theirs in zip(reference, spans):
+            if ours.text != theirs.text:
+                return CommentConflict(
+                    ConflictKind.LAYOUT_NOT_KEPT, f"{theirs.detail}: the sites' layouts differ"
+                )
+    for span in reference:
+        nodes = _siblings(statements, span.first, span.last)
+        if nodes is None or _shape(nodes) != span.shape:
+            return CommentConflict(
+                ConflictKind.LAYOUT_NOT_KEPT,
+                f"{span.detail}: a parameter stands in the code whose layout it keeps",
+            )
+    return reference
+
+
+def _layout_for_home(
+    statements: Sequence[ast.AST],
+    sites: Sequence[Tuple[SiteComments, bool]],
+    home_class: Optional[str],
+    home_function: Optional[str],
+) -> Union[Tuple[ProtectedSpan, ...], CommentConflict]:
+    """What the helper holds verbatim once placed: each site's spans, or its whole block.
+
+    A formatter's region around a site's block that still reaches the
+    helper keeps the helper off the formatter too, so the whole block is
+    kept as the site wrote it. A method helper is re-indented by whole
+    levels (``insertion.reindent``), which a kept line indented otherwise
+    would not survive.
+    """
+    spans_by_site: List[Sequence[ProtectedSpan]] = []
+    for site, same_module in sites:
+        governed = next(
+            (
+                surrounding
+                for surrounding in site.around
+                if surrounding.layout
+                and same_module
+                and surrounding.governs(home_class, home_function)
+            ),
+            None,
+        )
+        if governed is None:
+            spans_by_site.append(site.protected)
+        elif site.whole is None:
+            return CommentConflict(
+                ConflictKind.LAYOUT_NOT_KEPT, site.whole_unkept or governed.detail
+            )
+        else:
+            spans_by_site.append((site.whole,))
+    kept = _kept_layout(statements, spans_by_site)
+    if isinstance(kept, CommentConflict) or home_class is None:
+        return kept
+    for span in kept:
+        uneven = next((line for line in span.text if (len(line) - len(line.lstrip(" "))) % 4), None)
+        if uneven is not None:
+            return CommentConflict(
+                ConflictKind.LAYOUT_NOT_KEPT,
+                f"{span.detail}: {uneven.strip()!r} is not indented by whole levels, as a"
+                " method helper's lines must be",
+            )
+    return kept
+
+
+def _unwritable_layout(statements: Sequence[ast.AST], comments: HelperComments) -> str:
+    """Why ``comments`` cannot be written into a helper of ``statements``, kept layout and all; or empty.
+
+    Tried on a stand-in helper whose body is ``statements``, as the
+    rendered helper will be woven (``weave_comments``).
+    """
+    trial = ast.parse("def _():\n    pass\n").body[0]
+    if not isinstance(trial, ast.FunctionDef):
+        return "the helper cannot be tried"
+    trial.body = [statement for statement in statements if isinstance(statement, ast.stmt)]
+    try:
+        weave_comments(trial, trial, HelperComments(0, comments.comments, comments.verbatim))
+    except CommentPlacementError as error:
+        return str(error)
+    return ""
 
 
 def merge_comments(
@@ -1869,9 +2249,19 @@ def merge_comments(
             by_place.setdefault(_place(anchor), []).append(
                 HelperComment(comment.text, anchor, directive, line_start)
             )
-    return HelperComments(
-        body_offset, tuple(comment for comments in by_place.values() for comment in comments)
+    kept = _layout_for_home(statements, sites, home_class, home_function)
+    if isinstance(kept, CommentConflict):
+        return kept
+    merged = HelperComments(
+        body_offset,
+        tuple(comment for comments in by_place.values() for comment in comments),
+        kept,
     )
+    if kept:
+        unwritable = _unwritable_layout(statements, merged)
+        if unwritable:
+            return CommentConflict(ConflictKind.LAYOUT_NOT_KEPT, unwritable)
+    return merged
 
 
 def _above(anchor: Anchor) -> Anchor:
@@ -2324,6 +2714,66 @@ class _DirectiveCheck:
     line_start: Optional[NodePath]
 
 
+def _comment_texts(text: str) -> Optional[List[str]]:
+    """The comments of ``text`` in order, as written; None when it does not tokenize."""
+    try:
+        return [token.text.rstrip() for token in _tokens(text) if token.kind == tokenize.COMMENT]
+    except (tokenize.TokenError, SyntaxError):
+        return None
+
+
+def _holds(lines: Sequence[str], block: Sequence[str]) -> bool:
+    """Whether ``block`` stands in ``lines`` as consecutive lines."""
+    size = len(block)
+    return any(
+        list(lines[start : start + size]) == list(block) for start in range(len(lines) - size + 1)
+    )
+
+
+def _spliced(
+    woven: str,
+    position: int,
+    body_offset: int,
+    spans: Sequence[ProtectedSpan],
+    expected: str,
+) -> Optional[Tuple[str, Tuple[Tuple[str, ...], ...]]]:
+    """``woven`` with each span's statements written as its site wrote them, and those lines.
+
+    Each span's text replaces the rendering of its statements, at their
+    indentation there. The result must have the rendering's tree and its
+    comments in the same order, since the kept text carries the comments
+    written on those lines; None when it does not.
+    """
+    tree = ast.parse(woven)
+    helper = _helper_in(tree, position)
+    if helper is None:
+        return None
+    statements = getattr(helper, "body")[body_offset:]
+    lines = woven.split("\n")
+    edits: List[Tuple[int, int, List[str]]] = []
+    for span in spans:
+        nodes = _siblings(statements, span.first, span.last)
+        if nodes is None:
+            return None
+        start, end = _start_of(nodes[0]), nodes[-1].end_lineno or nodes[-1].lineno
+        opening = lines[start - 1]
+        indentation = opening[: len(opening) - len(opening.lstrip(" "))]
+        edits.append((start, end, [indentation + line if line else "" for line in span.text]))
+    edits.sort()
+    if any(earlier[1] >= later[0] for earlier, later in zip(edits, edits[1:])):
+        return None
+    for start, end, replacement in reversed(edits):
+        lines[start - 1 : end] = replacement
+    spliced = "\n".join(lines)
+    try:
+        same = canonical_dump(ast.parse(spliced)) == expected
+    except SyntaxError:
+        return None
+    if not same or _comment_texts(spliced) != _comment_texts(woven):
+        return None
+    return spliced, tuple(tuple(replacement) for _, _, replacement in edits)
+
+
 @dataclass(frozen=True)
 class WovenHelper:
     """A helper's unparsed text with its comments written in, and how to check a formatting of it."""
@@ -2333,6 +2783,8 @@ class WovenHelper:
     body_offset: int
     comment_count: int
     checks: Tuple[_DirectiveCheck, ...] = ()
+    # The lines a formatter directive keeps, as ``text`` holds them.
+    verbatim: Tuple[Tuple[str, ...], ...] = ()
 
     def keeps_directives(self, formatted: str) -> bool:
         """Whether ``formatted`` leaves every directive on the line of the code it was beside.
@@ -2341,8 +2793,14 @@ class WovenHelper:
         to the node it followed, must still end and start on the directive's
         line: a formatter that split that line under the comment, or moved
         the comment past a closing bracket, changed what the directive
-        covers.
+        covers. The lines a formatter directive keeps must be there as
+        written: a formatter that does not read that directive (Black does
+        not read autopep8's) formats them.
         """
+        if self.verbatim:
+            formatted_lines = formatted.split("\n")
+            if not all(_holds(formatted_lines, kept) for kept in self.verbatim):
+                return False
         if not self.checks:
             return True
         try:
@@ -2372,8 +2830,9 @@ def weave_comments(node: ast.AST, helper: ast.AST, comments: HelperComments) -> 
     ``node`` is the helper itself, or a module whose last statement is the
     helper. The result has the syntax tree of the plain rendering, which is
     checked; where a comment cannot stand where it was written, it goes to
-    its statement's line instead. Raises ``CommentPlacementError`` when even
-    that does not hold.
+    its statement's line instead. The statements whose layout a formatter
+    directive kept are then written as their site wrote them (``_spliced``).
+    Raises ``CommentPlacementError`` when even that does not hold.
     """
     text = ast.unparse(node)
     tree = ast.parse(text)
@@ -2393,20 +2852,29 @@ def weave_comments(node: ast.AST, helper: ast.AST, comments: HelperComments) -> 
             same = canonical_dump(ast.parse(woven)) == expected
         except SyntaxError:
             same = False
-        if same and lines is not None and len(lines) == len(written):
-            ordinal_to_comment = {
-                ordinal: index
-                for index, insertion in enumerate(written)
-                for ordinal in insertion.comments
-            }
-            checks = tuple(
-                _DirectiveCheck(
-                    ordinal_to_comment[ordinal], comment.anchor.node, comment.line_start
-                )
-                for ordinal, comment in enumerate(comments.comments)
-                if comment.directive
-                and not comment.anchor.own_line
-                and comment.anchor.placement is Placement.TRAILING
-            )
-            return WovenHelper(woven, position, comments.body_offset, len(written), checks)
+        if not (same and lines is not None and len(lines) == len(written)):
+            continue
+        verbatim: Tuple[Tuple[str, ...], ...] = ()
+        if comments.verbatim:
+            spliced = _spliced(woven, position, comments.body_offset, comments.verbatim, expected)
+            if spliced is None:
+                continue
+            woven, verbatim = spliced
+        ordinal_to_comment = {
+            ordinal: index
+            for index, insertion in enumerate(written)
+            for ordinal in insertion.comments
+        }
+        checks = tuple(
+            _DirectiveCheck(ordinal_to_comment[ordinal], comment.anchor.node, comment.line_start)
+            for ordinal, comment in enumerate(comments.comments)
+            if comment.directive
+            and not comment.anchor.own_line
+            and comment.anchor.placement is Placement.TRAILING
+        )
+        return WovenHelper(woven, position, comments.body_offset, len(written), checks, verbatim)
+    if comments.verbatim:
+        raise CommentPlacementError(
+            "The layout a formatter directive keeps cannot be written into the helper"
+        )
     raise CommentPlacementError("The helper's comments cannot be written into its text")

@@ -451,7 +451,11 @@ before them and closed after them (`# fmt: off`, `# ruff: disable[E501]`,
 `# pylint: disable` on a line of its own, and the like), govern every site
 where the helper would be written outside it; a formatter's region may not
 govern any site; nor may coverage exclude a block's first statement, since
-the call replacing the block would be measured.
+the call replacing the block would be measured. Lines a formatter directive
+keeps as written (`# fmt: off` to `# fmt: on`, `# fmt: skip`) are copied into
+the helper as the first site wrote them, uniformly re-indented; the pair is
+declined (`layout_not_kept`) when the sites write them differently, a
+parameter would stand in them, or they cannot be re-indented unchanged.
 What coverage excludes is read from the project's own coverage.py
 configuration (`.coveragerc`, `.coveragerc.toml`, `setup.cfg` or `tox.ini`
 `[coverage:report]`, `pyproject.toml` `[tool.coverage.report]`, or the file
@@ -462,7 +466,8 @@ read is reported and replaced by its defaults. A pair
 that breaks any of these is declined, and `engine.declined_pairs` counts it
 under `directives_differ`, `directive_on_argument`,
 `directive_outlives_block`, `directive_around_block`,
-`excluded_block_start` or `directive_on_shared_line`; a directive is never
+`excluded_block_start`, `directive_on_shared_line` or `layout_not_kept`; a
+directive is never
 copied onto a call or a
 helper's `def` line.
 

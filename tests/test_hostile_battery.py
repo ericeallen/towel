@@ -286,6 +286,8 @@ TRANSFORMED = {
     "r7fz_ctrl_suppress_context",
     "r7fz_ctrl_walrus_while",
     "r7fz_directives_fmt_off_region",
+    # Round 4: the statements fmt: off and fmt: skip keep move as written.
+    "r9dr_fmt_off_layout_moves_verbatim",
     "r7fz_directives_noqa_on_argument",
     "r7fz_directives_pragma_branch",
     "r7fz_directives_type_ignore_line",

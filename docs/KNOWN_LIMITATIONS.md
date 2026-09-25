@@ -1437,7 +1437,21 @@ the proposals it built and did not apply, by reason:
   directive governs the whole line: moved into the helper it would leave
   `a = 1` unsilenced, and left on the call's line it would also reach the
   call while the helper took a copy. A plain comment there moves as any
-  other. A further site whose directives
+  other. `layout_not_kept`: a formatter directive keeps lines of a block
+  as written (a formatter's region inside it, a `# fmt: skip`, ruff's
+  trailing `# fmt: off` or yapf's trailing `# yapf: disable`, or a
+  formatter's region around the blocks that still covers the helper, which
+  keeps the whole block), and the helper cannot hold them byte for byte,
+  apart from a uniform re-indentation. Such lines are written into the
+  helper from the first site's own text, in place of their rendering, and a
+  formatting of the helper that changes them is not used. The pair is
+  declined when the sites keep different statements or write them
+  differently, when a parameter would stand in them, or when they cannot be
+  re-indented unchanged: a string running across their lines, a tab in
+  their indentation, a line indented less than their first, a statement
+  sharing their first or last line, a `# fmt: skip` on a clause's header,
+  or, in a method helper, a line indented other than by whole levels of
+  four spaces, which the class's indentation would change. A further site whose directives
   differ from the pair's is left out of the cluster rather than declining it.
   What coverage.py excludes is read from the project's own configuration,
   as coverage.py reads it (`src/towel/coverage_config.py`, following

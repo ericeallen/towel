@@ -122,7 +122,7 @@ flowchart TD
       moved code or its call would leave (`directives_differ`,
       `directive_on_argument`, `directive_outlives_block`,
       `directive_around_block`, `excluded_block_start`,
-      `directive_on_shared_line`; see *Comments of
+      `directive_on_shared_line`, `layout_not_kept`; see *Comments of
       moved code*), and a further site that differs from them in its
       directives does not join;
    10. placement: function, class, or module, and a host module that closes
@@ -914,7 +914,14 @@ rendering's tree, and a comment that cannot stand where it was written goes
 to its statement's line. A formatting that moves a directive off the line
 of the code it covered, as ruff does with a comment after a split line's
 closing parenthesis, is not used for that helper (`keeps_directives`); it is
-inserted as rendered.
+inserted as rendered. Statements whose layout a formatter directive keeps
+(a formatter's region, `fmt: skip`, or a formatter's region around the
+blocks that still covers the helper) are written into the helper from the
+first site's own text, uniformly re-indented, in place of their rendering
+(`_spliced`); the sites must keep the same statements alike, with no
+parameter standing in them, and a formatting that changes those lines is not
+used either. A pair where that cannot be done is declined, and the trial
+weave that decides it runs when the comments are merged (`layout_not_kept`).
 
 ## Cross-file behavior
 
