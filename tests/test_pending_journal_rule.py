@@ -323,6 +323,29 @@ def test_r9p2_an_out_of_place_run_names_the_projects_journal_and_leaves_it_behin
     assert (package / "mod.py").read_text() == DUPLICATES
 
 
+def test_r9p2_an_output_never_carries_a_journal_from_its_target(tmp_path: Path) -> None:
+    """A journal in the target naming files the run leaves alone was published with the output.
+
+    It blocked nothing, so the run went on, and the target, copied whole,
+    carried the journal into the output with its backups and manifest: the
+    adopted copy then had a pending change of its own, which ``towel
+    recover`` would have rolled back there.
+    """
+    root = tmp_path / "project"
+    package = _project(root)
+    (package / "third.py").write_text("third = 3\n")
+    journal = _r9p2_interrupted_over([package / "other.py", package / "third.py"])
+    output = tmp_path / "out"
+    result = invoke(
+        ["dry", str(package), str(output), "--no-interactive", "--no-types", "--no-format"]
+        + ["--progress", "none"]
+    )
+    assert result.status == 0, result.stderr
+    assert "Applied 1 refactoring" in result.stdout
+    assert not any(output.rglob(".towel-transaction-*"))
+    assert journal.is_dir()
+
+
 def test_r9p2_a_failure_raised_with_a_message_alone_names_no_stage_path() -> None:
     """``RecoveryRequired`` is an ``OSError`` whose paths are in its message, not its filename."""
     error = RecoveryRequired("Another transaction is in progress: /stage/pkg/.towel-transaction-1")
