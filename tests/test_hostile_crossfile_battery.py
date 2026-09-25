@@ -18,6 +18,11 @@ whose borrower rebinds ``len`` (``xf17``, ``xf18``, ``xf19``, ``xf22``); and
 ``xf23_relative_import_in_another_package``, whose subpackages ``pkg.x`` and
 ``pkg.y`` never import each other, so neither may gain an import of the
 other (docs/DECISIONS.md, "Import names come from the program").
+
+A fixture that configures an import sorter is refactored with it, as the
+command line would: ``xf7t_import_order_is_registration_order`` holds a
+module the sorter's configuration excludes and one whose imports are not in
+its order, and each import registers a plugin.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ import tempfile
 import pytest
 
 from tests.hostile_execution import module_faces, observe
+from towel.formatting import import_sorter_for_project
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 CASES = Path(__file__).parent / "hostile_crossfile"
@@ -67,6 +73,7 @@ TRANSFORMED = {
     # Only the benign module's twins; the rebinding hazard in the other keeps
     # its code (round-3 audit, P1-1).
     "xf7c_rebinding_enclosing_function_beside_a_twin_in_another_module",
+    "xf7t_import_order_is_registration_order",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
@@ -106,7 +113,11 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
         after = Path(directory) / "after"
         shutil.copytree(CASES / case, before)
         shutil.copytree(CASES / case, after)
-        engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+        engine = UnificationRefactorEngine(
+            min_lines=3,
+            cross_module_helpers=True,
+            file_finisher=import_sorter_for_project(after / "pkg").tool,
+        )
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             results, _ = engine.refactor_directory_to_fixed_point(
                 str(after / "pkg"), str(after / "pkg"), progress="none"

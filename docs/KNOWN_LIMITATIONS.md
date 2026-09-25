@@ -178,9 +178,23 @@ describe belong to that version.
   before and after formatting, and an import sorter's result is kept only
   when it only reorders or merges consecutive imports within one statement
   list while preserving each bound name's ordered providers. Wildcard imports,
-  future imports and non-import statements are barriers. Configured sorting
-  of independent imports can still change import-time side-effect order; static
-  binding checks do not establish that arbitrary module initializers commute.
+  future imports and non-import statements are barriers. An import runs its
+  module where it stands, so the order of a file's own imports is the order
+  of their import-time effects, and the sorter never changes it: it runs only
+  on a file its own configuration selects (ruff's `exclude`,
+  `extend-exclude`, `lint.exclude` and `per-file-ignores`; isort's `skip`,
+  `extend_skip`, `skip_glob`, `extend_skip_glob` and `skip_gitignore`,
+  judged for the project's file rather than the run's staged copy) and only
+  when it already leaves that file's text before the change as it is, so
+  that sorting can move only the imports Towel added; and its result is
+  used only when the file's own imports still bind their names in the order
+  they did. A file that fails either test keeps Towel's imports where it put
+  them, and the run says so once for the file. The formatters leave alone
+  the code Towel writes where their own configuration excludes the path
+  Towel was given: `ruff format` by `--force-exclude`, Black by `exclude`,
+  `extend-exclude` or `force-exclude`. That choice is made for the whole
+  run, since a snippet is formatted before the file it goes into is known;
+  it changes only layout.
 - **Annotations.** Every generated helper and its call sites are checked
   together in the prospective project, including unchanged consumers, and the
   check is compared with the project's own as it stood: an error the project
@@ -998,9 +1012,12 @@ the proposals it built and did not apply, by reason:
   not reproduce the block up to renamed binders.
 - Tool directives in the moved code. The comments of a block move into the
   helper with its code, and a directive (`# type: ignore`, `# pyright:
-  ignore`, `# noqa`, `# pragma: no cover`, `# nosec`, `# pylint: ...`,
-  `# fmt: ...`, `# isort: ...`, a type comment) changes what a tool reports
-  for its line, of which the helper has one where the sites had several.
+  ignore`, `# ty: ignore`, `# pyrefly: ignore`, `# zuban: ignore`,
+  `# pyre-ignore` and `# pyre-fixme`, `# noqa`, `# ruff: ...`, `# pragma: no
+  cover`, `# nosec`, `# nosemgrep`, `# pylint: ...`, Fixit's
+  `# lint-ignore`, `# fmt: ...`, `# isort: ...`, a type comment) changes
+  what a tool reports for its line, of which the helper has one where the
+  sites had several.
   `directives_differ`: the blocks do not carry the same directives, written
   alike up to spacing, at the same places, as when only one copy of a line
   needed its `# type: ignore` (mashumaro's `type_name`): the helper's line
@@ -1010,8 +1027,12 @@ the proposals it built and did not apply, by reason:
   the call site, where the directive does not reach: a `# type: ignore` or
   `# noqa` on its line, a `# nosec`, `# fmt: skip` or line-level
   `# pylint: disable`, a `# pragma: no cover` on the statement or the
-  clause it excludes, the statement after a `# noinspection`, or a
-  `# fmt: off` region. The directive is not copied onto the call line
+  clause it excludes, the statement after a `# noinspection`, the next
+  line of code after an ignore on a line of its own (ty and ruff read it
+  as the next logical line, or inside brackets the next physical one;
+  pyre, pyrefly, Semgrep and Fixit as the next line, and pyrefly reads
+  every checker's `<tool>: ignore` that way), or a `# fmt: off` or
+  `# ruff: disable` region. The directive is not copied onto the call line
   either, which would silence or exclude a line its tool never saw it on.
   Measured on September 24, 2026, extending the rule from a checker's
   ignore to every directive cost no refactoring: the `--no-types` fixed
@@ -1034,10 +1055,14 @@ the proposals it built and did not apply, by reason:
   helper might well have been covered; Towel cannot tell, and declines.
   `directive_outlives_block`:
   a region directive on a line of its own (`fmt: off`/`on`, `isort:
-  off`/`on`, `yapf: disable`/`enable`, `pylint: disable`/`enable`) is not
-  closed within the block, so its region reaches code that stays behind,
-  or a file-wide directive (`flake8: noqa`, `ruff: noqa`, `mypy:`, `pyright:
-  strict`) would move into another module. `directive_around_block`:
+  off`/`on`, `yapf: disable`/`enable`, `pylint: disable`/`enable`, `ruff:
+  disable`/`enable`) is not closed within the block, so its region reaches
+  code that stays behind, or a file-wide directive (`flake8: noqa`, `ruff:
+  noqa`, `ruff: file-ignore`, `mypy:`, `pyright: strict`, `pyrefly:
+  ignore-errors`, `pyre-strict`) would move into another module.
+  `directive_around_block`: an ignore on a line of its own above a site's
+  block governs the block's first statement, and would stay above the call
+  that takes its place, silencing the call and not the helper; or
   every site's block is reached by a directive outside it that would not
   reach the helper: `# pragma: no cover` or `# pylint: disable` at the end
   of the header of a statement enclosing the block (its function's `def`
