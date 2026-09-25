@@ -96,6 +96,7 @@ from .consumers import (
 )
 
 from .source_files import PROBE_PREFIX as PROBE_PREFIX, is_probe_file as is_probe_file
+from .source_files import TOOL_DIRECTORIES, is_environment
 
 __all__ = [
     "CheckFailure",
@@ -1653,6 +1654,12 @@ class CombinedOracle:
             oracle.close()
 
 
+_NO_SOURCE_DIRECTORIES: Final = frozenset(
+    {".git", ".hg", ".svn", ".mypy_cache", ".pytest_cache", ".ruff_cache", *TOOL_DIRECTORIES}
+)
+"""What the checked copy of an output holds no module in: version control, caches, tool output."""
+
+
 class _RelocatedOracle:
     """An output copy checked at its original project's logical module locations."""
 
@@ -1775,6 +1782,13 @@ class _RelocatedOracle:
         A module that does not decode is left out, and the checker reads the
         original's, which is the same bytes: Towel changes no file it cannot
         read. One such file (Latin-1 test data) had failed every check.
+
+        An environment is left out by what it holds, never by its name
+        (``source_files.is_environment``). Directories named ``env`` and
+        ``venv`` used to be left out whatever they held, so once a change to a
+        project package called ``env`` was written, every later check read the
+        original's ``env`` instead, and the cold confirmation, which read the
+        real one, refused the run.
         """
         try:
             current: Dict[str, str] = {}
@@ -1784,20 +1798,8 @@ class _RelocatedOracle:
                     directories[:] = [
                         name
                         for name in directories
-                        if name
-                        not in {
-                            ".git",
-                            ".hg",
-                            ".svn",
-                            ".mypy_cache",
-                            ".pytest_cache",
-                            ".ruff_cache",
-                            "__pycache__",
-                            "venv",
-                            "env",
-                            "node_modules",
-                        }
-                        and not (directory / name / "pyvenv.cfg").is_file()
+                        if name not in _NO_SOURCE_DIRECTORIES
+                        and not is_environment(directory / name)
                     ]
                     for name in files:
                         path = directory / name
