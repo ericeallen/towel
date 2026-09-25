@@ -185,6 +185,17 @@ class StagedProject:
     target: Path
     output: Path
     staged: Mapping[Path, str] = field(default_factory=dict)
+    hard_linked: Mapping[Path, int] = field(default_factory=dict)
+    """Of an in-place stage's target files, those with more than one link, and how many.
+
+    Publishing replaces a file by renaming a new one over it, which would
+    leave its other links holding the old text, so the run writes none of
+    these (``changes._safe_target`` refuses them, but only at publication).
+    """
+
+    def staged_copy(self, original: Path) -> Path:
+        """Where the stage holds the target file ``original``."""
+        return self.target / original.relative_to(self.origin_target)
 
     @property
     def in_place(self) -> bool:
@@ -330,6 +341,7 @@ def staged_project(
                 staged_target,
                 target,
                 _staged_digests(root, target, staged_root, planned),
+                _hard_linked(root, target, planned),
             )
             return
         if target.is_dir():
@@ -368,6 +380,19 @@ def _staged_digests(
         if copy.is_file() and not copy.is_symlink():
             digests[original] = _digest(copy.read_bytes())
     return digests
+
+
+def _hard_linked(root: Path, target: Path, planned: Iterable[PurePath]) -> Mapping[Path, int]:
+    """The regular files staged from the target that have more than one link, with the count."""
+    linked = {}
+    for relative in planned:
+        original = root / relative
+        if not (original == target or original.is_relative_to(target)):
+            continue
+        info = original.lstat()
+        if stat.S_ISREG(info.st_mode) and info.st_nlink > 1:
+            linked[original] = info.st_nlink
+    return linked
 
 
 def staged_changes(stage: StagedProject) -> ChangePlan:

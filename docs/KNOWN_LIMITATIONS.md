@@ -366,6 +366,13 @@ addresses:
   reader. Application requires exclusive write access; a concurrent editor
   writing in the check/replace interval is not prevented. Interrupted batches
   leave a recovery journal.
+- **Hard-linked files in place.** A file is replaced by renaming a new one
+  over it, which would leave its other hard links holding the old text. An
+  in-place directory run names each hard-linked file before it starts and
+  declines every proposal that would write one ("not writable in place: its
+  file is hard-linked"); the rest of the run is written. A single hard-linked
+  file refactored in place is refused before the run, with the remedy of
+  writing to a new file. Out of place, such files are refactored as any other.
 
 ### A cross-file helper adds an import of its host module
 

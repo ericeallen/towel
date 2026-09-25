@@ -123,6 +123,7 @@ DeclineReason = Union[
         "not verifiable: its file holds a name the type checker cannot type",
         "not verifiable: the type checker does not look at the code it changes",
         "not representable in its file's encoding",
+        "not writable in place: its file is hard-linked",
         "the formatter changed its code or failed",
         "could not be rendered",
         "changed nothing",
@@ -169,6 +170,9 @@ class FixedPointDrivers(Materialization):
     # the latest reason; and what its last whole analysis declined.
     _declined: Dict[str, DeclineReason] = {}
     _last_declined_pairs: Dict[str, int] = {}
+    # The stage copies of the files an in-place run must not write, since
+    # the project holds them under more than one link.
+    _unwritable_in_place: FrozenSet[Path] = frozenset()
 
     @property
     def run_report(self) -> RunReport:
@@ -288,6 +292,14 @@ class FixedPointDrivers(Materialization):
         in_place = output_path is None or Path(output_path).resolve() == Path(file_path).resolve()
         if not in_place:
             refuse_unusable_output(Path(file_path), Path(str(output_path)))
+        elif (links := os.lstat(file_path).st_nlink) > 1:
+            # Refused now: publishing would refuse it only after the whole run.
+            raise ValueError(
+                f"{file_path} has {links} hard links, and an in-place run replaces a file by"
+                " renaming a new one over it, which would leave the other links holding the old"
+                " text; write the result to a new file instead (towel dry"
+                f" {file_path} OUTPUT.py), or give it a single link first"
+            )
         self.begin_refactoring_run([file_path])
         destination = Path(file_path) if in_place else Path(str(output_path))
         with self._staged_output(Path(file_path), destination) as stage:
@@ -657,6 +669,18 @@ class FixedPointDrivers(Materialization):
                 )
             self._output_origin = (stage.origin_root, stage.root)
             self._analysis_paths = (str(stage.target),)
+            self._unwritable_in_place = frozenset(
+                stage.staged_copy(original).resolve() for original in stage.hard_linked
+            )
+            for original, links in sorted(stage.hard_linked.items()):
+                LOG.warning(
+                    "%s has %d hard links, and an in-place run replaces a file by renaming a new"
+                    " one over it, which would leave the other links holding the old text; no"
+                    " refactoring will change it. Run out of place to refactor it, or give it a"
+                    " single link first.",
+                    original,
+                    links,
+                )
             rewrite = _StagePathsInLogs(stage.public_text)
             loggers = (LOG, REJECTIONS, VALIDATION, OVERLAP, TYPES, UNIFIER)
             for logger in loggers:
@@ -676,6 +700,7 @@ class FixedPointDrivers(Materialization):
                 # The stage is about to go; nothing may keep checking against it.
                 self._type_run_oracle = inner_oracle
                 self._output_origin = None
+                self._unwritable_in_place = frozenset()
                 self._forget_run_lookups()
                 self.import_graph.begin_run()
 
@@ -850,6 +875,13 @@ class FixedPointDrivers(Materialization):
                 *(rep.file_path or proposal.file_path for rep in proposal.replacements),
             }
         }
+        if any(Path(path).resolve() in self._unwritable_in_place for path in before):
+            # Declined before it is rendered: the run could not publish it,
+            # and one such file used to fail the whole in-place run there.
+            self._decline(proposal, "not writable in place: its file is hard-linked")
+            run.rejected.add(proposal)
+            reporter.detail(f"Proposal writes a hard-linked file: {proposal.description}")
+            return None
         recorded = len(self._change_log)
         self._checker_refusals = 0
         try:
