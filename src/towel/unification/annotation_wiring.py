@@ -1646,7 +1646,7 @@ class HelperAnnotationWiring(EngineState):
         for result in checks_in_turn(oracle, unchanged):
             if isinstance(result, CheckFailure):
                 raise CheckerCannotCheckTheProject(
-                    "The type checker cannot check the project as it now stands, with no "
+                    "The type checker could not run on the project as it now stands, with no "
                     f"change applied, so no change could be judged: {result.reason}\n"
                     "Its check of the original project passed. If nothing has changed the "
                     "project since, this is a defect in Towel's verification; please report "
