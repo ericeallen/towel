@@ -1597,7 +1597,7 @@ class PairEvaluation(
             isinstance(node, ast.Assert)
             for statement in pair.block1_nodes
             for node in ast.walk(statement)
-        ) and not rewritten_alike(sorted(participating)):
+        ) and not rewritten_alike(sorted(participating), self.import_graph.project_root):
             self._debug_reject(RejectReason.ASSERT_REWRITING_DIFFERS, pair)
             return None
         # The helper runs the template's imports in whichever module hosts

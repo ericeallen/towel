@@ -51,7 +51,19 @@ import shlex
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path, PurePath
-from typing import Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
+from typing import (
+    Callable,
+    Dict,
+    FrozenSet,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+)
 
 from ..consumers import SKIPPED_DIRECTORIES
 from ..project_layout import find_project_root
@@ -91,12 +103,16 @@ _UNKNOWN = _Setup(known=False)
 _SETUPS: BoundedCache[str, _Setup] = BoundedCache(32)
 
 
-def rewrites_asserts(path: str) -> Optional[bool]:
+def rewrites_asserts(
+    path: str, project_root: Callable[[Path], Path] = find_project_root
+) -> Optional[bool]:
     """Whether pytest, run as the project configures it, rewrites the asserts of the module at ``path``.
 
     None when that cannot be told from the project (see the module docstring).
+    ``project_root`` finds the project a resolved path belongs to; an engine
+    passes its run's cache of them, since every pair asks.
     """
-    root = os.path.realpath(find_project_root(Path(path)))
+    root = os.path.realpath(project_root(Path(path).resolve()))
     setup = _SETUPS.get(root)
     if setup is None:
         setup = _SETUPS.put(root, _read_setup(Path(root)))
@@ -123,9 +139,11 @@ def rewrites_asserts(path: str) -> Optional[bool]:
     )
 
 
-def rewritten_alike(paths: Iterable[str]) -> bool:
+def rewritten_alike(
+    paths: Iterable[str], project_root: Callable[[Path], Path] = find_project_root
+) -> bool:
     """Whether pytest rewrites the asserts of every module of ``paths`` alike, as far as is known."""
-    statuses = {rewrites_asserts(path) for path in paths}
+    statuses = {rewrites_asserts(path, project_root) for path in paths}
     return None not in statuses and len(statuses) == 1
 
 

@@ -81,7 +81,6 @@ from weakref import WeakKeyDictionary
 
 from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
 from ..import_model import NameStatus
-from ..project_layout import find_project_root
 from ..source_text import read_source
 from .bounded_cache import BoundedCache
 from .exceptions import ProjectScanLimitError
@@ -782,7 +781,8 @@ class _Resolver:
 
     def _hand_index(self, module: _Module) -> _HandIndex:
         """The hand applications of ``module``'s project, read once per engine and project."""
-        root = os.path.realpath(find_project_root(Path(module.path)))
+        # The run's own cache of project roots: every pair asks, once per call site.
+        root = os.path.realpath(self._cache.project_root(Path(module.path).resolve()))
         indexes = _HAND_INDEXES.setdefault(self._cache, {})
         index = indexes.get(root)
         if index is None:
