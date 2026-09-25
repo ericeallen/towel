@@ -925,7 +925,10 @@ def _run_dry(args: argparse.Namespace) -> None:
 
     if is_file and not input_path.endswith(".py"):
         print(f"Warning: '{input_path}' is not a Python file (.py)")
-        if not _confirm("Analyze anyway? (y/N): "):
+        # ``--no-interactive`` promises no prompt: an unattended run asked
+        # here would block on an open stdin, or read a closed one as "no"
+        # and exit 0 having written nothing. The file was named explicitly.
+        if options.interactive and not _confirm("Analyze anyway? (y/N): "):
             return
 
     # Resolve aliases before checking containment or creating any output.

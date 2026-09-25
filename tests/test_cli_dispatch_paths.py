@@ -80,21 +80,26 @@ def test_dry_with_nothing_to_extract_says_so_and_copies_the_input(
 
 
 @pytest.mark.parametrize(
-    "answer, analyzed",
-    [("n\n", False), ("y\n", True), ("", False)],
-    ids=["declined", "accepted", "closed-stdin"],
+    "flag, answer, analyzed",
+    [
+        ("--interactive", "n\n", False),
+        ("--interactive", "y\ny\n", True),
+        ("--interactive", "", False),
+        ("--no-interactive", "", True),
+    ],
+    ids=["declined", "accepted", "closed-stdin", "no-interactive-never-asks"],
 )
 def test_input_without_a_py_suffix_is_analyzed_only_on_confirmation(
-    tmp_path: Path, answer: str, analyzed: bool
+    tmp_path: Path, flag: str, answer: str, analyzed: bool
 ) -> None:
-    source = tmp_path / "script"
+    """Asked only when interactive: round 4's D5 found ``--no-interactive`` still prompting."""
+    source = tmp_path / "r9p2_script"
     source.write_text(DUPLICATES)
     out = tmp_path / "out.py"
-    result = invoke(
-        ["dry", str(source), str(out), "--no-interactive", "--progress", "none"], stdin=answer
-    )
+    result = invoke(["dry", str(source), str(out), flag, "--progress", "none"], stdin=answer)
     assert result.status == 0, result.stderr
     assert f"Warning: '{source}' is not a Python file (.py)" in result.stdout
+    assert ("Analyze anyway?" in result.stdout) is (flag == "--interactive")
     assert out.exists() is analyzed
     assert ("Applied 1 refactoring(s)" in result.stdout) is analyzed
     assert source.read_text() == DUPLICATES
