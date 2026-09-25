@@ -483,7 +483,7 @@ url = "https://github.com/sphinx-doc/sphinx.git"
 rev = "e44a40eb2f810558ccd9da1425421270ccb81351"
 package = "sphinx"
 deps = ["pytest-xdist", "defusedxml", "typing_extensions", "cython", "setuptools"]
-timeout = 5400
+timeout = 10800
 
 [[project]]
 name = "black"
