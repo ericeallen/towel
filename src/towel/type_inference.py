@@ -1387,9 +1387,10 @@ class PyrightOracle:
         if self._forked():
             return CheckFailure(_AFTER_FORK)
         errors: List[TypeDiagnostic] = []
+        changed = [str(Path(path).resolve()) for path in sources]
         for root, replacements in _pyright_groups(sources).items():
             try:
-                served = self._check_with_session(root, replacements, excluded_paths)
+                served = self._check_with_session(root, replacements, excluded_paths, changed)
             except (OSError, ValueError, UnicodeError) as error:
                 # The project is being read while it is being refactored, so a
                 # file can go between listing it and reading it. The cold path
@@ -1409,6 +1410,9 @@ class PyrightOracle:
                 with checker_snapshot(
                     root, replacements, excluded_paths=excluded_paths
                 ) as snapshot:
+                    unshown = _unshown(root, snapshot.unshown(changed))
+                    if unshown is not None:
+                        return unshown
                     # A positional directory would override both configured
                     # include and exclude lists; naming none keeps their scope.
                     result = self._run_diagnostics(root, snapshot.tree)
@@ -1432,12 +1436,19 @@ class PyrightOracle:
         return CheckSuccess(tuple(errors))
 
     def _check_with_session(
-        self, root: Path, replacements: Mapping[str, str], excluded_paths: Sequence[str]
+        self,
+        root: Path,
+        replacements: Mapping[str, str],
+        excluded_paths: Sequence[str],
+        changed: Sequence[str],
     ) -> Optional[CheckResult]:
         """The project checked through its warm copy, or ``None`` to check it cold."""
         warm = self._warm(root, tuple(excluded_paths))
         if warm is None:
             return None
+        unshown = _unshown(root, warm.unshown(changed))
+        if unshown is not None:
+            return unshown
         try:
             published = warm.diagnostics(replacements)
         except SessionFailure as error:
@@ -1481,6 +1492,22 @@ def _copied_search_paths(search_path: Sequence[str], root: Path, copy: Path) -> 
         if counterpart.is_dir():
             moved[str(counterpart)] = None
     return list(moved)
+
+
+def _unshown(root: Path, unshown: Sequence[Tuple[str, str]]) -> Optional[CheckFailure]:
+    """A check from ``root`` refused, when its copy reaches a changed file only through a link out.
+
+    The file is read where the link leads, as it stands, so the check would
+    not see the change; a consumer importing through the link would be
+    judged against the file as it was.
+    """
+    if not unshown:
+        return None
+    path, link = unshown[0]
+    return CheckFailure(
+        f"pyright checking {root} reads {path} through the link {link}, which leads out of "
+        "the project, so no check there can see the change to it"
+    )
 
 
 def _what_pyright_said(stderr: str) -> str:
@@ -1544,6 +1571,10 @@ class _WarmProject:
             ]
         self._verdicts[key] = restored
         return {path: list(entries) for path, entries in restored.items()}
+
+    def unshown(self, paths: Iterable[str]) -> List[Tuple[str, str]]:
+        """Those of ``paths`` the copy reaches only through a link out of it; see ``CheckerSnapshot``."""
+        return self._snapshot.unshown(paths)
 
     def close(self) -> None:
         self._session.close()

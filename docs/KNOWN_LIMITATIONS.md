@@ -982,18 +982,28 @@ where the evidence comes from:
   project as it is refactored, and watched by one long-lived language server.
   A file is recopied when its content differs, not merely when its size or
   timestamp does, so an edit by something other than Towel cannot leave a
-  verdict standing against a project the copy no longer matches. A checker
-  configuration whose bytes are not UTF-8 is refused rather than copied
-  without rewriting the absolute paths in it. A `pyrightconfig.json` (or a
+  verdict standing against a project the copy no longer matches. A
+  `pyrightconfig.json`, or a `pyproject.toml` with a `[tool.pyright]` table,
+  whose bytes are not UTF-8 is refused rather than copied without rewriting
+  the absolute paths in it; any other `.json`, `.toml`, `.ini` or `.cfg` that
+  is not UTF-8 is data to pyright and is copied as it is. A `pyrightconfig.json` (or a
   file it extends) that pyright itself cannot parse refuses the typed run
   before anything is written, naming the file and the position: pyright's
   grammar is JSON with `//` and `/* */` comments and one trailing comma per
   object or array, and a byte-order mark, a form feed or a no-break space is
   an error to it. pyright's language server would otherwise go on checking
   with default settings. A pyright command line that fails is reported with
-  the end of what it printed to standard error. Cyclic or external source symlinks and
-  configured source or stub search roots outside the project cannot be
-  represented safely and cause verification to decline the proposal.
+  the end of what it printed to standard error. A symbolic link is a link in
+  the copy. One into the project leads to the copy's counterpart, so an import
+  through it sees a candidate's text; it used to be copied under its own
+  name, and an import through it read the file as it was. One out of the
+  project, or into an environment or another directory the copy leaves out,
+  leads where it always did, so pyright enumerates and imports through it as
+  it does in the project. A candidate that changes a file the copy reaches
+  only through a link out of the project is not judged, since the check would
+  read that file as it was. A link back to a directory that holds it, and a
+  configured source or stub search root outside the project, cannot be
+  represented safely and refuse the typed run.
   Project include/exclude settings still determine the checker's coverage.
   A change is checked from the root of its nearest pyright configuration and
   from every configured root enclosing that one within the repository, and

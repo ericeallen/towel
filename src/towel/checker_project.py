@@ -35,7 +35,18 @@ import tomllib
 from pathlib import Path
 import shutil
 import tempfile
-from typing import Dict, Iterator, List, Literal, Mapping, Sequence, Tuple
+from typing import (
+    Dict,
+    Final,
+    Iterable,
+    Iterator,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 from .source_files import TOOL_DIRECTORIES, is_environment, is_probe_file
 from .source_text import encode_like
@@ -84,10 +95,11 @@ class CheckerSnapshot:
     """A private copy of one project's checker inputs, reused across checks.
 
     Every Python source/stub is a real copy, so imports from unchanged consumers
-    see the same prospective module graph. Symlinks into the project are copied
-    under their lexical names; a cycle or external source link is rejected.
-    Non-code checker configuration and typing markers are preserved. Large data,
-    VCS metadata, caches and virtual environments are not checker inputs.
+    see the same prospective module graph. A symbolic link is a link in the
+    copy too, so pyright meets it as it meets the project's (see ``_Link``); a
+    link that leads back to its own directory is refused. Non-code checker
+    configuration and typing markers are preserved. Large data, VCS metadata,
+    caches and virtual environments are not checker inputs.
 
     The copy follows the project. A candidate is a question about the project as
     it now stands, and an in-place run changes the project with every
@@ -112,6 +124,8 @@ class CheckerSnapshot:
         # For every copy made from a project file: that file, and its stamp then.
         self._sources: Dict[Path, Path] = {}
         self._stamps: Dict[Path, _Stamp] = {}
+        # The project's symbolic links, as the copy reproduces them.
+        self._links: Dict[Path, _Link] = {}
         self.revision = 0
         try:
             self._layout = _layout(Path(self._temporary.name), root)
@@ -157,21 +171,61 @@ class CheckerSnapshot:
         """Make the copy show the project as it stands with ``replacements`` over it."""
         return self.show(replacements, after=self.follow_project())
 
+    def unshown(self, paths: Iterable[str]) -> List[Tuple[str, str]]:
+        """Each of ``paths`` the copy reaches only through a link out of it, with the link.
+
+        Such a file is read where the link leads, in the project as it stands,
+        so no candidate's text for it can be shown to the checker.
+        """
+        return [
+            (path, self.original_of(str(destination)))
+            for path in paths
+            for destination, link in sorted(self._links.items())
+            if link.outside is not None and Path(path).is_relative_to(link.outside)
+        ]
+
     def follow_project(self) -> Tuple[CopyChange, ...]:
         """Copy what the project gained or changed since last asked, and drop what it lost."""
         changes: Dict[Path, ChangeKind] = {}
-        current = _planned_copies(self._layout, self._excluded)
+        current, links = _planned_copies(self._layout, self._excluded)
         # A copy that fails part way through has still changed, so the
         # revision advances whatever happens; a remembered verdict about the
         # copy as it was must not survive it.
         try:
-            self._follow(current, changes)
+            # What the project lost goes first, so that nothing is written or
+            # removed through a link that is about to change: a copy made
+            # under a stale link would land in the counterpart it leads to.
+            self._drop_links(links, changes)
+            self._drop_copies(current, changes)
+            self._place_links(links, changes)
+            self._copy(current, changes)
         finally:
             if changes:
                 self.revision += 1
         return _as_changes(changes)
 
-    def _follow(self, current: Dict[Path, Path], changes: Dict[Path, ChangeKind]) -> None:
+    def _drop_links(self, current: Dict[Path, _Link], changes: Dict[Path, ChangeKind]) -> None:
+        for destination in sorted(self._links):
+            if current.get(destination) != self._links[destination]:
+                destination.unlink(missing_ok=True)
+                changes[destination] = "deleted"
+                del self._links[destination]
+
+    def _drop_copies(self, current: Dict[Path, Path], changes: Dict[Path, ChangeKind]) -> None:
+        for destination in sorted(set(self._stamps) - set(current)):
+            destination.unlink(missing_ok=True)
+            changes[destination] = "deleted"
+            del self._stamps[destination], self._sources[destination]
+            self._dirty.discard(destination)
+
+    def _place_links(self, current: Dict[Path, _Link], changes: Dict[Path, ChangeKind]) -> None:
+        for destination, link in current.items():
+            if destination not in self._links:
+                _place_link(destination, link.target)
+                changes[destination] = "changed" if destination in changes else "created"
+                self._links[destination] = link
+
+    def _copy(self, current: Dict[Path, Path], changes: Dict[Path, ChangeKind]) -> None:
         for destination, source in current.items():
             stamp = _stamp(source)
             if self._stamps.get(destination) == stamp:
@@ -179,11 +233,6 @@ class CheckerSnapshot:
             changes[destination] = "changed" if destination in self._stamps else "created"
             _copy_input(source, destination, self._layout)
             self._sources[destination], self._stamps[destination] = source, stamp
-            self._dirty.discard(destination)
-        for destination in sorted(set(self._stamps) - set(current)):
-            destination.unlink(missing_ok=True)
-            changes[destination] = "deleted"
-            del self._stamps[destination], self._sources[destination]
             self._dirty.discard(destination)
 
     def show(
@@ -273,16 +322,19 @@ def _layout(temporary: Path, root: Path) -> _Layout:
     return _Layout(root, target, tree, common, configs)
 
 
-def _planned_copies(layout: _Layout, excluded: frozenset[Path]) -> Dict[Path, Path]:
-    """Every copy the project calls for right now, mapped to the file it copies."""
-    plan = {
-        destination: source
-        for source, destination in _inputs(
-            layout.root, layout.target, layout.root, frozenset(), excluded
-        )
-    }
+def _planned_copies(
+    layout: _Layout, excluded: frozenset[Path]
+) -> Tuple[Dict[Path, Path], Dict[Path, _Link]]:
+    """Every copy the project calls for right now, mapped to the file it copies, and every link."""
+    plan: Dict[Path, Path] = {}
+    links: Dict[Path, _Link] = {}
+    for destination, source in _inputs(layout.root, layout.target, layout, frozenset(), excluded):
+        if isinstance(source, _Link):
+            links[destination] = source
+        else:
+            plan[destination] = source
     plan.update({layout.copy_of(config): config for config in layout.configs})
-    return plan
+    return plan, links
 
 
 def _copy_input(source: Path, destination: Path, layout: _Layout) -> None:
@@ -305,11 +357,35 @@ def _copy_input(source: Path, destination: Path, layout: _Layout) -> None:
         try:
             text = destination.read_text(encoding="utf-8")
         except UnicodeError:
-            # Its absolute paths cannot be rewritten, so they would point out
-            # of the copy at the real tree. Better no configuration than one
-            # that sends the checker somewhere else.
-            raise ValueError(f"Cannot rebase a checker configuration that is not UTF-8: {source}")
+            if _read_by_pyright_as_configuration(destination):
+                # Its absolute paths cannot be rewritten, so they would point
+                # out of the copy at the real tree. Better no configuration
+                # than one that sends the checker somewhere else.
+                raise ValueError(
+                    f"Cannot rebase a checker configuration that is not UTF-8: {source}"
+                )
+            return  # Data pyright never reads, copied as it is.
         destination.write_text(text.replace(str(layout.root), str(layout.target)), encoding="utf-8")
+
+
+def _read_by_pyright_as_configuration(path: Path) -> bool:
+    """Whether pyright reads ``path``, which is not UTF-8, as configuration.
+
+    A ``pyrightconfig.json``, and a ``pyproject.toml`` with a ``[tool.pyright]``
+    table. Every other ``.json``, ``.toml``, ``.ini`` or ``.cfg`` is data to
+    pyright: a Latin-1 test fixture refused the typed run of a project it
+    could not affect. A ``pyproject.toml`` that does not parse even with its
+    undecodable bytes replaced cannot be shown not to configure pyright.
+    """
+    if path.name == "pyrightconfig.json":
+        return True
+    if path.name != "pyproject.toml":
+        return False
+    try:
+        tool = tomllib.loads(path.read_bytes().decode("utf-8", "replace")).get("tool", {})
+    except tomllib.TOMLDecodeError:
+        return True
+    return isinstance(tool, dict) and "pyright" in tool
 
 
 @contextmanager
@@ -325,10 +401,43 @@ def checker_snapshot(
         snapshot.close()
 
 
+_UNCOPIED_DIRECTORIES: Final = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        ".nox",
+        *TOOL_DIRECTORIES,
+    }
+)
+"""Directories by name that hold no checker input, left out of every copy."""
+
+
+def _is_input_file(path: Path) -> bool:
+    return path.is_file() and (
+        path.suffix in {".py", ".pyi", ".toml", ".json", ".ini", ".cfg"}
+        or path.name in {"py.typed", ".gitignore"}
+    )
+
+
+def _is_left_out(directory: Path) -> bool:
+    """Whether a copy leaves ``directory`` out: VCS metadata, a cache, an environment."""
+    return directory.name in _UNCOPIED_DIRECTORIES or is_environment(directory)
+
+
 def _inputs(
-    root: Path, target: Path, project: Path, ancestors: frozenset[Path], excluded: frozenset[Path]
-) -> Iterator[Tuple[Path, Path]]:
-    """Each checker input under ``root`` with the place its copy belongs."""
+    root: Path,
+    target: Path,
+    layout: _Layout,
+    ancestors: frozenset[Path],
+    excluded: frozenset[Path],
+) -> Iterator[Tuple[Path, Path | _Link]]:
+    """Each checker input under ``root`` with the place its copy belongs, and each link."""
+    project = layout.root
     resolved = root.resolve()
     if resolved in ancestors or not resolved.is_relative_to(project):
         raise ValueError(f"Cannot snapshot cyclic or external source directory: {root}")
@@ -338,26 +447,67 @@ def _inputs(
             continue
         destination = target / entry.name
         if entry.is_dir():
-            if entry.name in {
-                ".git",
-                ".hg",
-                ".svn",
-                ".mypy_cache",
-                ".pytest_cache",
-                ".ruff_cache",
-                ".tox",
-                ".nox",
-                *TOOL_DIRECTORIES,
-            } or is_environment(entry):
+            if _is_left_out(entry):
                 continue
-            yield from _inputs(entry, destination, project, ancestry, excluded)
-        elif entry.is_file() and (
-            entry.suffix in {".py", ".pyi", ".toml", ".json", ".ini", ".cfg"}
-            or entry.name in {"py.typed", ".gitignore"}
-        ):
-            if entry.is_symlink() and not entry.resolve().is_relative_to(project):
-                raise ValueError(f"Cannot snapshot an external source link: {entry}")
-            yield entry, destination
+            if entry.is_symlink():
+                yield destination, _link(entry, destination, layout, excluded)
+                continue
+            yield from _inputs(entry, destination, layout, ancestry, excluded)
+        elif _is_input_file(entry):
+            if entry.is_symlink():
+                yield destination, _link(entry, destination, layout, excluded)
+            else:
+                yield destination, entry
+
+
+@dataclass(frozen=True)
+class _Link:
+    """A symbolic link of the project, as its copy reproduces it.
+
+    pyright follows a link to import through it, and enumerates the files of
+    a linked directory only when the directory it leads to lies inside what
+    the configuration includes. A link reproduced as a link keeps both. One
+    that leads into the project leads to the copy's counterpart, where a
+    candidate's text stands; it used to be copied under its own name, so an
+    import through it read the file as it was. One that leads out of the
+    project, or into what the copy leaves out, leads where it always did,
+    and ``outside`` names where that is when it is out of the project: a
+    directory linked from outside refused every typed run, though it held
+    nothing pyright reads as the project's.
+    """
+
+    target: str
+    outside: Optional[Path] = None
+
+
+def _link(entry: Path, destination: Path, layout: _Layout, excluded: frozenset[Path]) -> _Link:
+    """How the copy reproduces the link ``entry``, which it places at ``destination``."""
+    real = entry.resolve()
+    if entry.is_dir() and entry.parent.resolve().is_relative_to(real):
+        # pyright would skip it as a directory already seen; kept refused.
+        raise ValueError(f"Cannot snapshot cyclic or external source directory: {entry}")
+    project = layout.root
+    if not real.is_relative_to(project):
+        return _Link(str(real), outside=real)
+    held = not any(
+        _is_left_out(directory) or directory in excluded
+        for directory in (real, *real.parents)
+        if directory != project and directory.is_relative_to(project)
+    ) and (real.is_dir() or _is_input_file(real))
+    if not held:
+        return _Link(str(real))
+    counterpart = layout.target / real.relative_to(project)
+    return _Link(os.path.relpath(counterpart, destination.parent))
+
+
+def _place_link(destination: Path, target: str) -> None:
+    """Make ``destination``, inside the copy, a link to ``target``, whatever stood there."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.is_symlink() or destination.is_file():
+        destination.unlink()
+    elif destination.is_dir():
+        shutil.rmtree(destination)
+    os.symlink(target, destination)
 
 
 class UnusableConfiguration(ValueError):
