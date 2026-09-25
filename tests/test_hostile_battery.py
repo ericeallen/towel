@@ -173,6 +173,8 @@ TRANSFORMED = {
     "r7bi_loop_capture_def_rebind_prebound",
     # The helper returns what a later += or del of it needs.
     "r7bi_augassign_and_del_after_block",
+    # (r7bi_read_before_own_binding is declined: its block reads a local
+    # before binding it, which only the original's UnboundLocalError shows.)
 }
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in

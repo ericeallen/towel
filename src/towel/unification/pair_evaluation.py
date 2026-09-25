@@ -54,7 +54,7 @@ from ..project_layout import find_project_root
 from ..source_text import read_source
 from .definite_assignment import definitely_bound_after
 from .statement_facts import loaded_names
-from .assignment_analyzer import has_reassignments_without_bindings
+from .assignment_analyzer import has_reassignments_without_bindings, scope_declarations
 from .block_analysis import align_return_variables
 from .block_comments import (
     CommentConflict,
@@ -306,6 +306,30 @@ def _call_site_reads(call: ast.stmt) -> Set[str]:
     collector = FreeNameCollector()
     collector.visit(call)
     return collector.used
+
+
+def _read_before_own_binding(
+    function: FunctionNode,
+    snapshot: BlockBindingSnapshot,
+    free_variables: AbstractSet[str],
+    available: AbstractSet[str],
+) -> Set[str]:
+    """The locals the block reads before it binds them, where the call site may not have them.
+
+    A name the block binds is a local of its function throughout, so a read
+    of it before the block's own binding (``scale = scale(n)``) finds the
+    function's binding, or raises ``UnboundLocalError`` where there is none.
+    Such a read enters the helper as a free variable, and the call site's
+    argument reads the name where the block stood. Unless the name is bound
+    there on every path (``available``), that read is not the block's: with
+    the block gone the name may no longer be local to the caller at all, so
+    the argument finds a module name or a builtin and succeeds, or raises
+    ``NameError``, where the block raised ``UnboundLocalError``. A name the
+    function declares ``global`` or ``nonlocal`` is not its local and reads
+    the same from anywhere.
+    """
+    bound_in_block = snapshot.bound_in_block | snapshot.reassigned_in_block
+    return (set(free_variables) & bound_in_block) - scope_declarations(function) - set(available)
 
 
 def _thunk_uncertain_free_variables(
@@ -967,6 +991,31 @@ class PairEvaluation(
                 )
             self._debug_reject(RejectReason.INCOMPLETE_LIFETIME_BLOCK2, pair, str(incomplete_vars))
             return None
+        available = (
+            available_argument_names(ctx.func1, pair.block1_nodes, ctx.scope_analyzer),
+            available_argument_names(ctx.func2, pair.block2_nodes, ctx.scope_analyzer2),
+        )
+        for reason, func, snapshot, entering, resolvable in (
+            (
+                RejectReason.INCOMPLETE_LIFETIME_BLOCK1,
+                ctx.func1,
+                analysis.snapshot1,
+                free_vars1,
+                available[0],
+            ),
+            (
+                RejectReason.INCOMPLETE_LIFETIME_BLOCK2,
+                ctx.func2,
+                analysis.snapshot2,
+                free_vars2,
+                available[1],
+            ),
+        ):
+            # Read before its lifetime begins, as a name bound after the block is.
+            read_early = _read_before_own_binding(func, snapshot, entering, resolvable)
+            if read_early:
+                self._debug_reject(reason, pair, str(read_early))
+                return None
 
         substitution = unified.substitution
         aug_assign_vars = self._reserve_augassign_params(pair, substitution)
@@ -1006,10 +1055,6 @@ class PairEvaluation(
         ):
             self._debug_reject(RejectReason.REBOUND_EXTERNAL_BINDING, pair)
             return None
-        available = (
-            available_argument_names(ctx.func1, pair.block1_nodes, ctx.scope_analyzer),
-            available_argument_names(ctx.func2, pair.block2_nodes, ctx.scope_analyzer2),
-        )
         defer_impure_parameters(substitution, pair.block1_nodes, available)
         free_vars = _thunk_uncertain_free_variables(
             substitution,
