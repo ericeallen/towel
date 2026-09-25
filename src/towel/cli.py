@@ -1068,6 +1068,12 @@ LACKING_MODULE_REMEDY = (
 )
 """What a user can do about a name whose one location lacks a module the program imports of it."""
 
+LINKED_FILE_REMEDY = (
+    "For a file a symbolic or hard link gives a second name: replace the link with a copy of what"
+    " it names, or make the program import that file by one name only."
+)
+"""What a user can do about a file reachable under two names through a link."""
+
 MISSING_MODULE_OUTSIDE_REMEDY = (
     "Fix the import, or leave its directory out with --exclude <directory name>."
 )
@@ -1153,6 +1159,7 @@ def _import_problem_remedies(problems: Sequence["ImportProblem"]) -> str:
         Doubt.INSTALLED: INSTALLED_COPY_REMEDY,
         Doubt.REQUIRED: REQUIRED_DISTRIBUTION_REMEDY,
         Doubt.LACKING: LACKING_MODULE_REMEDY,
+        Doubt.LINK: LINKED_FILE_REMEDY,
     }
     present = {doubt for problem in problems for doubt in problem.doubts}
     return "\n".join(remedies[doubt] for doubt in Doubt if doubt in present)

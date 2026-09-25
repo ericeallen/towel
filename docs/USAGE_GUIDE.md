@@ -204,6 +204,10 @@ gets none. Each kind of doubt has its own remedy:
   `src/alpha`, or an import that names a module two ways or climbs out of
   its package: leave out the directory holding it with `--exclude`, or fix
   the import;
+- a symbolic or hard link that gives a file a second name the program uses,
+  such as `beta -> src/alpha` beside `alpha`, a file link `tool.py`, or a
+  link inside a package that an import goes through: replace the link with a
+  copy of what it names, or import that file by one name only;
 - a copy the interpreter running Towel can import from outside the project,
   including one installed in the project's own `.venv`: `--exclude` cannot
   reach it, so run Towel from an environment where that name is this tree,

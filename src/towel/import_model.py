@@ -329,6 +329,8 @@ class Doubt(enum.Enum):
     """A distribution of the name, which is what the installed project imports by it."""
     LACKING = "a module the tree's copy lacks"
     """An import of a module of the name that its one location lacks: another copy holds it."""
+    LINK = "a link in the tree"
+    """A symbolic or hard link that gives one file a second name."""
 
 
 @dataclass(frozen=True)
@@ -435,14 +437,19 @@ class UnresolvedImport:
 
 @dataclass(frozen=True)
 class FileUnderTwoNames:
-    """A location reachable under two of the program's top-level names, so it can load twice.
+    """A location reachable under two of the program's names, so it can load twice.
 
     ``src.alpha.a`` and ``alpha.a`` are two module objects with two copies of
-    every global; a helper imported under one name is not the other's.
+    every global; a helper imported under one name is not the other's. Two
+    search-path entries do it (the project root and ``src``), and so does a
+    link: ``beta -> src/alpha`` makes ``src/alpha/a.py`` both ``alpha.a`` and
+    ``beta.a``, as a file link or a hard link does for one module.
     """
 
     location: Path
     names: Tuple[str, str]
+    link: Optional[Path] = field(default=None, compare=False)
+    """The symbolic or hard link that gives the location its second name, when one does."""
 
     @property
     def names_in_doubt(self) -> FrozenSet[str]:
@@ -450,15 +457,18 @@ class FileUnderTwoNames:
 
     @property
     def doubts(self) -> FrozenSet[Doubt]:
-        return frozenset({Doubt.TREE})
+        return frozenset({Doubt.TREE if self.link is None else Doubt.LINK})
 
     @property
     def found_at(self) -> Tuple[Path, ...]:
-        return (self.location,)
+        return (self.location,) if self.link is None else (self.location, self.link)
 
     def describe(self, root: Path) -> str:
         first, second = self.names
-        return f"{_shown(self.location, root)} is reachable both as {first} and as {second}"
+        through = "" if self.link is None else f", through the link {_shown(self.link, root)}"
+        return (
+            f"{_shown(self.location, root)} is reachable both as {first} and as {second}{through}"
+        )
 
 
 @dataclass(frozen=True)
@@ -2158,29 +2168,150 @@ def _problems(
         if names[name].status is not NameStatus.EXTERNAL
     )
     problems.extend(unresolved)
-    attested = {
-        info.candidates[0]: name
-        for name, info in names.items()
-        if info.status is NameStatus.ATTESTED
-    }
-    problems.extend(_two_names(attested, tree.root))
+    named: Dict[Path, List[str]] = {}
+    for name, info in names.items():
+        if info.status is NameStatus.ATTESTED:
+            named.setdefault(info.candidates[0], []).append(name)
+    problems.extend(_two_names(named, tree, modules))
+    attested = {location: located[0] for location, located in named.items()}
     problems.extend(_relative_problems(tree, modules, attested, listings))
     return problems
 
 
-def _two_names(attested: Mapping[Path, str], root: Path) -> Iterator[FileUnderTwoNames]:
-    for inner, inner_name in sorted(attested.items()):
+def _two_names(
+    named: Mapping[Path, Sequence[str]], tree: _Tree, modules: Mapping[Path, _Module]
+) -> Iterator[FileUnderTwoNames]:
+    """Every location in the tree the program's names reach two ways, however that comes about.
+
+    - Two names at one location: ``beta -> src/alpha`` beside ``alpha``, both
+      imported. Links are counted by where they lead, so the two collapse
+      onto one location, and were once never compared (round-4 audit P1-4).
+    - One name's location inside another's, as ``src.alpha`` and ``alpha``
+      from two search-path entries, or a link to a module of a package.
+    - A link inside a name's location that an import goes through, as
+      ``alpha.compat`` through ``src/alpha/compat.py -> impl.py``, whose
+      target another name, ``alpha.impl``, also reaches.
+    - Two hard links to one module file, each under a name.
+    """
+    root = tree.root
+    links: Dict[Path, List[Path]] = {}
+    for link in tree.links:
+        target = _link_target(link, root)
+        if target is not None:
+            links.setdefault(target, []).append(link)
+
+    def link_to(location: Path) -> Optional[Path]:
+        return min(links[location]) if location in links else None
+
+    for location, located in sorted(named.items()):
+        if location.is_relative_to(root) and len(located) > 1:
+            first, second, *_ = sorted(located)
+            yield FileUnderTwoNames(location, (first, second), link_to(location))
+    for inner, inner_names in sorted(named.items()):
         if not inner.is_relative_to(root):
             continue
         for outer in inner.parents:
             if outer == root:
                 break
-            outer_name = attested.get(outer)
-            if outer_name is None:
+            outer_names = named.get(outer)
+            if not outer_names:
                 continue
             parts = _module_parts(inner.relative_to(outer))
             if parts and all(_is_identifier(part) for part in parts):
-                yield FileUnderTwoNames(inner, (".".join([outer_name, *parts]), inner_name))
+                both = (".".join([outer_names[0], *parts]), inner_names[0])
+                yield FileUnderTwoNames(inner, both, link_to(inner))
+    first_named = {location: located[0] for location, located in named.items()}
+    sites = [site for module in modules.values() for site in module.sites or () if site.runtime]
+    for target, into in sorted(links.items()):
+        through_target = _dotted(first_named, target, root, modules)
+        if through_target is None:
+            continue
+        for link in sorted(into):
+            through_link = _dotted(first_named, link, root, modules, owned_only=True)
+            if (
+                through_link is not None
+                and through_link != through_target
+                and _imported_through(through_link, sites, first_named, root)
+            ):
+                yield FileUnderTwoNames(target, (through_link, through_target), link)
+    for paths in _hard_links(tree.modules):
+        dotted = sorted(
+            {name for path in paths if (name := _dotted(first_named, path, root, modules))}
+        )
+        if len(dotted) > 1:
+            yield FileUnderTwoNames(paths[0], (dotted[0], dotted[1]), paths[1])
+
+
+def _link_target(link: Path, root: Path) -> Optional[Path]:
+    """Where ``link`` leads, when that is inside ``root``; ``None`` for a dangling or outside link."""
+    try:
+        target = link.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    return target if target.is_relative_to(root) else None
+
+
+def _dotted(
+    named: Mapping[Path, str],
+    path: Path,
+    root: Path,
+    modules: Mapping[Path, _Module],
+    *,
+    owned_only: bool = False,
+) -> Optional[str]:
+    """The name the innermost named location holding ``path``, by its spelling, gives it.
+
+    ``owned_only`` asks for a name through an enclosing location only, as a
+    link inside a package has; a location that is ``path`` itself is the
+    link's target, which the tree counts under the link's own name already.
+    """
+    for location in path.parents if owned_only else (path, *path.parents):
+        name = named.get(location)
+        if name is not None:
+            if location == path:
+                return name
+            parts = _module_parts(path.relative_to(location))
+            if location in modules or not all(_is_identifier(part) for part in parts):
+                return None
+            return ".".join([name, *parts])
+        if location == root:
+            break
+    return None
+
+
+def _imported_through(
+    dotted: str, sites: Sequence[ImportSite], named: Mapping[Path, str], root: Path
+) -> bool:
+    """Whether an import that runs names ``dotted`` or a module below it, absolutely or relatively."""
+    prefix = dotted + "."
+    for site in sites:
+        if site.level:
+            base = _climb(site.file.parent, site.level - 1, root)
+            package = None if base is None else _dotted(named, base, root, {})
+            if package is None:
+                continue
+            module = ".".join(part for part in (package, site.module) if part)
+        elif site.module is not None:
+            module = site.module
+        else:
+            continue
+        spelled = [module, *(f"{module}.{name}" for name in site.names if name != "*")]
+        if any(each == dotted or each.startswith(prefix) for each in spelled):
+            return True
+    return False
+
+
+def _hard_links(paths: Iterable[Path]) -> Iterator[Tuple[Path, ...]]:
+    """Each group of two or more of ``paths`` that are one file, in path order."""
+    files: Dict[Tuple[int, int], List[Path]] = {}
+    for path in paths:
+        try:
+            status = path.stat()
+        except OSError:
+            continue
+        if status.st_nlink > 1:
+            files.setdefault((status.st_dev, status.st_ino), []).append(path)
+    yield from (tuple(sorted(group)) for group in files.values() if len(group) > 1)
 
 
 def _innermost_location(attested: Mapping[Path, str], path: Path, root: Path) -> Optional[Path]:

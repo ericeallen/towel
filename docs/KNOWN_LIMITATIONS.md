@@ -455,7 +455,11 @@ the library. A top-level name
 found only as a module inside a package the program imports as one, as
 `pkg/c.py`'s `import helpers_top` finds only `pkg/helpers_top.py`, is in
 doubt too, and the file making the import runs as a script, so it is given
-no new import (the third audit's P1-6). Only an import that attests does
+no new import (the third audit's P1-6). So is a file a link gives a second
+name the program uses: a directory link `beta -> src/alpha` beside
+`alpha`, a file link, a link inside a package that an import goes through,
+or a hard link, each resolved by replacing the link with a copy (the
+round-4 audit's P1-4). Only an import that attests does
 any of this: one inside `try`/`except ImportError`, under `TYPE_CHECKING`,
 or in a file that changes `sys.path`, as graphene's setup.py imports
 `pyutils.version` after appending the package to `sys.path`, neither
