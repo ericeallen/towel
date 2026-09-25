@@ -76,7 +76,12 @@ from typing import (
 from .diagnostics import LOG
 from .project_tools import ToolChoice, python_tool_environment
 from .unification.exceptions import TowelError
-from .checker_project import CheckerSnapshot, UnusableConfiguration, checker_snapshot
+from .checker_project import (
+    CheckerSnapshot,
+    UnusableConfiguration,
+    checker_snapshot,
+    search_path_counterpart,
+)
 from .unification.bounded_cache import BoundedCache
 from .pyright_session import (
     Diagnostic,
@@ -411,22 +416,31 @@ def unanswered_files(answer: Mapping[RevealKey, str]) -> Mapping[str, str]:
     return answer.unanswered if isinstance(answer, Revealed) else {}
 
 
+_CHECKER_ROOT_MARKERS: Final = (
+    "mypy.ini",
+    ".mypy.ini",
+    "pyrightconfig.json",
+    "pyproject.toml",
+    "setup.cfg",
+    "setup.py",
+)
+"""Files whose directory a checker is run from when nothing configures one nearer."""
+
+
+def _is_checker_root(directory: Path) -> bool:
+    return any((directory / name).is_file() for name in _CHECKER_ROOT_MARKERS)
+
+
+def _is_repository_root(directory: Path) -> bool:
+    return (directory / ".git").exists() or (directory / ".hg").exists()
+
+
 def _checker_root(path: Path) -> Path:
     """Nearest checker or packaging root, independently of import-layout inference."""
     path = path.resolve()
     directory = path.parent if path.is_file() or path.suffix in {".py", ".pyi"} else path
     for root in (directory, *directory.parents):
-        if any(
-            (root / name).is_file()
-            for name in (
-                "mypy.ini",
-                ".mypy.ini",
-                "pyrightconfig.json",
-                "pyproject.toml",
-                "setup.cfg",
-                "setup.py",
-            )
-        ):
+        if _is_checker_root(root):
             return root
     return find_project_root(directory)
 
@@ -451,7 +465,7 @@ def _configured_root(path: Path, checker: str) -> Optional[Path]:
     for root in (directory, *directory.parents):
         if configured(root):
             return root
-        if (root / ".git").exists() or (root / ".hg").exists():
+        if _is_repository_root(root):
             break
     return None
 
@@ -464,6 +478,69 @@ def _source_groups(sources: Mapping[str, str], checker: str) -> Dict[Path, Dict[
             _configured_root(Path(absolute), checker) or _checker_root(Path(absolute)), {}
         )[absolute] = source
     return groups
+
+
+def _pyright_roots(path: Path) -> List[Path]:
+    """Every directory pyright checks ``path`` from: its nearest root, and each enclosing it.
+
+    A project's pyright run at a directory checks everything beneath it,
+    including a member with a configuration of its own; that configuration
+    applies only when pyright is run from the member. A consumer in the outer
+    project imports the member (through ``extraPaths`` or an editable install)
+    and is checked by the outer run alone. Checking the member's files only
+    from the member judged that consumer against the member as it was: a
+    helper that changed what an unannotated function returns broke it, and
+    the outer project's own check failed once the change was written.
+
+    The enclosing roots are those pyright is configured at, found as the
+    nearest is, within the repository. Where nothing configures pyright the
+    roots are checker and packaging roots, and they enclose one another only
+    within a repository: outside one, nothing bounds the walk up but the
+    filesystem's root.
+    """
+    nearest = _configured_root(path, "pyright")
+    if nearest is not None:
+        roots = [nearest]
+        while not _is_repository_root(roots[-1]) and roots[-1].parent != roots[-1]:
+            outer = _configured_root(roots[-1].parent, "pyright")
+            if outer is None:
+                break
+            roots.append(outer)
+        return roots
+    roots = [_checker_root(path)]
+    within = next(
+        (
+            directory
+            for directory in (roots[0], *roots[0].parents)
+            if _is_repository_root(directory)
+        ),
+        None,
+    )
+    if within is not None:
+        roots += [
+            directory
+            for directory in roots[0].parents
+            if directory.is_relative_to(within) and _is_checker_root(directory)
+        ]
+    return roots
+
+
+def _pyright_groups(sources: Mapping[str, str]) -> Dict[Path, Dict[str, str]]:
+    """Each root pyright checks ``sources`` from, with every one of them that lies beneath it.
+
+    A root's copy holds the whole directory, so each of its checks shows every
+    change inside it, not only those whose nearest root it is: a nested
+    configuration's files, in the outer copy, used to stand as they were on
+    disk while the nested copy showed the change.
+    """
+    resolved = {str(Path(path).resolve()): text for path, text in sources.items()}
+    roots: Dict[Path, None] = {}
+    for path in resolved:
+        roots.update(dict.fromkeys(_pyright_roots(Path(path))))
+    return {
+        root: {path: text for path, text in resolved.items() if Path(path).is_relative_to(root)}
+        for root in roots
+    }
 
 
 _MYPY_WORKER = Path(__file__).with_name("_mypy_worker.py")
@@ -906,7 +983,9 @@ class PyrightOracle:
     The server and the command line are configured alike (see
     ``towel.pyright_session.server_settings``) and resolve imports through one
     interpreter, this one's, whose environment holds the project's
-    dependencies and, installed editable, the project itself. Either path
+    dependencies and, installed editable, the project itself; or, where the
+    configuration names one with ``venvPath`` and ``venv``, through that
+    environment (see ``towel.checker_project._Environment``). Either path
     therefore reaches the verdict the other would. Where that environment
     reaches into the project, both reach the copy instead (see
     ``_environment``).
@@ -932,6 +1011,22 @@ class PyrightOracle:
         self.answered_from_a_session = False
         # What each project's configuration has pyright report on, read once.
         self._scopes: Dict[Path, PyrightScope] = {}
+        # Its servers and copies belong to this process; see ``_forked``.
+        self._owner_pid = os.getpid()
+
+    def _forked(self) -> bool:
+        """Whether this is a forked child of the process that made the oracle.
+
+        A child inherits the servers' pipes and the private copies' paths, but
+        not the servers: ``Popen.poll`` there cannot wait for a process it did
+        not start and reports it gone. Checking from a child therefore
+        abandoned the parent's sessions and removed the copies they watch, and
+        so did merely closing the oracle there; the parent's next check then
+        read a copy that no longer existed and called a breaking candidate
+        clean. A child asks nothing and removes nothing, as ``MypyInferrer``'s
+        does.
+        """
+        return self._owner_pid != os.getpid()
 
     def reports_on(self, file_path: str) -> bool:
         """Whether the project's configuration has pyright report on ``file_path`` at all.
@@ -950,6 +1045,8 @@ class PyrightOracle:
 
     def close(self) -> None:
         """Stop every language server this oracle started and drop its copies."""
+        if self._forked():
+            return  # They are the parent's, still in use there.
         for warm in self._warmed.values():
             warm.close()
         self._warmed.clear()
@@ -1067,6 +1164,8 @@ class PyrightOracle:
 
     def stop_language_servers(self) -> None:
         """Close every warm project; this oracle answers from the command line after."""
+        if self._forked():
+            return  # The parent's servers, which only the parent may stop.
         self._server = None
         for warm in self._warmed.values():
             warm.close()
@@ -1080,6 +1179,8 @@ class PyrightOracle:
         self._warmed.clear()
 
     def _diagnostics(self, file_path: str, text: str) -> _PyrightDiagnostics | CheckFailure:
+        if self._forked():
+            return CheckFailure(_AFTER_FORK)
         original = Path(file_path).resolve()
         root = _configured_root(original, "pyright") or _checker_root(original)
         warm = self._warm(root, ())
@@ -1180,12 +1281,18 @@ class PyrightOracle:
             if severity not in {"error", "warning", "information"}:
                 return CheckFailure("pyright returned an invalid diagnostic severity")
             location = diagnostic.get("range")
-            if severity == "error" and (
-                not isinstance(location, dict)
-                or not isinstance(location.get("start"), dict)
-                or not isinstance(location["start"].get("line"), int)
-                or isinstance(location["start"].get("line"), bool)
-                or location["start"]["line"] < 0
+            # A diagnostic about a whole file, such as reportImportCycles, has
+            # no range on the command line (``_file_line``), and is no failure.
+            if (
+                severity == "error"
+                and location is not None
+                and (
+                    not isinstance(location, dict)
+                    or not isinstance(location.get("start"), dict)
+                    or not isinstance(location["start"].get("line"), int)
+                    or isinstance(location["start"].get("line"), bool)
+                    or location["start"]["line"] < 0
+                )
             ):
                 return CheckFailure("pyright error has no valid source position")
             if location is not None:
@@ -1207,6 +1314,16 @@ class PyrightOracle:
         """The one-based line of a diagnostic, or 0 when it carries no position."""
         start = diagnostic.get("range", {}).get("start")
         return start.get("line", -1) + 1 if start is not None else 0
+
+    @staticmethod
+    def _file_line(diagnostic: _PyrightDiagnostic) -> int:
+        """The one-based line a project check reports a diagnostic at.
+
+        A diagnostic about a whole file comes without a range from the command
+        line, and the language server publishes it at the file's first line;
+        it is taken there on both paths, so the two report one error alike.
+        """
+        return PyrightOracle._line(diagnostic) if "range" in diagnostic else 1
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         """Reveal each request by having pyright check a probed copy of its module.
@@ -1254,7 +1371,12 @@ class PyrightOracle:
             return []
         text, signature_line, return_line = _subtype_probes(source, pairs)
         result = self._diagnostics(file_path, text)
-        if isinstance(result, CheckFailure):
+        if isinstance(result, CheckFailure) or any(
+            diagnostic.get("severity") == "error" and "range" not in diagnostic
+            for diagnostic in result.diagnostics
+        ):
+            # Verdicts are read off the lines errors stand on, so an error
+            # that stands on none leaves every verdict unread.
             return [Subtyping.UNKNOWN] * len(pairs)
         error_lines = [
             self._line(diagnostic)
@@ -1269,10 +1391,13 @@ class PyrightOracle:
     def check_project(
         self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
     ) -> CheckResult:
+        if self._forked():
+            return CheckFailure(_AFTER_FORK)
         errors: List[TypeDiagnostic] = []
-        for root, replacements in _source_groups(sources, "pyright").items():
+        changed = [str(Path(path).resolve()) for path in sources]
+        for root, replacements in _pyright_groups(sources).items():
             try:
-                served = self._check_with_session(root, replacements, excluded_paths)
+                served = self._check_with_session(root, replacements, excluded_paths, changed)
             except (OSError, ValueError, UnicodeError) as error:
                 # The project is being read while it is being refactored, so a
                 # file can go between listing it and reading it. The cold path
@@ -1292,28 +1417,25 @@ class PyrightOracle:
                 with checker_snapshot(
                     root, replacements, excluded_paths=excluded_paths
                 ) as snapshot:
+                    unshown = _unshown(root, snapshot.unshown(changed))
+                    if unshown is not None:
+                        return unshown
                     # A positional directory would override both configured
                     # include and exclude lists; naming none keeps their scope.
-                    result = self._run_diagnostics(root, snapshot)
+                    result = self._run_diagnostics(root, snapshot.tree)
                     if isinstance(result, CheckFailure):
                         return result
-                    for diagnostic in result.diagnostics:
-                        if diagnostic.get("severity") != "error":
-                            continue
-                        path = Path(diagnostic["file"])
-                        if path.is_relative_to(snapshot):
-                            path = root / path.relative_to(snapshot)
-                        message = (
-                            f"pyright: {diagnostic.get('rule') or ''}: " f"{diagnostic['message']}"
+                    errors.extend(
+                        TypeDiagnostic(
+                            snapshot.original_of(diagnostic["file"]),
+                            snapshot.restore_paths(
+                                f"pyright: {diagnostic.get('rule') or ''}: {diagnostic['message']}"
+                            ),
+                            self._file_line(diagnostic),
                         )
-                        start = diagnostic.get("range", {}).get("start", {}).get("line")
-                        errors.append(
-                            TypeDiagnostic(
-                                str(path),
-                                message.replace(str(snapshot), str(root)),
-                                None if start is None else start + 1,
-                            )
-                        )
+                        for diagnostic in result.diagnostics
+                        if diagnostic.get("severity") == "error"
+                    )
             except UnusableConfiguration as error:
                 return CheckFailure(str(error))
             except (OSError, ValueError, UnicodeError) as error:
@@ -1321,12 +1443,19 @@ class PyrightOracle:
         return CheckSuccess(tuple(errors))
 
     def _check_with_session(
-        self, root: Path, replacements: Mapping[str, str], excluded_paths: Sequence[str]
+        self,
+        root: Path,
+        replacements: Mapping[str, str],
+        excluded_paths: Sequence[str],
+        changed: Sequence[str],
     ) -> Optional[CheckResult]:
         """The project checked through its warm copy, or ``None`` to check it cold."""
         warm = self._warm(root, tuple(excluded_paths))
         if warm is None:
             return None
+        unshown = _unshown(root, warm.unshown(changed))
+        if unshown is not None:
+            return unshown
         try:
             published = warm.diagnostics(replacements)
         except SessionFailure as error:
@@ -1344,6 +1473,9 @@ class PyrightOracle:
 PYRIGHT_TIMEOUT_SECONDS = 600.0
 """How long one pyright run may take before Towel proceeds without its answer."""
 
+_AFTER_FORK = "Create a new pyright oracle after fork"
+"""Why a forked child's question goes unanswered (see ``PyrightOracle._forked``)."""
+
 INTERPRETER_TIMEOUT_SECONDS = 60.0
 """How long the interpreter may take to say where its installed code is."""
 
@@ -1355,18 +1487,24 @@ def _copied_search_paths(search_path: Sequence[str], root: Path, copy: Path) -> 
     copied, and pyright goes on finding it where it is. The root is the copy's
     own root already, where pyright looks first.
     """
-    resolved = root.resolve()
-    moved: Dict[str, None] = {}
-    for entry in search_path:
-        if not entry or not os.path.isabs(entry):
-            continue
-        path = Path(entry).resolve()
-        if path == resolved or not path.is_relative_to(resolved):
-            continue
-        counterpart = copy / path.relative_to(resolved)
-        if counterpart.is_dir():
-            moved[str(counterpart)] = None
-    return list(moved)
+    moved = (search_path_counterpart(entry, root, copy) for entry in search_path)
+    return list(dict.fromkeys(entry for entry in moved if entry is not None))
+
+
+def _unshown(root: Path, unshown: Sequence[Tuple[str, str]]) -> Optional[CheckFailure]:
+    """A check from ``root`` refused, when its copy reaches a changed file only through a link out.
+
+    The file is read where the link leads, as it stands, so the check would
+    not see the change; a consumer importing through the link would be
+    judged against the file as it was.
+    """
+    if not unshown:
+        return None
+    path, link = unshown[0]
+    return CheckFailure(
+        f"pyright checking {root} reads {path} through the link {link}, which leads out of "
+        "the project, so no check there can see the change to it"
+    )
 
 
 def _what_pyright_said(stderr: str) -> str:
@@ -1408,8 +1546,8 @@ class _WarmProject:
     def diagnostics(self, replacements: Mapping[str, str]) -> Dict[str, List[Diagnostic]]:
         """Diagnostics for the project as ``replacements`` would leave it.
 
-        Paths come back as the project's own, not the copy's, so a caller never
-        sees where the check happened.
+        Paths come back as the project's own, not the copy's, in the messages
+        too, so a caller never sees where the check happened.
         """
         followed = self._snapshot.follow_project()
         key = f"{self._snapshot.revision}:{_candidate_key(replacements)}"
@@ -1424,9 +1562,16 @@ class _WarmProject:
         restored: Dict[str, List[Diagnostic]] = {}
         for path, entries in published.items():
             original = self._snapshot.original_of(path)
-            restored[original] = [replace(entry, path=original) for entry in entries]
+            restored[original] = [
+                replace(entry, path=original, message=self._snapshot.restore_paths(entry.message))
+                for entry in entries
+            ]
         self._verdicts[key] = restored
         return {path: list(entries) for path, entries in restored.items()}
+
+    def unshown(self, paths: Iterable[str]) -> List[Tuple[str, str]]:
+        """Those of ``paths`` the copy reaches only through a link out of it; see ``CheckerSnapshot``."""
+        return self._snapshot.unshown(paths)
 
     def close(self) -> None:
         self._session.close()

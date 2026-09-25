@@ -899,7 +899,11 @@ where the evidence comes from:
   four proposals there had been declined as unreachable). A language server
   asked about such a file never answered, and the run waited a minute and
   then gave the server up; the marker a settle waits for now goes where the
-  server reports. A file no configured checker reports on is changed as the
+  server reports, spelled as the server knows its workspace (a target outside
+  `include = ["src"]` had its marker written in `src` under the resolved
+  `/private/var` spelling of a copy made in `/var`, and waited out the minute
+  all the same), and, for an `include` that names no directory outright, in
+  the first directory whose files it matches. A file no configured checker reports on is changed as the
   body of an unannotated function is, since the project's own check says
   nothing there on any platform, and its helper takes only the annotations
   its sites declare, completed with `Any`: nothing would check an inferred
@@ -978,19 +982,52 @@ where the evidence comes from:
   project as it is refactored, and watched by one long-lived language server.
   A file is recopied when its content differs, not merely when its size or
   timestamp does, so an edit by something other than Towel cannot leave a
-  verdict standing against a project the copy no longer matches. A checker
-  configuration whose bytes are not UTF-8 is refused rather than copied
-  without rewriting the absolute paths in it. A `pyrightconfig.json` (or a
+  verdict standing against a project the copy no longer matches. A
+  `pyrightconfig.json`, or a `pyproject.toml` with a `[tool.pyright]` table,
+  whose bytes are not UTF-8 is refused rather than copied without rewriting
+  the absolute paths in it; any other `.json`, `.toml`, `.ini` or `.cfg` that
+  is not UTF-8 is data to pyright and is copied as it is. A `pyrightconfig.json` (or a
   file it extends) that pyright itself cannot parse refuses the typed run
   before anything is written, naming the file and the position: pyright's
   grammar is JSON with `//` and `/* */` comments and one trailing comma per
   object or array, and a byte-order mark, a form feed or a no-break space is
   an error to it. pyright's language server would otherwise go on checking
   with default settings. A pyright command line that fails is reported with
-  the end of what it printed to standard error. Cyclic or external source symlinks and
-  configured source or stub search roots outside the project cannot be
-  represented safely and cause verification to decline the proposal.
+  the end of what it printed to standard error. A symbolic link is a link in
+  the copy. One into the project leads to the copy's counterpart, so an import
+  through it sees a candidate's text; it used to be copied under its own
+  name, and an import through it read the file as it was. One out of the
+  project, or into an environment or another directory the copy leaves out,
+  leads where it always did, so pyright enumerates and imports through it as
+  it does in the project. A candidate that changes a file the copy reaches
+  only through a link out of the project is not judged, since the check would
+  read that file as it was. A link back to a directory that holds it, and a
+  configured source or stub search root outside the project, cannot be
+  represented safely and refuse the typed run. An environment the
+  configuration names with `venvPath` and `venv` is where pyright resolves
+  imports in the copy too, through a mirror of it whose `.pth` files lead into
+  the copy where an editable install leads into the project; the copy left the
+  environment out, and pyright fell back, silently, on Towel's interpreter. One
+  pyright could not use (missing, unreadable, holding no site-packages) refuses
+  the typed run, since pyright would fall back so. When Towel's interpreter is
+  that environment's own, pyright adds the interpreter's standard library
+  directories to its search paths, and through the mirror it does not; the
+  standard library is resolved from typeshed first either way. A search path
+  setting (`extraPaths`, `stubPath`, `typingsPath`, `typeshedPath`, an
+  execution environment's `extraPaths`) that leads into what the copy leaves
+  out, such as an environment's site directory, names the original in the
+  copy's configuration, rather than nothing.
   Project include/exclude settings still determine the checker's coverage.
+  A change is checked from the root of its nearest pyright configuration and
+  from every configured root enclosing that one within the repository, and
+  each root's copy shows every change beneath it: pyright run at the outer
+  root checks a member with a configuration of its own as well, and a
+  consumer there was judged against the member's original text. Where nothing
+  configures pyright, the roots are checker and packaging roots, which enclose
+  one another only inside a repository (a `.git` or `.hg` directory); outside
+  one, a change to a member is checked from the member and from the roots of
+  the run's other files, so a consumer in an enclosing directory that the
+  run's target leaves out is not checked.
 - Mypy runs in an owned worker process, each build in a forked child of it that exits once it has answered, and never freezes the caller's garbage
   collector. Library users should call the oracle's `close()` when finished;
   `CombinedOracle.close()` closes both checkers. The CLI closes its oracle on

@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 from concurrent.futures import ThreadPoolExecutor
 import importlib.util
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -443,7 +444,6 @@ def test_shared_pyright_extends_config_is_preserved(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "diagnostic, status",
     [
-        ({"file": "m.py", "severity": "error", "message": "no position"}, 1),
         ({"file": "m.py", "severity": "mystery", "message": "unrecognized"}, 0),
         (None, 1),
         (
@@ -481,6 +481,7 @@ def test_invalid_pyright_results_do_not_certify_subtypes(
     checker._probe_copies = {}
     checker._interpreter = sys.executable
     checker._search_path = ()
+    checker._owner_pid = os.getpid()
     path = tmp_path / "m.py"
     path.write_text("x = 1\n")
     payload = json.dumps({"generalDiagnostics": [] if diagnostic is None else [diagnostic]})

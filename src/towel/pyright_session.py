@@ -57,7 +57,7 @@ import tomllib
 import weakref
 from typing import Dict, Iterator, List, Literal, Mapping, Optional, Sequence, Set, Tuple, TypedDict
 
-from .checker_project import UnusableConfiguration, _pyright_config_inputs, _read_json_config
+from .checker_project import UnusableConfiguration, _settings_chain
 from .diagnostics import LOG
 from .source_files import PROBE_PREFIX
 
@@ -259,20 +259,6 @@ EVERYWHERE = PyrightScope((re.compile("^/"),))
 """The scope of a configuration that cannot be read, where the check itself says why."""
 
 
-def _settings_chain(root: Path) -> List[Tuple[Path, Mapping[str, object]]]:
-    """Each configuration pyright reads for ``root``, its own first, with the directory it is in."""
-    chain: List[Tuple[Path, Mapping[str, object]]] = []
-    for config in _pyright_config_inputs(root):
-        if config.name == "pyproject.toml":
-            with config.open("rb") as handle:
-                tool = tomllib.load(handle).get("tool", {})
-            section = tool.get("pyright", {}) if isinstance(tool, dict) else {}
-            chain.append((config.parent, section if isinstance(section, dict) else {}))
-        else:
-            chain.append((config.parent, _read_json_config(config)))
-    return chain
-
-
 def pyright_scope(root: Path) -> PyrightScope:
     """What ``root``'s pyright configuration has pyright report on, read without running pyright.
 
@@ -304,9 +290,19 @@ def pyright_scope(root: Path) -> PyrightScope:
 
 
 def _included_directories(root: Path) -> List[Path]:
-    """The directories ``root``'s pyright configuration includes by name, without wildcards."""
+    """The directories ``root``'s pyright configuration includes by name, without wildcards.
+
+    Each is spelled under ``root`` as given, not resolved. The server knows its
+    workspace by the spelling it was given, and a file written under another
+    spelling of the same directory is a change outside it that the server never
+    analyzes. The configuration is read resolved, so a marker placed in an
+    included directory went to ``/private/var/...`` for a copy made under
+    macOS's ``/var/...``, and a run whose changes all lay outside ``include``
+    waited out ``UNSEEN_MARKER_TIMEOUT_SECONDS`` and gave the server up.
+    """
+    real = Path(os.path.realpath(root))
     try:
-        chain = _settings_chain(Path(os.path.realpath(root)))
+        chain = _settings_chain(real)
     except (OSError, ValueError, UnusableConfiguration, tomllib.TOMLDecodeError):
         return []
     for base, chosen in chain:
@@ -315,11 +311,30 @@ def _included_directories(root: Path) -> List[Path]:
             continue
         named = specs if isinstance(specs, list) else []
         return [
-            base / spec
+            _spelled_under(root, real, base / spec)
             for spec in named
             if isinstance(spec, str) and not set("*?[") & set(spec) and (base / spec).is_dir()
         ]
     return []
+
+
+def _spelled_under(root: Path, real: Path, path: Path) -> Path:
+    """``path``, which lies under ``real``, the resolved ``root``, spelled under ``root``."""
+    normal = Path(os.path.normpath(path))
+    return root / normal.relative_to(real) if normal.is_relative_to(real) else normal
+
+
+def _first_reported_directory(root: Path, scope: PyrightScope) -> Optional[Path]:
+    """The first directory under ``root``, walked in order, where pyright reports on a new file.
+
+    For a configuration whose ``include`` names no directory outright
+    (``src/*``): the marker must stand where the server analyzes it.
+    """
+    for parent, directories, _ in os.walk(root):
+        directories.sort()
+        if scope.reports_on(Path(parent) / _MARKER_NAME):
+            return Path(parent)
+    return None
 
 
 def _uri(path: Path) -> str:
@@ -789,24 +804,29 @@ class PyrightSession:
     def _marker_directory(self, beside: Sequence[Path]) -> Path:
         """Where the marker goes: beside the first of ``beside`` that the server reports on.
 
-        A marker in a directory the configuration excludes or ignores is never
-        answered, however long the wait. With nothing to stand beside, where
-        the server last answered is the best place known, then the root, then
-        a directory the configuration includes; the root may lie outside what
-        the project includes.
+        A marker in a directory the configuration excludes or ignores, or
+        leaves out of its ``include``, is never answered, however long the
+        wait. With nothing to stand beside, where the server last answered is
+        the best place known, then the root, then a directory the
+        configuration includes; the root may lie outside what the project
+        includes. Failing all of those, the first directory of the project
+        that the configuration reports on.
         """
         candidates = [path.parent for path in beside]
         if self._marker.directory is not None:
             candidates.append(self._marker.directory)
         candidates += [self._root, *self._included]
-        return next(
+        chosen = next(
             (
                 directory
                 for directory in candidates
                 if self._scope.reports_on(directory / _MARKER_NAME)
             ),
-            candidates[0],
+            None,
         )
+        if chosen is None:
+            chosen = _first_reported_directory(self._root, self._scope)
+        return candidates[0] if chosen is None else chosen
 
     def _drain(self) -> None:
         """Absorb anything the server said while nobody was listening."""

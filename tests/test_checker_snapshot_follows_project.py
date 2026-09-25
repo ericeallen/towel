@@ -147,10 +147,14 @@ def test_an_in_place_rewrite_that_keeps_size_and_timestamp_is_still_seen(
 
 
 def test_a_checker_configuration_that_cannot_be_rebased_is_refused(tmp_path: Path) -> None:
-    """Copied without rebasing, its absolute paths would point at the real tree."""
+    """Copied without rebasing, its absolute paths would point at the real tree.
+
+    Only a file pyright reads as configuration: other data that is not UTF-8
+    is copied as it is (``test_r9py_pyright_copy_inputs``).
+    """
     root = tmp_path / "p"
-    root.mkdir()
+    (root / "sub").mkdir(parents=True)
     (root / "a.py").write_text("A = 1\n", encoding="utf-8")
-    (root / "setup.cfg").write_bytes(b"[x]\nname = caf\xe9\n")
+    (root / "sub" / "pyrightconfig.json").write_bytes(b'{"venv": "caf\xe9"}\n')
     with pytest.raises(ValueError, match="not UTF-8"):
         CheckerSnapshot(root).close()
