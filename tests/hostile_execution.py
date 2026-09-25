@@ -32,9 +32,10 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
-from typing import Mapping, Sequence
+from typing import List, Mapping, Sequence
 
 import pytest
 
@@ -127,6 +128,37 @@ def observe(script: str, cwd: Path) -> tuple[int, str, list[str]]:
         env=ISOLATED_ENV,
     )
     return completed.returncode, completed.stdout, completed.stderr.strip().splitlines()[-1:]
+
+
+NEWER_SYNTAX_SUFFIX = ".pynew"
+"""The suffix of a fixture written in syntax some supported Python does not parse.
+
+Towel refuses a program holding a file it cannot parse (``towel.program_files``),
+and the suite refactors files inside this repository, so every ``.py`` file here
+must parse on every supported Python. A fixture in newer syntax, ``type Alias =
+...`` before 3.12 or a Python newer than any Towel supports, is stored under
+this suffix instead, which no Python tool reads as source, and a battery gives
+it back its ``.py`` name where it runs.
+"""
+
+
+def fixture_sources(directory: Path, *, recursive: bool = False) -> List[Path]:
+    """Every Python fixture in ``directory``, sorted: its ``.py`` files and those in newer syntax."""
+    found = directory.rglob if recursive else directory.glob
+    return sorted([*found("*.py"), *found(f"*{NEWER_SYNTAX_SUFFIX}")])
+
+
+def fixture_named(directory: Path, stem: str) -> Path:
+    """The single-file fixture ``stem`` of ``directory``, whichever suffix it is stored under."""
+    plain = directory / f"{stem}.py"
+    return plain if plain.exists() else directory / f"{stem}{NEWER_SYNTAX_SUFFIX}"
+
+
+def copy_fixture_tree(source: Path, destination: Path) -> None:
+    """``shutil.copytree``, with each file in newer syntax copied under the ``.py`` name it runs under."""
+    shutil.copytree(source, destination)
+    for path in sorted(destination.rglob(f"*{NEWER_SYNTAX_SUFFIX}")):
+        path.rename(path.with_suffix(".py"))
 
 
 def parsed_or_skipped(path: Path) -> ast.Module:

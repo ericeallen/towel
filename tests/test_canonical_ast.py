@@ -32,6 +32,7 @@ from typing import Callable, List, Sequence, Type, TypeVar
 
 import pytest
 
+from tests.hostile_execution import fixture_sources
 from towel.canonical_ast import canonical_dump
 from towel.type_inference import Subtyping
 from towel.unification.annotations import _joined, _unknown_subtypes, normalize_union
@@ -173,7 +174,7 @@ def test_the_spelling_is_the_same_on_every_version() -> None:
 def _repository_trees() -> List[ast.AST]:
     trees: List[ast.AST] = []
     for directory in ("src/towel", "tests/hostile_cases"):
-        for path in sorted((ROOT / directory).rglob("*.py")):
+        for path in fixture_sources(ROOT / directory, recursive=True):
             try:
                 trees.append(ast.parse(path.read_bytes()))
             except SyntaxError:

@@ -22,7 +22,7 @@ from typing import Iterator, List, Sequence
 
 import pytest
 
-from tests.hostile_execution import parsed_or_skipped
+from tests.hostile_execution import fixture_sources, parsed_or_skipped
 from towel.unification.block_signature import BlockSignature, extract_block_signature
 from towel.unification.extractor import contains_return
 from towel.unification.visitors import OwnScopeVisitor
@@ -245,7 +245,7 @@ HOSTILE = Path(__file__).resolve().parent / "hostile_cases"
 
 @pytest.mark.parametrize(
     "path",
-    sorted(SOURCE_ROOT.rglob("*.py")) + sorted(HOSTILE.glob("*.py")),
+    sorted(SOURCE_ROOT.rglob("*.py")) + fixture_sources(HOSTILE),
     ids=lambda p: p.name,
 )
 def test_memoized_guards_match_the_whole_block_walk(path: Path) -> None:
