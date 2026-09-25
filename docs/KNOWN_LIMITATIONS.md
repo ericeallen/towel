@@ -299,6 +299,14 @@ addresses:
   Calls to the reflection builtins, direct or through an alias the module
   binds by import or assignment, are rejected; rebinding through
   `globals()[...]`, `setattr`, another thread, or a callee is not detected.
+  Nor is rebinding that a new import could reorder: under `--cross-module`
+  a borrower's import of its helper loads the host earlier than the program
+  did, so a host that binds at import what the program rebinds elsewhere,
+  `from time import sleep` where another module or a test sets `time.sleep
+  = patch` or monkeypatches it before importing the host, binds the value
+  it finds then. Towel only places the import after every statement of the
+  borrower's own that runs before its first definition (*Import-time
+  behavior*), so the borrower's own patch still comes first.
 - **Metaclasses and descriptors.** Method extraction into a class assumes the
   usual descriptor protocol. Only a method whose decorators are all known to
   leave its body alone is refactored at all (*Decorators that compile or
@@ -349,10 +357,16 @@ addresses:
   with constants runs nothing. When a name the
   annotations need is defined only after such code, the helper goes before
   it anyway where annotations are postponed (`from __future__ import
-  annotations`), and is declined elsewhere. Cross-file helpers add a module import; a helper
-  import goes after the module's last leading import (after the docstring
-  when there are none), so a script that runs a statement before its
-  imports keeps it first. Static local import cycles are rejected
+  annotations`), and is declined elsewhere. Cross-file helpers add a module
+  import. Every import Towel writes, a helper's and a typed run's `import
+  typing as _typing` alike, goes after each statement ahead of the module's
+  first definition that imports or can run code at import, so a script's
+  `print("loading")` above its imports and a `time.sleep = patch` below them
+  still run before what the new import loads. It goes after the docstring
+  when there is one, and never above a `#!` line, an encoding declaration
+  (line 1 or 2), a file-wide `# type: ignore` or the module's leading
+  comment block. A write that Python would read in another encoding than
+  the file's own is refused, and its proposal dropped. Static local import cycles are rejected
   (including cycles through a package's `__init__`, which `from . import
   name` runs), dynamic ones are not detected. An import under a
   `TYPE_CHECKING` guard, resolved as above, never runs and closes no cycle;
@@ -401,17 +415,27 @@ it from the wheel, and `shop/stats.py` was made to import it unconditionally
 of the wheel or the sdist, from which the wheel is usually built, is never a
 host for a module it keeps: hatch's `exclude = ["src/shop/_devtools.py"]`
 kept one module out of a package that ships, and the installed `shop.stats`
-could not import the helper hosted there. The declarations read, only to put
-a host in doubt and never to name a module, are hatch's `exclude`,
-`include`, `only-include` and `packages`; setuptools' `packages.find`
-`include` and `exclude` and an explicit `packages` list, in pyproject.toml
-or setup.cfg; MANIFEST.in's `exclude`, `recursive-exclude`, `global-exclude`
-and `prune`; Poetry's `exclude`, PDM's `excludes`, uv's `source-exclude` and
-`wheel-exclude`, flit's sdist `exclude` and scikit-build-core's excludes; and
-every `.gitignore` above a module. Each is read to leave out at least what
-the backend would, and an include that could put a file back is not read.
-What a setup.py, a build hook or a backend not listed leaves out is not
-known, and a module it leaves out can still host a helper. A candidate host
+could not import the helper hosted there, and so did Poetry's `packages =
+[{ include = "shop/[!_]*.py", from = "src" }]` and PDM's `includes` (round
+4). The declarations read, each in the distribution's own pyproject.toml or
+setup.cfg, only to put a host in doubt and never to name a module, are
+hatch's `exclude`, `include`, `only-include`, `packages` and
+`only-packages`, and its wheel's default of the package named after the
+project; setuptools' `packages.find` `where`, `include` and `exclude`, an
+explicit `packages` list, `package-dir` and `py-modules`; MANIFEST.in's
+`exclude`, `recursive-exclude`, `global-exclude` and `prune`; Poetry's
+`packages` (`include`, `from`, `format`), `include` and `exclude`, and its
+default package; PDM's `includes`, `excludes`, `source-includes` and
+`package-dir`, and its default of `package-dir`'s packages; uv's
+`module-name`, `module-root`, `source-include`, `source-exclude` and
+`wheel-exclude`; flit's module and its sdist `exclude`; scikit-build-core's
+`wheel.packages` and its excludes; and every `.gitignore` above a module.
+Each is read to leave out at least what the backend would, as the wheels
+each backend built of `tests/test_shipped_files_recorded.py`'s trees show,
+and what puts a file back (hatch's `force-include`, MANIFEST.in's `graft`)
+is not read. What a setup.py, a build hook, setuptools' discovery where
+nothing selects, or a backend not listed leaves out is not known, and a
+module it leaves out can still host a helper. A candidate host
 some borrower cannot import that way is never taken, and a pair none
 survives is declined (`unproven_import`).
 Names are read from every Python file under the project root, but not from a
@@ -512,12 +536,47 @@ import: an unconditional import, including one inside a module-level `if`,
 of anything outside the project, the standard library and the project's
 declared dependencies: PEP 621's `[project].dependencies`, Poetry's
 `[tool.poetry.dependencies]` less the optional ones an extra installs, and
-setup.cfg's `install_requires`; a setup.py is not run, so dependencies it
-alone declares are not known. An import inside `try` is taken as an
-optional dependency and requires nothing. A dependency declared under a
+setup.cfg's `install_requires`, each less any a marker limits
+(`pywin32; sys_platform == "win32"`, or Poetry's `markers`, `platform` or
+`python`); a setup.py is not run, so dependencies it alone declares are not
+known. The standard library counts only where its documentation places it
+(`known_platforms`, read from the Availability notes of CPython 3.11 to
+3.13): `msvcrt`, `winreg`, `os.startfile`, `ctypes.windll` and
+`signal.CTRL_C_EVENT` are Windows's alone, `fcntl`, `termios`, `os.fork` and
+`signal.SIGALRM` are missing on Windows, `tkinter` wherever Python lacks
+Tk, and a module a supported version removed, `distutils` or `cgi`, is
+missing there; a name below a module counts as the module (`curses.ascii`).
+Notes that leave out only WebAssembly and mobile platforms are not read,
+since the documentation says those mean a module "does not work or is not
+available" there, nor is availability stated only in prose, nor are
+undocumented private modules (`_winapi`). An import inside a `try` whose
+handlers catch `ImportError` is taken as an optional dependency and
+requires nothing; one in its handler, `else` or `finally`, or in a `try`
+that lets the error through, is required. A module the program imports only
+under a condition hosts a helper only for a borrower whose own import
+already loads it (`conditionally_imported_host`): every import of it sits
+under an `if` (a `sys.platform`, `os.name` or `platform.system()` test, or
+any other), in a `try`, a loop or a `with`, or in a function body, or in a
+module that is itself so imported, as shop's `__init__` imports
+`_winconsole` only under `sys.platform == "win32"`. One import at the top
+of any other module, a test's included, shows the module importable where
+that module is. The cost is that two modules gated alike share no helper
+unless one already imports the other. A dependency declared under a
 distribution name that differs from its import name (`PyYAML` for `yaml`) is
 not recognized, which refuses a host rather than accepting one; an import
 made by `importlib` or `__import__` is not seen at all.
+
+A distribution is released on its own, so a borrower that belongs to one
+borrows only from a host in the same distribution (`other_distribution`): in
+a monorepo, `beta` depending on `alpha` was made to import a helper from
+`alpha/a.py`, and the new beta installed against the released alpha raised
+`ImportError`. A module belongs to the nearest directory above it with a
+`setup.py`, a `setup.cfg` declaring `[metadata]` or `[options]`, or a
+`pyproject.toml` with a `[project]`, `[build-system]` or `[tool.poetry]`
+table; one in none, a test or a script beside the packages, keeps the rules
+below. On a monorepo-shaped fixture with helpers within each of two
+distributions, across them, and in a root test, only the one across them is
+declined.
 
 A distribution ships the packages its metadata names, not the repository, so
 a host is refused as well when its import would load a module of a
@@ -1537,9 +1596,12 @@ the proposals it built and did not apply, by reason:
   host closes a static import cycle. `import_time_effects`: a cross-file
   helper's host module, which the borrower's import does not already
   load, would run code at import (*Import-time behavior*: a module that
-  prints, registers or connects at import time); `new_import_requirement`:
-  it would require a package outside the project, the standard library and
-  the declared dependencies; `new_top_level_package`: it would load a
+  prints, registers or connects at import time); `new_import_requirement`: it would require a package outside the project,
+  the standard library every supported platform and Python has, and the
+  declared dependencies no marker limits; `conditionally_imported_host`: the
+  program imports the host, or a package it is in, only under a condition;
+  `other_distribution`: the borrower belongs to a distribution the host is
+  not in; `new_top_level_package`: it would load a
   top-level package of the project the borrower's import does not;
   `run_by_path_import`: the borrower runs as a program, and run by its path
   it could not resolve the import; `host_has_stub`: a type checker would

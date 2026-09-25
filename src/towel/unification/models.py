@@ -294,6 +294,7 @@ class RejectReason(StrEnum):
     CLASS_MACHINERY_MAY_TRANSFORM_METHODS = "class_machinery_may_transform_methods"
     CLOSURE_CROSSES_BLOCK_BOUNDARY = "closure_crosses_block_boundary"
     CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"
+    CONDITIONALLY_IMPORTED_HOST = "conditionally_imported_host"
     CREATED_OBJECT_ESCAPES = "created_object_escapes"
     CROSS_MODULE_GLOBAL_DECLARATION = "cross_module_global_declaration"
     # Counted with the decorator it names: decorator_may_transform_body[numba.njit].
@@ -321,6 +322,7 @@ class RejectReason(StrEnum):
     NONLOCAL_SAFETY_SKIP = "nonlocal_safety_skip"
     NOT_STRUCTURALLY_SIMILAR = "not_structurally_similar"
     ORPHANED_VARIABLES = "orphaned_variables"
+    OTHER_DISTRIBUTION = "other_distribution"
     PRIVATE_NAME_LEXICAL_CLASS = "private_name_lexical_class"
     REBOUND_EXTERNAL_BINDING = "rebound_external_binding"
     RELATIVE_IMPORT_ACROSS_PACKAGES = "relative_import_across_packages"
