@@ -234,8 +234,12 @@ actual arguments back into the helper body, alpha-normalizes both it and the
 original block (binders renamed to positional placeholders, i.e. compared up to
 alpha-equivalence [Church 1936; Barendregt 1984], annotations
 replaced by a placeholder because they are inert at runtime), and requires the
-two to be structurally identical. A proposal is offered only if this holds for
-**every** call site. This is the property that makes the transformation safe to
+two to be structurally identical. Alpha-equivalence is observational only
+where no read can find a renamed binder unbound, since `UnboundLocalError` and
+`NameError` carry the name; `observable_renamings` walks the block in
+evaluation order and declines a call site where one can, or where a `global`
+or `nonlocal` declaration names the binder. A proposal is offered only if this
+holds for **every** call site. This is the property that makes the transformation safe to
 apply after review: the helper, called as written, reduces to the exact code it
 replaced. A mismatch — from a subtle scoping or parameterization error — drops
 the proposal rather than emitting it.
@@ -323,8 +327,10 @@ a helper could change behavior even if the shapes match:
   or binds `__class__`, is declined here, since no helper would read the
   same receiver and cell. `super(C, obj)`, which names both, is an ordinary
   call.
-- **Binding discipline.** A block that deletes, rebinds, or `except ... as`
-  binds a name the caller keeps using; a moved `global`/`nonlocal`
+- **Binding discipline.** A block that deletes, rebinds (by any binding
+  construct: a `for` or `with` target, a capture, a nested `def`), or
+  `except ... as` binds a name the caller keeps using, or that reads a local
+  before binding it; a moved `global`/`nonlocal`
   declaration; a comprehension assignment expression that would bind in the
   wrong scope.
 - **Closures.** A nested function or lambda in the block that shares a rebound
