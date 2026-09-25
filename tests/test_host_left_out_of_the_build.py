@@ -125,20 +125,32 @@ def _left_out(root: Path, files: Mapping[str, str]) -> Mapping[str, FrozenSet[Ar
                 "pyproject.toml": '[tool.setuptools.packages.find]\nwhere = ["src"]\n'
                 'exclude = ["shop.devtools*"]\n'
             },
-            {"src/shop/devtools/__init__.py": _WHEEL, "src/shop/devtools/dump.py": _WHEEL},
+            {
+                "src/shop/devtools/__init__.py": _WHEEL,
+                "src/shop/devtools/dump.py": _WHEEL,
+                "tests/test_shop.py": _WHEEL,
+            },
         ),
         (
             {
                 "setup.cfg": "[options]\npackage_dir =\n    =src\npackages = find:\n"
                 "[options.packages.find]\nwhere = src\nexclude =\n    shop.devtools\n"
             },
-            {"src/shop/devtools/__init__.py": _WHEEL, "src/shop/devtools/dump.py": _WHEEL},
+            {
+                "src/shop/devtools/__init__.py": _WHEEL,
+                "src/shop/devtools/dump.py": _WHEEL,
+                "tests/test_shop.py": _WHEEL,
+            },
         ),
         (
             {
                 "pyproject.toml": '[tool.setuptools]\npackage-dir = {"" = "src"}\npackages = ["shop"]\n'
             },
-            {"src/shop/devtools/__init__.py": _WHEEL, "src/shop/devtools/dump.py": _WHEEL},
+            {
+                "src/shop/devtools/__init__.py": _WHEEL,
+                "src/shop/devtools/dump.py": _WHEEL,
+                "tests/test_shop.py": _WHEEL,
+            },
         ),
         (
             {
@@ -160,8 +172,9 @@ def _left_out(root: Path, files: Mapping[str, str]) -> Mapping[str, FrozenSet[Ar
             {"src/shop/_devtools.py": _BOTH},
         ),
         (
+            # pdm-backend ships src's packages by default, and its tests only in the sdist.
             {"pyproject.toml": '[tool.pdm.build]\nexcludes = ["**/_devtools.py"]\n'},
-            {"src/shop/_devtools.py": _BOTH},
+            {"src/shop/_devtools.py": _BOTH, "tests/test_shop.py": _WHEEL},
         ),
         (
             {"pyproject.toml": '[tool.uv.build-backend]\nwheel-exclude = ["_devtools.py"]\n'},

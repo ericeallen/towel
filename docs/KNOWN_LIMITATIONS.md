@@ -400,17 +400,27 @@ it from the wheel, and `shop/stats.py` was made to import it unconditionally
 of the wheel or the sdist, from which the wheel is usually built, is never a
 host for a module it keeps: hatch's `exclude = ["src/shop/_devtools.py"]`
 kept one module out of a package that ships, and the installed `shop.stats`
-could not import the helper hosted there. The declarations read, only to put
-a host in doubt and never to name a module, are hatch's `exclude`,
-`include`, `only-include` and `packages`; setuptools' `packages.find`
-`include` and `exclude` and an explicit `packages` list, in pyproject.toml
-or setup.cfg; MANIFEST.in's `exclude`, `recursive-exclude`, `global-exclude`
-and `prune`; Poetry's `exclude`, PDM's `excludes`, uv's `source-exclude` and
-`wheel-exclude`, flit's sdist `exclude` and scikit-build-core's excludes; and
-every `.gitignore` above a module. Each is read to leave out at least what
-the backend would, and an include that could put a file back is not read.
-What a setup.py, a build hook or a backend not listed leaves out is not
-known, and a module it leaves out can still host a helper. A candidate host
+could not import the helper hosted there, and so did Poetry's `packages =
+[{ include = "shop/[!_]*.py", from = "src" }]` and PDM's `includes` (round
+4). The declarations read, each in the distribution's own pyproject.toml or
+setup.cfg, only to put a host in doubt and never to name a module, are
+hatch's `exclude`, `include`, `only-include`, `packages` and
+`only-packages`, and its wheel's default of the package named after the
+project; setuptools' `packages.find` `where`, `include` and `exclude`, an
+explicit `packages` list, `package-dir` and `py-modules`; MANIFEST.in's
+`exclude`, `recursive-exclude`, `global-exclude` and `prune`; Poetry's
+`packages` (`include`, `from`, `format`), `include` and `exclude`, and its
+default package; PDM's `includes`, `excludes`, `source-includes` and
+`package-dir`, and its default of `package-dir`'s packages; uv's
+`module-name`, `module-root`, `source-include`, `source-exclude` and
+`wheel-exclude`; flit's module and its sdist `exclude`; scikit-build-core's
+`wheel.packages` and its excludes; and every `.gitignore` above a module.
+Each is read to leave out at least what the backend would, as the wheels
+each backend built of `tests/test_shipped_files_recorded.py`'s trees show,
+and what puts a file back (hatch's `force-include`, MANIFEST.in's `graft`)
+is not read. What a setup.py, a build hook, setuptools' discovery where
+nothing selects, or a backend not listed leaves out is not known, and a
+module it leaves out can still host a helper. A candidate host
 some borrower cannot import that way is never taken, and a pair none
 survives is declined (`unproven_import`).
 Names are read from every Python file under the project root, but not from a
