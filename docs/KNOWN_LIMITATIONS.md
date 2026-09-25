@@ -1065,7 +1065,9 @@ the code under it. Every write the builtins' question counts (above) counts
 here for a decorator's name, from anywhere in the project, tests included:
 an attribute store, `setattr` with that name or a computed one, a store into
 the module's `__dict__`, the module's own `globals()` before or after the
-definition, `mock.patch` and `monkeypatch.setattr`. An attribute store at the top level of its module, `mod.name = value`, adds its
+definition, `mock.patch` and `monkeypatch.setattr`, and also
+`importlib.reload` of the module (or of a module that cannot be told). An
+attribute store at the top level of its module, `mod.name = value`, adds its
 `value` as one more possibility, read there, so `functools.cache =
 functools.lru_cache(maxsize=None)` keeps `@functools.cache` known; any other
 write makes the name unknown. A library's name counts the writes into its

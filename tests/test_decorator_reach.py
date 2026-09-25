@@ -952,6 +952,17 @@ REBINDINGS: Tuple[Spelling, ...] = (
         None,
     ),
     _rebound(
+        "importlib.reload of its module",
+        "import importlib\nimport pkg.checks\nimportlib.reload(pkg.checks)\n",
+        "pkg.checks.checked",
+    ),
+    # The module may be any, the one the decorator is read in first.
+    _rebound(
+        "reload of a module not known",
+        "from importlib import reload\ndef again(module):\n    return reload(module)\n",
+        "checked",
+    ),
+    _rebound(
         "mock.patch of it in a test",
         "from unittest import mock\n@mock.patch('pkg.checks.checked')\n"
         "def test_it(checked):\n    pass\n",

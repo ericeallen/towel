@@ -55,8 +55,9 @@ outside the project does is not seen at all.
 
 The decorator analysis (``decorator_reach``) asks the same scan about a
 decorator's name, any name, so it reads every file; each write records the
-file making it, and an attribute store at that file's top level the value it
-assigns.
+file making it, an attribute store at that file's top level the value it
+assigns, and ``importlib.reload(mod)`` counts as a write (:data:`RELOADED`)
+that only that question reads.
 """
 
 from __future__ import annotations
@@ -80,13 +81,22 @@ ANY_NAME = "*"
 ANY_MODULE = "*"
 """The dotted name of a write into a module computed at run time: ``patch(prefix + ".open")``."""
 
+RELOADED = "*reloaded*"
+"""The name of a module run again: ``importlib.reload(mod)``.
+
+A reload binds again what the module's own statements bind, so it binds no
+builtin the module's text does not, and a question about those statements has
+read them already. It does choose when they run, which a question about the
+object a name holds as some code runs, such as a decorator's, cannot rule out.
+"""
+
 
 @dataclass(frozen=True)
 class NamespaceWrite:
     """A place in the project that may bind ``name`` in a module's namespace."""
 
     name: str
-    """The name written, or :data:`ANY_NAME`."""
+    """The name written, :data:`ANY_NAME`, or :data:`RELOADED`."""
     site: str
     """Where, as ``path:line`` below the project root."""
     writer: Optional[Path] = None
@@ -264,6 +274,8 @@ _READING_CALLEES = frozenset(
 )
 # Callees that take a dotted target to patch: ``mock.patch``, ``monkeypatch.setattr``.
 _PATCHING_CALLEES = frozenset({"patch", "setattr", "delattr"})
+# What runs a module again, however it is imported.
+_RELOADS = frozenset({"importlib.reload", "imp.reload"})
 
 
 class _References:
@@ -556,6 +568,9 @@ class _WriteScanner(ast.NodeVisitor):
             self._record(namespaces, [ANY_NAME], node)
         if self._own_namespace(node) and self._handed_on(node):
             self._record({self._path}, [ANY_NAME], node)
+        if first is not None and _RELOADS & self._references.of(node.func):
+            # A module not known may be any module.
+            self._record(self._references.of(first) or {ANY_MODULE}, [RELOADED], node)
         self.generic_visit(node)
 
     def _dotted_target(self, node: ast.Call, callee: Optional[str], target: str) -> None:
@@ -830,7 +845,7 @@ def _exports(
     scanner = _WriteScanner(module, tree, str(module))
     scanner.visit(tree)
     writes = [*scanner.by_path.get(module, ()), *(at_run_time.into(module) if at_run_time else ())]
-    written = {write.name for write in writes}
+    written = {write.name for write in writes if write.name != RELOADED}
     if ANY_NAME in written:
         return None
     names = {name for name in table.bindings if not name.startswith("_")}
