@@ -1281,7 +1281,13 @@ measure is exact and changes no proposal.
   iteration can cost more than a small iteration saves. Each worker runs a
   watchdog thread that ends it within a second of its parent's death, so a
   killed run leaves nothing behind; the worker count is also capped by the
-  parent's resident size against physical memory. `TOWEL_WORKERS=1` disables
+  parent's resident size against physical memory. Workers fork only while no
+  other thread runs, because a child inherits every lock as it stood and would
+  wait for ever on one another thread held: tqdm's monitor, the progress
+  heartbeat and each warm pyright session's reader are ended for the fork and
+  started again after it, and any other live thread, or one of these that does
+  not end within two seconds, keeps evaluation in the process, which the run
+  says once. `TOWEL_WORKERS=1` disables
   forking; any other value caps the count. See
   [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#resources-and-platform) for
   measured memory and time.

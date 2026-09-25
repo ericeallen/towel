@@ -40,6 +40,7 @@ evidence that code is valid.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import IntEnum
 import json
@@ -53,6 +54,7 @@ import subprocess
 import threading
 import time
 import tomllib
+import weakref
 from typing import Dict, Iterator, List, Literal, Mapping, Optional, Sequence, Set, Tuple, TypedDict
 
 from .checker_project import UnusableConfiguration, _pyright_config_inputs, _read_json_config
@@ -365,6 +367,41 @@ class _Marker:
         )
 
 
+_OPEN_SESSIONS: "weakref.WeakSet[PyrightSession]" = weakref.WeakSet()
+"""Every session not yet closed, for :func:`readers_stopped`."""
+
+_STOP_CHECK_SECONDS = 0.05
+"""How often a reader waiting for the server looks whether it has been asked to end."""
+
+
+@contextmanager
+def readers_stopped(timeout: float) -> Iterator[None]:
+    """End every open session's reader thread for the block, and start each again after.
+
+    For a fork: a child keeps only the thread that forked it and every lock as
+    it stood, so a fork made while a reader runs could leave the child a lock
+    no thread of its own will ever release. A reader ends only between two
+    messages, so none is split between it and the next; one still mid-message
+    after ``timeout`` seconds is left running, still to be seen among the
+    process's threads. The server waits meanwhile, as it does whenever its
+    client is slow, and nothing it says is lost: it stays in the pipe.
+    """
+    asked = [
+        (session, reader)
+        for session in list(_OPEN_SESSIONS)
+        for reader in (session._ask_reader_to_end(),)
+        if reader is not None
+    ]
+    deadline = time.monotonic() + timeout
+    for _, reader in asked:
+        reader.join(max(0.0, deadline - time.monotonic()))
+    try:
+        yield
+    finally:
+        for session, _ in asked:
+            session._resume_reading()
+
+
 class PyrightSession:
     """A running language server over one project root.
 
@@ -411,8 +448,14 @@ class PyrightSession:
         self._marker_answered = False
         self._reading = False
         self._closed = False
-        self._reader = threading.Thread(target=self._read_loop, daemon=True)
+        # A request that the reader end at its next message boundary, and
+        # whether the reader took it (see ``_server_speaks_before_a_stop``).
+        self._stopping = threading.Lock()
+        self._stop_asked = False
+        self._stop_taken = False
+        self._reader = self._new_reader()
         self._reader.start()
+        _OPEN_SESSIONS.add(self)
         try:
             self._initialize()
         except BaseException:
@@ -491,8 +534,21 @@ class PyrightSession:
             return None
         return message if isinstance(message, dict) else None
 
+    def _new_reader(self) -> threading.Thread:
+        return threading.Thread(target=self._read_loop, name="towel-pyright-reader", daemon=True)
+
     def _read_loop(self) -> None:
-        while True:
+        try:
+            self._read_messages()
+        except (OSError, ValueError):
+            # ``close`` shut the pipe between two of this reader's reads, which
+            # it waits on between messages; that ends the stream as surely as
+            # the server's exit does.
+            if not self._closed:
+                raise
+
+    def _read_messages(self) -> None:
+        while self._server_speaks_before_a_stop():
             message = self._read_message()
             if message is None:
                 self._events.put(("", None))  # end of stream
@@ -508,6 +564,45 @@ class PyrightSession:
                 self._events.put((method, message.get("params")))
             # Only now is the message out of this thread's hands; see ``_is_silent``.
             self._reading = False
+
+    def _server_speaks_before_a_stop(self) -> bool:
+        """Wait for the server's next message; False when this reader is asked to end first.
+
+        A request to end is either taken here, and the reader ends, or
+        withdrawn by ``_resume_reading`` before the reader saw it; the lock
+        makes it exactly one of the two.
+        """
+        stream = self._process.stdout
+        if stream is None:
+            return True  # The read that follows reports the end of the stream.
+        while True:
+            with self._stopping:
+                if self._stop_asked:
+                    self._stop_asked, self._stop_taken = False, True
+                    return False
+            ready, _, _ = select.select([stream], [], [], _STOP_CHECK_SECONDS)
+            if ready:
+                return True
+
+    def _ask_reader_to_end(self) -> Optional[threading.Thread]:
+        """Ask the reader to end at its next message boundary; the thread, for the caller to join."""
+        if self._closed or not self._reader.is_alive():
+            return None
+        with self._stopping:
+            self._stop_asked, self._stop_taken = True, False
+        return self._reader
+
+    def _resume_reading(self) -> None:
+        """After ``_ask_reader_to_end``: a new reader if the old one ended, else the old one carries on."""
+        with self._stopping:
+            taken = self._stop_taken
+            self._stop_asked = self._stop_taken = False
+        if taken:
+            # The reader took the request, so it has ended or is about to.
+            self._reader.join()
+            if not self._closed:
+                self._reader = self._new_reader()
+                self._reader.start()
 
     def _answer(self, message: Mapping[str, object], method: str) -> None:
         """Reply to a server-to-client request.
@@ -742,6 +837,7 @@ class PyrightSession:
         if self._closed:
             return
         self._closed = True
+        _OPEN_SESSIONS.discard(self)
         try:
             self._request("shutdown", None, 10.0)
             self._notify("exit", None)

@@ -177,7 +177,6 @@ def _declined(engine: UnificationRefactorEngine, path: Path) -> Dict[str, int]:
 @pytest.mark.skipif(
     "fork" not in multiprocessing.get_all_start_methods(), reason="needs the fork start method"
 )
-@pytest.mark.filterwarnings("ignore:This process .* is multi-threaded:DeprecationWarning")
 def test_forked_evaluation_counts_what_serial_evaluation_counts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

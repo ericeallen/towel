@@ -30,15 +30,9 @@ from towel.unification.models import RefactoringProposal
 from towel.unification.parallel import ParallelEvaluation
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-pytestmark = [
-    pytest.mark.skipif(
-        "fork" not in multiprocessing.get_all_start_methods(), reason="needs the fork start method"
-    ),
-    # CPython 3.12 warns when a process with more than one thread forks, and
-    # the pytest process carries helper threads. The engine forks the same
-    # way in production; the warning is the test host's, not the code's.
-    pytest.mark.filterwarnings("ignore:This process .* is multi-threaded:DeprecationWarning"),
-]
+pytestmark = pytest.mark.skipif(
+    "fork" not in multiprocessing.get_all_start_methods(), reason="needs the fork start method"
+)
 
 # Two block shapes, so the run yields two clustered proposals rather than one.
 SHAPES = (
