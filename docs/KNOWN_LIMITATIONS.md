@@ -143,8 +143,20 @@ describe belong to that version.
   object reached other than by an import, `importlib.import_module`,
   `getattr` with a spelled name or `sys.modules`, such as a fixture's
   return value. A cross-module helper then reads that builtin in its host's
-  namespace, and the patch reaches only the code the host itself runs. A
-  module `__getattr__` changes no bare lookup and is not consulted. In any
+  namespace, and the patch reaches only the code the host itself runs. Nor
+  does this check read a star import as it may run: it takes a provider's
+  literal `__all__` as final, and counts only the provider's own writes.
+  A provider imported part way through an import cycle, before it binds
+  `__all__`, exports every public name bound so far, and a write of the name
+  into the provider from another module reaches every star importer. The
+  round-4 probe `builtin-cycle-probe` shows the first: `pkg/common.py` binds
+  `len`, imports `pkg/b.py`, whose `from .common import *` runs then, and
+  only afterwards binds `__all__ = ["scale"]`; under `--cross-module` the
+  shared helper reads the builtin where `b` read `common.len`, and the
+  program's output changes from `6 110` to `6 6`. The decorator check reads
+  star imports as they may run (*Decorators that compile or instrument a
+  body* below). A module `__getattr__` changes no bare lookup and is not
+  consulted. In any
   pair, same-module or not, no generated call hands its helper a builtin:
   an argument, or what a lambda argument returns, that is a name its site
   reads from the builtins, bare or in a literal tuple, list, set or dict,
