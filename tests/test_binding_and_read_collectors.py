@@ -35,6 +35,7 @@ from towel.unification.instantiation import observable_renamings
 from towel.unification.models import RejectReason
 from towel.unification.orphan_detector import orphaned_variables
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.semantic_safety import unbinds_external_name
 from towel.unification.statement_facts import bindings_of, loaded_names
 from towel.unification.visitors import NameCollector
 
@@ -54,12 +55,31 @@ def _classified(source: str) -> List[Tuple[str, bool]]:
 
 
 def _rebinds(source: str, start: int, end: int) -> Set[str]:
-    """The names ``has_reassignments_without_bindings`` flags for ``body[start:end]``."""
+    """The names bound before ``body[start:end]`` that the block's guards decline it for rebinding.
+
+    ``has_reassignments_without_bindings`` flags a rebinding; an ``except
+    ... as`` rebinding also deletes the name, which ``unbinds_external_name``
+    declines against the names the engine finds bound before the block.
+    """
     function = _function(source)
-    unsafe, names = has_reassignments_without_bindings(
-        function, function.body[start:end], analyze_assignments(function)
-    )
+    block = function.body[start:end]
+    reassignments = analyze_assignments(function)
+    unsafe, names = has_reassignments_without_bindings(function, block, reassignments)
     assert unsafe == bool(names)
+    engine = UnificationRefactorEngine()
+    span = engine._block_line_span(block)
+    assert span is not None
+    before = engine._compute_block_binding_snapshot(
+        function, block, span, reassignments
+    ).bound_before_block
+    if unbinds_external_name(function, block, before):
+        handlers = {
+            node.name
+            for statement in block
+            for node in ast.walk(statement)
+            if isinstance(node, ast.ExceptHandler) and node.name
+        }
+        names = names | (handlers & before)
     return names
 
 
@@ -104,6 +124,32 @@ def test_every_binding_construct_rebinding_a_name_bound_before_the_block_is_flag
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="type aliases are Python 3.12 syntax")
 def test_a_type_alias_rebinding_a_name_bound_before_the_block_is_flagged() -> None:
     assert "i" in _rebinds("def f(xs):\n    i = -1\n    type i = int\n    return i\n", 1, 2)
+
+
+def test_an_except_name_in_a_nested_block_is_not_bound_before_it() -> None:
+    """The clause deletes its name as it ends: it binds nothing a later block could lose."""
+    source = """
+    def f(xs):
+        if xs:
+            try:
+                r = 1 / xs[0]
+            except ZeroDivisionError as error:
+                print(error)
+            print(r)
+        return xs
+    """
+    function = _function(source)
+    outer = function.body[0]
+    assert isinstance(outer, ast.If)
+    engine = UnificationRefactorEngine()
+    block = outer.body[:1]
+    span = engine._block_line_span(block)
+    assert span is not None
+    snapshot = engine._compute_block_binding_snapshot(
+        function, block, span, analyze_assignments(function)
+    )
+    assert "error" not in snapshot.bound_before_block
+    assert not unbinds_external_name(function, block, snapshot.bound_before_block)
 
 
 def test_the_first_binding_of_a_name_in_the_block_is_not_flagged() -> None:

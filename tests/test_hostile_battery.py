@@ -178,6 +178,9 @@ TRANSFORMED = {
     # A binder that may be read unbound keeps its spelling: the deletion and
     # the handler stay with each site, and only what follows them moves.
     "r7bi_renamed_binder_named_by_unbound_error",
+    # An except clause deletes its name as it ends: a try nested in an if
+    # leaves nothing bound for the block to lose, and moves.
+    "r7bi_except_name_in_nested_block",
 }
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in

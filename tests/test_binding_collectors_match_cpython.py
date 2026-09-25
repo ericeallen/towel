@@ -661,13 +661,17 @@ def test_a_block_that_rebinds_what_cpython_stored_before_it_is_unsafe(index: int
     Whatever construct stores it (a ``for`` target, a capture, a ``def``):
     the helper would bind its own local, and a read of the name after a
     rebinding that did not happen would not see the caller's binding.
+    Handler names are left out: an ``except ... as`` clause deletes its name
+    as it ends, so it leaves nothing bound before a later block, and one
+    that rebinds a name bound before deletes that binding, which
+    ``unbinds_external_name`` declines (``test_binding_and_read_collectors``).
     """
     for case in _CASES[index : index + 50]:
         body = case.function.body
         stores = [
             (line, name)
             for line, name in _stores_by_line(case.code)
-            if name not in _inlined_comprehension_names()
+            if name not in _inlined_comprehension_names() and name not in HANDLER_NAMES
         ]
         classification = analyze_assignments(case.function)
         declared = {

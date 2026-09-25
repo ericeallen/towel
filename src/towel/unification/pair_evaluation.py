@@ -54,7 +54,11 @@ from ..project_layout import find_project_root
 from ..source_text import read_source
 from .definite_assignment import definitely_bound_after
 from .statement_facts import loaded_names
-from .assignment_analyzer import has_reassignments_without_bindings, scope_declarations
+from .assignment_analyzer import (
+    has_reassignments_without_bindings,
+    own_scope_bindings,
+    scope_declarations,
+)
 from .block_analysis import align_return_variables
 from .block_comments import (
     CommentConflict,
@@ -310,7 +314,7 @@ def _call_site_reads(call: ast.stmt) -> Set[str]:
 
 def _read_before_own_binding(
     function: FunctionNode,
-    snapshot: BlockBindingSnapshot,
+    block: Sequence[ast.stmt],
     free_variables: AbstractSet[str],
     available: AbstractSet[str],
 ) -> Set[str]:
@@ -328,7 +332,7 @@ def _read_before_own_binding(
     function declares ``global`` or ``nonlocal`` is not its local and reads
     the same from anywhere.
     """
-    bound_in_block = snapshot.bound_in_block | snapshot.reassigned_in_block
+    bound_in_block = {binding.name for binding in own_scope_bindings(block)}
     return (set(free_variables) & bound_in_block) - scope_declarations(function) - set(available)
 
 
@@ -995,24 +999,24 @@ class PairEvaluation(
             available_argument_names(ctx.func1, pair.block1_nodes, ctx.scope_analyzer),
             available_argument_names(ctx.func2, pair.block2_nodes, ctx.scope_analyzer2),
         )
-        for reason, func, snapshot, entering, resolvable in (
+        for reason, func, nodes, entering, resolvable in (
             (
                 RejectReason.INCOMPLETE_LIFETIME_BLOCK1,
                 ctx.func1,
-                analysis.snapshot1,
+                pair.block1_nodes,
                 free_vars1,
                 available[0],
             ),
             (
                 RejectReason.INCOMPLETE_LIFETIME_BLOCK2,
                 ctx.func2,
-                analysis.snapshot2,
+                pair.block2_nodes,
                 free_vars2,
                 available[1],
             ),
         ):
             # Read before its lifetime begins, as a name bound after the block is.
-            read_early = _read_before_own_binding(func, snapshot, entering, resolvable)
+            read_early = _read_before_own_binding(func, nodes, entering, resolvable)
             if read_early:
                 self._debug_reject(reason, pair, str(read_early))
                 return None

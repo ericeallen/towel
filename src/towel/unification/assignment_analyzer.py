@@ -60,12 +60,15 @@ class Binding:
     capture pattern, or a ``def``/``class`` statement); the node itself is
     not held, so a memoized list of bindings cannot keep its statement
     alive. ``reads_first`` marks an augmented assignment, which reads the
-    name before it rebinds it and so always needs an earlier binding.
+    name before it rebinds it and so always needs an earlier binding;
+    ``deleted_on_exit`` an ``except ... as`` name, which the clause deletes
+    as it ends.
     """
 
     node_id: int
     name: str
     reads_first: bool = False
+    deleted_on_exit: bool = False
 
 
 class _OwnScopeBindings(OwnScopeVisitor):
@@ -74,8 +77,10 @@ class _OwnScopeBindings(OwnScopeVisitor):
     def __init__(self) -> None:
         self.found: List[Binding] = []
 
-    def _bind(self, node: ast.AST, name: str, *, reads_first: bool = False) -> None:
-        self.found.append(Binding(id(node), name, reads_first))
+    def _bind(
+        self, node: ast.AST, name: str, *, reads_first: bool = False, deleted_on_exit: bool = False
+    ) -> None:
+        self.found.append(Binding(id(node), name, reads_first, deleted_on_exit))
 
     def visit_Name(self, node: ast.Name) -> None:
         if isinstance(node.ctx, ast.Store):
@@ -129,7 +134,7 @@ class _OwnScopeBindings(OwnScopeVisitor):
         if node.type is not None:
             self.visit(node.type)
         if node.name:
-            self._bind(node, node.name)
+            self._bind(node, node.name, deleted_on_exit=True)
         visit_each(self, node.body)
 
     def visit_MatchAs(self, node: ast.MatchAs) -> None:
@@ -298,7 +303,12 @@ def _collect_bindings_and_reassignments(
     node: ast.AST, reassignments: Dict[int, bool], bound_vars: Set[str], reassigned_vars: Set[str]
 ) -> None:
     """
-    Add the variables ``node`` binds in its own scope to the caller's sets.
+    Add the variables ``node`` binds in its own scope, and keeps bound, to the caller's sets.
+
+    An ``except ... as`` name is left out: the clause deletes it as it ends,
+    so it is bound neither after the statement nor, by it, before a later
+    block. Rebinding a name bound before the block that way deletes that
+    binding, which ``unbinds_external_name`` declines.
 
     Args:
         node: AST node to analyze
@@ -308,6 +318,8 @@ def _collect_bindings_and_reassignments(
             assignments always count as reassignments)
     """
     for binding in own_scope_bindings([node]):
+        if binding.deleted_on_exit:
+            continue
         reassigned = binding.reads_first or reassignments.get(binding.node_id, False)
         (reassigned_vars if reassigned else bound_vars).add(binding.name)
 
