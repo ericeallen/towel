@@ -229,7 +229,11 @@ it starts, with the remedy for its kind, and refuses when one leaves a name
 of the package it refactors in doubt: an ambiguous name, a file reachable
 under two names, a relative import that climbs out of its package, or a
 top-level name found only inside a package the program also imports as one,
-as `pkg/c.py`'s `import helpers` finds only `pkg/helpers.py`.
+as `pkg/c.py`'s `import helpers` finds only `pkg/helpers.py`. The report
+names the import that treats it as top-level. Only an import that attests
+can raise any of these: one inside `try`/`except ImportError`, under
+`TYPE_CHECKING`, or in a file that changes `sys.path` (a setup.py that
+appends its package to `sys.path` to read its own version) raises none.
 
 An import of a module the tree lacks refuses nothing, wherever it lies,
 however it is spelled: `from .gone import x`, `from . import gone` or

@@ -439,7 +439,11 @@ project's, so run it in the project's own environment. A top-level name
 found only as a module inside a package the program imports as one, as
 `pkg/c.py`'s `import helpers_top` finds only `pkg/helpers_top.py`, is in
 doubt too, and the file making the import runs as a script, so it is given
-no new import (the third audit's P1-6). Before it writes anything, a
+no new import (the third audit's P1-6). Only an import that attests does
+any of this: one inside `try`/`except ImportError`, under `TYPE_CHECKING`,
+or in a file that changes `sys.path`, as graphene's setup.py imports
+`pyutils.version` after appending the package to `sys.path`, neither
+locates a name nor puts one in doubt. Before it writes anything, a
 `--cross-module` run of `dry` or `preview` names every such problem with the
 remedy for its kind, and refuses the run when one leaves in doubt a
 top-level name located at or around the target, or lies under the target and

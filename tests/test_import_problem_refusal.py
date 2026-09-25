@@ -42,7 +42,7 @@ import pytest
 
 import towel
 from towel.cli import _problems_involving
-from towel.import_model import build_import_model
+from towel.import_model import NameStatus, build_import_model
 
 _BLOCK = """
 def {name}(values):
@@ -532,3 +532,113 @@ def test_a_problem_elsewhere_in_the_package_involves_a_subpackage_when_it_leaves
     assert len(model.problems) == 1
     assert _problems_involving(model, target) == []
     assert [problem.names_in_doubt for problem in model.problems] == [frozenset()]
+
+
+# -- Imports that attest nothing put no name in doubt (round-4 audit) -----------------
+
+_GRAPHENE_SETUP = """
+import sys
+
+from setuptools import setup
+
+path_copy = sys.path[:]
+sys.path.append("zzshop")
+try:
+    from pyutils.version import get_version
+
+    version = get_version((1, 0))
+except Exception:
+    version = "1.0"
+sys.path[:] = path_copy
+
+setup(name="zzshop", version=version, packages=["zzshop", "zzshop.pyutils"])
+"""
+
+_SHOP = {
+    "zzshop/__init__.py": "",
+    "zzshop/pyutils/__init__.py": "",
+    "zzshop/pyutils/version.py": "def get_version(parts):\n    return '.'.join(map(str, parts))\n",
+    "zzshop/a.py": _BLOCK.format(name="fa", tag="a"),
+    "zzshop/b.py": "from . import a\n" + _BLOCK.format(name="fb", tag="b"),
+}
+_SHOP_PROGRAM = (
+    "import zzshop.a, zzshop.b\nprint(zzshop.a.fa([0, 1, 2, 3]), zzshop.b.fb([3, -1]))\n"
+)
+
+
+def test_a_guarded_import_in_a_setup_py_that_changes_sys_path_refuses_nothing(
+    tmp_path: Path,
+) -> None:
+    """graphene's setup.py once refused every ``--cross-module`` run on graphene (round-4 P2-3).
+
+    It appends the package to ``sys.path`` and imports ``pyutils.version``
+    inside ``try``: an import that attests nothing, so it cannot say where
+    ``pyutils`` lives, nor put the name in doubt; and ``--exclude``, the
+    remedy the refusal named, cannot reach a file at the project root.
+    """
+    root = _write(tmp_path / "project", {"setup.py": _GRAPHENE_SETUP, **_SHOP})
+    ran = _refactored_alike(
+        root, ["."], _SHOP_PROGRAM, lambda: _towel(root, "dry", "--cross-module", target="zzshop")
+    )
+    assert "pyutils" not in ran.stderr, ran.stderr
+    assert "from .a import __extracted_func" in (root / "zzshop/b.py").read_text()
+
+
+@pytest.mark.parametrize(
+    "importer",
+    [
+        "try:\n    from pyutils.version import get_version\nexcept ImportError:\n    pass\n",
+        "import sys\nsys.path.append('zzshop')\nfrom pyutils.version import get_version\n",
+        "if TYPE_CHECKING:\n    from pyutils.version import get_version\n",
+    ],
+    ids=["guarded", "changes-sys-path", "type-only"],
+)
+def test_an_import_that_attests_nothing_leaves_every_name_trusted(
+    tmp_path: Path, importer: str
+) -> None:
+    root = _write(
+        tmp_path / "project",
+        {
+            "pyproject.toml": _SETUPTOOLS.format(name="zzshop"),
+            **_SHOP,
+            "tools/version_of.py": "from typing import TYPE_CHECKING\n" + importer,
+            # The same attests nothing about a name the tree holds twice.
+            "tools/helpers_of.py": "try:\n    import helpers\nexcept ImportError:\n    pass\n",
+            "tests/unit/helpers.py": "",
+            "tests/integration/helpers.py": "",
+        },
+    )
+    model = build_import_model(root)
+    assert model.problems == ()
+    assert model.names["pyutils"].status is NameStatus.EXTERNAL
+    assert model.spelling(model.root / "zzshop/b.py", model.root / "zzshop/a.py") is not None
+
+
+def test_a_top_level_import_of_a_module_inside_the_package_still_refuses_and_its_remedy_clears_it(
+    tmp_path: Path,
+) -> None:
+    """Where the import attests, the file under two names is real, and the named remedy works."""
+    root = _write(
+        tmp_path / "project",
+        {
+            "pyproject.toml": _SETUPTOOLS.format(name="zzshop"),
+            **_SHOP,
+            "tools/version_of.py": "from pyutils.version import get_version\n",
+        },
+    )
+    before = _sources(root)
+    refused = _towel(root, "dry", "--cross-module", target="zzshop")
+    assert refused.returncode == 1, refused.stdout + refused.stderr
+    assert (
+        "pyutils is imported as a top-level name, and its only location zzshop/pyutils is"
+        " inside zzshop, which the program also imports as a package"
+        " (tools/version_of.py:1: from pyutils.version import get_version)"
+    ) in refused.stderr, refused.stderr
+    assert "--exclude <directory name>" in refused.stderr
+    assert _sources(root) == before
+    _refactored_alike(
+        root,
+        ["."],
+        _SHOP_PROGRAM,
+        lambda: _towel(root, "dry", "--cross-module", "--exclude", "tools", target="zzshop"),
+    )

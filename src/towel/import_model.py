@@ -78,7 +78,8 @@ end, and are refined where they do; each refinement is argued where it is made:
   one blocks the modules below it only for importers not already imported
   through it (:meth:`ImportModel._blocked_provider`).
 - An import attests a name only when it runs, runs unguarded, and runs where
-  ``sys.path`` is not being changed (:attr:`ImportSite.attests`).
+  ``sys.path`` is not being changed (:attr:`ImportSite.attests`), and only
+  such an import locates a name or puts one in doubt (:func:`_places`).
 - A new import may enter a directory only where the importer's context or the
   provider's own package already imports from it, the owner's rule for
   top-level packages applied at every level, because part of a package may
@@ -134,7 +135,7 @@ import os
 import sys
 import sysconfig
 import warnings
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from keyword import iskeyword
 from pathlib import Path
 from typing import (
@@ -451,6 +452,8 @@ class TopLevelInsidePackage:
     name: str
     location: Path
     package: Path
+    site: Optional[ImportSite] = field(default=None, compare=False)
+    """The import naming it top-level, which ``--exclude`` of its directory, or a fix, removes."""
 
     @property
     def names_in_doubt(self) -> FrozenSet[str]:
@@ -465,10 +468,13 @@ class TopLevelInsidePackage:
         return (self.location,)
 
     def describe(self, root: Path) -> str:
+        importing = (
+            "" if self.site is None else f" ({self.site.where(root)}: {self.site.statement()})"
+        )
         return (
             f"{self.name} is imported as a top-level name, and its only location"
             f" {_shown(self.location, root)} is inside {_shown(self.package, root)},"
-            " which the program also imports as a package"
+            f" which the program also imports as a package{importing}"
         )
 
 
@@ -1634,19 +1640,26 @@ def build_import_model(
         top = site.top_level
         if top is not None and top not in _NOT_PROJECT_MODULES:
             absolute.setdefault(top, []).append(site)
+    # Only an import that attests may locate a name or put one in doubt.
+    placing = {
+        name: [site for site in found if _places(site, modules)] for name, found in absolute.items()
+    }
+    placed = frozenset(name for name, found in placing.items() if found)
     listings = _Listings(modules)
     entries = _top_level_entries(tree)
     strict = {name: entries.get(name, ()) for name in absolute}
-    used_strictly = _used_packages(tree, sites, strict)
-    relaxed, inside_used = _relaxed_candidates(tree, used_strictly, absolute, strict, listings)
+    used_strictly = _used_packages(
+        tree, [site for site in sites if site.level or _places(site, modules)], strict
+    )
+    relaxed, inside_used = _relaxed_candidates(tree, used_strictly, placing, strict, listings)
     found = {name: strict[name] or relaxed.get(name, ()) for name in absolute}
     classified = {
-        name: _classify(name, found[name], absolute[name], tree, listings, probe, project)
+        name: _classify(name, found[name], placing[name], tree, listings, probe, project)
         for name in absolute
     }
     requirements = tuple(declared_requirements(project) if required is None else required)
     classified, modules_inside, scripts = _modules_beside_their_importers(
-        classified, absolute, tree, used_strictly, requirements, lambda name: probe(name, project)
+        classified, placing, tree, used_strictly, requirements, lambda name: probe(name, project)
     )
     inside_used = {**inside_used, **modules_inside}
     names, unresolved = _checked(dict(sorted(classified.items())), absolute, listings)
@@ -1661,15 +1674,15 @@ def build_import_model(
     # the name turned out to be: the bound only ever withholds a relative import.
     bounds = frozenset(location for locations in found.values() for location in locations)
     package_of = {path: _package_of(path, tree, used, bounds) for path in tree.modules}
-    problems = _problems(tree, modules, names, unresolved, inside_used, listings)
+    problems = _problems(tree, modules, names, placed, unresolved, inside_used, listings)
     flagged_names, flagged_files = _flags(problems)
     flagged_files |= scripts
     names = {name: replace(info, flagged=name in flagged_names) for name, info in names.items()}
     trusted = {info.candidates[0]: name for name, info in names.items() if info.trusted}
     blocked = frozenset(
         location
-        for info in names.values()
-        if info.status is NameStatus.AMBIGUOUS or info.flagged
+        for name, info in names.items()
+        if (info.status is NameStatus.AMBIGUOUS and name in placed) or info.flagged
         for location in info.candidates
     )
     contexts = {path: package_of[path] or path for path in tree.modules}
@@ -1767,15 +1780,17 @@ def _relaxed_candidates(
     absolute: Mapping[str, Sequence[ImportSite]],
     strict: Mapping[str, Tuple[Path, ...]],
     listings: _Listings,
-) -> Tuple[Dict[str, Tuple[Path, ...]], Dict[str, Tuple[Path, Path]]]:
+) -> Tuple[Dict[str, Tuple[Path, ...]], Dict[str, _InsidePackage]]:
     """Locations a stray ``__init__.py`` hid, for the names that have no other candidate.
 
     A child of a top-level package counts only where some import of its
-    name names a module the child holds: ``from alpha.a import f`` for
-    ``src/alpha/a.py``. A bare ``import toml`` beside a package's own
-    ``toml.py`` is no evidence at all. Under a package the program does use
+    name that places it (:func:`_places`) names a module the child holds:
+    ``from alpha.a import f`` for ``src/alpha/a.py``. A bare ``import toml``
+    beside a package's own ``toml.py`` is no evidence at all, and nor is
+    graphene's setup.py importing ``pyutils.version`` inside ``try`` once it
+    has put ``graphene`` on ``sys.path``. Under a package the program does use
     as a package, the child is also that package's submodule, and the second
-    mapping records the conflict.
+    mapping records the conflict, with the import that names the child.
     """
     tops = sorted(
         directory
@@ -1783,16 +1798,21 @@ def _relaxed_candidates(
         if directory == tree.root or directory.parent not in tree.packages
     )
     found: Dict[str, List[Path]] = {}
-    inside_used: Dict[str, Tuple[Path, Path]] = {}
+    inside_used: Dict[str, _InsidePackage] = {}
     for name, sites in absolute.items():
         if strict[name] or not _is_identifier(name):
             continue
         for top in tops:
             child = top / name
-            if child in tree.holding_modules and _names_a_module_of(sites, child, listings):
+            if child not in tree.holding_modules:
+                continue
+            naming = next(
+                (site for site in sites if listings.submodules(child, site).resolved), None
+            )
+            if naming is not None:
                 found.setdefault(name, []).append(child)
                 if top in used:
-                    inside_used.setdefault(name, (child, top))
+                    inside_used.setdefault(name, _InsidePackage(child, top, naming))
     return {name: tuple(paths) for name, paths in found.items()}, inside_used
 
 
@@ -1803,7 +1823,7 @@ def _modules_beside_their_importers(
     used: Set[Path],
     required: Sequence[Requirement],
     outside: Callable[[str], Optional[OutsideProvider]],
-) -> Tuple[Dict[str, TopLevelName], Dict[str, Tuple[Path, Path]], FrozenSet[Path]]:
+) -> Tuple[Dict[str, TopLevelName], Dict[str, _InsidePackage], FrozenSet[Path]]:
     """Names nothing else provides that a file in a package imports from a module beside it.
 
     ``pkg/c.py`` imports ``helpers_top``, and only ``pkg/helpers_top.py`` is
@@ -1814,7 +1834,7 @@ def _modules_beside_their_importers(
     the module they import, the third result, run as top-level modules,
     where a relative import fails: they are never a provider and are given
     no new import. Only an import that
-    attests (:attr:`ImportSite.attests`), from another file of the module's
+    places its name (:func:`_places`), from another file of the module's
     own directory, is such evidence. A module importing its own name
     (``tqdm/keras.py``'s ``import keras``), or a script elsewhere importing a
     library named like a package's module (mistune's benchmark importing
@@ -1824,7 +1844,7 @@ def _modules_beside_their_importers(
     """
     requiring = frozenset(requirement.name for requirement in required)
     placed: Dict[str, TopLevelName] = {}
-    inside: Dict[str, Tuple[Path, Path]] = {}
+    inside: Dict[str, _InsidePackage] = {}
     scripts: Set[Path] = set()
     modules = frozenset(tree.modules)
     for name, info in names.items():
@@ -1835,11 +1855,11 @@ def _modules_beside_their_importers(
             or not _is_identifier(name)
         ):
             continue
-        importers: Dict[Path, Set[Path]] = {}
+        importers: Dict[Path, Dict[Path, ImportSite]] = {}
         for site in absolute[name]:
             sibling = site.file.parent / f"{name}.py"
             if site.attests and sibling in modules and sibling != site.file:
-                importers.setdefault(sibling, set()).add(site.file)
+                importers.setdefault(sibling, {}).setdefault(site.file, site)
         if not importers or outside(name) is not None:
             continue
         locations = tuple(sorted(importers))
@@ -1850,8 +1870,18 @@ def _modules_beside_their_importers(
             chain = _chain(location.parent, tree.packages, tree.root)
             package = next((directory for directory in reversed(chain) if directory in used), None)
             if package is not None:
-                inside.setdefault(name, (location, package))
+                naming = next(iter(importers[location].values()))
+                inside.setdefault(name, _InsidePackage(location, package, naming))
     return {**names, **placed}, inside, frozenset(scripts)
+
+
+@dataclass(frozen=True)
+class _InsidePackage:
+    """A top-level name's location inside a package the program uses as one, and the import naming it."""
+
+    location: Path
+    package: Path
+    site: ImportSite
 
 
 def _names_a_module_of(sites: Sequence[ImportSite], directory: Path, listings: _Listings) -> bool:
@@ -2000,18 +2030,25 @@ def _problems(
     tree: _Tree,
     modules: Mapping[Path, _Module],
     names: Mapping[str, TopLevelName],
+    placed: FrozenSet[str],
     unresolved: Sequence[UnresolvedImport],
-    inside_used: Mapping[str, Tuple[Path, Path]],
+    inside_used: Mapping[str, _InsidePackage],
     listings: _Listings,
 ) -> List[ImportProblem]:
+    """What the imports get wrong. A name only imports that attest nothing use is in no doubt.
+
+    Such an import, guarded or in a file that changes ``sys.path``, names
+    nothing the program relies on, and nothing is spelled into its name
+    (:func:`_places`); so it neither locates a name nor makes one ambiguous.
+    """
     problems: List[ImportProblem] = [
         AmbiguousName(name, info.candidates, info.installed, info.required)
         for name, info in names.items()
-        if info.status is NameStatus.AMBIGUOUS
+        if info.status is NameStatus.AMBIGUOUS and name in placed
     ]
     problems.extend(
-        TopLevelInsidePackage(name, location, package)
-        for name, (location, package) in sorted(inside_used.items())
+        TopLevelInsidePackage(name, inside.location, inside.package, inside.site)
+        for name, inside in sorted(inside_used.items())
         if names[name].status is not NameStatus.EXTERNAL
     )
     problems.extend(unresolved)
@@ -2123,17 +2160,28 @@ def _flags(problems: Sequence[ImportProblem]) -> Tuple[FrozenSet[str], FrozenSet
     return flagged_names, flagged_files
 
 
+def _places(site: ImportSite, modules: Mapping[Path, _Module]) -> bool:
+    """Whether ``site`` shows where its top-level name lives: it attests, from a file leaving ``sys.path`` alone.
+
+    Only such an import may locate a name, attest it for spelling, or put it
+    in doubt (docs/DECISIONS.md, "How the import model decides, and when a
+    problem refuses"). graphene's setup.py appends ``graphene`` to
+    ``sys.path`` and then, inside ``try``, imports ``pyutils.version``: that
+    says nothing about where ``pyutils`` lives for the program, and it once
+    refused every ``--cross-module`` run on graphene.
+    """
+    return site.attests and not modules[site.file].changes_sys_path
+
+
 def _attestations(
     modules: Mapping[Path, _Module], contexts: Mapping[Path, Path], trusted: FrozenSet[str]
 ) -> Dict[Path, Dict[str, ImportSite]]:
-    """For each context, the first import attesting each trusted name it uses."""
+    """For each context, the first import attesting each trusted name it uses (:func:`_places`)."""
     attestations: Dict[Path, Dict[str, ImportSite]] = {}
     for path, module in modules.items():
-        if module.sites is None or module.changes_sys_path:
-            continue
-        for site in module.sites:
+        for site in module.sites or ():
             top = site.top_level
-            if site.attests and top in trusted:
+            if top in trusted and _places(site, modules):
                 attestations.setdefault(contexts[path], {}).setdefault(top, site)
     return attestations
 
