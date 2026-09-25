@@ -55,6 +55,24 @@ LEFT_ALONE: Dict[str, str] = {
         "a source-text fixture: its form feed on the second line, and the line numbers a splice"
         " computes around it, are what it tests"
     ),
+    "tests/hostile_cases/r7fz_srctext_bom.py": (
+        "a source-text fixture: its UTF-8 byte order mark must stay the file's first bytes"
+    ),
+    "tests/hostile_cases/r7fz_srctext_cp1252_quotes.py": (
+        "a source-text fixture: its coding cookie must stay on its first two lines, and its"
+        " bytes are cp1252, which a UTF-8 header would not be"
+    ),
+    "tests/hostile_cases/r7fz_srctext_crlf.py": (
+        "a source-text fixture: its CRLF line endings are what it tests, and a header's LF"
+        " lines would mix them"
+    ),
+    "tests/hostile_cases/r7fz_srctext_form_feed.py": (
+        "a source-text fixture: where its form feed falls relative to the lines is what it tests"
+    ),
+    "tests/hostile_cases/r7fz_srctext_latin1_literals.py": (
+        "a source-text fixture: its coding cookie must stay on its first two lines, and its"
+        " bytes are latin-1, which a UTF-8 header would not be"
+    ),
 }
 """Files a header would change what they test, and why."""
 
