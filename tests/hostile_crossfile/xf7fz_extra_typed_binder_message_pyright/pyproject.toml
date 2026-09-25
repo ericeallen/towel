@@ -1,0 +1,7 @@
+[project]
+name = "pkg"
+version = "0"
+requires-python = ">=3.11"
+
+[tool.pyright]
+typeCheckingMode = "strict"

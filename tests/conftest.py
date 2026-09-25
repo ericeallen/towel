@@ -48,6 +48,9 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
     We exclude:
     - test_examples/ and its variants (expected_output, skip, etc.)
     - tmp/ like mytmp*, tmp_out*, and output staging dirs created by scripts
+    - the hostile batteries' fixtures, which are programs to refactor: a
+      fixture project may hold its own ``tests/test_*.py``, there for its
+      import graph
 
     Rationale: these directories contain demonstration inputs and generated
     artifacts whose basenames collide (e.g., edge_cases_stress_test.py) causing
@@ -58,6 +61,11 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
     # Quick substring checks to avoid expensive operations
     basename = os.path.basename(p)
     if "test_examples" in p:
+        return True
+    if collection_path.parent.name == "tests" and basename in (
+        "hostile_cases",
+        "hostile_crossfile",
+    ):
         return True
     if basename.startswith("mytmp") or basename.startswith("tmp_out"):
         return True

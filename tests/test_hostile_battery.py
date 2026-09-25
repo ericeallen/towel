@@ -6,20 +6,32 @@ evaluation count, conditional evaluation, closure cells, deletion, and
 pattern bindings. The battery asserts that the program's output is identical
 after refactoring, and records per fixture whether the current engine
 transforms it or rejects it, so a change in either direction is visible.
+
+A fixture in ``KNOWN_DEFECTS`` shows a defect an audit reported and is not
+yet fixed: it is expected to fail, strictly, and its transformed state is
+not pinned, since the fix may extract it soundly or decline it. When the fix
+lands the fixture passes, pytest reports the XPASS as a failure, and the
+fixture moves from ``KNOWN_DEFECTS`` to ``TRANSFORMED`` or stays out of both.
 """
 
 from __future__ import annotations
 
-import contextlib
-import io
 from pathlib import Path
 import shutil
 import tempfile
 
 import pytest
 
+from tests.audit_defects import (
+    P1_1_PREBOUND_REBINDING,
+    P1_2_SEMICOLON_LINE,
+    P1_3_LEADING_THUNK,
+    P1_5_RENAMED_BINDER,
+    P1_7_READ_BEFORE_BIND,
+    P1_8_LATER_UPDATE,
+)
 from tests.hostile_execution import observe, parsed_or_skipped
-from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.hostile_refactoring import refactor_script, with_known_defects
 
 CASES = Path(__file__).parent / "hostile_cases"
 
@@ -180,12 +192,42 @@ TRANSFORMED = {
 # r86_annotated_assignment_live left the set when the trivial-helper filter
 # began declining its shared block, which binds only a literal and a parameter.
 
+KNOWN_DEFECTS = {
+    # The round-3 audit's P1 cases, ported from its families and its grammar
+    # generator (r7fz_grammar_<its case id>_...). Each fixture's opening comment
+    # says what it shows.
+    "r7fz_binding_loop_var_leak": P1_1_PREBOUND_REBINDING,
+    "r7fz_prebound_for_read_in_block": P1_1_PREBOUND_REBINDING,
+    "r7fz_prebound_for_else_prebound": P1_1_PREBOUND_REBINDING,
+    "r7fz_prebound_for_target_attr_prebound": P1_1_PREBOUND_REBINDING,
+    "r7fz_prebound_match_capture_prebound": P1_1_PREBOUND_REBINDING,
+    "r7fz_prebound_def_conditional_rebind": P1_1_PREBOUND_REBINDING,
+    "r7fz_grammar_u0898_for_target_prebound": P1_1_PREBOUND_REBINDING,
+    "r7fz_srctext_semicolons_continuations": P1_2_SEMICOLON_LINE,
+    "r7fz_thunks2_dict_unhashable": P1_3_LEADING_THUNK,
+    "r7fz_thunks2_dict_unpack": P1_3_LEADING_THUNK,
+    "r7fz_thunks2_lambda_default": P1_3_LEADING_THUNK,
+    "r7fz_thunks2_list_starred": P1_3_LEADING_THUNK,
+    "r7fz_thunks2_set_hash_effect": P1_3_LEADING_THUNK,
+    "r7fz_thunks2_set_unhashable": P1_3_LEADING_THUNK,
+    "r7fz_thunks2_tuple_starred": P1_3_LEADING_THUNK,
+    "r7fz_thunks2_undefined_global": P1_3_LEADING_THUNK,
+    "r7fz_misc_binder_renamed_del_message": P1_5_RENAMED_BINDER,
+    "r7fz_grammar_u0217_read_before_bind": P1_7_READ_BEFORE_BIND,
+    "r7fz_grammar_t11254_read_before_bind": P1_7_READ_BEFORE_BIND,
+    "r7fz_late_after_block_augassign": P1_8_LATER_UPDATE,
+    "r7fz_late_after_block_del": P1_8_LATER_UPDATE,
+    "r7fz_grammar_u0417_augassign_after_block": P1_8_LATER_UPDATE,
+}
+
 
 def _run(script: Path) -> tuple[int, str, list[str]]:
     return observe(script.name, script.parent)
 
 
-@pytest.mark.parametrize("case", sorted(path.stem for path in CASES.glob("*.py")))
+@pytest.mark.parametrize(
+    "case", with_known_defects(sorted(path.stem for path in CASES.glob("*.py")), KNOWN_DEFECTS)
+)
 def test_refactoring_preserves_program_output(case: str) -> None:
     parsed_or_skipped(CASES / f"{case}.py")
     with tempfile.TemporaryDirectory(prefix="towel-hostile-") as directory:
@@ -196,12 +238,11 @@ def test_refactoring_preserves_program_output(case: str) -> None:
         after.parent.mkdir()
         shutil.copy(CASES / f"{case}.py", before)
         shutil.copy(CASES / f"{case}.py", after)
-        engine = UnificationRefactorEngine(min_lines=3)
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            _, applied, _ = engine.refactor_to_fixed_point(str(after))
+        applied = refactor_script(after)
         transformed = before.read_bytes() != after.read_bytes()
         assert transformed == (applied > 0)
         assert _run(after) == _run(before)
-        assert transformed == (case in TRANSFORMED), (
-            "rejected" if not transformed else "transformed"
-        )
+        if case not in KNOWN_DEFECTS:
+            assert transformed == (case in TRANSFORMED), (
+                "rejected" if not transformed else "transformed"
+            )

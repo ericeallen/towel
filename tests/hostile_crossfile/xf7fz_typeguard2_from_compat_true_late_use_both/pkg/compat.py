@@ -1,0 +1,2 @@
+TYPE_CHECKING = True
+DEBUG = True
