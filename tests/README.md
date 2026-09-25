@@ -154,6 +154,24 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   fixture that came from a repaired ecosystem defect
   (`xf9_same_named_base_class`) is cited in
   `docs/ADVERSARIAL_REVIEW.md`; the others pin behaviour the engine must keep.
+- **Audit findings and differential testing** — the batteries hold the
+  round-3 audit's cases (`r7fz_*`, `xf7fz_*`): every one it reported as a
+  P1, and a sample of the rest from each of its families. A fixture whose
+  defect is not yet fixed is in its battery's `KNOWN_DEFECTS`, a strict
+  expected failure with its reason from `audit_defects.py`, and its
+  transformed state is not pinned. The package battery runs a fixture in
+  `WITHOUT_CROSS_MODULE` as the default mode does and one in `TYPED` with the
+  checker its `pyproject.toml` configures (both run the refactoring the way
+  `hostile_refactoring.py` does, which the harness's exporter shares).
+  `test_differential_grammar.py` runs the auditor's program generator,
+  rewritten in `differential/`: each seed's project is refactored and
+  observed before and after in fresh interpreters (`differential/observer.py`
+  records output, exceptions, signatures, class dictionaries, MROs, pickling
+  and public names), on seeds 0 to 299 in the default mode, the two-module
+  layouts of seeds 0 to 199 with `--cross-module`, a few typed seeds with
+  mypy strict, and every seed on which a defect was found. `just fuzz` runs
+  the same harness over many seeds (`differential/fuzz.py`) and writes each
+  failure as a fixture (`differential/export.py`).
 - **Property-based tests** — `test_properties.py` generates programs from
   small grammars with Hypothesis (300 deterministic examples for the pure
   properties, 60 for each engine property, no deadline). The pure properties:

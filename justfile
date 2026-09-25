@@ -72,6 +72,15 @@ test-smoke:
 test-crossfile:
     uv run --frozen python -m pytest -q tests/test_crossfile_observational_equivalence.py
 
+# A release-candidate step (docs/RELEASING.md). SEED is a random start, printed, when
+# omitted; each case runs in the default and the --cross-module modes, every 20th also
+# typed. Each failure is written as a hostile fixture under the directory the run prints,
+# and the run exits 1 if any case failed. Extra ARGS go to
+# `python -m tests.differential.fuzz` (--jobs, --out, --prefix, --modes, ...).
+# Differential fuzzing over N generated cases from seed SEED, failures written as fixtures
+fuzz N="2000" SEED="" *ARGS:
+    uv run --frozen python -m tests.differential.fuzz --count {{N}} --seed "{{SEED}}" {{ARGS}}
+
 # Observational equivalence for one example file
 test-file FILENAME:
     uv run --frozen python -c "from tests.automatic_equivalence_tester import AutomaticEquivalenceTester; from towel.unification.refactor_engine import UnificationRefactorEngine; t = AutomaticEquivalenceTester(UnificationRefactorEngine(max_parameters=5, min_lines=4)); p, f, e = t.test_file('{{FILENAME}}'); print(f'{p}/{p+f} passed'); [print(' ', x) for x in e[:5]]; raise SystemExit(1 if f or not p else 0)"
