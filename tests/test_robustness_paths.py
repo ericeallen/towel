@@ -112,6 +112,7 @@ def test_pyright_output_of_the_wrong_shape_infers_nothing(
     oracle._probe_copies = {}
     oracle._interpreter = sys.executable
     oracle._search_path = ()
+    oracle._owner_pid = os.getpid()
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed(stdout))
     with caplog.at_level(logging.WARNING, logger="towel"):
         assert isinstance(oracle._diagnostics(str(module), "x = 1\n"), CheckFailure)
@@ -131,6 +132,7 @@ def test_a_hung_pyright_is_abandoned_with_a_warning(
     oracle._probe_copies = {}
     oracle._interpreter = sys.executable
     oracle._search_path = ()
+    oracle._owner_pid = os.getpid()
 
     def hang(*args: Any, **kwargs: Any) -> Any:
         raise subprocess.TimeoutExpired(cmd="pyright", timeout=kwargs["timeout"])

@@ -27,6 +27,7 @@ from __future__ import annotations
 import ast
 import json
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -98,6 +99,7 @@ def _oracle_without_pyright() -> type_inference.PyrightOracle:
     oracle._probe_copies = {}
     oracle._interpreter = sys.executable
     oracle._search_path = ()
+    oracle._owner_pid = os.getpid()
     return oracle
 
 

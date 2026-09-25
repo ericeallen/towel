@@ -28,6 +28,7 @@ pyright, and a checker failure now carries what the checker said.
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -195,6 +196,7 @@ def test_a_command_line_failure_says_what_pyright_said(tmp_path: Path) -> None:
     oracle._probe_copies = {}
     oracle._interpreter = sys.executable
     oracle._search_path = ()
+    oracle._owner_pid = os.getpid()
     path = tmp_path / "project" / "m.py"
     path.parent.mkdir()
     path.write_text("x = 1\n", encoding="utf-8")
