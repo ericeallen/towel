@@ -52,6 +52,7 @@ from ..canonical_ast import canonical_dump
 from ..diagnostics import VALIDATION, debugging
 from ..project_layout import find_project_root
 from ..source_text import read_source
+from .assert_rewriting import rewritten_alike
 from .decorator_reach import (
     Definition,
     DecoratorRefusal,
@@ -1546,6 +1547,16 @@ class PairEvaluation(
             return canonical_file
         if any(functions.declares_global(path) for path in participating):
             self._debug_reject(RejectReason.CROSS_MODULE_GLOBAL_DECLARATION, pair)
+            return None
+        # A failing assert pytest rewrote says more than one it did not
+        # (``assert_rewriting``), so the helper's module must be rewritten
+        # exactly as every site's is.
+        if any(
+            isinstance(node, ast.Assert)
+            for statement in pair.block1_nodes
+            for node in ast.walk(statement)
+        ) and not rewritten_alike(sorted(participating)):
+            self._debug_reject(RejectReason.ASSERT_REWRITING_DIFFERS, pair)
             return None
         # The helper runs the template's imports in whichever module hosts
         # it, and every participating module is a candidate host, so each

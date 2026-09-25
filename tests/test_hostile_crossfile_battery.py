@@ -17,7 +17,10 @@ prints at import time, which the borrower's own import never ran; the four
 whose borrower rebinds ``len`` (``xf17``, ``xf18``, ``xf19``, ``xf22``); and
 ``xf23_relative_import_in_another_package``, whose subpackages ``pkg.x`` and
 ``pkg.y`` never import each other, so neither may gain an import of the
-other (docs/DECISIONS.md, "Import names come from the program").
+other (docs/DECISIONS.md, "Import names come from the program"); and
+``xf7d_assert_moves_to_a_module_pytest_does_not_rewrite``, whose shared block
+holds an assert pytest rewrites in one module and not in the other. Its
+``run.py`` runs pytest and prints each failing assert's message.
 """
 
 from __future__ import annotations
@@ -57,6 +60,8 @@ TRANSFORMED = {
     "xf27_registration_decorator_in_host",
     "xf28_registration_decorator_in_reused_module",
     "xf29_type_checking_block_with_branches",
+    # Two modules pytest does not rewrite share an assert: either may host it.
+    "xf7d_asserts_shared_by_modules_rewritten_alike",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
@@ -67,6 +72,9 @@ REJECTED = {
     "xf19_builtin_shadowed_by_borrower_local",
     "xf22_borrower_rebinds_builtins_namespace",
     "xf23_relative_import_in_another_package",
+    # A test module's assert would move to a module pytest does not rewrite,
+    # and the AssertionError pytest reports would lose its explanation.
+    "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite",
 }
 
 
