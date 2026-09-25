@@ -168,6 +168,9 @@ TRANSFORMED = {
     # the block only calls or consumes moves with it (r157).
     "r156_created_objects_that_escape",
     "r157_created_objects_only_called",
+    # Bindings audit of 1.772. A block that rebinds a name bound before it
+    # (a for target, a capture, a def) is declined; the code around it moves.
+    "r7bi_loop_capture_def_rebind_prebound",
 }
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in
