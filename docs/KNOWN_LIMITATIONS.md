@@ -24,11 +24,22 @@ describe belong to that version.
   substituted for its parameters (thunks beta-reduced), must reproduce the
   block it replaces up to the renaming of names the block itself binds, and
   a name may be renamed only where the running program cannot see its
-  spelling: `UnboundLocalError` and `NameError` name a variable read,
-  augmented or deleted while unbound, so a renamed binder that some read may
-  find unbound (after a `del`, an empty loop, an unmatched case, the end of
-  its `except ... as` clause, or in a closure), or that a `global` or
-  `nonlocal` declaration names, declines the call site. A
+  spelling. The comparison is by binding: each binder, in whatever scope of
+  the block (a lambda's, a comprehension's, a nested function's or class
+  body's), matches only its own occurrences, and a name free in the helper
+  matches the block's only where the site reads the same thing, the module's
+  name or builtin, never a local or closure variable of the site's function.
+  An argument substituted where a scope of the helper binds a name it reads,
+  or a thunk's argument under a scope of the thunk's that does, is a capture
+  and declines the call site. On the spelling: `UnboundLocalError` and
+  `NameError` name a variable read, augmented or deleted while unbound, so a
+  renamed binder that some read may find unbound (after a `del`, an empty
+  loop, an unmatched case, the end of its `except ... as` clause, or in a
+  closure), or that a `global` or `nonlocal` declaration names, declines the
+  call site. The comparison is not flow-sensitive: a name the block both
+  reads before binding it and binds is one binder in both fragments, and
+  the incomplete-lifetime and reassignment guards, not this check, decline
+  such a block. A
   proposal whose unification, substitution, or renaming disagree is rejected
   before it is offered. (`src/towel/unification/instantiation.py`)
 - **Argument evaluation.** Only names, literals, a unary operator on a

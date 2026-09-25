@@ -1504,6 +1504,31 @@ def module_resolved_names(
     return frozenset(resolved)
 
 
+def function_scope_names(
+    function: FunctionNode, analyzer: "ScopeAnalyzer", block: Sequence[ast.stmt]
+) -> FrozenSet[str]:
+    """The names ``block`` mentions that a read inside ``function`` resolves in a function scope.
+
+    ``function``'s own locals and parameters, and an enclosing function's
+    cells: the complement, among the names the block mentions, of
+    ``module_resolved_names``. ``__class__`` is left out: a method helper
+    compiled in the class the block's method is defined in has that cell
+    too. The instantiation check tells by these which of the block's free
+    names its helper can read only as arguments.
+    """
+    names = {
+        name
+        for statement in block
+        for node in ast.walk(statement)
+        for name in (
+            [node.id]
+            if isinstance(node, ast.Name)
+            else node.names if isinstance(node, ast.Nonlocal) else []
+        )
+    }
+    return frozenset(names - module_resolved_names(function, analyzer, names) - {"__class__"})
+
+
 def _module_parents(module: ast.Module) -> Dict[ast.AST, ast.AST]:
     """Each node's parent in ``module``, computed once per tree.
 

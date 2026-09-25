@@ -38,7 +38,14 @@ def test_consistent_instantiation_matches() -> None:
     block = _block("out = []\nout.append(d[k + 1])\n")
     assert (
         instantiation_mismatch(
-            helper, call, block, {}, {}, preamble_length=0, returns_variables=False
+            helper,
+            call,
+            block,
+            {},
+            {},
+            site_function_names=frozenset(),
+            preamble_length=0,
+            returns_variables=False,
         )
         is None
     )
@@ -51,7 +58,14 @@ def test_parameter_substituted_at_unrelated_position_is_rejected() -> None:
     call = _statement("return h(k + 1, d)")
     block = _block("if k in d:\n    return d[k + 1]\n")
     reason = instantiation_mismatch(
-        helper, call, block, {}, {}, preamble_length=0, returns_variables=False
+        helper,
+        call,
+        block,
+        {},
+        {},
+        site_function_names=frozenset(),
+        preamble_length=0,
+        returns_variables=False,
     )
     assert reason is not None and reason.startswith("body")
 
@@ -64,7 +78,14 @@ def test_thunk_is_beta_reduced_at_use_sites() -> None:
     block = _block("if not self.email:\n    raise ValueError()\n")
     assert (
         instantiation_mismatch(
-            helper, call, block, {}, {}, preamble_length=0, returns_variables=False
+            helper,
+            call,
+            block,
+            {},
+            {},
+            site_function_names=frozenset(),
+            preamble_length=0,
+            returns_variables=False,
         )
         is None
     )
@@ -78,7 +99,14 @@ def test_lambda_lifted_parameter_binds_block_variables() -> None:
     block = _block("for item in items:\n    use(item * 2)\n")
     assert (
         instantiation_mismatch(
-            helper, call, block, {}, {}, preamble_length=0, returns_variables=False
+            helper,
+            call,
+            block,
+            {},
+            {},
+            site_function_names=frozenset(),
+            preamble_length=0,
+            returns_variables=False,
         )
         is None
     )
@@ -92,7 +120,14 @@ def test_forwarded_callee_reduces_to_original_call() -> None:
     block = _block("value = obj.method(x, key=1)\nreturn value\n")
     assert (
         instantiation_mismatch(
-            helper, call, block, {}, {}, preamble_length=0, returns_variables=False
+            helper,
+            call,
+            block,
+            {},
+            {},
+            site_function_names=frozenset(),
+            preamble_length=0,
+            returns_variables=False,
         )
         is None
     )
@@ -104,7 +139,14 @@ def test_thunk_used_as_value_is_rejected() -> None:
     block = _block("f = obj.attr\nreturn f\n")
     assert (
         instantiation_mismatch(
-            helper, call, block, {}, {}, preamble_length=0, returns_variables=False
+            helper,
+            call,
+            block,
+            {},
+            {},
+            site_function_names=frozenset(),
+            preamble_length=0,
+            returns_variables=False,
         )
         is not None
     )
@@ -116,14 +158,28 @@ def test_renamed_binders_compare_equal_but_captures_do_not() -> None:
     renamed = _block("for k, v in pairs:\n    use(k, v)\n")
     assert (
         instantiation_mismatch(
-            helper, call, renamed, {}, {}, preamble_length=0, returns_variables=False
+            helper,
+            call,
+            renamed,
+            {},
+            {},
+            site_function_names=frozenset(),
+            preamble_length=0,
+            returns_variables=False,
         )
         is None
     )
     captured = _block("for k, v in pairs:\n    use(key, v)\n")
     assert (
         instantiation_mismatch(
-            helper, call, captured, {}, {}, preamble_length=0, returns_variables=False
+            helper,
+            call,
+            captured,
+            {},
+            {},
+            site_function_names=frozenset(),
+            preamble_length=0,
+            returns_variables=False,
         )
         is not None
     )
@@ -137,7 +193,14 @@ def test_preamble_and_return_suffix_are_ignored() -> None:
     block = _block("counter = x\ntotal = x + 1\n")
     assert (
         instantiation_mismatch(
-            helper, call, block, {}, {}, preamble_length=1, returns_variables=True
+            helper,
+            call,
+            block,
+            {},
+            {},
+            site_function_names=frozenset(),
+            preamble_length=1,
+            returns_variables=True,
         )
         is None
     )
@@ -154,6 +217,7 @@ def test_hygienic_renames_translate_template_spelling() -> None:
             block,
             {"vals": "__temp_0"},
             {"res": "__temp_0"},
+            site_function_names=frozenset(),
             preamble_length=0,
             returns_variables=True,
         )
@@ -174,6 +238,7 @@ def test_call_shape_and_arity_are_checked(call_source: str) -> None:
             block,
             {},
             {},
+            site_function_names=frozenset(),
             preamble_length=0,
             returns_variables=False,
         )
@@ -188,13 +253,25 @@ def test_returned_variables_must_match_assignment_targets_in_order() -> None:
     good = _statement("lo, hi = h(items)")
     assert (
         instantiation_mismatch(
-            helper, good, block, *renames, preamble_length=0, returns_variables=True
+            helper,
+            good,
+            block,
+            *renames,
+            site_function_names=frozenset(),
+            preamble_length=0,
+            returns_variables=True,
         )
         is None
     )
     swapped = _statement("hi, lo = h(items)")
     reason = instantiation_mismatch(
-        helper, swapped, block, *renames, preamble_length=0, returns_variables=True
+        helper,
+        swapped,
+        block,
+        *renames,
+        site_function_names=frozenset(),
+        preamble_length=0,
+        returns_variables=True,
     )
     assert reason is not None and "assignment targets" in reason
 
@@ -206,7 +283,14 @@ def test_early_return_with_returned_variables_is_rejected() -> None:
     call = _statement("cls = h(obj, self)")
     block = _block("if obj is None:\n    return self\ncls = obj.__class__\n")
     reason = instantiation_mismatch(
-        helper, call, block, {}, {}, preamble_length=0, returns_variables=True
+        helper,
+        call,
+        block,
+        {},
+        {},
+        site_function_names=frozenset(),
+        preamble_length=0,
+        returns_variables=True,
     )
     assert reason is not None and "early return" in reason
 
@@ -221,6 +305,7 @@ def test_early_return_requires_return_call() -> None:
             block,
             {},
             {},
+            site_function_names=frozenset(),
             preamble_length=0,
             returns_variables=False,
         )
@@ -228,7 +313,14 @@ def test_early_return_requires_return_call() -> None:
     )
     assert (
         instantiation_mismatch(
-            helper, _statement("h(x)"), block, {}, {}, preamble_length=0, returns_variables=False
+            helper,
+            _statement("h(x)"),
+            block,
+            {},
+            {},
+            site_function_names=frozenset(),
+            preamble_length=0,
+            returns_variables=False,
         )
         is not None
     )
@@ -280,6 +372,7 @@ def test_a_thunk_the_reducer_cannot_apply_is_a_named_mismatch(
             block,
             {},
             {},
+            site_function_names=frozenset(),
             preamble_length=0,
             returns_variables=False,
         )

@@ -78,6 +78,7 @@ from .builtins import BUILTIN_NAMES, CALL_ARGUMENT_BUILTINS
 from .semantic_safety import (
     available_argument_names,
     builtins_passed,
+    function_scope_names,
     module_resolved_names,
     defer_impure_parameters,
     has_impure_eager_parameters,
@@ -1392,12 +1393,14 @@ class PairEvaluation(
                 detail=f"block{block_idx+1}: {sorted(invalid_names)}",
             )
             return None
+        analyzer = setup.ctx.scope_analyzer if block_idx == 0 else setup.ctx.scope_analyzer2
         mismatch = instantiation_mismatch(
             func_def,
             call_node,
             nodes,
             unified.hygienic_renames[0],
             unified.hygienic_renames[block_idx],
+            site_function_names=function_scope_names(function, analyzer, nodes),
             preamble_length=rendered.preamble_length,
             returns_variables=bool(unified.ordered_return_variables[0]),
         )
@@ -1406,7 +1409,6 @@ class PairEvaluation(
                 RejectReason.INSTANTIATION_MISMATCH, pair, detail=f"block{block_idx+1}: {mismatch}"
             )
             return None
-        analyzer = setup.ctx.scope_analyzer if block_idx == 0 else setup.ctx.scope_analyzer2
         handed = builtins_passed(
             call_node,
             func_def.name,

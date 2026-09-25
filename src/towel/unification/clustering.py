@@ -55,6 +55,7 @@ from .semantic_safety import (
     available_argument_names,
     builtins_passed,
     free_variable_positions,
+    function_scope_names,
     thunk_reads_possibly_unbound_local,
     module_resolved_names,
     defer_impure_parameters,
@@ -264,6 +265,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 candidate.nodes,
                 cluster_renames[0],
                 cluster_renames[1],
+                site_function_names=function_scope_names(
+                    candidate.function, candidate.analyzer, candidate.nodes
+                ),
                 preamble_length=template.preamble_length,
                 returns_variables=bool(template.return_variables),
             )
