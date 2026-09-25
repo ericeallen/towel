@@ -194,12 +194,20 @@ def bindings_of(statement: ast.AST, *, into_nested_scopes: bool) -> FrozenSet[st
 
 
 def loaded_names(node: ast.AST) -> Set[str]:
-    """Every name read (Load context) anywhere under ``node``, nested scopes included."""
-    return {
-        child.id
-        for child in ast.walk(node)
-        if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
-    }
+    """Every name read anywhere under ``node``, nested scopes included.
+
+    A read is whatever needs the name's binding: a load, the target of an
+    augmented assignment (``count += 1`` loads ``count`` before it stores
+    it), and a ``del`` target (``del count`` raises ``UnboundLocalError``
+    without one).
+    """
+    names: Set[str] = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and isinstance(child.ctx, (ast.Load, ast.Del)):
+            names.add(child.id)
+        elif isinstance(child, ast.AugAssign) and isinstance(child.target, ast.Name):
+            names.add(child.target.id)
+    return names
 
 
 def block_contains_return(block: Sequence[ast.stmt]) -> bool:

@@ -432,8 +432,10 @@ class LoopReturnFinder(OwnScopeVisitor):
 
 
 class NameCollector(OwnScopeVisitor):
-    """Collect all names referenced in Load context within a code block.
+    """Collect every name a code block reads: loads, ``del`` targets, augmented targets.
 
+    ``count += 1`` loads ``count`` before it stores it, and ``del count``
+    needs the binding as much as a load does, so both are reads of it.
     Stops at nested function boundaries to avoid capturing scopes outside the block.
     """
 
@@ -442,6 +444,11 @@ class NameCollector(OwnScopeVisitor):
 
     def visit_Name(self, n: ast.Name) -> None:
         _record_load_name_and_visit(n, self.used, self)
+
+    def visit_AugAssign(self, n: ast.AugAssign) -> None:
+        if isinstance(n.target, ast.Name):
+            self.used.add(n.target.id)
+        self.generic_visit(n)
 
     def visit_AnnAssign(self, n: ast.AnnAssign) -> None:
         # An annotation inside a function body is never evaluated.
@@ -601,7 +608,7 @@ def _visit_loop_and_restore_flag(
 def _record_load_name_and_visit(
     node: ast.Name, destination: Set[str], visitor: ast.NodeVisitor
 ) -> None:
-    if isinstance(node.ctx, ast.Load):
+    if isinstance(node.ctx, (ast.Load, ast.Del)):
         destination.add(node.id)
     visitor.generic_visit(node)
 
