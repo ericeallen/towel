@@ -30,6 +30,24 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A block that rebinds a name bound before it is now declined, whatever
+  construct rebinds it: a `for` or `with` target, a `match` capture, a
+  nested `def` or `class`, an import, or a walrus. So
+  `i = -1; for i in xs: ...; i * 2` keeps its `-1` when `xs` is empty. It
+  had raised `UnboundLocalError` in the helper.
+- `count += 1` and `del count` after a block now count as reads of `count`.
+  The helper returns it, or the block is declined, instead of the later
+  statement raising `UnboundLocalError`.
+- A block that reads a local before binding it, such as
+  `scale = scale(n)`, is declined where the call site may not have the name
+  bound. The call had succeeded there, using the module's `scale`.
+- Blocks equal up to their binders' names now share a helper only where no
+  read can find a renamed binder unbound. So an `UnboundLocalError` still
+  names each site's own variable.
+- Definite assignment now unbinds a deleted name for everything the
+  deletion may precede: the next loop iteration, a handler or `finally`, a
+  `with`, `case` or `else` body, and an `except*` clause. Such a name had
+  been passed eagerly, and raised before an effect the original ran first.
 - A block that started at the second statement of a `;` line, or ended at
   the first, was spliced by whole lines, which deleted the other statement.
   `a = n + 1; b = a * 2`, with the block at `b`, lost `a = n + 1`, and a
