@@ -197,4 +197,7 @@ def test_r9my_a_file_the_configuration_excludes_is_not_built(tmp_path: Path) -> 
             ),
         },
     )
-    assert _typed_run(tmp_path) == ["core.py"]
+    # cookiecutter's hooks are Jinja templates, which do not parse, so the run
+    # leaves them out by name, as the refusal says to; the project's mypy
+    # configuration still decides what its check builds.
+    assert _typed_run(tmp_path, ("post_gen.py",)) == ["core.py"]
