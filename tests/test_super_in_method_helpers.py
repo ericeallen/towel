@@ -805,11 +805,13 @@ def main():
 @pytest.mark.parametrize(
     "source, reason",
     [
-        (PROTOCOL, "needs_class_body"),
+        # A class whose machinery fails the method-host test keeps every
+        # method's code, super() or not (decorator_reach).
+        (PROTOCOL, "class_machinery_may_transform_methods"),
         (DECORATED, "needs_class_body"),
-        (METACLASS, "needs_class_body"),
-        (INIT_SUBCLASS, "needs_class_body"),
-        (GETATTRIBUTE, "needs_class_body"),
+        (METACLASS, "class_machinery_may_transform_methods"),
+        (INIT_SUBCLASS, "class_machinery_may_transform_methods"),
+        (GETATTRIBUTE, "class_machinery_may_transform_methods"),
         (SELF_TYPE, "needs_class_body"),
         (UNDERSCORES, "needs_class_body"),
         (SIBLINGS, "needs_class_body"),
@@ -846,7 +848,7 @@ def test_super_is_declined_where_no_helper_of_its_class_can_hold_it(
     outcome = _refactored(tmp_path, source, caplog)
     assert outcome.applied == 0, outcome.source
     assert outcome.source == textwrap.dedent(source).lstrip("\n")
-    assert reason in outcome.reasons, outcome.reasons
+    assert any(key.partition("[")[0] == reason for key in outcome.reasons), outcome.reasons
 
 
 EXPLICIT = BASE + """
