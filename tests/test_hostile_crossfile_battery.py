@@ -95,10 +95,35 @@ REJECTED = {
     "xf23_relative_import_in_another_package",
 }
 
-_TYPED_DEFECTS = {
-    # The round-3 audit's typed P1 cases: each Towel refactors in the typed
-    # mode, with the strict checker its pyproject.toml configures, and the
-    # checker accepts the change of behaviour.
+TYPED = frozenset(
+    {
+        # The round-3 audit's typed cases: refactored with the strict checker
+        # the fixture's pyproject.toml configures, as towel dry does by default.
+        "xf7fz_misc_typed_for_prebound_mypy",
+        "xf7fz_grammar_t11094_semicolon",
+        "xf7fz_grammar_t11271_semicolon",
+        "xf7fz_extra_typed_thunk_lambda_default_mypy",
+        "xf7fz_extra_typed_thunk_lambda_default_pyright",
+        "xf7fz_typeguard2_from_compat_true_mypy",
+        "xf7fz_typeguard2_from_compat_true_both",
+        "xf7fz_typeguard2_from_compat_true_late_use_mypy",
+        "xf7fz_typeguard2_from_compat_true_late_use_both",
+        "xf7fz_typeguard2_import_alias_flag_mypy",
+        "xf7fz_typeguard2_import_alias_flag_both",
+        "xf7fz_extra_typed_binder_message_mypy",
+        "xf7fz_extra_typed_binder_message_pyright",
+        "xf7fz_extra_typed_read_before_bind_mypy",
+        "xf7fz_extra_typed_read_before_bind_pyright",
+    }
+)
+"""Packages run with the checker their ``pyproject.toml`` configures."""
+
+WITHOUT_CROSS_MODULE = TYPED
+"""Packages run without ``--cross-module``: every typed one so far, as the audit ran them."""
+
+KNOWN_DEFECTS = {
+    # The round-3 audit's typed P1 cases: the checker accepts each change of
+    # behaviour.
     "xf7fz_misc_typed_for_prebound_mypy": P1_1_PREBOUND_REBINDING,
     "xf7fz_grammar_t11094_semicolon": P1_2_SEMICOLON_LINE,
     "xf7fz_grammar_t11271_semicolon": P1_2_SEMICOLON_LINE,
@@ -114,10 +139,6 @@ _TYPED_DEFECTS = {
     "xf7fz_extra_typed_binder_message_pyright": P1_5_RENAMED_BINDER,
     "xf7fz_extra_typed_read_before_bind_mypy": P1_7_READ_BEFORE_BIND,
     "xf7fz_extra_typed_read_before_bind_pyright": P1_7_READ_BEFORE_BIND,
-}
-
-KNOWN_DEFECTS = {
-    **_TYPED_DEFECTS,
     # The round-3 audit's cross-module P1 cases.
     "xf7fz_grammar_u0474_for_target_prebound": P1_1_PREBOUND_REBINDING,
     "xf7fz_grammar_u0624_for_target_prebound": P1_1_PREBOUND_REBINDING,
@@ -128,12 +149,6 @@ KNOWN_DEFECTS = {
     # stays until the engine also leaves the importing module alone.
     "xf7fz_late_toplevel_module_in_package": P1_6_TOP_LEVEL_INSIDE_PACKAGE,
 }
-
-WITHOUT_CROSS_MODULE = frozenset(_TYPED_DEFECTS)
-"""Packages run without ``--cross-module``, as the typed cases the audit reported ran."""
-
-TYPED = frozenset(_TYPED_DEFECTS)
-"""Packages run with the checker their ``pyproject.toml`` configures."""
 
 
 def _python_files(root: Path) -> dict[str, bytes]:
