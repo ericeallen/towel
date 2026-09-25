@@ -46,6 +46,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from tests.differential.cases import Case
 from tests.differential.comparison import Difference, behaviour_changes
+from tests.differential.scope_grammar import FAMILY as SCOPE_FAMILY
 from tests.hostile_execution import ISOLATED_ENV, ScopeWatch
 from towel.diagnostics import Settings
 from towel.type_inference import CheckerNotInstalled, TypeOracle, type_oracle_for_project
@@ -115,6 +116,8 @@ class Outcome:
             if self.mode.types
             else f"--modes {'cross' if self.mode.cross_module else 'default'}"
         )
+        if SCOPE_FAMILY in case.features:
+            how += f" --family {SCOPE_FAMILY}"
         lines = [
             f"{case.name} (seed {case.seed}{', typed' if case.typed else ''}, {case.layout} layout),"
             f" towel {self.mode.label or '(types on)'}: {self.status}. {self.detail}".rstrip(),
