@@ -288,7 +288,6 @@ class RejectReason(StrEnum):
     """Why a candidate pair was declined; the vocabulary of the rejection trace."""
 
     ASSERT_REWRITING_DIFFERS = "assert_rewriting_differs"
-    COVERAGE_MEASUREMENT_DIFFERS = "coverage_measurement_differs"
     BARE_NAME_DIFFERS_BY_MODULE = "bare_name_differs_by_module"
     BUILTIN_ARGUMENT = "builtin_argument"
     BUILTIN_MAY_DIFFER_BY_MODULE = "builtin_may_differ_by_module"

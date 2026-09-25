@@ -48,12 +48,7 @@ from typing import (
 )
 from weakref import WeakKeyDictionary
 
-from ..coverage_config import (
-    CoverageConfiguration,
-    CoverageExclusion,
-    CoverageMeasurement,
-    coverage_configuration,
-)
+from ..coverage_config import CoverageExclusion, coverage_exclusion
 from ..diagnostics import LOG, Settings
 from ..type_baseline import CheckedChange, KnownErrors
 from ..type_inference import CheckResult, TypeDiagnostic, TypeOracle
@@ -207,7 +202,7 @@ class EngineState:
     """The helper-shaped names each project root's sources already define, by root."""
     _namespace_writes: Dict[str, ProjectWrites]
     """The writes into module namespaces each project root's sources make, by root."""
-    _coverage_configurations: Dict[str, CoverageConfiguration]
+    _coverage_exclusions: Dict[str, CoverageExclusion]
     """What each project root's coverage.py excludes lines by, read once per engine."""
     _origins_in_run: Dict[Tuple[str, Optional[Tuple[Path, Path]]], Path]
     """Where each file of the run stands in the project, by the file and the
@@ -373,8 +368,8 @@ class EngineState:
         """Provided by HelperAnnotationWiring."""
         raise NotImplementedError
 
-    def _coverage_configuration(self, file_path: str) -> CoverageConfiguration:
-        """How the coverage.py of the project around ``file_path`` is configured.
+    def _coverage_exclusion(self, file_path: str) -> CoverageExclusion:
+        """What the coverage.py of the project around ``file_path`` excludes lines by.
 
         Read from the project's own location, since an output directory is
         only a copy of part of it, once per engine and root. A configuration
@@ -385,25 +380,17 @@ class EngineState:
         """
         root = self._project_root_in_run(file_path)
         key = str(root)
-        found = self._coverage_configurations.get(key)
+        found = self._coverage_exclusions.get(key)
         if found is None:
-            found = self._coverage_configurations[key] = coverage_configuration(root)
-            if found.exclusion.problem is not None:
+            found = self._coverage_exclusions[key] = coverage_exclusion(root)
+            if found.problem is not None:
                 LOG.warning(
                     "warning: coverage.py could not read its configuration in %s (%s); moved"
                     " code is judged against coverage.py's default exclusions",
                     root,
-                    found.exclusion.problem,
+                    found.problem,
                 )
         return found
-
-    def _coverage_exclusion(self, file_path: str) -> CoverageExclusion:
-        """What the coverage.py of the project around ``file_path`` excludes lines by."""
-        return self._coverage_configuration(file_path).exclusion
-
-    def _coverage_measurement(self, file_path: str) -> CoverageMeasurement:
-        """Which files the coverage.py of the project around ``file_path`` measures and reports."""
-        return self._coverage_configuration(file_path).measurement
 
     def _origin_in_run(self, path: str) -> Path:
         """``_origin_of(path)``, resolved, found once per path for the run.
