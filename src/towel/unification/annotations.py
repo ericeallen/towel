@@ -1493,8 +1493,17 @@ def builtin_object_revealed(expression: str, revealed: str) -> str:
     returning different types (``open``, ``sorted``) are left for
     ``annotation_from_revealed`` to decline. It is a fallback: the checker's
     own spelling is used wherever it can be written, so a local of the site
-    that is spelled as a builtin loses no precision to it.
+    that is spelled as a builtin loses no precision to it. A site that hands
+    over the builtin read at each use passes the thunk ``lambda: len``, shown
+    as ``def () -> def (typing.Sized) -> int``, and the thunk's result is
+    loosened the same way.
     """
+    thunk = "def () -> "
+    thunked = _thunked_name(expression)
+    if thunked is not None and revealed.startswith(thunk):
+        inner = revealed[len(thunk) :]
+        loosened = builtin_object_revealed(thunked, inner)
+        return revealed if loosened == inner else thunk + loosened
     if expression not in _BUILTIN_NAMES:
         return revealed
     text = revealed.strip()
@@ -1515,6 +1524,27 @@ def builtin_object_revealed(expression: str, revealed: str) -> str:
     if len(signatures) == 1 and "." not in parameters:
         return revealed
     return f"def (*args: Any, **kwargs: Any) -> {returns[0]}"
+
+
+def _thunked_name(expression: str) -> Optional[str]:
+    """``len`` for ``lambda: len``: the name a thunk that takes nothing returns, if that is all it does."""
+    try:
+        probed = ast.parse(expression, mode="eval").body
+    except SyntaxError:
+        return None
+    if (
+        isinstance(probed, ast.Lambda)
+        and not (
+            probed.args.posonlyargs
+            or probed.args.args
+            or probed.args.kwonlyargs
+            or probed.args.vararg
+            or probed.args.kwarg
+        )
+        and isinstance(probed.body, ast.Name)
+    ):
+        return probed.body.id
+    return None
 
 
 def _signature_return(signature: str) -> str:

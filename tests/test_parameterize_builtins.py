@@ -24,6 +24,11 @@ evaluated where the block read it, so a patch of either module still reaches
 that module's code. It permits nothing else: a builtin every site reads alike
 is still read bare, and blocks that differ in which builtin they use are still
 declined.
+
+A site that hands over the builtin passes it as a thunk, ``lambda: len``, read
+at each use, since code the block runs may rebind it between two reads (the
+round-4 audit's P1-08: a callee writing ``builtins.len``). It is passed as the
+name itself only where the helper reads it first, once, before anything runs.
 """
 
 from __future__ import annotations
@@ -126,6 +131,20 @@ def _parameters(root: Path) -> List[List[str]]:
     return [[argument.arg for argument in helper.args.args] for helper in _helpers(root)]
 
 
+def _passes_the_builtin_read_at_each_use(root: Path) -> bool:
+    """Whether a generated call hands its helper ``lambda: len``, and none hands over ``len``."""
+    arguments = [
+        ast.unparse(argument)
+        for source in _python_files(root).values()
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id.startswith("__extracted_func")
+        for argument in node.args
+    ]
+    return "lambda: len" in arguments and "len" not in arguments
+
+
 def _calls(source: str) -> Dict[str, int]:
     """How many calls of a generated helper each function of ``source`` makes."""
     return {
@@ -213,7 +232,8 @@ def test_a_site_reading_the_builtin_shares_with_one_binding_its_name_only_with_t
     applied, declined = _refactor(after / "m.py", parameterize_builtins=flag)
     if flag:
         assert applied == 1
-        assert _parameters(after) == [["__param_0", "len", "name", "rows"]]
+        assert _parameters(after) == [["__param_0", "__param_1", "name", "rows"]]
+        assert _passes_the_builtin_read_at_each_use(after)
     else:
         assert applied == 0
         assert "builtin_argument" in declined
@@ -327,7 +347,7 @@ def test_across_modules_evidence_declines_or_passes_the_builtin(
     applied, declined = _refactor(after / "proj" / "pkg", parameterize_builtins=flag)
     if flag:
         assert applied > 0
-        assert any("len" in parameters for parameters in _parameters(after / "proj"))
+        assert _passes_the_builtin_read_at_each_use(after / "proj")
     else:
         assert applied == 0
         assert {"builtin_may_differ_by_module", "builtin_argument"} & set(declined)
@@ -413,7 +433,8 @@ def test_the_flag_reaches_the_engine_from_the_command_line(tmp_path: Path) -> No
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
     assert completed.returncode == 0, completed.stderr
-    assert _parameters(tmp_path) == [["__param_0", "len", "name", "rows"]]
+    assert _parameters(tmp_path) == [["__param_0", "__param_1", "name", "rows"]]
+    assert _passes_the_builtin_read_at_each_use(tmp_path)
 
 
 # What the checker reveals for a builtin, and the annotation Towel writes.
@@ -456,6 +477,20 @@ REVEALED = [
     # A name that is no builtin is left as the checker put it, a whole path
     # kept for the caller to import or to write as Any.
     ("measure", "def (typing.Sized) -> int", "'Callable[[typing.Sized], int]'"),
+    # A builtin handed over read at each use: the thunk's result is loosened.
+    ("lambda: len", "def () -> def (typing.Sized) -> int", "Callable[[], Callable[..., int]]"),
+    (
+        "lambda: print",
+        "def () -> Overload(def (*values: object, sep: str | None =), "
+        "def (*values: object, flush: bool))",
+        "Callable[[], Callable[..., None]]",
+    ),
+    # A thunk of a name that is no builtin is left as the checker put it.
+    (
+        "lambda: measure",
+        "def () -> def (typing.Sized) -> int",
+        "'Callable[[], Callable[[typing.Sized], int]]'",
+    ),
 ]
 
 
@@ -569,4 +604,83 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(tmp_path: Path
         for argument in helper.args.args
         if argument.annotation is not None
     }
-    assert annotations["len"] == "_typing.Callable[..., int]"
+    # The helper reads ``len`` twice, so each site passes it read at each use.
+    assert annotations["__param_0"] == "_typing.Callable[[], _typing.Callable[..., int]]"
+
+
+# Round-4 P1-08: a callee rebinds the builtin between the block's two reads.
+CALLEE_REBINDS_THE_BUILTIN = """
+import builtins
+
+
+def hook():
+    builtins.len = lambda value: 999
+
+
+def site_builtin(rows):
+    n = len(rows)
+    hook()
+    m = len(rows)
+    print("lens", n, m)
+    return (n, m)
+
+
+def site_local(rows, len=lambda value: -1):
+    n = len(rows)
+    hook()
+    m = len(rows)
+    print("lens", n, m)
+    return (n, m)
+"""
+
+# The builtin is read once, before anything the block runs.
+READ_ONCE_FIRST = """
+import builtins
+
+
+def hook():
+    builtins.len = lambda value: 999
+
+
+def site_builtin(rows):
+    n = len(rows)
+    hook()
+    print("len", n)
+    return n + 1
+
+
+def site_local(rows, len=lambda value: -1):
+    n = len(rows)
+    hook()
+    print("len", n)
+    return n + 1
+"""
+
+REBINDING_DRIVER = """
+import builtins
+
+real = builtins.len
+import m
+
+for function in (m.site_builtin, m.site_local):
+    builtins.len = real
+    print(function([1, 2]))
+builtins.len = real
+"""
+
+
+@pytest.mark.parametrize(
+    "module, thunked",
+    [(CALLEE_REBINDS_THE_BUILTIN, True), (READ_ONCE_FIRST, False)],
+    ids=["read_twice_around_a_call", "read_once_before_anything_runs"],
+)
+def test_r9sb_a_builtin_is_read_where_the_block_read_it(
+    tmp_path: Path, module: str, thunked: bool
+) -> None:
+    before, after = tmp_path / "before", tmp_path / "after"
+    for root in (before, after):
+        _write(root, {"m.py": module, "drive.py": REBINDING_DRIVER})
+    applied, _ = _refactor(after / "m.py", parameterize_builtins=True)
+    assert applied == 1
+    assert _passes_the_builtin_read_at_each_use(after) == thunked
+    assert _run(after, "drive.py") == _run(before, "drive.py")

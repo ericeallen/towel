@@ -172,8 +172,14 @@ describe belong to that version.
   (`parameterize_builtins=True`), each of those declines that concerns a
   builtin the sites may disagree about, one site's function binding the
   name or a module that may hold it, passes the builtin as an ordinary
-  parameter instead, each site giving its own: eagerly, or as a thunk where
-  the site may not have bound it, as for any free variable. The rules for a
+  parameter instead, each site giving its own. A site that hands over the
+  builtin, or its module's name of that spelling, passes it as a thunk
+  (`lambda: len`) read at each use, since code the block runs may rebind it
+  between two reads (a callee writing `builtins.len`); it passes the name
+  itself only where the helper reads it first, once, before anything else
+  runs. A site whose function binds the name passes its local, eagerly, or
+  as a thunk where the site may not have bound it, as for any free
+  variable. The rules for a
   name rebound between the call and the read still apply, so a module whose
   function declares the name `global` or writes its namespace at run time
   (`rebound_external_binding`), or that assigns it at its top level
