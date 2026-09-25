@@ -1312,7 +1312,7 @@ def _around(
                     found.append(
                         Surrounding(f"line {line}: {token.text.rstrip()}", "pylint", reach)
                     )
-    found.extend(_regions_around(tree, holders, comments, lines, first))
+    found.extend(_regions_around(source, tree, holders, comments, lines, first))
     return tuple(found)
 
 
@@ -1391,6 +1391,7 @@ def _left_open(tokens: Iterable[_Token], family: _Region, column: Optional[int])
 
 
 def _regions_around(
+    source: str,
     tree: ast.Module,
     holders: Sequence[ast.stmt],
     comments: Dict[int, Tuple[_Token, ...]],
@@ -1406,13 +1407,9 @@ def _regions_around(
     for one that lasts line by line, any opener before the block not closed
     anywhere before it.
     """
-    before = [
-        token
-        for line in sorted(line for line in comments if line < first)
-        for token in comments[line]
-        if not lines[token.start[0] - 1][: token.start[1]].strip()
-    ]
-    if not any(_ANY_REGION.search(token.text) for token in before):
+    regions = _region_comments(source)
+    before = regions[: bisect.bisect_left([token.start[0] for token in regions], first)]
+    if not before:
         return []
     total = len(lines)
     clauses = _clauses_around(tree, holders, first, total)
@@ -1439,6 +1436,26 @@ def _regions_around(
                 )
             )
     return found
+
+
+@functools.lru_cache(maxsize=8)
+def _region_comments(source: str) -> Tuple[_Token, ...]:
+    """The comments of ``source`` on lines of their own that may open or close a region, in order.
+
+    Only those can decide whether a region reaches a block, and every site
+    of a module asks, so they are found once per module text.
+    """
+    read = _module_comments(source)
+    if read is None:
+        return ()
+    comments, lines = read[1], _lines_of(source)
+    return tuple(
+        token
+        for line in sorted(comments)
+        for token in comments[line]
+        if not lines[token.start[0] - 1][: token.start[1]].strip()
+        and _ANY_REGION.search(token.text)
+    )
 
 
 def _homes_reached(
