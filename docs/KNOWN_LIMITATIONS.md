@@ -75,7 +75,8 @@ describe belong to that version.
   function reads its own frame (`locals()`, `dir()`, `eval`,
   `sys._getframe()`, ...) anywhere outside the block. Zero-argument
   `super()` itself moves only into a method helper of the class that holds
-  the block (see *Method insertion*).
+  the block (see *Method insertion*). A block that calls inline-snapshot is
+  rejected as well; see *Observable differences that remain*.
 - **Names the call site may not resolve.** A free variable is passed eagerly
   only when the call site resolves it on every path: a local bound on every
   path before the block, a module name bound on every path before the
@@ -238,7 +239,7 @@ frames, names, or source.
 Some behavior is outside any static model: a program that reads its own call
 stack, the active traceback, or its own source can observe that a helper adds
 a frame or shifts line numbers, even though the value the program computes is
-unchanged. Towel handles this in three layers, and it is worth being explicit
+unchanged. Towel handles this in four layers, and it is worth being explicit
 about where each one stops.
 
 - **Rejected outright.** A block that *itself* contains generator or async
@@ -257,6 +258,27 @@ about where each one stops.
   typing_extensions' `_caller`, which finds a `TypeAliasType`'s defining
   module that way, would otherwise see the helper (fixture r146). The
   functions are matched by name, which over-approximates and only declines.
+- **inline-snapshot, recognized by name.** A callee that reads its caller's
+  frame or source is reflection, and Towel does not model it (see *Not
+  detected* below). It makes one exception: inline-snapshot, because it is
+  popular and its snapshot tests are exactly what Towel extracts.
+  `snapshot()` keys each snapshot by its call's position and reads the
+  literal there, so two tests doing `snapshot("<item 1>")` and
+  `snapshot("<item 2>")`, merged into one helper doing
+  `snapshot(__param_1)`, raise `UsageError` (rich-click's suite lost 68 of
+  151 tests this way). A block that refers to `snapshot`, `external` or
+  `snapshot_arg` is declined (`source_reading_callee`), whether or not an
+  argument would be parameterized, and the code around the call is still
+  shared. `outsource`, `Is` and inline-snapshot's other names read no frame;
+  `external_file` reads only its caller's file. The list, with the source
+  each entry was read in, is `src/towel/unification/known_source_readers.py`.
+  Names are resolved by binding, anywhere in the module: an import alias,
+  `from inline_snapshot import snapshot as snap`, a module attribute, a
+  star import, a plain assignment, a parameter default; a local that
+  shadows one is taken for it, which only declines. `snapshot_arg()` reads
+  the call of the function it is called from, so a function of the module
+  that calls it, or calls such a function, or a class whose `__init__` or
+  `__new__` does, is matched too, by name, bare or as an attribute.
 - **Warned before the run.** Directory mode scans every module first and prints
   a stderr warning naming the files that inspect frames or tracebacks,
   attribute warnings by `stacklevel`, or read source through
@@ -277,13 +299,21 @@ about where each one stops.
   counts the frames of the traceback it was raised through); a test that asserts the exact line
   number a warning is issued from inside its own module, which a helper
   inserted above it shifts (trio's `test_deprecate`); and a *callee* that
-  reads its caller's frame, which the block-level guard cannot see through
-  a call: `inspect.stack()` or `sys._getframe(1)` inside a function the
-  block calls, the shape of a traceback that now includes the helper's
-  frame, and logging's `%(funcName)s`, which names the function whose frame
-  issued the record and so names the helper (the four differences the
-  fifth audit's battery still shows at `5ff2458`, September 19, 2026, are
-  all of this kind). None of these
+  reads its caller's frame or source, which is reflection. The block-level
+  guard cannot see through a call, and Towel recognizes no such callee but
+  inline-snapshot's (above): `inspect.stack()` or `sys._getframe(1)` inside a
+  function of another module the block calls; a library that reads the text
+  of its call, as icecream's `ic()`, devtools' `debug()`, varname's
+  `nameof()` and sorcery's spells do, or the name its result is assigned
+  to, as `varname()` does; one that stamps what it builds with its caller's
+  module, as `namedtuple`, the functional `Enum` API and `TypeVar` do,
+  which only a helper in another module changes; an inline-snapshot reader
+  reached through a value (a parameter, a container, `getattr`) or
+  re-exported by another module of the project; the shape of a traceback
+  that now includes the helper's frame; and logging's `%(funcName)s`, which
+  names the function whose frame issued the record and so names the helper
+  (the four differences the fifth audit's battery still shows at `5ff2458`,
+  September 19, 2026, are all of this kind). None of these
   can be distinguished statically from safe code that does the same thing
   (a linter also opens `.py` files; every library raises exceptions; every
   module has line numbers; every logging call may carry any format), so
@@ -1194,7 +1224,11 @@ the proposals it built and did not apply, by reason:
   out of the block, a comprehension assignment expression, or a `super()`
   reached through another name (the list under *Frame and control flow*
   above), or zero-argument `super()` in a method that rebinds its receiver or
-  binds `__class__`. `frame_read_in_function`: the enclosing function reads
+  binds `__class__`. `source_reading_callee[...]`, counted with the callee
+  it names (`source_reading_callee[inline_snapshot.snapshot]`): the block
+  refers to an inline-snapshot callee that reads the source or position of
+  its call (*Observable differences that remain* above).
+  `frame_read_in_function`: the enclosing function reads
   its own frame (`locals()`, `dir()`, `eval`, `sys._getframe()`, ...)
   somewhere outside the block, or calls `super()` through another name there
   while the block holds a load of `super` or `__class__`, which may be what

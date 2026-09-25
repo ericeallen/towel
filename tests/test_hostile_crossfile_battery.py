@@ -39,6 +39,11 @@ binding it; and ``xf7fz_late_toplevel_module_in_package``, whose ``pkg/c.py``
 imports a module of ``pkg`` as a top-level name, so runs as a top-level
 module itself.
 
+``r9sr_inline_snapshot`` holds the fourth audit's reproducer: two tests that
+differ in the literal each passes to ``snapshot()``. A stub of inline-snapshot
+beside ``pkg``, imported under the library's name, keys each call by its
+position as the library does, and its ``run.py`` runs the tests under pytest.
+
 ``xf7d_assert_moves_to_a_module_pytest_does_not_rewrite`` shares a block that
 holds an assert pytest rewrites in one module and not in the other; its
 ``run.py`` runs pytest and prints each failing assert's message.
@@ -146,6 +151,9 @@ TRANSFORMED = {
     "xf7fz_modules_three_modules_cluster",
     # Two modules pytest does not rewrite share an assert: either may host it.
     "xf7d_asserts_shared_by_modules_rewritten_alike",
+    # Round-4 audit: each inline-snapshot call keeps its place, and the code
+    # before it is still shared.
+    "r9sr_inline_snapshot",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
@@ -194,8 +202,9 @@ TYPED = frozenset(
 )
 """Packages run with the checker their ``pyproject.toml`` configures."""
 
-WITHOUT_CROSS_MODULE = TYPED
-"""Packages run without ``--cross-module``: every typed one so far, as the audit ran them."""
+WITHOUT_CROSS_MODULE = TYPED | {"r9sr_inline_snapshot"}
+"""Packages run without ``--cross-module``: every typed one so far, as the audit ran them, and
+the inline-snapshot fixture, whose defect the audit found without it."""
 
 KNOWN_DEFECTS: Dict[str, str] = {}
 """Packages whose defect is reported and not yet fixed, each with its reason from

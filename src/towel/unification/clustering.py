@@ -68,6 +68,7 @@ from .semantic_safety import (
     needs_class_body,
     unbinds_external_name,
 )
+from .source_readers import calls_source_reader
 from .splicing import BlockColumns
 from .thunk_inlining import inline_leading_thunks
 from .typing_forms import ModuleText
@@ -437,13 +438,15 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         """The candidate block as a cluster candidate, or None when a semantic guard declines it.
 
         The same guards the pair stages apply to a block: frame sensitivity,
-        escaping nested bindings, rebinding of snapshotted names, scopes
-        crossing the boundary, moved scope declarations, reassignment of a
-        name the block did not bind, and unbinding of a name bound before it.
+        a callee that reads the source or position of its call, escaping
+        nested bindings, rebinding of snapshotted names, scopes crossing the
+        boundary, moved scope declarations, reassignment of a name the block
+        did not bind, and unbinding of a name bound before it.
         """
         fn, fpath, analyzer = entry.node, entry.file_path, entry.scope_analyzer
         for frame_guard in (
             block_requires_original_frame,
+            calls_source_reader,
             frame_read_outside_block,
             created_object_escapes,
         ):

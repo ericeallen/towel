@@ -322,6 +322,12 @@ a helper could change behavior even if the shapes match:
   one; any call with a `stacklevel=` keyword counts as a warning. A
   `break` or `continue` whose loop lies outside the block would leave the
   helper instead of the loop.
+- **inline-snapshot.** `source_readers.py` declines a block that refers to a
+  callee of `known_source_readers.py`, which lists the inline-snapshot
+  entry points that read the source or position of their call
+  (`snapshot()`, `external()`, `snapshot_arg()`), however the module binds
+  the name (`source_reading_callee`). Every other callee that reads its
+  caller's frame is reflection, outside the model.
 - **The class cell.** Zero-argument `super()` reads the `__class__` cell of
   the function calling it and that frame's first argument, so code using it
   needs its class body (`needs_class_body`). The guard stage marks the pair;
@@ -1498,6 +1504,7 @@ but the ideas and their names are from the literature.
 | Loggers and settings | `diagnostics.py` (at `src/towel/`) |
 | Anti-unification | `unifier.py` over `unifier_state.py`, with `constant_consistency.py`, `parameterization.py`, `hof_promotion.py`; `substitution.py`, `binding_context.py` |
 | What a tool reads where it stands, and what a block's callees denote among the typing forms | `static_positions.py`, `typing_forms.py` |
+| The inline-snapshot callees that read their call site, and what a block's names denote among them | `known_source_readers.py`, `source_readers.py` |
 | Pair pre-filter | `block_signature.py` |
 | Per-statement facts and the weak per-node memo | `statement_facts.py` |
 | Verification | `instantiation.py` |
