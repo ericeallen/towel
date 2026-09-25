@@ -200,7 +200,37 @@ TRANSFORMED = {
     # The control for the mangled parameters and import names, which a class
     # body rewrites and a helper elsewhere would not.
     "r7c_unmangled_parameter_passed_by_keyword",
+    # A block that starts after, or ends before, another statement on its
+    # line: the call takes the block's place and the other statement stays.
+    "r7sp_block_starts_after_a_semicolon",
+    "r7sp_block_ends_before_a_semicolon",
+    # A thunk evaluated after an effect is passed as a thunk, not eagerly:
+    # a lambda's default, a set display's hashing, ``*`` unpacking, a read
+    # of a global nothing binds.
+    "r7sp_thunk_after_a_lambda_default",
+    "r7sp_thunk_after_a_set_display",
+    "r7sp_thunk_after_a_starred_display",
+    "r7sp_thunk_after_an_unbound_global_read",
+    # A thunk in dead code after a ``raise``, which the original never evaluated.
+    "r7sp_thunk_after_a_raise",
+    # Bindings audit of 1.772. A block that rebinds a name bound before it
+    # (a for target, a capture, a def) is declined; the code around it moves.
+    "r7bi_loop_capture_def_rebind_prebound",
+    # The helper returns what a later += or del of it needs.
+    "r7bi_augassign_and_del_after_block",
+    # (r7bi_read_before_own_binding is declined: its block reads a local
+    # before binding it, which only the original's UnboundLocalError shows.
+    # r7bi_loop_del_before_eager_read is declined: a del later in the loop
+    # leaves the name unbound on the next iteration.)
+    # A binder that may be read unbound keeps its spelling: the deletion and
+    # the handler stay with each site, and only what follows them moves.
+    "r7bi_renamed_binder_named_by_unbound_error",
+    # An except clause deletes its name as it ends: a try nested in an if
+    # leaves nothing bound for the block to lose, and moves.
+    "r7bi_except_name_in_nested_block",
 }
+# r7sp_directive_on_a_shared_line is declined: each block starts after, or
+# ends before, a statement that stays on a line carrying a directive.
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in
 # their qualified names. Its reads are still what free_variables reports.

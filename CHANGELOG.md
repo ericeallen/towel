@@ -30,6 +30,46 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A block that rebinds a name bound before it is now declined, whatever
+  construct rebinds it: a `for` or `with` target, a `match` capture, a
+  nested `def` or `class`, an import, or a walrus. So
+  `i = -1; for i in xs: ...; i * 2` keeps its `-1` when `xs` is empty. It
+  had raised `UnboundLocalError` in the helper.
+- `count += 1` and `del count` after a block now count as reads of `count`.
+  The helper returns it, or the block is declined, instead of the later
+  statement raising `UnboundLocalError`.
+- A block that reads a local before binding it, such as
+  `scale = scale(n)`, is declined where the call site may not have the name
+  bound. The call had succeeded there, using the module's `scale`.
+- Blocks equal up to their binders' names now share a helper only where no
+  read can find a renamed binder unbound. So an `UnboundLocalError` still
+  names each site's own variable.
+- Definite assignment now unbinds a deleted name for everything the
+  deletion may precede: the next loop iteration, a handler or `finally`, a
+  `with`, `case` or `else` body, and an `except*` clause. Such a name had
+  been passed eagerly, and raised before an effect the original ran first.
+- A block that started at the second statement of a `;` line, or ended at
+  the first, was spliced by whole lines, which deleted the other statement.
+  `a = n + 1; b = a * 2`, with the block at `b`, lost `a = n + 1`, and a
+  trailing `; log.append(...)` was lost the same way. The call now replaces
+  exactly the block's text. It keeps the rest of the first and last lines,
+  including a one-line compound body's header and a backslash continuation.
+- A thunk was passed eagerly although the helper evaluated something first
+  that could run code or raise, so its effect moved ahead of that
+  something. The cases were:
+  - a lambda's default arguments;
+  - a set or dict display hashing its keys;
+  - `*` and `**` unpacking;
+  - a read of a global that raises `NameError`;
+  - dead code after `return` or `raise`.
+
+  A thunk now goes eagerly only after steps on an allowlist of forms, in
+  CPython's evaluation order, that can neither run code nor raise.
+- A pair is declined as `directive_on_shared_line` when its block shares a
+  physical line with code that stays at the call site, and that line
+  carries a tool directive or is excluded from coverage. The directive
+  governs the whole line, and splicing in the call would part it from some
+  of that code.
 - The import sorter could reorder a file's own imports, and so the order
   their modules run in. With ruff excluding `pkg/app.py`, Towel rewrote
   `from pkg import zeta` / `from pkg import alpha` as

@@ -432,19 +432,43 @@ class LoopReturnFinder(OwnScopeVisitor):
 
 
 class NameCollector(OwnScopeVisitor):
-    """Collect all names referenced in Load context within a code block.
+    """Collect every name a code block reads: loads, ``del`` targets, augmented targets.
 
+    ``count += 1`` loads ``count`` before it stores it, and ``del count``
+    needs the binding as much as a load does, so both are reads of it.
     Stops at nested function boundaries to avoid capturing scopes outside the block.
     """
 
     def __init__(self) -> None:
         self.used: Set[str] = set()
+        self._in_class_body = False
 
     def visit_Name(self, n: ast.Name) -> None:
         _record_load_name_and_visit(n, self.used, self)
 
+    def visit_AugAssign(self, n: ast.AugAssign) -> None:
+        if isinstance(n.target, ast.Name):
+            self.used.add(n.target.id)
+        self.generic_visit(n)
+
+    def _nested_function(self, node: FunctionNode) -> None:
+        # The body is another scope; the decorators, defaults and annotations
+        # are read here, when the definition runs.
+        visit_each(self, evaluated_before_definition(node))
+        visit_each(self, annotation_expressions(node))
+
+    def _nested_class(self, node: ast.ClassDef) -> None:
+        enclosing, self._in_class_body = self._in_class_body, True
+        try:
+            self.generic_visit(node)
+        finally:
+            self._in_class_body = enclosing
+
     def visit_AnnAssign(self, n: ast.AnnAssign) -> None:
-        # An annotation inside a function body is never evaluated.
+        # An annotation inside a function body is never evaluated; one in a
+        # class body is, when the class is created.
+        if self._in_class_body:
+            self.visit(n.annotation)
         if n.value is not None:
             self.visit(n.value)
         self.visit(n.target)
@@ -601,7 +625,7 @@ def _visit_loop_and_restore_flag(
 def _record_load_name_and_visit(
     node: ast.Name, destination: Set[str], visitor: ast.NodeVisitor
 ) -> None:
-    if isinstance(node.ctx, ast.Load):
+    if isinstance(node.ctx, (ast.Load, ast.Del)):
         destination.add(node.id)
     visitor.generic_visit(node)
 

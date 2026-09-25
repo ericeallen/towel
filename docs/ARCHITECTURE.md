@@ -121,7 +121,8 @@ flowchart TD
       directives the two blocks do not carry alike, or whose reach the
       moved code or its call would leave (`directives_differ`,
       `directive_on_argument`, `directive_outlives_block`,
-      `directive_around_block`, `excluded_block_start`; see *Comments of
+      `directive_around_block`, `excluded_block_start`,
+      `directive_on_shared_line`; see *Comments of
       moved code*), and a further site that differs from them in its
       directives does not join;
    10. placement: function, class, or module, and a host module that closes
@@ -207,7 +208,12 @@ Each parameter is passed in the way that preserves the original evaluation:
   original evaluated twice, or not at all on some path, is evaluated the same
   number of times under the same conditions. As an optimization, a thunk the
   helper would evaluate first, once, and unconditionally is passed eagerly
-  instead, because nothing can observe the difference.
+  instead, because nothing can observe the difference. "First" means that
+  every step before it can neither run code nor raise, by an allowlist over
+  the expression forms (`thunk_inlining.effect_free`): a name read is such a
+  step only for a helper parameter or a name the helper already bound, and
+  hashing an element that is not a constant, `*`, `**` and target unpacking
+  are effects.
 - **Lifted.** An expression that reads a name bound *inside* the block is
   lambda-lifted [Johnsson 1985]: the lambda takes those names as arguments so it still refers
   to the block-local values, not to whatever the helper's scope binds.
@@ -234,8 +240,12 @@ actual arguments back into the helper body, alpha-normalizes both it and the
 original block (binders renamed to positional placeholders, i.e. compared up to
 alpha-equivalence [Church 1936; Barendregt 1984], annotations
 replaced by a placeholder because they are inert at runtime), and requires the
-two to be structurally identical. A proposal is offered only if this holds for
-**every** call site. This is the property that makes the transformation safe to
+two to be structurally identical. Alpha-equivalence is observational only
+where no read can find a renamed binder unbound, since `UnboundLocalError` and
+`NameError` carry the name; `observable_renamings` walks the block in
+evaluation order and declines a call site where one can, or where a `global`
+or `nonlocal` declaration names the binder. A proposal is offered only if this
+holds for **every** call site. This is the property that makes the transformation safe to
 apply after review: the helper, called as written, reduces to the exact code it
 replaced. A mismatch — from a subtle scoping or parameterization error — drops
 the proposal rather than emitting it.
@@ -323,8 +333,10 @@ a helper could change behavior even if the shapes match:
   or binds `__class__`, is declined here, since no helper would read the
   same receiver and cell. `super(C, obj)`, which names both, is an ordinary
   call.
-- **Binding discipline.** A block that deletes, rebinds, or `except ... as`
-  binds a name the caller keeps using; a moved `global`/`nonlocal`
+- **Binding discipline.** A block that deletes, rebinds (by any binding
+  construct: a `for` or `with` target, a capture, a nested `def`), or
+  `except ... as` binds a name the caller keeps using, or that reads a local
+  before binding it; a moved `global`/`nonlocal`
   declaration; a comprehension assignment expression that would bind in the
   wrong scope.
 - **Closures.** A nested function or lambda in the block that shares a rebound
@@ -879,7 +891,10 @@ would not reach the helper where placement writes it
 a block whose first statement coverage excludes would become a measured call
 (`excluded_block_start`), where what coverage excludes is every line the
 project's own coverage.py configuration's regexes match, read as coverage.py
-reads it (`coverage_config.py`); and a region directive (`fmt: off`, `isort:
+reads it (`coverage_config.py`); a directive, or a coverage exclusion, on a
+line the block shares with a statement that stays at the call site governs
+that statement too, and the splice would part them
+(`directive_on_shared_line`); and a region directive (`fmt: off`, `isort:
 off`, a `pylint: disable` on a line of its own) must close within the block,
 and a file-wide one (`flake8: noqa`, `mypy:`) must stay in its module
 (`directive_outlives_block`). A clustered site whose directives differ is
@@ -1468,6 +1483,7 @@ but the ideas and their names are from the literature.
 | Binding-aware type terms and scoped type parameters | `type_bindings.py` |
 | Signature anti-unification and fresh generic candidates | `type_generalization.py`, `generic_annotations.py` |
 | Materialization and the arity check | `materialize.py` |
+| Writing a call in place of exactly its block's text | `splicing.py` |
 | Clustering further call sites | `clustering.py` |
 | Fork-based parallel evaluation | `parallel.py` |
 | Fixed-point drivers and the frame-sensitivity warning | `fixed_point.py` |

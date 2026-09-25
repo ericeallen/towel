@@ -52,7 +52,7 @@ def _inline(source: str, *names: str) -> tuple[set[str], str]:
         ),
         ("def h(__param_0, d):\n    d[__param_0()] = 1\n", ("__param_0",), {"__param_0"}),
         (
-            "def h(__param_0):\n    return ''.join(sorted(__param_0() | set('ab')))\n",
+            "def h(__param_0):\n    return ''.join(__param_0() | {'a', 'b'})\n",
             ("__param_0",),
             {"__param_0"},
         ),
@@ -72,7 +72,7 @@ def _inline(source: str, *names: str) -> tuple[set[str], str]:
             {"__param_0", "__param_1"},
         ),
         (
-            "def h(__param_0, __param_1):\n    return f(__param_0(), __param_1())\n",
+            "def h(__param_0, __param_1, f):\n    return f(__param_0(), __param_1())\n",
             ("__param_0", "__param_1"),
             {"__param_0", "__param_1"},
         ),
@@ -99,6 +99,9 @@ def test_leading_thunks_are_inlined(
         ("def h(__param_0, counter):\n    counter['total'] += __param_0()\n", ("__param_0",)),
         ("def h(__param_0, obj):\n    return obj.method(__param_0())\n", ("__param_0",)),
         ("def h(__param_0):\n    print('start')\n    return __param_0()\n", ("__param_0",)),
+        # a global or builtin read first may raise NameError
+        ("def h(__param_0):\n    return f(__param_0())\n", ("__param_0",)),
+        ("def h(__param_0):\n    return sorted(__param_0() | set('ab'))\n", ("__param_0",)),
         # conditional or repeated evaluation
         ("def h(__param_0, flag):\n    return flag and __param_0()\n", ("__param_0",)),
         ("def h(__param_0, flag):\n    return 1 if flag else __param_0()\n", ("__param_0",)),

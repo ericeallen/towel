@@ -29,7 +29,7 @@ from .models import FunctionNode
 from .parameters import parameter_names
 from .statement_facts import import_binding_names, pattern_capture_names
 from functools import cached_property
-from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set
+from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple, cast
 from weakref import WeakKeyDictionary, ref
 
 # ``None`` stands for "every name": the position is unreachable, so any
@@ -83,26 +83,23 @@ def _collect_definite_before(
     """One pass over the statement lists a path from the function root can follow.
 
     Mirrors :func:`_definitely_bound_before_uncached`: at each level the
-    names bound before a child are those bound on entry to the container,
-    what the container binds before the list runs, and what every preceding
-    sibling definitely binds, with a sibling that never falls through making
-    the rest of the list contribute nothing.
+    names bound before a child are those bound on entry to the list
+    (``_field_entry``), less what every preceding sibling may unbind, plus
+    what it definitely binds. After a sibling that never falls through,
+    nothing is claimed.
     """
     for field in _STATEMENT_LIST_FIELDS:
         children = getattr(container, field, None)
         if not isinstance(children, list) or not children:
             continue
-        on_entry = entry | frozenset(_bindings_on_entry(container, field))
-        accumulated: Definite = frozenset()
+        current: Definite = _field_entry(container, field, entry)
         for child in children:
-            bound = on_entry | (accumulated or frozenset())
+            bound = current if current is not None else frozenset()
             before[child] = bound
             _collect_definite_before(child, bound, before)
-            if accumulated is not None:
+            if current is not None:
                 result = _definite_statement(child)
-                accumulated = (
-                    None if result is None else (accumulated - _may_unbind(child)) | result
-                )
+                current = None if result is None else (current - _may_unbind(child)) | result
 
 
 _FACTS: "WeakKeyDictionary[ast.AST, _FunctionFacts]" = WeakKeyDictionary()
@@ -137,15 +134,44 @@ def _definitely_bound_before_uncached(function: FunctionNode, statement: ast.stm
         node = parents[node]
     path.reverse()
     container: ast.AST = function
+    current: FrozenSet[str] = frozenset(bound)
     for child in path:
         for field, value in ast.iter_fields(container):
             if isinstance(value, list) and child in value:
-                index = value.index(child)
-                bound |= _definite(value[:index]) or set()
-                bound |= _bindings_on_entry(container, field)
+                reached: Definite = _field_entry(container, field, current)
+                for sibling in value[: value.index(child)]:
+                    if reached is None:
+                        break
+                    result = _definite_statement(sibling)
+                    reached = None if result is None else (reached - _may_unbind(sibling)) | result
+                current = reached if reached is not None else frozenset()
                 break
         container = child
-    return bound
+    return set(current)
+
+
+def _field_entry(container: ast.AST, field: str, entry: FrozenSet[str]) -> FrozenSet[str]:
+    """Names bound on entry to ``container``'s statement list ``field``, given ``entry``.
+
+    A loop's body may run again after a ``del`` or an ``except ... as`` in
+    it, and its ``else`` after any of them; a handler or ``finally`` may start
+    after any statement of the ``try``, and the ``else`` runs after them all.
+    Whatever the statement may unbind anywhere is therefore not bound on
+    entry to those lists. The container then binds its own targets.
+    """
+    if isinstance(container, (ast.For, ast.AsyncFor, ast.While) + _TRY_STATEMENTS) and field in (
+        "body",
+        "orelse",
+        "handlers",
+        "finalbody",
+    ):
+        entry = entry - _may_unbind(cast(ast.stmt, container))
+    return entry | frozenset(_bindings_on_entry(container, field))
+
+
+_TRY_STATEMENTS: Tuple[type, ...] = tuple(
+    kind for kind in (ast.Try, getattr(ast, "TryStar", None)) if isinstance(kind, type)
+)
 
 
 def definitely_bound_after(statements: Sequence[ast.stmt]) -> Optional[Set[str]]:
@@ -192,8 +218,16 @@ def _locally_bound_names(function: FunctionNode) -> Set[str]:
         node = pending.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(node.name)
+            # What a definition evaluates where it stands runs in this scope:
+            # decorators, defaults, annotations, bases and keywords.
+            pending.extend(node.decorator_list)
+            if isinstance(node, ast.ClassDef):
+                pending.extend([*node.bases, *node.keywords])
+            else:
+                pending.extend([node.args, *([node.returns] if node.returns else [])])
             continue  # a nested scope binds its own names
         if isinstance(node, ast.Lambda):
+            pending.append(node.args)
             continue
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             names.add(node.id)
@@ -232,22 +266,20 @@ def _meet(left: Definite, right: Definite) -> Definite:
     return left & right
 
 
-def _join(left: Definite, right: Definite) -> Definite:
-    if left is None or right is None:
-        return None
-    return left | right
-
-
 def _definite(statements: Sequence[ast.stmt]) -> Definite:
     """Names bound on every path through the sequence, or None if it never falls through."""
-    bound: FrozenSet[str] = frozenset()
+    return _then(frozenset(), statements)
+
+
+def _then(bound: Definite, statements: Sequence[ast.stmt]) -> Definite:
+    """``bound`` carried through ``statements``: what they unbind on some path goes, what they bind on every path comes."""
     for statement in statements:
-        result = _definite_statement(statement)
-        if result is None:
+        if bound is None:
             return None
+        result = _definite_statement(statement)
         # A name the statement may unbind on some path is no longer definite,
         # unless the statement itself rebinds it on every path.
-        bound = (bound - _may_unbind(statement)) | result
+        bound = None if result is None else (bound - _may_unbind(statement)) | result
     return bound
 
 
@@ -269,9 +301,10 @@ def _may_unbind(statement: ast.stmt) -> FrozenSet[str]:
     if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         return frozenset()
     names: Set[str] = set()
-    if isinstance(statement, ast.Try):
-        names.update(handler.name for handler in statement.handlers if handler.name)
-        for handler in statement.handlers:
+    if isinstance(statement, _TRY_STATEMENTS):
+        handlers: List[ast.ExceptHandler] = getattr(statement, "handlers")
+        names.update(handler.name for handler in handlers if handler.name)
+        for handler in handlers:
             for child in handler.body:
                 names |= _may_unbind(child)
     if isinstance(statement, ast.Match):
@@ -314,29 +347,29 @@ def _definite_statement(statement: ast.stmt) -> Definite:
         for item in statement.items:
             if item.optional_vars is not None:
                 names |= stored_names(item.optional_vars)
-        body = _definite(statement.body)
-        return None if body is None else frozenset(names) | body
+        # The body may delete a target it was given.
+        return _then(frozenset(names), statement.body)
     if isinstance(statement, ast.Try):
-        normal = _join(_definite(statement.body), _definite(statement.orelse))
+        # The else clause runs after the body and may delete what it bound;
+        # so may the finally clause, after whichever path came before it.
+        normal = _then(_definite(statement.body), statement.orelse)
         for handler in statement.handlers:
-            handled = _definite(handler.body)
+            entry = frozenset({handler.name}) if handler.name else frozenset()
+            handled = _then(entry, handler.body)
             if handled is not None and handler.name:
                 # ``except E as e`` deletes ``e`` when the handler exits, so it
                 # is unbound on that path even if it was bound before the try.
                 handled = handled - {handler.name}
             normal = _meet(normal, handled)
-        final = _definite(statement.finalbody)
-        return _join(normal, final) if final is not None else None
+        return _then(normal, statement.finalbody)
     if isinstance(statement, ast.Match):
         if not any(_irrefutable(case.pattern) and case.guard is None for case in statement.cases):
             return frozenset()
         result: Definite = None
         for case in statement.cases:
-            body = _definite(case.body)
-            case_names = (
-                None if body is None else body | frozenset(pattern_capture_names(case.pattern))
-            )
-            result = _meet(result, case_names)
+            # A case body may delete what its pattern captured.
+            captured = _then(frozenset(pattern_capture_names(case.pattern)), case.body)
+            result = _meet(result, captured)
         return result if result is not None else frozenset()
     # Loops may run zero times; a while-else or for-else without break would
     # be definite, but that refinement is not needed for soundness.

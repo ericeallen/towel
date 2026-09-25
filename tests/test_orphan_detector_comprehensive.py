@@ -504,9 +504,10 @@ def foo():
         assert isinstance(func, ast.FunctionDef)
 
         orphaned = orphaned_variables(func.body, (0, 0))
-        # Augmented assignment both uses and rebinds
-        # The current implementation treats it as a rebinding
-        self.assertEqual(orphaned, set())
+        # An augmented assignment reads x before it rebinds it: moving the
+        # block's binding away leaves that read without one, unless the
+        # helper returns x.
+        self.assertEqual(orphaned, {"x"})
 
     def test_no_bindings_in_extracted(self):
         """Test when extracted block has no bindings."""

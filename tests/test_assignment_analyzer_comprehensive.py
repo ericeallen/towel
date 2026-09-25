@@ -25,8 +25,15 @@ import ast
 from towel.unification.assignment_analyzer import (
     analyze_assignments,
     has_reassignments_without_bindings,
+    own_scope_bindings,
     _collect_bindings_and_reassignments,
 )
+
+
+def classified(func):
+    """Each binding of ``func``'s own scope, in order, as (name, is_reassignment)."""
+    result = analyze_assignments(func)
+    return [(binding.name, result[binding.node_id]) for binding in own_scope_bindings(func.body)]
 
 
 class TestAnalyzeAssignmentsBasics(unittest.TestCase):
@@ -193,24 +200,16 @@ def foo():
             self.assertFalse(is_reassignment, "Tuple unpacking should be initial binding")
 
     def test_tuple_unpacking_reassignment(self):
-        """Test tuple unpacking with one variable already bound."""
+        """Tuple unpacking classifies each name: one already bound, one new."""
         code = """
 def foo():
     a = 1
     a, b = (2, 3)
 """
-        tree = ast.parse(code)
-        func = tree.body[0]
+        func = ast.parse(code).body[0]
         assert isinstance(func, ast.FunctionDef)
 
-        result = analyze_assignments(func)
-
-        self.assertEqual(len(result), 2, "Should have two assignments")
-
-        # First is initial, second is reassignment (because 'a' was bound)
-        assignments = list(result.values())
-        self.assertFalse(assignments[0], "First should be initial binding")
-        self.assertTrue(assignments[1], "Second should be reassignment (a is already bound)")
+        self.assertEqual(classified(func), [("a", False), ("a", True), ("b", False)])
 
     def test_list_unpacking(self):
         """Test list unpacking."""
@@ -290,64 +289,47 @@ class TestForLoopHandling(unittest.TestCase):
     """Test for loop variable handling."""
 
     def test_for_loop_creates_binding(self):
-        """Test that for loop variable creates a binding."""
+        """A for target is a binding, and a later assignment reassigns it."""
         code = """
 def foo():
     for i in range(10):
         pass
     i = 5
 """
-        tree = ast.parse(code)
-        func = tree.body[0]
+        func = ast.parse(code).body[0]
         assert isinstance(func, ast.FunctionDef)
 
-        result = analyze_assignments(func)
-
-        # Only the explicit assignment is recorded, and it's a reassignment
-        # because the for loop binds 'i'
-        self.assertEqual(len(result), 1, "Should have one explicit assignment")
-        for node_id, is_reassignment in result.items():
-            self.assertTrue(is_reassignment, "Assignment after for loop should be reassignment")
+        self.assertEqual(classified(func), [("i", False), ("i", True)])
 
     def test_for_loop_tuple_unpacking(self):
-        """Test for loop with tuple unpacking."""
+        """Every name of an unpacked for target is a binding."""
         code = """
 def foo():
     for x, y in [(1, 2), (3, 4)]:
         pass
     x = 10
 """
-        tree = ast.parse(code)
-        func = tree.body[0]
+        func = ast.parse(code).body[0]
         assert isinstance(func, ast.FunctionDef)
 
-        result = analyze_assignments(func)
-
-        # Assignment to x is a reassignment
-        for node_id, is_reassignment in result.items():
-            self.assertTrue(is_reassignment, "Assignment after for loop should be reassignment")
+        self.assertEqual(classified(func), [("x", False), ("y", False), ("x", True)])
 
 
 class TestWithStatementHandling(unittest.TestCase):
     """Test with statement 'as' clause handling."""
 
     def test_with_statement_creates_binding(self):
-        """Test that with statement 'as' clause creates a binding."""
+        """A with target is a binding, and a later assignment reassigns it."""
         code = """
 def foo():
     with open('file.txt') as f:
         pass
     f = None
 """
-        tree = ast.parse(code)
-        func = tree.body[0]
+        func = ast.parse(code).body[0]
         assert isinstance(func, ast.FunctionDef)
 
-        result = analyze_assignments(func)
-
-        # Assignment to f is a reassignment
-        for node_id, is_reassignment in result.items():
-            self.assertTrue(is_reassignment, "Assignment after with should be reassignment")
+        self.assertEqual(classified(func), [("f", False), ("f", True)])
 
     def test_with_statement_no_as_clause(self):
         """Test with statement without 'as' clause."""
@@ -371,7 +353,7 @@ class TestNestedFunctionHandling(unittest.TestCase):
     """Test that nested functions are not descended into."""
 
     def test_nested_function_not_analyzed(self):
-        """Test that nested function assignments are not analyzed."""
+        """A nested def binds its name here; its body's bindings are its own."""
         code = """
 def outer():
     x = 1
@@ -380,18 +362,10 @@ def outer():
         y = 3
     x = 4
 """
-        tree = ast.parse(code)
-        func = tree.body[0]
+        func = ast.parse(code).body[0]
         assert isinstance(func, ast.FunctionDef)
 
-        result = analyze_assignments(func)
-
-        # Should only have 2 assignments (x=1 and x=4), not the inner function's assignments
-        self.assertEqual(len(result), 2, "Should only analyze outer function assignments")
-
-        assignments = list(result.values())
-        self.assertFalse(assignments[0], "First x assignment is initial")
-        self.assertTrue(assignments[1], "Second x assignment is reassignment")
+        self.assertEqual(classified(func), [("x", False), ("inner", False), ("x", True)])
 
 
 class TestComprehensionHandling(unittest.TestCase):
@@ -620,7 +594,7 @@ def foo():
         self.assertIn("x", bound_vars, "x should be bound in with body")
 
     def test_ignores_nested_functions(self):
-        """Test that nested functions are ignored."""
+        """A nested function contributes its name, not its own bindings."""
         code = """
 def foo():
     x = 1
@@ -638,7 +612,7 @@ def foo():
         for node in func.body:
             _collect_bindings_and_reassignments(node, reassignments, bound_vars, reassigned_vars)
 
-        self.assertEqual(bound_vars, {"x"}, "Should only collect outer function bindings")
+        self.assertEqual(bound_vars, {"x", "inner"}, "Should only collect outer function bindings")
         self.assertNotIn("y", bound_vars, "Should not collect nested function bindings")
 
 
@@ -674,60 +648,40 @@ def foo():
         self.assertEqual(len(result), 0, "Expression-only function should have no assignments")
 
     def test_multiple_targets_in_assignment(self):
-        """Test assignment with multiple targets."""
+        """A chained assignment binds each of its targets once, all initially."""
         code = """
 def foo():
     x = y = z = 1
 """
-        tree = ast.parse(code)
-        func = tree.body[0]
+        func = ast.parse(code).body[0]
         assert isinstance(func, ast.FunctionDef)
 
-        result = analyze_assignments(func)
-
-        # This creates one Assign node with multiple targets
-        # Should be tracked as initial binding
-        self.assertEqual(len(result), 1, "Should have one assignment node")
-        for node_id, is_reassignment in result.items():
-            self.assertFalse(is_reassignment, "Should be initial binding")
+        self.assertEqual(classified(func), [("x", False), ("y", False), ("z", False)])
 
     def test_attribute_assignment_ignored(self):
-        """Test that attribute assignments don't create bindings."""
+        """An attribute assignment binds no variable name."""
         code = """
 def foo():
     obj = SomeClass()
     obj.attr = 1
     obj.attr = 2
 """
-        tree = ast.parse(code)
-        func = tree.body[0]
+        func = ast.parse(code).body[0]
         assert isinstance(func, ast.FunctionDef)
 
-        result = analyze_assignments(func)
-
-        # Should have 3 assignments total
-        # First is initial (obj), second is initial (obj.attr first time),
-        # third is reassignment (obj.attr second time)
-        # Actually, attribute assignments create assignment nodes but don't
-        # bind variable names, so they're tracked based on whether any Name
-        # in the target is a reassignment
-        self.assertEqual(len(result), 3, "Should have three assignment nodes")
+        self.assertEqual(classified(func), [("obj", False)])
 
     def test_subscript_assignment_ignored(self):
-        """Test that subscript assignments don't create bindings."""
+        """A subscript assignment binds no variable name."""
         code = """
 def foo():
     lst = []
     lst[0] = 1
 """
-        tree = ast.parse(code)
-        func = tree.body[0]
+        func = ast.parse(code).body[0]
         assert isinstance(func, ast.FunctionDef)
 
-        result = analyze_assignments(func)
-
-        # Should have 2 assignments
-        self.assertEqual(len(result), 2, "Should have two assignment nodes")
+        self.assertEqual(classified(func), [("lst", False)])
 
 
 def main():

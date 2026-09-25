@@ -35,7 +35,6 @@ import copy
 import hashlib
 import os
 import re
-import textwrap
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +54,7 @@ from .engine_state import HelperNameClaims
 from .exceptions import ProjectScanLimitError, RefactoringError, UntypeableExtraction
 from .import_graph import ImportTimeCode, TypeCheckingGuards, fails_run_by_path, runs_as_script
 from .insertion import reindent
+from .splicing import splice_block, whole_lines
 from .models import (
     AppliedChange,
     MethodKind,
@@ -450,7 +450,11 @@ class Materialization(
         lines: List[str],
         replacements: List[Replacement],
     ) -> None:
-        """Replace each duplicate block of ``lines`` with its generated call, last first."""
+        """Replace each duplicate block of ``lines`` with its generated call, last first.
+
+        Exactly the block's text is replaced (``splicing``): its first and last
+        lines keep any statement written on them outside it.
+        """
         ascending = sorted(replacements, key=lambda replacement: replacement.line_range)
         if any(
             left.line_range[1] >= right.line_range[0]
@@ -463,11 +467,10 @@ class Materialization(
             if not 1 <= start_line <= end_line <= len(lines):
                 raise ValueError(f"Invalid replacement range {start_line}-{end_line}: {file_path}")
             replacement_code = self._render(self._call_site(proposal, naming, repl))
-            indent = self._get_indent(lines[start_line - 1])
-            replacement_lines = [
-                indent + line + "\n" if line.strip() else "\n"
-                for line in replacement_code.split("\n")
-            ]
+            block_lines = lines[start_line - 1 : end_line]
+            spliced = splice_block(
+                block_lines, repl.columns or whole_lines(block_lines), replacement_code
+            )
             # A call to an existing function needs no naming, so it is not logged.
             if proposal.reused_function is None:
                 self._change_log.append(
@@ -475,13 +478,11 @@ class Materialization(
                         helper=naming.final_name,
                         path=file_path,
                         line=start_line,
-                        before=textwrap.dedent("".join(lines[start_line - 1 : end_line])).rstrip(
-                            "\n"
-                        ),
+                        before=spliced.replaced,
                         after=replacement_code,
                     )
                 )
-            lines[start_line - 1 : end_line] = replacement_lines
+            lines[start_line - 1 : end_line] = spliced.lines
 
     def _call_site(
         self, proposal: RefactoringProposal, naming: _HelperNaming, repl: Replacement
