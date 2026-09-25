@@ -30,6 +30,35 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- An in-place `dry` refused whenever any `.towel-transaction-*` path
+  existed under its target. That included an empty directory, one inside
+  `.git`, and a journal naming only untouched files, and for the empty
+  directory the suggested `towel recover` failed too.
+
+  A run now stops only for a pending journal that may name a file it would
+  change: one whose manifest names such a file, or which has no readable
+  manifest. The refusal names the `towel recover` command, or says why
+  recovery would not read the journal and what to do instead. `preview`
+  and `rename-helpers` warn by the same rule.
+- `towel recover` accepts a journal named through a symbolic link, such as
+  one under macOS's `/tmp`, and each refusal says why.
+- A file's project root, coverage exclusions, builtin evidence and
+  declared dependencies were looked up at every call site: 12,205 times
+  for one input on a benchmark of 50 functions. They are now looked up
+  once per input for the run, and so are a function's own locals, keyed by
+  block site. CPU time against 1.732 went from 1.71 to 1.27 times on that
+  benchmark, and from 1.37 to 1.08 times on rich.
+- A project's own package named `env` or `venv` is refactored. An
+  environment is now recognised by `pyvenv.cfg` or `conda-meta`, whatever
+  it is called.
+- The rejection trace names each block's file:
+  `REJECT[reason]: path::function@(start, end) <-> ...`. A pair the
+  extractor cannot render is traced as `unsupported_extraction`, and one
+  found while clustering no longer ends the analysis.
+  `return_versus_variables` replaces the mislabelled
+  `incomplete_return_coverage_block2`.
+- The tests and scripts shipped in the sdist carry the Apache licence
+  header, and `scripts/add_copyright_headers.py --check` enforces it.
 - A typed run on a project reached through a symbolic link now verifies its
   changes. On macOS that includes every temporary directory, since `/var`
   is `/private/var`. mypy prints each file by its resolved path, and Towel
