@@ -30,6 +30,104 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- The import sorter could reorder a file's own imports, and so the order
+  their modules run in. With ruff excluding `pkg/app.py`, Towel rewrote
+  `from pkg import zeta` / `from pkg import alpha` as
+  `from pkg import alpha, zeta`, and a plugin registry's order flipped.
+  httpcore's byte-compared `_sync` twins were re-sorted the same way.
+
+  Sorting now respects each tool's own file selection, judged for the
+  project's file rather than the run's staged copy:
+  - ruff: `exclude`, `extend-exclude`, `lint.exclude` and
+    `per-file-ignores`;
+  - isort: `skip`, `extend_skip`, `skip_glob`, `extend_skip_glob` and
+    `skip_gitignore`, skipped directories included.
+
+  A file is sorted only if its original imports are already in the
+  sorter's order, and a result is kept only if the file's own imports keep
+  their order. So only the imports Towel added can move, and a file left
+  unsorted is reported once. `ruff format` and Black respect their
+  exclusions too.
+- `# ty: ignore[...]` and `# pyrefly: ignore` were read as plain comments.
+  Towel moved the code they silenced into call-site lambdas and left the
+  ignores behind. On griffe, its own `ty check` went from 2 to 23
+  diagnostics. These are now directives, as are:
+  - `# zuban: ignore` and `# nosemgrep`;
+  - Fixit's `# lint-ignore` and `# lint-fixme`;
+  - ruff's `file-ignore`, `disable` and `enable`;
+  - pyrefly's `ignore-errors`.
+
+  An ignore on a line of its own governs the next line of code, as those
+  tools read it.
+- With `--cross-module`, Towel took a project directory named like a
+  library it requires for that library, when its own interpreter lacked
+  the library. For example, `click/` sharing one module with click, while
+  the project depends on `click>=8`. The import it wrote then failed once
+  the package was installed. A requirement declared in any of these now
+  puts the name in doubt: pyproject.toml, setup.cfg, a uv, Poetry, PDM or
+  Pipenv lockfile, or requirements*.txt.
+- With `--cross-module`, a library installed in an environment inside the
+  project root, such as the project's own `.venv`, was taken for the
+  project's own code. It now counts as installed outside the project.
+- With `--cross-module`, Towel could host a helper in a module the build
+  leaves out of the wheel, so the installed package failed to import. It
+  now reads the declared exclusions of hatch, setuptools, MANIFEST.in,
+  Poetry, PDM, uv, flit and scikit-build-core, and every `.gitignore`. It
+  uses them only to put a host in doubt, never to name a module. An import
+  inside a function no longer shows that a directory ships.
+- With `--cross-module`, a top-level module inside a package, imported by
+  its bare name from beside it, went unrefused. The borrower was given a
+  relative import that fails where the original works. It now refuses.
+  `from . import x` and `from pkg import x` of a missing submodule are now
+  reported, and their file is left unchanged.
+- Each import problem's remedy now fits its kind:
+  - `--exclude` for a stray copy in the tree;
+  - an environment where the name is this tree, or one without it, for an
+    installed copy;
+  - a rename, `--exclude` or a dropped requirement, for a required
+    distribution.
+- Typed mode now reads per-module `follow_imports` as mypy does. An error
+  in a module its own section follows was dropped, and a helper the
+  project's mypy rejects was let through.
+- A typed run over part of a project (`towel dry tests tests`) found the
+  project's own packages in a stale installed copy, and wrote annotations
+  for the installed API. It now finds them in the tree.
+- Probes now name modules as mypy does under `explicit_package_bases`,
+  `mypy_path` and namespace packages. A probe build that fails is now a
+  checker failure. It had been read as unreachable code, which ended PEP
+  420 projects at a false fixed point with exit status 0.
+- A changed file outside the configured `files` is named as its importer
+  names it, so mypy no longer refuses the build with "found twice".
+- A mypy configuration that mypy only warns about no longer refuses the
+  typed run, and the warning is passed on. Examples are an unknown option,
+  a global option in an override, or a dropped Python version.
+- A typed run accounted for errors on the lines a change wrote by message
+  alone. Merging two copies of a block then freed the second copy's errors
+  to hide a new error with the same message. A helper typed `int | str`,
+  whose `p + p` repeated two pre-existing messages, was accepted, and the
+  project's mypy rejected it.
+
+  Each error is now accounted for by an error of the original that stood
+  where it stands:
+  - in the helper, the same message at the same statement of one copy of
+    the block, each error once;
+  - at a call site, its own copy's.
+- A file whose imports the checker cannot resolve is now left alone even
+  when the configuration silences that report. Examples are
+  `ignore_missing_imports` and pyright's `reportMissingImports = "none"`.
+  Every checker is asked what each import binds. A subtype question about
+  a type the checker sees as `Any` answers unknown, so it no longer folds a
+  union.
+- A file that cannot be decoded is left out of a typed run and left
+  unchanged, as without types, instead of refusing the run.
+- Files that pyright's configuration excludes or ignores are known before
+  the run, and pyright is not asked about them. That removes a minute-long
+  stall. Another checker that checks them settles them, rather than their
+  being declined as unreachable. Where no checker covers a file, its helper
+  takes only the annotations its sites declare.
+- A class the checker names by its whole path, which the helper's module
+  does not import, is now imported under `TYPE_CHECKING` and named
+  directly, as documented. It had been written `Any`.
 - A verdict that nothing rebinds a name a block reads was memoized under the
   structure of the block and its function. It then answered for identical
   code whose enclosing function rebinds that name with `nonlocal`, in the

@@ -776,3 +776,81 @@ The owner has proposed a user-supplied list of trusted decorators, as an
 escape hatch for a later release: `docs/proposals/trusted-decorators.md`.
 
 *Status: being implemented on the `audit-1772` branch; not yet released.*
+
+## 2026-09-24: Build exclusions may put a host in doubt, but never name a module
+
+This refines "Import names come from the program". The third audit found
+`--cross-module` hosting a helper in a module the wheel leaves out, so the
+installed package failed to import. A hatch `exclude` of one file did it,
+and so did a setuptools `exclude` of a subpackage that a shipped module
+imported lazily, inside a function. The directory rule had counted that
+function-level import as evidence that the directory ships, contrary to
+its own documentation.
+
+Two remedies were measured:
+- **Require import-time evidence for each host module itself.** Helpers
+  imported across modules fell from 34 to 18 over 12 packages, and 84 of
+  the suite's tests broke, mostly on sibling modules that nothing imports.
+- **Read the build's declared exclusions**, only to put a host in doubt.
+  In every corpus package target, the only modules this leaves out are
+  whole test or benchmark subpackages, which the directory rule had
+  already fenced off.
+
+The second was taken. It reads the exclusions of:
+- hatch, setuptools, MANIFEST.in, Poetry, PDM, uv, flit and
+  scikit-build-core;
+- every `.gitignore`.
+
+It errs toward "left out". A module left out of an artifact never hosts a
+helper for a module that artifact keeps, although it may still borrow from
+one. It never names a module, so names still come only from the program's
+imports, and the packaging readers the owner removed from naming stay
+removed. The directory rule's evidence is now what it always claimed to
+be: imports that run whenever their module is imported.
+
+Two residuals remain:
+- exclusions made by a `setup.py`, a build hook or an unread backend
+  (meson-python, maturin), and files left untracked under setuptools-scm;
+- the module that attests a directory may itself be left out.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
+
+## 2026-09-24: An error is accounted for by the original's error where it stood
+
+This supersedes the comparison described in "How a typed run compares, as
+implemented". That comparison matched errors on the lines a change wrote by
+message alone. The third audit showed why that is not enough: when two copies
+of a block are merged into one helper, the second copy's errors are freed.
+They can then hide a genuinely new error with the same message. A helper typed
+`int | str`, whose `p + p` repeated two pre-existing messages, was accepted,
+and the project's mypy rejected it.
+
+An error after a change is now accounted for only in three ways:
+- **On a line the change left alone:** by the original's error on that
+  line, wherever the line now stands.
+- **In the helper's body:** by the same message at the same statement of
+  one copy of the block, each error once. The copy chosen is the one that
+  leaves the fewest errors unexplained.
+- **Elsewhere the change wrote, such as a call site:** by the same message
+  on the lines that stretch replaced, which for a call site is its own
+  copy.
+
+Anything else is new. Where either text of a changed file is unknown, every
+error in it is new. A generated property test holds the rule: every case
+with a genuinely new error is rejected, and every other case is accepted.
+
+Three related rules came with it:
+- **Names the checker types as `Any`** are found by asking the checker
+  what each import binds. So a configuration that silences the report,
+  such as `ignore_missing_imports` or pyright's `reportMissingImports`,
+  no longer hides them. A subtype question about such a type answers
+  unknown.
+- **A file that pyright's configuration excludes or ignores** is outside
+  pyright's jurisdiction, not unreachable. Another configured checker that
+  covers it settles it.
+- **A file no configured checker covers** is treated like the body of an
+  unannotated function: the verdict cannot depend on where Towel runs. Its
+  helper takes only the annotations its sites declare, completed with
+  `Any`.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
