@@ -90,6 +90,7 @@ def test_a_module_that_asserts_another_platform_is_left_alone_and_named(
     assert "m.py:7-18" in caplog.text
 
 
+@pytest.mark.looks_nowhere
 @requires_mypy
 def test_code_the_declared_types_rule_out_is_left_alone_without_blaming_the_platform(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
