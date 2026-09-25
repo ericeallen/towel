@@ -28,10 +28,11 @@ import json
 import os
 import secrets
 from pathlib import Path
+import shlex
 from .source_text import encode_like
 import stat
 import tempfile
-from typing import List, Mapping, Optional, Set, TypedDict
+from typing import List, Mapping, Optional, Set, Tuple, TypedDict
 
 from .diagnostics import LOG
 
@@ -46,6 +47,10 @@ class StaleSource(ChangeConflict):
 
 class RecoveryRequired(OSError):
     """Rollback could not finish; the journal must be retained for recovery."""
+
+
+class ExternalEdit(ChangeConflict):
+    """A file a journal would restore was edited since; recovering would discard the edit."""
 
 
 JOURNAL_PREFIX = ".towel-transaction-"
@@ -171,14 +176,20 @@ def _digest(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def _foreign_entries(journal: Path) -> List[str]:
+    """The names in ``journal`` that no journal writes, which ``_cleanup`` will not remove."""
+    return sorted(
+        path.name
+        for path in journal.iterdir()
+        if path.name not in ("manifest.json", "manifest.pending", "complete", "complete.pending")
+        and not path.name.removesuffix(".after").isdecimal()
+    )
+
+
 def _cleanup(journal: Path) -> None:
     # Only files created by this journal format, never an arbitrary tree.
     entries = sorted(journal.iterdir(), key=lambda item: item.name == "complete")
-    if any(
-        path.name not in ("manifest.json", "manifest.pending", "complete", "complete.pending")
-        and not path.name.removesuffix(".after").isdecimal()
-        for path in entries
-    ):
+    if _foreign_entries(journal):
         raise RecoveryRequired(f"Unexpected journal entry; retained {journal}")
     for path in entries:
         path.unlink()
@@ -232,12 +243,59 @@ def journals_covering(targets: Set[Path]) -> List[Path]:
     )
 
 
+SET_ASIDE_PREFIX = ".towel-set-aside-"
+"""What a journal recovery cannot use is renamed to; no run reads a name beginning so."""
+
+
+def _set_aside(journal: Path) -> str:
+    """The command that moves ``journal`` out of every run's way, keeping what it holds."""
+    aside = journal.parent / (SET_ASIDE_PREFIX + journal.name.removeprefix(JOURNAL_PREFIX))
+    return f"mv {shlex.quote(str(journal))} {shlex.quote(str(aside))}"
+
+
+def _instead_of_recovery(journal: Path, error: ChangeConflict) -> str:
+    """What works when ``recover`` refuses the trusted ``journal`` for ``error``.
+
+    An edit made since the interrupted change can be resolved, and recovery
+    then proceeds. Anything else means recovery would restore the wrong
+    bytes or none, so the files are left to the user and the journal is
+    moved aside, where it blocks no run and keeps the bytes it holds.
+    """
+    if isinstance(error, ExternalEdit):
+        return (
+            "Recovering would discard that edit: resolve it, so the file holds what the"
+            " interrupted change left or what it replaced, and then run towel recover"
+            f" {journal}; or keep the files as they are and move the journal aside:"
+            f" {_set_aside(journal)}"
+        )
+    return (
+        "Its numbered files hold the bytes the interrupted change replaced; restore by hand"
+        f" whatever you need from them, then move it aside: {_set_aside(journal)}"
+    )
+
+
+def _recovery_obstacle(journal: Path) -> Optional[ChangeConflict]:
+    """Why ``recover`` would refuse the journal directory ``journal`` once trusted; None if it would not.
+
+    The same checks ``recover`` makes, and nothing written, so that a remedy
+    naming ``towel recover`` names a command that succeeds.
+    """
+    try:
+        _restoration(journal)
+    except ChangeConflict as error:
+        return error
+    foreign = _foreign_entries(journal)
+    if foreign:
+        return ChangeConflict(f"it holds {', '.join(foreign)}, which no journal a run writes holds")
+    return None
+
+
 def pending_journal_remedy(journal: Path, changing: str = "this change writes") -> str:
     """Why the pending ``journal`` stands in the way of a file ``changing``, and what resolves it.
 
-    That is ``towel recover`` where recovery will read the journal, and
-    otherwise why it will not and what to do instead, so that a refusal
-    never ends in a command that fails too.
+    That is ``towel recover`` where recovery will read the journal and
+    restore from it, and otherwise why it will not and what to do instead,
+    so that a refusal never ends in a command that fails too.
     """
     if _named_files(journal) is None:
         why = (
@@ -246,12 +304,28 @@ def pending_journal_remedy(journal: Path, changing: str = "this change writes") 
         )
     else:
         why = f"{journal}, a pending transaction journal, names a file {changing}"
+    obstacle: Optional[ChangeConflict] = None
     try:
-        distrust = _distrust(_journal_directory(journal))
+        directory = _journal_directory(journal)
+        distrust = _distrust(directory)
     except ChangeConflict as error:
         distrust = str(error).removeprefix("Invalid transaction directory: ")
     except OSError as error:
         distrust = f"{journal} cannot be examined ({error})"
+    else:
+        try:
+            obstacle = _recovery_obstacle(directory)
+        except OSError as error:
+            # Unreadable to a journal's owner, it cannot be restored from;
+            # to anyone else, who may read it is what stops them.
+            obstacle = ChangeConflict(str(error)) if distrust is None else None
+    # A journal recovery could not restore from is moved aside, whoever may
+    # read it, so what stops recovery is said before who may.
+    if obstacle is not None:
+        return (
+            f"{why}, and towel recover cannot restore from it as it stands: {obstacle}."
+            f" {_instead_of_recovery(journal, obstacle)}"
+        )
     if distrust is None:
         return f"{why}; recover it first: towel recover {journal}"
     return f"{why}, and towel recover will not read it as it stands: {distrust}"
@@ -381,26 +455,20 @@ def _distrust(journal: Path) -> Optional[str]:
     return None
 
 
-def recover(journal: Path) -> None:
-    """Restore originals from a trusted local journal, refusing conflicting edits.
+def _restoration(journal: Path) -> Optional[List[Tuple[Path, bytes, int, str]]]:
+    """What recovering the journal directory ``journal`` restores, every file checked first.
 
-    Validate the entire journal and all targets before restoring its first file.
-    Recovery is itself restartable after interruption.
+    Each is a target, the bytes and mode to restore it to, and the digest of
+    what the change wrote there. None when there is nothing to restore: the
+    change committed, or failed before its manifest was durable. A
+    ``ChangeConflict`` says why recovery cannot proceed; nothing is written.
     """
-    journal = _journal_directory(journal)
-    distrust = _distrust(journal)
-    if distrust is not None:
-        raise ChangeConflict(
-            f"Recovery requires an owner-only journal owned by the current user: {distrust}"
-        )
     if (journal / "complete").is_file():
-        _cleanup(journal)
-        return
+        return None
     manifest = journal / "manifest.json"
     if not manifest.exists():
         # A durable manifest always precedes the first target replacement.
-        _cleanup(journal)
-        return
+        return None
     _safe_target(manifest)
     try:
         records: object = json.loads(manifest.read_text(encoding="utf-8"))
@@ -408,8 +476,8 @@ def recover(journal: Path) -> None:
         raise ChangeConflict(f"Invalid transaction manifest: {error}") from error
     if not isinstance(records, list):
         raise ChangeConflict("Invalid transaction manifest")
-    originals: list[tuple[Path, bytes, int, str]] = []
-    seen: set[Path] = set()
+    originals: List[Tuple[Path, bytes, int, str]] = []
+    seen: Set[Path] = set()
     for index, record in enumerate(records):
         entry = _manifest_record(record)
         relative, mode = entry["path"], entry["mode"]
@@ -426,8 +494,30 @@ def recover(journal: Path) -> None:
         _safe_target(path)
         current = path.read_bytes()
         if _digest(current) not in (before, after) or stat.S_IMODE(path.stat().st_mode) != mode:
-            raise ChangeConflict(f"External edit preserved; resolve before recovery: {path}")
+            raise ExternalEdit(f"External edit preserved; resolve before recovery: {path}")
         originals.append((path, content, mode, after))
+    return originals
+
+
+def recover(journal: Path) -> None:
+    """Restore originals from a trusted local journal, refusing conflicting edits.
+
+    Validate the entire journal and all targets before restoring its first file.
+    Recovery is itself restartable after interruption.
+    """
+    journal = _journal_directory(journal)
+    distrust = _distrust(journal)
+    if distrust is not None:
+        raise ChangeConflict(
+            f"Recovery requires an owner-only journal owned by the current user: {distrust}"
+        )
+    try:
+        originals = _restoration(journal)
+    except ChangeConflict as error:
+        raise type(error)(f"{error}. {_instead_of_recovery(journal, error)}") from error
+    if originals is None:
+        _cleanup(journal)
+        return
     for path, content, mode, after in reversed(originals):
         _safe_target(path)
         current = path.read_bytes()

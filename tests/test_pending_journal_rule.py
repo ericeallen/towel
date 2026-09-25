@@ -31,6 +31,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
+import subprocess
 from typing import Callable, List, Optional
 
 import pytest
@@ -136,6 +138,21 @@ def _empty_directory_at_the_target(root: Path, package: Path) -> Optional[Path]:
     return journal
 
 
+def _r9p2_journal_with_a_truncated_manifest(root: Path, package: Path) -> Optional[Path]:
+    """Round 4's D6: the refusal named ``towel recover``, which then failed on the manifest."""
+    journal = root / ".towel-transaction-0badf00d"
+    journal.mkdir(mode=0o700)
+    (journal / "manifest.json").write_text('[{"path": "pkg/mod.py", "mo')
+    return journal
+
+
+def _r9p2_journal_whose_file_was_edited_since(root: Path, package: Path) -> Optional[Path]:
+    """Recovery would discard the edit, so it refuses; the remedy must not end in it alone."""
+    files, journal = _interrupted_transaction(package)
+    files[0].write_text("edited = True\n")
+    return journal
+
+
 Case = Callable[[Path, Path], Optional[Path]]
 
 PROCEEDS: List[Case] = [
@@ -148,6 +165,8 @@ REFUSES: List[Case] = [
     _interrupted_transaction_over_the_package,
     _journal_without_a_manifest_above_the_project,
     _empty_directory_at_the_target,
+    _r9p2_journal_with_a_truncated_manifest,
+    _r9p2_journal_whose_file_was_edited_since,
 ]
 
 
@@ -164,7 +183,15 @@ def test_a_journal_that_names_no_file_the_run_changes_does_not_stop_it(
 
 
 def _carry_out(remedy: str) -> None:
-    """Do what a refusal says, in order: restore a journal's mode, then recover it."""
+    """Do what a refusal says: move the journal aside, or restore its mode, then recover it.
+
+    A journal recovery cannot restore from is moved aside, by running the
+    command the refusal names exactly as it names it.
+    """
+    aside = re.search(r"aside: (mv .+)$", remedy)
+    if aside is not None:
+        subprocess.run(shlex.split(aside.group(1)), check=True)
+        return
     for mode, path in re.findall(r"chmod (\d+) (/\S+?)(?=,|;| |$)", remedy):
         os.chmod(path, int(mode, 8))
     commands = re.findall(r"towel recover (/\S+?)(?=,|;| |$)", remedy)
@@ -215,3 +242,17 @@ def test_preview_warns_only_of_a_journal_that_may_name_its_files(tmp_path: Path)
     warned = invoke(["preview", str(package)])
     assert warned.status == 0
     assert f"recover it first: towel recover {journal}" in warned.stderr
+
+
+def test_r9p2_an_edited_file_is_recovered_once_the_edit_is_resolved(tmp_path: Path) -> None:
+    """The other route the refusal names: resolve the edit, then the recovery it names works."""
+    package = _project(tmp_path / "project")
+    journal = _r9p2_journal_whose_file_was_edited_since(tmp_path / "project", package)
+    assert journal is not None
+    refused = _dry_in_place(package)
+    assert "Recovering would discard that edit" in refused.stderr
+    (package / "a.py").write_text("value = 2\n")  # what the interrupted change left
+    commands = re.findall(r"then run towel recover (/\S+?)(?=,|;| |$)", refused.stderr)
+    assert commands == [str(journal)], refused.stderr
+    assert invoke(["recover", commands[0]]).status == 0
+    assert (package / "a.py").read_text() == "value = 1\n" and not journal.exists()
