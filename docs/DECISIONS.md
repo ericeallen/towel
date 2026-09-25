@@ -867,3 +867,34 @@ Three related rules came with it:
   `Any`.
 
 *Status: implemented on the `audit-1772` branch; not yet released.*
+
+## 2026-09-25: Reflection over a namespace is a documented limitation, and recursion is refactored
+
+The fourth audit found programs that change when a helper appears in a
+namespace that other code enumerates:
+
+- a loop over `vars(A)` or `dir(A)` that wraps every function of a class;
+- `instrument(A)`, or typeguard's `typechecked(A)`, called on a class;
+- a descriptor whose `__set_name__` wraps its owner's functions;
+- a package `__init__` that wraps every function of a submodule;
+- a star import without `__all__`, `hasattr`, or a module `__getattr__`,
+  meeting a submodule that a new import has bound on its package.
+
+Each is reflection: the program asks what a namespace holds, and a
+refactoring adds to it. The owner ruled that this is a documented limitation,
+not a defect to fix. KNOWN_LIMITATIONS names these cases. An audit finding in
+this class is checked only for whether the documentation describes it; it
+does not block a release. The same applies to a callee that rebinds a name
+between two reads in a block, including a builtin passed under
+`--parameterize-builtins`.
+
+Decoration by hand is not reflection, and stays inside the decorator rule
+in every spelling: `f = deco(f)` and a stacked `f = outer(inner(f))` alike.
+
+Recursive functions are refactored like any other. The owner favours a
+functional style, and declining recursion would penalise it. Each helper
+call adds a stack frame, so a deeply recursive function uses more stack
+after extraction and may reach Python's recursion limit sooner.
+KNOWN_LIMITATIONS says so.
+
+*Status: decided; the documentation is on the `audit-1772` branch.*
