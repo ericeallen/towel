@@ -7,7 +7,7 @@ or read by a closure while unbound. The analysis walks the block in
 evaluation order to find those reads. This test runs what it analyses: a
 seeded generator writes small functions out of every construct that binds,
 unbinds or reads a local on some paths only (branches, loops that may not
-run, ``del``, ``except ... as``, ``match`` captures, walrus under ``and`` and
+run, ``del``, ``except ... as`` and ``except* ... as``, ``match`` captures, walrus under ``and`` and
 ``or``, conditional expressions, ``with`` and ``contextlib.suppress``,
 ``try``/``finally``, lambdas, comprehensions and nested functions), calls
 each many times on random inputs, and asserts that no ``UnboundLocalError``
@@ -90,7 +90,7 @@ class _Writer:
             lambda: [
                 f"{indent}try:",
                 *self.block(depth + 1, inner),
-                f"{indent}except E as {self.name()}:",
+                f"{indent}except{self.rng.choice(['', '', '*'])} E as {self.name()}:",
                 *self.block(depth + 1, inner),
                 *(
                     [f"{indent}finally:", *self.block(depth + 1, inner)]

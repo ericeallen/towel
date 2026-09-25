@@ -85,7 +85,10 @@ describe belong to that version.
   unbound, because only a correlation between paths shows it
   (`r85_conditionally_bound_parameter`). Definite assignment is computed conservatively:
   loops, `contextlib.suppress`, and non-exhaustive `match` statements never
-  bind definitely.
+  bind definitely, and a name a statement may delete (`del`, or the end of
+  an `except ... as` clause) is unbound for whatever may follow it: the rest
+  of its list, the next iteration of a loop that holds it, and the handlers,
+  `else` and `finally` of a `try` that holds it.
 - **Module names stay module names.** A free name that both sites resolve at
   module scope (or nowhere: a builtin, or a name the module never binds) is
   not passed to a same-module helper at all; the helper reads it bare, where
