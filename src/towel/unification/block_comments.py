@@ -44,8 +44,12 @@ directive may reach code of a site's that becomes an argument of the call,
 written at the call site where the directive does not reach
 (``DIRECTIVE_ON_ARGUMENT``), no ignore above a block may govern its first
 statement, which the call takes the place of (``DIRECTIVE_AROUND_BLOCK``),
-and a directive whose reach is a region or a file must not reach past the
-moved code (``DIRECTIVE_OUTLIVES_BLOCK``).
+a directive whose reach is a region or a file must not reach past the
+moved code (``DIRECTIVE_OUTLIVES_BLOCK``), and no directive may stand on a
+line the block shares with code that stays at the call site
+(``a = 1; b = 2  # noqa`` with the block at ``b``): the directive governs
+the whole line, and splicing the call in parts it from some of that code
+(``DIRECTIVE_ON_SHARED_LINE``).
 """
 
 from __future__ import annotations
@@ -66,6 +70,7 @@ from .exceptions import RefactoringError
 from .substitution import Substitution
 from ..coverage_config import DEFAULT_EXCLUDE, CoverageExclusion
 from ..source_text import source_lines
+from .splicing import shared_lines
 
 DEFAULT_EXCLUSION = CoverageExclusion().pattern
 """coverage.py's own exclusion regexes, joined: for a block whose project sets none."""
@@ -175,6 +180,9 @@ class SiteComments:
     # The ignore on a line of its own above the block that governs its first
     # statement, and would govern the call instead (``_directive_before``).
     directed_start: str = ""
+    # The directive on a line the block shares with code outside it, or the
+    # coverage exclusion of such a line (``_shared_line_directive``); or empty.
+    shared_line_directive: str = ""
 
 
 @dataclass(frozen=True)
@@ -235,6 +243,7 @@ class ConflictKind(Enum):
     DIRECTIVE_OUTLIVES_BLOCK = "directive_outlives_block"
     DIRECTIVE_AROUND_BLOCK = "directive_around_block"
     EXCLUDED_BLOCK_START = "excluded_block_start"
+    DIRECTIVE_ON_SHARED_LINE = "directive_on_shared_line"
 
 
 @dataclass(frozen=True)
@@ -752,12 +761,14 @@ def site_comments(
     excluded = _excluded(in_block, index)
     start = _excluded_start(block, in_block)
     directed = _directive_before(lines, first_line)
+    shared = shared_lines(lines, block)
     bare = SiteComments(
         argument_lines=arguments,
         around=around,
         excluded=excluded,
         excluded_start=start,
         directed_start=directed,
+        shared_line_directive=_shared_line_directive(shared, excluded, ()),
     )
     if index is None or not commented:
         return bare
@@ -771,6 +782,7 @@ def site_comments(
             excluded=excluded,
             excluded_start=start,
             directed_start=directed,
+            shared_line_directive=bare.shared_line_directive,
         )
     positions = [
         position for position, token in enumerate(tokens) if token.kind == tokenize.COMMENT
@@ -806,14 +818,40 @@ def site_comments(
                 directive,
             )
         )
+    moved = _with_region_reach(comments)
     return SiteComments(
-        _with_region_reach(comments),
+        moved,
         arguments,
         around=around,
         excluded=excluded,
         excluded_start=start,
         directed_start=directed,
+        shared_line_directive=_shared_line_directive(shared, excluded, moved),
     )
+
+
+def _shared_line_directive(
+    shared: FrozenSet[int], excluded: FrozenSet[int], comments: Sequence[BlockComment]
+) -> str:
+    """What governs a line of the block that also holds code outside it, if a tool reads anything there.
+
+    ``shared`` are such lines (``splicing.shared_lines``). A directive governs
+    its whole line, and the splice parts the block from the rest of that
+    line: a comment there moves into the helper, leaving the code that
+    stays uncovered, or stays with that code while the helper takes a copy.
+    Coverage's exclusion of a line, by a pragma or by a configured regex,
+    governs it alike. A comment no tool reads may move.
+    """
+    excluded_here = sorted(shared & excluded)
+    if excluded_here:
+        return f"line {excluded_here[0]} is excluded from coverage and holds code outside the block"
+    governing = (
+        comment
+        for comment in comments
+        if comment.directive and (comment.line in shared or comment.reach & shared)
+    )
+    found = next(governing, None)
+    return "" if found is None else f"line {found.line}: {found.text}"
 
 
 def _excluded(lines: FrozenSet[int], index: Optional[_BlockIndex]) -> FrozenSet[int]:
@@ -1225,8 +1263,9 @@ def directive_conflict(
     """Why the sites' tool directives cannot move into the helper's ``statements``, if they cannot.
 
     Every site must carry the same directives, written alike up to spacing,
-    at the same places; no directive may reach code of a site's that
-    becomes an argument of its call, which is written at the call site,
+    at the same places; no directive may stand on a line a site's block
+    shares with code outside it; no directive may reach code of a site's
+    that becomes an argument of its call, which is written at the call site,
     where the directive does not reach; no ignore above a site's block may
     govern its first statement, since it stays above the call that takes
     the statement's place; and a region a directive opens or closes must
@@ -1236,6 +1275,10 @@ def directive_conflict(
         if site.unreadable:
             return CommentConflict(
                 ConflictKind.DIRECTIVES_DIFFER, "a site's comments cannot be tokenized"
+            )
+        if site.shared_line_directive:
+            return CommentConflict(
+                ConflictKind.DIRECTIVE_ON_SHARED_LINE, site.shared_line_directive
             )
     if sites:
         reference = _directives(statements, sites[0])

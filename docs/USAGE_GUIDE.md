@@ -454,8 +454,9 @@ where the configuration keeps it; a configuration coverage.py could not
 read is reported and replaced by its defaults. A pair
 that breaks any of these is declined, and `engine.declined_pairs` counts it
 under `directives_differ`, `directive_on_argument`,
-`directive_outlives_block`, `directive_around_block` or
-`excluded_block_start`; a directive is never copied onto a call or a
+`directive_outlives_block`, `directive_around_block`,
+`excluded_block_start` or `directive_on_shared_line`; a directive is never
+copied onto a call or a
 helper's `def` line.
 
 ### Cross-File vs Same-File
