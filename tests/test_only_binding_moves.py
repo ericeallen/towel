@@ -46,6 +46,7 @@ import pytest
 from towel.unification.function_scope import scope_moving_names
 from towel.unification.models import FunctionNode
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.scope_analyzer import ScopeAnalyzer
 
 BINDERS: Dict[str, str] = {
     "assign": "X = n",
@@ -188,3 +189,20 @@ def test_r9bd_a_call_that_assigns_the_name_back_keeps_it_local(tmp_path: Path) -
         for replacement in proposal.replacements
     ]
     assert calls and all(call.startswith("total = ") for call in calls), calls
+
+
+@pytest.mark.parametrize(
+    "binding",
+    ["id += 1", "del id", "a, *id = [1, 2]", "type id = int"][
+        : 4 if sys.version_info >= (3, 12) else 3
+    ],
+)
+def test_r9bd_a_builtin_spelling_any_construct_binds_stays_free(binding: str) -> None:
+    """``id += 1`` alone makes ``id`` a local: a helper reading it bare would find the builtin."""
+    source = f"def f():\n    try:\n        {binding}\n    except Exception:\n        pass\n"
+    tree = ast.parse(source + "    return id, len\n")
+    analyzer = ScopeAnalyzer()
+    analyzer.analyze(tree)
+    function = tree.body[0]
+    assert isinstance(function, ast.FunctionDef)
+    assert analyzer.free_variables(function.body[-1:]) == {"id"}
