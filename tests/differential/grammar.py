@@ -31,6 +31,16 @@ round-3 audit's final generator draw for draw, so seed 898 is the audit's
 audit kept from it (untyped seeds 400 to 899 and 1000 to 1299, typed seeds
 10400 to 10599 and 11000 to 11299) come out byte for byte. Keep the order of
 every draw when changing it, or say in the change that seeds have moved.
+
+With ``bindings`` the same draws are made and, between the statements they
+produce, forms the round-4 audit found the grammar lacked: a parameter read
+in an f-string's format specification, nested and doubly nested; ``for``,
+``with`` and comprehension targets that store into a parameter's attribute
+or item; and lambdas, comprehensions and defaults whose own names are
+spelled like the function's parameters, at every site or at the template's
+alone. Those forms draw from a random generator of their own, so a seed's
+other draws, and every case drawn without ``bindings``, are unchanged. Such
+a case is named ``gram_ub0898`` (``gram_tb...`` typed).
 """
 
 from __future__ import annotations
@@ -171,14 +181,21 @@ _POSITIONS: Tuple[Position, ...] = ("top",) * 5 + ("if", "for", "try", "with", "
 """Where the block stands in its function, drawn with these odds."""
 
 
-def case_name(seed: int, *, typed: bool) -> str:
-    """The name the audit gave the case of ``seed``: ``gram_u0898``, ``gram_t11094``."""
-    return f"gram_{'t' if typed else 'u'}{seed:04d}"
+def case_name(seed: int, *, typed: bool, bindings: bool = False) -> str:
+    """The name the audit gave the case of ``seed``: ``gram_u0898``, ``gram_t11094``.
+
+    A case drawn with the binding forms is ``gram_ub0898``, ``gram_tb11094``.
+    """
+    return f"gram_{'t' if typed else 'u'}{'b' if bindings else ''}{seed:04d}"
 
 
-def generate_case(seed: int, *, typed: bool = False) -> Case:
-    """The case ``seed`` draws: untyped, or with annotations and a strict checker configured."""
-    return _Generator(seed, typed).build()
+def generate_case(seed: int, *, typed: bool = False, bindings: bool = False) -> Case:
+    """The case ``seed`` draws: untyped, or with annotations and a strict checker configured.
+
+    With ``bindings``, the forms that bind or read names where substitution
+    must follow Python's scopes are drawn between its statements too.
+    """
+    return _Generator(seed, typed, bindings).build()
 
 
 def _indent(lines: Sequence[str], by: str = "    ") -> List[str]:
@@ -188,12 +205,15 @@ def _indent(lines: Sequence[str], by: str = "    ") -> List[str]:
 class _Generator:
     """One draw of the grammar. Its state lives only for one :meth:`build`."""
 
-    def __init__(self, seed: int, typed: bool) -> None:
+    def __init__(self, seed: int, typed: bool, bindings: bool = False) -> None:
         self.seed = seed
         self.typed = typed
+        self.bindings = bindings
         self.layout: Layout = _LAYOUT_BY_SEED[seed % 5]
         self.checker: Checker = _CHECKER_BY_SEED[seed % 4]
         self.r = random.Random(seed)
+        # The binding forms' own draws, so that ``self.r`` draws as it always has.
+        self.b = random.Random(f"bindings-{seed}")
         self.holes: List[Tuple[str, str]] = []
         self.bound = 0
         self.features: Set[str] = set()
@@ -349,7 +369,97 @@ class _Generator:
             else:
                 out += new
             self.last_was_simple = simple
+            if self.bindings and self.b.random() < 0.35:
+                out += self.binding_stmt(scope)
+                # Nothing is joined onto a binding form with a semicolon.
+                self.last_was_simple = False
         return out
+
+    # ---- the binding forms (``bindings``), drawn from ``self.b`` ------------
+
+    def b_int(self, scope: Scope) -> str:
+        """An int expression over the parameters and the ints bound so far, drawn from ``self.b``.
+
+        It reads ``scope`` and never changes it: what ``self.r`` chooses from
+        must stay what it was without the binding forms.
+        """
+        b = self.b
+        ints = [name for name, kind in scope.items() if kind == "int"]
+        choices = ["@P:a@", "len(@P:b@)", "@P:o@.v", "@P:c@.get('k', 0)", str(b.randint(-2, 9))]
+        return b.choice(choices + ints)
+
+    def shadowing_name(self) -> str:
+        """A lambda's or comprehension's own name: a parameter's spelling, at every site or one.
+
+        At the template's site alone it is the parameter's spelling, and a
+        fresh name at the others, so the template's lambda is the one that
+        binds the name that becomes a helper parameter.
+        """
+        b = self.b
+        parameter = f"@P:{b.choice('abco')}@"
+        if b.random() < 0.3:
+            self.holes.append((parameter, f"s{b.randint(0, 9)}"))
+            self.features.add("shadow_template_only")
+            return f"@H:{len(self.holes) - 1}@"
+        return parameter
+
+    def binding_stmt(self, scope: Scope) -> List[str]:
+        """One binding form: a format spec, a stored-into target, or a shadowing scope."""
+        b = self.b
+        k = b.randrange(10)
+        e = self.b_int(scope)
+        width = "abs(@P:a@) % 6"
+        if k == 0:
+            self.features.add("fstring_spec")
+            return [f'print("fs", f"[{{{e}:>{{{width}}}}}]")']
+        if k == 1:
+            self.features.add("fstring_spec_nested")
+            return [
+                f'print("fs2", f"[{{{e}:{{\'*\'}}^{{{width}:d}}}}]", f"{{{e}!r:>{{{width}}}}}")'
+            ]
+        if k == 2:
+            self.features.add("for_attribute_target")
+            return [
+                f"for @P:o@.v in range({b.randint(0, 3)}):",
+                '    print("fo", @P:o@.v)',
+                'print("fo-after", @P:o@.v)',
+            ]
+        if k == 3:
+            self.features.add("for_subscript_target")
+            return [
+                f"for q, @P:c@['j'] in enumerate(range({b.randint(0, 3)})):",
+                "    print(\"fc\", q, @P:c@['j'])",
+            ]
+        if k == 4:
+            self.features.add("comprehension_attribute_target")
+            return [f'print("ca", [@P:o@.v * 2 for @P:o@.v in range({b.randint(1, 3)})], @P:o@.v)']
+        if k == 5 and not self.typed:
+            self.features.add("with_attribute_target")
+            return [
+                f'with Ctx("b{b.randint(0, 9)}") as @P:o@.v:',
+                '    print("wa", @P:o@.v)',
+                "@P:o@.v = len(@P:o@.v)",
+            ]
+        if k in (5, 6):
+            self.features.add("lambda_shadows_parameter")
+            name = self.shadowing_name()
+            return [f'print("ls", (lambda {name}: {name} * 2 + 1)({e}))']
+        if k == 7:
+            self.features.add("key_lambda_shadows_parameter")
+            name = self.shadowing_name()
+            return [f'print("lk", max(@P:b@ + [{e}], key=lambda {name}: -{name}))']
+        if k == 8:
+            self.features.add("comprehension_shadows_parameter")
+            name = self.shadowing_name()
+            return [
+                f'print("cs", [{name} + 1 for {name} in @P:b@],'
+                f" sum({name} for {name} in range(3)), {e})"
+            ]
+        self.features.add("lambda_parameter_forms")
+        return [
+            f'print("ld", (lambda @P:a@={e}: @P:a@ + 1)(), (lambda *@P:b@: len(@P:b@))(1, 2),'
+            " (lambda **@P:c@: len(@P:c@))(k=1), (lambda *, @P:o@=3: @P:o@)())"
+        ]
 
     def stmt(self, scope: Scope, depth: int, in_loop: bool) -> List[str]:
         r = self.r
@@ -648,9 +758,10 @@ class _Generator:
         probes: List[Probe],
     ) -> Case:
         return Case(
-            name=case_name(self.seed, typed=self.typed),
+            name=case_name(self.seed, typed=self.typed, bindings=self.bindings),
             seed=self.seed,
             typed=self.typed,
+            bindings=self.bindings,
             layout=layout,
             features=frozenset(self.features | ({layout} if layout != "package" else set())),
             files=tuple(files.items()),

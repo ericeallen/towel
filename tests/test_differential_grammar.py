@@ -33,6 +33,9 @@ whole module runs in well under a minute:
   the grammar puts sites in different modules;
 - the typed mode, with mypy strict, on a handful of typed seeds, which cost
   about a second each;
+- the grammar with its binding forms (``bindings``: format specs, stored-into
+  targets, shadowing lambdas and comprehensions) on seeds 0 to 11 in the
+  default mode, and on one seed for each form that round-4's engine got wrong;
 - and, in each mode, the seeds beyond those ranges on which the default suite
   or a longer fuzz run (:mod:`tests.differential.fuzz`) has found a defect:
   the regression targets.
@@ -94,6 +97,20 @@ report, was one the round-3 audit reported, and each is fixed:
   907, 1360, 2319, 2746 and 2881.
 """
 
+BINDING_SEEDS: Tuple[int, ...] = tuple(range(12))
+"""Seeds drawn with the binding forms (``bindings``), in the default mode."""
+
+BINDING_REGRESSION_SEEDS: Tuple[int, ...] = (40, 45, 98, 147, 190, 192, 345)
+"""Binding-form seeds on which round-4's Towel changed behaviour, one per form each shows alone.
+
+From a fuzz run of seeds 0 to 1999 with the binding forms, against the
+round-4 engine: a for target storing into a parameter's attribute (40), a
+format spec reading a parameter (45) and a doubly nested one (98), a with
+target (147) and a comprehension target (190) storing into one, and a
+lambda (192) and a sort key (345) whose parameter is spelled like the
+function's (P1-01 to P1-03).
+"""
+
 KNOWN_DEFECTS: Dict[Mode, Dict[int, str]] = {DEFAULT: {}, CROSS_MODULE: {}, TYPED: {}}
 """Seeds whose defect is reported and not yet fixed, by mode, each with its reason from
 ``tests/audit_defects.py``. None is open."""
@@ -128,6 +145,43 @@ def test_generated_duplicates_across_modules_keep_their_behaviour(
 @pytest.mark.parametrize("seed", _seeds(TYPED, TYPED_SEEDS))
 def test_generated_typed_duplicates_keep_their_behaviour(seed: int, tmp_path: Path) -> None:
     _keeps_behaviour(seed, TYPED, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "seed",
+    [pytest.param(seed, id=f"seed{seed}") for seed in (*BINDING_SEEDS, *BINDING_REGRESSION_SEEDS)],
+)
+def test_r9sb_generated_binding_forms_keep_their_behaviour(seed: int, tmp_path: Path) -> None:
+    outcome = run_case(generate_case(seed, bindings=True), DEFAULT, tmp_path)
+    if outcome.status == "unsupported":
+        pytest.skip(outcome.detail)
+    assert outcome.status in ("unchanged", "equivalent"), outcome.report()
+
+
+BINDING_FORMS = frozenset(
+    {
+        "fstring_spec",
+        "fstring_spec_nested",
+        "for_attribute_target",
+        "for_subscript_target",
+        "comprehension_attribute_target",
+        "with_attribute_target",
+        "lambda_shadows_parameter",
+        "key_lambda_shadows_parameter",
+        "comprehension_shadows_parameter",
+        "lambda_parameter_forms",
+        "shadow_template_only",
+    }
+)
+
+
+def test_r9sb_the_binding_forms_leave_the_grammars_own_draws_alone() -> None:
+    """Every binding form is drawn within a few seeds, and never without ``bindings``."""
+    drawn = set().union(*(generate_case(seed, bindings=True).features for seed in range(60)))
+    assert BINDING_FORMS <= drawn
+    plain = set().union(*(generate_case(seed).features for seed in range(60)))
+    assert not BINDING_FORMS & plain
+    assert generate_case(898, bindings=True).name == "gram_ub0898"
 
 
 AUDIT_CASE_DIGESTS = {

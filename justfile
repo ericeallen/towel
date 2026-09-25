@@ -73,10 +73,11 @@ test-crossfile:
     uv run --frozen python -m pytest -q tests/test_crossfile_observational_equivalence.py
 
 # A release-candidate step (docs/RELEASING.md). SEED is a random start, printed, when
-# omitted; each case runs in the default and the --cross-module modes, every 20th also
+# omitted; each seed is drawn as the round-3 grammar and again with its binding forms,
+# and each case runs in the default and the --cross-module modes, every 20th also
 # typed. Each failure is written as a hostile fixture under the directory the run prints,
 # and the run exits 1 if any case failed. Extra ARGS go to
-# `python -m tests.differential.fuzz` (--jobs, --out, --prefix, --modes, ...).
+# `python -m tests.differential.fuzz` (--jobs, --out, --prefix, --modes, --forms, ...).
 # Differential fuzzing over N generated cases from seed SEED, failures written as fixtures
 fuzz N="2000" SEED="" *ARGS:
     uv run --frozen python -m tests.differential.fuzz --count {{N}} --seed "{{SEED}}" {{ARGS}}
