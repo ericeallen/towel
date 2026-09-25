@@ -76,7 +76,12 @@ from typing import (
 from .diagnostics import LOG
 from .project_tools import ToolChoice, python_tool_environment
 from .unification.exceptions import TowelError
-from .checker_project import CheckerSnapshot, UnusableConfiguration, checker_snapshot
+from .checker_project import (
+    CheckerSnapshot,
+    UnusableConfiguration,
+    checker_snapshot,
+    search_path_counterpart,
+)
 from .unification.bounded_cache import BoundedCache
 from .pyright_session import (
     Diagnostic,
@@ -978,7 +983,9 @@ class PyrightOracle:
     The server and the command line are configured alike (see
     ``towel.pyright_session.server_settings``) and resolve imports through one
     interpreter, this one's, whose environment holds the project's
-    dependencies and, installed editable, the project itself. Either path
+    dependencies and, installed editable, the project itself; or, where the
+    configuration names one with ``venvPath`` and ``venv``, through that
+    environment (see ``towel.checker_project._Environment``). Either path
     therefore reaches the verdict the other would. Where that environment
     reaches into the project, both reach the copy instead (see
     ``_environment``).
@@ -1480,18 +1487,8 @@ def _copied_search_paths(search_path: Sequence[str], root: Path, copy: Path) -> 
     copied, and pyright goes on finding it where it is. The root is the copy's
     own root already, where pyright looks first.
     """
-    resolved = root.resolve()
-    moved: Dict[str, None] = {}
-    for entry in search_path:
-        if not entry or not os.path.isabs(entry):
-            continue
-        path = Path(entry).resolve()
-        if path == resolved or not path.is_relative_to(resolved):
-            continue
-        counterpart = copy / path.relative_to(resolved)
-        if counterpart.is_dir():
-            moved[str(counterpart)] = None
-    return list(moved)
+    moved = (search_path_counterpart(entry, root, copy) for entry in search_path)
+    return list(dict.fromkeys(entry for entry in moved if entry is not None))
 
 
 def _unshown(root: Path, unshown: Sequence[Tuple[str, str]]) -> Optional[CheckFailure]:

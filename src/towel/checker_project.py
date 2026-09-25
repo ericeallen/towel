@@ -30,7 +30,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
+import json
 import os
+import re
 import tomllib
 from pathlib import Path
 import shutil
@@ -128,9 +130,10 @@ class CheckerSnapshot:
         self._links: Dict[Path, _Link] = {}
         self.revision = 0
         try:
-            self._layout = _layout(Path(self._temporary.name), root)
+            self._layout = _layout(Path(self._temporary.name), root, self._excluded)
             self._spellings = _copy_spellings(self._layout)
             self.follow_project()
+            _mirror_environment(self._layout)
             self.revision = 0
         except BaseException:
             self._temporary.cleanup()
@@ -187,7 +190,7 @@ class CheckerSnapshot:
     def follow_project(self) -> Tuple[CopyChange, ...]:
         """Copy what the project gained or changed since last asked, and drop what it lost."""
         changes: Dict[Path, ChangeKind] = {}
-        current, links = _planned_copies(self._layout, self._excluded)
+        current, links = _planned_copies(self._layout)
         # A copy that fails part way through has still changed, so the
         # revision advances whatever happens; a remembered verdict about the
         # copy as it was must not survive it.
@@ -287,9 +290,66 @@ class _Layout:
     tree: Path
     common: Path
     configs: Tuple[Path, ...]
+    excluded: frozenset[Path] = frozenset()
+    environment: Optional[_Environment] = None
 
     def copy_of(self, config: Path) -> Path:
         return self.tree / config.relative_to(self.common)
+
+    def holds(self, path: Path) -> bool:
+        """Whether the copy holds ``path``, resolved and inside the project, at its counterpart.
+
+        Not where the copy leaves a directory out (an environment, VCS
+        metadata, a cache) or a path is excluded, and a file only if it is a
+        checker input.
+        """
+        return not any(
+            _is_left_out(directory) or directory in self.excluded
+            for directory in (path, *path.parents)
+            if directory != self.root and directory.is_relative_to(self.root)
+        ) and (path.is_dir() or _is_input_file(path))
+
+    def counterpart(self, entry: str) -> str:
+        """Where a search path ``entry`` leads in the copy (``search_path_counterpart``)."""
+        return search_path_counterpart(entry, self.root, self.target) or entry
+
+
+def search_path_counterpart(entry: str, root: Path, copy: Path) -> Optional[str]:
+    """The directory of ``copy``, the copy of ``root``, that search path ``entry`` stands for.
+
+    ``None`` for the root itself, which is the copy's own root already and
+    where pyright looks first, for a path outside the project, and for one the
+    copy does not hold: an environment kept inside the project is found where
+    it is.
+    """
+    if not entry or not os.path.isabs(entry):
+        return None
+    path = Path(entry).resolve()
+    resolved = root.resolve()
+    if path == resolved or not path.is_relative_to(resolved):
+        return None
+    counterpart = copy / path.relative_to(resolved)
+    return str(counterpart) if counterpart.is_dir() else None
+
+
+@dataclass(frozen=True)
+class _Environment:
+    """The environment a configuration names with ``venvPath`` and ``venv``, as the copy reaches it.
+
+    pyright takes its search paths from the environment's site directories and
+    the ``.pth`` files in them. The copy left the environment out, and so
+    pyright found no ``venv`` under the copy's ``venvPath`` and fell back,
+    silently, to the interpreter it is given, Towel's: a helper was annotated
+    with the types of the library Towel's environment holds, and the project's
+    own pyright rejected it. The copy's configuration names ``mirror``
+    instead: a directory laid out as the environment is, each site directory
+    holding one ``.pth`` that names the environment's own site directory and
+    then the entries of its ``.pth`` files, each leading into the copy where
+    an editable install leads into the project.
+    """
+
+    configured: Path
+    mirror: Path
 
 
 def _copy_spellings(layout: _Layout) -> Tuple[Tuple[Path, Path], ...]:
@@ -308,7 +368,7 @@ def _copy_spellings(layout: _Layout) -> Tuple[Tuple[Path, Path], ...]:
     return tuple(sorted(pairs.items(), key=lambda pair: -len(str(pair[0]))))
 
 
-def _layout(temporary: Path, root: Path) -> _Layout:
+def _layout(temporary: Path, root: Path, excluded: frozenset[Path] = frozenset()) -> _Layout:
     """An empty copy of ``root`` under ``temporary``, placed so its extends chain resolves.
 
     Shared monorepo base configs retain their relative locations, so the chain
@@ -319,16 +379,18 @@ def _layout(temporary: Path, root: Path) -> _Layout:
     tree = temporary / "project"
     target = tree / root.relative_to(common)
     target.mkdir(parents=True)
-    return _Layout(root, target, tree, common, configs)
+    configured = _configured_environment(configs)
+    environment = (
+        None if configured is None else _Environment(configured, temporary / "environment" / "venv")
+    )
+    return _Layout(root, target, tree, common, configs, excluded, environment)
 
 
-def _planned_copies(
-    layout: _Layout, excluded: frozenset[Path]
-) -> Tuple[Dict[Path, Path], Dict[Path, _Link]]:
+def _planned_copies(layout: _Layout) -> Tuple[Dict[Path, Path], Dict[Path, _Link]]:
     """Every copy the project calls for right now, mapped to the file it copies, and every link."""
     plan: Dict[Path, Path] = {}
     links: Dict[Path, _Link] = {}
-    for destination, source in _inputs(layout.root, layout.target, layout, frozenset(), excluded):
+    for destination, source in _inputs(layout.root, layout.target, layout, frozenset()):
         if isinstance(source, _Link):
             links[destination] = source
         else:
@@ -337,18 +399,32 @@ def _planned_copies(
     return plan, links
 
 
+def _rebased(text: str, layout: _Layout) -> str:
+    """``text`` with every absolute path into the project or its configurations moved into the copy."""
+    rebased = {str(layout.root): str(layout.target)}
+    rebased.update({str(config): str(layout.copy_of(config)) for config in layout.configs})
+    for original_prefix, replacement_prefix in sorted(
+        rebased.items(), key=lambda item: -len(item[0])
+    ):
+        text = text.replace(original_prefix, replacement_prefix)
+    return text
+
+
 def _copy_input(source: Path, destination: Path, layout: _Layout) -> None:
     """Copy one checker input, pointing any absolute project path it holds into the copy."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     if source in layout.configs:
-        rebased = {str(layout.root): str(layout.target)}
-        rebased.update({str(config): str(layout.copy_of(config)) for config in layout.configs})
         text = source.read_text(encoding="utf-8")
-        for original_prefix, replacement_prefix in sorted(
-            rebased.items(), key=lambda item: -len(item[0])
-        ):
-            text = text.replace(original_prefix, replacement_prefix)
-        destination.write_text(text, encoding="utf-8")
+        relocated = _relocated_configuration(source, text, layout)
+        if source.name == "pyproject.toml":
+            destination.write_text(_rebased(text, layout), encoding="utf-8")
+            if relocated is not None:
+                # pyright reads a pyrightconfig.json before [tool.pyright].
+                (destination.parent / "pyrightconfig.json").write_text(relocated, encoding="utf-8")
+        else:
+            destination.write_text(
+                _rebased(text, layout) if relocated is None else relocated, encoding="utf-8"
+            )
         return
     shutil.copyfile(source, destination)
     if source.suffix in {".toml", ".json", ".ini", ".cfg"}:
@@ -366,6 +442,227 @@ def _copy_input(source: Path, destination: Path, layout: _Layout) -> None:
                 )
             return  # Data pyright never reads, copied as it is.
         destination.write_text(text.replace(str(layout.root), str(layout.target)), encoding="utf-8")
+
+
+_SEARCH_PATH_SETTINGS: Final = ("extraPaths", "stubPath", "typingsPath", "typeshedPath")
+"""Settings naming where pyright looks for code and stubs, by path."""
+
+
+def _relocated_configuration(source: Path, text: str, layout: _Layout) -> Optional[str]:
+    """The copy's configuration for ``source``, as JSON, where it cannot be ``text`` rebased.
+
+    A configured search path into what the copy leaves out -- an environment's
+    site directory named in ``extraPaths``, say -- names nothing in the copy,
+    so it names the original instead, where it has always led; Towel never
+    changes a file there. The environment ``venvPath`` and ``venv`` name is
+    reached through its mirror (``_Environment``), named in the project's own
+    configuration, which the chain's others extend. ``None`` where nothing
+    needs either, and the configuration is copied rebased, as ever.
+    """
+    if source.name == "pyproject.toml":
+        tool = tomllib.loads(text).get("tool", {})
+        settings = tool.get("pyright", {}) if isinstance(tool, dict) else {}
+    else:
+        settings = _json_config(text)
+    if not isinstance(settings, dict):
+        return None
+    relocated = _relocated_paths(settings, source.parent, layout)
+    environment = layout.environment
+    if environment is not None and source == layout.configs[0]:
+        relocated["venvPath"] = str(environment.mirror.parent)
+        relocated["venv"] = environment.mirror.name
+    if not relocated:
+        return None
+    rebased = {key: _rebased_value(value, layout) for key, value in settings.items()}
+    rebased.update(relocated)
+    try:
+        return json.dumps(rebased, indent=2, allow_nan=False)
+    except (TypeError, ValueError) as error:  # a TOML date, or a number JSON cannot hold
+        raise ValueError(f"Cannot restate the pyright configuration in {source}: {error}")
+
+
+def _rebased_value(value: object, layout: _Layout) -> object:
+    if isinstance(value, str):
+        return _rebased(value, layout)
+    if isinstance(value, list):
+        return [_rebased_value(item, layout) for item in value]
+    if isinstance(value, dict):
+        return {key: _rebased_value(item, layout) for key, item in value.items()}
+    return value
+
+
+def _relocated_paths(
+    settings: Mapping[str, object], directory: Path, layout: _Layout
+) -> Dict[str, object]:
+    """The search path settings of ``settings`` that must name the original, restated so.
+
+    Only those that change; relative to ``directory``, where the file stating
+    them is in the project.
+    """
+    relocated: Dict[str, object] = {}
+    for key in _SEARCH_PATH_SETTINGS:
+        value = settings.get(key)
+        if isinstance(value, str) and _unheld(value, directory, layout):
+            relocated[key] = _original(value, directory)
+        elif isinstance(value, list) and any(
+            isinstance(item, str) and _unheld(item, directory, layout) for item in value
+        ):
+            relocated[key] = [
+                (
+                    _original(item, directory)
+                    if isinstance(item, str) and _unheld(item, directory, layout)
+                    else _rebased_value(item, layout)
+                )
+                for item in value
+            ]
+    environments = settings.get("executionEnvironments")
+    if isinstance(environments, list):
+        restated = [
+            (
+                {
+                    **{key: _rebased_value(item, layout) for key, item in environment.items()},
+                    **_relocated_paths(environment, directory, layout),
+                }
+                if isinstance(environment, dict)
+                else environment
+            )
+            for environment in environments
+        ]
+        if any(
+            isinstance(environment, dict) and _relocated_paths(environment, directory, layout)
+            for environment in environments
+        ):
+            relocated["executionEnvironments"] = restated
+    return relocated
+
+
+def _literal_prefix(path: str) -> str:
+    """``path`` up to its first wildcard, the part that names a directory outright."""
+    return path.split("*", 1)[0].split("?", 1)[0].split("[", 1)[0]
+
+
+def _unheld(path: str, directory: Path, layout: _Layout) -> bool:
+    """Whether ``path``, relative to ``directory``, leads into the project where the copy has nothing."""
+    resolved = (directory / _literal_prefix(path)).resolve()
+    return resolved.is_relative_to(layout.root) and resolved.exists() and not layout.holds(resolved)
+
+
+def _original(path: str, directory: Path) -> str:
+    return os.path.normpath(directory / path)
+
+
+def _configured_environment(configs: Sequence[Path]) -> Optional[Path]:
+    """The environment the chain names with ``venvPath`` and ``venv``.
+
+    As pyright reads the chain: of each setting, the first file that states
+    it, a ``venvPath`` relative to that file. Without both, pyright uses no
+    environment. One pyright cannot use -- missing, unreadable, holding no
+    site directory -- has pyright fall back, silently, on the interpreter it
+    is given, which is Towel's and not the project's, so it refuses the check.
+    """
+    chain = list(zip(configs, _settings_chain_of(configs)))
+    stated = _first_stated(chain, "venvPath")
+    named = _first_stated(chain, "venv")
+    if stated is None or named is None:
+        return None
+    stated_in, venv_path = stated
+    base = stated_in.parent
+    location = Path(os.path.normpath(base / venv_path))
+    environment = Path(os.path.normpath(location / named[1]))
+    try:
+        found = _site_directories(environment) if environment.is_dir() else []
+    except OSError as error:
+        found, why = [], f"cannot be read ({error})"
+    else:
+        why = "holds no site-packages directory" if environment.is_dir() else "does not exist"
+    if not found:
+        raise UnusableConfiguration(
+            f"pyright's configured environment {environment} (venvPath and venv in {stated_in})"
+            f" {why}. pyright would fall back on the interpreter it is given, which is"
+            " Towel's, not the project's, so no check of it would be the project's; create"
+            " the environment, or correct the configuration, to check this project."
+        )
+    return environment
+
+
+def _first_stated(
+    chain: Sequence[Tuple[Path, Tuple[Path, Mapping[str, object]]]], key: str
+) -> Optional[Tuple[Path, str]]:
+    """The first configuration of ``chain`` that states ``key`` as a string, and the value."""
+    for config, (_, settings) in chain:
+        value = settings.get(key)
+        if isinstance(value, str):
+            return config, value
+    return None
+
+
+_LIBRARY_DIRECTORIES: Final = ("lib", "lib64", "Lib")
+"""Where pyright looks in an environment for its site directory, in its order."""
+
+
+def _site_directories(environment: Path) -> List[Path]:
+    """Every site directory of ``environment`` pyright may take, as pyright looks for them.
+
+    In each of ``lib``, ``lib64`` and ``Lib``: ``site-packages`` there, else a
+    ``python3.*`` directory's. Of several ``python3.*`` pyright takes the one
+    for its Python version; the mirror has them all, and pyright chooses among
+    them as it does in the environment. One directory is taken once, under the
+    first name that reaches it, as pyright takes it: where the filesystem
+    ignores case, ``Lib`` is ``lib``.
+    """
+    found: Dict[Tuple[int, int], Path] = {}
+    for name in _LIBRARY_DIRECTORIES:
+        library = environment / name
+        if not library.is_dir():
+            continue
+        if (library / "site-packages").is_dir():
+            sites = [library / "site-packages"]
+        else:
+            sites = [
+                child / "site-packages"
+                for child in sorted(library.iterdir())
+                if child.name.startswith("python3.") and (child / "site-packages").is_dir()
+            ]
+        for site in sites:
+            status = site.stat()
+            found.setdefault((status.st_dev, status.st_ino), site)
+    return list(found.values())
+
+
+def _pth_entries(site: Path) -> List[str]:
+    """The directories ``site``'s ``.pth`` files add, read as pyright reads them.
+
+    Files by name, each under 64 KiB and not empty; a line is a path relative to
+    ``site`` unless it is blank, a comment or an ``import``.
+    """
+    entries: List[str] = []
+    for pth in sorted(path for path in site.iterdir() if path.name.endswith(".pth")):
+        try:
+            size = pth.stat().st_size
+        except OSError:
+            continue
+        if not pth.is_file() or not 0 < size < 65536:
+            continue
+        for line in pth.read_bytes().decode("utf-8", "replace").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or re.match(r"import\s", stripped):
+                continue
+            entries.append(os.path.normpath(site / stripped))
+    return entries
+
+
+def _mirror_environment(layout: _Layout) -> None:
+    """Lay out the mirror of the configured environment (``_Environment``)."""
+    environment = layout.environment
+    if environment is None:
+        return
+    for site in _site_directories(environment.configured):
+        mirrored = environment.mirror / site.relative_to(environment.configured)
+        mirrored.mkdir(parents=True, exist_ok=True)
+        lines = [str(site), *(layout.counterpart(entry) for entry in _pth_entries(site))]
+        (mirrored / "_towel_environment.pth").write_text(
+            "".join(f"{line}\n" for line in lines), encoding="utf-8"
+        )
 
 
 def _read_by_pyright_as_configuration(path: Path) -> bool:
@@ -430,11 +727,7 @@ def _is_left_out(directory: Path) -> bool:
 
 
 def _inputs(
-    root: Path,
-    target: Path,
-    layout: _Layout,
-    ancestors: frozenset[Path],
-    excluded: frozenset[Path],
+    root: Path, target: Path, layout: _Layout, ancestors: frozenset[Path]
 ) -> Iterator[Tuple[Path, Path | _Link]]:
     """Each checker input under ``root`` with the place its copy belongs, and each link."""
     project = layout.root
@@ -443,19 +736,19 @@ def _inputs(
         raise ValueError(f"Cannot snapshot cyclic or external source directory: {root}")
     ancestry = ancestors | {resolved}
     for entry in sorted(root.iterdir()):
-        if is_probe_file(entry) or entry.resolve() in excluded:
+        if is_probe_file(entry) or entry.resolve() in layout.excluded:
             continue
         destination = target / entry.name
         if entry.is_dir():
             if _is_left_out(entry):
                 continue
             if entry.is_symlink():
-                yield destination, _link(entry, destination, layout, excluded)
+                yield destination, _link(entry, destination, layout)
                 continue
-            yield from _inputs(entry, destination, layout, ancestry, excluded)
+            yield from _inputs(entry, destination, layout, ancestry)
         elif _is_input_file(entry):
             if entry.is_symlink():
-                yield destination, _link(entry, destination, layout, excluded)
+                yield destination, _link(entry, destination, layout)
             else:
                 yield destination, entry
 
@@ -480,7 +773,7 @@ class _Link:
     outside: Optional[Path] = None
 
 
-def _link(entry: Path, destination: Path, layout: _Layout, excluded: frozenset[Path]) -> _Link:
+def _link(entry: Path, destination: Path, layout: _Layout) -> _Link:
     """How the copy reproduces the link ``entry``, which it places at ``destination``."""
     real = entry.resolve()
     if entry.is_dir() and entry.parent.resolve().is_relative_to(real):
@@ -489,11 +782,7 @@ def _link(entry: Path, destination: Path, layout: _Layout, excluded: frozenset[P
     project = layout.root
     if not real.is_relative_to(project):
         return _Link(str(real), outside=real)
-    held = not any(
-        _is_left_out(directory) or directory in excluded
-        for directory in (real, *real.parents)
-        if directory != project and directory.is_relative_to(project)
-    ) and (real.is_dir() or _is_input_file(real))
+    held = layout.holds(real)
     if not held:
         return _Link(str(real))
     counterpart = layout.target / real.relative_to(project)
@@ -722,8 +1011,12 @@ def _read_json_config(path: Path) -> dict[str, object]:
         ) from error
 
 
-def _pyright_config_inputs(root: Path) -> tuple[Path, ...]:
-    """The extends chain; external checker source roots must not be silently omitted."""
+def _pyright_config_inputs(root: Path, *, representable: bool = True) -> tuple[Path, ...]:
+    """The extends chain; external checker source roots must not be silently omitted.
+
+    Unless ``representable`` is false, a search path the copy cannot represent
+    refuses it (``_check_config_source_paths``).
+    """
     initial = root / "pyrightconfig.json"
     if initial.is_file():
         data = _read_json_config(initial)
@@ -742,7 +1035,8 @@ def _pyright_config_inputs(root: Path) -> tuple[Path, ...]:
         # A path in a shared base config still resolves relative to that base.
         # Only paths inside the copied project are representable here. Refuse
         # others rather than treating their absent stubs/imports as unknown.
-        _check_config_source_paths(data, initial.parent, root)
+        if representable:
+            _check_config_source_paths(data, initial.parent, root)
         base = data.get("extends")
         if base is None:
             return tuple(found)
@@ -755,8 +1049,37 @@ def _pyright_config_inputs(root: Path) -> tuple[Path, ...]:
         data = _read_json_config(initial)
 
 
+def _settings_chain(root: Path) -> List[Tuple[Path, Mapping[str, object]]]:
+    """Each configuration pyright reads for ``root``, its own first, with the directory it is in.
+
+    Read for what it says, wherever its search paths lead: the copy's own
+    configuration names the original where the copy holds nothing.
+    """
+    return _settings_chain_of(_pyright_config_inputs(root, representable=False))
+
+
+def _settings_chain_of(configs: Sequence[Path]) -> List[Tuple[Path, Mapping[str, object]]]:
+    chain: List[Tuple[Path, Mapping[str, object]]] = []
+    for config in configs:
+        if config.name == "pyproject.toml":
+            with config.open("rb") as handle:
+                tool = tomllib.load(handle).get("tool", {})
+            section = tool.get("pyright", {}) if isinstance(tool, dict) else {}
+            chain.append((config.parent, section if isinstance(section, dict) else {}))
+        else:
+            chain.append((config.parent, _read_json_config(config)))
+    return chain
+
+
 def _check_config_source_paths(data: Mapping[str, object], directory: Path, root: Path) -> None:
-    for key in ("stubPath", "typeshedPath", "extraPaths", "include", "executionEnvironments"):
+    for key in (
+        "stubPath",
+        "typingsPath",
+        "typeshedPath",
+        "extraPaths",
+        "include",
+        "executionEnvironments",
+    ):
         value = data.get(key)
         if value is None:
             continue
@@ -777,7 +1100,6 @@ def _check_config_source_paths(data: Mapping[str, object], directory: Path, root
                 raise ValueError(f"Invalid pyright {key} path")
             # Nonexistent default paths are harmless; a configured external
             # source/stub directory would otherwise silently read stale files.
-            literal = path.split("*", 1)[0].split("?", 1)[0].split("[", 1)[0]
-            resolved = (directory / literal).resolve()
+            resolved = (directory / _literal_prefix(path)).resolve()
             if not resolved.is_relative_to(root):
                 raise ValueError(f"External pyright {key} path cannot be snapshotted: {resolved}")

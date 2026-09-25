@@ -57,7 +57,7 @@ import tomllib
 import weakref
 from typing import Dict, Iterator, List, Literal, Mapping, Optional, Sequence, Set, Tuple, TypedDict
 
-from .checker_project import UnusableConfiguration, _pyright_config_inputs, _read_json_config
+from .checker_project import UnusableConfiguration, _settings_chain
 from .diagnostics import LOG
 from .source_files import PROBE_PREFIX
 
@@ -257,20 +257,6 @@ class PyrightScope:
 
 EVERYWHERE = PyrightScope((re.compile("^/"),))
 """The scope of a configuration that cannot be read, where the check itself says why."""
-
-
-def _settings_chain(root: Path) -> List[Tuple[Path, Mapping[str, object]]]:
-    """Each configuration pyright reads for ``root``, its own first, with the directory it is in."""
-    chain: List[Tuple[Path, Mapping[str, object]]] = []
-    for config in _pyright_config_inputs(root):
-        if config.name == "pyproject.toml":
-            with config.open("rb") as handle:
-                tool = tomllib.load(handle).get("tool", {})
-            section = tool.get("pyright", {}) if isinstance(tool, dict) else {}
-            chain.append((config.parent, section if isinstance(section, dict) else {}))
-        else:
-            chain.append((config.parent, _read_json_config(config)))
-    return chain
 
 
 def pyright_scope(root: Path) -> PyrightScope:

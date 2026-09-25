@@ -1003,7 +1003,20 @@ where the evidence comes from:
   only through a link out of the project is not judged, since the check would
   read that file as it was. A link back to a directory that holds it, and a
   configured source or stub search root outside the project, cannot be
-  represented safely and refuse the typed run.
+  represented safely and refuse the typed run. An environment the
+  configuration names with `venvPath` and `venv` is where pyright resolves
+  imports in the copy too, through a mirror of it whose `.pth` files lead into
+  the copy where an editable install leads into the project; the copy left the
+  environment out, and pyright fell back, silently, on Towel's interpreter. One
+  pyright could not use (missing, unreadable, holding no site-packages) refuses
+  the typed run, since pyright would fall back so. When Towel's interpreter is
+  that environment's own, pyright adds the interpreter's standard library
+  directories to its search paths, and through the mirror it does not; the
+  standard library is resolved from typeshed first either way. A search path
+  setting (`extraPaths`, `stubPath`, `typingsPath`, `typeshedPath`, an
+  execution environment's `extraPaths`) that leads into what the copy leaves
+  out, such as an environment's site directory, names the original in the
+  copy's configuration, rather than nothing.
   Project include/exclude settings still determine the checker's coverage.
   A change is checked from the root of its nearest pyright configuration and
   from every configured root enclosing that one within the repository, and
