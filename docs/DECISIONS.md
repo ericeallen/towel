@@ -898,3 +898,32 @@ after extraction and may reach Python's recursion limit sooner.
 KNOWN_LIMITATIONS says so.
 
 *Status: decided; the documentation is on the `audit-1772` branch.*
+
+## 2026-09-25: Round-4 refinements to the import model and the typed check
+
+These came out of the fourth audit's fixes. Each makes Towel decline or
+refuse where it had written wrong code, and none widens what it accepts.
+
+- **A directory lacking a module the program imports of it puts its name in
+  doubt.** A single location of a name is in doubt when an unguarded import
+  of that name, made outside the location in a file that leaves `sys.path`
+  alone, names a module the location lacks. The location's own imports are
+  exempt, and so is a name the project's metadata gives the project itself.
+  This is the fix the 2026-09-23 entry anticipated. A problem outside a
+  package run's target still only warns, as decided then.
+- **Only an import that attests locates a name or puts one in doubt.** A
+  guarded import, a type-only import, and an import in a file that changes
+  `sys.path` do neither. A file under two names is judged from every import
+  that runs, guarded ones included, and through links of every kind.
+- **pyright checks a change from every configured root that encloses it**
+  within the repository, since pyright run at the outer root checks the
+  member as well. Each root's copy shows the whole change.
+- **A configured environment pyright cannot use refuses the typed run**,
+  rather than letting pyright fall back to Towel's interpreter. This follows
+  from checking exactly as the project configures its checker.
+- **An out-of-place run warns about a pending journal and leaves it out of
+  its stage.** It changes nothing in the project, so it does not refuse,
+  which matches the documented rule that a journal blocks only a run that
+  would change a file its manifest names.
+
+*Status: implemented on the `audit-1772` branch; not yet released.*

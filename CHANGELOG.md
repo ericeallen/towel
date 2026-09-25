@@ -30,6 +30,68 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A typed run checked a change to a member with its own pyright
+  configuration only from that member's root, so a consumer in the outer
+  project was judged against the original text, and a helper that broke it
+  was accepted. A change is now checked from every configured root that
+  encloses it, and each copy shows the whole change.
+- pyright's configured `venvPath`/`venv` was dropped from Towel's copy, so
+  the check silently used Towel's own interpreter: a helper typed `-> int`
+  was accepted where the project's library returns `str`. pyright now
+  resolves imports in the configured environment, and an environment it
+  cannot use refuses the typed run. Search paths that lead into an
+  environment name the original.
+- A pyright-typed run was refused whenever any data file was not UTF-8 or a
+  directory was linked from outside. Only the files pyright reads as
+  configuration are now held to UTF-8, and links are reproduced as links, so
+  an import through an alias inside the project sees the candidate.
+- pyright's messages could carry the private copy's paths, so a
+  pre-existing import cycle declined every change. The command line's
+  errors without a range are accepted. A forked child can no longer disable
+  a `PyrightOracle` or delete its copy. A target outside pyright's `include`
+  no longer waits 60 s for the language server.
+- Under `--cross-module`, a directory named like a library, such as
+  `third_party/click/` holding `utils.py`, was taken for the library when
+  Towel's interpreter lacked it, and Towel wrote `from click.utils import`.
+  A directory lacking a module that an import from outside it names is now
+  in doubt, unless the project's metadata gives the project that name.
+  Requirements declared in `[tool.uv]` and `[tool.pdm]` dev dependencies,
+  hatch environments, a Pipfile and `*-requirements.txt` files are read
+  too.
+- A file that a symbolic or hard link gives a second module name is now in
+  doubt, and the report names the link. Before, its import-time code could
+  run twice.
+- An import that attests nothing, because it is guarded, type-only, or in a
+  file that changes `sys.path`, no longer locates a name or puts one in
+  doubt; graphene's `setup.py` refused every `--cross-module` run. An
+  import of a module the tree lacks no longer makes a stray
+  `src/__init__.py` a used package, and a type-only one no longer leaves its
+  file unchanged.
+- A formatter that changed or failed on the code it was given ended a
+  directory run with exit 1 and nothing written: Black normalizing a
+  docstring, Black unable to parse a snippet, ruff exiting nonzero or timing
+  out. The proposal is now declined as "the formatter changed its code or
+  failed", and the run goes on.
+- A differing value holding a slice outside its own subscript, such as
+  numbagg's `data[0, :50]`, became the argument `lambda: (0, :50)`, which is
+  not Python. Such a value is no longer made a parameter.
+- An out-of-place run copied a pending journal into its stage and refused
+  its own write there; a journal inside the target was published into the
+  output. Journals are left out of both, and the run warns, naming the
+  project's journal and `towel recover`.
+- A refusal over a pending journal named `towel recover` even where recovery
+  would then fail. The remedy now runs recovery's own checks and names what
+  works.
+- One hard-linked file failed a whole in-place run at publication, losing
+  every other file's refactoring. Proposals that would write it are now
+  declined up front, and the rest is written.
+- `--no-interactive` still asked "Analyze anyway?" for an input without a
+  `.py` suffix. A crash inside mypy or a plugin was reported only as
+  "SystemExit: 2"; it now names the exception and mypy's last output.
+- Under forked evaluation the rejection trace counted some pairs twice, and
+  which pairs were duplicates depended on the split between workers. The
+  trace is now the serial run's, line for line.
+- The sdist left out 33 test fixture configuration files.
 - Code moved out of functions whose decorators rewrite or compile their
   bodies. typeguard's `@typechecked` recompiles a function from its source
   with checks added, and numba's `@njit` compiles it. The moved code went
@@ -1037,6 +1099,17 @@ anti-unifies the types alongside the code, so the helper's signature carries
 the correlation the call sites had.
 
 ### Added
+- A library API for errors and reports:
+  - exceptions in `towel.unification.exceptions`, based on `TowelError`:
+    `CheckerUnavailableError`, `UntypeableExtraction` (with `.reason`, an
+    `Untypeable`, and `.detail`), `UnverifiableChangeError` and
+    `UncheckedCodeError`, `AmbiguousImportsError` and
+    `ProjectScanLimitError`; `UnsupportedLayoutError` is kept, though no
+    longer raised;
+  - `engine.run_report`, a frozen `RunReport` whose `declined_pairs` and
+    `declined_proposals` count declines by reason; `engine.declined_pairs`
+    for the latest analysis; and `engine.checker_failures`, how many
+    proposals the last run dropped because the checker could not run.
 - `--parameterize-builtins` (`parameterize_builtins=True`), off by default:
   where a builtin that duplicated code reads may differ between its sites (a
   function's own `len` against the builtin, or with `--cross-module` a module
