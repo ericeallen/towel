@@ -724,7 +724,9 @@ class HelperAnnotationWiring(EngineState):
         """Whether no configured checker reports on any file ``proposal`` changes.
 
         Such files are outside what the project's check checks (pyright's
-        ``exclude`` or ``ignore``, with pyright the only checker), so they are
+        ``exclude`` or ``ignore``; what mypy's own run does not check, or
+        checks under ``ignore_errors``; see
+        :func:`~towel.type_inference.reports_by_each`), so they are
         changed as the body of an unannotated function is: the project's own
         check says nothing there on any platform. What a checker would infer
         there, nothing would verify, so the helper takes the annotations its

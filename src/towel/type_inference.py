@@ -377,10 +377,15 @@ class _BuildSource:
 
 @dataclass(frozen=True)
 class _BuildMessages:
-    """What a build reported, and what mypy said about the configuration while reading it."""
+    """What a build reported, and what mypy said about the configuration while reading it.
+
+    ``reported`` is, of a complete build's sources, those the project's own
+    mypy run reports errors in.
+    """
 
     messages: Tuple[str, ...]
     warnings: Tuple[str, ...] = ()
+    reported: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, eq=False)
@@ -513,6 +518,9 @@ class MypyInferrer:
         self._warned: set[str] = set()
         # The resolved files the current run analyzes (``begin_run``), or None.
         self._run_targets: Optional[FrozenSet[str]] = None
+        # Whether the project's own run reports on each resolved file, as the
+        # first complete check to be given it found (``reports_on``).
+        self._reporting: Dict[str, bool] = {}
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)
@@ -532,6 +540,42 @@ class MypyInferrer:
         """
         with self._lock:
             self._run_targets = frozenset(os.path.realpath(path) for path in analyzed)
+            self._reporting = {}
+
+    def reports_on(self, paths: Sequence[str]) -> FrozenSet[str]:
+        """Those of ``paths`` the project's own mypy run reports errors in: mypy's jurisdiction.
+
+        That run checks what its configuration names (``files``, ``packages``,
+        ``modules``), or else what the run is pointed at (:meth:`begin_run`),
+        less what ``exclude`` matches, and reports on what those follow their
+        imports to, as each module's own options say. A module that ships its
+        own stub is the stub to it, so the implementation beside the stub is
+        outside it, unless ``files`` names the implementation itself; a module
+        whose options set ``ignore_errors`` is checked but reported on
+        nowhere. Outside mypy's jurisdiction a probe build that names the file
+        still answers, since it makes the file a source, and so it verified
+        nothing: tests outside ``files = ["pkg"]`` got helpers annotated with
+        inferred types no check of the project looks at. Now such a file is
+        what pyright's ``exclude`` makes of one, outside that checker's check.
+
+        Each file's answer comes from the first complete check it was given
+        to, which in a run is the baseline; a file no check has seen yet is
+        checked, as it stands, to find out. A file that cannot be read, or
+        whose check fails, is taken to be reported on, as every file was.
+        """
+        unseen: Dict[str, str] = {}
+        for path in paths:
+            if os.path.realpath(path) in self._reporting:
+                continue
+            try:
+                unseen[path] = read_source(Path(path))
+            except (OSError, ValueError, UnicodeError, SyntaxError):
+                continue
+        if unseen:
+            self.check_project(unseen)
+        return frozenset(
+            path for path in paths if self._reporting.get(os.path.realpath(path), True)
+        )
 
     def close(self) -> None:
         """Reap the owned worker and remove its cache; safe after partial construction."""
@@ -755,6 +799,7 @@ class MypyInferrer:
             return CheckFailure("mypy worker returned an invalid response")
         failure, messages = payload.get("failure"), payload.get("messages")
         warnings = payload.get("warnings", [])
+        reported = payload.get("reported", [])
         if isinstance(failure, str):
             return CheckFailure(failure)
         if failure is not None:
@@ -763,9 +808,12 @@ class MypyInferrer:
             return CheckFailure("mypy worker returned invalid diagnostics")
         if not isinstance(warnings, list) or not all(isinstance(w, str) for w in warnings):
             return CheckFailure("mypy worker returned invalid configuration warnings")
+        if not isinstance(reported, list) or not all(isinstance(r, str) for r in reported):
+            return CheckFailure("mypy worker returned an invalid account of what it reports on")
         return _BuildMessages(
             tuple(m for m in messages if isinstance(m, str)),
             tuple(w for w in warnings if isinstance(w, str)),
+            tuple(r for r in reported if isinstance(r, str)),
         )
 
     def is_subtype(
@@ -798,6 +846,7 @@ class MypyInferrer:
         self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
     ) -> CheckResult:
         errors: List[TypeDiagnostic] = []
+        reported: set[str] = set()
         for root, replacements in _source_groups(sources, "mypy").items():
             builds = [_build_source(path, source) for path, source in replacements.items()]
             try:
@@ -817,6 +866,11 @@ class MypyInferrer:
                 for diagnostic in (_mypy_error(message, root) for message in result.messages)
                 if diagnostic is not None
             )
+            reported.update(os.path.realpath(path) for path in result.reported)
+        with self._lock:
+            for path in sources:
+                resolved = os.path.realpath(path)
+                self._reporting.setdefault(resolved, resolved in reported)
         return CheckSuccess(tuple(errors))
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
@@ -1626,8 +1680,9 @@ def reports_by_each(oracle: TypeOracle, paths: Sequence[str]) -> Tuple[FrozenSet
     A file a checker's configuration leaves out of what it reports on
     (pyright's ``exclude`` and ``ignore``) is outside that checker's check, so
     its silence there is no sign it takes the code to be unreachable: the
-    project's own run of it says nothing there either. mypy reports on every
-    module it is given or follows to.
+    project's own run of it says nothing there either. mypy reports on what
+    the project's own mypy run checks and follows to, less what
+    ``ignore_errors`` silences (:meth:`MypyInferrer.reports_on`).
     """
     if isinstance(oracle, CombinedOracle):
         return tuple(answer for one in oracle.checkers for answer in reports_by_each(one, paths))
@@ -1635,6 +1690,8 @@ def reports_by_each(oracle: TypeOracle, paths: Sequence[str]) -> Tuple[FrozenSet
         return oracle.reports_by_each(paths)
     if isinstance(oracle, PyrightOracle):
         return (frozenset(path for path in paths if oracle.reports_on(path)),)
+    if isinstance(oracle, MypyInferrer):
+        return (oracle.reports_on(paths),)
     return (frozenset(paths),)
 
 

@@ -899,7 +899,12 @@ where the evidence comes from:
   four proposals there had been declined as unreachable). A language server
   asked about such a file never answered, and the run waited a minute and
   then gave the server up; the marker a settle waits for now goes where the
-  server reports. A file no configured checker reports on is changed as the
+  server reports. mypy reports on what the project's own mypy run checks --
+  its `files`, `packages` or `modules`, else what Towel is pointed at, less
+  what `exclude` matches -- and on what those follow their imports to, but
+  not on a module whose options set `ignore_errors`, which suppresses its
+  `reveal_type` notes with its errors, nor on an implementation behind its own
+  stub. A file no configured checker reports on is changed as the
   body of an unannotated function is, since the project's own check says
   nothing there on any platform, and its helper takes only the annotations
   its sites declare, completed with `Any`: nothing would check an inferred
@@ -954,7 +959,16 @@ where the evidence comes from:
   implementation itself is not checked by mypy unless the configuration's
   `files` names it. A change inside such an implementation is therefore not
   verified by mypy, exactly as the project's own mypy run never checks it;
-  Pyright, when configured, still checks the implementation as a file.
+  Pyright, when configured, still checks the implementation as a file. With
+  mypy alone the implementation is a file no configured checker reports on,
+  and its helper takes only the annotations its sites declare, completed with
+  `Any`, as a file outside `files`, or one whose options set `ignore_errors`,
+  does: mypy's probe of such a file still answers, because the probe makes
+  it a source, and an inferred annotation there was accepted that no check
+  of the project looks at. The stub cannot come to disagree with the code:
+  every name and signature it declares is kept, and the helper, which it does
+  not declare, is private to the module (a stubbed module never hosts a
+  helper another module imports).
 - Which files' errors count, and what each module is called, is mypy's own
   rule under the project's configuration. Where the configuration names no
   `files`, `packages` or `modules`, the project's run is taken to be mypy

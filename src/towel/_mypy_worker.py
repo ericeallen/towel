@@ -965,9 +965,33 @@ def _as_the_project_judges(
     }
     if not unjudged:
         return list(messages)
-    checked = [source.module for source in sources if source.module not in unjudged]
+    reported = _reporting_modules(graph, sources, judged, options)
+    unchecked = {path for module, path in unjudged.items() if module not in reported}
+
+    def about_unchecked(message: str) -> bool:
+        match = _MESSAGE_PATH.match(message)
+        return match is not None and os.path.realpath(match.group("path")) in unchecked
+
+    return [message for message in messages if not about_unchecked(message)]
+
+
+def _reporting_modules(
+    graph: Mapping[str, _Imports],
+    sources: Sequence[BuildSource],
+    judged: Callable[[str], bool],
+    options: Options,
+) -> set[str]:
+    """The modules of a finished build whose errors the project's own run reports.
+
+    Those it checks (the sources it would take as targets, ``judged``), and
+    those their imports follow to, where that module's own options report what
+    they find (:func:`_followed`).
+    """
+    checked = {
+        source.module for source in sources if source.path is not None and judged(source.path)
+    }
+    reported = set(checked)
     seen = set(checked)
-    reported: set[str] = set()
     pending = list(checked)
     while pending:
         state = graph.get(pending.pop())
@@ -984,20 +1008,47 @@ def _as_the_project_judges(
             if how is _Followed.REPORTED:
                 reported.add(dependency)
             pending.append(dependency)
-    unchecked = {path for module, path in unjudged.items() if module not in reported}
+    return reported
 
-    def about_unchecked(message: str) -> bool:
-        match = _MESSAGE_PATH.match(message)
-        return match is not None and os.path.realpath(match.group("path")) in unchecked
 
-    return [message for message in messages if not about_unchecked(message)]
+def _files_reported_on(
+    graph: Mapping[str, _Imports],
+    sources: Sequence[BuildSource],
+    judged: Callable[[str], bool],
+    options: Options,
+) -> set[str]:
+    """The resolved files the project's own run reports errors in: its jurisdiction, in this build.
+
+    A module of :func:`_reporting_modules`, by the file mypy read for it,
+    unless its options have mypy report nothing there (``ignore_errors``,
+    globally or in its own section). Such a module is still checked, but its
+    errors, and every ``reveal_type`` note, are suppressed: Towel read that
+    silence as code the checker takes to be unreachable and declined every
+    change in it (graphene, referencing and numbagg: none applied typed).
+    A module that ships its own stub is the stub here, as it is to the
+    project's run, so the implementation beside it is never among these.
+    """
+    reported: set[str] = set()
+    for module in _reporting_modules(graph, sources, judged, options):
+        state = graph.get(module)
+        if state is None or state.path is None:
+            continue
+        if options.clone_for_module(module).ignore_errors:
+            continue
+        reported.add(os.path.realpath(state.path))
+    return reported
 
 
 class _Answered(NamedTuple):
-    """A build's diagnostics, and what mypy said about the configuration on the way."""
+    """A build's diagnostics, and what mypy said about the configuration on the way.
+
+    ``reported`` is, of a complete build's request paths, those the project's
+    own run reports errors in (:func:`_files_reported_on`).
+    """
 
     messages: List[str]
     said: Tuple[str, ...]
+    reported: Tuple[str, ...] = ()
 
 
 def _request(request: object, cache: str) -> _Answered:
@@ -1059,9 +1110,11 @@ def _request(request: object, cache: str) -> _Answered:
     result, sources = _build_as_the_project_reaches(sources, options, judged, complete=complete)
     if not complete:
         return _Answered(list(result.errors), configured.said)
+    reported = _files_reported_on(result.graph, sources, judged, options)
     return _Answered(
         _as_the_project_judges(result.errors, result.graph, sources, judged, options),
         configured.said,
+        tuple(sorted(path for path in replacements if os.path.realpath(path) in reported)),
     )
 
 
@@ -1078,7 +1131,12 @@ def _answer(line: str, cache: str) -> str:
         failure = f"{type(error).__name__}: {error}"
     return (
         json.dumps(
-            {"messages": answered.messages, "failure": failure, "warnings": list(answered.said)}
+            {
+                "messages": answered.messages,
+                "failure": failure,
+                "warnings": list(answered.said),
+                "reported": list(answered.reported),
+            }
         )
         + "\n"
     )

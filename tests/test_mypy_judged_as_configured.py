@@ -189,6 +189,7 @@ def test_the_worker_answer_carries_what_mypy_said_and_never_a_failure_for_it(
         "messages": ["m"],
         "failure": None,
         "warnings": ["warned"],
+        "reported": [],
     }
 
 
