@@ -295,6 +295,7 @@ class RejectReason(StrEnum):
     CLASS_MACHINERY_MAY_TRANSFORM_METHODS = "class_machinery_may_transform_methods"
     CLOSURE_CROSSES_BLOCK_BOUNDARY = "closure_crosses_block_boundary"
     CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"
+    CONDITIONALLY_IMPORTED_HOST = "conditionally_imported_host"
     CREATED_OBJECT_ESCAPES = "created_object_escapes"
     CROSS_MODULE_GLOBAL_DECLARATION = "cross_module_global_declaration"
     # Counted with the decorator it names: decorator_may_transform_body[numba.njit].

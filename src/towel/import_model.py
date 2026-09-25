@@ -700,6 +700,11 @@ class ImportModel:
         """The first import in ``context`` that attests ``name``, if one does."""
         return self._attestations.get(context.resolve(), {}).get(name)
 
+    @property
+    def modules(self) -> FrozenSet[Path]:
+        """Every module the model read, as a resolved path."""
+        return frozenset(self._modules)
+
     def imports_of(self, module: Path) -> Tuple[ImportSite, ...]:
         """Every import ``module`` contains, in source order; empty when it does not parse."""
         known = self._modules.get(module.resolve())

@@ -29,7 +29,6 @@ from __future__ import annotations
 import ast
 import builtins
 import re
-import sys
 import warnings
 from dataclasses import dataclass
 from enum import Enum
@@ -56,9 +55,14 @@ from .known_bases import (
     KNOWN_BASE_ORIGINS,
     KNOWN_SUBSCRIPTED_BASE_ORIGINS,
 )
+from .known_platforms import platform_only, stdlib_everywhere
 from ..import_model import NameStatus
-from ..declared_requirements import installed_with_the_project, normalized_name
-from ..project_layout import find_project_root
+from ..declared_requirements import (
+    declared_requirements,
+    installed_with_the_project,
+    normalized_name,
+)
+from ..project_layout import find_project_root, load_pyproject
 from .module_bindings import (
     NAMESPACE_PRESERVING_DECORATORS,
     ModuleBindings,
@@ -127,6 +131,8 @@ class ImportGraphCache:
         self.resolved_paths: BoundedCache[str, Path] = BoundedCache(limit)
         # Every write into a module namespace each project's code makes, read once per run.
         self._attribute_writes: Dict[Path, ProjectWrites] = {}
+        # The modules each program imports only under a condition, found once per run.
+        self._conditional: Dict[Path, FrozenSet[Path]] = {}
 
     def resolve(self, path: str) -> Path:
         """``Path(path).resolve()``, once per spelling for the life of the cache."""
@@ -154,6 +160,7 @@ class ImportGraphCache:
         self._declared = {}
         self._roots = {}
         self._attribute_writes = {}
+        self._conditional = {}
         for table in (self.edges, self.effects, self.quiet_classes):
             table.clear()
 
@@ -174,7 +181,7 @@ class ImportGraphCache:
         return known
 
     def installed_with_the_project(self, path: Path) -> FrozenSet[str]:
-        """``installed_with_the_project`` for the project holding ``path``, read once per run.
+        """``_installed_everywhere`` for the project holding ``path``, read once per run.
 
         Every cross-module pair asks, and the answer is what the project's
         configuration files say, which a run does not change. Under
@@ -182,10 +189,10 @@ class ImportGraphCache:
         """
         root = self.project_root(path.resolve())
         if not memoizing():
-            return installed_with_the_project(root)
+            return _installed_everywhere(root)
         known = self._declared.get(root)
         if known is None:
-            known = self._declared[root] = installed_with_the_project(root)
+            known = self._declared[root] = _installed_everywhere(root)
         return known
 
     def attribute_writes(self, root: Path) -> ProjectWrites:
@@ -200,6 +207,16 @@ class ImportGraphCache:
         known = self._attribute_writes.get(root)
         if known is None:
             known = self._attribute_writes[root] = scan_attribute_writes(root)
+        return known
+
+    def conditionally_imported(self, program: ProgramImports) -> FrozenSet[Path]:
+        """``conditionally_imported`` of ``program``, found once per run."""
+        root = program.model.root
+        if not memoizing():
+            return conditionally_imported(program, self)
+        known = self._conditional.get(root)
+        if known is None:
+            known = self._conditional[root] = conditionally_imported(program, self)
         return known
 
     def program_for(self, path: Path) -> ProgramImports:
@@ -229,6 +246,32 @@ class ImportGraphCache:
             raise
         self._programs[root] = known
         return known
+
+
+def _installed_everywhere(root: Path) -> FrozenSet[str]:
+    """What every installation of the project at ``root`` installs, on every platform and Python.
+
+    ``installed_with_the_project`` less each requirement a marker limits:
+    ``pywin32; sys_platform == "win32"`` is installed on Windows alone, so a
+    host importing ``win32api`` fails on macOS for a borrower that did not,
+    and Poetry spells the same limit with ``markers``, ``platform`` or
+    ``python`` in a dependency's table, or with a list of such tables.
+    """
+    limited = {
+        requirement.name
+        for requirement in declared_requirements(root)
+        if requirement.with_the_project and ";" in requirement.declared
+    }
+    dependencies = load_pyproject(root).get("tool", {}).get("poetry", {}).get("dependencies", {})
+    if isinstance(dependencies, dict):
+        for name, specification in dependencies.items():
+            tables = specification if isinstance(specification, list) else [specification]
+            if isinstance(specification, list) or any(
+                isinstance(table, dict) and {"markers", "platform", "python"} & set(table)
+                for table in tables
+            ):
+                limited.add(normalized_name(str(name)))
+    return installed_with_the_project(root) - limited
 
 
 def relative_import_levels(nodes: Iterable[ast.AST]) -> FrozenSet[int]:
@@ -1586,6 +1629,7 @@ class ImportChange(Enum):
     READS_REBOUND_STATE = (
         "a module the new import loads reads, at import, an attribute the program rebinds"
     )
+    CONDITIONAL_HOST = "the program imports the host, or a package it is in, only under a condition"
     NEW_REQUIREMENT = "a module the new import loads requires a package that may be absent"
     NEW_TOP_LEVEL_PACKAGE = (
         "a module the new import loads is in a package the borrower never imports"
@@ -1610,9 +1654,11 @@ def import_change(
     module the new import may load that the borrower's does not certainly
     load already must run no code at import (``ImportTimeCode``), read at
     import nothing the program rebinds (``_reads_rebound_state``), require
-    no package that may be absent where the borrower is installed
+    no package or name that may be absent where the borrower is installed
     (``_new_requirements``), and belong to a top-level package the borrower
-    already relies on (``_new_top_level_packages``). An import in a function
+    already relies on (``_new_top_level_packages``); and neither the host
+    nor a package it is in may be one the program imports only under a
+    condition (``conditionally_imported``). An import in a function
     body runs only when the function is called, so it makes nothing present
     at the borrower's import. What the new import runs must be seen whole:
     one that enters a directory the model did not read is unknown.
@@ -1643,11 +1689,73 @@ def import_change(
             return ImportChange.READS_REBOUND_STATE
         if _new_requirements(added, already, program, cache):
             return ImportChange.NEW_REQUIREMENT
+        conditional = cache.conditionally_imported(program)
+        if any(
+            module in conditional and module not in already
+            for module in (host, *program.package_initializers(host))
+        ):
+            return ImportChange.CONDITIONAL_HOST
         if _new_top_level_packages(added, already, borrower, program):
             return ImportChange.NEW_TOP_LEVEL_PACKAGE
     if _breaks_run_by_path(borrower, added | {host}, program):
         return ImportChange.RUN_BY_PATH
     return None
+
+
+def conditionally_imported(program: ProgramImports, cache: ImportGraphCache) -> FrozenSet[Path]:
+    """The modules of the program that it imports only under a condition, in the model's paths.
+
+    A module the program imports only where a condition holds is not known
+    to import everywhere else: shop's ``__init__`` imports ``_winconsole``
+    only under ``sys.platform == "win32"``, and ``_winconsole`` imports
+    ``msvcrt``. So such a module never hosts a helper for a borrower whose
+    import does not already load it (:func:`import_change`). Any import that
+    is not a statement of its module's top level is conditional: one under
+    an ``if`` (a ``sys.platform``, ``os.name`` or ``platform.system()`` test,
+    or any other), in a ``try`` (``except ImportError`` included), a loop or
+    a ``with``, or in a function body. One under ``TYPE_CHECKING`` never runs
+    and is no import at all.
+
+    A module is conditional when some import of it is, and every other
+    import of it is too, or sits in a conditional module: so is everything
+    such a module imports at its top level and nothing else imports
+    unconditionally. Importing a module imports the packages it is in, so a
+    package's ``__init__`` imported lazily is still loaded by each of its
+    modules. A module nothing imports shows no condition, and neither does a
+    cycle of modules only each other import.
+    """
+    sites: Dict[Path, List[Tuple[Path, bool]]] = {}
+    certainly_loads: Dict[Path, FrozenSet[Path]] = {}
+    for module in sorted(program.model.modules):
+        every = _import_edges(module, program, cache, "everywhere")
+        certain = _import_edges(module, program, cache, "unconditionally")
+        every_files = every.files if every is not None else frozenset()
+        certain_files = certain.files if certain is not None else frozenset()
+        certainly_loads[module] = certain_files - {module}
+        # Importing a module runs the initializers of the packages it is in
+        # first, an import of each that is as certain as its own.
+        initializers = frozenset(program.package_initializers(module))
+        for target in (every_files | initializers) - {module}:
+            sites.setdefault(target, []).append(
+                (module, target in certain_files or target in initializers)
+            )
+    region = {target for target, found in sites.items() if not all(sure for _, sure in found)}
+    pending = list(region)
+    while pending:
+        for target in certainly_loads.get(pending.pop(), frozenset()) - region:
+            region.add(target)
+            pending.append(target)
+    conditional = set(region)
+    changed = True
+    while changed:
+        freed = {
+            target
+            for target in conditional
+            if any(sure and importer not in conditional for importer, sure in sites.get(target, ()))
+        }
+        conditional -= freed
+        changed = bool(freed)
+    return frozenset(conditional)
 
 
 def host_has_stub(host_file: str, cache: ImportGraphCache) -> bool:
@@ -1854,30 +1962,121 @@ def _new_requirements(
     program: ProgramImports,
     cache: ImportGraphCache,
 ) -> FrozenSet[str]:
-    """Third-party modules the new import requires that the borrower's import does not.
+    """Modules or names the new import requires that the borrower's import does not.
 
     An import is inert as a statement, but it is also a requirement: a host
     doing ``import tornado`` cannot be imported where tornado is absent, so a
     borrower made to import it stopped importing in exactly those
     environments (gunicorn's sync worker). What the borrower already imports
-    it already requires; the standard library is always there; a project's
-    declared dependencies are installed wherever it is; and a name the
-    program's imports place in the project is the project's own. Anything
-    else is a new requirement, and the host is refused. An import guarded by
-    ``try``/``except`` is how optional dependencies are spelled, and requires
-    nothing.
+    it already requires; a project's declared dependencies are installed
+    wherever it is; and a name the program's imports place in the project is
+    the project's own. The standard library is there only where its
+    documentation says (``known_platforms``): ``msvcrt`` and
+    ``os.startfile`` on Windows alone, ``fcntl`` and ``signal.SIGALRM`` not
+    on Windows, ``tkinter`` only where Python has Tk, and ``distutils`` not
+    on every supported version. Anything else is a new requirement, and the
+    host is refused. An import that a ``try`` catches the ``ImportError`` of
+    is how optional dependencies are spelled, and requires nothing
+    (``_required_names``).
     """
 
     def required(modules: Set[Path]) -> Set[str]:
         return {
-            name for module in modules for name in _required_imports(program.in_run(module), cache)
+            name for module in modules for name in _required_names(program.in_run(module), cache)
         }
 
-    names = {name for name in required(added) - required(present) if not program.is_local(name)}
-    available = (
-        set(sys.stdlib_module_names) - _EFFECTFUL_STDLIB
-    ) | cache.installed_with_the_project(program.model.root)
-    return frozenset(name for name in names if normalized_name(name) not in available)
+    new = required(added) - required(present)
+    declared = cache.installed_with_the_project(program.model.root)
+
+    def requires(name: str) -> bool:
+        top = name.partition(".")[0]
+        if top == "__future__" or program.is_local(top):
+            return False
+        if stdlib_everywhere(top) and top not in _EFFECTFUL_STDLIB:
+            return platform_only(name)
+        return normalized_name(top) not in declared
+
+    return frozenset(name for name in new if requires(name))
+
+
+def _required_imports(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:
+    """Top-level names of the absolute imports ``module`` runs unconditionally at import."""
+    return frozenset(name.partition(".")[0] for name in _required_names(module, cache)) - {
+        "__future__"
+    }
+
+
+def _catches_import_error(statement: ast.Try) -> bool:
+    """Whether a handler of ``statement`` catches ``ImportError``, as a bare ``except`` does."""
+    catching = {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"}
+    for handler in statement.handlers:
+        caught = handler.type
+        names = caught.elts if isinstance(caught, ast.Tuple) else [caught]
+        if caught is None or any(
+            isinstance(name, ast.Name) and name.id in catching for name in names
+        ):
+            return True
+    return False
+
+
+def _prefixes(dotted: str) -> Iterator[str]:
+    """``a``, ``a.b`` and ``a.b.c`` for ``a.b.c``: every module importing it imports."""
+    parts = dotted.split(".")
+    return (".".join(parts[:end]) for end in range(1, len(parts) + 1))
+
+
+def _required_names(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:
+    """What the absolute imports ``module`` may run at import require, as dotted names.
+
+    ``import a.b`` requires ``a`` and ``a.b``, and ``from a import b``
+    requires ``a`` and ``a.b``, a submodule or an attribute. Either branch of an ``if`` may
+    be the one that runs, and an import there is required there; under
+    ``TYPE_CHECKING`` only the ``else`` ever runs. An import in a ``try``
+    whose handlers catch ``ImportError`` requires nothing, since the module
+    goes on without it, but one in the handler, the ``else`` or the
+    ``finally`` does, and so does one in a ``try`` that lets the error
+    through. An import in a function runs only when it is called.
+    """
+    try:
+        stat = module.stat()
+    except OSError:
+        return frozenset()
+    key = (module, stat.st_mtime_ns, stat.st_size)
+    known = cache.required_imports.get(key)
+    if known is not None:
+        return known
+    try:
+        source = read_source(module)
+        tree = ast.parse(source)
+    except (OSError, UnicodeError, SyntaxError):
+        return cache.required_imports.put(key, frozenset())
+    guards = TypeCheckingGuards.of(source, tree)
+    names: Set[str] = set()
+    pending: List[Tuple[ast.stmt, int]] = [(node, order) for order, node in enumerate(tree.body)]
+    while pending:
+        statement, order = pending.pop()
+        if isinstance(statement, ast.Import):
+            names.update(prefix for alias in statement.names for prefix in _prefixes(alias.name))
+        elif isinstance(statement, ast.ImportFrom) and statement.level == 0 and statement.module:
+            names.update(_prefixes(statement.module))
+            names.update(
+                f"{statement.module}.{alias.name}" for alias in statement.names if alias.name != "*"
+            )
+        elif isinstance(statement, ast.If):
+            branches = (
+                statement.orelse
+                if guards.never_true(statement.test, order=order)
+                else statement.body + statement.orelse
+            )
+            pending.extend((branch, order) for branch in branches)
+        elif isinstance(statement, ast.Try):
+            ran = [] if _catches_import_error(statement) else statement.body
+            handled = [inner for handler in statement.handlers for inner in handler.body]
+            pending.extend(
+                (inner, order)
+                for inner in (*ran, *handled, *statement.orelse, *statement.finalbody)
+            )
+    return cache.required_imports.put(key, frozenset(names))
 
 
 # -- What a module reads from other modules as it is imported ---------------------
@@ -2078,43 +2277,6 @@ def _expression_reads(
                 yield "builtins", current.id
             continue
         pending.extend(ast.iter_child_nodes(current))
-
-
-def _required_imports(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:
-    """Top-level names of the absolute imports ``module`` runs unconditionally at import."""
-    try:
-        stat = module.stat()
-    except OSError:
-        return frozenset()
-    key = (module, stat.st_mtime_ns, stat.st_size)
-    known = cache.required_imports.get(key)
-    if known is not None:
-        return known
-    try:
-        source = read_source(module)
-        tree = ast.parse(source)
-    except (OSError, UnicodeError, SyntaxError):
-        return cache.required_imports.put(key, frozenset())
-    guards = TypeCheckingGuards.of(source, tree)
-    names: Set[str] = set()
-    pending: List[Tuple[ast.stmt, int]] = [(node, order) for order, node in enumerate(tree.body)]
-    while pending:
-        statement, order = pending.pop()
-        if isinstance(statement, ast.Import):
-            names.update(alias.name.split(".")[0] for alias in statement.names)
-        elif isinstance(statement, ast.ImportFrom) and statement.level == 0 and statement.module:
-            names.add(statement.module.split(".")[0])
-        elif isinstance(statement, ast.If):
-            # Either branch may be the one that runs; an import there is required
-            # there. Under ``TYPE_CHECKING`` only the ``else`` ever runs.
-            branches = (
-                statement.orelse
-                if guards.never_true(statement.test, order=order)
-                else statement.body + statement.orelse
-            )
-            pending.extend((branch, order) for branch in branches)
-    names.discard("__future__")
-    return cache.required_imports.put(key, frozenset(names))
 
 
 def would_create_import_cycle(

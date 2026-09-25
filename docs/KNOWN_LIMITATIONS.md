@@ -494,9 +494,32 @@ import: an unconditional import, including one inside a module-level `if`,
 of anything outside the project, the standard library and the project's
 declared dependencies: PEP 621's `[project].dependencies`, Poetry's
 `[tool.poetry.dependencies]` less the optional ones an extra installs, and
-setup.cfg's `install_requires`; a setup.py is not run, so dependencies it
-alone declares are not known. An import inside `try` is taken as an
-optional dependency and requires nothing. A dependency declared under a
+setup.cfg's `install_requires`, each less any a marker limits
+(`pywin32; sys_platform == "win32"`, or Poetry's `markers`, `platform` or
+`python`); a setup.py is not run, so dependencies it alone declares are not
+known. The standard library counts only where its documentation places it
+(`known_platforms`, read from the Availability notes of CPython 3.11 to
+3.13): `msvcrt`, `winreg`, `os.startfile`, `ctypes.windll` and
+`signal.CTRL_C_EVENT` are Windows's alone, `fcntl`, `termios`, `os.fork` and
+`signal.SIGALRM` are missing on Windows, `tkinter` wherever Python lacks
+Tk, and a module a supported version removed, `distutils` or `cgi`, is
+missing there; a name below a module counts as the module (`curses.ascii`).
+Notes that leave out only WebAssembly and mobile platforms are not read,
+since the documentation says those mean a module "does not work or is not
+available" there, nor is availability stated only in prose, nor are
+undocumented private modules (`_winapi`). An import inside a `try` whose
+handlers catch `ImportError` is taken as an optional dependency and
+requires nothing; one in its handler, `else` or `finally`, or in a `try`
+that lets the error through, is required. A module the program imports only
+under a condition hosts a helper only for a borrower whose own import
+already loads it (`conditionally_imported_host`): every import of it sits
+under an `if` (a `sys.platform`, `os.name` or `platform.system()` test, or
+any other), in a `try`, a loop or a `with`, or in a function body, or in a
+module that is itself so imported, as shop's `__init__` imports
+`_winconsole` only under `sys.platform == "win32"`. One import at the top
+of any other module, a test's included, shows the module importable where
+that module is. The cost is that two modules gated alike share no helper
+unless one already imports the other. A dependency declared under a
 distribution name that differs from its import name (`PyYAML` for `yaml`) is
 not recognized, which refuses a host rather than accepting one; an import
 made by `importlib` or `__import__` is not seen at all.
@@ -1486,7 +1509,10 @@ the proposals it built and did not apply, by reason:
   `import_reads_rebound_state`: a module it would load reads at import an
   attribute of another module that the project's code rebinds;
   `new_import_requirement`: it would require a package outside the project,
-  the standard library and the declared dependencies; `new_top_level_package`: it would load a
+  the standard library every supported platform and Python has, and the
+  declared dependencies no marker limits; `conditionally_imported_host`: the
+  program imports the host, or a package it is in, only under a condition;
+  `new_top_level_package`: it would load a
   top-level package of the project the borrower's import does not;
   `run_by_path_import`: the borrower runs as a program, and run by its path
   it could not resolve the import; `host_has_stub`: a type checker would
