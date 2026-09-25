@@ -40,8 +40,14 @@ name, writing a module into `tmp_path`, locating and copying `test_examples`
 files, asserting a file was left unmodified, running the engine to a fixed
 point with its output silenced, the `EngineOptions` a test may forward, and
 `TemporaryModuleTestCase` for `unittest` classes that write modules) live in
-`test_helpers.py`, which is strictly typed; `conftest.py` only keeps pytest
-from collecting the example corpora and scratch output directories.
+`test_helpers.py`, which is strictly typed; `conftest.py` keeps pytest from
+collecting the example corpora and scratch output directories, and guards
+typed tests against passing vacuously: a test whose typed runs declined
+proposals as code the type checker does not look at, and verified none,
+fails at teardown unless it is marked `@pytest.mark.looks_nowhere`, because
+such a checker answered nowhere and the test verified nothing. A project
+path through a symbolic link (every temporary directory on macOS) once had
+every mypy answer dropped in exactly that way.
 
 A test that writes a module the engine will refactor puts it in a directory
 of its own: pytest's `tmp_path`, or `TemporaryModuleTestCase._write_temp` in

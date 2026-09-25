@@ -68,6 +68,7 @@ def _run(
     return path.read_text(encoding="utf-8"), applied, engine
 
 
+@pytest.mark.looks_nowhere
 @requires_mypy
 def test_a_module_that_asserts_another_platform_is_left_alone_and_named(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -114,6 +115,7 @@ def _guarded(test: str) -> str:
         """).lstrip()
 
 
+@pytest.mark.looks_nowhere
 @requires_mypy
 def test_a_branch_under_another_platform_inside_a_function_is_left_alone(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -170,6 +172,7 @@ def test_the_branch_the_checker_does_look_at_is_refactored(tmp_path: Path) -> No
     assert UNCHECKED not in engine.run_report.declined_proposals
 
 
+@pytest.mark.looks_nowhere
 @requires_mypy
 def test_a_branch_for_a_python_the_checker_does_not_check_for_is_left_alone(
     tmp_path: Path,
@@ -184,6 +187,7 @@ def test_a_branch_for_a_python_the_checker_does_not_check_for_is_left_alone(
     assert engine.run_report.declined_proposals == {UNCHECKED: 1}
 
 
+@pytest.mark.looks_nowhere
 @requires_mypy
 @requires_pyright
 def test_every_checker_is_asked_where_it_looks_before_a_change_is_accepted(
@@ -210,6 +214,7 @@ def test_every_checker_is_asked_where_it_looks_before_a_change_is_accepted(
     assert engine.run_report.declined_proposals == {UNCHECKED: 1}
 
 
+@pytest.mark.looks_nowhere
 @requires_mypy
 def test_dead_code_the_regions_before_the_run_miss_is_refused_by_the_check_itself(
     tmp_path: Path, caplog: pytest.LogCaptureFixture

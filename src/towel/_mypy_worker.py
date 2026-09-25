@@ -441,7 +441,7 @@ def _named_by_the_project(options: Options) -> set[str]:
     implementation that has a stub beside it; see :func:`_as_the_project_resolves`.
     """
     return {
-        os.path.abspath(entry)
+        os.path.realpath(entry)
         for entry in options.files or ()
         if entry.endswith(".py") and os.path.isfile(entry)
     }
@@ -461,7 +461,7 @@ def _as_the_project_resolves(source: BuildSource, named: set[str]) -> BuildSourc
     while the project's mypy reported the name missing.
     """
     path = source.path
-    if path is None or not path.endswith(".py") or os.path.abspath(path) in named:
+    if path is None or not path.endswith(".py") or os.path.realpath(path) in named:
         return source
     stub = path + "i"
     if not os.path.isfile(stub):
@@ -484,7 +484,7 @@ def _one_source_per_module(selected: Sequence[BuildSource]) -> list[BuildSource]
     by_path: dict[str, BuildSource] = {}
     for source in selected:
         if source.path is not None:
-            by_path.setdefault(os.path.abspath(source.path), source)
+            by_path.setdefault(os.path.realpath(source.path), source)
     return list(by_path.values())
 
 
@@ -552,7 +552,7 @@ def _build_sources(
     targets = _complete_targets(replacements, options, root, consumers)
     selected = create_source_list(targets, options, allow_empty_dir=True) + selected
     by_path = {
-        os.path.abspath(source.path): source
+        os.path.realpath(source.path): source
         for source in _one_source_per_module(
             [_as_the_project_resolves(source, named) for source in selected]
         )
@@ -698,11 +698,11 @@ def _named_by_its_importer(
         match = _FOUND_TWICE.match(message)
         if match is None:
             continue
-        path = os.path.abspath(match.group("path"))
+        path = os.path.realpath(match.group("path"))
         for index, source in enumerate(sources):
             if (
                 source.path is None
-                or os.path.abspath(source.path) != path
+                or os.path.realpath(source.path) != path
                 or source.module != match.group("given")
                 or path in renamed
                 or judged(source.path)
@@ -774,8 +774,8 @@ def _judged_by_the_project(
     ``options.exclude`` must still be the project's, before Towel adds to it.
     """
     if options.files:
-        targets = {os.path.abspath(source.path) for source in run if source.path is not None}
-        return lambda path: os.path.abspath(path) in targets
+        targets = {os.path.realpath(source.path) for source in run if source.path is not None}
+        return lambda path: os.path.realpath(path) in targets
     excludes = list(options.exclude)
     cache = FileSystemCache()
 
@@ -857,7 +857,7 @@ def _as_the_project_judges(
     the project's own ``mypy`` rejected there was accepted.
     """
     unjudged = {
-        source.module: os.path.abspath(source.path)
+        source.module: os.path.realpath(source.path)
         for source in sources
         if source.path is not None and not judged(source.path)
     }
@@ -886,7 +886,7 @@ def _as_the_project_judges(
 
     def about_unchecked(message: str) -> bool:
         match = _MESSAGE_PATH.match(message)
-        return match is not None and os.path.abspath(match.group("path")) in unchecked
+        return match is not None and os.path.realpath(match.group("path")) in unchecked
 
     return [message for message in messages if not about_unchecked(message)]
 

@@ -229,9 +229,14 @@ def _same_file(reported: str, path: str) -> bool:
     other file absolute; Towel passes whatever spelling the caller used. A
     plain string comparison therefore matched only when the working
     directory was outside the project, and every reveal and error was
-    dropped otherwise, which switched inference off without a word.
+    dropped otherwise, which switched inference off without a word. mypy is
+    given, and so prints, each file by its resolved path: a project reached
+    through a symbolic link (macOS's ``/var``, which is ``/private/var``, and
+    so every temporary directory there) had every answer dropped as well,
+    every proposal declined as code the checker does not look at, and every
+    subtype question answered yes. So both are compared resolved.
     """
-    return os.path.abspath(reported) == os.path.abspath(path)
+    return os.path.realpath(reported) == os.path.realpath(path)
 
 
 def _module_name_and_root(path: Path) -> Tuple[str, Path]:
@@ -277,8 +282,12 @@ def _module_name(path: Path) -> str:
 
 
 def _build_source(path: str, text: str) -> _BuildSource:
-    """``text`` for the module at ``path``, with the name Towel gives it where mypy gives none."""
-    module, root = _module_name_and_root(Path(path))
+    """``text`` for the module at ``path``, with the name Towel gives it where mypy gives none.
+
+    The worker is given the file by its resolved path, so the directory its
+    name is taken from is that path's too.
+    """
+    module, root = _module_name_and_root(Path(os.path.realpath(path)))
     return _BuildSource(path, module, str(root), text)
 
 
@@ -602,16 +611,19 @@ class MypyInferrer:
             root = _configured_root(Path(sources[0].path), "mypy") or _checker_root(
                 Path(sources[0].path)
             )
+            # Every path goes to the worker resolved, one spelling per file:
+            # mypy prints a file by the path it was given, and a file under a
+            # symbolic link given one way and walked another is two files.
             request = {
-                "root": str(root),
+                "root": os.path.realpath(root),
                 "config": _mypy_config(root),
-                "sources": {str(Path(source.path).resolve()): source.text for source in sources},
+                "sources": {os.path.realpath(source.path): source.text for source in sources},
                 # A complete build is a check of the project, any other a probe.
                 "complete": complete,
-                "excluded_paths": list(excluded_paths),
-                "consumers": list(consumers),
+                "excluded_paths": [os.path.realpath(path) for path in excluded_paths],
+                "consumers": [os.path.realpath(path) for path in consumers],
                 "modules": {
-                    str(Path(source.path).resolve()): [source.module, source.root]
+                    os.path.realpath(source.path): [source.module, source.root]
                     for source in sources
                 },
             }
@@ -813,7 +825,7 @@ class MypyInferrer:
                 shift += len(request.expressions)
             for request, lines in landed:
                 for index, line in enumerate(lines):
-                    probe_lines[(os.path.abspath(file_path), line)] = (
+                    probe_lines[(os.path.realpath(file_path), line)] = (
                         file_path,
                         request.line,
                         index,
@@ -833,7 +845,7 @@ class MypyInferrer:
             match = _REVEALED.match(message)
             if match is None:
                 continue
-            key = probe_lines.get((os.path.abspath(match.group("path")), int(match.group("line"))))
+            key = probe_lines.get((os.path.realpath(match.group("path")), int(match.group("line"))))
             if key is not None and key not in ambiguous:
                 kind = match.group("type")
                 if key in revealed and revealed[key] != kind:
@@ -1672,14 +1684,14 @@ class _RelocatedOracle:
         return path
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
-        return self._outputs(self._oracle.reveal(self._originals(requests)))
+        return self._outputs(self._oracle.reveal(self._originals(requests)), requests)
 
     def reveal_by_each(
         self, requests: Sequence[RevealRequest]
     ) -> Tuple[Mapping[RevealKey, str], ...]:
         """Each checker's revelations, at the copy's paths; see :func:`reveal_by_each`."""
         answers = reveal_by_each(self._oracle, self._originals(requests))
-        return tuple(self._outputs(answer) for answer in answers)
+        return tuple(self._outputs(answer, requests) for answer in answers)
 
     def reports_by_each(self, paths: Sequence[str]) -> Tuple[FrozenSet[str], ...]:
         """Each checker's :func:`reports_by_each`, asked of the originals, at the copy's paths."""
@@ -1701,14 +1713,26 @@ class _RelocatedOracle:
             for request in requests
         ]
 
-    def _outputs(self, revealed: Mapping[RevealKey, str]) -> Revealed:
-        """``revealed`` at the copy's paths, its unanswered files included."""
+    def _outputs(
+        self, revealed: Mapping[RevealKey, str], requests: Sequence[RevealRequest]
+    ) -> Revealed:
+        """``revealed`` under the paths ``requests`` asked by, its unanswered files included.
+
+        Each answer comes back under the very spelling it was asked by: a
+        caller reads an answer by the key it made, and one spelled otherwise,
+        through a symbolic link or around one, is no answer to it.
+        """
+        asked = {self._original(request.file_path): request.file_path for request in requests}
+
+        def spelled(path: str) -> str:
+            return asked.get(path) or self._output(path)
+
         return Revealed(
             {
-                (self._output(path), line, index): value
+                (spelled(path), line, index): value
                 for (path, line, index), value in revealed.items()
             },
-            {self._output(path): reason for path, reason in unanswered_files(revealed).items()},
+            {spelled(path): reason for path, reason in unanswered_files(revealed).items()},
         )
 
     def is_subtype(
