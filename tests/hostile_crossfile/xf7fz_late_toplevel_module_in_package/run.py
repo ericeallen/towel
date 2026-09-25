@@ -1,6 +1,7 @@
 # Round-3 audit case late_toplevel_module_in_package (late: cross-top-level-module-inside-
 # package). P1-6, --cross-module: pkg/c.py imports helpers_top, a module inside the package
 # imported top-level; c.py borrows a helper by a relative import that fails where c.py works.
+# Since the P1-6 fix c.py is given no import, and towel dry --cross-module refuses the run.
 if __name__ == "__main__":
     import pkg.a as pkg_a
     import pkg

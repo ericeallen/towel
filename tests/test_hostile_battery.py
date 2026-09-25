@@ -21,17 +21,10 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import tempfile
+from typing import Dict
 
 import pytest
 
-from tests.audit_defects import (
-    P1_1_PREBOUND_REBINDING,
-    P1_2_SEMICOLON_LINE,
-    P1_3_LEADING_THUNK,
-    P1_5_RENAMED_BINDER,
-    P1_7_READ_BEFORE_BIND,
-    P1_8_LATER_UPDATE,
-)
 from tests.hostile_execution import module_faces, observe, parsed_or_skipped
 from tests.hostile_refactoring import refactor_script, with_known_defects
 
@@ -226,6 +219,31 @@ TRANSFORMED = {
     # An except clause deletes its name as it ends: a try nested in an if
     # leaves nothing bound for the block to lose, and moves.
     "r7bi_except_name_in_nested_block",
+    # The round-3 audit's P1 cases, ported from its families and its grammar
+    # generator (r7fz_grammar_<its case id>_...), each now extracted soundly
+    # by the fix of its defect. Each fixture's opening comment says what it
+    # shows.
+    "r7fz_binding_loop_var_leak",
+    "r7fz_prebound_for_read_in_block",
+    "r7fz_prebound_for_else_prebound",
+    "r7fz_prebound_for_target_attr_prebound",
+    "r7fz_prebound_match_capture_prebound",
+    "r7fz_prebound_def_conditional_rebind",
+    "r7fz_grammar_u0898_for_target_prebound",
+    "r7fz_srctext_semicolons_continuations",
+    "r7fz_thunks2_dict_unhashable",
+    "r7fz_thunks2_dict_unpack",
+    "r7fz_thunks2_lambda_default",
+    "r7fz_thunks2_list_starred",
+    "r7fz_thunks2_set_hash_effect",
+    "r7fz_thunks2_set_unhashable",
+    "r7fz_thunks2_tuple_starred",
+    "r7fz_thunks2_undefined_global",
+    "r7fz_misc_binder_renamed_del_message",
+    "r7fz_grammar_t11254_read_before_bind",
+    "r7fz_late_after_block_augassign",
+    "r7fz_late_after_block_del",
+    "r7fz_grammar_u0417_augassign_after_block",
     # The round-3 audit's families (r7fz_<family>_<case>): a sample of the
     # cases the audit found sound, one or more for each thing a family
     # targets, and every one transformed.
@@ -305,6 +323,8 @@ TRANSFORMED = {
 }
 # r7sp_directive_on_a_shared_line is declined: each block starts after, or
 # ends before, a statement that stays on a line carrying a directive.
+# r7fz_grammar_u0217_read_before_bind, a P1-7 case, is declined since its fix:
+# its block reads v6 before binding it (incomplete_lifetime_block1).
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in
 # their qualified names. Its reads are still what free_variables reports.
@@ -316,33 +336,9 @@ TRANSFORMED = {
 # r86_annotated_assignment_live left the set when the trivial-helper filter
 # began declining its shared block, which binds only a literal and a parameter.
 
-KNOWN_DEFECTS = {
-    # The round-3 audit's P1 cases, ported from its families and its grammar
-    # generator (r7fz_grammar_<its case id>_...). Each fixture's opening comment
-    # says what it shows.
-    "r7fz_binding_loop_var_leak": P1_1_PREBOUND_REBINDING,
-    "r7fz_prebound_for_read_in_block": P1_1_PREBOUND_REBINDING,
-    "r7fz_prebound_for_else_prebound": P1_1_PREBOUND_REBINDING,
-    "r7fz_prebound_for_target_attr_prebound": P1_1_PREBOUND_REBINDING,
-    "r7fz_prebound_match_capture_prebound": P1_1_PREBOUND_REBINDING,
-    "r7fz_prebound_def_conditional_rebind": P1_1_PREBOUND_REBINDING,
-    "r7fz_grammar_u0898_for_target_prebound": P1_1_PREBOUND_REBINDING,
-    "r7fz_srctext_semicolons_continuations": P1_2_SEMICOLON_LINE,
-    "r7fz_thunks2_dict_unhashable": P1_3_LEADING_THUNK,
-    "r7fz_thunks2_dict_unpack": P1_3_LEADING_THUNK,
-    "r7fz_thunks2_lambda_default": P1_3_LEADING_THUNK,
-    "r7fz_thunks2_list_starred": P1_3_LEADING_THUNK,
-    "r7fz_thunks2_set_hash_effect": P1_3_LEADING_THUNK,
-    "r7fz_thunks2_set_unhashable": P1_3_LEADING_THUNK,
-    "r7fz_thunks2_tuple_starred": P1_3_LEADING_THUNK,
-    "r7fz_thunks2_undefined_global": P1_3_LEADING_THUNK,
-    "r7fz_misc_binder_renamed_del_message": P1_5_RENAMED_BINDER,
-    "r7fz_grammar_u0217_read_before_bind": P1_7_READ_BEFORE_BIND,
-    "r7fz_grammar_t11254_read_before_bind": P1_7_READ_BEFORE_BIND,
-    "r7fz_late_after_block_augassign": P1_8_LATER_UPDATE,
-    "r7fz_late_after_block_del": P1_8_LATER_UPDATE,
-    "r7fz_grammar_u0417_augassign_after_block": P1_8_LATER_UPDATE,
-}
+KNOWN_DEFECTS: Dict[str, str] = {}
+"""Fixtures whose defect is reported and not yet fixed, each with its reason from
+``tests/audit_defects.py``. None is open: every round-3 P1 fixture passes."""
 
 
 def _run(script: Path) -> tuple[int, str, list[str]]:

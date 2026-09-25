@@ -17,9 +17,13 @@ prints at import time, which the borrower's own import never ran; the four
 whose borrower rebinds ``len`` (``xf17``, ``xf18``, ``xf19``, ``xf22``); and
 ``xf23_relative_import_in_another_package``, whose subpackages ``pkg.x`` and
 ``pkg.y`` never import each other, so neither may gain an import of the
-other (docs/DECISIONS.md, "Import names come from the program"); and
+other (docs/DECISIONS.md, "Import names come from the program");
 ``xf7n_namesake_of_a_required_library``, whose ``zzlib/`` is a namesake of the
-distribution its ``pyproject.toml`` requires.
+distribution its ``pyproject.toml`` requires; the two
+``xf7fz_extra_typed_read_before_bind_*``, whose block reads a name before
+binding it; and ``xf7fz_late_toplevel_module_in_package``, whose ``pkg/c.py``
+imports a module of ``pkg`` as a top-level name, so runs as a top-level
+module itself.
 
 A fixture that configures an import sorter is refactored with it, as the
 command line would: ``xf7t_import_order_is_registration_order`` holds a
@@ -48,18 +52,10 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import tempfile
+from typing import Dict
 
 import pytest
 
-from tests.audit_defects import (
-    P1_1_PREBOUND_REBINDING,
-    P1_2_SEMICOLON_LINE,
-    P1_3_LEADING_THUNK,
-    P1_4_ANNOTATION_IMPORT,
-    P1_5_RENAMED_BINDER,
-    P1_6_TOP_LEVEL_INSIDE_PACKAGE,
-    P1_7_READ_BEFORE_BIND,
-)
 from tests.hostile_execution import module_faces, observe
 from tests.hostile_refactoring import refactor_package, with_known_defects
 from tests.test_cli_integration import invoke
@@ -101,6 +97,25 @@ TRANSFORMED = {
     "xf7t_import_order_is_registration_order",
     "xf7n_host_the_wheel_leaves_out",
     "xf7n_subpackage_the_wheel_leaves_out",
+    # The round-3 audit's P1 cases, typed and across modules, each now
+    # extracted soundly by the fix of its defect (and, typed, accepted by
+    # the strict checker its pyproject.toml configures).
+    "xf7fz_misc_typed_for_prebound_mypy",
+    "xf7fz_grammar_t11094_semicolon",
+    "xf7fz_grammar_t11271_semicolon",
+    "xf7fz_extra_typed_thunk_lambda_default_mypy",
+    "xf7fz_extra_typed_thunk_lambda_default_pyright",
+    "xf7fz_typeguard2_from_compat_true_mypy",
+    "xf7fz_typeguard2_from_compat_true_both",
+    "xf7fz_typeguard2_from_compat_true_late_use_mypy",
+    "xf7fz_typeguard2_from_compat_true_late_use_both",
+    "xf7fz_typeguard2_import_alias_flag_mypy",
+    "xf7fz_typeguard2_import_alias_flag_both",
+    "xf7fz_extra_typed_binder_message_mypy",
+    "xf7fz_extra_typed_binder_message_pyright",
+    "xf7fz_grammar_u0474_for_target_prebound",
+    "xf7fz_grammar_u0624_for_target_prebound",
+    "xf7fz_grammar_u1209_for_target_prebound",
     # The round-3 audit's families (xf7fz_<family>_<case>): a sample of the
     # cross-module cases the audit found sound, every one transformed.
     "xf7fz_binding_x_class_level_name",
@@ -122,6 +137,15 @@ REJECTED = {
     "xf22_borrower_rebinds_builtins_namespace",
     "xf23_relative_import_in_another_package",
     "xf7n_namesake_of_a_required_library",
+    # Round-3 audit P1-7: the block reads scale before binding it, which only
+    # the original's UnboundLocalError shows (incomplete_lifetime_block1).
+    "xf7fz_extra_typed_read_before_bind_mypy",
+    "xf7fz_extra_typed_read_before_bind_pyright",
+    # Round-3 audit P1-6: helpers_top, imported top-level by pkg/c.py, is a
+    # module of pkg, so c.py runs as a top-level module and is given no
+    # import; towel dry refuses the run outright
+    # (test_cli_refuses_a_top_level_module_inside_the_package).
+    "xf7fz_late_toplevel_module_in_package",
 }
 
 TYPED = frozenset(
@@ -150,34 +174,9 @@ TYPED = frozenset(
 WITHOUT_CROSS_MODULE = TYPED
 """Packages run without ``--cross-module``: every typed one so far, as the audit ran them."""
 
-KNOWN_DEFECTS = {
-    # The round-3 audit's typed P1 cases: the checker accepts each change of
-    # behaviour.
-    "xf7fz_misc_typed_for_prebound_mypy": P1_1_PREBOUND_REBINDING,
-    "xf7fz_grammar_t11094_semicolon": P1_2_SEMICOLON_LINE,
-    "xf7fz_grammar_t11271_semicolon": P1_2_SEMICOLON_LINE,
-    "xf7fz_extra_typed_thunk_lambda_default_mypy": P1_3_LEADING_THUNK,
-    "xf7fz_extra_typed_thunk_lambda_default_pyright": P1_3_LEADING_THUNK,
-    "xf7fz_typeguard2_from_compat_true_mypy": P1_4_ANNOTATION_IMPORT,
-    "xf7fz_typeguard2_from_compat_true_both": P1_4_ANNOTATION_IMPORT,
-    "xf7fz_typeguard2_from_compat_true_late_use_mypy": P1_4_ANNOTATION_IMPORT,
-    "xf7fz_typeguard2_from_compat_true_late_use_both": P1_4_ANNOTATION_IMPORT,
-    "xf7fz_typeguard2_import_alias_flag_mypy": P1_4_ANNOTATION_IMPORT,
-    "xf7fz_typeguard2_import_alias_flag_both": P1_4_ANNOTATION_IMPORT,
-    "xf7fz_extra_typed_binder_message_mypy": P1_5_RENAMED_BINDER,
-    "xf7fz_extra_typed_binder_message_pyright": P1_5_RENAMED_BINDER,
-    "xf7fz_extra_typed_read_before_bind_mypy": P1_7_READ_BEFORE_BIND,
-    "xf7fz_extra_typed_read_before_bind_pyright": P1_7_READ_BEFORE_BIND,
-    # The round-3 audit's cross-module P1 cases.
-    "xf7fz_grammar_u0474_for_target_prebound": P1_1_PREBOUND_REBINDING,
-    "xf7fz_grammar_u0624_for_target_prebound": P1_1_PREBOUND_REBINDING,
-    "xf7fz_grammar_u1209_for_target_prebound": P1_1_PREBOUND_REBINDING,
-    # The decided behaviour is the refusal that towel dry makes before it
-    # writes anything (test_cli_refuses_a_top_level_module_inside_the_package);
-    # the library entry this battery runs has no such check, so this entry
-    # stays until the engine also leaves the importing module alone.
-    "xf7fz_late_toplevel_module_in_package": P1_6_TOP_LEVEL_INSIDE_PACKAGE,
-}
+KNOWN_DEFECTS: Dict[str, str] = {}
+"""Packages whose defect is reported and not yet fixed, each with its reason from
+``tests/audit_defects.py``. None is open: every round-3 P1 package passes."""
 
 
 def _python_files(root: Path) -> dict[str, bytes]:
@@ -214,9 +213,6 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
         results = refactor_package(
             after / "pkg", cross_module=case not in WITHOUT_CROSS_MODULE, typed=case in TYPED
         )
-        assert (
-            results or case in REJECTED
-        ), "Each fixture must exercise a real cross-file extraction"
         transformed = _python_files(after) != _python_files(before)
         assert transformed == (sum(applied for applied, _ in results.values()) > 0)
         assert _run(after) == _run(before)
@@ -225,12 +221,16 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
             modules = _modules(before)
             assert module_faces(after, modules) == module_faces(before, modules)
         if case not in KNOWN_DEFECTS:
+            # Pinned only once the defect is fixed: a fix that declines the
+            # package must show as an XPASS, not fail here as expected.
+            assert (
+                results or case in REJECTED
+            ), "Each fixture must exercise a real cross-file extraction"
             assert transformed == (case in TRANSFORMED), (
                 "rejected" if not transformed else "transformed"
             )
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=P1_6_TOP_LEVEL_INSIDE_PACKAGE)
 def test_cli_refuses_a_top_level_module_inside_the_package(tmp_path: Path) -> None:
     """``pkg/c.py`` imports ``helpers_top``, a module file of ``pkg`` itself, top-level.
 

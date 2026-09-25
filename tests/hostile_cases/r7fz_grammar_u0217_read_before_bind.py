@@ -2,6 +2,7 @@
 # refactored by towel --no-types, its behaviour changed. Seed 217 of tests.differential.grammar
 # now draws another case, so this fixture is its only record.
 # Round-3 audit P1-7: the block reads a name before binding it; the call site passes it in, where it is not local.
+# Since the P1-7 fix the pair is declined: the block reads v6 before binding it.
 LOG = []
 G = 5
 

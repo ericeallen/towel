@@ -24,27 +24,20 @@ whole module runs in well under a minute:
   the regression targets.
 
 A seed that exposes a defect not yet fixed is an expected failure, strict,
-with the round-3 audit's id for it: when its fix lands the seed passes, the
-run reports XPASS as a failure, and the marker is removed.
+with the id of the audit that reported it (``KNOWN_DEFECTS``): when its fix
+lands the seed passes, the run reports XPASS as a failure, and its entry is
+removed. The seed stays in ``REGRESSION_SEEDS``.
 """
 
 from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 from _pytest.mark.structures import ParameterSet
 import pytest
 
-from tests.audit_defects import (
-    P1_1_PREBOUND_REBINDING,
-    P1_2_SEMICOLON_LINE,
-    P1_4_ANNOTATION_IMPORT,
-    P1_5_RENAMED_BINDER,
-    P1_7_READ_BEFORE_BIND,
-    P1_8_LATER_UPDATE,
-)
 from tests.differential.grammar import generate_case
 from tests.differential.runner import CROSS_MODULE, DEFAULT, Mode, run_case
 from tests.hostile_refactoring import with_known_defects
@@ -60,50 +53,43 @@ TYPED_SEEDS: Tuple[int, ...] = (10016, 10084, 10090, 10302)
 a method in three sites, a static method holding a nested ``def`` and a walrus, a match
 inside a method reading ``self``, and a single file."""
 
-KNOWN_DEFECTS: Dict[Mode, Dict[int, str]] = {
-    DEFAULT: {
-        30: P1_8_LATER_UPDATE,
-        322: P1_8_LATER_UPDATE,
-        417: P1_8_LATER_UPDATE,  # the audit's gram_u0417
-        898: P1_1_PREBOUND_REBINDING,  # the audit's gram_u0898
-        907: P1_8_LATER_UPDATE,
-        979: P1_2_SEMICOLON_LINE,
-        1356: P1_2_SEMICOLON_LINE,
-        1360: P1_8_LATER_UPDATE,
-        1470: P1_1_PREBOUND_REBINDING,
-        1582: P1_2_SEMICOLON_LINE,
-        1591: P1_7_READ_BEFORE_BIND,
-        1854: P1_1_PREBOUND_REBINDING,
-        1921: P1_2_SEMICOLON_LINE,
-        1984: P1_5_RENAMED_BINDER,
-        2267: P1_2_SEMICOLON_LINE,  # the block ends inside the line: its second statement is deleted
-        2319: P1_8_LATER_UPDATE,
-        2746: P1_8_LATER_UPDATE,
-        2881: P1_8_LATER_UPDATE,
-        2882: P1_1_PREBOUND_REBINDING,
-    },
-    CROSS_MODULE: {
-        474: P1_1_PREBOUND_REBINDING,  # the audit's gram_u0474, gram_u0624 and gram_u1209
-        624: P1_1_PREBOUND_REBINDING,
-        1209: P1_1_PREBOUND_REBINDING,
-    },
-    Mode(types=True): {
-        10108: P1_4_ANNOTATION_IMPORT,  # the helper's annotation adds a public Callable
-        10220: P1_2_SEMICOLON_LINE,  # the deleted print breaks no type, so mypy accepts it
-    },
-}
-"""Seeds on which a defect the round-3 audit reported is not yet fixed, by mode.
+TYPED = Mode(types=True)
 
-Beside the audit's own (417, 898, 474, 624 and 1209), the seeds come from a
-sweep of seeds 0 to 2999 in both modes, made when this module was written
-(the audit's first 400 seeds had drawn other cases), and 10108 and 10220 from
-one of typed seeds 10000 to 10399. Each seed's defect was read from its report.
+REGRESSION_SEEDS: Dict[Mode, Tuple[int, ...]] = {
+    DEFAULT: (30, 322, 417, 898, 907, 979, 1356, 1360, 1470, 1582, 1591, 1854, 1921, 1984)
+    + (2267, 2319, 2746, 2881, 2882),
+    CROSS_MODULE: (474, 624, 1209),
+    TYPED: (10108, 10220),
+}
+"""Seeds on which a defect was found, run in the mode it was found in.
+
+Beside the audit's own (417 and 898, and 474, 624 and 1209 across modules),
+they come from a sweep of seeds 0 to 2999 in both modes, made when this
+module was written (the audit's first 400 seeds had drawn other cases), and
+from one of typed seeds 10000 to 10399. Each seed's defect, read from its
+report, was one the round-3 audit reported, and each is fixed:
+
+- P1-1, a for target rebinding a name bound before the block: 898, 1470,
+  1854, 2882, and 474, 624 and 1209 across modules;
+- P1-2, a block starting or ending inside a ';' line: 979, 1356, 1582,
+  1921, 2267, and 10220 typed;
+- P1-4, a public name added for a helper's annotation: 10108 typed;
+- P1-5, a renamed binder in an UnboundLocalError: 1984;
+- P1-7, a read before the block's own binding: 1591;
+- P1-8, a later augmented assignment not counted as a read: 30, 322, 417,
+  907, 1360, 2319, 2746 and 2881.
 """
 
+KNOWN_DEFECTS: Dict[Mode, Dict[int, str]] = {DEFAULT: {}, CROSS_MODULE: {}, TYPED: {}}
+"""Seeds whose defect is reported and not yet fixed, by mode, each with its reason from
+``tests/audit_defects.py``. None is open."""
 
-def _seeds(seeds: Iterable[int], known: Mapping[int, str]) -> List[ParameterSet]:
-    """``seeds``, then the known defects' seeds, each named ``seed<N>``."""
-    return with_known_defects(seeds, known, lambda seed: f"seed{seed}")
+
+def _seeds(mode: Mode, seeds: Iterable[int]) -> List[ParameterSet]:
+    """``seeds`` and the mode's regression seeds, each named ``seed<N>``, known defects expected."""
+    return with_known_defects(
+        [*seeds, *REGRESSION_SEEDS[mode]], KNOWN_DEFECTS[mode], lambda seed: f"seed{seed}"
+    )
 
 
 def _keeps_behaviour(seed: int, mode: Mode, workspace: Path) -> None:
@@ -113,21 +99,21 @@ def _keeps_behaviour(seed: int, mode: Mode, workspace: Path) -> None:
     assert outcome.status in ("unchanged", "equivalent"), outcome.report()
 
 
-@pytest.mark.parametrize("seed", _seeds(DEFAULT_SEEDS, KNOWN_DEFECTS[DEFAULT]))
+@pytest.mark.parametrize("seed", _seeds(DEFAULT, DEFAULT_SEEDS))
 def test_generated_duplicates_keep_their_behaviour(seed: int, tmp_path: Path) -> None:
     _keeps_behaviour(seed, DEFAULT, tmp_path)
 
 
-@pytest.mark.parametrize("seed", _seeds(CROSS_MODULE_SEEDS, KNOWN_DEFECTS[CROSS_MODULE]))
+@pytest.mark.parametrize("seed", _seeds(CROSS_MODULE, CROSS_MODULE_SEEDS))
 def test_generated_duplicates_across_modules_keep_their_behaviour(
     seed: int, tmp_path: Path
 ) -> None:
     _keeps_behaviour(seed, CROSS_MODULE, tmp_path)
 
 
-@pytest.mark.parametrize("seed", _seeds(TYPED_SEEDS, KNOWN_DEFECTS[Mode(types=True)]))
+@pytest.mark.parametrize("seed", _seeds(TYPED, TYPED_SEEDS))
 def test_generated_typed_duplicates_keep_their_behaviour(seed: int, tmp_path: Path) -> None:
-    _keeps_behaviour(seed, Mode(types=True), tmp_path)
+    _keeps_behaviour(seed, TYPED, tmp_path)
 
 
 AUDIT_CASE_DIGESTS = {

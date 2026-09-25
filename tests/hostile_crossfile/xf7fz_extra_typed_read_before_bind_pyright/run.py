@@ -1,6 +1,7 @@
 # Round-3 audit case ex_typed_read_before_bind_pyright (extra: typed-read-before-binding-pyright).
 # P1-7 in the typed mode, pyright strict: scale = scale(...) raised UnboundLocalError; the call
 # site now passes the module's scale and the call succeeds.
+# Since the P1-7 fix the pair is declined: the block reads scale before binding it.
 if __name__ == "__main__":
     import pkg.m as pkg_m
     import pkg
