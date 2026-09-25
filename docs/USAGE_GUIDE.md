@@ -148,7 +148,7 @@ The remaining parameters (keyword-only after `parameterize_constants`), all defa
 | `annotate_helpers` | `True` | Copy the annotations the call sites declare onto the helper, in code that uses annotations. |
 | `type_oracle` | `None` | A `TypeOracle` (`towel.type_inference`) that reveals types, decides subtyping, and checks generated code; without one nothing is inferred or verified (`--types/--no-types`). |
 | `snippet_formatter` | `None` | Formats each inserted snippet; see below (`--format/--no-format`). |
-| `file_finisher` | `None` | Finishes each modified file, for example by sorting its imports. |
+| `file_finisher` | `None` | Finishes each modified file, for example by sorting its imports: called with the file's path and new text, while the file at that path still holds the text the change started from. |
 | `incremental_global_passes` | `True` | Later global passes re-pair only rewritten files (exact). The rehearing that ends a run re-pairs everything regardless. |
 | `promote_equal_hof_literals` | `False` | Expose literal arguments of higher-order factory calls as helper parameters even when they are equal in every block. |
 | `settings` | `None` | A `towel.diagnostics.Settings`: what Towel reads from the environment (worker cap, debug switches). When omitted, the engine reads the environment once at construction; the command line and the analysis session each read it once as well (see *Diagnostics and settings* in [ARCHITECTURE.md](ARCHITECTURE.md)). |
@@ -182,21 +182,58 @@ import those show to work wherever the program runs
 - across top-level packages, an absolute import only when the importing
   package already imports the other one, spelled as it already does;
 - into a directory only where the importing side already imports from it,
-  so a library never borrows from the test package inside it.
+  with an import that runs whenever its module is imported, not one inside a
+  function, so a library never borrows from the test package inside it;
+- never from a module the build configuration leaves out of what ships into
+  one it keeps: hatch's `exclude`, `include`, `only-include` and
+  `packages`, setuptools' `packages.find` excludes or an explicit
+  `packages` list, MANIFEST.in's `exclude`, `recursive-exclude`,
+  `global-exclude` and `prune` (a wheel built from the sdist lacks what the
+  sdist does), Poetry's `exclude`, PDM's `excludes`, uv's, flit's and
+  scikit-build-core's excludes, and what a `.gitignore` covers. The module
+  left out may still borrow from the one that ships. What a setup.py or a
+  build hook leaves out is not known.
 
 A host that no participating module can import that way is not taken, and a
 pair with no such host is declined (`unproven_import`). The costs: sibling
 packages that never import each other share nothing; a directory of scripts
-that import nothing local gets no cross-file helpers; and a name the tree
-makes ambiguous (a stale `build/lib/alpha` beside `src/alpha`, or an
-installed copy of the package that the interpreter running Towel can see)
-gets none until the stray copy is left out with `--exclude`. On the command
-line, a `--cross-module` run names each such problem before it starts, and
-refuses when one leaves a name of the package it refactors in doubt: an
-ambiguous name, a file reachable under two names, a relative import that
-climbs out of its package.
+that import nothing local gets no cross-file helpers; and a name in doubt
+gets none. Each kind of doubt has its own remedy:
 
-An import of a module the tree lacks refuses nothing, wherever it lies. The
+- a second copy in the tree, such as a stale `build/lib/alpha` beside
+  `src/alpha`, or an import that names a module two ways or climbs out of
+  its package: leave out the directory holding it with `--exclude`, or fix
+  the import;
+- a copy the interpreter running Towel can import from outside the project,
+  including one installed in the project's own `.venv`: `--exclude` cannot
+  reach it, so run Towel from an environment where that name is this tree,
+  such as one with the project installed editable (`pip install -e .`), or
+  from one without it; if the project's directory of that name is a
+  namesake, leaving it out with `--exclude` also resolves it;
+- a directory named like a distribution the project requires, such as a
+  `click/` beside `dependencies = ["click>=8"]`, which is what the installed
+  project imports as `click`: rename the directory or leave it out with
+  `--exclude`, or drop the requirement if the directory is what the program
+  means.
+
+The requirements read are PEP 621's dependencies and extras, PEP 735's
+dependency groups, Poetry's dependency tables and groups, setup.cfg's
+`install_requires` and `extras_require`, the lockfiles uv, Poetry, PDM and
+Pipenv write, and `requirements*.txt` at the project root. A distribution is
+matched to a name by its own normalized name, so one whose import name
+differs (`PyYAML` provides `yaml`) is recognized only where the interpreter
+running Towel can import it: run Towel in the project's own environment.
+
+On the command line, a `--cross-module` run names each such problem before
+it starts, with the remedy for its kind, and refuses when one leaves a name
+of the package it refactors in doubt: an ambiguous name, a file reachable
+under two names, a relative import that climbs out of its package, or a
+top-level name found only inside a package the program also imports as one,
+as `pkg/c.py`'s `import helpers` finds only `pkg/helpers.py`.
+
+An import of a module the tree lacks refuses nothing, wherever it lies,
+however it is spelled: `from .gone import x`, `from . import gone` or
+`from pkg import gone`, where `pkg`'s initializer binds no `gone`. The
 run leaves the file making it exactly as it was, neither hosting nor
 borrowing a helper and getting none of its own, and says so, naming the
 file: test data such as sphinx's `need_mocks.py`, which imports a module its
@@ -244,6 +281,22 @@ and only the probes that infer a helper's types also check the bodies of
 functions without annotations, where mypy otherwise reveals nothing but `Any`.
 Without a formatter the rendering is `ast.unparse`'s: one
 statement per line, single-quoted strings, no blank-line conventions.
+
+Each tool keeps to the files its own configuration selects. The formatter
+leaves the inserted code as rendered where the project excludes the path it
+was chosen for from formatting (`ruff format`'s exclusions through
+`--force-exclude`; Black's `exclude`, `extend-exclude` and `force-exclude`).
+The import sorter leaves a file alone that ruff's `exclude`,
+`extend-exclude`, `lint.exclude` or `per-file-ignores`, or isort's `skip`,
+`extend_skip`, `skip_glob`, `extend_skip_glob` or `skip_gitignore`, leave
+out, judged for the project's own file even while a run works on a staged
+copy of it. It sorts only a file it already leaves as it is: every import
+runs its module where it stands, so a file's own imports keep their order,
+and only the ones Towel added may move. A file whose imports the sorter
+would change keeps Towel's imports where Towel placed them, and so does
+one where the sorter's result would move an import the file already had;
+the run logs each such file once. `sort_added_imports` makes that decision
+on texts, and `SortOutcome` names what came of it.
 
 The engine checks the original project before using its type oracle, and
 logs what that check reports (the `towel` logger, which the CLI prints on
@@ -378,11 +431,16 @@ The helper carries the comments of the blocks it replaces, beside the code
 they were written for; `proposal.helper_comments` holds them, and each
 `replacement.comments` holds its own block's. Comments above or below a
 block stay at its call. An explanatory comment is kept from every site that
-has one. A tool directive (`# type: ignore`, `# noqa`, `# pragma: no
-cover`, `# nosec`, `# pylint: ...`, `# fmt: ...`, `# isort: ...`, a type
-comment) must be carried alike by every site, and must not reach code that
-becomes an argument of the call, anything but a name or a literal, since
-that code is written at the call site where the directive does not reach.
+has one. A tool directive (`# type: ignore`, `# pyright: ignore`, `# ty:
+ignore`, `# pyrefly: ignore`, `# zuban: ignore`, `# pyre-ignore`, `# noqa`,
+`# ruff: ...`, `# pragma: no cover`, `# nosec`, `# nosemgrep`, `# pylint:
+...`, `# lint-ignore`, `# fmt: ...`, `# isort: ...`, a type comment) must be
+carried alike by every site, and must not reach code that becomes an
+argument of the call, anything but a name or a literal, since that code is
+written at the call site where the directive does not reach. An ignore on a
+line of its own reaches the next line of code, as ty, ruff, pyre, pyrefly,
+Semgrep and Fixit read it, so one above a block's first statement, which
+would stay above the call, declines the pair too.
 Nor may a coverage pragma or pylint `disable` around the blocks (on an
 enclosing `def`, `if`, loop or `else:` line) govern every site where the
 helper would be written outside it, nor may coverage exclude a block's
@@ -396,8 +454,9 @@ where the configuration keeps it; a configuration coverage.py could not
 read is reported and replaced by its defaults. A pair
 that breaks any of these is declined, and `engine.declined_pairs` counts it
 under `directives_differ`, `directive_on_argument`,
-`directive_outlives_block`, `directive_around_block` or
-`excluded_block_start`; a directive is never copied onto a call or a
+`directive_outlives_block`, `directive_around_block`,
+`excluded_block_start` or `directive_on_shared_line`; a directive is never
+copied onto a call or a
 helper's `def` line.
 
 ### Cross-File vs Same-File
@@ -663,13 +722,16 @@ adopted into its real location. If you still hit an import error:
   hand-built `RefactoringProposal` skips host selection, and its import is
   refused when no spelling is known.
 - Run Towel with the interpreter the project uses: an installed copy of the
-  package that only another interpreter holds is invisible to it.
+  package, or a library named like one of its directories, that only another
+  interpreter holds is invisible to it unless the project declares it.
 
 ### "No helper shared across modules"
 
 - Pass `--cross-module`: by default only duplicates within a module are paired.
-- If the run names import problems, leave out the directory holding the stray
-  copy or the broken import with `--exclude`.
+- If the run names import problems, follow the remedy it prints for each
+  kind (*How a cross-module import is spelled* above): `--exclude` for a
+  stray copy in the tree, another environment for an installed copy, and a
+  rename or `--exclude` for a directory named like a required distribution.
 - A file the run names as importing a module the tree lacks is left
   unchanged. If it is a package's `__init__.py` importing a generated
   `_version.py`, install the project (`pip install -e .`) so the module

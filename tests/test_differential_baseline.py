@@ -99,7 +99,7 @@ def test_the_same_errors_where_they_were_are_nothing_new() -> None:
 def test_an_error_whose_message_the_reference_lacks_is_new() -> None:
     reference = [_error(A, "Incompatible types [assignment]", 3)]
     added = _error(A, "Argument 1 has incompatible type [arg-type]", 9)
-    assert _new(reference, [*reference, added], changing=[A]) == (added,)
+    assert _new(reference, [*reference, added]) == (added,)
 
 
 def test_in_a_file_left_alone_an_error_on_another_line_is_new_whatever_disappeared() -> None:
@@ -109,34 +109,45 @@ def test_in_a_file_left_alone_an_error_on_another_line_is_new_whatever_disappear
     assert _new(reference, [moved], changing=[A]) == (moved,)
 
 
+LINES = "\n".join(f"line_{number} = {number}" for number in range(1, 31)) + "\n"
+"""Thirty distinct statements, each alone on its line."""
+SHIFTED = "\n".join(f"added_{number} = {number}" for number in range(6)) + "\n" + LINES
+"""The same, below six new lines: line ``n`` of ``LINES`` is line ``n + 6`` here."""
+
+
+def _changed(
+    reference: Sequence[TypeDiagnostic],
+    after: Sequence[TypeDiagnostic],
+    before: str = LINES,
+    now: str = SHIFTED,
+) -> tuple[TypeDiagnostic, ...]:
+    known = KnownErrors(tuple(reference), texts={A: before})
+    return known.introduced(after, [A], where=_as_is, texts_after={A: now}.get)
+
+
 def test_in_a_changed_file_errors_that_moved_down_are_nothing_new() -> None:
     reference = [_error(A, "Incompatible types [assignment]", 10), _error(A, "Oops [misc]", 12)]
     after = [_error(A, "Incompatible types [assignment]", 16), _error(A, "Oops [misc]", 18)]
-    assert _new(reference, after, changing=[A]) == ()
+    assert _changed(reference, after) == ()
 
 
 def test_in_a_changed_file_a_message_seen_more_often_is_new_in_every_instance() -> None:
     """Nothing says which of three is the new one, so all three are reported."""
-    reference = [_error(A, "Oops [misc]", 10), _error(A, "Oops [misc]", 20)]
+    rewritten = LINES.replace("line_10 = 10\nline_11 = 11", "rewritten_10\nrewritten_11\nmore")
+    reference = [_error(A, "Oops [misc]", 10), _error(A, "Oops [misc]", 11)]
     after = [
-        _error(A, "Oops [misc]", 4),
-        _error(A, "Oops [misc]", 16),
-        _error(A, "Oops [misc]", 26),
+        _error(A, "Oops [misc]", 10),
+        _error(A, "Oops [misc]", 11),
+        _error(A, "Oops [misc]", 12),
     ]
-    assert _new(reference, after, changing=[A]) == tuple(after)
-
-
-def test_in_a_changed_file_an_error_that_moves_into_the_helper_is_not_new() -> None:
-    """The same message gone from one line and found on another is the same error moved."""
-    reference = [_error(A, "Unsupported operand [operator]", 30)]
-    after = [_error(A, "Unsupported operand [operator]", 3)]
-    assert _new(reference, after, changing=[A]) == ()
+    assert _changed(reference, after, now=rewritten) == tuple(after)
+    assert _changed(reference, after[:2], now=rewritten) == ()
 
 
 def test_a_message_that_embeds_its_line_fails_closed_when_the_line_moves() -> None:
     reference = [_error(A, 'Name "x" already defined on line 12  [no-redef]', 20)]
-    after = [_error(A, 'Name "x" already defined on line 17  [no-redef]', 25)]
-    assert _new(reference, after, changing=[A]) == tuple(after)
+    after = [_error(A, 'Name "x" already defined on line 18  [no-redef]', 26)]
+    assert _changed(reference, after) == tuple(after)
 
 
 def test_one_error_of_the_reference_accounts_for_one_error_after() -> None:
@@ -145,9 +156,14 @@ def test_one_error_of_the_reference_accounts_for_one_error_after() -> None:
     assert _new(reference, after, changing=[A]) == (after[1],)
 
 
-def test_a_file_an_earlier_change_touched_is_compared_by_message() -> None:
-    reference = [_error(B, "Oops [misc]", 5)]
-    assert _new(reference, [_error(B, "Oops [misc]", 9)], changing=[A], moved=[B]) == ()
+def test_a_file_an_earlier_change_touched_is_aligned_with_the_text_its_errors_were_found_in() -> (
+    None
+):
+    known = KnownErrors((_error(B, "Oops [misc]", 5),), frozenset([B]), texts={B: LINES})
+    now = {B: SHIFTED}.get
+    assert known.introduced([_error(B, "Oops [misc]", 11)], [A], texts_after=now) == ()
+    moved = _error(B, "Oops [misc]", 9)
+    assert known.introduced([moved], [A], where=_as_is, texts_after=now) == (moved,)
 
 
 def test_errors_that_disappear_are_never_an_objection() -> None:
@@ -212,26 +228,36 @@ def test_an_error_on_a_line_left_alone_that_moves_to_another_such_line_is_new() 
 
 
 def test_an_error_gone_from_a_line_left_alone_accounts_for_none_the_change_wrote() -> None:
-    """The gap a comparison by message leaves: one error gone, an identical one in the helper."""
+    """The gap a comparison by message left: one error gone, an identical one in the helper."""
     in_the_helper = _error(A, "Oops [misc]", 4)
-    assert _new([_error(A, "Oops [misc]", 7)], [in_the_helper], changing=[A]) == ()
     assert _aligned([_error(A, "Oops [misc]", 7)], [in_the_helper]) == (in_the_helper,)
 
 
-def test_an_error_on_a_line_the_change_replaced_may_move_into_what_it_wrote() -> None:
-    """``x = 1`` (line 4) is gone; its error in the helper (line 4 after) is the same one moved."""
-    assert _aligned([_error(A, "Oops [misc]", 4)], [_error(A, "Oops [misc]", 4)]) == ()
+def test_an_error_on_a_line_the_change_replaced_may_move_to_what_took_its_place() -> None:
+    """``x = 1`` (line 4) is gone; its error at the call (line 7 after) is the same one moved.
+
+    In the helper (line 4 after) it is new: told nothing of the change's shape,
+    the comparison cannot say which statement of the helper stands for it, and
+    the helper's lines are a stretch of the diff that replaced nothing.
+    """
     assert _aligned([_error(A, "Oops [misc]", 4)], [_error(A, "Oops [misc]", 7)]) == ()
+    in_the_helper = _error(A, "Oops [misc]", 4)
+    assert _aligned([_error(A, "Oops [misc]", 4)], [in_the_helper]) == (in_the_helper,)
 
 
-def test_without_the_texts_a_changed_file_is_compared_by_message() -> None:
+def test_without_the_texts_every_error_of_a_changed_file_is_new() -> None:
+    """Nothing says where its lines went, so no error of the reference stood where one stands."""
     known = KnownErrors((_error(A, "Oops [misc]", 7),))
-    assert known.introduced([_error(A, "Oops [misc]", 4)], [A], where=_as_is) == ()
+    unaligned = [_error(A, "Oops [misc]", 7), _error(A, "Oops [misc]", 4)]
+    assert known.introduced(unaligned, [A], where=_as_is) == tuple(unaligned)
 
 
-def test_a_change_that_is_accepted_leaves_its_files_compared_by_message() -> None:
-    known = KnownErrors((_error(A, "Oops [misc]", 5),)).moving([A])
-    assert known.introduced([_error(A, "Oops [misc]", 30)], where=_as_is) == ()
+def test_a_change_that_is_accepted_leaves_its_files_aligned_by_their_texts() -> None:
+    known = KnownErrors((_error(A, "Oops [misc]", 5),), texts={A: LINES}).moving([A])
+    now = {A: SHIFTED}.get
+    assert known.introduced([_error(A, "Oops [misc]", 11)], where=_as_is, texts_after=now) == ()
+    elsewhere = _error(A, "Oops [misc]", 30)
+    assert known.introduced([elsewhere], where=_as_is, texts_after=now) == (elsewhere,)
 
 
 @pytest.mark.parametrize(
@@ -286,7 +312,9 @@ def test_the_report_counts_by_file_and_names_what_it_will_not_change(tmp_path: P
     names_any = files_where_names_are_any(errors)
     warning = names_any_warning(names_any, root, {str(root / "pkg/a.py")})
     assert warning is not None
-    assert warning.startswith("warning: 2 of these error(s) leave a name the checker cannot type")
+    assert warning.startswith(
+        "warning: 2 import(s) or error(s) leave a name the checker cannot type"
+    )
     assert "No change to these 1 file(s) is attempted" in warning
     assert (
         '  pkg/a.py:3: Cannot find implementation or library stub for module named "gone"'
@@ -762,8 +790,9 @@ class _WithAnOldError(MypyInferrer):
         real = super().check_project(sources, excluded_paths=excluded_paths)
         if isinstance(real, CheckFailure):
             return real
-        path = next(iter(sources))
-        invented = [TypeDiagnostic(path, "invented: always there", 1)]
+        path, text = next(iter(sources.items()))
+        # On a line no change touches: an error does not leave its code.
+        invented = [TypeDiagnostic(path, "invented: always there", _line_of(text, "WRONG"))]
         changed = any("_extracted_func" in text for text in sources.values())
         if self.forgotten and self.only_cold and changed:
             invented.append(TypeDiagnostic(path, self.only_cold, 1))
@@ -778,7 +807,8 @@ def test_the_cold_confirmation_compares_with_what_the_project_already_reports(
     """An error there all along confirms nothing wrong; one only the cold check sees still does."""
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n", encoding="utf-8")
     path = tmp_path / "m.py"
-    path.write_text(TWINS, encoding="utf-8")
+    original = TWINS + "\n\nWRONG = 1\n"
+    path.write_text(original, encoding="utf-8")
     oracle = _WithAnOldError(only_cold="invented: missed while warm" if missed_while_warm else "")
     try:
         engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
@@ -787,7 +817,7 @@ def test_the_cold_confirmation_compares_with_what_the_project_already_reports(
                 RefactoringError, match="did not report while the run was in progress"
             ):
                 engine.refactor_to_fixed_point(str(path), progress="none")
-            assert path.read_text(encoding="utf-8") == TWINS, "nothing was written"
+            assert path.read_text(encoding="utf-8") == original, "nothing was written"
         else:
             _, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
             assert applied == 1 and oracle.forgotten, "confirmed, from nothing"

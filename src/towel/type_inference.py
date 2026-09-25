@@ -60,6 +60,7 @@ from typing import (
     IO,
     Dict,
     Final,
+    FrozenSet,
     Iterable,
     Iterator,
     List,
@@ -77,7 +78,14 @@ from .project_tools import ToolChoice, python_tool_environment
 from .unification.exceptions import TowelError
 from .checker_project import CheckerSnapshot, UnusableConfiguration, checker_snapshot
 from .unification.bounded_cache import BoundedCache
-from .pyright_session import Diagnostic, FileChange, PyrightSession, SessionFailure
+from .pyright_session import (
+    Diagnostic,
+    FileChange,
+    PyrightScope,
+    PyrightSession,
+    SessionFailure,
+    pyright_scope,
+)
 from .source_text import read_source, source_lines
 from .project_layout import find_project_root, load_pyproject, package_chain
 from .consumers import (
@@ -100,14 +108,17 @@ __all__ = [
     "PyrightOracle",
     "RevealKey",
     "RevealRequest",
+    "Revealed",
     "Subtyping",
     "TypeDiagnostic",
     "TypeOracle",
     "checks_in_turn",
     "is_probe_file",
+    "reports_by_each",
     "reveal_by_each",
     "type_oracle_for_project",
     "relocate_oracle",
+    "unanswered_files",
 ]
 
 RevealKey = Tuple[str, int, int]
@@ -177,6 +188,9 @@ class TypeOracle(Protocol):
         This flat protocol cannot correlate separate constrained-TypeVar
         instantiations. A checker reporting distinct types for the same probe
         does not establish any single one of those types for the expression.
+        A file whose probe build could not be completed is named in the
+        answer's :attr:`Revealed.unanswered`, so that its silence is never
+        taken for code the checker does not look at.
         """
         raise NotImplementedError
 
@@ -262,11 +276,20 @@ def _module_name(path: Path) -> str:
     return _module_name_and_root(path)[0]
 
 
-def checker_module_name(path: Path) -> Optional[str]:
-    """The module name mypy is given for ``path`` when it is probed, or None for a placeholder.
+def _build_source(path: str, text: str) -> _BuildSource:
+    """``text`` for the module at ``path``, with the name Towel gives it where mypy gives none."""
+    module, root = _module_name_and_root(Path(path))
+    return _BuildSource(path, module, str(root), text)
 
-    It names a module by its ``__init__`` chain (:func:`_module_name_and_root`),
-    which is how mypy spells the module in every type it reveals.
+
+def checker_module_name(path: Path) -> Optional[str]:
+    """The module's name by its ``__init__`` chain, or None for a placeholder.
+
+    It is the name mypy gives a probed module wherever the configuration does
+    not decide otherwise (:func:`_module_name_and_root`), and so how mypy
+    spells the module in the types it reveals. Under ``explicit_package_bases``
+    mypy names a module from its package base (``tests.test_m``, not
+    ``test_m``), and a type from a module no import names is then not matched.
     """
     name = _module_name(path)
     return None if "_towel_package" in name.split(".") else name
@@ -327,14 +350,56 @@ def _verdicts_from_error_lines(
 
 @dataclass(frozen=True)
 class _BuildSource:
+    """A module given to the worker as text.
+
+    ``module`` and ``root`` are Towel's ``__init__``-chain name for it and the
+    directory that name is found from; the worker names a probed module as
+    mypy names its file, and takes these only where mypy names none
+    (``_probed_as_the_project_names`` in ``_mypy_worker.py``).
+    """
+
     path: str
     module: str
+    root: str
     text: str
 
 
 @dataclass(frozen=True)
 class _BuildMessages:
+    """What a build reported, and what mypy said about the configuration while reading it."""
+
     messages: Tuple[str, ...]
+    warnings: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, eq=False)
+class Revealed(Mapping[RevealKey, str]):
+    """The types a checker revealed, and the files whose probe build it could not complete.
+
+    It reads as the mapping of types, which is all inference asks. A probe in
+    a file listed in ``unanswered`` got no answer because the build failed,
+    not because the checker looked and saw nothing there; the reachability
+    rule reads silence as "the checker does not look at this code", so it
+    must never read these files' silence (see :func:`unanswered_files`).
+    """
+
+    types: Mapping[RevealKey, str]
+    unanswered: Mapping[str, str] = field(default_factory=dict)
+    """Each file whose probe build failed, and why."""
+
+    def __getitem__(self, key: RevealKey) -> str:
+        return self.types[key]
+
+    def __iter__(self) -> Iterator[RevealKey]:
+        return iter(self.types)
+
+    def __len__(self) -> int:
+        return len(self.types)
+
+
+def unanswered_files(answer: Mapping[RevealKey, str]) -> Mapping[str, str]:
+    """The files ``answer`` holds no verdict on because their probe build failed, and why."""
+    return answer.unanswered if isinstance(answer, Revealed) else {}
 
 
 def _checker_root(path: Path) -> Path:
@@ -433,6 +498,8 @@ class MypyInferrer:
         self._import_scans: Dict[Path, ImportScan] = {}
         # Whether a build has answered since the cache and scans were empty.
         self.answered_from_warm_state = False
+        # What mypy has said about a configuration, each said once per oracle.
+        self._warned: set[str] = set()
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)
@@ -520,7 +587,6 @@ class MypyInferrer:
     def _build_errors(
         self,
         sources: Sequence[_BuildSource],
-        roots: Sequence[str],
         *,
         complete: bool = False,
         excluded_paths: Sequence[str] = (),
@@ -539,13 +605,15 @@ class MypyInferrer:
             request = {
                 "root": str(root),
                 "config": _mypy_config(root),
-                "roots": list(roots),
                 "sources": {str(Path(source.path).resolve()): source.text for source in sources},
                 # A complete build is a check of the project, any other a probe.
                 "complete": complete,
                 "excluded_paths": list(excluded_paths),
                 "consumers": list(consumers),
-                "modules": {str(Path(source.path).resolve()): source.module for source in sources},
+                "modules": {
+                    str(Path(source.path).resolve()): [source.module, source.root]
+                    for source in sources
+                },
             }
             try:
                 process = self._running_worker()
@@ -556,7 +624,19 @@ class MypyInferrer:
             if isinstance(result, CheckFailure):
                 return _with_stderr(result, self._stderr_since(said_before))
             self.answered_from_warm_state = True
+            self._pass_on(result.warnings)
             return result
+
+    def _pass_on(self, warnings: Sequence[str]) -> None:
+        """Say, once each, what mypy said about the configuration and checked on regardless.
+
+        mypy's own run prints these and carries on, so a check does too; the
+        user still hears them, as they would from their own ``mypy``.
+        """
+        for warning in warnings:
+            if warning not in self._warned:
+                self._warned.add(warning)
+                LOG.warning("mypy, reading the project's configuration: %s", warning)
 
     def _running_worker(self) -> subprocess.Popen[bytes]:
         if self._process is not None:
@@ -640,13 +720,19 @@ class MypyInferrer:
         if not isinstance(payload, dict):
             return CheckFailure("mypy worker returned an invalid response")
         failure, messages = payload.get("failure"), payload.get("messages")
+        warnings = payload.get("warnings", [])
         if isinstance(failure, str):
             return CheckFailure(failure)
         if failure is not None:
             return CheckFailure("mypy worker returned an invalid failure status")
         if not isinstance(messages, list) or not all(isinstance(m, str) for m in messages):
             return CheckFailure("mypy worker returned invalid diagnostics")
-        return _BuildMessages(tuple(m for m in messages if isinstance(m, str)))
+        if not isinstance(warnings, list) or not all(isinstance(w, str) for w in warnings):
+            return CheckFailure("mypy worker returned invalid configuration warnings")
+        return _BuildMessages(
+            tuple(m for m in messages if isinstance(m, str)),
+            tuple(w for w in warnings if isinstance(w, str)),
+        )
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
@@ -659,8 +745,7 @@ class MypyInferrer:
         if not pairs:
             return []
         text, signature_line, return_line = _subtype_probes(source, pairs)
-        module, root = _module_name_and_root(Path(file_path))
-        result = self._build_errors([_BuildSource(file_path, module, text)], [str(root)])
+        result = self._build_errors([_build_source(file_path, text)])
         if isinstance(result, CheckFailure):
             LOG.warning("mypy subtype check failed: %s", result.reason)
             return [Subtyping.UNKNOWN] * len(pairs)
@@ -680,17 +765,13 @@ class MypyInferrer:
     ) -> CheckResult:
         errors: List[TypeDiagnostic] = []
         for root, replacements in _source_groups(sources, "mypy").items():
-            builds = [
-                _BuildSource(path, _module_name_and_root(Path(path))[0], source)
-                for path, source in replacements.items()
-            ]
+            builds = [_build_source(path, source) for path, source in replacements.items()]
             try:
                 consumers = self._consumers(root, replacements)
             except ScanLimitExceeded as error:
                 return CheckFailure(str(error))
             result = self._build_errors(
                 builds,
-                [str(root)],
                 complete=True,
                 excluded_paths=excluded_paths,
                 consumers=consumers,
@@ -710,7 +791,6 @@ class MypyInferrer:
         for request in requests:
             by_file.setdefault(request.file_path, []).append(request)
         sources: List[_BuildSource] = []
-        roots: List[str] = []
         probe_lines: Dict[Tuple[str, int], RevealKey] = {}
         for file_path, file_requests in by_file.items():
             text = file_requests[0].source
@@ -738,16 +818,14 @@ class MypyInferrer:
                         request.line,
                         index,
                     )
-            module, root = _module_name_and_root(Path(file_path))
-            sources.append(_BuildSource(file_path, module, text))
-            if str(root) not in roots:
-                roots.append(str(root))
+            sources.append(_build_source(file_path, text))
         if not sources:
-            return {}
-        result = self._build_errors(sources, roots)
+            return Revealed({})
+        result = self._build_errors(sources)
         if isinstance(result, CheckFailure):
+            # No probe was answered, and none was looked at and found silent.
             LOG.warning("mypy inference failed: %s", result.reason)
-            return {}
+            return Revealed({}, {file_path: result.reason for file_path in by_file})
         errors = result.messages
         revealed: Dict[RevealKey, str] = {}
         ambiguous: set[RevealKey] = set()
@@ -765,7 +843,7 @@ class MypyInferrer:
                     del revealed[key]
                 else:
                     revealed[key] = kind
-        return revealed
+        return Revealed(revealed)
 
 
 MYPY_TIMEOUT_SECONDS = 600.0
@@ -840,6 +918,23 @@ class PyrightOracle:
         self._probe_copies: Dict[Path, CheckerSnapshot] = {}
         # Whether a session ever answered, which abandoning one does not undo.
         self.answered_from_a_session = False
+        # What each project's configuration has pyright report on, read once.
+        self._scopes: Dict[Path, PyrightScope] = {}
+
+    def reports_on(self, file_path: str) -> bool:
+        """Whether the project's configuration has pyright report on ``file_path`` at all.
+
+        Not a file its ``exclude`` or ``ignore`` names, or its ``include``
+        leaves out (``towel.pyright_session.PyrightScope``): pyright answers
+        nothing there, and a probe of it would wait for an answer that never
+        comes. Read from the configuration, without starting pyright.
+        """
+        original = Path(file_path).resolve()
+        root = _configured_root(original, "pyright") or _checker_root(original)
+        scope = self._scopes.get(root)
+        if scope is None:
+            scope = self._scopes[root] = pyright_scope(root)
+        return scope.reports_on(original)
 
     def close(self) -> None:
         """Stop every language server this oracle started and drop its copies."""
@@ -1102,11 +1197,17 @@ class PyrightOracle:
         return start.get("line", -1) + 1 if start is not None else 0
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
-        """Reveal each request by having pyright check a probed copy of its module."""
+        """Reveal each request by having pyright check a probed copy of its module.
+
+        A module the configuration has pyright report nothing on is not probed
+        (:meth:`reports_on`): it would answer nothing, after a wait.
+        """
         revealed: Dict[RevealKey, str] = {}
+        unanswered: Dict[str, str] = {}
         by_file: Dict[str, List[RevealRequest]] = {}
         for request in requests:
-            by_file.setdefault(request.file_path, []).append(request)
+            if self.reports_on(request.file_path):
+                by_file.setdefault(request.file_path, []).append(request)
         for file_path, file_requests in by_file.items():
             text = file_requests[0].source
             ordered = sorted(file_requests, key=lambda request: request.line)
@@ -1124,13 +1225,14 @@ class PyrightOracle:
                 shift += len(request.expressions)
             result = self._diagnostics(file_path, text)
             if isinstance(result, CheckFailure):
+                unanswered[file_path] = result.reason
                 continue
             for diagnostic in result.diagnostics:
                 match = _PYRIGHT_REVEALED.match(str(diagnostic.get("message", "")))
                 key = probe_lines.get(self._line(diagnostic))
                 if match is not None and key is not None:
                     revealed[key] = match.group("type")
-        return revealed
+        return Revealed(revealed, unanswered)
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
@@ -1468,6 +1570,24 @@ def reveal_by_each(
     return (oracle.reveal(requests),)
 
 
+def reports_by_each(oracle: TypeOracle, paths: Sequence[str]) -> Tuple[FrozenSet[str], ...]:
+    """For each checker behind ``oracle``, in :func:`reveal_by_each`'s order, those ``paths`` it reports on.
+
+    A file a checker's configuration leaves out of what it reports on
+    (pyright's ``exclude`` and ``ignore``) is outside that checker's check, so
+    its silence there is no sign it takes the code to be unreachable: the
+    project's own run of it says nothing there either. mypy reports on every
+    module it is given or follows to.
+    """
+    if isinstance(oracle, CombinedOracle):
+        return tuple(answer for one in oracle.checkers for answer in reports_by_each(one, paths))
+    if isinstance(oracle, _RelocatedOracle):
+        return oracle.reports_by_each(paths)
+    if isinstance(oracle, PyrightOracle):
+        return (frozenset(path for path in paths if oracle.reports_on(path)),)
+    return (frozenset(paths),)
+
+
 def _every_check(results: Iterable[CheckResult]) -> CheckResult:
     """All the errors of ``results``, or the first that could not be completed."""
     errors: List[TypeDiagnostic] = []
@@ -1561,6 +1681,14 @@ class _RelocatedOracle:
         answers = reveal_by_each(self._oracle, self._originals(requests))
         return tuple(self._outputs(answer) for answer in answers)
 
+    def reports_by_each(self, paths: Sequence[str]) -> Tuple[FrozenSet[str], ...]:
+        """Each checker's :func:`reports_by_each`, asked of the originals, at the copy's paths."""
+        original = {self._original(path): path for path in paths}
+        return tuple(
+            frozenset(original[path] for path in answer)
+            for answer in reports_by_each(self._oracle, list(original))
+        )
+
     def _originals(self, requests: Sequence[RevealRequest]) -> List[RevealRequest]:
         return [
             RevealRequest(
@@ -1573,11 +1701,15 @@ class _RelocatedOracle:
             for request in requests
         ]
 
-    def _outputs(self, revealed: Mapping[RevealKey, str]) -> Mapping[RevealKey, str]:
-        return {
-            (self._output(path), line, index): value
-            for (path, line, index), value in revealed.items()
-        }
+    def _outputs(self, revealed: Mapping[RevealKey, str]) -> Revealed:
+        """``revealed`` at the copy's paths, its unanswered files included."""
+        return Revealed(
+            {
+                (self._output(path), line, index): value
+                for (path, line, index), value in revealed.items()
+            },
+            {self._output(path): reason for path, reason in unanswered_files(revealed).items()},
+        )
 
     def is_subtype(
         self, file_path: str, source: str, pairs: Sequence[Tuple[str, str]]
@@ -1614,7 +1746,12 @@ class _RelocatedOracle:
             )
 
     def _restated(self, sources: Mapping[str, str]) -> Dict[str, str] | CheckFailure:
-        """Every module of the copy, and ``sources`` over them, at the original's paths."""
+        """Every module of the copy, and ``sources`` over them, at the original's paths.
+
+        A module that does not decode is left out, and the checker reads the
+        original's, which is the same bytes: Towel changes no file it cannot
+        read. One such file (Latin-1 test data) had failed every check.
+        """
         try:
             current: Dict[str, str] = {}
             if self._directory:
@@ -1641,7 +1778,10 @@ class _RelocatedOracle:
                     for name in files:
                         path = directory / name
                         if path.suffix in {".py", ".pyi"} and not is_probe_file(path):
-                            current[self._original(str(path))] = read_source(path)
+                            try:
+                                current[self._original(str(path))] = read_source(path)
+                            except (ValueError, UnicodeError, SyntaxError):
+                                continue  # unchanged, and read at the original's path
             else:
                 current[str(self._source)] = read_source(self._destination)
             current.update({self._original(path): source for path, source in sources.items()})

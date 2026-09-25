@@ -520,14 +520,15 @@ def test_the_callable_a_signature_writes_is_imported_end_to_end(tmp_path: Path) 
         assert oracle.check(str(path), changed) == CheckSuccess(), changed
     finally:
         oracle.close()
-    assert "from typing import Callable" in changed, changed
+    # Reached through a private alias of typing, so the module binds no new public name.
+    assert "import typing as _typing" in changed and "from typing import Callable" not in changed
     helper = _helper(changed)
     kinds = [
         _annotation(parameter.annotation)
         for parameter in helper.args.args
         if parameter.annotation is not None
     ]
-    assert "Callable[[], dict[str, tuple[_TowelT0, ...]]]" in kinds, changed
+    assert "_typing.Callable[[], dict[str, tuple[_TowelT0, ...]]]" in kinds, changed
     assert _annotation(helper.returns) == "tuple[_TowelT0, ...]"
 
 
@@ -655,7 +656,10 @@ def test_a_thunk_returning_a_class_shares_its_variable_with_the_list_end_to_end(
     changed = _extract_first(tmp_path / "elements.py")
     helper = _helper(changed)
     kinds = [_annotation(parameter.annotation) for parameter in helper.args.args]
-    assert kinds[:2] == ["Callable[[], type[_TowelT0]]", "Callable[[], list[_TowelT0]]"], changed
+    assert kinds[:2] == [
+        "_typing.Callable[[], type[_TowelT0]]",
+        "_typing.Callable[[], list[_TowelT0]]",
+    ], changed
     assert "Any" not in changed, changed
 
 
@@ -714,8 +718,13 @@ def test_returned_values_follow_the_arguments_they_are_end_to_end(tmp_path: Path
         for parameter in helper.args.args
         if parameter.arg != "self"
     }
-    assert kinds == {"__param_0": "_TowelT0", "__param_1": "Callable[[], _TowelT1]"}, changed
-    assert _annotation(helper.returns) == "tuple[_TowelT0, Callable[[Span], None], _TowelT1]"
+    assert kinds == {
+        "__param_0": "_TowelT0",
+        "__param_1": "_typing.Callable[[], _TowelT1]",
+    }, changed
+    assert (
+        _annotation(helper.returns) == "tuple[_TowelT0, _typing.Callable[[Span], None], _TowelT1]"
+    )
 
 
 def test_a_module_no_import_names_is_named_as_mypy_names_it(tmp_path: Path) -> None:
@@ -800,11 +809,14 @@ class {name}(Exception):
 def test_a_constraint_from_another_module_is_imported_for_the_checker_end_to_end(
     tmp_path: Path,
 ) -> None:
-    """packaging L, in miniature: the variable ranges over the two modules' error classes.
+    """packaging L, in miniature: the helper's receiver ranges over the two modules' error classes.
 
-    The helper lives in direct.py, which does not import lock.py; the
-    constraint that names lock.py's class is imported under ``TYPE_CHECKING``,
-    as the program's imports show direct.py can, and so never runs.
+    The helper lives in direct.py, which does not import lock.py; the class
+    that lock.py defines is imported under ``TYPE_CHECKING``, as the program's
+    imports show direct.py can, and so never runs. The ordinary signature
+    names both classes directly, which is what the checker reveals: it used
+    to drop ``pkg.lock.LockError`` for a head direct.py does not bind, write
+    ``Any``, and leave the classes to a constrained type variable.
     """
     _project(
         tmp_path,
@@ -818,9 +830,10 @@ def test_a_constraint_from_another_module_is_imported_for_the_checker_end_to_end
     )
     sources = _extract_across_modules(tmp_path / "pkg")
     direct = sources[str(tmp_path / "pkg" / "direct.py")]
-    assert "_towel_typevar('_TowelT0', 'DirectError', 'LockError')" in direct, direct
-    guarded = direct.split("if TYPE_CHECKING:", 1)[1].splitlines()[1]
-    assert guarded.strip() == "from .lock import LockError", direct
+    # The checker's import is private, so no star-importer of direct.py sees it.
+    assert "def _extracted_func_0(self: 'DirectError | _LockError') -> str:" in direct, direct
+    guarded = direct.split("if _typing.TYPE_CHECKING:", 1)[1].splitlines()[1]
+    assert guarded.strip() == "from .lock import LockError as _LockError", direct
     assert "Any" not in direct, direct
 
 

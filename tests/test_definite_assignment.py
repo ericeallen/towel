@@ -167,3 +167,56 @@ def test_locally_bound_names_excludes_nested_scopes_and_free_names() -> None:
     bound = locally_bound_names(function)
     assert {"a", "rest", "os", "i", "y", "inner", "err", "lam"} <= bound
     assert not ({"xs", "outer", "q", "z", "w", "helper", "E"} & bound)
+
+
+@pytest.mark.parametrize(
+    "source, unbound",
+    [
+        # A del later in a loop's body unbinds the name for the next iteration.
+        ("def f(xs):\n    x = 1\n    for i in xs:\n        marker()\n        del x\n", {"x"}),
+        ("def f(c):\n    x = 1\n    while c():\n        marker()\n        del x\n", {"x"}),
+        # ... and for the else clause, which runs after the last iteration.
+        (
+            "def f(xs):\n    x = 1\n    for i in xs:\n        del x\n        x = 2\n        del x\n"
+            "    else:\n        marker()\n",
+            {"x"},
+        ),
+        # A del in an earlier statement of the same list.
+        ("def f(c):\n    x = 1\n    if c:\n        del x\n        marker()\n", {"x"}),
+        # A handler or finally clause may start after a del in the try.
+        (
+            "def f(g):\n    x = 1\n    try:\n        del x\n        g()\n    except E:\n        marker()\n",
+            {"x"},
+        ),
+        (
+            "def f(g):\n    x = 1\n    try:\n        del x\n        g()\n    finally:\n        marker()\n",
+            {"x"},
+        ),
+        # A body may delete what its with target, pattern or try bound.
+        ("def f(cm):\n    with cm as h:\n        del h\n    marker()\n", {"h"}),
+        (
+            "def f(v):\n    match v:\n        case [a]:\n            del a\n        case a:\n            pass\n"
+            "    marker()\n",
+            {"a"},
+        ),
+        (
+            "def f(g):\n    try:\n        x = g()\n    except E:\n        x = 0\n    else:\n        del x\n"
+            "    marker()\n",
+            {"x"},
+        ),
+        (
+            "def f(g):\n    try:\n        x = g()\n    finally:\n        del x\n        x = 1\n        del x\n"
+            "    marker()\n",
+            {"x"},
+        ),
+        # except* deletes its name as except does.
+        (
+            "def f(g):\n    e = 1\n    try:\n        g()\n    except* E as e:\n        pass\n    marker()\n",
+            {"e"},
+        ),
+    ],
+)
+def test_a_name_unbound_on_some_path_to_the_statement_is_not_definite(
+    source: str, unbound: set[str]
+) -> None:
+    assert not (unbound & _bound_at_marker(source))

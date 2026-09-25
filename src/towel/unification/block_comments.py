@@ -42,8 +42,14 @@ the sites had several, so the sites must agree: every site must carry the
 same directives at the same places (``DIRECTIVES_DIFFER`` otherwise), no
 directive may reach code of a site's that becomes an argument of the call,
 written at the call site where the directive does not reach
-(``DIRECTIVE_ON_ARGUMENT``), and a directive whose reach is a region or a
-file must not reach past the moved code (``DIRECTIVE_OUTLIVES_BLOCK``).
+(``DIRECTIVE_ON_ARGUMENT``), no ignore above a block may govern its first
+statement, which the call takes the place of (``DIRECTIVE_AROUND_BLOCK``),
+a directive whose reach is a region or a file must not reach past the
+moved code (``DIRECTIVE_OUTLIVES_BLOCK``), and no directive may stand on a
+line the block shares with code that stays at the call site
+(``a = 1; b = 2  # noqa`` with the block at ``b``): the directive governs
+the whole line, and splicing the call in parts it from some of that code
+(``DIRECTIVE_ON_SHARED_LINE``).
 """
 
 from __future__ import annotations
@@ -64,6 +70,7 @@ from .exceptions import RefactoringError
 from .substitution import Substitution
 from ..coverage_config import DEFAULT_EXCLUDE, CoverageExclusion
 from ..source_text import source_lines
+from .splicing import shared_lines
 
 DEFAULT_EXCLUSION = CoverageExclusion().pattern
 """coverage.py's own exclusion regexes, joined: for a block whose project sets none."""
@@ -170,6 +177,12 @@ class SiteComments:
     # Why the block's first statement is excluded from coverage, which the
     # call that replaces the block would not be (``_excluded_start``); or empty.
     excluded_start: str = ""
+    # The ignore on a line of its own above the block that governs its first
+    # statement, and would govern the call instead (``_directive_before``).
+    directed_start: str = ""
+    # The directive on a line the block shares with code outside it, or the
+    # coverage exclusion of such a line (``_shared_line_directive``); or empty.
+    shared_line_directive: str = ""
 
 
 @dataclass(frozen=True)
@@ -230,6 +243,7 @@ class ConflictKind(Enum):
     DIRECTIVE_OUTLIVES_BLOCK = "directive_outlives_block"
     DIRECTIVE_AROUND_BLOCK = "directive_around_block"
     EXCLUDED_BLOCK_START = "excluded_block_start"
+    DIRECTIVE_ON_SHARED_LINE = "directive_on_shared_line"
 
 
 @dataclass(frozen=True)
@@ -249,10 +263,12 @@ class CommentPlacementError(RefactoringError):
 _DIRECTIVE = re.compile(
     r"""\#\s*(?:
         type\s*:\s*\S                       # PEP 484 type comments and ignores
-      | pyright\s*:\s*\S | mypy\s*:\s*\S | pytype\s*:\s*\S
+      | pyright\s*:\s*\S | mypy\s*:\s*\S | pytype\s*:\s*\S   # pyright and basedpyright alike
       | pyre-(?:ignore|fixme|strict|unsafe|ignore-all-errors)\b
+      | ty\s*:\s*ignore\b | pyrefly\s*:\s*ignore\b | zuban\s*:\s*ignore\b
       | noqa\b | flake8[:=\s]\s*noqa\b | ruff\s*:\s*\S
       | pragma\b | nosec\b | pylint\s*:\s*\S | noinspection\b
+      | nosemgrep\b | lint-(?:fixme|ignore)\b  # Semgrep, Fixit
       | fmt\s*:\s*(?:off|on|skip)\b | yapf\s*:\s*(?:disable|enable)\b
       | isort\s*:\s*\S | autopep8\s*:\s*(?:off|on)\b
       | pycln\s*:\s*\S | nopycln\b | codespell\s*:\s*ignore\b
@@ -277,8 +293,22 @@ _PYLINT_ENABLE = re.compile(r"\#\s*pylint\s*:\s*enable\b", re.IGNORECASE)
 # A directive on a line of its own that governs the statement after it.
 _NEXT_STATEMENT = re.compile(r"\#\s*noinspection\b", re.IGNORECASE)
 
+# An ignore on a line of its own that governs the next line of code: ty's and
+# ruff's the next logical line, or inside brackets the next physical line;
+# pyre's, pyrefly's, Semgrep's and Fixit's the next line. pyrefly reads every
+# checker's ``<tool>: ignore`` that way, ``type: ignore`` included, so a
+# project it checks has them all reach the next line.
+_NEXT_LINE = re.compile(
+    r"""\#\s*(?:
+        (?:type|ty|pyrefly|pyre|pyright|mypy|zuban|ruff)\s*:\s*ignore\b(?!-)
+      | pyre-(?:ignore|fixme)\b(?!-) | nosemgrep\b | lint-(?:fixme|ignore)\b
+    )""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
 _FILE_DIRECTIVE = re.compile(
-    r"\#\s*(?:flake8[:=\s]\s*noqa\b|ruff\s*:\s*noqa\b|mypy\s*:|pyright\s*:\s*(?!ignore\b)\w"
+    r"\#\s*(?:flake8[:=\s]\s*noqa\b|ruff\s*:\s*(?:noqa|file-ignore)\b|mypy\s*:"
+    r"|pyright\s*:\s*(?!ignore\b)\w|pyrefly\s*:\s*ignore-errors\b"
     r"|isort\s*:\s*skip_file\b|pylint\s*:\s*skip-file\b|pytype\s*:\s*skip-file\b"
     r"|pyre-(?:strict|unsafe|ignore-all-errors)\b)",
     re.IGNORECASE,
@@ -308,18 +338,25 @@ _REGIONS = (
         re.compile(r"\#\s*pylint\s*:\s*disable\b", re.I),
         re.compile(r"\#\s*pylint\s*:\s*enable\b", re.I),
     ),
+    (
+        "ruff",
+        re.compile(r"\#\s*ruff\s*:\s*disable\b", re.I),
+        re.compile(r"\#\s*ruff\s*:\s*enable\b", re.I),
+    ),
 )
 
 
 def is_directive(text: str) -> bool:
     """Whether the comment ``text`` tells a tool something: an ignore, a pragma, a type.
 
-    Type checkers (``type: ignore``, a PEP 484 type comment, ``pyright:``,
-    ``mypy:``, pyre, pytype), linters (``noqa``, ``ruff:``, ``pylint:``,
-    ``nosec``, PyCharm's ``noinspection``), coverage (``pragma``), and
-    formatters and import sorters (``fmt:``, ``yapf:``, ``isort:``,
-    ``autopep8:``, pycln, codespell). Any ``#`` segment of the comment may
-    hold it, as in ``# type: ignore  # noqa: E721``.
+    Type checkers (``type: ignore``, a PEP 484 type comment, ``pyright:``
+    for pyright and basedpyright, ``mypy:``, ``ty: ignore``, ``pyrefly:
+    ignore``, ``zuban: ignore``, pyre, pytype), linters (``noqa``, ``ruff:``,
+    ``pylint:``, ``nosec``, PyCharm's ``noinspection``, Semgrep's
+    ``nosemgrep``, Fixit's ``lint-ignore`` and ``lint-fixme``), coverage
+    (``pragma``), and formatters and import sorters (``fmt:``, ``yapf:``,
+    ``isort:``, ``autopep8:``, pycln, codespell). Any ``#`` segment of the
+    comment may hold it, as in ``# type: ignore  # noqa: E721``.
     """
     return _DIRECTIVE.search(text) is not None
 
@@ -723,8 +760,15 @@ def site_comments(
     index = _BlockIndex(block, lines) if in_block or commented else None
     excluded = _excluded(in_block, index)
     start = _excluded_start(block, in_block)
+    directed = _directive_before(lines, first_line)
+    shared = shared_lines(lines, block)
     bare = SiteComments(
-        argument_lines=arguments, around=around, excluded=excluded, excluded_start=start
+        argument_lines=arguments,
+        around=around,
+        excluded=excluded,
+        excluded_start=start,
+        directed_start=directed,
+        shared_line_directive=_shared_line_directive(shared, excluded, ()),
     )
     if index is None or not commented:
         return bare
@@ -737,6 +781,8 @@ def site_comments(
             around=around,
             excluded=excluded,
             excluded_start=start,
+            directed_start=directed,
+            shared_line_directive=bare.shared_line_directive,
         )
     positions = [
         position for position, token in enumerate(tokens) if token.kind == tokenize.COMMENT
@@ -768,17 +814,44 @@ def site_comments(
                 Anchor(anchor.node, anchor.placement, anchor.punctuation, group, exploded),
                 line,
                 line_start,
-                _reach(comment, own_line, index) if directive else frozenset(),
+                _reach(tokens, at, own_line, index) if directive else frozenset(),
                 directive,
             )
         )
+    moved = _with_region_reach(comments)
     return SiteComments(
-        _with_region_reach(comments),
+        moved,
         arguments,
         around=around,
         excluded=excluded,
         excluded_start=start,
+        directed_start=directed,
+        shared_line_directive=_shared_line_directive(shared, excluded, moved),
     )
+
+
+def _shared_line_directive(
+    shared: FrozenSet[int], excluded: FrozenSet[int], comments: Sequence[BlockComment]
+) -> str:
+    """What governs a line of the block that also holds code outside it, if a tool reads anything there.
+
+    ``shared`` are such lines (``splicing.shared_lines``). A directive governs
+    its whole line, and the splice parts the block from the rest of that
+    line: a comment there moves into the helper, leaving the code that
+    stays uncovered, or stays with that code while the helper takes a copy.
+    Coverage's exclusion of a line, by a pragma or by a configured regex,
+    governs it alike. A comment no tool reads may move.
+    """
+    excluded_here = sorted(shared & excluded)
+    if excluded_here:
+        return f"line {excluded_here[0]} is excluded from coverage and holds code outside the block"
+    governing = (
+        comment
+        for comment in comments
+        if comment.directive and (comment.line in shared or comment.reach & shared)
+    )
+    found = next(governing, None)
+    return "" if found is None else f"line {found.line}: {found.text}"
 
 
 def _excluded(lines: FrozenSet[int], index: Optional[_BlockIndex]) -> FrozenSet[int]:
@@ -950,16 +1023,19 @@ def _lines_between(first: int, last: int) -> FrozenSet[int]:
     return frozenset(range(first, last + 1))
 
 
-def _reach(comment: _Token, own_line: bool, index: _BlockIndex) -> FrozenSet[int]:
-    """The lines of the block whose code the directive ``comment`` governs (``BlockComment.reach``).
+def _reach(tokens: Sequence[_Token], at: int, own_line: bool, index: _BlockIndex) -> FrozenSet[int]:
+    """The lines of the block whose code the directive ``tokens[at]`` governs (``BlockComment.reach``).
 
     A directive at the end of a line governs that line; pylint's
     ``disable`` governs the whole statement holding it, and the whole block
     when the line opens one. Of those on a line of their own,
-    PyCharm's ``noinspection`` governs the statement after it, and a region
-    directive its region (``_with_region_reach``); the rest govern nothing.
-    A directive for the whole file reaches its module wherever the code goes.
+    PyCharm's ``noinspection`` governs the statement after it, an ignore
+    that a checker or linter applies to the next line governs that line
+    (``_next_line_reach``), and a region directive its region
+    (``_with_region_reach``); the rest govern nothing. A directive for the
+    whole file reaches its module wherever the code goes.
     """
+    comment = tokens[at]
     text, line = comment.text, comment.start[0]
     if not is_directive(text) or is_file_directive(text):
         return frozenset()
@@ -968,12 +1044,54 @@ def _reach(comment: _Token, own_line: bool, index: _BlockIndex) -> FrozenSet[int
             following = index.statement_starting_after(comment.start)
             if following is not None:
                 return _lines_between(following.start[0], following.end[0])
+        if _NEXT_LINE.search(text):
+            return _next_line_reach(tokens, at, index)
         return frozenset()
     if _STATEMENT_WIDE.search(text):
         holder = index.innermost_statement_on(line)
         if holder is not None:
             return _lines_between(min(holder.start[0], line), max(holder.end[0], line))
     return frozenset({line})
+
+
+def _next_line_reach(tokens: Sequence[_Token], at: int, index: _BlockIndex) -> FrozenSet[int]:
+    """The lines an ignore on a line of its own, ``tokens[at]``, governs: the next line of code.
+
+    Before a statement that is its logical line: the whole of a simple
+    statement, and of a compound one its header up to the line its body
+    starts on, as ty and ruff apply it (pyre, pyrefly, Semgrep and Fixit
+    apply it to the first of those lines). Inside brackets it is the next
+    physical line holding code.
+    """
+    following = next((token for token in tokens[at + 1 :] if token.kind != tokenize.COMMENT), None)
+    if following is None:
+        return frozenset()
+    line = following.start[0]
+    starting = index.starting_at(following.start)
+    if starting is None or not _statement_like(starting.node):
+        return frozenset({line})
+    clauses = _clauses(starting.node)
+    last = starting.end[0] if not clauses else max(line, clauses[0][0].lineno - 1)
+    return _lines_between(line, last)
+
+
+def _directive_before(lines: Sequence[str], first_line: int) -> str:
+    """The ignore above line ``first_line`` that governs the code there, or empty.
+
+    An ignore on a line of its own governs the next line of code
+    (``_NEXT_LINE``, ``_NEXT_STATEMENT``), across the blank and comment
+    lines between. Above a block's first statement it stays with the call
+    that replaces the block, and would govern the call instead.
+    """
+    line = first_line - 1
+    while line >= 1:
+        text = lines[line - 1].strip()
+        if text and not text.startswith("#"):
+            return ""
+        if _NEXT_LINE.search(text) or _NEXT_STATEMENT.search(text):
+            return f"line {line}: {text} governs the block's first statement"
+        line -= 1
+    return ""
 
 
 def _with_region_reach(comments: Sequence[BlockComment]) -> Tuple[BlockComment, ...]:
@@ -1145,15 +1263,22 @@ def directive_conflict(
     """Why the sites' tool directives cannot move into the helper's ``statements``, if they cannot.
 
     Every site must carry the same directives, written alike up to spacing,
-    at the same places; no directive may reach code of a site's that
-    becomes an argument of its call, which is written at the call site,
-    where the directive does not reach; and a region a directive opens or
-    closes must not reach past the block.
+    at the same places; no directive may stand on a line a site's block
+    shares with code outside it; no directive may reach code of a site's
+    that becomes an argument of its call, which is written at the call site,
+    where the directive does not reach; no ignore above a site's block may
+    govern its first statement, since it stays above the call that takes
+    the statement's place; and a region a directive opens or closes must
+    not reach past the block.
     """
     for site in sites:
         if site.unreadable:
             return CommentConflict(
                 ConflictKind.DIRECTIVES_DIFFER, "a site's comments cannot be tokenized"
+            )
+        if site.shared_line_directive:
+            return CommentConflict(
+                ConflictKind.DIRECTIVE_ON_SHARED_LINE, site.shared_line_directive
             )
     if sites:
         reference = _directives(statements, sites[0])
@@ -1172,6 +1297,8 @@ def directive_conflict(
     for site in sites:
         if site.excluded_start:
             return CommentConflict(ConflictKind.EXCLUDED_BLOCK_START, site.excluded_start)
+        if site.directed_start:
+            return CommentConflict(ConflictKind.DIRECTIVE_AROUND_BLOCK, site.directed_start)
         for comment in site.comments:
             if comment.reach & site.argument_lines:
                 return CommentConflict(

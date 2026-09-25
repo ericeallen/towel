@@ -4,8 +4,10 @@ Each fixture in ``tests/hostile_cases`` is a script whose ``__main__`` block
 prints every observation that an extraction could disturb: evaluation order,
 evaluation count, conditional evaluation, closure cells, deletion, and
 pattern bindings. The battery asserts that the program's output is identical
-after refactoring, and records per fixture whether the current engine
-transforms it or rejects it, so a change in either direction is visible.
+after refactoring, and that the module shows its importers the same public
+names bound to the same things (``module_faces``), and records per fixture
+whether the current engine transforms it or rejects it, so a change in either
+direction is visible.
 
 A fixture in ``KNOWN_DEFECTS`` shows a defect an audit reported and is not
 yet fixed: it is expected to fail, strictly, and its transformed state is
@@ -30,7 +32,7 @@ from tests.audit_defects import (
     P1_7_READ_BEFORE_BIND,
     P1_8_LATER_UPDATE,
 )
-from tests.hostile_execution import observe, parsed_or_skipped
+from tests.hostile_execution import module_faces, observe, parsed_or_skipped
 from tests.hostile_refactoring import refactor_script, with_known_defects
 
 CASES = Path(__file__).parent / "hostile_cases"
@@ -180,6 +182,50 @@ TRANSFORMED = {
     # the block only calls or consumes moves with it (r157).
     "r156_created_objects_that_escape",
     "r157_created_objects_only_called",
+    # The annotations' typing names are reached through a private alias of
+    # typing, so no name the module binds or exports changes: not its own Any
+    # (r160), not its public names under __all__ (r161), not the Callable a
+    # star import bound (r162).
+    "r160_host_binds_any_before_its_last_import",
+    "r161_module_with_all_gains_no_public_name",
+    "r162_host_star_imports_callable",
+    # Round-3 audit: a memoized verdict answers only for its block's site. The
+    # benign twins of a rebinding hazard, and the top-level twin of a copy in
+    # a loop, still share helpers; the hazard and the loop copy
+    # keep their code.
+    "r7c_rebinding_enclosing_function_beside_a_benign_twin",
+    "r7c_top_level_copy_beside_a_loop_copy",
+    # The control for the mangled parameters and import names, which a class
+    # body rewrites and a helper elsewhere would not.
+    "r7c_unmangled_parameter_passed_by_keyword",
+    # A block that starts after, or ends before, another statement on its
+    # line: the call takes the block's place and the other statement stays.
+    "r7sp_block_starts_after_a_semicolon",
+    "r7sp_block_ends_before_a_semicolon",
+    # A thunk evaluated after an effect is passed as a thunk, not eagerly:
+    # a lambda's default, a set display's hashing, ``*`` unpacking, a read
+    # of a global nothing binds.
+    "r7sp_thunk_after_a_lambda_default",
+    "r7sp_thunk_after_a_set_display",
+    "r7sp_thunk_after_a_starred_display",
+    "r7sp_thunk_after_an_unbound_global_read",
+    # A thunk in dead code after a ``raise``, which the original never evaluated.
+    "r7sp_thunk_after_a_raise",
+    # Bindings audit of 1.772. A block that rebinds a name bound before it
+    # (a for target, a capture, a def) is declined; the code around it moves.
+    "r7bi_loop_capture_def_rebind_prebound",
+    # The helper returns what a later += or del of it needs.
+    "r7bi_augassign_and_del_after_block",
+    # (r7bi_read_before_own_binding is declined: its block reads a local
+    # before binding it, which only the original's UnboundLocalError shows.
+    # r7bi_loop_del_before_eager_read is declined: a del later in the loop
+    # leaves the name unbound on the next iteration.)
+    # A binder that may be read unbound keeps its spelling: the deletion and
+    # the handler stay with each site, and only what follows them moves.
+    "r7bi_renamed_binder_named_by_unbound_error",
+    # An except clause deletes its name as it ends: a try nested in an if
+    # leaves nothing bound for the block to lose, and moves.
+    "r7bi_except_name_in_nested_block",
     # The round-3 audit's families (r7fz_<family>_<case>): a sample of the
     # cases the audit found sound, one or more for each thing a family
     # targets, and every one transformed.
@@ -257,6 +303,8 @@ TRANSFORMED = {
     "r7fz_thunks_match_guard",
     "r7fz_thunks_short_circuit_and",
 }
+# r7sp_directive_on_a_shared_line is declined: each block starts after, or
+# ends before, a statement that stays on a line carrying a directive.
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in
 # their qualified names. Its reads are still what free_variables reports.
@@ -318,6 +366,9 @@ def test_refactoring_preserves_program_output(case: str) -> None:
         transformed = before.read_bytes() != after.read_bytes()
         assert transformed == (applied > 0)
         assert _run(after) == _run(before)
+        if transformed:
+            # No public name of the module appears, disappears, or changes meaning.
+            assert module_faces(after.parent, ["m"]) == module_faces(before.parent, ["m"])
         if case not in KNOWN_DEFECTS:
             assert transformed == (case in TRANSFORMED), (
                 "rejected" if not transformed else "transformed"

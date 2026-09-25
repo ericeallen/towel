@@ -37,6 +37,7 @@ from towel.unification.block_comments import (
     Placement,
     SiteComments,
     argument_lines,
+    directive_conflict,
     is_directive,
     is_file_directive,
     merge_comments,
@@ -97,6 +98,136 @@ def _merged(helper: ast.FunctionDef, *sites: SiteComments) -> HelperComments:
 )
 def test_tool_directives_are_recognized(text: str) -> None:
     assert is_directive(text)
+
+
+# Every directive form the reader recognizes, checked against each tool's
+# documented syntax: (comment, configures its whole file, governs the next line
+# of code from a line of its own). An ignore on a line of its own governs the
+# next line for ty and ruff (the next logical line), pyre, pyrefly (which reads
+# every checker's ``<tool>: ignore`` so, ``type: ignore`` included), Semgrep,
+# Fixit and PyCharm's ``noinspection``; ty and pyrefly also accept it trailing.
+DIRECTIVE_FORMS = [
+    ("# type: ignore", False, True),
+    ("# type: ignore[arg-type]", False, True),
+    ("#type:ignore", False, True),
+    ("# type: ignore[ty:unresolved-attribute]", False, True),
+    ("# type: List[int]", False, False),
+    ("# pyright: ignore[reportGeneralTypeIssues]", False, True),
+    ("# pyright: ignore [reportPrivateUsage, reportGeneralTypeIssues]", False, True),
+    ("# pyright: strict", True, False),
+    ("# pyright: basic", True, False),
+    ("# pyright: standard, reportPrivateUsage=false", True, False),
+    ("# mypy: ignore-errors", True, False),
+    ('# mypy: disable-error-code="attr-defined"', True, False),
+    ("# ty: ignore[unresolved-attribute]", False, True),
+    ("# ty:ignore[unresolved-attribute]", False, True),
+    ("#ty:ignore", False, True),
+    ("# ty : ignore[missing-argument, invalid-argument-type]", False, True),
+    ("# ty: ignore  # noqa: E501", False, True),
+    ("# pyrefly: ignore", False, True),
+    ("# pyrefly: ignore[bad-return]", False, True),
+    ("#  pyrefly:  ignore  [  bad-return  ]", False, True),
+    ("# pyrefly: ignore-errors", True, False),
+    ("# pyrefly: ignore-errors[bad-assignment]", True, False),
+    ("# zuban: ignore[attr-defined]", False, True),
+    ("# pyre-ignore", False, True),
+    ("# pyre-ignore[16]", False, True),
+    ("# pyre-fixme[7]: Expected `int` but got `str`.", False, True),
+    ("# pyre-strict", True, False),
+    ("# pyre-unsafe", True, False),
+    ("# pyre-ignore-all-errors", True, False),
+    ("# pyre-ignore-all-errors[16]", True, False),
+    ("# pytype: disable=attribute-error", False, False),
+    ("# pytype: skip-file", True, False),
+    ("# noqa", False, False),
+    ("# noqa: E501,W291", False, False),
+    ("# NOQA", False, False),
+    ("# flake8: noqa", True, False),
+    ("# flake8: noqa: E501", True, False),
+    ("# ruff: noqa", True, False),
+    ("# ruff: noqa: F841", True, False),
+    ("# ruff: file-ignore[F401, ARG001]", True, False),
+    ("# ruff: ignore[ARG001]", False, True),
+    ("# ruff: disable[E501]", False, False),
+    ("# ruff: enable[E501]", False, False),
+    ("# pragma: no cover", False, False),
+    ("# pragma: no branch", False, False),
+    ("# nosec", False, False),
+    ("# nosec B101", False, False),
+    ("# pylint: disable=invalid-name", False, False),
+    ("# pylint: skip-file", True, False),
+    ("# noinspection PyProtectedMember", False, True),
+    ("# nosemgrep", False, True),
+    ("# nosemgrep: rule-id-1, rule-id-2", False, True),
+    ("# lint-ignore: NoInheritFromObject", False, True),
+    ("# lint-fixme: NoInheritFromObject", False, True),
+    ("# lint-ignore", False, True),
+    ("# fmt: off", False, False),
+    ("# fmt: skip", False, False),
+    ("# yapf: disable", False, False),
+    ("# autopep8: off", False, False),
+    ("# isort: skip", False, False),
+    ("# isort: skip_file", True, False),
+    ("# pycln: skip", False, False),
+    ("# nopycln: import", False, False),
+    ("# codespell:ignore", False, False),
+    ("# something  # noqa: E721", False, False),
+]
+
+
+@pytest.mark.parametrize("text, file_wide, next_line", DIRECTIVE_FORMS)
+def test_every_directive_form_is_read_as_its_tool_reads_it(
+    text: str, file_wide: bool, next_line: bool
+) -> None:
+    assert is_directive(text)
+    assert is_file_directive(text) is file_wide
+    # On a line of its own inside a block: does it reach the line after it?
+    source, block = _block(f"""
+        def f(record):
+            total = 0
+            {text}
+            total += compute(record.alpha)
+            return total
+        """)
+    (comment,) = site_comments(source, block).comments
+    assert (comment.reach == {4}) is next_line
+    # Above a block's first statement it would govern the call instead.
+    starting = site_comments(source, block[1:])
+    assert bool(starting.directed_start) is next_line
+    if next_line:
+        conflict = directive_conflict(block[1:], [starting])
+        assert conflict is not None and conflict.kind is ConflictKind.DIRECTIVE_AROUND_BLOCK
+
+
+def test_an_ignore_inside_brackets_governs_the_next_physical_line_of_code() -> None:
+    """ty's rule inside a multi-line logical line; pyrefly's, whatever the line holds."""
+    source, block = _block("""
+        def f(record):
+            total = compute(
+                record.alpha,
+                # ty: ignore[unresolved-attribute]
+
+                record.beta,
+                record.gamma,
+            )
+            return total
+        """)
+    (comment,) = site_comments(source, block).comments
+    assert comment.reach == {6}
+
+
+def test_an_ignore_above_a_compound_statement_governs_its_header() -> None:
+    source, block = _block("""
+        def f(record):
+            total = 0
+            # ruff: ignore[SIM102]
+            if (record.alpha
+                    and record.beta):
+                total += compute(record.gamma)
+            return total
+        """)
+    (comment,) = site_comments(source, block).comments
+    assert comment.reach == {4, 5}
 
 
 @pytest.mark.parametrize(

@@ -15,214 +15,240 @@
 """
 Assignment analyzer for distinguishing initial bindings from reassignments.
 
-This module analyzes assignment statements within a function to classify them as either:
-- Initial bindings: First assignment to a variable (creates the variable)
-- Reassignments: Subsequent assignments to an already-bound variable
+Every binding a function's own scope makes is classified as either:
+- an initial binding: the first binding of the name (it creates the variable), or
+- a reassignment: the name was already bound, by a parameter or an earlier binding.
 
 This is critical for safe code extraction:
 - Extracting code with an initial binding is safe
 - Extracting code with a reassignment WITHOUT the initial binding is unsafe
+
+A binding is any construct that stores a name in the scope, whatever its
+spelling: an assignment, augmented or annotated assignment, walrus (also
+inside a comprehension, where it binds in the function), ``for`` and
+``with`` targets, an import, an ``except ... as`` name, a ``match`` capture,
+a nested ``def`` or ``class``, and a ``type`` alias. What the scope's
+nested functions, lambdas, comprehensions and class bodies bind is theirs,
+not the function's; what those definitions evaluate where they stand
+(decorators, defaults, annotations, bases) runs in the function and may bind
+there.
 """
 
 import ast
-from typing import Dict, Sequence, Set, Tuple, Union
+from dataclasses import dataclass
+from typing import Dict, FrozenSet, Iterable, List, Sequence, Set, Tuple, Union
+from weakref import WeakKeyDictionary
 
-from .statement_facts import import_binding_names, pattern_capture_names
+from .statement_facts import imported_binding_name, memoized_per_node
 from .models import FunctionNode
 from .parameters import parameter_names
-from .visitors import OwnScopeVisitor
+from .visitors import (
+    OwnScopeVisitor,
+    annotation_expressions,
+    evaluated_before_definition,
+    visit_comprehension_result,
+    visit_each,
+)
+
+
+@dataclass(frozen=True)
+class Binding:
+    """One place a scope's own code binds one name.
+
+    ``node_id`` is the ``id`` of the node that performs the binding (a
+    ``Name`` in store context, an import alias, an except handler, a match
+    capture pattern, or a ``def``/``class`` statement); the node itself is
+    not held, so a memoized list of bindings cannot keep its statement
+    alive. ``reads_first`` marks an augmented assignment, which reads the
+    name before it rebinds it and so always needs an earlier binding;
+    ``deleted_on_exit`` an ``except ... as`` name, which the clause deletes
+    as it ends.
+    """
+
+    node_id: int
+    name: str
+    reads_first: bool = False
+    deleted_on_exit: bool = False
+
+
+class _OwnScopeBindings(OwnScopeVisitor):
+    """Collect the bindings one scope's own code makes, in evaluation order."""
+
+    def __init__(self) -> None:
+        self.found: List[Binding] = []
+
+    def _bind(
+        self, node: ast.AST, name: str, *, reads_first: bool = False, deleted_on_exit: bool = False
+    ) -> None:
+        self.found.append(Binding(id(node), name, reads_first, deleted_on_exit))
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Store):
+            self._bind(node, node.id)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        # The value is evaluated before any target is bound.
+        self.visit(node.value)
+        visit_each(self, node.targets)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        if isinstance(node.target, ast.Name):
+            self.visit(node.value)
+            self._bind(node.target, node.target.id, reads_first=True)
+        else:
+            self.visit(node.target)
+            self.visit(node.value)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        # An annotation in a function body is never evaluated. Without a value
+        # nothing is bound: ``x: int`` leaves ``x`` as it was, and
+        # ``obj.attr: int`` only evaluates ``obj``.
+        if node.value is None:
+            if not isinstance(node.target, ast.Name):
+                self.visit(node.target)
+            return
+        self.visit(node.value)
+        self.visit(node.target)
+
+    def visit_For(self, node: Union[ast.For, ast.AsyncFor]) -> None:
+        self.visit(node.iter)
+        self.visit(node.target)
+        visit_each(self, node.body)
+        visit_each(self, node.orelse)
+
+    visit_AsyncFor = visit_For
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        self.visit(node.value)
+        self.visit(node.target)
+
+    def visit_Import(self, node: Union[ast.Import, ast.ImportFrom]) -> None:
+        for alias in node.names:
+            name = imported_binding_name(alias)
+            if name is not None:
+                self._bind(alias, name)
+
+    visit_ImportFrom = visit_Import
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.type is not None:
+            self.visit(node.type)
+        if node.name:
+            self._bind(node, node.name, deleted_on_exit=True)
+        visit_each(self, node.body)
+
+    def visit_MatchAs(self, node: ast.MatchAs) -> None:
+        if node.pattern is not None:
+            self.visit(node.pattern)
+        if node.name:
+            self._bind(node, node.name)
+
+    def visit_MatchStar(self, node: ast.MatchStar) -> None:
+        if node.name:
+            self._bind(node, node.name)
+
+    def visit_MatchMapping(self, node: ast.MatchMapping) -> None:
+        visit_each(self, node.keys)
+        visit_each(self, node.patterns)
+        if node.rest:
+            self._bind(node, node.rest)
+
+    def _nested_function(self, node: FunctionNode) -> None:
+        # Decorators, defaults and annotations run here; the body is another scope.
+        visit_each(self, evaluated_before_definition(node))
+        visit_each(self, annotation_expressions(node))
+        self._bind(node, node.name)
+
+    def _nested_class(self, node: ast.ClassDef) -> None:
+        # The class body binds the class's attributes, not the function's names.
+        visit_each(self, evaluated_before_definition(node))
+        visit_each(self, node.bases)
+        visit_each(self, [keyword.value for keyword in node.keywords])
+        self._bind(node, node.name)
+
+    def _lambda(self, node: ast.Lambda) -> None:
+        # Only the defaults run here; the body is the lambda's own scope.
+        visit_each(self, evaluated_before_definition(node))
+
+    def _comprehension(
+        self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
+    ) -> None:
+        # The targets are the comprehension's own; a walrus anywhere else in
+        # it binds in the enclosing function.
+        for generator in node.generators:
+            self.visit(generator.iter)
+            visit_each(self, generator.ifs)
+        visit_comprehension_result(self, node)
+
+
+_BINDINGS: "WeakKeyDictionary[ast.AST, Tuple[Binding, ...]]" = WeakKeyDictionary()
+
+
+def _statement_bindings(statement: ast.AST) -> Tuple[Binding, ...]:
+    collector = _OwnScopeBindings()
+    collector.visit(statement)
+    return tuple(collector.found)
+
+
+def own_scope_bindings(nodes: Iterable[ast.AST]) -> List[Binding]:
+    """The bindings ``nodes`` make in their own scope, in evaluation order.
+
+    Computed once per node: the result depends on the node's structure alone.
+    """
+    return [
+        binding
+        for node in nodes
+        for binding in memoized_per_node(_BINDINGS, node, _statement_bindings)
+    ]
+
+
+def scope_declarations(function: FunctionNode) -> FrozenSet[str]:
+    """The names ``function``'s own scope declares ``global`` or ``nonlocal``, at any depth.
+
+    A declaration anywhere in the function's own code (inside an ``if``, a
+    loop, a handler) covers the whole scope; one in a nested function or
+    class is that scope's.
+    """
+    declared: Set[str] = set()
+    pending: List[ast.AST] = list(function.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.Global, ast.Nonlocal)):
+            declared.update(node.names)
+        elif not isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            pending.extend(ast.iter_child_nodes(node))
+    return frozenset(declared)
 
 
 def analyze_assignments(func: FunctionNode) -> Dict[int, bool]:
     """
-    Analyze assignments in a function to identify reassignments.
+    Classify every binding of ``func``'s own scope as initial or a reassignment.
 
     Args:
         func: Function definition to analyze
 
     Returns:
-        Dictionary mapping assignment node id to is_reassignment boolean
-        - True: This assignment is a reassignment (variable was bound earlier)
-        - False: This assignment is an initial binding (first assignment to variable)
+        Dictionary mapping the ``Binding.node_id`` of each binding (see
+        ``own_scope_bindings``) to is_reassignment:
+        - True: the name was already bound, by a parameter or an earlier binding,
+          or the binding is an augmented assignment, which reads the name first
+        - False: the first binding of the name
 
     Example:
         def foo(x):
-            result = x * 2      # Initial binding: id -> False
-            result = result + 10  # Reassignment: id -> True
+            result = x * 2        # Initial binding: False
+            for result in x:      # Reassignment: True
+                pass
             return result
     """
-    analyzer = _AssignmentAnalyzer()
-    analyzer.visit(func)
-    return analyzer.reassignments
-
-
-class _AssignmentAnalyzer(OwnScopeVisitor):
-    """
-    Visitor that analyzes assignments to determine which are reassignments.
-
-    Tracks which variables have been bound and marks assignments accordingly.
-    Handles scoping correctly for nested functions, comprehensions, etc.
-    """
-
-    def __init__(self) -> None:
-        self.bound_vars: Set[str] = set()
-        self.reassignments: Dict[int, bool] = {}  # node id -> is_reassignment
-
-    def _nested_function(self, node: FunctionNode) -> None:
-        """The first function seen is the one analyzed: its parameters are bound, its body visited.
-
-        A function nested inside it is another scope and is not entered.
-        """
-        if not self.bound_vars:
-            self.bound_vars.update(parameter_names(node.args))
-            for stmt in node.body:
-                self.visit(stmt)
-
-    def visit_Assign(self, node: ast.Assign) -> None:
-        """
-        Visit assignment statement.
-
-        For each target being assigned:
-        - If already bound: mark as reassignment
-        - If not bound: mark as initial binding and add to bound_vars
-        """
-        # Visit the RHS first (in case it has side effects on bound vars)
-        self.visit(node.value)
-
-        for target in node.targets:
-            if isinstance(target, ast.Name):
-                # Simple variable assignment
-                var_name = target.id
-
-                is_reassignment = var_name in self.bound_vars
-
-                self.reassignments[id(node)] = is_reassignment
-
-                # Mark variable as bound for future assignments
-                self.bound_vars.add(var_name)
-            else:
-                # Complex target (tuple unpacking, subscript, attribute)
-                names = self._collect_assignment_names(target)
-
-                is_any_reassignment = any(name in self.bound_vars for name in names)
-                self.reassignments[id(node)] = is_any_reassignment
-
-                # Mark all names as bound
-                self.bound_vars.update(names)
-
-    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        """An annotated assignment with a value binds its target like ``Assign``."""
-        if node.value is None:
-            return
-        self.visit(node.value)
-        if isinstance(node.target, ast.Name):
-            self.reassignments[id(node)] = node.target.id in self.bound_vars
-            self.bound_vars.add(node.target.id)
-
-    def visit_Import(self, node: ast.Import) -> None:
-        """An import binds each alias, or the first component of a dotted name."""
-        self._bind_import_aliases(node)
-
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        self._bind_import_aliases(node)
-
-    def _bind_import_aliases(self, node: Union[ast.Import, ast.ImportFrom]) -> None:
-        names = import_binding_names(node)
-        self.reassignments[id(node)] = any(name in self.bound_vars for name in names)
-        self.bound_vars.update(names)
-
-    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
-        """An assignment expression binds its target in the enclosing function."""
-        self.visit(node.value)
-        self.reassignments[id(node)] = node.target.id in self.bound_vars
-        self.bound_vars.add(node.target.id)
-
-    def visit_AugAssign(self, node: ast.AugAssign) -> None:
-        """
-        Visit augmented assignment (+=, -=, etc.).
-
-        Augmented assignments are ALWAYS reassignments because they read
-        the variable before writing it.
-        """
-        # The target must already be bound (or it's a runtime error)
-        # Mark as reassignment
-        self.reassignments[id(node)] = True
-
-        # Visit children
-        self.visit(node.target)
-        self.visit(node.value)
-
-    def visit_For(self, node: ast.For) -> None:
-        """
-        Visit for loop.
-
-        The loop variable is bound by the for statement.
-        """
-        # Visit the iterable first
-        self.visit(node.iter)
-
-        # The loop target creates bindings
-        if isinstance(node.target, ast.Name):
-            var_name = node.target.id
-            # This is an initial binding (for loop creates the variable)
-            # Note: We don't add a reassignments entry here because
-            # for loop targets are handled specially
-            self.bound_vars.add(var_name)
-        else:
-            # Complex target (tuple unpacking)
-            names = self._collect_assignment_names(node.target)
-            self.bound_vars.update(names)
-
-        # Visit loop body
-        _visit_body_and_orelse(self, node)
-
-    def visit_With(self, node: ast.With) -> None:
-        """
-        Visit with statement.
-
-        The 'as' clause creates bindings.
-        """
-        # Visit context expressions
-        for item in node.items:
-            self.visit(item.context_expr)
-
-            # The 'as' clause creates a binding
-            if item.optional_vars:
-                if isinstance(item.optional_vars, ast.Name):
-                    self.bound_vars.add(item.optional_vars.id)
-                else:
-                    names = self._collect_assignment_names(item.optional_vars)
-                    self.bound_vars.update(names)
-
-        # Visit body
-        for stmt in node.body:
-            self.visit(stmt)
-
-    def visit_comprehension(self, node: ast.comprehension) -> None:
-        """
-        Visit comprehension (in list/dict/set comprehension or generator).
-
-        Don't descend - comprehensions have their own scope.
-        """
-        # Don't analyze comprehension targets as they create their own scope
-        pass
-
-    def _comprehension(
-        self, node: Union[ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp]
-    ) -> None:
-        """A comprehension's targets are its own; nothing in it is an assignment of this scope."""
-
-    def _collect_assignment_names(self, target: ast.AST) -> Set[str]:
-        """
-        Collect all Name nodes being assigned to in a complex target.
-
-        Examples:
-        - (a, b) = ... -> {'a', 'b'}
-        - [x, y, z] = ... -> {'x', 'y', 'z'}
-        - obj.attr = ... -> set()  # Not a variable binding
-        - lst[i] = ... -> set()  # Not a variable binding
-        """
-        return stored_names(target)
+    bound: Set[str] = set(parameter_names(func.args))
+    reassignments: Dict[int, bool] = {}
+    for binding in own_scope_bindings(func.body):
+        reassignments[binding.node_id] = binding.reads_first or binding.name in bound
+        bound.add(binding.name)
+    return reassignments
 
 
 def has_reassignments_without_bindings(
@@ -234,8 +260,11 @@ def has_reassignments_without_bindings(
     Check if a code block contains reassignments without initial bindings.
 
     This is the validation function for safe extraction. A block is unsafe
-    to extract if it contains a reassignment to a variable that was initially
-    bound outside the block.
+    to extract if it rebinds, by any binding construct, a variable that was
+    initially bound outside the block: the helper would bind a local of its
+    own, so a read after a rebinding that did not happen (an empty loop, an
+    unmatched case, an untaken branch) or after the block would not see the
+    caller's binding.
 
     Args:
         func: The function containing the block
@@ -263,18 +292,9 @@ def has_reassignments_without_bindings(
 
     problematic_vars = reassigned_in_block - bound_in_block
 
-    # Relaxation: allow reassignments to names declared global/nonlocal in the enclosing function
-    declared_global: Set[str] = set()
-    declared_nonlocal: Set[str] = set()
-
-    for stmt in func.body:
-        if isinstance(stmt, ast.Global):
-            declared_global.update(stmt.names)
-        elif isinstance(stmt, ast.Nonlocal):
-            declared_nonlocal.update(stmt.names)
-
-    allowed = declared_global | declared_nonlocal
-    remaining = problematic_vars - allowed
+    # Relaxation: a name declared global or nonlocal is not a local of the
+    # function; the helper re-declares it and writes the same variable.
+    remaining = problematic_vars - scope_declarations(func)
 
     return (len(remaining) > 0, remaining)
 
@@ -283,80 +303,25 @@ def _collect_bindings_and_reassignments(
     node: ast.AST, reassignments: Dict[int, bool], bound_vars: Set[str], reassigned_vars: Set[str]
 ) -> None:
     """
-    Recursively collect variables bound and reassigned in a node.
+    Add the variables ``node`` binds in its own scope, and keeps bound, to the caller's sets.
+
+    An ``except ... as`` name is left out: the clause deletes it as it ends,
+    so it is bound neither after the statement nor, by it, before a later
+    block. Rebinding a name bound before the block that way deletes that
+    binding, which ``unbinds_external_name`` declines.
 
     Args:
         node: AST node to analyze
-        reassignments: Assignment classification mapping
+        reassignments: Assignment classification mapping from analyze_assignments()
         bound_vars: Set to add initially-bound variables to
-        reassigned_vars: Set to add reassigned variables to
+        reassigned_vars: Set to add reassigned variables to (augmented
+            assignments always count as reassignments)
     """
-    _BindingCollector(reassignments, bound_vars, reassigned_vars).visit(node)
-
-
-class _BindingCollector(OwnScopeVisitor):
-    """Adds the names a node binds, and the ones it reassigns, to the caller's sets."""
-
-    def __init__(
-        self, reassignments: Dict[int, bool], bound_vars: Set[str], reassigned_vars: Set[str]
-    ) -> None:
-        self.reassignments = reassignments
-        self.bound_vars = bound_vars
-        self.reassigned_vars = reassigned_vars
-
-    def _destination(self, node: ast.AST) -> Set[str]:
-        return self.reassigned_vars if self.reassignments.get(id(node), False) else self.bound_vars
-
-    def visit_Assign(self, node: ast.Assign) -> None:
-        # A tuple or list target binds every name inside it (astroid:
-        # ``frame, stmts = self.lookup(name)`` read after the block).
-        destination = self._destination(node)
-        for target in node.targets:
-            destination.update(stored_names(target))
-        self.generic_visit(node)
-
-    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        # An annotated assignment with a value binds its target; without a
-        # value it only declares the annotation and binds nothing.
-        if node.value is not None and isinstance(node.target, ast.Name):
-            self._destination(node).add(node.target.id)
-        self.generic_visit(node)
-
-    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
-        self._destination(node).add(node.target.id)
-        self.generic_visit(node)
-
-    def visit_Import(self, node: ast.Import) -> None:
-        self._bind_import_aliases(node)
-
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        self._bind_import_aliases(node)
-
-    def _bind_import_aliases(self, node: Union[ast.Import, ast.ImportFrom]) -> None:
-        self._destination(node).update(import_binding_names(node))
-
-    def visit_AugAssign(self, node: ast.AugAssign) -> None:
-        # Augmented assignments are always reassignments
-        _add_augassign_target(node.target, self.reassigned_vars)
-        self.generic_visit(node)
-
-    def visit_For(self, node: ast.For) -> None:
-        # For loop variables are initial bindings
-        self.bound_vars.update(stored_names(node.target))
-        self.generic_visit(node)
-
-    def visit_With(self, node: ast.With) -> None:
-        # With statement 'as' clauses create bindings, including unpacked ones
-        for item in node.items:
-            if item.optional_vars:
-                self.bound_vars.update(stored_names(item.optional_vars))
-        self.generic_visit(node)
-
-    def visit_Match(self, node: ast.Match) -> None:
-        # Capture patterns are initial bindings of the enclosing function
-        for case in node.cases:
-            self.bound_vars.update(pattern_capture_names(case.pattern))
-        self.generic_visit(node)
+    for binding in own_scope_bindings([node]):
+        if binding.deleted_on_exit:
+            continue
+        reassigned = binding.reads_first or reassignments.get(binding.node_id, False)
+        (reassigned_vars if reassigned else bound_vars).add(binding.name)
 
 
 def stored_names(target: ast.AST) -> Set[str]:
@@ -379,16 +344,3 @@ def _collect_block_binding_stats(
             node, reassignments, bound_in_block, reassigned_in_block
         )
     return bound_in_block, reassigned_in_block
-
-
-def _add_augassign_target(target: ast.AST, reassigned_vars: Set[str]) -> None:
-    """Track Name targets that appear on the LHS of an augmented assignment."""
-    if isinstance(target, ast.Name):
-        reassigned_vars.add(target.id)
-
-
-def _visit_body_and_orelse(visitor: ast.NodeVisitor, node: ast.AST) -> None:
-    for stmt in getattr(node, "body", []):
-        visitor.visit(stmt)
-    for stmt in getattr(node, "orelse", []):
-        visitor.visit(stmt)

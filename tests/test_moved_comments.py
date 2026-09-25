@@ -493,6 +493,83 @@ def test_an_ignore_over_a_name_that_becomes_an_argument_moves(tmp_path: Path) ->
     )
 
 
+# ty (griffe's only checker) and pyrefly: the audit of 1.772 found their
+# ignores read as plain comments, so the silenced code went to the call site
+# and the ignore stayed in the helper, where it silenced nothing.
+_CHECKER_IGNORES = {
+    "ty": "# ty:ignore[unresolved-attribute]",
+    "pyrefly": "# pyrefly: ignore[missing-attribute]",
+}
+
+_CHECKED = """
+    def first(record, alpha):
+        total = 0{above}
+        total += count({first}){trailing}
+        total = total * 2
+        return total
+
+
+    def second(record, beta):
+        total = 0{above}
+        total += count({second}){trailing}
+        total = total * 2
+        return total
+    """
+
+
+def _checked(ignore: str, placement: str, first: str, second: str) -> str:
+    above = "\n        " + ignore if placement == "own line" else ""
+    trailing = "  " + ignore if placement == "trailing" else ""
+    return _CHECKED.format(above=above, trailing=trailing, first=first, second=second)
+
+
+@pytest.mark.parametrize("placement", ["trailing", "own line"])
+@pytest.mark.parametrize("checker", sorted(_CHECKER_IGNORES))
+def test_a_checker_ignore_over_code_that_becomes_an_argument_declines_the_pair(
+    tmp_path: Path, checker: str, placement: str
+) -> None:
+    """ty and pyrefly apply an ignore on a line of its own to the next line."""
+    source = _checked(_CHECKER_IGNORES[checker], placement, "record.alpha", "record.beta")
+    assert "directive_on_argument" in _declined(tmp_path / "m.py", source)
+
+
+@pytest.mark.parametrize("placement", ["trailing", "own line"])
+@pytest.mark.parametrize("checker", sorted(_CHECKER_IGNORES))
+def test_a_checker_ignore_over_a_name_argument_moves_with_its_code(
+    tmp_path: Path, checker: str, placement: str
+) -> None:
+    ignore = _CHECKER_IGNORES[checker]
+    path = _write(tmp_path, _checked(ignore, placement, "alpha", "beta"))
+    result = _refactor(path)
+    helper = _helper_source(result).split("\n")
+    governed = helper.index(_line_holding("\n".join(helper), "total += count("))
+    if placement == "trailing":
+        assert helper[governed].endswith("  " + ignore)
+    else:
+        assert helper[governed - 1].strip() == ignore
+    assert result.count(ignore) == 1
+    _assert_same_refactoring_without_comments(path, result)
+
+
+def test_an_ignore_above_the_blocks_first_statement_declines_the_pair(tmp_path: Path) -> None:
+    """It would stay above the call, silencing the call and not the helper's line."""
+    source = """
+        def first(record):
+            # pyrefly: ignore[missing-attribute]
+            total = record.alpha.count()
+            total = total * 2
+            return total + 1
+
+
+        def second(record):
+            # pyrefly: ignore[missing-attribute]
+            total = record.alpha.count()
+            total = total * 2
+            return total + 1
+        """
+    assert "directive_around_block" in _declined(tmp_path / "m.py", source)
+
+
 _REGION = """
     def first(values):
         total = 0

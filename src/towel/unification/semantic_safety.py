@@ -31,6 +31,7 @@ import ast
 import builtins
 from itertools import chain
 from typing import (
+    Callable,
     Dict,
     Optional,
     AbstractSet,
@@ -50,6 +51,12 @@ from weakref import WeakKeyDictionary
 
 from .binding_detector import BindingDetector
 from .builtins import BUILTIN_NAMES, PYTHON_BUILTINS
+from .class_private import (
+    function_mangling_classes,
+    is_class_private,
+    mangled,
+    rewritten_identifiers,
+)
 from .definite_assignment import (
     definitely_bound_after,
     definitely_bound_before,
@@ -78,8 +85,8 @@ _PRIVATE_NAME_USE: BoundedCache[str, bool] = BoundedCache(65_536)
 
 Asked of every function that hosts a clustered site, once per proposal
 that clusters into it; the answer depends only on the names the nodes
-spell. Per process; the workers fork after parsing and each keeps its own
-copy.
+spell, which their structure holds. Per process; the workers fork after
+parsing and each keeps its own copy.
 """
 
 
@@ -94,16 +101,19 @@ def uses_class_private_names(nodes: Iterable[ast.AST]) -> bool:
 
 
 def _uses_class_private_names(nodes: Sequence[ast.AST]) -> bool:
-    for statement in nodes:
-        for node in ast.walk(statement):
-            name = (
-                node.id
-                if isinstance(node, ast.Name)
-                else (node.attr if isinstance(node, ast.Attribute) else "")
-            )
-            if name.startswith("__") and not name.endswith("__"):
-                return True
-    return False
+    """Whether the nodes spell a class-private name anywhere the class's mangling rewrites one.
+
+    Every such position counts (``rewritten_identifiers``): a parameter
+    ``__p`` is stored as ``_A__p`` in ``class A`` while a keyword ``__p=``
+    is passed as written, so ``(lambda __p=0: 7)(__p=y)`` raises in a method
+    and returns 7 in a module-level helper.
+    """
+    return any(
+        is_class_private(name)
+        for statement in nodes
+        for node in ast.walk(statement)
+        for name in rewritten_identifiers(node)
+    )
 
 
 def nested_bindings_escape(function: FunctionNode, nodes: Iterable[ast.AST]) -> bool:
@@ -1084,7 +1094,9 @@ def created_object_escapes(
         for child in ast.iter_child_nodes(parent)
     }
     inside = {id(node) for statement in block for node in ast.walk(statement)}
-    context = _CreatedObjectContext(function, parents, inside, shadowable)
+    context = _CreatedObjectContext(
+        function, parents, inside, shadowable, _parameter_storage(analyzer.analyzed_tree, function)
+    )
     for statement in block:
         for node in ast.walk(statement):
             if isinstance(node, (ast.ClassDef, ast.AsyncFunctionDef)):
@@ -1130,6 +1142,9 @@ class _CreatedObjectContext:
     parents: Dict[ast.AST, ast.AST]
     inside: AbstractSet[int]
     shadowable: Optional[FrozenSet[str]]
+    # The name the compiler stores a parameter of a function the block makes
+    # under (see ``_parameter_storage``).
+    stored_as: Callable[[str], Optional[str]]
 
     def _builtin(self, callee: ast.AST, names: FrozenSet[str]) -> Optional[str]:
         """The builtin of ``names`` a callee spells, when nothing in the module can shadow it."""
@@ -1189,13 +1204,13 @@ class _CreatedObjectContext:
         """
         parent = self.parents.get(node)
         if isinstance(parent, ast.Call) and parent.func is node:
-            return _call_binds(arguments, parent)
+            return _call_binds(arguments, parent, self.stored_as)
         if isinstance(parent, ast.keyword) and parent.arg == "key":
             call = self.parents.get(parent)
             return (
                 isinstance(call, ast.Call)
                 and self._builtin(call.func, _KEY_CALLING_BUILTINS) is not None
-                and _binds(arguments, 1, ())
+                and _binds(arguments, 1, (), self.stored_as)
             )
         if isinstance(parent, ast.Call) and parent.args and parent.args[0] is node:
             builtin = self._builtin(parent.func, frozenset({"map", "filter"}))
@@ -1203,7 +1218,7 @@ class _CreatedObjectContext:
             if builtin is None or any(isinstance(item, ast.Starred) for item in iterables):
                 return False
             arity = 1 if builtin == "filter" else len(iterables)
-            return _binds(arguments, arity, ()) and self.consumed(parent)
+            return _binds(arguments, arity, (), self.stored_as) and self.consumed(parent)
         return False
 
     def consumed(self, node: ast.AST, seen: FrozenSet[str] = frozenset()) -> bool:
@@ -1260,27 +1275,75 @@ def _assignment_targets(statement: Union[ast.Assign, ast.AnnAssign]) -> List[ast
     return list(statement.targets) if isinstance(statement, ast.Assign) else [statement.target]
 
 
-def _call_binds(arguments: ast.arguments, call: ast.Call) -> bool:
+def _as_written(name: str) -> Optional[str]:
+    """A parameter's name outside every class body: stored as written."""
+    return name
+
+
+def _parameter_storage(
+    tree: Optional[ast.AST], function: FunctionNode
+) -> Callable[[str], Optional[str]]:
+    """How the compiler stores the parameters of a function or lambda in ``function``'s body.
+
+    A class-private name is mangled with the class whose body holds
+    ``function`` (``function_mangling_classes``), found only when a
+    parameter needs it; without the module's tree, or with a function the
+    tree does not hold, its storage is unknown: None. Every other name is
+    stored as written.
+    """
+
+    def stored_as(name: str) -> Optional[str]:
+        if not is_class_private(name):
+            return name
+        classes = function_mangling_classes(tree) if tree is not None else {}
+        if function not in classes:
+            return None
+        return mangled(name, classes[function])
+
+    return stored_as
+
+
+def _call_binds(
+    arguments: ast.arguments,
+    call: ast.Call,
+    stored_as: Callable[[str], Optional[str]] = _as_written,
+) -> bool:
     """Whether ``call`` binds its arguments to these parameters; unknowable with ``*``/``**``."""
     if any(isinstance(argument, ast.Starred) for argument in call.args):
         return False
     keywords = [keyword.arg for keyword in call.keywords]
     if any(keyword is None for keyword in keywords):
         return False
-    return _binds(arguments, len(call.args), [keyword for keyword in keywords if keyword])
+    return _binds(
+        arguments, len(call.args), [keyword for keyword in keywords if keyword], stored_as
+    )
 
 
-def _binds(arguments: ast.arguments, positional: int, keywords: Sequence[str]) -> bool:
+def _binds(
+    arguments: ast.arguments,
+    positional: int,
+    keywords: Sequence[str],
+    stored_as: Callable[[str], Optional[str]] = _as_written,
+) -> bool:
     """Whether ``positional`` arguments and these keywords bind without a TypeError.
 
     The TypeError a failed binding raises names the function by its
-    qualified name, which a helper changes.
+    qualified name, which a helper changes. A keyword binds the parameter
+    whose name, as the compiler stores it (``stored_as``), is the keyword
+    as written: in a class body a parameter ``__p`` is stored mangled and
+    the keyword ``__p=`` is not (``class_private``), so it does not bind
+    there. A parameter whose storage is unknown binds nothing.
     """
     ordered = [*arguments.posonlyargs, *arguments.args]
     if positional > len(ordered) and arguments.vararg is None:
         return False
-    filled = {argument.arg for argument in ordered[:positional]}
-    by_keyword = {argument.arg for argument in [*arguments.args, *arguments.kwonlyargs]}
+    stored = {
+        argument.arg: stored_as(argument.arg) for argument in [*ordered, *arguments.kwonlyargs]
+    }
+    if any(name is None for name in stored.values()):
+        return False
+    filled = {stored[argument.arg] for argument in ordered[:positional]}
+    by_keyword = {stored[argument.arg] for argument in [*arguments.args, *arguments.kwonlyargs]}
     for keyword in keywords:
         if keyword in by_keyword:
             if keyword in filled:
@@ -1294,7 +1357,7 @@ def _binds(arguments: ast.arguments, positional: int, keywords: Sequence[str]) -
         for argument, default in zip(arguments.kwonlyargs, arguments.kw_defaults)
         if default is None
     ]
-    return all(argument.arg in filled for argument in [*required, *required_keywords])
+    return all(stored[argument.arg] in filled for argument in [*required, *required_keywords])
 
 
 def is_eagerly_evaluable(expression: ast.AST, available: AbstractSet[str]) -> bool:
@@ -1739,9 +1802,16 @@ def _own_scope_locals(function: FunctionNode) -> Set[str]:
         node = pending.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(node.name)
-            pending.extend([*node.decorator_list])
+            # What a definition evaluates where it stands runs in this scope:
+            # decorators, defaults, annotations, bases and keywords.
+            pending.extend(node.decorator_list)
+            if isinstance(node, ast.ClassDef):
+                pending.extend([*node.bases, *node.keywords])
+            else:
+                pending.extend([node.args, *([node.returns] if node.returns else [])])
             continue  # a nested scope binds its own names
         if isinstance(node, ast.Lambda):
+            pending.append(node.args)
             continue
         if isinstance(node, ast.comprehension):
             pending.extend([node.iter, *node.ifs])  # the target is the comprehension's own

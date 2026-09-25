@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Dict, Sequence
 
 from towel.reachability import PROBE
+from towel.type_baseline import IMPORT_PROBE_PREFIX
 from towel.type_inference import RevealKey, RevealRequest
 
 
@@ -28,5 +29,12 @@ def answer_probes(requests: Sequence[RevealRequest]) -> Dict[RevealKey, str]:
 
 
 def only_probes(requests: Sequence[RevealRequest]) -> bool:
-    """Whether ``requests`` ask where the checker looks, and nothing a helper's types need."""
-    return bool(requests) and all(request.expressions == (PROBE,) for request in requests)
+    """Whether ``requests`` ask where the checker looks, or what an import binds, and nothing else.
+
+    Neither is a question a helper's types need.
+    """
+    return bool(requests) and all(
+        request.expressions == (PROBE,)
+        or all(expression.startswith(IMPORT_PROBE_PREFIX) for expression in request.expressions)
+        for request in requests
+    )

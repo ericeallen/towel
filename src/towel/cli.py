@@ -1027,11 +1027,27 @@ def _run_dry(args: argparse.Namespace) -> None:
             oracle.close()
 
 
-IMPORT_PROBLEM_REMEDY = (
-    "Leave out each directory holding a stray copy or a broken import with --exclude"
-    " <directory name> (for example --exclude build), or fix the import."
+STRAY_COPY_REMEDY = (
+    "For a stray copy, or an import that names a module two ways or climbs out of its package:"
+    " leave out the directory holding it with --exclude <directory name> (for example"
+    " --exclude build), or fix the import."
 )
-"""What a user can do about an import problem that leaves a name in doubt."""
+"""What a user can do about a name the project's own tree leaves in doubt."""
+
+INSTALLED_COPY_REMEDY = (
+    "For a copy installed outside the project, which --exclude cannot reach: run Towel from an"
+    " environment where that name is this tree, such as one with the project installed editable"
+    " (pip install -e .), or from one without it; or, if the project's own directory of that"
+    " name is not what the program imports, leave it out with --exclude <directory name>."
+)
+"""What a user can do about a name an installed copy leaves in doubt."""
+
+REQUIRED_DISTRIBUTION_REMEDY = (
+    "For a distribution the project requires, which is what the installed project imports by"
+    " that name: rename the project's directory of that name, or leave it out with --exclude"
+    " <directory name>; if that directory is what the program means, drop the requirement."
+)
+"""What a user can do about a name a distribution the project requires leaves in doubt."""
 
 MISSING_MODULE_OUTSIDE_REMEDY = (
     "Fix the import, or leave its directory out with --exclude <directory name>."
@@ -1084,7 +1100,7 @@ def _judge_import_problems(target: Path, excluded: Sequence[str]) -> None:
             " do not name them unambiguously, so no import of one could be shown to work:\n"
             + "".join(f"  {problem.describe(model.root)}\n" for problem in involved)
             + (f"({others} other problem(s) alone would not stop the run.)\n" if others else "")
-            + IMPORT_PROBLEM_REMEDY
+            + _import_problem_remedies(involved)
         )
     missing = [
         problem
@@ -1097,10 +1113,28 @@ def _judge_import_problems(target: Path, excluded: Sequence[str]) -> None:
             "The program's imports do not name every module unambiguously, so no helper is shared"
             " across the modules these involve:\n%s%s",
             "".join(f"  {problem.describe(model.root)}\n" for problem in in_doubt),
-            IMPORT_PROBLEM_REMEDY,
+            _import_problem_remedies(in_doubt),
         )
     if missing:
         LOG.warning("%s", _missing_module_report(model, missing, target))
+
+
+def _import_problem_remedies(problems: Sequence["ImportProblem"]) -> str:
+    """The remedy for each kind of doubt ``problems`` raise, one line each, in a fixed order.
+
+    ``--exclude`` sets aside a stray copy in the tree, but no installed copy,
+    and a directory named like a distribution the project requires is
+    resolved only by telling the two apart.
+    """
+    from towel.import_model import Doubt
+
+    remedies = {
+        Doubt.TREE: STRAY_COPY_REMEDY,
+        Doubt.INSTALLED: INSTALLED_COPY_REMEDY,
+        Doubt.REQUIRED: REQUIRED_DISTRIBUTION_REMEDY,
+    }
+    present = {doubt for problem in problems for doubt in problem.doubts}
+    return "\n".join(remedies[doubt] for doubt in Doubt if doubt in present)
 
 
 def _missing_module_report(

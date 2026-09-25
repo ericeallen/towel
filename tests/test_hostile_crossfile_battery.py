@@ -17,7 +17,22 @@ prints at import time, which the borrower's own import never ran; the four
 whose borrower rebinds ``len`` (``xf17``, ``xf18``, ``xf19``, ``xf22``); and
 ``xf23_relative_import_in_another_package``, whose subpackages ``pkg.x`` and
 ``pkg.y`` never import each other, so neither may gain an import of the
-other (docs/DECISIONS.md, "Import names come from the program").
+other (docs/DECISIONS.md, "Import names come from the program"); and
+``xf7n_namesake_of_a_required_library``, whose ``zzlib/`` is a namesake of the
+distribution its ``pyproject.toml`` requires.
+
+A fixture that configures an import sorter is refactored with it, as the
+command line would: ``xf7t_import_order_is_registration_order`` holds a
+module the sorter's configuration excludes and one whose imports are not in
+its order, and each import registers a plugin.
+
+Three ``xf7n_`` fixtures are projects whose ``run.py`` runs the program as
+it ships rather than from the tree, since only there does their defect
+show: the namesake imports ``zzapp`` beside the installed ``zzlib``;
+``xf7n_host_the_wheel_leaves_out`` and ``xf7n_subpackage_the_wheel_leaves_out``
+import ``shop`` without the module hatch, or the subpackage setuptools,
+leaves out of the wheel. Their modules left out may borrow from the ones
+that ship, never the reverse.
 
 A package runs with ``--cross-module`` unless ``WITHOUT_CROSS_MODULE`` names
 it: then only duplicates within a module are paired, as ``towel dry`` pairs
@@ -45,7 +60,7 @@ from tests.audit_defects import (
     P1_6_TOP_LEVEL_INSIDE_PACKAGE,
     P1_7_READ_BEFORE_BIND,
 )
-from tests.hostile_execution import observe
+from tests.hostile_execution import module_faces, observe
 from tests.hostile_refactoring import refactor_package, with_known_defects
 from tests.test_cli_integration import invoke
 
@@ -73,6 +88,19 @@ TRANSFORMED = {
     "xf27_registration_decorator_in_host",
     "xf28_registration_decorator_in_reused_module",
     "xf29_type_checking_block_with_branches",
+    # The host's new binding for its annotations is private, so no module that
+    # star-imports it takes a typing name in place of its own Any or Callable:
+    # a sibling (xf30), the package's __init__ (xf31), a module outside the
+    # package the run was given (xf32).
+    "xf30_star_importer_takes_a_typing_name",
+    "xf31_package_init_star_imports_a_matcher_named_any",
+    "xf32_star_importer_outside_the_target",
+    # Only the benign module's twins; the rebinding hazard in the other keeps
+    # its code (round-3 audit, P1-1).
+    "xf7c_rebinding_enclosing_function_beside_a_twin_in_another_module",
+    "xf7t_import_order_is_registration_order",
+    "xf7n_host_the_wheel_leaves_out",
+    "xf7n_subpackage_the_wheel_leaves_out",
     # The round-3 audit's families (xf7fz_<family>_<case>): a sample of the
     # cross-module cases the audit found sound, every one transformed.
     "xf7fz_binding_x_class_level_name",
@@ -93,6 +121,7 @@ REJECTED = {
     "xf19_builtin_shadowed_by_borrower_local",
     "xf22_borrower_rebinds_builtins_namespace",
     "xf23_relative_import_in_another_package",
+    "xf7n_namesake_of_a_required_library",
 }
 
 TYPED = frozenset(
@@ -159,6 +188,17 @@ def _run(root: Path) -> tuple[int, str, list[str]]:
     return observe("run.py", root)
 
 
+def _modules(root: Path) -> list[str]:
+    """Every module of the fixture but its script, ``run.py``, by the name it is imported under."""
+    names = []
+    for path in sorted(root.rglob("*.py")):
+        parts = path.relative_to(root).with_suffix("").parts
+        if parts == ("run",):
+            continue
+        names.append(".".join(parts[:-1] if parts[-1] == "__init__" else parts))
+    return names
+
+
 @pytest.mark.parametrize(
     "case",
     with_known_defects(
@@ -180,6 +220,10 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
         transformed = _python_files(after) != _python_files(before)
         assert transformed == (sum(applied for applied, _ in results.values()) > 0)
         assert _run(after) == _run(before)
+        if transformed:
+            # No module's public names appear, disappear, or change meaning.
+            modules = _modules(before)
+            assert module_faces(after, modules) == module_faces(before, modules)
         if case not in KNOWN_DEFECTS:
             assert transformed == (case in TRANSFORMED), (
                 "rejected" if not transformed else "transformed"

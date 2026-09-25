@@ -121,7 +121,8 @@ flowchart TD
       directives the two blocks do not carry alike, or whose reach the
       moved code or its call would leave (`directives_differ`,
       `directive_on_argument`, `directive_outlives_block`,
-      `directive_around_block`, `excluded_block_start`; see *Comments of
+      `directive_around_block`, `excluded_block_start`,
+      `directive_on_shared_line`; see *Comments of
       moved code*), and a further site that differs from them in its
       directives does not join;
    10. placement: function, class, or module, and a host module that closes
@@ -207,7 +208,12 @@ Each parameter is passed in the way that preserves the original evaluation:
   original evaluated twice, or not at all on some path, is evaluated the same
   number of times under the same conditions. As an optimization, a thunk the
   helper would evaluate first, once, and unconditionally is passed eagerly
-  instead, because nothing can observe the difference.
+  instead, because nothing can observe the difference. "First" means that
+  every step before it can neither run code nor raise, by an allowlist over
+  the expression forms (`thunk_inlining.effect_free`): a name read is such a
+  step only for a helper parameter or a name the helper already bound, and
+  hashing an element that is not a constant, `*`, `**` and target unpacking
+  are effects.
 - **Lifted.** An expression that reads a name bound *inside* the block is
   lambda-lifted [Johnsson 1985]: the lambda takes those names as arguments so it still refers
   to the block-local values, not to whatever the helper's scope binds.
@@ -234,8 +240,12 @@ actual arguments back into the helper body, alpha-normalizes both it and the
 original block (binders renamed to positional placeholders, i.e. compared up to
 alpha-equivalence [Church 1936; Barendregt 1984], annotations
 replaced by a placeholder because they are inert at runtime), and requires the
-two to be structurally identical. A proposal is offered only if this holds for
-**every** call site. This is the property that makes the transformation safe to
+two to be structurally identical. Alpha-equivalence is observational only
+where no read can find a renamed binder unbound, since `UnboundLocalError` and
+`NameError` carry the name; `observable_renamings` walks the block in
+evaluation order and declines a call site where one can, or where a `global`
+or `nonlocal` declaration names the binder. A proposal is offered only if this
+holds for **every** call site. This is the property that makes the transformation safe to
 apply after review: the helper, called as written, reduces to the exact code it
 replaced. A mismatch — from a subtle scoping or parameterization error — drops
 the proposal rather than emitting it.
@@ -323,8 +333,10 @@ a helper could change behavior even if the shapes match:
   or binds `__class__`, is declined here, since no helper would read the
   same receiver and cell. `super(C, obj)`, which names both, is an ordinary
   call.
-- **Binding discipline.** A block that deletes, rebinds, or `except ... as`
-  binds a name the caller keeps using; a moved `global`/`nonlocal`
+- **Binding discipline.** A block that deletes, rebinds (by any binding
+  construct: a `for` or `with` target, a capture, a nested `def`), or
+  `except ... as` binds a name the caller keeps using, or that reads a local
+  before binding it; a moved `global`/`nonlocal`
   declaration; a comprehension assignment expression that would bind in the
   wrong scope.
 - **Closures.** A nested function or lambda in the block that shares a rebound
@@ -519,16 +531,19 @@ the CI never checks, in checkers no CI step runs, or came from checking
 without the CI's flags. `KnownErrors.introduced` compares a file that no
 change has touched by file, line and message, since its lines cannot have
 moved. A file a change has touched is aligned with the text the reference was
-checked against (`unchanged_lines`, a line diff, so it holds whatever wrote the
-lines, formatter and import sorter included): an error on a line the change
-left alone must match the reference's on that line, wherever it now stands,
-and the errors on the lines the change wrote are compared by message, as a
-multiset, with the reference's on the lines it replaced, which is where a
-duplicated block's error moves into the helper from. However the diff pairs
-the lines, an error is new whenever its message appears more often than before
-in its file, so the alignment rejects more than a comparison by message would,
-never less. A message that embeds a line reappears as new when its line moves,
-so it fails closed. The reference follows the project. When a driver
+checked against by a line diff, so it holds whatever wrote the lines,
+formatter and import sorter included, in which the copies the change replaced
+and the helper it wrote pair with nothing: the change's `ChangeShape`, which
+materialization passes along, says where they are. An error on a line the
+change left alone must match the reference's on that line, wherever it now
+stands. An error in the helper must match, by message, the reference's error
+at the same statement of one copy of the block, statements counted in order
+through the copy and the helper's body; one copy's errors account for the
+helper's, each once, so merging two copies frees the other's errors to
+account for nothing. Any other error on a line the change wrote, a call site
+among them, must match one on the lines the same stretch of the diff replaced.
+Where either text is unknown, every error of the file is new. A message that
+embeds a line reappears as new when its line moves, so it fails closed. The reference follows the project. When a driver
 writes a change, `_follow_the_written_change` makes that change's own check
 the reference, once the files hold what was checked, so an error one change
 removed cannot be spent by the next; against the original's errors it could
@@ -818,12 +833,24 @@ and the rewritten call statements are formatted, never the surrounding
 file, and every formatter is wrapped by `checked`, which compares each
 snippet's syntax tree before and after and raises if formatting changed
 it. A `FileFinisher` sorts the imports of each modified file the way the
-project does, with ruff's `I` rules when selected or isort when configured;
-`imports_permuted_only` accepts only reordering or merging within consecutive
-import runs in the same statement list, preserving each bound name's ordered
-providers. Wildcard imports, future imports and other statements are barriers;
-otherwise the file stays as Towel assembled it. Independent imports can still
-have order-sensitive initialization, which this binding check cannot model. The tools are optional (`code-towel[format]`);
+project does, with ruff's `I` rules when selected or isort when configured.
+An import runs its module where it stands, so the order of a file's own
+imports is the order of their import-time effects, which no binding check
+can show to commute; the finisher therefore moves only the imports Towel
+added. It runs the tool only on a file the tool's own configuration selects
+(`--force-exclude` for ruff; isort's skip settings, directories included),
+judged for the project's file rather than the run's staged copy
+(`_counterpart`), and only on a file whose text before the change the tool
+already leaves unchanged, where the file's own imports are in the tool's
+order (`sort_added_imports`). The result must permute or merge only
+consecutive imports within one statement list, preserving each bound name's
+ordered providers, with wildcard imports, future imports and other
+statements as barriers, and must bind the file's own imports in their
+original order; otherwise the file stays as Towel assembled it, and a file
+left unsorted is logged once. The formatters leave the code they are given
+unformatted where their configuration excludes the path the run was given
+(`--force-exclude` for `ruff format`; Black's `exclude`, `extend-exclude`,
+`force-exclude`). The tools are optional (`code-towel[format]`);
 without them code is inserted as rendered, and the CLI says so.
 
 ## Comments of moved code
@@ -853,14 +880,21 @@ may reach code of some site's, other than a name or a literal, that becomes
 an argument and so is written at the call site, where the directive does
 not reach (`directive_on_argument`: its line, the statement or clause a
 coverage pragma or pylint `disable` covers, the statement after a
-`noinspection`, a region's span); a coverage pragma or pylint `disable` on the
-header of a statement enclosing the block, or a `pylint: disable` earlier in
-an enclosing body, governs every site and would not reach the helper where
-placement writes it (`directive_around_block`, decided with the proposal);
+`noinspection`, the next line of code after an ignore on a line of its own,
+which ty, ruff, pyre, pyrefly, Semgrep and Fixit apply there, a region's
+span); an ignore on a line of its own above a block would stay above its
+call and govern that instead (`directive_around_block`); a coverage pragma
+or pylint `disable` on the header of a statement enclosing the block, or a
+`pylint: disable` earlier in an enclosing body, governs every site and
+would not reach the helper where placement writes it
+(`directive_around_block`, decided with the proposal);
 a block whose first statement coverage excludes would become a measured call
 (`excluded_block_start`), where what coverage excludes is every line the
 project's own coverage.py configuration's regexes match, read as coverage.py
-reads it (`coverage_config.py`); and a region directive (`fmt: off`, `isort:
+reads it (`coverage_config.py`); a directive, or a coverage exclusion, on a
+line the block shares with a statement that stays at the call site governs
+that statement too, and the splice would part them
+(`directive_on_shared_line`); and a region directive (`fmt: off`, `isort:
 off`, a `pylint: disable` on a line of its own) must close within the block,
 and a file-wide one (`flake8: noqa`, `mypy:`) must stay in its module
 (`directive_outlives_block`). A clustered site whose directives differ is
@@ -1153,17 +1187,27 @@ measure is exact and changes no proposal.
   where the parser sets them empty, and `ast.dump` spells the two
   differently. Every comparison, hash and key built from a tree's structure
   goes through it, so a helper, an annotation or a reduced body Towel built
-  compares as the tree the parser would build. All the engine's id-keyed
-  caches — guard verdicts, unification results, the clustering pipeline, per-block
-  analyses — are keyed by structural id, so a fixed-point iteration that
-  re-parses a file still reuses results for the blocks it did not change.
-  Those id-keyed caches are `BoundedCache` instances (`bounded_cache.py`,
+  compares as the tree the parser would build. Unification results, and
+  the memos of analyses that read nothing but the code they are given
+  (orphans, the instantiation check, the class-private-name scan), are
+  keyed by structural id, so a fixed-point iteration that re-parses a file
+  still reuses them for the blocks it did not change. Block guards and
+  per-block analyses read more than the block: the scopes around its
+  function and the module's hazards and aliases, what is bound before and
+  after it, whether a loop holds it. They are keyed by the block's site
+  (`BlockSite`: the digest of its module's source, the positions of its
+  function and first statement, and its length), which a block of the same
+  code elsewhere does not share; keyed by structure, a benign copy's
+  verdict answered for a hazardous one (the round-3 audit's P1-1). A
+  clustering scan is keyed by the file's digest and the template.
+  These caches are `BoundedCache` instances (`bounded_cache.py`,
   an LRU mapping; `STRUCTURAL_CACHE_LIMIT`, 250,000 entries); every cache keyed by a node
   (structural ids, signed blocks, value-producing verdicts, used names,
   assignment analyses, and the per-statement memos below) is a
   `WeakKeyDictionary` whose entries vanish with their tree, so a file the
-  analysis session has dropped is not pinned. A pair's four ids are
-  resolved once, in its `_PairContext`, and passed to every guard.
+  analysis session has dropped is not pinned. A pair's two sites are
+  resolved once, in its `_PairContext`, and passed to every guard and
+  per-block analysis.
   `structural_memo.py` stores a unification result as positions and
   rehydrates it onto the matching re-parsed block.
 - **Shared analysis graphs.** Each engine owns an `AnalysisSession`
@@ -1434,6 +1478,7 @@ but the ideas and their names are from the literature.
 | Binding-aware type terms and scoped type parameters | `type_bindings.py` |
 | Signature anti-unification and fresh generic candidates | `type_generalization.py`, `generic_annotations.py` |
 | Materialization and the arity check | `materialize.py` |
+| Writing a call in place of exactly its block's text | `splicing.py` |
 | Clustering further call sites | `clustering.py` |
 | Fork-based parallel evaluation | `parallel.py` |
 | Fixed-point drivers and the frame-sensitivity warning | `fixed_point.py` |
