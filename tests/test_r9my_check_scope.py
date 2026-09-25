@@ -35,6 +35,7 @@ and each candidate's, is built alike from that:
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import textwrap
 from typing import Mapping, Sequence
@@ -101,6 +102,46 @@ TAXES = """\
         rounded = round(taxed, 2)
         return rounded - taxed + subtotal
     """
+
+
+@requires_mypy
+def test_r9my_the_baseline_and_a_candidate_are_built_from_the_same_targets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A candidate's check is given every module of the target, restated; the baseline, the analyzed ones."""
+    from towel import _mypy_worker as worker
+
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": '[project]\nname = "demo"\nversion = "0"\n',
+            "tests/__init__.py": "",
+            "tests/test_tool.py": BUMP_TESTS,
+            "scripts/tool.py": "def bump(version: str) -> str:\n    return version\n",
+            "docs/example.py": "import tests.test_tool\n",
+        },
+    )
+    monkeypatch.chdir(tmp_path)
+    options = worker._options(tmp_path, None, str(tmp_path / "cache"), probe=False).options
+    run = worker._sources_of_the_projects_run(options, tmp_path)
+    analyzed = {str(tmp_path / name) for name in ("tests/__init__.py", "tests/test_tool.py")}
+    judged = worker._judged_by_the_project(
+        options, tmp_path, run, {os.path.realpath(path) for path in analyzed}
+    )
+    texts = {str(path): path.read_text(encoding="utf-8") for path in tmp_path.rglob("*.py")}
+    test = str(tmp_path / "tests" / "test_tool.py")
+    consumer = [str(tmp_path / "docs" / "example.py")]
+
+    def built(replacements: Mapping[str, str], given: Mapping[str, str]) -> list[str]:
+        sources = worker._build_sources(
+            replacements, given, options, tmp_path, True, {}, consumer, run=run, judged=judged
+        )
+        return sorted(str(source.path) for source in sources)
+
+    baseline = built({path: texts[path] for path in analyzed}, {})
+    changed = texts[test] + "\n\nEXTRA: int = 1\n"
+    candidate = built({**texts, test: changed}, {test: changed})
+    assert baseline == candidate == sorted(analyzed)
 
 
 @requires_mypy

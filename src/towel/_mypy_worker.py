@@ -888,7 +888,7 @@ def _judged_by_the_project(
 
     def judged(path: str) -> bool:
         candidate = Path(path)
-        if targets is not None and os.path.realpath(path) not in targets:
+        if targets is not None and not _among(os.path.realpath(path), targets):
             return False
         if not candidate.is_relative_to(root) or any(
             candidate.is_relative_to(other) for other in nested
@@ -903,6 +903,15 @@ def _judged_by_the_project(
         )
 
     return judged
+
+
+def _among(path: str, targets: AbstractSet[str]) -> bool:
+    """Whether a resolved ``path`` is one of the run's ``targets``, or the stub of one.
+
+    mypy's walk of a target directory keeps the stub beside a module, and the
+    build puts that stub in the module's place (:func:`_as_the_project_resolves`).
+    """
+    return path in targets or (path.endswith(".pyi") and path[:-1] in targets)
 
 
 class _Followed(enum.Enum):
