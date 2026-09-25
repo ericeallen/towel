@@ -889,11 +889,10 @@ class MypyInferrer:
         """
         errors: List[TypeDiagnostic] = []
         reported: set[str] = set()
-        every: Dict[str, str] = {}
-        for grouped in _source_groups(sources, "mypy").values():
-            every.update(grouped)
+        groups = _source_groups(sources, "mypy")
+        every = {path: text for grouped in groups.values() for path, text in grouped.items()}
         with self._lock:
-            self._group_roots.update(_source_groups(sources, "mypy"))
+            self._group_roots.update(groups)
             known = sorted(self._group_roots)
         for root in known:
             nested = (
