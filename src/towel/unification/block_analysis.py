@@ -38,6 +38,7 @@ from typing import (
     Callable,
     Dict,
     FrozenSet,
+    Iterable,
     List,
     Optional,
     Sequence,
@@ -54,6 +55,7 @@ from .assignment_analyzer import (
 )
 from .block_signature import BlockSignature, extract_block_signature
 from .extractor import has_complete_return_coverage, is_value_producing
+from .function_scope import scope_moving_names
 from .models import (
     BlockBindingSnapshot,
     CodeBlockPair,
@@ -546,6 +548,26 @@ class BlockAnalysis(EngineState):
             "own_scope_locals", lambda: own_scope_locals(function), site=site
         )
         return local
+
+    def _moves_only_binding(
+        self,
+        function: FunctionNode,
+        block: Sequence[ast.stmt],
+        rebound_by_call: Iterable[str],
+        *,
+        site: Optional[BlockSite],
+    ) -> FrozenSet[str]:
+        """The names whose scope in ``function`` moving ``block`` would change.
+
+        These are the names only the block makes local that the function's
+        other code reads (``scope_moving_names``), less those the call that
+        replaces the block assigns, which stay local to the function. The
+        first part is the site's alone and is computed once per site.
+        """
+        moving: FrozenSet[str] = self._per_block(
+            "scope_moving_names", lambda: scope_moving_names(function, block), site=site
+        )
+        return moving - frozenset(rebound_by_call)
 
     def _build_block_binding_snapshot(
         self,

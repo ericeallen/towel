@@ -48,7 +48,7 @@ from .instantiation import instantiation_mismatch
 from .models import FunctionArtifact, FunctionNode, RejectReason, Replacement
 from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
-from .statement_facts import statement_shape
+from .statement_facts import bindings_of, statement_shape
 from .substitution import Substitution
 from .decorator_reach import ModuleSource, decorator_refusal
 from .semantic_safety import (
@@ -234,6 +234,15 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         # A ``super()`` the call itself holds runs in a thunk or in the helper,
         # neither of which reads the method's receiver and cell (``SUPER_IN_CALL``).
         if needs_class_body([call_node2]):
+            return None
+        # The candidate's other code must not lose the only binding of a name
+        # it reads, unless the call binds it again (``MOVES_ONLY_BINDING``).
+        if self._moves_only_binding(
+            candidate.function,
+            candidate.nodes,
+            bindings_of(call_node2, into_nested_scopes=False),
+            site=candidate.site,
+        ):
             return None
         # A clustered block reading a builtin cannot join a helper whose sites
         # pass their own local of that name: its call would hand over the

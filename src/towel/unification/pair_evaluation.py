@@ -60,7 +60,7 @@ from .decorator_reach import (
     decorator_refusal,
 )
 from .definite_assignment import definitely_bound_after
-from .statement_facts import loaded_names
+from .statement_facts import bindings_of, loaded_names
 from .assignment_analyzer import (
     has_reassignments_without_bindings,
     own_scope_bindings,
@@ -1367,6 +1367,21 @@ class PairEvaluation(
             return None
         function = setup.ctx.func1 if block_idx == 0 else setup.ctx.func2
         site = setup.ctx.site1 if block_idx == 0 else setup.ctx.site2
+        # Python makes a name local to a function if any of its code binds it.
+        # Where the block holds the function's only binding of a name, the
+        # rest of the function would read the name somewhere else once the
+        # block moves, a module name or a builtin where it raised
+        # ``UnboundLocalError``, unless the call statement binds it again.
+        moving = self._moves_only_binding(
+            function, nodes, bindings_of(call_node, into_nested_scopes=False), site=site
+        )
+        if moving:
+            self._debug_reject(
+                RejectReason.MOVES_ONLY_BINDING,
+                pair,
+                detail=f"block{block_idx+1}: {sorted(moving)}",
+            )
+            return None
         if thunk_reads_possibly_unbound_local(
             call_node, self._own_scope_locals(function, site), free.available_names[block_idx]
         ):

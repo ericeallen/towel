@@ -169,6 +169,9 @@ REJECTED = {
     # A test module's assert would move to a module pytest does not rewrite,
     # and the AssertionError pytest reports would lose its explanation.
     "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite",
+    # Round-4 audit P1-04 across modules: each block holds its function's only
+    # binding of total, read on the early return (moves_only_binding).
+    "xf9bd_only_binding_across_modules",
 }
 
 TYPED = frozenset(

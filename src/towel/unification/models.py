@@ -313,6 +313,7 @@ class RejectReason(StrEnum):
     INSTANTIATION_MISMATCH = "instantiation_mismatch"
     MIXED_RETURN_AND_VARIABLES = "mixed_return_and_variables"
     MODULE_DATA_LOOKUP = "module_data_lookup"
+    MOVES_ONLY_BINDING = "moves_only_binding"
     MOVES_SCOPE_DECLARATION = "moves_scope_declaration"
     NARROWING_LOST_AT_CALL_SITE = "narrowing_lost_at_call_site"
     NEEDS_CLASS_BODY = "needs_class_body"

@@ -38,6 +38,9 @@ body never evaluates; ``NameCollector`` must read what the function's own
 scope, its lambdas, comprehensions and class bodies read. A disagreement is
 the defect class behind the bindings audit: a ``for`` target, capture or
 nested ``def`` not seen as rebinding, a ``+=`` or ``del`` not seen as a read.
+And ``scope_moving_names`` must name, for a block of the function, exactly
+the names the function stops holding as locals once the block is gone that
+its remaining code still reads through it (the round-4 audit's P1-04).
 
 Three normalizations keep the oracle version-proof, and each is narrow:
 Python 3.12 inlines list, set and dict comprehensions into the function's
@@ -54,6 +57,7 @@ from __future__ import annotations
 import ast
 import dis
 import random
+import re
 import symtable
 import sys
 import types
@@ -70,6 +74,7 @@ from towel.unification.assignment_analyzer import (
     scope_declarations,
 )
 from towel.unification.definite_assignment import locally_bound_names
+from towel.unification.function_scope import scope_moving_names
 from towel.unification.parameters import parameter_names
 from towel.unification.semantic_safety import own_scope_locals
 from towel.unification.statement_facts import bindings_of, loaded_names
@@ -793,3 +798,158 @@ def test_free_names_are_the_symbol_tables(index: int) -> None:
             scope_declarations(case.function) & outer_names
         )
         assert towel == free & outer_names, _explain(case, "free names")
+
+
+# -- the names a block alone makes local ---------------------------------------------
+
+
+def _statement_lists(function: ast.AST) -> Iterator[List[ast.stmt]]:
+    """Every list of statements of ``function``'s own scope, its body first."""
+    pending: List[ast.AST] = [function]
+    while pending:
+        node = pending.pop()
+        for field in ("body", "orelse", "finalbody"):
+            statements = getattr(node, field, None)
+            if isinstance(statements, list) and statements and isinstance(statements[0], ast.stmt):
+                yield statements
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.ExceptHandler, ast.match_case)) or (
+                isinstance(child, ast.stmt)
+                and not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            ):
+                pending.append(child)
+
+
+def _blocks(function: ast.AST) -> Iterator[List[ast.stmt]]:
+    """Each statement, and each whole list of statements longer than one."""
+    for statements in _statement_lists(function):
+        for start in range(len(statements)):
+            yield statements[start : start + 1]
+        if len(statements) > 1:
+            yield statements
+
+
+def _without(case: _Case, block: List[ast.stmt]) -> str:
+    """The case's source with the block's lines replaced by ``pass``, one per line."""
+    lines = case.source.splitlines()
+    first = min(
+        node.lineno for node in ast.walk(block[0]) if isinstance(node, (ast.stmt, ast.expr))
+    )
+    last = block[-1].end_lineno or block[-1].lineno
+    indent = " " * block[0].col_offset
+    return "\n".join([*lines[: first - 1], *[indent + "pass"] * (last - first + 1), *lines[last:]])
+
+
+def _function_table(source: str) -> symtable.SymbolTable:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        table = symtable.symtable(source, "<generated>", "exec")
+    outer = next(child for child in table.get_children() if child.get_name() == "outer")
+    return next(child for child in outer.get_children() if child.get_name() == "f")
+
+
+_OUTWARD_ACCESS = frozenset(
+    {
+        "LOAD_GLOBAL",
+        "LOAD_NAME",
+        "LOAD_DEREF",
+        "LOAD_CLASSDEREF",
+        "LOAD_FROM_DICT_OR_DEREF",
+        "LOAD_FROM_DICT_OR_GLOBALS",
+        "DELETE_GLOBAL",
+        "DELETE_DEREF",
+        "DELETE_NAME",
+        "STORE_DEREF",
+    }
+)
+"""Accesses of a name that is not the code object's own fast local."""
+
+
+def _read_by_own_code(source: str) -> Set[str]:
+    """What ``f``'s own code object looks up outside itself: annotations it never evaluates are absent."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        code = compile(source, "<generated>", "exec", dont_inherit=True)
+    outer = next(c for c in code.co_consts if isinstance(c, types.CodeType))
+    function = next(
+        c for c in outer.co_consts if isinstance(c, types.CodeType) and c.co_name == "f"
+    )
+    return {
+        name
+        for instruction in _instructions(function)
+        if instruction.opname in _OUTWARD_ACCESS
+        for name in _names(instruction.argval)
+    }
+
+
+def _read_by_nested_scopes(table: symtable.SymbolTable, name: str) -> bool:
+    """Whether a scope nested in ``table`` reads ``name`` from it or past it, not binding it itself."""
+    for child in table.get_children():
+        kind = str(getattr(child.get_type(), "value", child.get_type()))
+        own = False
+        if name in child.get_identifiers():
+            symbol = child.lookup(name)
+            own = symbol.is_local() or symbol.is_declared_global()
+            if not own and (symbol.is_referenced() or symbol.is_nonlocal()):
+                return True
+        # A class body's own name hides nothing from the functions in it.
+        if (not own or kind == "class") and _read_by_nested_scopes(child, name):
+            return True
+    return False
+
+
+def _names_losing_their_scope(case: _Case, block: List[ast.stmt]) -> FrozenSet[str]:
+    """CPython's answer: locals of ``f`` that ``f`` without the block no longer has, and still reads.
+
+    A ``nonlocal`` left with no binding does not compile, and so answers with
+    its name; ``outer`` then binds the name, and the rest is asked again.
+    """
+    source = _without(case, block)
+    orphaned: Set[str] = set()
+    while True:
+        try:
+            table = _function_table(source)
+            break
+        except SyntaxError as error:
+            found = re.search(r"no binding for nonlocal '(\w+)'", str(error))
+            assert found, error
+            orphaned.add(found.group(1))
+            source = source.replace(
+                "def outer(o0, n0):\n", f"def outer(o0, n0):\n    {found.group(1)} = None\n", 1
+            )
+    lost = {
+        symbol.get_name()
+        for symbol in case.table.get_symbols()
+        if symbol.is_local()
+        and not (
+            symbol.get_name() in table.get_identifiers()
+            and table.lookup(symbol.get_name()).is_local()
+        )
+    } - _inlined_comprehension_names()
+    own_reads = _read_by_own_code(source) if lost else set()
+    return frozenset(
+        name for name in lost if name in own_reads or _read_by_nested_scopes(table, name)
+    ) | frozenset(orphaned)
+
+
+def test_r9bd_the_names_a_block_alone_makes_local_are_the_symbol_tables() -> None:
+    """``scope_moving_names`` of every block agrees with CPython on the function without it.
+
+    Each statement and each whole statement list of every generated
+    function is a block. CPython compiles
+    the function with the block's lines replaced by ``pass``: a local of the
+    function that is no longer one, and that its code or a nested scope not
+    binding it still reads, is a name whose scope moving the block changes.
+    """
+    checked = named = 0
+    comprehension_targets = set(COMPREHENSION_TARGETS)
+    for case in _CASES:
+        for block in _blocks(case.function):
+            expected = _names_losing_their_scope(case, block)
+            found = scope_moving_names(case.function, block) - comprehension_targets
+            first, last = block[0].lineno, block[-1].end_lineno
+            assert found == expected, _explain(case, f"lines {first}-{last}")
+            checked += 1
+            named += bool(expected)
+    # The generator reaches the cases the function exists for.
+    assert checked > 4000 and named > 400, (checked, named)

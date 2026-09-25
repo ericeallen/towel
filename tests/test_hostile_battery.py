@@ -337,6 +337,16 @@ TRANSFORMED = {
     # A TestCase, read to be built by type, takes the class-private helper, which
     # neither unittest nor pytest collects as a test.
     "r7d_method_helper_in_a_testcase",
+    # Round-4 audit, P1-04: a block holding its function's only binding of a
+    # name the function reads elsewhere is declined, since the name would stop
+    # being local (r9bd_only_binding_read_before_block, the audit's reproducer;
+    # r9bd_only_binding_deleted_read_after; r9bd_type_alias_only_binding). In
+    # these, only the code after each binding moves, and the binding stays.
+    "r9bd_only_binding_every_binder",
+    "r9bd_only_binding_read_by_nested_scopes",
+    # The controls: the call assigns the name back, and a comprehension's own
+    # target of the same spelling reads nothing of the function's.
+    "r9bd_only_binding_kept_local",
 }
 # r7fz_classhost_init_subclass_wraps and r7fz_classhost_metaclass_registry,
 # which the round-3 audit found extracted soundly, are declined since code
