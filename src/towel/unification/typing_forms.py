@@ -122,6 +122,13 @@ class _ModuleFacts:
         default_factory=dict, init=False, repr=False, compare=False, hash=False
     )
     """``local_forms`` per spelling: a pure function of the source, living as long as these facts."""
+    _origins: Dict[Tuple[str, int], Tuple[FrozenSet[str], bool]] = field(
+        default_factory=dict, init=False, repr=False, compare=False, hash=False
+    )
+    """``origins`` per name and depth, pure like ``_local``. A function-body alias of a name to
+    itself (``tok = tok.next_token``) sends the recursion back to that name at every level, once
+    per binding of it, so without this the calls grow as the bindings' count to the power of
+    ``_MAX_DEPTH``: 1.7 billion on yapf, nearly all of one analysis."""
 
     def local_forms(self, spelling: str) -> Tuple[FrozenSet[str], bool]:
         """What ``spelling`` denotes as this module binds it, and whether an import must be followed."""
@@ -149,6 +156,12 @@ class _ModuleFacts:
         absolutely: a relative import, which only the importing file's place
         in the project resolves.
         """
+        known = self._origins.get((head, depth))
+        if known is None:
+            known = self._origins[(head, depth)] = self._origins_of(head, depth)
+        return known
+
+    def _origins_of(self, head: str, depth: int) -> Tuple[FrozenSet[str], bool]:
         found = set(self.globals.possible_origins(head))
         opaque = any(
             binding.is_import and binding.origin is None
