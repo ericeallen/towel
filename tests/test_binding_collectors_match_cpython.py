@@ -648,6 +648,44 @@ def test_locals_and_declarations_are_the_symbol_tables(index: int) -> None:
         assert scope_declarations(case.function) == declared, _explain(case, "scope_declarations")
 
 
+def test_the_engines_kept_locals_are_the_symbol_tables(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One engine answers for every generated function from its cache, keyed by block site.
+
+    Every generated ``f`` stands at the same line and column of its module,
+    and its first statement at the same place, so only the module's digest
+    in the key tells them apart: a key that dropped a dependency would hand
+    one function's locals to the next, and CPython would disagree. Each is
+    asked twice and computed once per site.
+    """
+    from towel.unification import block_analysis
+    from towel.unification.engine_state import BlockSite
+    from towel.unification.models import source_digest_of
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+
+    computed: List[str] = []
+
+    def counted(function: ast.FunctionDef | ast.AsyncFunctionDef) -> FrozenSet[str]:
+        computed.append(function.name)
+        return own_scope_locals(function)
+
+    monkeypatch.setattr(block_analysis, "own_scope_locals", counted)
+    engine = UnificationRefactorEngine()
+    for case in _CASES:
+        first = case.function.body[0]
+        site = BlockSite(
+            source_digest_of(case.source),
+            (case.function.lineno, case.function.col_offset),
+            (first.lineno, first.col_offset, len(case.function.body)),
+        )
+        expected = _cpython_locals(case)
+        for _ in range(2):
+            kept = engine._own_scope_locals(case.function, site)
+            assert kept == expected, _explain(case, "_own_scope_locals, kept per block site")
+    # Once per site: the generator writes one function twice, and the second
+    # copy is the same module, so the same site, and is answered from the cache.
+    assert len(computed) == len({case.source for case in _CASES})
+
+
 @pytest.mark.parametrize("index", range(0, FUNCTIONS, 50))
 def test_the_reassignment_analysis_sees_every_store(index: int) -> None:
     for case in _CASES[index : index + 50]:
