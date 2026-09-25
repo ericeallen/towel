@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Hashable, Iterator, List, Sequence, Tuple
 
+from tests.hostile_execution import fixture_sources
 from towel.diagnostics import REJECTIONS
 from towel.unification.bounded_cache import memoization_disabled
 from towel.unification.models import proposal_identity
@@ -145,13 +146,13 @@ def _generated() -> Iterator[_Case]:
 
 
 def _hostile() -> Iterator[_Case]:
-    for path in sorted(HOSTILE.glob("*.py")):
+    for path in fixture_sources(HOSTILE):
         source = path.read_bytes()
         try:
             ast.parse(source)
         except SyntaxError:
             continue  # syntax this Python does not have
-        yield _Case(path.stem, ((path.name, source),))
+        yield _Case(path.stem, ((f"{path.stem}.py", source),))
 
 
 class _Trace(logging.Handler):

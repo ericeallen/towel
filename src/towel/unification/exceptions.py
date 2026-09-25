@@ -141,6 +141,18 @@ class AmbiguousImportsError(TowelError):
     """
 
 
+class UnparsedProgramError(TowelError, ValueError):
+    """A file of the program does not parse on the Python Towel runs on, so the run refuses.
+
+    Towel reads the whole program for what could make a change unsafe, and a
+    file it cannot parse may still run on a newer Python, where what it does
+    is unseen (``towel.program_files``). Raised before anything is written,
+    and by any whole-program scan that meets such a file. Still a
+    ``ValueError``, as the refusal of an input file that does not parse
+    always was.
+    """
+
+
 class ProjectScanLimitError(TowelError):
     """The project around the input is too large to read whole for what it already names.
 

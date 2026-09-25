@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, journals_covering, pending_journal_remedy, recover
 from towel.diagnostics import LOG, Settings, configure_stderr_logging
+from towel.program_files import is_exclusion_name, refuse_unparsed_program
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source, source_lines
 from towel.source_files import python_sources
@@ -254,15 +255,36 @@ def _warn_about_retired_flags(args: argparse.Namespace) -> None:
         )
 
 
+def _excluded_name(value: str) -> str:
+    """An argparse type for ``--exclude``: a directory's or a file's name, matched at any depth.
+
+    A path or a pattern matches no name, so given one the flag would leave
+    out nothing, silently; it is refused, naming what to pass instead: the
+    last part of a path, whether it names a directory or a file. A trailing
+    separator, as a shell completes a directory, is dropped.
+    """
+    name = value.rstrip("/" + os.sep)
+    if is_exclusion_name(name):
+        return name
+    last = Path(name).name if name else ""
+    instead = f"; for {value}, pass --exclude {last}" if is_exclusion_name(last) else ""
+    raise argparse.ArgumentTypeError(
+        "--exclude takes the name of a directory or a file, not a path or a pattern, and leaves"
+        f" out every directory or file of that name{instead}"
+    )
+
+
 def _add_exclude_flag(parser: argparse.ArgumentParser) -> None:
     """Add ``--exclude``, shared by the commands that analyze a directory."""
     parser.add_argument(
         "--exclude",
         action="append",
         default=[],
-        metavar="DIRECTORY",
-        help="Directory name to leave out of directory mode (repeatable), e.g. tests; "
-        "the names the program's imports give its modules are read without it too",
+        type=_excluded_name,
+        metavar="NAME",
+        help="Name of a directory or file to leave unchanged (repeatable), at any depth, e.g."
+        " tests or benchmark.py; checks that read the whole program still read it, and one"
+        " there that does not parse is taken for no part of the program",
     )
 
 
@@ -945,6 +967,7 @@ def _run_dry(args: argparse.Namespace) -> None:
             raise ValueError(
                 "Output already exists; choose a new path or explicitly refactor in place"
             )
+    refuse_unparsed_program(source, options.exclude)
     if options.cross_module and is_dir:
         _judge_import_problems(source, options.exclude)
 
@@ -1383,6 +1406,7 @@ def _run_preview(args: argparse.Namespace) -> None:
     journal = _pending_journal(Path(target), options.exclude)
     if journal is not None:
         LOG.warning("%s", pending_journal_remedy(journal, "a run here would change"))
+    refuse_unparsed_program(Path(target), options.exclude)
     if options.cross_module and is_dir:
         _judge_import_problems(Path(target).resolve(), options.exclude)
 

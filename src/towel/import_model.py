@@ -1365,7 +1365,12 @@ def _read_module(path: Path) -> _Module:
             warnings.simplefilter("ignore")
             tree = ast.parse(path.read_bytes(), filename=str(path))
     except (OSError, SyntaxError, ValueError, RecursionError):
-        # It cannot run, so it imports nothing and nothing can import it.
+        # Its imports are unknown, so no spelling is made to or from it. It may
+        # run on a newer Python, so a dry or preview run refuses before reading
+        # the model when a file of the program does not parse here
+        # (``towel.program_files``); the model still meets one in a build
+        # output, a second copy it reads only to see that it is there, and in
+        # a file ``--exclude`` names by its own name.
         return _Module(None, False)
     return _scan(tree, path)
 

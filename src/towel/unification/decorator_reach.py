@@ -89,8 +89,9 @@ from typing import (
 )
 from weakref import WeakKeyDictionary
 
-from ..consumers import MAXIMUM_FILES, scanned_directories
+from ..consumers import MAXIMUM_FILES
 from ..import_model import NameStatus
+from ..program_files import program_directories, refuse_unparsed_file
 from ..source_text import read_source
 from .bounded_cache import BoundedCache
 from .exceptions import ProjectScanLimitError
@@ -825,7 +826,9 @@ class _Resolver:
         roots = _PROJECT_WRITES.setdefault(self._cache, {})
         writes = roots.get(root)
         if writes is None:
-            writes = roots[root] = scan_project_writes(Path(root), every_file=True)
+            writes = roots[root] = scan_project_writes(
+                Path(root), self._cache.excluded_names, every_file=True
+            )
         self._writes[module.path] = writes
         return writes
 
@@ -993,15 +996,18 @@ class _Resolver:
     def _read_hand_index(self, root: Path) -> _HandIndex:
         """Every hand application of the project under ``root``, by the definitions it is given.
 
-        The directories the consumer scan skips are skipped here too; past its
-        limit the project cannot be read whole, and the index says so.
+        It reads the program's files (``program_directories``), those the run
+        excludes included: excluded code is left unchanged, not unseen. A
+        file that does not parse here may run on a newer Python and apply a
+        decorator there, so meeting one refuses the run, unless the run
+        excludes it. Past the consumer scan's limit the project cannot be
+        read whole, and the index says so.
         """
         by_target: Dict[_Target, List[_Application]] = {}
         by_name: Dict[str, List[_Application]] = {}
         count = 0
-        for parent, directories, files in os.walk(root, onerror=lambda _: None):
-            directories[:] = scanned_directories(parent, directories)
-            for name in sorted(files):
+        for parent, files in program_directories(root):
+            for name in files:
                 if not name.endswith(".py"):
                     continue
                 count += 1
@@ -1009,7 +1015,8 @@ class _Resolver:
                     return _HandIndex({}, {}, complete=False)
                 module = self._load(os.path.join(parent, name))
                 if module is None:
-                    continue  # A module that does not parse applies nothing.
+                    refuse_unparsed_file(Path(parent, name), root, self._cache.excluded_names)
+                    continue  # Excluded, gone, or not text: it applies nothing that can be read.
                 for application, spelled in _hand_calls(module):
                     targets = self._argument_targets(module, spelled, application.slot)
                     if targets is None:

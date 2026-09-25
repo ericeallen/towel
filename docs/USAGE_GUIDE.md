@@ -142,7 +142,7 @@ The remaining parameters (keyword-only after `parameterize_constants`), all defa
 | `parameterize_constants` | `True` | Differing constants become helper parameters. |
 | `parameterize_builtins` | `False` | Where a builtin the duplicated code reads may differ between its sites (one site's function binds `len` and the other reads the builtin, or, across modules, a module may hold the name), pass it to the helper as a parameter, each site giving its own, instead of declining the pair (`--parameterize-builtins/--no-parameterize-builtins`). A builtin every site reads alike is still read bare, and blocks that differ in which builtin they use are still declined. In typed code such a parameter is annotated with what its body needs: `Callable[..., int]` for `len`, `type[str]` for `str`; a builtin whose overloads return different types (`open`, `sorted`) gets `Any`. |
 | `cross_module_helpers` | `False` | Also share a helper between duplicates in different modules, importing it into the others (`--cross-module/--no-cross-module`). Off, only duplicates within a module are paired and no import of a project module that runs is written. |
-| `excluded_directories` | `()` | Directory names skipped in directory mode (`--exclude`); the program's import model reads nothing in them either. |
+| `excluded_directories` | `()` | Names of directories or files to leave unchanged (`--exclude`), at any depth. The checks that read the whole program still read them, and one that does not parse is taken for no part of the program; the program's import model reads nothing in an excluded directory. |
 | `max_candidate_pairs` | `20_000_000` | Most candidate block pairs one analysis evaluates; past it the largest groups of similar blocks are left out with a warning (`--max-pairs`). |
 | `skip_trivial_helpers` | `True` | Do not propose a helper that only forwards, renames, or unpacks. |
 | `annotate_helpers` | `True` | Copy the annotations the call sites declare onto the helper, in code that uses annotations. |
@@ -436,8 +436,21 @@ The scanner automatically skips:
 - `node_modules`, and every environment: a directory holding a `pyvenv.cfg` or a
   `conda-meta`, whatever its name (a package of your own called `env` or `venv`
   is analyzed like any other)
-- The names in `excluded_directories` (`--exclude`)
+- The directories and files `excluded_directories` names (`--exclude`)
 - Symlinked files, and Towel's own `_towel_probe_*.py` type-checker probes
+
+A run (`refactor_to_fixed_point`, `refactor_directory_to_fixed_point`, and
+`towel dry` and `towel preview` in every mode) first reads the whole program,
+from the project root down, less those directories and the ones every scan
+skips (`towel.program_files`). If a file there does not parse on the Python
+Towel runs on, the run raises `UnparsedProgramError` (a `ValueError`) before
+anything is written, naming each file and what the parser said: it may run on a
+newer Python, where what it does would go unseen by the checks that decline
+unsafe changes. A file `excluded_directories` names is read like any other, and
+only one that does not parse is passed over. The refusal suggests, for each
+file, a name that clears it: its directory's, when two or more share it, else
+its own. `analyze_files` makes no such check first, but refuses the same
+way at the first pair it judges.
 
 ## Understanding Proposals
 

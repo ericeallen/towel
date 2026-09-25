@@ -62,14 +62,14 @@ assigns.
 from __future__ import annotations
 
 import ast
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AbstractSet, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
 from typing import Tuple, Union
 
-from ..consumers import MAXIMUM_FILES, scanned_directories
+from ..consumers import MAXIMUM_FILES
+from ..program_files import program_directories, refuse_unparsed_file
 from .bounded_cache import BoundedCache
 from .builtins import BUILTIN_NAMES
 from .module_bindings import global_bindings
@@ -171,11 +171,16 @@ _MAY_WRITE = re.compile(
 )
 
 
-def scan_project_writes(root: Path, *, every_file: bool = False) -> ProjectWrites:
+def scan_project_writes(
+    root: Path, excluded_names: AbstractSet[str] = frozenset(), *, every_file: bool = False
+) -> ProjectWrites:
     """The writes into module namespaces that the Python files under ``root`` make.
 
-    The directories the consumer scan skips are skipped here too; stubs never
-    run and are not read. Past the consumer scan's limit the project cannot
+    It reads the program's files (``program_directories``), those the run
+    excludes included, since a test suite left unchanged still patches what
+    it patches; stubs never run and are not read. A file that does not parse
+    here refuses the run unless ``excluded_names`` names it
+    (:func:`_file_writes`). Past the consumer scan's limit the project cannot
     be read whole, and the answer says so rather than claim no write exists.
     A file is read only when its text names a form of write the builtins'
     question counts, an attribute store of a builtin's name among them;
@@ -186,16 +191,17 @@ def scan_project_writes(root: Path, *, every_file: bool = False) -> ProjectWrite
     by_path: Dict[Path, List[NamespaceWrite]] = {}
     by_name: Dict[str, List[NamespaceWrite]] = {}
     count = 0
-    for parent, directories, files in os.walk(project, onerror=lambda _: None):
-        directories[:] = scanned_directories(parent, directories)
-        for name in sorted(files):
+    for parent, files in program_directories(project):
+        for name in files:
             if not name.endswith(".py"):
                 continue
             count += 1
             if count > MAXIMUM_FILES:
                 return ProjectWrites(project, {}, {}, complete=False)
             path = Path(parent, name)
-            scanned = _file_writes(path, project, None if every_file else _MAY_WRITE)
+            scanned = _file_writes(
+                path, project, None if every_file else _MAY_WRITE, excluded_names
+            )
             if scanned is None:
                 continue
             for target, writes in scanned.by_path.items():
@@ -216,10 +222,18 @@ class _FileWrites:
     by_name: Mapping[str, Tuple[NamespaceWrite, ...]]
 
 
-def _file_writes(path: Path, root: Path, gate: Optional[re.Pattern[str]]) -> Optional[_FileWrites]:
-    """What ``path`` writes into module namespaces; None when it cannot run or writes nothing.
+def _file_writes(
+    path: Path,
+    root: Path,
+    gate: Optional[re.Pattern[str]],
+    excluded_names: AbstractSet[str] = frozenset(),
+) -> Optional[_FileWrites]:
+    """What ``path`` writes into module namespaces; None when it cannot be read or writes nothing.
 
-    A file whose text ``gate`` does not match is not parsed; None parses every file.
+    A file whose text ``gate`` does not match is not parsed; None parses every
+    file. One that is parsed and does not parse here may run on a newer Python
+    and write there, so it refuses the run, unless the run excludes it; one
+    that does not decode runs nowhere, and writes nothing.
     """
     try:
         data = path.read_bytes()
@@ -229,8 +243,9 @@ def _file_writes(path: Path, root: Path, gate: Optional[re.Pattern[str]]) -> Opt
         return None
     try:
         tree = ast.parse(data, filename=str(path))
-    except (SyntaxError, ValueError):
-        return None  # It cannot run, so it writes nothing.
+    except (SyntaxError, ValueError) as error:
+        refuse_unparsed_file(path, root, excluded_names, error)
+        return None  # Excluded, or not text in its declared encoding: it writes nothing.
     resolved = path.resolve()
     scanner = _WriteScanner(resolved, tree, _shown(resolved, root))
     scanner.visit(tree)

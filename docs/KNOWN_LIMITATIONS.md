@@ -1891,6 +1891,34 @@ naming each block by file, function and lines:
 Each pair is traced once and in pair order, whatever `TOWEL_WORKERS` is, so
 counting the lines by reason prices a decline the same with any worker count.
 
+## A program Towel cannot read whole
+
+The checks that decline unsafe changes read the whole program, from the project
+root down (`src/towel/program_files.py`). A file there that does not parse on the
+Python Towel runs on refuses every run before anything is written, because it may
+run on a newer Python and do there what those checks never saw (round-4 audit
+P1-2 and P1-3). Towel cannot tell a file in newer syntax from one that is invalid
+on every Python, so both refuse. A file that does not decode in its declared
+encoding runs on no Python, and is left alone. `--exclude` still means "leave
+this unchanged": what it names is read as evidence like the rest, and only a file
+it names that does not parse is taken for no part of the program. The refusal
+suggests an `--exclude` for each file that clears it, the directory's name when
+two or more of the files share it, else the file's own; only a file given
+explicitly as the target has none, since it is always analyzed. Of the 140 corpus
+projects, 8 hold a file that does not parse on 3.12 and 3.13, all cleared that
+way (black's `tests/data`, parso's `normalizer_issue_files`, unidecode's
+root-level Python 2 `benchmark.py`). On 3.11 sphinx and cattrs join them, and
+django holds five more such files, all written for 3.12, which sphinx and django
+require. What remains:
+
+- A name matches at any depth, so `--exclude tests.py` leaves every file of that
+  name unchanged, not only the one that does not parse.
+- The newest Python the refusal names is read from `requires-python` (or
+  setup.cfg's `python_requires`, or Poetry's `python`) and the `Programming
+  Language :: Python :: 3.N` classifiers; a `setup.py` is not read.
+- Past the scans' limit of 20,000 Python files the program is not read whole,
+  and the scans say so themselves.
+
 ## Performance
 
 Analysis is quadratic in candidate blocks per file. The measures below keep

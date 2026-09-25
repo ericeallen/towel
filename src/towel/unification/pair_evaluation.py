@@ -618,11 +618,16 @@ class PairEvaluation(
         return found
 
     def _project_writes(self, path: str) -> ProjectWrites:
-        """The own writes into module namespaces of the project holding ``path``, read once per engine."""
+        """The own writes into module namespaces of the project holding ``path``, read once per engine.
+
+        What the run excludes is read too; a file it excludes that does not parse is passed over.
+        """
         root = self._project_root_in_run(path)
         writes = self._namespace_writes.get(str(root))
         if writes is None:
-            writes = self._namespace_writes[str(root)] = scan_project_writes(root)
+            writes = self._namespace_writes[str(root)] = scan_project_writes(
+                root, self.import_graph.excluded_names
+            )
         return writes
 
     # -- 1 ---------------------------------------------------------------------
@@ -1635,7 +1640,9 @@ class PairEvaluation(
             isinstance(node, ast.Assert)
             for statement in pair.block1_nodes
             for node in ast.walk(statement)
-        ) and not rewritten_alike(sorted(participating), self.import_graph.project_root):
+        ) and not rewritten_alike(
+            sorted(participating), self.import_graph.project_root, self.import_graph.excluded_names
+        ):
             self._debug_reject(RejectReason.ASSERT_REWRITING_DIFFERS, pair)
             return None
         # The helper runs the template's imports in whichever module hosts

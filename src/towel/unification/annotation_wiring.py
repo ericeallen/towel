@@ -91,6 +91,7 @@ from .exceptions import (
 from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import LOG, TYPES
 from ..checker_project import _read_json_config
+from ..declared_python import declared_requirement, python_lower_bound
 from ..project_layout import find_project_root, load_pyproject, package_chain
 from ..type_baseline import (
     NO_SHAPE,
@@ -140,35 +141,6 @@ from .program_imports import ProgramImports
 
 UNTYPED_REMEDY = "rerun with --no-types (library: type_oracle=None, annotate_helpers=False)."
 """The way out when the checker cannot run at all: the one thing such a user can act on."""
-
-
-def python_lower_bound(specifier: str) -> Optional[PythonVersion]:
-    """The oldest Python a version requirement admits, to the minor version; None if unbounded.
-
-    PEP 440 clauses, comma-separated, as ``requires-python`` spells them, and
-    Poetry's ``^3.9`` and ``~3.9``: ``>=``, ``~=``, ``==``, ``===``, ``^`` and
-    ``~`` bound from below at their version, ``>`` at the same minor version
-    (``>3.8`` admits 3.8.1), and the tightest bound wins. ``<``, ``<=`` and
-    ``!=`` bound nothing below. Anything unreadable makes the whole answer
-    None, which the caller takes as the oldest Python there is.
-    """
-    bounds: List[PythonVersion] = []
-    for clause in (part.strip() for part in specifier.split(",")):
-        if not clause:
-            continue
-        match = _VERSION_CLAUSE.fullmatch(clause)
-        if match is None:
-            return None
-        if match.group("operator") in {"<", "<=", "!="}:
-            continue
-        bounds.append((int(match.group("major")), int(match.group("minor") or 0)))
-    return max(bounds) if bounds else None
-
-
-_VERSION_CLAUSE = re.compile(
-    r"(?P<operator>===|==|~=|>=|<=|!=|>|<|\^|~)\s*v?(?P<major>\d+)"
-    r"(?:\.(?P<minor>\d+))?(?:\.(?:\d+|\*))*(?:[a-z]+\d*)?(?:\.\*)?"
-)
 
 
 def _table(document: Mapping[str, object], *keys: str) -> Mapping[str, object]:
@@ -229,14 +201,8 @@ def declared_oldest_python(path: Path) -> Optional[PythonVersion]:
     of the versions mypy and pyright are configured to check for: a project
     whose checker targets 3.9 means its code to run there.
     """
-    root = find_project_root(path)
-    pyproject = load_pyproject(root)
-    requirement: object = _table(pyproject, "project").get("requires-python")
-    if not isinstance(requirement, str) and (root / "setup.cfg").is_file():
-        requirement = _ini_option(root / "setup.cfg", "options", "python_requires")
-    if not isinstance(requirement, str):
-        requirement = _table(pyproject, "tool", "poetry", "dependencies").get("python")
-    if isinstance(requirement, str):
+    requirement = declared_requirement(find_project_root(path))
+    if requirement is not None:
         bound = python_lower_bound(requirement)
         if bound is not None:
             return bound

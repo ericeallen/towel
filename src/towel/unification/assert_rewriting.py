@@ -52,6 +52,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 from typing import (
+    AbstractSet,
     Callable,
     Dict,
     FrozenSet,
@@ -65,7 +66,7 @@ from typing import (
     Union,
 )
 
-from ..consumers import scanned_directories
+from ..program_files import program_files, refuse_unparsed_file
 from ..project_layout import find_project_root
 from ..source_text import read_source
 from .bounded_cache import BoundedCache
@@ -100,22 +101,27 @@ class _Setup:
 
 
 _UNKNOWN = _Setup(known=False)
-_SETUPS: BoundedCache[str, _Setup] = BoundedCache(32)
+_SETUPS: BoundedCache[Tuple[str, FrozenSet[str]], _Setup] = BoundedCache(32)
 
 
 def rewrites_asserts(
-    path: str, project_root: Callable[[Path], Path] = find_project_root
+    path: str,
+    project_root: Callable[[Path], Path] = find_project_root,
+    excluded_names: AbstractSet[str] = frozenset(),
 ) -> Optional[bool]:
     """Whether pytest, run as the project configures it, rewrites the asserts of the module at ``path``.
 
     None when that cannot be told from the project (see the module docstring).
     ``project_root`` finds the project a resolved path belongs to; an engine
-    passes its run's cache of them, since every pair asks.
+    passes its run's cache of them, since every pair asks. ``excluded_names``
+    says which files that do not parse are no part of the program
+    (``_read_setup``); an excluded file that parses is still read.
     """
     root = os.path.realpath(project_root(Path(path).resolve()))
-    setup = _SETUPS.get(root)
+    key = (root, frozenset(excluded_names))
+    setup = _SETUPS.get(key)
     if setup is None:
-        setup = _SETUPS.put(root, _read_setup(Path(root)))
+        setup = _SETUPS.put(key, _read_setup(Path(root), key[1]))
     if not setup.known:
         return None
     if not setup.rewriting:
@@ -140,10 +146,12 @@ def rewrites_asserts(
 
 
 def rewritten_alike(
-    paths: Iterable[str], project_root: Callable[[Path], Path] = find_project_root
+    paths: Iterable[str],
+    project_root: Callable[[Path], Path] = find_project_root,
+    excluded_names: AbstractSet[str] = frozenset(),
 ) -> bool:
     """Whether pytest rewrites the asserts of every module of ``paths`` alike, as far as is known."""
-    statuses = {rewrites_asserts(path, project_root) for path in paths}
+    statuses = {rewrites_asserts(path, project_root, excluded_names) for path in paths}
     return None not in statuses and len(statuses) == 1
 
 
@@ -173,8 +181,13 @@ def _module_name(path: Path) -> str:
 # -- Reading the project -------------------------------------------------------
 
 
-def _read_setup(root: Path) -> _Setup:
-    """What decides rewriting in the project at ``root``; ``_UNKNOWN`` where the project cannot say."""
+def _read_setup(root: Path, excluded_names: AbstractSet[str] = frozenset()) -> _Setup:
+    """What decides rewriting in the project at ``root``; ``_UNKNOWN`` where the project cannot say.
+
+    The program's files are read (``program_files``), those the run excludes
+    included; ``excluded_names`` says which files that do not parse are no
+    part of the program.
+    """
     if _declares_pytest_plugin(root):
         return _UNKNOWN
     located = _locate_config(root)
@@ -193,7 +206,7 @@ def _read_setup(root: Path) -> _Setup:
     testpaths = _arguments(config.get("testpaths", []))
     if patterns is None or testpaths is None or any("*" in entry for entry in testpaths):
         return _UNKNOWN
-    marks = _plugin_marks(root, config_dir)
+    marks = _plugin_marks(root, config_dir, excluded_names)
     if marks is None:
         return _UNKNOWN
     sure, uncertain = marks
@@ -311,16 +324,9 @@ def _read_options(options: Sequence[str]) -> Tuple[bool, Optional[List[str]]]:
     return rewriting, [plugin for plugin in plugins if not plugin.startswith("no:")]
 
 
-def _project_files(root: Path) -> Iterable[Path]:
-    for parent, directories, files in os.walk(root, onerror=lambda _: None):
-        directories[:] = scanned_directories(parent, directories)
-        for name in sorted(files):
-            yield Path(parent, name)
-
-
 def _configures_below(root: Path) -> bool:
     """Whether a directory below ``root`` holds pytest configuration an invocation there would read."""
-    for path in _project_files(root):
+    for path in program_files(root):
         if path.parent == root or path.name not in _CONFIG_NAMES:
             continue
         try:
@@ -331,30 +337,38 @@ def _configures_below(root: Path) -> bool:
     return False
 
 
-def _plugin_marks(root: Path, config_dir: Path) -> Optional[Tuple[FrozenSet[str], FrozenSet[str]]]:
+def _plugin_marks(
+    root: Path, config_dir: Path, excluded_names: AbstractSet[str] = frozenset()
+) -> Optional[Tuple[FrozenSet[str], FrozenSet[str]]]:
     """The module names the project marks for rewriting: surely, and perhaps; None if unknown.
 
     A mark is sure only at the top level of the ``conftest.py`` beside the
     configuration, which pytest loads first: a ``pytest_plugins`` literal, or
     a ``register_assert_rewrite`` call statement with literal names.
-    Anywhere else pytest may or may not run it.
+    Anywhere else pytest may or may not run it. A file that does not parse
+    here may run on a newer Python and mark modules there, so it refuses the
+    run unless the run excludes it; one that does not decode runs nowhere.
     """
     sure: Set[str] = set()
     uncertain: Set[str] = set()
     root_conftest = os.path.realpath(config_dir / "conftest.py")
-    for path in _project_files(root):
+    for path in program_files(root):
         if path.suffix != ".py":
             continue
         try:
             source = read_source(str(path))
-        except (OSError, UnicodeError, ValueError):
+        except OSError:
             continue
+        except (UnicodeError, ValueError, SyntaxError):
+            refuse_unparsed_file(path, root, excluded_names)
+            continue  # Excluded, or not text in its declared encoding: it marks nothing.
         if "pytest_plugins" not in source and "register_assert_rewrite" not in source:
             continue
         try:
             tree = ast.parse(source)
-        except SyntaxError:
-            continue
+        except (SyntaxError, ValueError) as error:
+            refuse_unparsed_file(path, root, excluded_names, error)
+            continue  # Excluded: taken at the user's word as no part of the program.
         found = _marks_in(tree)
         if found is None:
             return None

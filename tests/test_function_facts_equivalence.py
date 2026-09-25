@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.hostile_execution import parsed_or_skipped
+from tests.hostile_execution import fixture_sources, parsed_or_skipped
 from towel.unification import definite_assignment as da
 from towel.unification.definite_assignment import (
     definitely_bound_after,
@@ -39,7 +39,7 @@ from towel.unification.definite_assignment import (
 EXAMPLES = sorted(
     path
     for directory in ("test_examples", "test_examples_crossfile", "tests/hostile_cases")
-    for path in (Path(__file__).parent.parent / directory).rglob("*.py")
+    for path in fixture_sources(Path(__file__).parent.parent / directory, recursive=True)
 )
 
 

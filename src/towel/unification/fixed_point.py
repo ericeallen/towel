@@ -92,6 +92,7 @@ from ..filesystem import (
     staged_changes,
     staged_project,
 )
+from ..program_files import refuse_unparsed_program
 from ..project_layout import find_project_root
 from ..source_text import UnencodableText, decode_source, encode_like, read_source
 from ..type_inference import relocate_oracle
@@ -280,6 +281,7 @@ class FixedPointDrivers(Materialization):
         """
         self._change_log = []
         self._begin_counting_checker_failures()
+        self._refuse_an_unreadable_program(Path(file_path))
         analysis_progress: ProgressMode = progress if wants_bar(progress) else "none"
         current_bytes = Path(file_path).read_bytes()
         try:
@@ -308,6 +310,17 @@ class FixedPointDrivers(Materialization):
             )
             self._publish(stage)
             return refactored
+
+    def _refuse_an_unreadable_program(self, target: Path) -> None:
+        """Refuse the run, before its first check, when the program around ``target`` cannot be read whole.
+
+        Some checks read the whole program for what could make a change
+        unsafe, and a file of it that does not parse on this interpreter may
+        run on a newer one, unseen (``towel.program_files``). What the run
+        excludes is still read, and a file it excludes that does not parse is
+        taken for no part of the program.
+        """
+        refuse_unparsed_program(target, self.import_graph.excluded_names)
 
     @staticmethod
     def _publish(stage: StagedProject, *, allow_empty: bool = False) -> None:
@@ -590,6 +603,7 @@ class FixedPointDrivers(Materialization):
 
         if not input_path.is_dir():
             raise ValueError("Input directory does not exist")
+        self._refuse_an_unreadable_program(input_path)
         if resolved_input != resolved_output:
             refuse_unusable_output(input_path, output_path, allow_empty=True)
         self.begin_refactoring_run(self._find_python_files(input_dir))

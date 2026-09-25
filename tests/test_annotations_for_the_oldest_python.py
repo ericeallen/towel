@@ -37,7 +37,8 @@ from typing import Optional, Tuple
 
 import pytest
 
-from towel.unification.annotation_wiring import declared_oldest_python, python_lower_bound
+from towel.declared_python import python_lower_bound
+from towel.unification.annotation_wiring import declared_oldest_python
 from towel.unification.annotations import (
     OLDEST_PYTHON,
     evaluated_syntax,

@@ -39,7 +39,8 @@ from typing import Dict
 
 import pytest
 
-from tests.hostile_execution import ScopeWatch, module_faces, observe, parsed_or_skipped
+from tests.hostile_execution import ScopeWatch, fixture_named, fixture_sources, module_faces
+from tests.hostile_execution import observe, parsed_or_skipped
 from tests.hostile_refactoring import refactor_script, with_known_defects
 
 CASES = Path(__file__).parent / "hostile_cases"
@@ -401,18 +402,19 @@ def _run(script: Path) -> tuple[int, str, list[str]]:
 
 
 @pytest.mark.parametrize(
-    "case", with_known_defects(sorted(path.stem for path in CASES.glob("*.py")), KNOWN_DEFECTS)
+    "case", with_known_defects([path.stem for path in fixture_sources(CASES)], KNOWN_DEFECTS)
 )
 def test_refactoring_preserves_program_output(case: str) -> None:
-    parsed_or_skipped(CASES / f"{case}.py")
+    fixture = fixture_named(CASES, case)
+    parsed_or_skipped(fixture)
     with tempfile.TemporaryDirectory(prefix="towel-hostile-") as directory:
         root = Path(directory)
         before = root / "before" / "m.py"
         after = root / "after" / "m.py"
         before.parent.mkdir()
         after.parent.mkdir()
-        shutil.copy(CASES / f"{case}.py", before)
-        shutil.copy(CASES / f"{case}.py", after)
+        shutil.copy(fixture, before)
+        shutil.copy(fixture, after)
         scopes = ScopeWatch()
         applied = refactor_script(after, file_finisher=scopes)
         transformed = before.read_bytes() != after.read_bytes()
