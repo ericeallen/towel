@@ -351,7 +351,6 @@ def _thunk_uncertain_free_variables(
     blocks: Sequence[Tuple[FunctionNode, Sequence[ast.stmt]]],
     renames: Sequence[Dict[str, str]],
     available: Sequence[AbstractSet[str]],
-    read_where_used: AbstractSet[str] = frozenset(),
 ) -> Set[str]:
     """Pass free variables that the call site may not resolve as thunks.
 
@@ -361,13 +360,7 @@ def _thunk_uncertain_free_variables(
     some path before the block, a module name the module binds later or
     nowhere, or a cell of an enclosing function not yet filled would raise
     at the eager call where the block raised only on the path that read it.
-    The thunk keeps the timing. So does it for each of ``read_where_used``,
-    a name some site reads where code the block runs may rebind it before
-    its last read: a builtin a site hands over under
-    ``parameterize_builtins`` (``_builtins_read_from_the_module``). A thunk
-    the helper evaluates first, once and unconditionally is passed eagerly
-    again when the helper is rendered (``inline_leading_thunks``), which is
-    exactly where no code can run before the read.
+    The thunk keeps the timing.
     """
     template_renames = renames[0] if renames else {}
     canonical_to_block = [
@@ -399,9 +392,7 @@ def _thunk_uncertain_free_variables(
 
     remaining = set(free_variables)
     for name in sorted(free_variables):
-        if name not in read_where_used and not any(
-            uncertain(index, spelling(index, name)) for index in range(len(blocks))
-        ):
+        if not any(uncertain(index, spelling(index, name)) for index in range(len(blocks))):
             continue
         parameter = _fresh_parameter_name(substitution, blocks)
         for index in range(len(blocks)):
@@ -1101,7 +1092,6 @@ class PairEvaluation(
             ((ctx.func1, pair.block1_nodes), (ctx.func2, pair.block2_nodes)),
             unified.hygienic_renames,
             available,
-            read_where_used=self._builtins_read_from_the_module(ctx, free_vars),
         )
         return _FreeVariables(
             free_vars,
@@ -1111,29 +1101,6 @@ class PairEvaluation(
             nonlocals_to_declare,
             available,
             module_names,
-        )
-
-    def _builtins_read_from_the_module(
-        self, ctx: "_PairContext", free_vars: AbstractSet[str]
-    ) -> FrozenSet[str]:
-        """The builtin spellings among ``free_vars`` that some site passes from its module's lookup.
-
-        Only ``parameterize_builtins`` lets a site hand its helper a builtin,
-        and a site hands over the builtin, or its module's name of that
-        spelling, exactly where its function binds no such name. The block
-        read that name where it used it, so code the block runs between two
-        reads (a callee writing ``builtins.len``) reached the later one; an
-        argument read at the call would not see it. Each such name is passed
-        as a thunk and read at each use, and ``inline_leading_thunks`` passes
-        it eagerly where nothing can run before its only read.
-        """
-        if not self.parameterize_builtins:
-            return frozenset()
-        spellings = frozenset(name for name in free_vars if name in BUILTIN_NAMES)
-        if not spellings:
-            return frozenset()
-        return module_resolved_names(ctx.func1, ctx.scope_analyzer, spellings) | (
-            module_resolved_names(ctx.func2, ctx.scope_analyzer2, spellings)
         )
 
     def _builtin_spellings(
