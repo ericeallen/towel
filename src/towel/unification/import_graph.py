@@ -41,6 +41,7 @@ from typing import (
     Iterator,
     List,
     Literal,
+    Mapping,
     Optional,
     Sequence,
     Set,
@@ -65,6 +66,7 @@ from .module_bindings import (
     global_bindings,
     import_origin,
 )
+from .namespace_writes import ANY_MODULE, ANY_NAME, ProjectWrites, scan_attribute_writes
 from .program_imports import ProgramImports, program_imports
 from .statement_facts import (
     bindings_of,
@@ -123,6 +125,8 @@ class ImportGraphCache:
         # Resolving a path walks the filesystem; the class-hierarchy lookup
         # resolves every class's file per base-class reference.
         self.resolved_paths: BoundedCache[str, Path] = BoundedCache(limit)
+        # Every write into a module namespace each project's code makes, read once per run.
+        self._attribute_writes: Dict[Path, ProjectWrites] = {}
 
     def resolve(self, path: str) -> Path:
         """``Path(path).resolve()``, once per spelling for the life of the cache."""
@@ -149,6 +153,7 @@ class ImportGraphCache:
         self._unreadable = {}
         self._declared = {}
         self._roots = {}
+        self._attribute_writes = {}
         for table in (self.edges, self.effects, self.quiet_classes):
             table.clear()
 
@@ -181,6 +186,20 @@ class ImportGraphCache:
         known = self._declared.get(root)
         if known is None:
             known = self._declared[root] = installed_with_the_project(root)
+        return known
+
+    def attribute_writes(self, root: Path) -> ProjectWrites:
+        """``scan_attribute_writes`` of the project at ``root``, read once per run.
+
+        What the project's code writes into module namespaces is read from
+        the project as it stands; a run adds imports and functions, never an
+        attribute store. Under ``memoization_disabled`` it keeps nothing.
+        """
+        if not memoizing():
+            return scan_attribute_writes(root)
+        known = self._attribute_writes.get(root)
+        if known is None:
+            known = self._attribute_writes[root] = scan_attribute_writes(root)
         return known
 
     def program_for(self, path: Path) -> ProgramImports:
@@ -1564,6 +1583,9 @@ class ImportChange(Enum):
 
     UNKNOWN = "the imports cannot be inspected"
     RUNS_CODE = "a module the new import loads runs code at import"
+    READS_REBOUND_STATE = (
+        "a module the new import loads reads, at import, an attribute the program rebinds"
+    )
     NEW_REQUIREMENT = "a module the new import loads requires a package that may be absent"
     NEW_TOP_LEVEL_PACKAGE = (
         "a module the new import loads is in a package the borrower never imports"
@@ -1586,8 +1608,9 @@ def import_change(
     borrower's import already certainly loads the host, nothing new runs.
     Otherwise every
     module the new import may load that the borrower's does not certainly
-    load already must run no code at import (``ImportTimeCode``), require no
-    package that may be absent where the borrower is installed
+    load already must run no code at import (``ImportTimeCode``), read at
+    import nothing the program rebinds (``_reads_rebound_state``), require
+    no package that may be absent where the borrower is installed
     (``_new_requirements``), and belong to a top-level package the borrower
     already relies on (``_new_top_level_packages``). An import in a function
     body runs only when the function is called, so it makes nothing present
@@ -1616,6 +1639,8 @@ def import_change(
         added = loaded - already
         if any(_has_import_time_effects(program.in_run(module), cache) for module in added):
             return ImportChange.RUNS_CODE
+        if _reads_rebound_state(added, program, cache):
+            return ImportChange.READS_REBOUND_STATE
         if _new_requirements(added, already, program, cache):
             return ImportChange.NEW_REQUIREMENT
         if _new_top_level_packages(added, already, borrower, program):
@@ -1853,6 +1878,206 @@ def _new_requirements(
         set(sys.stdlib_module_names) - _EFFECTFUL_STDLIB
     ) | cache.installed_with_the_project(program.model.root)
     return frozenset(name for name in names if normalized_name(name) not in available)
+
+
+# -- What a module reads from other modules as it is imported ---------------------
+
+_Reference = Union[Path, str]
+"""A module named by its file (a relative import) or by its dotted name."""
+
+_EVERY_NAME = "*"
+"""The attribute ``from m import *`` reads: every one ``m`` has."""
+
+
+def _reads_rebound_state(
+    added: Set[Path], program: ProgramImports, cache: ImportGraphCache
+) -> bool:
+    """Whether a module the new import loads reads, as it is imported, an attribute the program rebinds.
+
+    ``from time import sleep`` binds what ``time.sleep`` holds when it runs.
+    Where the program rebinds it (``time.sleep = patch``, a test's
+    ``monkeypatch.setattr(time, "sleep", ...)``), what the module binds
+    depends on whether it is imported before or after, and a new import
+    loads it earlier than the program did: shop.b patched ``time.sleep``
+    after its imports, the helper's import of shop.a moved ahead of that
+    patch, and shop.a kept the unpatched ``sleep``. So every attribute of
+    another module that one of ``added`` reads at import must be one no code
+    of the project writes (``namespace_writes.scan_attribute_writes``): what
+    it imports from another module, the attributes of a module it reads,
+    and the builtins it reads. Code outside the project is not seen.
+    """
+    writes = cache.attribute_writes(program.model.root)
+    for module in added:
+        reads = _import_time_reads(program.in_run(module), module, program)
+        if reads is None:
+            return True
+        if any(_rebound(writes, reference, name, program) for reference, name in reads):
+            return True
+    return False
+
+
+def _rebound(
+    writes: ProjectWrites, reference: _Reference, name: str, program: ProgramImports
+) -> bool:
+    """Whether some code of the project may bind ``name`` in the module ``reference`` names."""
+    if isinstance(reference, Path):
+        found = list(writes.into(reference))
+    else:
+        if not writes.complete:
+            return True
+        found = [*writes.by_name.get(reference, ()), *writes.by_name.get(ANY_MODULE, ())]
+        top, _, rest = reference.partition(".")
+        info = program.model.names.get(top)
+        location = info.location if info is not None and info.trusted else None
+        if location is not None:
+            file = _definition_file(location, rest.split(".") if rest else [])
+            if file is not None:
+                found.extend(writes.into(file))
+    return any(name in (write.name, _EVERY_NAME) or write.name == ANY_NAME for write in found)
+
+
+def _import_time_reads(
+    path: Path, module: Path, program: ProgramImports
+) -> Optional[FrozenSet[Tuple[_Reference, str]]]:
+    """The attributes of other modules that importing ``module`` (read at ``path``) reads.
+
+    ``from m import a`` reads ``m.a``, and ``from . import a`` the package's
+    ``a``; ``from m import *`` reads every attribute of ``m``. Wherever the
+    module's own scope evaluates an expression as it is imported, which is
+    anywhere but in a function or lambda body and a ``TYPE_CHECKING`` body
+    (decorators, defaults, annotations, bases and class bodies included),
+    ``m.a`` of a module bound by ``import m`` reads ``m.a``, and a name the
+    module never binds reads the builtin of that name. None when the module
+    cannot be read.
+    """
+    try:
+        source = read_source(path)
+        tree = ast.parse(source)
+    except (OSError, UnicodeError, SyntaxError, ValueError):
+        return None
+    guards = TypeCheckingGuards.of(source, tree)
+    bindings = global_bindings(source)
+    own = (
+        frozenset(bindings.bindings) | bindings.rebound_by_global
+        if bindings is not None
+        else frozenset()
+    )
+    modules: Dict[str, str] = {}
+    reads: Set[Tuple[_Reference, str]] = set()
+    evaluated: List[ast.AST] = []
+    pending: List[Tuple[ast.stmt, Optional[int]]] = [
+        (statement, order) for order, statement in enumerate(tree.body)
+    ]
+    while pending:
+        statement, order = pending.pop()
+        if isinstance(statement, ast.Import):
+            for alias in statement.names:
+                if alias.asname:
+                    modules[alias.asname] = alias.name
+                else:
+                    modules.setdefault(alias.name.split(".")[0], alias.name.split(".")[0])
+            continue
+        if isinstance(statement, ast.ImportFrom):
+            reads.update(_imported_attributes(statement, module, program))
+            continue
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            arguments = statement.args
+            evaluated.extend(statement.decorator_list)
+            evaluated.extend(arguments.defaults)
+            evaluated.extend(default for default in arguments.kw_defaults if default is not None)
+            evaluated.extend(
+                argument.annotation
+                for argument in (
+                    *arguments.posonlyargs,
+                    *arguments.args,
+                    *arguments.kwonlyargs,
+                    *filter(None, (arguments.vararg, arguments.kwarg)),
+                )
+                if argument.annotation is not None
+            )
+            if statement.returns is not None:
+                evaluated.append(statement.returns)
+            continue
+        if isinstance(statement, ast.ClassDef):
+            evaluated.extend([*statement.decorator_list, *statement.bases, *statement.keywords])
+            pending.extend((inner, order) for inner in statement.body)
+            continue
+        if isinstance(statement, ast.If) and guards.never_true(statement.test, order=order):
+            pending.extend((inner, order) for inner in statement.orelse)
+            continue
+        for field, value in ast.iter_fields(statement):
+            for child in value if isinstance(value, list) else [value]:
+                if isinstance(child, ast.stmt):
+                    pending.append((child, order))
+                elif isinstance(child, (ast.ExceptHandler, ast.match_case)):
+                    if isinstance(child, ast.ExceptHandler) and child.type is not None:
+                        evaluated.append(child.type)
+                    if isinstance(child, ast.match_case):
+                        evaluated.append(child.pattern)
+                        if child.guard is not None:
+                            evaluated.append(child.guard)
+                    pending.extend((inner, order) for inner in child.body)
+                elif isinstance(child, ast.AST) and field not in ("type_comment",):
+                    evaluated.append(child)
+    for node in evaluated:
+        reads.update(_expression_reads(node, own, modules))
+    return frozenset(reads)
+
+
+def _imported_attributes(
+    statement: ast.ImportFrom, module: Path, program: ProgramImports
+) -> Iterator[Tuple[_Reference, str]]:
+    """What ``from ... import ...`` reads: an attribute of the module it names, each."""
+    names = [alias.name for alias in statement.names]
+    if not statement.level:
+        if statement.module:
+            for name in names:
+                yield statement.module, name
+        return
+    base = module.parent
+    for _ in range(statement.level - 1):
+        base = base.parent
+    if statement.module:
+        target = base.joinpath(*statement.module.split("."))
+        files = [(target / "__init__.py"), target.with_name(target.name + ".py")]
+    else:
+        files = [base / "__init__.py"]
+    for file in files:
+        for name in names:
+            yield file.resolve(), name
+
+
+def _expression_reads(
+    node: ast.AST, own: FrozenSet[str], modules: Mapping[str, str]
+) -> Iterator[Tuple[_Reference, str]]:
+    """The module attributes and builtins evaluating ``node`` at the module's top level reads.
+
+    A lambda's body runs only when it is called, so only its defaults count.
+    """
+    pending: List[ast.AST] = [node]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, ast.Lambda):
+            pending.extend(current.args.defaults)
+            pending.extend(default for default in current.args.kw_defaults if default is not None)
+            continue
+        if isinstance(current, ast.Attribute):
+            chain: List[str] = []
+            base: ast.expr = current
+            while isinstance(base, ast.Attribute):
+                chain.append(base.attr)
+                base = base.value
+            if isinstance(base, ast.Name) and base.id in modules:
+                dotted = modules[base.id]
+                for attribute in reversed(chain):
+                    yield dotted, attribute
+                    dotted = f"{dotted}.{attribute}"
+                continue
+        if isinstance(current, ast.Name) and isinstance(current.ctx, ast.Load):
+            if current.id not in own:
+                yield "builtins", current.id
+            continue
+        pending.extend(ast.iter_child_nodes(current))
 
 
 def _required_imports(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:
