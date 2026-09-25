@@ -34,9 +34,12 @@ import re
 import shlex
 import subprocess
 from typing import Callable, List, Optional
+from unittest.mock import patch
 
 import pytest
 
+from towel.changes import ChangePlan, RecoveryRequired, apply_changes
+from towel.unification.fixed_point import _name_public_paths
 from tests.test_cli_integration import CliResult, invoke
 from tests.test_recovery_journal import _interrupted_transaction
 
@@ -256,3 +259,72 @@ def test_r9p2_an_edited_file_is_recovered_once_the_edit_is_resolved(tmp_path: Pa
     assert commands == [str(journal)], refused.stderr
     assert invoke(["recover", commands[0]]).status == 0
     assert (package / "a.py").read_text() == "value = 1\n" and not journal.exists()
+
+
+# --- Out of place: round 4's D2 ----------------------------------------------
+
+
+def _r9p2_interrupted_over(files: List[Path]) -> Path:
+    """A genuine interrupted change over ``files``: the first is replaced, the rest are not."""
+    plan = ChangePlan.from_sources(
+        {str(path): path.read_bytes() for path in files},
+        {str(path): path.read_text() + "\n# interrupted\n" for path in files},
+    )
+    original = os.replace
+    writes = 0
+
+    def fail_after_first(
+        source: "os.PathLike[str] | str", target: "os.PathLike[str] | str"
+    ) -> None:
+        nonlocal writes
+        if Path(target) in files:
+            writes += 1
+            if writes > 1:
+                raise OSError("unavailable filesystem")
+        original(source, target)
+
+    with patch("towel.changes.os.replace", side_effect=fail_after_first):
+        with pytest.raises(RecoveryRequired):
+            apply_changes(plan)
+    (journal,) = Path(os.path.commonpath([str(path.parent) for path in files])).glob(
+        ".towel-transaction-*"
+    )
+    return journal
+
+
+@pytest.mark.parametrize("where", ["above-the-target", "in-the-target"])
+def test_r9p2_an_out_of_place_run_names_the_projects_journal_and_leaves_it_behind(
+    tmp_path: Path, where: str
+) -> None:
+    """A pending journal was copied into the stage, where it refused the run's own write.
+
+    The refusal named the temporary stage, which was gone by then, and told
+    the user to chmod and recover it. Out of place, the run changes nothing
+    the journal names, so it is not blocked; it says which journal it found
+    in the project, and how to resolve it there, and copies it nowhere.
+    """
+    root = tmp_path / "project"
+    package = _project(root)
+    elsewhere = root / "other" if where == "above-the-target" else package
+    elsewhere.mkdir(exist_ok=True)
+    (elsewhere / "c.py").write_text("c = 2\n")
+    journal = _r9p2_interrupted_over([package / "mod.py", elsewhere / "c.py"])
+    output = tmp_path / "out"
+    result = invoke(
+        ["dry", str(package), str(output), "--no-interactive", "--no-types", "--no-format"]
+        + ["--progress", "none"]
+    )
+    assert result.status == 0, result.stderr
+    assert "Applied 1 refactoring" in result.stdout
+    assert "towel-stage-" not in result.stderr
+    assert f"recover it first: towel recover {journal}" in result.stderr
+    assert not any(output.rglob(".towel-transaction-*"))
+    assert invoke(["recover", str(journal)]).status == 0
+    assert (package / "mod.py").read_text() == DUPLICATES
+
+
+def test_r9p2_a_failure_raised_with_a_message_alone_names_no_stage_path() -> None:
+    """``RecoveryRequired`` is an ``OSError`` whose paths are in its message, not its filename."""
+    error = RecoveryRequired("Another transaction is in progress: /stage/pkg/.towel-transaction-1")
+    _name_public_paths(error, lambda text: text.replace("/stage/", "/project/"))
+    assert str(error) == "Another transaction is in progress: /project/pkg/.towel-transaction-1"

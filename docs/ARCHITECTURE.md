@@ -1378,7 +1378,10 @@ the project, at the same relative layout: its Python sources, stubs and
 configuration files, skipping what the checker copy skips (VCS metadata,
 caches, virtual environments, `node_modules`), with symlinks kept as links as
 `copytree` keeps them, and for an output elsewhere the target whole, as the
-output will be. A root holding more than `consumers.MAXIMUM_FILES` Python files
+output will be. Towel's own transient directories are left out of both, a
+pending journal among them: copied, it named the stage's copies of its files,
+and the run's own write there refused as though the project had a change
+pending. A root holding more than `consumers.MAXIMUM_FILES` Python files
 is refused with a message rather than copied. The run refactors the target's
 counterpart in the stage, and the cold confirmation checks it there; only when
 both succeed is anything published: the counterpart to `OUT` with

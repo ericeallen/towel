@@ -958,13 +958,17 @@ def _run_dry(args: argparse.Namespace) -> None:
             print("Aborted.")
             return
 
-    if source == destination:
-        journal = _pending_journal(destination, options.exclude)
-        if journal is not None:
-            raise ValueError(
-                "Refusing to refactor in place: "
-                + pending_journal_remedy(journal, "this run would change")
-            )
+    journal = _pending_journal(source, options.exclude)
+    if journal is not None and source == destination:
+        raise ValueError(
+            "Refusing to refactor in place: "
+            + pending_journal_remedy(journal, "this run would change")
+        )
+    if journal is not None:
+        # Out of place the run changes nothing the journal names, so it is
+        # not blocked, as preview is not; but it refactors those files as an
+        # interrupted change left them, which the user should know first.
+        LOG.warning("%s", pending_journal_remedy(journal, "this output is refactored from"))
 
     oracle = _type_oracle(Path(input_path)) if options.types else None
     try:

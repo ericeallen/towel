@@ -918,13 +918,17 @@ class _StagePathsInLogs(logging.Filter):
 
 
 def _name_public_paths(error: BaseException, rewrite: Callable[[str], str]) -> None:
-    """Point a failure's message at the paths the user knows; the stage it names is gone."""
+    """Point a failure's message at the paths the user knows; the stage it names is gone.
+
+    An ``OSError`` names paths in its ``filename`` attributes, or, raised
+    with a message alone as ``RecoveryRequired`` is, in that message.
+    """
     if isinstance(error, OSError):
         for attribute in ("filename", "filename2"):
             value = getattr(error, attribute)
             if isinstance(value, str):
                 setattr(error, attribute, rewrite(value))
-    elif len(error.args) == 1 and isinstance(error.args[0], str):
+    if len(error.args) == 1 and isinstance(error.args[0], str):
         error.args = (rewrite(error.args[0]),)
 
 
