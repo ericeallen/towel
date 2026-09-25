@@ -21,10 +21,13 @@ never change an analysis outcome, so every call into a bar goes through
 :func:`quietly`, the one place a display failure is allowed to vanish.
 """
 
+import atexit
 import sys
 import importlib
 import threading
-from typing import Callable, Literal, Mapping, Optional, Protocol, cast
+import time
+from contextlib import contextmanager
+from typing import Callable, Iterator, List, Literal, Mapping, Optional, Protocol, Set, Tuple, cast
 
 ProgressMode = Literal["auto", "tqdm", "none", "detail"]
 """How a run reports progress: tqdm bars, tqdm with an inline fallback, nothing, or per-phase detail."""
@@ -108,6 +111,10 @@ def quietly(action: Callable[[], object]) -> None:
         pass
 
 
+_BEATING: Set["Heartbeat"] = set()
+"""Every heartbeat started and not yet stopped, for :func:`display_threads_stopped`."""
+
+
 class Heartbeat:
     """Redraws a display on a timer, so a long silent step still shows it is alive.
 
@@ -119,31 +126,122 @@ class Heartbeat:
     the sanctioned shape; the caller serializes it against its own drawing.
 
     ``stop`` is idempotent, and a redraw that fails is dropped rather than
-    ending a run for the sake of its display.
+    ending a run for the sake of its display. ``start``, ``stop`` and
+    :func:`display_threads_stopped` are called from the run's own thread.
     """
 
     def __init__(self, redraw: Callable[[], object], period: float = 1.0) -> None:
         self._redraw = redraw
         self._period = period
-        self._stopped = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        # The thread beating now and the event that ends it. Each thread has
+        # an event of its own, so one told to end can never be revived by a
+        # later start, which gets a new thread instead.
+        self._beating: Optional[Tuple[threading.Thread, threading.Event]] = None
 
     def start(self) -> None:
-        if self._thread is not None:
+        _BEATING.add(self)
+        if self._beating is not None:
             return
-        self._stopped.clear()
-        self._thread = threading.Thread(target=self._beat, name="towel-progress", daemon=True)
-        self._thread.start()
+        ended = threading.Event()
+        thread = threading.Thread(
+            target=self._beat, args=(ended,), name="towel-progress", daemon=True
+        )
+        self._beating = (thread, ended)
+        thread.start()
 
-    def _beat(self) -> None:
-        while not self._stopped.wait(self._period):
+    def _beat(self, ended: threading.Event) -> None:
+        while not ended.wait(self._period):
             quietly(self._redraw)
 
+    def _end_thread(self) -> Optional[threading.Thread]:
+        """Tell the beating thread to end and forget it; the thread, for the caller to join."""
+        beating, self._beating = self._beating, None
+        if beating is None:
+            return None
+        thread, ended = beating
+        ended.set()
+        return thread
+
     def stop(self) -> None:
-        self._stopped.set()
-        thread, self._thread = self._thread, None
-        if thread is not None:
+        _BEATING.discard(self)
+        thread = self._end_thread()
+        if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=2)
+
+
+def _running_tqdm_monitors() -> List[threading.Thread]:
+    """tqdm's monitor threads alive in this process, whoever's bars started them.
+
+    tqdm starts one with the first bar of a class and, in the versions Towel
+    supports, never ends it, so once any bar has been drawn it runs for the
+    rest of the process.
+    """
+    monitor_type = getattr(sys.modules.get("tqdm._monitor"), "TMonitor", None)
+    if not isinstance(monitor_type, type):
+        return []
+    return [thread for thread in threading.enumerate() if isinstance(thread, monitor_type)]
+
+
+def _end_tqdm_monitor(monitor: threading.Thread) -> Optional[Callable[[], None]]:
+    """Tell one of tqdm's monitors to end; an action that starts its replacement.
+
+    None when the monitor is not the shape this expects, a tqdm Towel does not
+    know: it is left running, and a fork that needs it gone sees it there.
+    """
+    ended = getattr(monitor, "was_killed", None)
+    owner = getattr(monitor, "tqdm_cls", None)
+    interval = getattr(monitor, "sleep_interval", None)
+    if not isinstance(ended, threading.Event) or owner is None or interval is None:
+        return None
+    ended.set()
+
+    def restart() -> None:
+        # What tqdm itself does when a bar finds its monitor gone, under its lock.
+        with owner.get_lock():
+            if getattr(owner, "monitor", None) is monitor:
+                owner.monitor = type(monitor)(owner, interval)
+        # Each monitor registers an exit signal of its own; the ended one needs none.
+        atexit.unregister(getattr(monitor, "_atexit_signal", lambda: None))
+
+    return restart
+
+
+@contextmanager
+def display_threads_stopped(timeout: float) -> Iterator[None]:
+    """End every thread that redraws a display for the block, and start each again after.
+
+    A forked child keeps only the thread that forked it, but every lock in the
+    state it had at that instant; a lock held by a redraw -- tqdm's, or the
+    one inside ``sys.stderr`` that a half-finished write holds -- is held for
+    ever in the child, which waits on it as soon as it touches the stream, as
+    every worker does when it flushes on exit. The heartbeats and tqdm's
+    monitors are this process's display threads, so a fork made inside this
+    block has none of them. Each gets up to ``timeout`` seconds to end; one
+    still running after that (a redraw blocked on a full pipe) finishes in its
+    own time and is still to be seen among the process's threads, where the
+    caller looks before it forks. The ended threads are replaced when the
+    block ends, however it ends.
+    """
+    heartbeats = list(_BEATING)
+    ending = [thread for thread in (beat._end_thread() for beat in heartbeats) if thread]
+    restarts: List[Callable[[], None]] = []
+    for monitor in _running_tqdm_monitors():
+        restart = _end_tqdm_monitor(monitor)
+        if restart is not None:
+            restarts.append(restart)
+            ending.append(monitor)
+    deadline = time.monotonic() + timeout
+    for thread in ending:
+        if thread is not threading.current_thread():
+            thread.join(max(0.0, deadline - time.monotonic()))
+    try:
+        yield
+    finally:
+        for restart in restarts:
+            quietly(restart)
+        for beat in heartbeats:
+            if beat in _BEATING:
+                beat.start()
 
 
 def render_inline_bar(pct: int, bar_len: int = 24) -> str:

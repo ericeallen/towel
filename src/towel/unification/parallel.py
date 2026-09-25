@@ -22,6 +22,16 @@ the pairs, never by pair count alone. Each worker runs a watchdog thread
 that ends it within a second of its parent's death, and the worker count is
 capped by the parent's resident size against physical memory.
 TOWEL_WORKERS=1 keeps evaluation serial; any other value caps the workers.
+
+Workers fork only while no other thread runs here. A forked child keeps only
+the thread that forked it, but every lock in whatever state it was in: one
+held by another thread at that instant -- tqdm's, a language server reader's,
+the one inside ``sys.stderr`` that a half-written line holds -- stays held in
+the child for good. A child that needs it waits for ever, as every worker
+needs the stream locks when it flushes on exit, and the run waits on the
+worker. So every thread Towel runs is ended for the fork and
+started again after it (see ``_alone_at_fork``), and evaluation stays in this
+process, saying why, while any thread that did not end is still running.
 """
 
 from __future__ import annotations
@@ -33,7 +43,19 @@ import sys
 import threading
 import time
 
-from typing import Dict, FrozenSet, Hashable, List, Optional, Sequence, Tuple, Iterable
+from contextlib import ExitStack, contextmanager
+from typing import (
+    Dict,
+    FrozenSet,
+    Hashable,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 from .models import (
     ClassInfo,
     CodeBlockPair,
@@ -43,8 +65,10 @@ from .models import (
 )
 from concurrent.futures import ProcessPoolExecutor
 from ..diagnostics import LOG
+from ..pyright_session import readers_stopped
 from .progress import (
     ProgressMode,
+    display_threads_stopped,
     finish_inline_status,
     start_inline_status,
     update_inline_status,
@@ -72,6 +96,49 @@ _worker_probed: FrozenSet[int] = frozenset()
 
 
 PARENT_WATCH_INTERVAL_SECONDS = 1.0
+
+
+THREAD_STOP_SECONDS = 2.0
+"""How long each kind of thread Towel runs gets to end before workers fork.
+
+Each ends within milliseconds unless it is blocked, in a write to a full
+pipe or mid-message from a stalled language server; past this, it is taken
+to be one of those and evaluation stays in this process.
+"""
+
+
+_SERIAL_NOTED: Set[Tuple[str, ...]] = set()
+"""The sets of threads that have already been named for keeping evaluation serial."""
+
+
+@contextmanager
+def _alone_at_fork() -> Iterator[Tuple[str, ...]]:
+    """End every thread Towel runs for the block; the names of the threads still running.
+
+    Those are the progress displays -- the heartbeat and tqdm's monitor,
+    which tqdm starts with the first bar and never ends -- and the reader of
+    each warm pyright session, which typed runs keep across fixed-point
+    iterations. Each is started again when the block ends. Workers may fork
+    inside the block only when the names are empty: the process is then down
+    to this thread, so no lock can be held by anyone else, and nothing but
+    this thread can start another before the fork.
+    """
+    with display_threads_stopped(THREAD_STOP_SECONDS), readers_stopped(THREAD_STOP_SECONDS):
+        this = threading.current_thread()
+        yield tuple(sorted({thread.name for thread in threading.enumerate() if thread is not this}))
+
+
+def _note_serial_evaluation(running: Tuple[str, ...]) -> None:
+    """Say once for each set of threads that they kept pair evaluation in this process."""
+    if running in _SERIAL_NOTED:
+        return
+    _SERIAL_NOTED.add(running)
+    LOG.warning(
+        "Evaluating pairs in this process rather than in forked workers: a worker "
+        "forked while another thread runs can wait for ever on a lock that thread "
+        "held, and %s did not stop",
+        ", ".join(running),
+    )
 
 
 def _exit_when_parent_dies(parent: int, interval: float) -> None:
@@ -330,14 +397,25 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
             block_pairs,
         )
         _worker_probed = frozenset(probe)
+        running: Tuple[str, ...] = ()
         try:
-            context = multiprocessing.get_context("fork")
-            with ProcessPoolExecutor(
-                max_workers=workers, mp_context=context, initializer=_start_parent_watchdog
-            ) as executor:
-                for bounds, (accepted, declined) in zip(
-                    chunks, executor.map(_evaluate_pair_chunk, chunks)
-                ):
+            with ExitStack() as pool:
+                outcomes: Iterable[Tuple[List[Tuple[int, RefactoringProposal]], Dict[str, int]]]
+                outcomes = ()
+                with _alone_at_fork() as running:
+                    if not running:
+                        executor = pool.enter_context(
+                            ProcessPoolExecutor(
+                                max_workers=workers,
+                                mp_context=multiprocessing.get_context("fork"),
+                                initializer=_start_parent_watchdog,
+                            )
+                        )
+                        # ``map`` submits every chunk now, and under the fork
+                        # context the first submission forks every worker,
+                        # before the pool starts threads of its own.
+                        outcomes = executor.map(_evaluate_pair_chunk, chunks)
+                for bounds, (accepted, declined) in zip(chunks, outcomes):
                     for index, proposal in accepted:
                         results.add(index, proposal)
                     for reason, count in declined.items():
@@ -351,4 +429,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         finally:
             _worker_engine = _worker_functions = _worker_class_infos = _worker_pairs = None
             _worker_probed = frozenset()
+        if running:
+            _note_serial_evaluation(running)
+            return finish_serially(cold)
         return results.in_order()
