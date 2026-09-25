@@ -1129,37 +1129,36 @@ underscore would.
 Under `--cross-module`, a block holding an `assert` is shared between two
 modules only when pytest rewrites both alike (`assert_rewriting_differs`). A
 rewritten assert that fails reports the values it compared; a plain one
-reports only its message. Following pytest 9.1.1's own rules, read in its
-source, a module is rewritten when it is a `conftest.py`, matches
-`python_files` (`test_*.py` and `*_test.py` by default), is one of the
-session's initial paths, or is named, or lies in a package named, by a `-p`
-of `addopts`, a `pytest_plugins` or a `register_assert_rewrite` at the top
-of the root's `conftest.py`; never under `--assert=plain` and never with
-`PYTEST_DONT_REWRITE` in its docstring. The initial paths are the files
-`testpaths` names that pytest keeps: run without arguments from the root, it
-drops an entry that an earlier one holds, so `testpaths = ["tests/helpers.py",
-"tests"]` does not make `tests/helpers.py` one (round 4's P1-11), unless
-`--keep-duplicates` is given. A package's `__init__.py` that `python_files`
-matches is rewritten only when its package's name matches too, or names an
-initial path. The configuration is the first pytest reads from the project's
-root upward (`pytest.toml`, `pytest.ini`, `pyproject.toml`, `tox.ini`,
-`setup.cfg`). Where the project cannot say, the pair is declined: a pytest
-configuration below the root, `-o`, `-c`, `--rootdir` or `--pyargs` in
-`addopts`, a `testpaths` entry holding a glob or a node id, or reached through
-a symbolic link, the file a configuration above the root names in its
-`testpaths` (they apply only when pytest runs from there), a file rewritten
-only as an initial path while a `conftest.py` of the project imports one of
-its modules or a plugin is loaded (pytest consults the initial paths only
-once the session is set, so a module imported while it configures itself is
-not rewritten), a `pytest11` entry point of the project itself (its packages
-are rewritten once it is installed), a `pytest_plugins` or
-`register_assert_rewrite` anywhere else (for the modules it names), or a
-value that is not a literal. What the invocation adds (`PYTEST_ADDOPTS`,
-`PYTEST_PLUGINS`, a module path given on the command line, an installed
-plugin that imports the project's modules as pytest starts) is taken to be
-absent (fixtures `xf7d_*` and `r9dr_assert_testpaths_subsume_the_file`;
-`tests/test_assert_rewriting.py` asks pytest itself on a matrix of
-configurations).
+reports only its message. Following pytest 9.1.1's own rules, a module is
+rewritten when it is a `conftest.py`, matches `python_files` (`test_*.py`
+and `*_test.py` by default), is a file `testpaths` names, or is named, or
+lies in a package named, by a `-p` of `addopts`, a `pytest_plugins` or a
+`register_assert_rewrite` at the top of the root's `conftest.py`; never under
+`--assert=plain` and never with `PYTEST_DONT_REWRITE` in its docstring. The
+configuration is the first pytest reads from the project's root upward
+(`pytest.toml`, `pytest.ini`, `pyproject.toml`, `tox.ini`, `setup.cfg`).
+Where the project cannot say, the pair is declined: a pytest configuration
+below the root, `-o`, `-c` or `--rootdir` in `addopts`, a `pytest11` entry
+point of the project itself (its packages are rewritten once it is
+installed), a `pytest_plugins` or `register_assert_rewrite` anywhere else
+(for the modules it names), or a value that is not a literal. What the
+invocation adds (`PYTEST_ADDOPTS`, `PYTEST_PLUGINS`, a module path given on
+the command line) is taken to be absent (fixtures `xf7d_*`).
+
+Three of pytest's rules are not modeled, and a file they concern is taken
+to be rewritten or not by the rules above. pytest keeps only the
+`testpaths` entries no earlier one holds (`normalize_collection_arguments`
+in `_pytest/main.py`, unless `--keep-duplicates`), so `testpaths =
+["tests/helpers.py", "tests"]` does not make `tests/helpers.py` an initial
+path, and pytest does not rewrite it, while Towel takes it to be rewritten
+(round 4, P1-11). pytest consults its initial paths only once the session
+is set, so a file a `conftest.py` imports while pytest configures itself is
+not rewritten as one. And its early bail-out passes over a package's
+`__init__.py` that `python_files` matches unless the package's own name
+matches too. In each case an `assert` may move, under `--cross-module`,
+between a module pytest rewrites and one it does not. What changes is the
+failure report: a failing assert loses, or gains, pytest's account of the
+values it compared. Whether a test passes or fails does not change.
 
 What this does not see:
 
