@@ -589,10 +589,12 @@ in a base class or a mixin is left to your review.
 
 Code is moved out of a function, and a call placed in it, only when every
 decorator that can reach it is known to leave the body alone: the function's
-own decorators, and those of every function and class enclosing it. A
-decorator that compiles or instruments the body it decorates, such as
-typeguard's `@typechecked` or numba's `@njit`, would lose the moved code, so
-the pair is declined and counted under the decorator it names:
+own decorators, and those of every function and class enclosing it, including
+a decorator applied by hand in an assignment at module or class level
+(`fast = numba.njit(kernel)`, `f = typechecked(f)`). A decorator that compiles
+or instruments the body it decorates, such as typeguard's `@typechecked` or
+numba's `@njit`, would lose the moved code, so the pair is declined and
+counted under the decorator it names:
 
 ```text
 Declined (DEBUG_PROPOSAL_REJECTIONS=1 traces each candidate pair):
@@ -604,7 +606,16 @@ that were read in their source (`property`, `functools.lru_cache`,
 `contextlib.contextmanager`, `dataclasses.dataclass`, `unittest.mock.patch`,
 `pytest.fixture`, `pytest.mark.*`, `click.command`, and others), and the
 project's own decorators that only return the function, register it, or wrap
-it in a function calling it with its own arguments. [Known
+it in a function calling it with its own arguments. A class enclosing the code
+must also build its methods with Python's own machinery (a metaclass of `type`,
+`ABCMeta` or the enum metaclass, no `__init_subclass__`, and bases that are
+builtins, `abc.ABC`, `typing.Generic`, enums or classes of the project that
+qualify in turn), or the pair is counted under
+`class_machinery_may_transform_methods[...]`: a class deriving from a library
+class, `unittest.TestCase` included, keeps its code, since Towel reads no class
+outside the project; and with
+`cross_module_helpers=True`, an `assert` joins two modules only when pytest
+rewrites both alike (`assert_rewriting_differs`). [Known
 limitations](KNOWN_LIMITATIONS.md#decorators-that-compile-or-instrument-a-body)
 lists them and what the check does not see.
 

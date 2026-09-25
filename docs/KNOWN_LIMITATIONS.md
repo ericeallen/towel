@@ -268,7 +268,8 @@ addresses:
 - **Metaclasses and descriptors.** Method extraction into a class assumes the
   usual descriptor protocol. Only a method whose decorators are all known to
   leave its body alone is refactored at all (*Decorators that compile or
-  instrument a body*); one decorated with any of them but the recognized
+  instrument a body*), in a class whose machinery passes the test below; one
+  decorated with any of them but the recognized
   receiver-preserving decorators receives a module-level helper with the
   receiver passed explicitly. A class decorator is trusted to leave a
   helper in place only when it is one of `dataclasses.dataclass`,
@@ -904,19 +905,69 @@ named through a local of an enclosing function, a method of an object
 (`@app.route("/x")`, `@cli.command()`, `@f.register`), a class, or any other
 expression is declined.
 
+A decorator applied by hand counts as one written with `@`: every call in the
+value of an assignment at module or class level, in any module of the
+project, applies its callee to each definition an argument of it names, and
+is judged as that decorator would be. `fast = numba.njit(kernel)` and
+`fast = njit(cache=True)(kernel)` decline `kernel`, `f = typechecked(f)`
+declines `f`, `method = wrap(method)` in a class body declines `method`, and
+`C = typechecked(C)` declines every method of `C`, however the argument is
+spelled (`kernels.slow`, an alias, a name imported from another module). A
+call given the function among other arguments (`x = property(get, set)`,
+`T = TypeVar("T", bound=Model)`) is covered only where the entry's reading
+covers it. A name that cannot be followed to its definition (through a star
+import, a name bound by a loop) is taken to be every definition of its name.
+So `ORDER = sorted(items, key=rank)` at module level declines `rank`.
+
+The class that holds the code is judged by its machinery as well: a
+metaclass, or an `__init_subclass__` anywhere on its method resolution order,
+may wrap or recompile its methods while the class is built. Every class
+enclosing the code must pass the test a class taking a method helper passes
+(*Metaclasses and descriptors* below): a metaclass that is `type`,
+`abc.ABCMeta` or the enum metaclass, no `__init_subclass__` or
+`__getattribute__` of its own, and bases that are builtins, `abc.ABC`,
+`typing.Generic[...]`, enums, or classes of the project that pass in turn. A
+class not in a module's own body passes only when it has no bases and no
+keywords, and binds neither name. Anything else declines under
+`class_machinery_may_transform_methods[...]`, which names what fails the test:
+`metaclass LexerMeta`, `__init_subclass__ of Base`, or `base
+unittest.TestCase`, since the test reads no class outside the project.
+
+Under `--cross-module`, a block holding an `assert` is shared between two
+modules only when pytest rewrites both alike (`assert_rewriting_differs`). A
+rewritten assert that fails reports the values it compared; a plain one
+reports only its message. Following pytest 9.1.1's own rules, a module is
+rewritten when it is a `conftest.py`, matches `python_files` (`test_*.py`
+and `*_test.py` by default), is a file `testpaths` names, or is named, or
+lies in a package named, by a `-p` of `addopts`, a `pytest_plugins` or a
+`register_assert_rewrite` at the top of the root's `conftest.py`; never under
+`--assert=plain` and never with `PYTEST_DONT_REWRITE` in its docstring. The
+configuration is the first pytest reads from the project's root upward
+(`pytest.toml`, `pytest.ini`, `pyproject.toml`, `tox.ini`, `setup.cfg`).
+Where the project cannot say, the pair is declined: a pytest configuration
+below the root, `-o`, `-c` or `--rootdir` in `addopts`, a `pytest11` entry
+point of the project itself (its packages are rewritten once it is
+installed), a `pytest_plugins` or `register_assert_rewrite` anywhere else
+(for the modules it names), or a value that is not a literal. What the
+invocation adds (`PYTEST_ADDOPTS`, `PYTEST_PLUGINS`, a module path given on
+the command line) is taken to be absent (fixtures `xf7d_*`).
+
 What this does not see:
 
-- **A function handed to a compiler other than as a decorator.** `fast =
-  numba.njit(kernel)`, `f = typechecked(f)`, or a registry that later
-  instruments what it holds, compile code Towel may still move out of
-  `kernel` or `f`.
-- **Instrumentation by other machinery.** A metaclass or `__init_subclass__`
-  that wraps or recompiles every method, and an import hook that rewrites a
-  whole module (typeguard's `install_import_hook`, pytest's assertion
-  rewriting), are not decorators. A same-module helper is instrumented with
-  the rest of its module; a helper shared across modules with `--cross-module`
-  is not, so an assertion moved from a test module into another module loses
-  pytest's rewritten message.
+- **A function handed to a compiler or source reader only inside another
+  call.** Decoration by hand is read from assignments at module or class
+  level alone. An expression statement (`atexit.register(f)`,
+  `app.add_url_rule("/", view_func=f)`), a call in a function body
+  (`kernel = numba.njit(slow)` inside `setup()`, `Thread(target=f)`), a
+  default value, and a function reached through a container
+  (`njit(KERNELS["slow"])`) or through a name bound other than by a `def`, an
+  import or a plain alias (`g = f if fast else h`) are not seen, and code may
+  still move out of the function they hand over.
+- **Import hooks.** A hook that rewrites a whole module (typeguard's
+  `install_import_hook`) is neither a decorator nor class machinery. A helper
+  in the same module is rewritten with it; one shared across modules with
+  `--cross-module` is rewritten only if its host is, and only pytest's
+  assertion rewriting is modeled.
 - **Shadowed library names.** A module of the project named like a
   third-party library in the list is read as the project's own code, but one
   named like a standard-library module (`functools.py` at an import root) is
@@ -934,11 +985,17 @@ nothing prints how many pairs its last analysis declined for each (a pair
 that only repeated another's proposal is not counted), and every run counts
 the proposals it built and did not apply, by reason:
 
-- Decorators. `decorator_may_transform_body[...]`, counted with the
-  decorator it names (`decorator_may_transform_body[typeguard.typechecked]`):
-  a decorator that can reach the code of a block, of a call site, or of the
-  helper's host is not known to leave the body alone. See *Decorators that
-  compile or instrument a body* below.
+- Decorators and class machinery. `decorator_may_transform_body[...]`,
+  counted with the decorator it names
+  (`decorator_may_transform_body[typeguard.typechecked]`): a decorator,
+  written with `@` or applied by a call a module or class body assigns, that
+  can reach the code of a block, of a call site, or of the helper's host is
+  not known to leave the body alone. `class_machinery_may_transform_methods[...]`,
+  counted with what fails the test (`...[metaclass LexerMeta]`): a class
+  enclosing the code does not pass the method-host test of its machinery.
+  `assert_rewriting_differs`: under `--cross-module`, a block holding an
+  `assert` would join modules pytest does not rewrite alike. See *Decorators
+  that compile or instrument a body* above.
 - Frame use. `frame_sensitive_block`: the block contains a suspension,
   a namespace read, a frame or stack read, a warning, a loop transfer
   out of the block, a comprehension assignment expression, or a `super()`

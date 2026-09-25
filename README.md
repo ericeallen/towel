@@ -101,13 +101,18 @@ call's arguments and comparing it with the block it replaces. It also checks
 name binding, control flow, and evaluation order, and declines transformations
 that fail these checks. It moves no code out of or into a function whose
 decorators, or those of an enclosing function or class, it does not know to
-leave the body alone: a decorator that compiles or instruments its function,
+leave the body alone, whether written with `@` or applied by hand
+(`fast = njit(kernel)`): a decorator that compiles or instruments its function,
 such as typeguard's `@typechecked` or numba's `@njit`, would lose the moved
 code. The common decorators of the standard library (`property`, `functools`,
 `contextlib`, `typing`, `dataclasses`, `unittest.mock.patch`), of pytest and of
 click, each read in its source, are known, and so are the project's own that
 only wrap or register the function; a pair any other reaches is declined under
-the decorator's name. It skips trivial extractions that would add
+the decorator's name. The classes holding the code must be built by Python's
+own machinery, as far as Towel can read it, so a class with a metaclass of the
+project's or one deriving from a library class (`unittest.TestCase` included)
+keeps its code. Across modules, an `assert` moves only between modules pytest
+rewrites alike. It skips trivial extractions that would add
 indirection without sharing real logic, wraps arguments that must not be
 evaluated eagerly in zero-argument `lambda`s (see
 [below](#why-some-arguments-are-wrapped-in-lambda)), and leaves naming to you.
