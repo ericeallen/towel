@@ -175,6 +175,9 @@ TRANSFORMED = {
     "r7bi_augassign_and_del_after_block",
     # (r7bi_read_before_own_binding is declined: its block reads a local
     # before binding it, which only the original's UnboundLocalError shows.)
+    # A binder that may be read unbound keeps its spelling: the deletion and
+    # the handler stay with each site, and only what follows them moves.
+    "r7bi_renamed_binder_named_by_unbound_error",
 }
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in
