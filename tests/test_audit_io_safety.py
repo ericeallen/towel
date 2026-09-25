@@ -289,6 +289,12 @@ def test_r9p2_a_hard_linked_file_is_left_alone_and_the_rest_refactored_in_place(
     other.write_text(DUPLICATES)
     outside = tmp_path / "outside-link.py"
     os.link(source, outside)
+    # Files the run never writes are not reported: data, and an excluded module.
+    (target / "data.json").write_text("{}")
+    os.link(target / "data.json", tmp_path / "data-link.json")
+    (target / "vendor").mkdir()
+    (target / "vendor" / "kept.py").write_text(DUPLICATES)
+    os.link(target / "vendor" / "kept.py", tmp_path / "kept-link.py")
     run = _cli(
         [
             "dry",
@@ -297,12 +303,15 @@ def test_r9p2_a_hard_linked_file_is_left_alone_and_the_rest_refactored_in_place(
             "--no-format",
             "--no-types",
             "--no-interactive",
+            "--exclude",
+            "vendor",
             "--progress",
             "none",
         ]
     )
     assert run.returncode == 0, (run.stdout, run.stderr)
     assert f"{source.resolve()} has 2 hard links" in run.stderr
+    assert run.stderr.count("hard links") == 1, run.stderr
     assert "not writable in place: its file is hard-linked 1" in run.stdout + run.stderr
     assert source.read_text() == outside.read_text() == DUPLICATES
     assert source.stat().st_ino == outside.stat().st_ino

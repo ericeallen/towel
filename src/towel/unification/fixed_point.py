@@ -669,10 +669,22 @@ class FixedPointDrivers(Materialization):
                 )
             self._output_origin = (stage.origin_root, stage.root)
             self._analysis_paths = (str(stage.target),)
-            self._unwritable_in_place = frozenset(
-                stage.staged_copy(original).resolve() for original in stage.hard_linked
+            # Only the sources the run may rewrite matter: a hard-linked data
+            # file, or a module under an excluded directory, it never writes.
+            analyzed = (
+                {Path(path).resolve() for path in self._find_python_files(str(stage.target))}
+                if stage.hard_linked and stage.target.is_dir()
+                else set()
             )
-            for original, links in sorted(stage.hard_linked.items()):
+            unwritable = {
+                original: links
+                for original, links in stage.hard_linked.items()
+                if stage.staged_copy(original).resolve() in analyzed
+            }
+            self._unwritable_in_place = frozenset(
+                stage.staged_copy(original).resolve() for original in unwritable
+            )
+            for original, links in sorted(unwritable.items()):
                 LOG.warning(
                     "%s has %d hard links, and an in-place run replaces a file by renaming a new"
                     " one over it, which would leave the other links holding the old text; no"
