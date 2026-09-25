@@ -64,6 +64,9 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   constant parameterization without AST breakage.
 - **Extraction & rendering** — the many `test_extractor_*.py` files: helper and
   call-site generation, hygienic naming, overlapping-replacement detection.
+  `test_splicing.py`: the call replaces exactly its block's text, keeping
+  the other statements of a `;` line, a one-line compound body's header and
+  a backslash continuation, with a property over generated modules.
 - **Engine end-to-end** — `test_refactoring_engine.py`,
   `test_engine_adversarial.py`: single-file, directory, and cross-file runs,
   parameter and min-lines limits.

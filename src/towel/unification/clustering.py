@@ -67,6 +67,7 @@ from .semantic_safety import (
     needs_class_body,
     unbinds_external_name,
 )
+from .splicing import BlockColumns
 from .thunk_inlining import inline_leading_thunks
 from .typing_forms import ModuleText
 from .visitors import body_without_docstring
@@ -381,6 +382,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 yield ClusteredSite(
                     Replacement(
                         line_range=cand_range,
+                        columns=BlockColumns.of(cand_nodes),
                         node=call_node,
                         file_path=entry.file_path,
                         class_name=entry.class_name,

@@ -120,6 +120,7 @@ from .import_graph import (
     relative_imports_resolve_alike,
     would_create_import_cycle,
 )
+from .splicing import BlockColumns
 from .thunk_inlining import inline_leading_thunks
 from .typing_forms import ModuleText
 from .substitution import Substitution
@@ -1343,6 +1344,7 @@ class PairEvaluation(
             return None
         return Replacement(
             line_range=block_range,
+            columns=BlockColumns.of(nodes),
             node=call_node,
             file_path=file_path,
             class_name=class_name,

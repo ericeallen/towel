@@ -168,6 +168,10 @@ TRANSFORMED = {
     # the block only calls or consumes moves with it (r157).
     "r156_created_objects_that_escape",
     "r157_created_objects_only_called",
+    # A block that starts after, or ends before, another statement on its
+    # line: the call takes the block's place and the other statement stays.
+    "r7sp_block_starts_after_a_semicolon",
+    "r7sp_block_ends_before_a_semicolon",
 }
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in

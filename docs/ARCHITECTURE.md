@@ -1434,6 +1434,7 @@ but the ideas and their names are from the literature.
 | Binding-aware type terms and scoped type parameters | `type_bindings.py` |
 | Signature anti-unification and fresh generic candidates | `type_generalization.py`, `generic_annotations.py` |
 | Materialization and the arity check | `materialize.py` |
+| Writing a call in place of exactly its block's text | `splicing.py` |
 | Clustering further call sites | `clustering.py` |
 | Fork-based parallel evaluation | `parallel.py` |
 | Fixed-point drivers and the frame-sensitivity warning | `fixed_point.py` |

@@ -42,6 +42,7 @@ import re
 
 from ..canonical_ast import canonical_dump
 from .block_comments import HelperComments, SiteComments
+from .splicing import BlockColumns
 
 MethodKind = Literal["instance", "classmethod", "staticmethod"]
 """How a helper placed in a class binds its receiver."""
@@ -147,6 +148,12 @@ class Replacement:
     implicit_param: Optional[str] = None
     # The comments of the block this call replaces, which move into the helper.
     comments: SiteComments = SiteComments()
+    # Where the block begins on its first line and ends on its last. Those
+    # lines can hold statements the block does not (``a = 1; b = 2`` with
+    # the block at ``b``, or ``if x: b = 2``), and the splice keeps them.
+    # Every block the engine finds records its columns; None stands for a
+    # block of whole lines, as a replacement built by hand is.
+    columns: Optional[BlockColumns] = None
 
 
 GENERATED_HELPER_NAME = re.compile(r"_{1,2}extracted_func(?:_\d+)?")
