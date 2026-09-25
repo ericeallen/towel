@@ -504,7 +504,9 @@ Towel requires a well-formed program before it refactors:
 A file that does not parse is skipped rather than refused: it cannot run, so
 nothing Towel does elsewhere can change its behaviour, and repositories often
 keep deliberately invalid test data (17 of the corpus's first 52 projects
-held files a checker could not build).
+held files a checker could not build). *The premise was wrong: a file that
+does not parse on Towel's Python may run on a newer one. It is superseded by
+"A file that does not parse refuses the run" (2026-09-25).*
 
 A valid file never contains a character its encoding cannot hold. Where
 Towel's own rendering produced one, by printing the constant `"\u20ac"` back
@@ -979,3 +981,47 @@ The fifth round is run against the next release, with the same discipline,
 and the stop rule applies to it unchanged.
 
 *Status: decided.*
+
+## 2026-09-25: A file that does not parse refuses the run
+
+This supersedes the premise of "Well-formed input" that a file which does
+not parse cannot run. It can, on a newer Python. The fourth audit showed
+the cost of skipping it. A 3.12 project's hand-applied decorator, and a
+test's patch of `len` in 3.12 syntax, went unseen when Towel ran on 3.11,
+and code moved anyway.
+
+It follows the import-problem rule: refuse only where something is in doubt,
+and name a remedy that works.
+
+- **Refusal.** A file of the program that decodes but does not parse on the
+  Python Towel runs on refuses the run, in every mode, before anything is
+  written. The refusal names each file and the parser's message, the newest
+  Python the project declares, and an `--exclude` that clears it.
+- **Undecodable files.** A file that does not decode runs nowhere, and is
+  left alone as before.
+- **What `--exclude` means.** `--exclude` still means "leave these
+  unchanged". It takes a directory or file name, matched at any depth. An
+  excluded file that parses is still read as evidence by every whole-program
+  scan, since a test suite left unchanged still patches what it patches.
+  Only an excluded file that does not parse is taken at the user's word as no
+  part of the program. An exclusion that names the target itself, or a path
+  or glob, is refused with the name to pass instead.
+- **Fixtures.** Towel's own fixtures in syntax newer than a supported Python
+  are stored as `.pynew`, so its repository parses everywhere it runs.
+
+*Status: implemented in 1.772.*
+
+## 2026-09-25: A decorator's name counts every binding the program may give it
+
+A decorator is known to leave bodies alone only when every binding the
+program may give its name is known, at every module the name passes
+through. Any write the namespace-writes scan finds makes the name unknown,
+unless it is a top-level attribute store whose value is itself a known
+decorator. `importlib.reload` needs no rule of its own, since it re-runs
+only the module's own bindings. A star import makes unknown only the names
+it may bind, read as it may run: a literal `__all__` together with the
+module's public names, since an import cycle may run the star import before
+the provider binds its `__all__`. A decoration by hand is judged at every
+call along its chain, `f = outer(inner(f))` included.
+
+*Status: implemented in 1.772.*
