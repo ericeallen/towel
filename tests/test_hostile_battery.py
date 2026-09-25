@@ -182,6 +182,8 @@ TRANSFORMED = {
     # A thunk in dead code after a ``raise``, which the original never evaluated.
     "r7sp_thunk_after_a_raise",
 }
+# r7sp_directive_on_a_shared_line is declined: each block starts after, or
+# ends before, a statement that stays on a line carrying a directive.
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in
 # their qualified names. Its reads are still what free_variables reports.

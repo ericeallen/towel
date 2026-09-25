@@ -121,7 +121,8 @@ flowchart TD
       directives the two blocks do not carry alike, or whose reach the
       moved code or its call would leave (`directives_differ`,
       `directive_on_argument`, `directive_outlives_block`,
-      `directive_around_block`, `excluded_block_start`; see *Comments of
+      `directive_around_block`, `excluded_block_start`,
+      `directive_on_shared_line`; see *Comments of
       moved code*), and a further site that differs from them in its
       directives does not join;
    10. placement: function, class, or module, and a host module that closes
@@ -865,7 +866,10 @@ placement writes it (`directive_around_block`, decided with the proposal);
 a block whose first statement coverage excludes would become a measured call
 (`excluded_block_start`), where what coverage excludes is every line the
 project's own coverage.py configuration's regexes match, read as coverage.py
-reads it (`coverage_config.py`); and a region directive (`fmt: off`, `isort:
+reads it (`coverage_config.py`); a directive, or a coverage exclusion, on a
+line the block shares with a statement that stays at the call site governs
+that statement too, and the splice would part them
+(`directive_on_shared_line`); and a region directive (`fmt: off`, `isort:
 off`, a `pylint: disable` on a line of its own) must close within the block,
 and a file-wide one (`flake8: noqa`, `mypy:`) must stay in its module
 (`directive_outlives_block`). A clustered site whose directives differ is

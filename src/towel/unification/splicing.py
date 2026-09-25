@@ -31,7 +31,9 @@ separated the block from it still does. What follows the block is dropped
 when it is only a ``;``, blanks, or a comment: the comment moves into the
 helper with the block (``block_comments.site_comments`` reads every comment
 up to the end of the block's last line), as it does from a line of the
-block's alone.
+block's alone. A tool directive governs its whole line, so on a line the
+block shares with code that stays (``shared_lines``) it declines the pair
+instead (``block_comments``, ``directive_on_shared_line``).
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ from __future__ import annotations
 import ast
 import textwrap
 from dataclasses import dataclass
-from typing import Sequence, Tuple
+from typing import FrozenSet, Sequence, Tuple
 
 from ..source_text import source_lines
 
@@ -103,8 +105,7 @@ def splice_block(block_lines: Sequence[str], columns: BlockColumns, code: str) -
         raise ValueError("a block spans at least one line")
     first, last = block_lines[0], block_lines[-1]
     # Before the block there is only its indentation, or code that stays.
-    head = first[: character_column(first, columns.start)]
-    tail = last[character_column(last, columns.end) :]
+    head, tail = _around(first, last, columns)
     kept_tail = tail if holds_code(tail) else ""
     indentation = first[: len(first) - len(first.lstrip())]
     code_lines = code.split("\n")
@@ -117,6 +118,29 @@ def splice_block(block_lines: Sequence[str], columns: BlockColumns, code: str) -
     written = "".join(block_lines)
     removed = written[len(head) : len(written) - len(kept_tail)]
     return Splice(tuple(source_lines(text)), textwrap.dedent(indentation + removed).rstrip("\n"))
+
+
+def shared_lines(lines: Sequence[str], block: Sequence[ast.stmt]) -> FrozenSet[int]:
+    """The block's first and last lines, where each also holds code the splice keeps.
+
+    ``lines`` are the module's, ``block`` a nonempty run of its statements.
+    A comment is not such code: it moves into the helper.
+    """
+    first_line, last_line = block[0].lineno, block[-1].end_lineno or block[-1].lineno
+    head, tail = _around(lines[first_line - 1], lines[last_line - 1], BlockColumns.of(block))
+    return frozenset(
+        line
+        for line, shared in ((first_line, bool(head.strip())), (last_line, holds_code(tail)))
+        if shared
+    )
+
+
+def _around(first: str, last: str, columns: BlockColumns) -> Tuple[str, str]:
+    """The text before a block on its first line, and after it on its last."""
+    return (
+        first[: character_column(first, columns.start)],
+        last[character_column(last, columns.end) :],
+    )
 
 
 def whole_lines(block_lines: Sequence[str]) -> BlockColumns:

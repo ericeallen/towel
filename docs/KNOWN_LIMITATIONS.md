@@ -1049,7 +1049,14 @@ the proposals it built and did not apply, by reason:
   that replaces the block runs exactly when that statement did, so it
   would be measured and never run. A block opening with an excluded clause
   (`if error:  # pragma: no cover`) still moves: its header runs whenever
-  it is reached, and so does the call. A further site whose directives
+  it is reached, and so does the call. `directive_on_shared_line`: the
+  block starts after, or ends before, a statement on the same line that
+  stays at the call site (`a = 1; b = 2  # noqa: E702` with the block at
+  `b`), and that line carries a directive or coverage excludes it. The
+  directive governs the whole line: moved into the helper it would leave
+  `a = 1` unsilenced, and left on the call's line it would also reach the
+  call while the helper took a copy. A plain comment there moves as any
+  other. A further site whose directives
   differ from the pair's is left out of the cluster rather than declining it.
   What coverage.py excludes is read from the project's own configuration,
   as coverage.py reads it (`src/towel/coverage_config.py`, following

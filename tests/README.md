@@ -67,6 +67,9 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   `test_splicing.py`: the call replaces exactly its block's text, keeping
   the other statements of a `;` line, a one-line compound body's header and
   a backslash continuation, with a property over generated modules.
+  `test_shared_line_directives.py`: every directive form on a line the
+  block shares with code that stays declines the pair; a plain comment
+  there moves.
   `test_effect_free.py`: what may precede a thunk passed eagerly, a verdict
   for every expression form, and a property that evaluates what the rule
   accepts among objects recording every operation.
