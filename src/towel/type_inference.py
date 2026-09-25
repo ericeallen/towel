@@ -932,6 +932,22 @@ class PyrightOracle:
         self.answered_from_a_session = False
         # What each project's configuration has pyright report on, read once.
         self._scopes: Dict[Path, PyrightScope] = {}
+        # Its servers and copies belong to this process; see ``_forked``.
+        self._owner_pid = os.getpid()
+
+    def _forked(self) -> bool:
+        """Whether this is a forked child of the process that made the oracle.
+
+        A child inherits the servers' pipes and the private copies' paths, but
+        not the servers: ``Popen.poll`` there cannot wait for a process it did
+        not start and reports it gone. Checking from a child therefore
+        abandoned the parent's sessions and removed the copies they watch, and
+        so did merely closing the oracle there; the parent's next check then
+        read a copy that no longer existed and called a breaking candidate
+        clean. A child asks nothing and removes nothing, as ``MypyInferrer``'s
+        does.
+        """
+        return self._owner_pid != os.getpid()
 
     def reports_on(self, file_path: str) -> bool:
         """Whether the project's configuration has pyright report on ``file_path`` at all.
@@ -950,6 +966,8 @@ class PyrightOracle:
 
     def close(self) -> None:
         """Stop every language server this oracle started and drop its copies."""
+        if self._forked():
+            return  # They are the parent's, still in use there.
         for warm in self._warmed.values():
             warm.close()
         self._warmed.clear()
@@ -1067,6 +1085,8 @@ class PyrightOracle:
 
     def stop_language_servers(self) -> None:
         """Close every warm project; this oracle answers from the command line after."""
+        if self._forked():
+            return  # The parent's servers, which only the parent may stop.
         self._server = None
         for warm in self._warmed.values():
             warm.close()
@@ -1080,6 +1100,8 @@ class PyrightOracle:
         self._warmed.clear()
 
     def _diagnostics(self, file_path: str, text: str) -> _PyrightDiagnostics | CheckFailure:
+        if self._forked():
+            return CheckFailure(_AFTER_FORK)
         original = Path(file_path).resolve()
         root = _configured_root(original, "pyright") or _checker_root(original)
         warm = self._warm(root, ())
@@ -1269,6 +1291,8 @@ class PyrightOracle:
     def check_project(
         self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
     ) -> CheckResult:
+        if self._forked():
+            return CheckFailure(_AFTER_FORK)
         errors: List[TypeDiagnostic] = []
         for root, replacements in _source_groups(sources, "pyright").items():
             try:
@@ -1343,6 +1367,9 @@ class PyrightOracle:
 
 PYRIGHT_TIMEOUT_SECONDS = 600.0
 """How long one pyright run may take before Towel proceeds without its answer."""
+
+_AFTER_FORK = "Create a new pyright oracle after fork"
+"""Why a forked child's question goes unanswered (see ``PyrightOracle._forked``)."""
 
 INTERPRETER_TIMEOUT_SECONDS = 60.0
 """How long the interpreter may take to say where its installed code is."""
