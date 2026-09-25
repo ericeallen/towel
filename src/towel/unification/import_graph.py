@@ -63,6 +63,7 @@ from ..declared_requirements import (
     normalized_name,
 )
 from ..project_layout import find_project_root, load_pyproject
+from ..shipped_files import distribution_root
 from .module_bindings import (
     NAMESPACE_PRESERVING_DECORATORS,
     ModuleBindings,
@@ -133,6 +134,8 @@ class ImportGraphCache:
         self._attribute_writes: Dict[Path, ProjectWrites] = {}
         # The modules each program imports only under a condition, found once per run.
         self._conditional: Dict[Path, FrozenSet[Path]] = {}
+        # The distribution each directory's modules belong to, found once per run.
+        self._distributions: Dict[Path, Optional[Path]] = {}
 
     def resolve(self, path: str) -> Path:
         """``Path(path).resolve()``, once per spelling for the life of the cache."""
@@ -161,6 +164,7 @@ class ImportGraphCache:
         self._roots = {}
         self._attribute_writes = {}
         self._conditional = {}
+        self._distributions = {}
         for table in (self.edges, self.effects, self.quiet_classes):
             table.clear()
 
@@ -218,6 +222,15 @@ class ImportGraphCache:
         if known is None:
             known = self._conditional[root] = conditionally_imported(program, self)
         return known
+
+    def distribution_of(self, module: Path) -> Optional[Path]:
+        """``shipped_files.distribution_root`` of ``module``, found once per directory per run."""
+        directory = module.parent
+        if not memoizing():
+            return distribution_root(module)
+        if directory not in self._distributions:
+            self._distributions[directory] = distribution_root(module)
+        return self._distributions[directory]
 
     def program_for(self, path: Path) -> ProgramImports:
         """The program imports of the project ``path`` belongs to, read on first use.
@@ -1630,6 +1643,7 @@ class ImportChange(Enum):
         "a module the new import loads reads, at import, an attribute the program rebinds"
     )
     CONDITIONAL_HOST = "the program imports the host, or a package it is in, only under a condition"
+    OTHER_DISTRIBUTION = "the host belongs to another distribution than the borrower"
     NEW_REQUIREMENT = "a module the new import loads requires a package that may be absent"
     NEW_TOP_LEVEL_PACKAGE = (
         "a module the new import loads is in a package the borrower never imports"
@@ -1648,7 +1662,10 @@ def import_change(
     """What ``borrower`` importing ``host`` would change about importing the borrower, if anything.
 
     A cross-file helper adds an import of the host to the borrower, which
-    runs the host and the initializers of the packages enclosing it. If the
+    runs the host and the initializers of the packages enclosing it. A
+    borrower that belongs to a distribution borrows only from a host in the
+    same one: a monorepo's beta may be installed against the released
+    alpha, which lacks the helper. If the
     borrower's import already certainly loads the host, nothing new runs.
     Otherwise every
     module the new import may load that the borrower's does not certainly
@@ -1666,6 +1683,9 @@ def import_change(
     program = cache.program_for(Path(host_file))
     host = program.origin(Path(host_file))
     borrower = program.origin(Path(borrower_file))
+    distribution = cache.distribution_of(borrower)
+    if distribution is not None and cache.distribution_of(host) != distribution:
+        return ImportChange.OTHER_DISTRIBUTION
     already = _reachable_modules(
         [borrower, *program.package_initializers(borrower)],
         program,

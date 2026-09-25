@@ -324,6 +324,7 @@ class RejectReason(StrEnum):
     NONLOCAL_SAFETY_SKIP = "nonlocal_safety_skip"
     NOT_STRUCTURALLY_SIMILAR = "not_structurally_similar"
     ORPHANED_VARIABLES = "orphaned_variables"
+    OTHER_DISTRIBUTION = "other_distribution"
     PRIVATE_NAME_LEXICAL_CLASS = "private_name_lexical_class"
     REBOUND_EXTERNAL_BINDING = "rebound_external_binding"
     RELATIVE_IMPORT_ACROSS_PACKAGES = "relative_import_across_packages"

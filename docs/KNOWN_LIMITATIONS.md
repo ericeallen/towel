@@ -534,6 +534,18 @@ distribution name that differs from its import name (`PyYAML` for `yaml`) is
 not recognized, which refuses a host rather than accepting one; an import
 made by `importlib` or `__import__` is not seen at all.
 
+A distribution is released on its own, so a borrower that belongs to one
+borrows only from a host in the same distribution (`other_distribution`): in
+a monorepo, `beta` depending on `alpha` was made to import a helper from
+`alpha/a.py`, and the new beta installed against the released alpha raised
+`ImportError`. A module belongs to the nearest directory above it with a
+`setup.py`, a `setup.cfg` declaring `[metadata]` or `[options]`, or a
+`pyproject.toml` with a `[project]`, `[build-system]` or `[tool.poetry]`
+table; one in none, a test or a script beside the packages, keeps the rules
+below. On a monorepo-shaped fixture with helpers within each of two
+distributions, across them, and in a root test, only the one across them is
+declined.
+
 A distribution ships the packages its metadata names, not the repository, so
 a host is refused as well when its import would load a module of a
 top-level package the borrower does not already rely on
@@ -1522,7 +1534,8 @@ the proposals it built and did not apply, by reason:
   the standard library every supported platform and Python has, and the
   declared dependencies no marker limits; `conditionally_imported_host`: the
   program imports the host, or a package it is in, only under a condition;
-  `new_top_level_package`: it would load a
+  `other_distribution`: the borrower belongs to a distribution the host is
+  not in; `new_top_level_package`: it would load a
   top-level package of the project the borrower's import does not;
   `run_by_path_import`: the borrower runs as a program, and run by its path
   it could not resolve the import; `host_has_stub`: a type checker would
