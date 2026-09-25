@@ -35,6 +35,7 @@ this process's imports, which is all an incremental build reuses anyway.
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
+import enum
 import io
 import json
 import os
@@ -44,15 +45,21 @@ import signal
 import sys
 import threading
 import time
-from typing import Callable, Mapping, Optional, Sequence
+from typing import Callable, List, Mapping, NamedTuple, Optional, Protocol, Sequence, Tuple
 
 from mypy import build
 from mypy.build import BuildSource
 from mypy.errors import CompileError, Errors
-from mypy.find_sources import create_source_list
+from mypy.find_sources import InvalidSourceList, create_source_list
 from mypy.fscache import FileSystemCache
 from mypy.main import process_options
-from mypy.modulefinder import matches_exclude
+from mypy.modulefinder import (
+    FindModuleCache,
+    ModuleNotFoundReason,
+    SearchPaths,
+    compute_search_paths,
+    matches_exclude,
+)
 from mypy.options import BuildType, Options
 from mypy.util import decode_python_encoding
 
@@ -68,9 +75,61 @@ configuration, took 12.9 s in one cache and 5.7 s in two.
 """
 
 
-def _options(
-    root: Path, config: str | None, cache: str, roots: Sequence[str], *, probe: bool
-) -> Options:
+class _Configured(NamedTuple):
+    """The project's options, and what mypy said while reading its configuration.
+
+    ``said`` is what mypy's own run prints and then goes on from: an option
+    this mypy does not know, a global option in a per-module section. mypy
+    exits 0 after saying it, so it is a warning, never a reason to refuse.
+
+    A ``NamedTuple``, not a dataclass: the tests load this file as a module
+    that is not in ``sys.modules``, where a dataclass cannot be made.
+    """
+
+    options: Options
+    said: Tuple[str, ...]
+
+
+def _read_configuration(config: str | None) -> _Configured:
+    """The project's options exactly as its own ``mypy`` reads them, and what mypy said doing so.
+
+    mypy writes every problem it finds in a configuration file and carries
+    on (``parse_config_file``: "Errors are written to stderr but are not
+    fatal"); only what stops its own run, which exits through ``SystemExit``,
+    stops this one. Any output used to be fatal here, so a key mypy 2
+    dropped (``force_uppercase_builtins``) or a ``python_version`` in an
+    override refused a typed run whose own ``mypy`` said so and checked
+    clean. What stops mypy is raised in mypy's words, not as an exit status.
+    """
+    said = io.StringIO()
+    # A synthetic module target suppresses target discovery while parsing the
+    # project's options. This API is present throughout mypy 1.x and 2.x. No
+    # plugin is loaded until ``_load_configured_plugins``, after the options
+    # that would execute or write something have been taken away. Some notices
+    # (``--strict-concatenate is deprecated``) are printed to standard output.
+    try:
+        with redirect_stdout(said):
+            _, options = process_options(
+                [
+                    "--config-file",
+                    config or "",
+                    "--python-executable",
+                    sys.executable,
+                    "--module",
+                    "__towel_config_probe__",
+                ],
+                stdout=said,
+                stderr=said,
+                require_targets=False,
+            )
+    except SystemExit as stopped:
+        raise ValueError(
+            said.getvalue().strip() or f"mypy stopped reading its configuration ({stopped.code})"
+        ) from None
+    return _Configured(options, tuple(line for line in said.getvalue().splitlines() if line))
+
+
+def _options(root: Path, config: str | None, cache: str, *, probe: bool) -> _Configured:
     """The options of one build: the project's own, but for what a probe needs beyond them.
 
     A check (a complete build: the baseline, a candidate, the cold
@@ -98,26 +157,8 @@ def _options(
     therefore checks them, in a cache of its own (see ``_PROBE_CACHE``). A
     configured project's probes run with its own options, as its checks do.
     """
-    errors = io.StringIO()
-    # A synthetic module target suppresses target discovery while parsing the
-    # project's options. This API is present throughout mypy 1.x and 2.x. No
-    # plugin is loaded until ``_load_configured_plugins``, after the options
-    # below that would execute or write something have been taken away.
-    _, options = process_options(
-        [
-            "--config-file",
-            config or "",
-            "--python-executable",
-            sys.executable,
-            "--module",
-            "__towel_config_probe__",
-        ],
-        stdout=io.StringIO(),
-        stderr=errors,
-        require_targets=False,
-    )
-    if errors.getvalue():
-        raise ValueError(errors.getvalue().strip())
+    configured = _read_configuration(config)
+    options = configured.options
     options.build_type = BuildType.STANDARD
     if probe and config is None:
         options.check_untyped_defs = True
@@ -143,21 +184,15 @@ def _options(
     # Pretty diagnostics read snippets from disk, but prospective sources and
     # probes exist only in memory and can extend beyond the physical file.
     options.pretty = False
-    # A check's sources come with the directories mypy searches for what they
-    # import, and the root is the working directory, searched after them, as
-    # in the project's own run. Searched first, the root answered a test's
-    # ``import helpers`` with a ``helpers.py`` of its own instead of the one
-    # beside the test. A probed module is given as text alone, so a probe is
-    # also given the root its module imports from.
+    # Every source, a probed module included, comes with the directory mypy
+    # searches for what it imports (its ``base_dir``), and the root is the
+    # working directory, searched after them, as in the project's own run.
+    # Searched first, the root answered a test's ``import helpers`` with a
+    # ``helpers.py`` of its own instead of the one beside the test.
     options.mypy_path = list(
-        dict.fromkeys(
-            [
-                *(str((root / path).resolve()) for path in options.mypy_path),
-                *(roots if probe else ()),
-            ]
-        )
+        dict.fromkeys(str((root / path).resolve()) for path in options.mypy_path)
     )
-    return options
+    return _Configured(options, configured.said)
 
 
 class _PluginUnavailable(Exception):
@@ -218,6 +253,24 @@ def _sources(value: object) -> dict[str, str]:
         if not isinstance(path, str) or not isinstance(text, str) or not Path(path).is_absolute():
             raise ValueError("Expected source text and absolute paths")
         result[path] = text
+    return result
+
+
+def _placeholders(value: object) -> dict[str, Tuple[str, str]]:
+    """Per probed path, the module name and import directory Towel supplies for when mypy has none."""
+    if not isinstance(value, dict):
+        raise ValueError("Expected probed module names keyed by absolute path")
+    result: dict[str, Tuple[str, str]] = {}
+    for path, named in value.items():
+        if (
+            not isinstance(path, str)
+            or not Path(path).is_absolute()
+            or not isinstance(named, list)
+            or len(named) != 2
+            or not all(isinstance(part, str) for part in named)
+        ):
+            raise ValueError("Expected a module name and its directory for each probed path")
+        result[path] = (str(named[0]), str(named[1]))
     return result
 
 
@@ -435,13 +488,38 @@ def _one_source_per_module(selected: Sequence[BuildSource]) -> list[BuildSource]
     return list(by_path.values())
 
 
+def _probed_as_the_project_names(
+    path: str, text: Optional[str], placeholder: Tuple[str, str], options: Options
+) -> BuildSource:
+    """A probed module, named as mypy names its file under the project's configuration.
+
+    Its module name and the directory it imports from are what mypy's own
+    walk gives the file (``crawl_up``), so a probe names a module exactly as
+    the project's run and a complete check do. Towel's own ``__init__``-chain
+    name differed wherever the configuration decides: with
+    ``explicit_package_bases`` and ``mypy_path = "src"``, mypy names
+    ``src/acme/shop/models.py`` ``acme.shop.models``, a probe named it
+    ``shop.models``, and every probe build of such a project failed with
+    "Source file found twice". Only a file mypy will not name at all, below a
+    package directory whose name is no identifier, takes ``placeholder``.
+    """
+    try:
+        named = create_source_list([path], options)
+    except InvalidSourceList:
+        named = []
+    if len(named) != 1 or not named[0].module:
+        module, directory = placeholder
+        return BuildSource(path, module, text, directory)
+    return BuildSource(path, named[0].module, text, named[0].base_dir)
+
+
 def _build_sources(
     replacements: Mapping[str, str],
     given: Mapping[str, str],
     options: Options,
     root: Path,
     complete: bool,
-    modules: Mapping[str, str],
+    placeholders: Mapping[str, Tuple[str, str]],
     consumers: Sequence[str],
 ) -> list[BuildSource]:
     # Text is given for the replacements and for every path an earlier request
@@ -456,7 +534,10 @@ def _build_sources(
     if not complete:
         # The probed modules are the question and are built from their own
         # text; every other module is read as the project's mypy would read it.
-        probed = [BuildSource(path, modules[path], given.get(path)) for path in replacements]
+        probed = [
+            _probed_as_the_project_names(path, given.get(path), placeholders[path], options)
+            for path in replacements
+        ]
         return probed + [
             BuildSource(
                 resolved.path, resolved.module, given.get(resolved.path or ""), resolved.base_dir
@@ -484,20 +565,216 @@ def _build_sources(
     ]
 
 
-def _judged_by_the_project(options: Options, root: Path) -> Callable[[str], bool]:
-    """Whether the project's own mypy run would take a file as one of its targets.
+def _walked_like_mypy(entry: str, options: Options) -> bool:
+    """Whether mypy's walk of the root enters ``entry``, one of the root's own entries."""
+    name = os.path.basename(entry)
+    return not (
+        name in ("__pycache__", "site-packages", "node_modules")
+        or name.startswith(".")
+        or matches_exclude(entry, options.exclude, FileSystemCache(), False)
+    )
 
-    With ``files`` configured, the files those name, found as mypy finds them;
-    otherwise every file under ``root`` that no ``exclude`` pattern matches,
-    tested as mypy's own walk tests it, on the file and on each directory above
-    it. ``options.exclude`` must still be the project's, before Towel adds to it.
+
+def _sources_of_the_projects_run(options: Options, root: Path) -> list[BuildSource]:
+    """What the project's own mypy run is given: its ``files``, or else everything under ``root``.
+
+    It is read for which files that run checks, where ``files`` says
+    (:func:`_judged_by_the_project`), and for the directories its modules are
+    found from, which it searches for what they import
+    (:func:`_where_installed_code_hides_the_project`). A directory mypy will
+    not name (``docs/my-plugin/__init__.py``) stops mypy's walk of the whole
+    root, so the root's entries are then walked one by one, and only the one
+    holding it contributes nothing.
     """
     if options.files:
-        targets = {
-            os.path.abspath(source.path)
-            for source in create_source_list(list(options.files), options, allow_empty_dir=True)
-            if source.path is not None
-        }
+        return create_source_list(list(options.files), options, allow_empty_dir=True)
+    try:
+        return create_source_list([str(root)], options, allow_empty_dir=True)
+    except InvalidSourceList:
+        pass
+    found: list[BuildSource] = []
+    for name in sorted(os.listdir(root)):
+        entry = str(root / name)
+        if (os.path.isdir(entry) or entry.endswith((".py", ".pyi"))) and _walked_like_mypy(
+            entry, options
+        ):
+            try:
+                found.extend(create_source_list([entry], options, allow_empty_dir=True))
+            except InvalidSourceList:
+                continue
+    return found
+
+
+def _within(path: str, directory: str) -> bool:
+    return Path(os.path.realpath(path)).is_relative_to(os.path.realpath(directory))
+
+
+def _where_installed_code_hides_the_project(
+    search: SearchPaths, run: Sequence[BuildSource], options: Options, root: Path
+) -> list[str]:
+    """The directories of the project's own packages that installed code answers for in a build.
+
+    ``search`` is where the build looks for modules, and ``run`` what the
+    project's own run is given (:func:`_sources_of_the_projects_run`).
+
+    The project's own run is given every file under its root, or its
+    ``files``, and mypy searches the directory each is found from (``src``
+    for ``src/shop/util.py``) before installed code. A build is given far
+    fewer: the files it changes with their packages and consumers, or one
+    probed module. A run over ``tests/`` alone therefore found ``shop`` where
+    the interpreter had it installed, a stale non-editable 1.0 whose
+    ``DEFAULT`` was ``object``, rather than in ``src/shop``, where it is
+    ``list[int]``. The helper written for ``object`` checked clean against
+    1.0, and the project's own ``mypy .`` rejected it.
+
+    Each directory returned holds a top-level package of the project's run
+    that this build would take from installed code, typed or not (an untyped
+    copy is an ``import-untyped`` error where the project's run finds its own
+    package); they are returned in the order that run searches them. Only
+    that is corrected. A package this build finds nowhere stays unfound, as it
+    was, and a lone module is left alone however it is named: searching every
+    directory the tree's modules are found from (187 of them in sphinx, one
+    per test root) would let a ``conf.py`` or an ``examples/requests.py``
+    answer for what they happen to share a name with.
+    """
+    searched = {os.path.realpath(path) for path in (*search.mypy_path, *search.python_path)}
+    finder = FindModuleCache(search, FileSystemCache(), options)
+    hidden: set[str] = set()
+    asked: set[Tuple[str, str]] = set()
+    for source in run:
+        if source.path is None or source.base_dir is None or not source.module:
+            continue
+        if "." not in source.module and Path(source.path).stem != "__init__":
+            continue  # a lone module, not a package
+        base = os.path.realpath(source.base_dir)
+        top = source.module.partition(".")[0]
+        if base in searched or (base, top) in asked:
+            continue
+        asked.add((base, top))
+        found = finder.find_module(top)
+        # Found without type hints is found in installed code: only there does
+        # mypy ask for a ``py.typed`` marker or stubs.
+        if found is ModuleNotFoundReason.FOUND_WITHOUT_TYPE_HINTS or (
+            isinstance(found, str)
+            and not _within(found, str(root))
+            and any(_within(found, installed) for installed in search.package_path)
+        ):
+            hidden.add(base)
+    if not hidden:
+        return []
+    order = compute_search_paths(list(run), options, build.default_data_dir()).python_path
+    return [path for path in order if os.path.realpath(path) in hidden]
+
+
+_FOUND_TWICE = re.compile(
+    r"^(?P<path>.+?): error: Source file found twice under different module names:"
+    r' "(?P<given>[^"]+)" and "(?P<imported>[^"]+)"'
+)
+
+
+def _base_for(path: str, module: str) -> Optional[str]:
+    """The directory ``module`` is found from when it names the file at ``path``, if it can."""
+    file = Path(path)
+    spelled = list(file.parent.parts) + ([] if file.stem == "__init__" else [file.stem])
+    parts = module.split(".")
+    if len(spelled) <= len(parts) or spelled[-len(parts) :] != parts:
+        return None
+    return str(Path(*spelled[: -len(parts)]))
+
+
+def _named_by_its_importer(
+    messages: Sequence[str],
+    sources: Sequence[BuildSource],
+    judged: Callable[[str], bool],
+    renamed: set[str],
+) -> Optional[list[BuildSource]]:
+    """``sources`` with one file renamed as the import mypy reached it by names it, if that answers.
+
+    Only a file the project's own run is not given, which exists in that run
+    only as the module some import reaches, and only once: every other
+    "found twice" is the project's own, or no single rename resolves it.
+    """
+    for message in messages:
+        match = _FOUND_TWICE.match(message)
+        if match is None:
+            continue
+        path = os.path.abspath(match.group("path"))
+        for index, source in enumerate(sources):
+            if (
+                source.path is None
+                or os.path.abspath(source.path) != path
+                or source.module != match.group("given")
+                or path in renamed
+                or judged(source.path)
+            ):
+                continue
+            base = _base_for(path, match.group("imported"))
+            if base is None:
+                return None
+            renamed.add(path)
+            as_imported = BuildSource(source.path, match.group("imported"), source.text, base)
+            return [*sources[:index], as_imported, *sources[index + 1 :]]
+    return None
+
+
+def _build_as_the_project_reaches(
+    sources: Sequence[BuildSource],
+    options: Options,
+    judged: Callable[[str], bool],
+    *,
+    complete: bool,
+) -> Tuple[build.BuildResult, list[BuildSource]]:
+    """The build of ``sources``, each file the project reaches only by import taken as it would be.
+
+    Every file Towel changes is a source here, since only a source can be given
+    text, and mypy consults ``follow_imports`` only for a module it finds by
+    import, never for a source. So a complete build leaves out a file the
+    project's run is not given where the project's options do not follow it
+    (``skip``, ``error``): its importers then see what the project's run sees,
+    ``Any`` or "Import of ... ignored", rather than the types a source would
+    give them. A probe keeps it, since its question is the file's own types.
+
+    mypy names a source by its own walk, and such a file exists in the
+    project's run only as the module its importer names: ``tools/gen/x.py``,
+    outside ``files = ["app"]`` and with no ``__init__`` above it, is ``x`` to
+    mypy's walk and ``tools.gen.x`` to ``app/main.py``'s import. Given as
+    ``x``, the file was found twice and the build refused, while the project's
+    own ``mypy`` checked clean. mypy's own refusal names both names, and such a
+    file is given the importer's.
+    """
+    current = list(sources)
+    renamed: set[str] = set()
+    while True:
+        if complete:
+            current = [
+                source
+                for source in current
+                if source.path is None
+                or judged(source.path)
+                or _followed(options, source.module, source.path) is not _Followed.NOT_FOLLOWED
+            ]
+        try:
+            return build.build(sources=current, options=options), current
+        except CompileError as error:
+            as_imported = _named_by_its_importer(error.messages, current, judged, renamed)
+            if as_imported is None:
+                raise
+            current = as_imported
+
+
+def _judged_by_the_project(
+    options: Options, root: Path, run: Sequence[BuildSource]
+) -> Callable[[str], bool]:
+    """Whether the project's own mypy run would take a file as one of its targets.
+
+    With ``files`` configured, the files of ``run``, what those name found as
+    mypy finds them (:func:`_sources_of_the_projects_run`); otherwise every
+    file under ``root`` that no ``exclude`` pattern matches, tested as mypy's
+    own walk tests it, on the file and on each directory above it.
+    ``options.exclude`` must still be the project's, before Towel adds to it.
+    """
+    if options.files:
+        targets = {os.path.abspath(source.path) for source in run if source.path is not None}
         return lambda path: os.path.abspath(path) in targets
     excludes = list(options.exclude)
     cache = FileSystemCache()
@@ -515,12 +792,53 @@ def _judged_by_the_project(options: Options, root: Path) -> Callable[[str], bool
     return judged
 
 
+class _Followed(enum.Enum):
+    """How the project's own run takes a module that a module it checks imports."""
+
+    REPORTED = "followed, and its errors reported"
+    SILENCED = "followed, and its errors silenced"
+    NOT_FOLLOWED = "not followed"
+
+
+def _followed(options: Options, module: str, path: Optional[str]) -> _Followed:
+    """How the project's own run takes an import of ``module``, as that module's options say.
+
+    mypy decides it for each module it is asked to import
+    (``find_module_and_diagnose``) from the module's own options: the global
+    ``follow_imports`` as every section whose pattern names the module leaves
+    it (``Options.clone_for_module``), except that a stub is followed and
+    reported unless ``follow_imports_for_stubs`` says otherwise.
+    """
+    own = options.clone_for_module(module)
+    if path is not None and path.endswith(".pyi") and not own.follow_imports_for_stubs:
+        return _Followed.REPORTED
+    if own.follow_imports in {"skip", "error"}:
+        return _Followed.NOT_FOLLOWED
+    return _Followed.SILENCED if own.follow_imports == "silent" else _Followed.REPORTED
+
+
 _MESSAGE_PATH = re.compile(r"^(?P<path>.*?):(?:\d+:)?(?:\d+:)? (?:error|note|warning): ")
+
+
+class _Imports(Protocol):
+    """What a module of a finished build imports: all this judgement reads of mypy's ``State``."""
+
+    @property
+    def dependencies(self) -> Sequence[str]:
+        """The modules it imports that the build found."""
+
+    @property
+    def ancestors(self) -> Optional[Sequence[str]]:
+        """The packages above it, which mypy loads with it."""
+
+    @property
+    def path(self) -> Optional[str]:
+        """Its file."""
 
 
 def _as_the_project_judges(
     messages: Sequence[str],
-    result: build.BuildResult,
+    graph: Mapping[str, _Imports],
     sources: Sequence[BuildSource],
     judged: Callable[[str], bool],
     options: Options,
@@ -532,8 +850,11 @@ def _as_the_project_judges(
     naming ``files`` without it, then had its tests checked here and nowhere
     else, and a project whose mypy run is clean was refused. A file the project
     does not name is still checked when a file it does name imports it, since
-    mypy follows that import and reports what it finds -- unless the
-    configuration silences followed imports, when it reports nothing there.
+    mypy follows that import and reports what it finds -- unless that module's
+    own options silence it or do not follow it (:func:`_followed`). Reading
+    only the global ``follow_imports`` dropped every error in ``tools/`` under
+    a global ``silent`` whose ``tools.*`` section said ``normal``, and a helper
+    the project's own ``mypy`` rejected there was accepted.
     """
     unjudged = {
         source.module: os.path.abspath(source.path)
@@ -542,18 +863,26 @@ def _as_the_project_judges(
     }
     if not unjudged:
         return list(messages)
-    reached: set[str] = set()
-    if options.follow_imports not in {"silent", "skip"}:
-        pending = [source.module for source in sources if source.module not in unjudged]
-        while pending:
-            state = result.graph.get(pending.pop())
-            if state is None:
+    checked = [source.module for source in sources if source.module not in unjudged]
+    seen = set(checked)
+    reported: set[str] = set()
+    pending = list(checked)
+    while pending:
+        state = graph.get(pending.pop())
+        if state is None:
+            continue
+        for dependency in [*state.dependencies, *(state.ancestors or [])]:
+            if dependency in seen:
                 continue
-            for dependency in [*state.dependencies, *(state.ancestors or [])]:
-                if dependency not in reached:
-                    reached.add(dependency)
-                    pending.append(dependency)
-    unchecked = {path for module, path in unjudged.items() if module not in reached}
+            seen.add(dependency)
+            imported = graph.get(dependency)
+            how = _followed(options, dependency, imported.path if imported is not None else None)
+            if how is _Followed.NOT_FOLLOWED:
+                continue
+            if how is _Followed.REPORTED:
+                reported.add(dependency)
+            pending.append(dependency)
+    unchecked = {path for module, path in unjudged.items() if module not in reported}
 
     def about_unchecked(message: str) -> bool:
         match = _MESSAGE_PATH.match(message)
@@ -562,7 +891,14 @@ def _as_the_project_judges(
     return [message for message in messages if not about_unchecked(message)]
 
 
-def _request(request: object, cache: str) -> list[str]:
+class _Answered(NamedTuple):
+    """A build's diagnostics, and what mypy said about the configuration on the way."""
+
+    messages: List[str]
+    said: Tuple[str, ...]
+
+
+def _request(request: object, cache: str) -> _Answered:
     if not isinstance(request, dict):
         raise ValueError("Expected a request object")
     root_value = request.get("root")
@@ -572,9 +908,14 @@ def _request(request: object, cache: str) -> list[str]:
     root = Path(root_value)
     os.chdir(root)
     complete = request.get("complete") is True
-    options = _options(root, config, cache, _strings(request.get("roots")), probe=not complete)
-    judged = _judged_by_the_project(options, root) if complete else None
-    for excluded in _strings(request.get("excluded_paths")):
+    configured = _options(root, config, cache, probe=not complete)
+    options = configured.options
+    # The project's own run, read before Towel's exclusions, which name what
+    # Towel writes (a relocated output), never the project's own files.
+    run = _sources_of_the_projects_run(options, root)
+    judged = _judged_by_the_project(options, root, run)
+    excluded_paths = _strings(request.get("excluded_paths"))
+    for excluded in excluded_paths:
         path = Path(excluded)
         spellings = [str(path)]
         if path.is_relative_to(root):
@@ -589,27 +930,51 @@ def _request(request: object, cache: str) -> list[str]:
         options,
         root,
         complete,
-        _sources(request.get("modules")),
+        _placeholders(request.get("modules")),
         _strings(request.get("consumers") or []),
     )
-    result = build.build(sources=sources, options=options)
-    if judged is None:
-        return list(result.errors)
-    return _as_the_project_judges(result.errors, result, sources, judged, options)
+    # Every source is named by now, and SourceFinder reads ``mypy_path`` as the
+    # explicit package bases; from here on it is only where modules are found.
+    options.mypy_path = [
+        *options.mypy_path,
+        *_where_installed_code_hides_the_project(
+            compute_search_paths(sources, options, build.default_data_dir()),
+            [
+                source
+                for source in run
+                if source.path is None
+                or not any(_within(source.path, path) for path in excluded_paths)
+            ],
+            options,
+            root,
+        ),
+    ]
+    result, sources = _build_as_the_project_reaches(sources, options, judged, complete=complete)
+    if not complete:
+        return _Answered(list(result.errors), configured.said)
+    return _Answered(
+        _as_the_project_judges(result.errors, result.graph, sources, judged, options),
+        configured.said,
+    )
 
 
 def _answer(line: str, cache: str) -> str:
-    messages: list[str] = []
+    answered = _Answered([], ())
     failure: str | None = None
     captured = io.StringIO()
     try:
         with redirect_stdout(captured), redirect_stderr(captured):
-            messages = _request(json.loads(line), cache)
+            answered = _request(json.loads(line), cache)
     except _PluginUnavailable as error:
         failure = str(error)
     except (Exception, SystemExit) as error:
         failure = f"{type(error).__name__}: {error}"
-    return json.dumps({"messages": messages, "failure": failure}) + "\n"
+    return (
+        json.dumps(
+            {"messages": answered.messages, "failure": failure, "warnings": list(answered.said)}
+        )
+        + "\n"
+    )
 
 
 def _exit_with_parent(owner: int) -> None:

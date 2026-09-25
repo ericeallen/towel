@@ -18,8 +18,10 @@ Each fixture in ``tests/hostile_cases`` is a script whose ``__main__`` block
 prints every observation that an extraction could disturb: evaluation order,
 evaluation count, conditional evaluation, closure cells, deletion, and
 pattern bindings. The battery asserts that the program's output is identical
-after refactoring, and records per fixture whether the current engine
-transforms it or rejects it, so a change in either direction is visible.
+after refactoring, and that the module shows its importers the same public
+names bound to the same things (``module_faces``), and records per fixture
+whether the current engine transforms it or rejects it, so a change in either
+direction is visible.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ import tempfile
 
 import pytest
 
-from tests.hostile_execution import observe, parsed_or_skipped
+from tests.hostile_execution import module_faces, observe, parsed_or_skipped
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 CASES = Path(__file__).parent / "hostile_cases"
@@ -182,6 +184,22 @@ TRANSFORMED = {
     # the block only calls or consumes moves with it (r157).
     "r156_created_objects_that_escape",
     "r157_created_objects_only_called",
+    # The annotations' typing names are reached through a private alias of
+    # typing, so no name the module binds or exports changes: not its own Any
+    # (r160), not its public names under __all__ (r161), not the Callable a
+    # star import bound (r162).
+    "r160_host_binds_any_before_its_last_import",
+    "r161_module_with_all_gains_no_public_name",
+    "r162_host_star_imports_callable",
+    # Round-3 audit: a memoized verdict answers only for its block's site. The
+    # benign twins of a rebinding hazard, and the top-level twin of a copy in
+    # a loop, still share helpers; the hazard and the loop copy
+    # keep their code.
+    "r7c_rebinding_enclosing_function_beside_a_benign_twin",
+    "r7c_top_level_copy_beside_a_loop_copy",
+    # The control for the mangled parameters and import names, which a class
+    # body rewrites and a helper elsewhere would not.
+    "r7c_unmangled_parameter_passed_by_keyword",
 }
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in
@@ -216,6 +234,9 @@ def test_refactoring_preserves_program_output(case: str) -> None:
         transformed = before.read_bytes() != after.read_bytes()
         assert transformed == (applied > 0)
         assert _run(after) == _run(before)
+        if transformed:
+            # No public name of the module appears, disappears, or changes meaning.
+            assert module_faces(after.parent, ["m"]) == module_faces(before.parent, ["m"])
         assert transformed == (case in TRANSFORMED), (
             "rejected" if not transformed else "transformed"
         )

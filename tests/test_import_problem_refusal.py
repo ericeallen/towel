@@ -532,17 +532,3 @@ def test_a_problem_elsewhere_in_the_package_involves_a_subpackage_when_it_leaves
     assert len(model.problems) == 1
     assert _problems_involving(model, target) == []
     assert [problem.names_in_doubt for problem in model.problems] == [frozenset()]
-
-
-def test_a_copy_installed_outside_the_project_is_given_a_remedy_that_reaches_it() -> None:
-    """``--exclude`` cannot leave out site-packages; another environment can (third audit, P2-4)."""
-    from towel.cli import _import_problem_remedy
-    from towel.import_model import AmbiguousName
-
-    stale = AmbiguousName("zzalpha", (Path("/p/src/zzalpha"), Path("/p/build/lib/zzalpha")), None)
-    installed = AmbiguousName("click", (Path("/p/click"),), "/env/site-packages/click/__init__.py")
-    assert "editable install" not in _import_problem_remedy([stale])
-    remedy = _import_problem_remedy([stale, installed])
-    assert remedy.startswith("Leave out each directory holding a stray copy")
-    assert "--exclude reaches only the project's tree" in remedy
-    assert "an environment where the package is this tree (an editable install)" in remedy

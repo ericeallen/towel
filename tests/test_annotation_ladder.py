@@ -160,5 +160,5 @@ def test_a_call_site_error_under_every_any_ends_the_ladder(
         signature for signature in _helper_signatures(oracle.checked) if "_TowelT" not in signature
     ]
     assert len(signatures) == 2, signatures
-    every_any = signatures[-1].count(": Any") == signatures[-1].count(",") + 1
+    every_any = signatures[-1].count(": _typing.Any") == signatures[-1].count(",") + 1
     assert every_any is not strict, signatures

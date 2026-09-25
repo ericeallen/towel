@@ -453,8 +453,9 @@ REVEALED = [
         None,
     ),
     ("abs", "def [_T] (typing.SupportsAbs[_T]) -> _T", None),
-    # A name that is no builtin is left as the checker put it.
-    ("measure", "def (typing.Sized) -> int", None),
+    # A name that is no builtin is left as the checker put it, a whole path
+    # kept for the caller to import or to write as Any.
+    ("measure", "def (typing.Sized) -> int", "'Callable[[typing.Sized], int]'"),
 ]
 
 
@@ -568,4 +569,4 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(tmp_path: Path
         for argument in helper.args.args
         if argument.annotation is not None
     }
-    assert annotations["len"] == "Callable[..., int]"
+    assert annotations["len"] == "_typing.Callable[..., int]"

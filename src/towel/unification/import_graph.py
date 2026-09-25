@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import ast
 import builtins
-import configparser
 import re
 import sys
 import warnings
@@ -42,7 +41,6 @@ from typing import (
     Iterator,
     List,
     Literal,
-    Mapping,
     Optional,
     Sequence,
     Set,
@@ -53,7 +51,8 @@ from typing import (
 from .bounded_cache import BoundedCache
 from .exceptions import ProjectScanLimitError
 from ..import_model import NameStatus
-from ..project_layout import find_project_root, load_pyproject
+from ..declared_requirements import installed_with_the_project, normalized_name
+from ..project_layout import find_project_root
 from .module_bindings import (
     NAMESPACE_PRESERVING_DECORATORS,
     ModuleBindings,
@@ -161,15 +160,16 @@ class ImportGraphCache:
             known = self._roots[resolved] = find_project_root(resolved).resolve()
         return known
 
-    def declared_dependencies(self, root: Path) -> FrozenSet[str]:
-        """``_declared_dependencies(root)``, read once per run.
+    def installed_with_the_project(self, path: Path) -> FrozenSet[str]:
+        """``installed_with_the_project`` for the project holding ``path``, read once per run.
 
         Every cross-module pair asks, and the answer is what the project's
         configuration files say, which a run does not change.
         """
+        root = self.project_root(path.resolve())
         known = self._declared.get(root)
         if known is None:
-            known = self._declared[root] = frozenset(_declared_dependencies(root))
+            known = self._declared[root] = installed_with_the_project(root)
         return known
 
     def program_for(self, path: Path) -> ProgramImports:
@@ -1796,78 +1796,10 @@ def _new_requirements(
         }
 
     names = {name for name in required(added) - required(present) if not program.is_local(name)}
-    available = (set(sys.stdlib_module_names) - _EFFECTFUL_STDLIB) | cache.declared_dependencies(
-        program.model.root
-    )
-    return frozenset(name for name in names if _normalized(name) not in available)
-
-
-def _normalized(name: str) -> str:
-    return re.sub(r"[-_.]+", "_", name).lower()
-
-
-def _declared_dependencies(path: Path) -> Set[str]:
-    """The import names the project's declared runtime dependencies provide, as best known.
-
-    Read from PEP 621's ``[project].dependencies``, Poetry's
-    ``[tool.poetry.dependencies]`` (its ``python`` entry and the optional
-    dependencies only an extra installs aside) and setup.cfg's ``[options]
-    install_requires``. A setup.py is not run, so a project declaring its
-    dependencies only there declares none here, which refuses a host rather
-    than accepting one. A distribution name is taken as its import name,
-    normalized; one that differs (``PyYAML`` providing ``yaml``) is simply not
-    recognized, with the same effect.
-    """
-    root = find_project_root(path)
-    data = load_pyproject(root)
-    project = data.get("project", {})
-    declared = project.get("dependencies", []) if isinstance(project, dict) else []
-    names = _requirement_names(declared if isinstance(declared, list) else [])
-    return names | _poetry_dependencies(data) | _setup_cfg_install_requires(root)
-
-
-def _requirement_names(requirements: Iterable[object]) -> Set[str]:
-    """The normalized distribution names of PEP 508 requirement strings."""
-    return {
-        _normalized(match.group(0))
-        for requirement in requirements
-        if isinstance(requirement, str)
-        for match in [re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", requirement.strip())]
-        if match is not None
-    }
-
-
-def _poetry_dependencies(data: Mapping[str, object]) -> Set[str]:
-    """The distributions ``[tool.poetry.dependencies]`` installs with the project itself."""
-    tool = data.get("tool")
-    poetry = tool.get("poetry") if isinstance(tool, dict) else None
-    table = poetry.get("dependencies") if isinstance(poetry, dict) else None
-    if not isinstance(table, dict):
-        return set()
-    return {
-        _normalized(name)
-        for name, specification in table.items()
-        if isinstance(name, str)
-        and name.lower() != "python"
-        and not (isinstance(specification, dict) and specification.get("optional") is True)
-    }
-
-
-def _setup_cfg_install_requires(root: Path) -> Set[str]:
-    """The distributions setup.cfg's ``[options] install_requires`` names, one per line.
-
-    A ``file:`` directive names a file this does not read, and declares
-    nothing here.
-    """
-    parser = configparser.ConfigParser(interpolation=None)
-    try:
-        parser.read(root / "setup.cfg", encoding="utf-8")
-    except (configparser.Error, OSError, UnicodeError):
-        return set()
-    value = parser.get("options", "install_requires", fallback="")
-    if value.strip().startswith("file:"):
-        return set()
-    return _requirement_names(line.split("#", 1)[0] for line in value.splitlines())
+    available = (
+        set(sys.stdlib_module_names) - _EFFECTFUL_STDLIB
+    ) | cache.installed_with_the_project(program.model.root)
+    return frozenset(name for name in names if normalized_name(name) not in available)
 
 
 def _required_imports(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:

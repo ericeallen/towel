@@ -75,13 +75,39 @@ from .import_graph import ImportGraphCache
 from .namespace_writes import ProjectWrites
 
 
+class BlockSite(NamedTuple):
+    """One block of one function of one module, told apart from every other block.
+
+    The guards and per-block analyses read more than the block's own code:
+    the function's other statements, where in them the block stands (what
+    is bound before and after it, whether it is nested in a loop), the
+    scopes enclosing the function, and the module's hazards (``global`` and
+    ``nonlocal`` rebinding, reflection) and aliases. The module's source
+    fixes its tree, and so all of these; the positions pick out the function
+    and the block's statements in that tree. Two blocks of the same code in
+    other places are other sites, however alike their structure.
+    """
+
+    # SHA-256 of the module's source.
+    module_digest: str
+    # The function's line and column.
+    function_position: Tuple[int, int]
+    # The first statement's line and column, and the number of statements.
+    block_position: Tuple[int, int, int]
+
+
 class GuardKey(NamedTuple):
-    """What a block guard's verdict depends on."""
+    """What a block guard's verdict depends on: the guard and where the block stands."""
 
     guard: Callable[..., bool]
-    function_id: Optional[str]
-    block_id: str
-    module_digest: Optional[str]
+    site: BlockSite
+
+
+class PerBlockKey(NamedTuple):
+    """What a per-block analysis depends on: which analysis, and where the block stands."""
+
+    analysis: str
+    site: BlockSite
 
 
 class UnifyKey(NamedTuple):
@@ -252,6 +278,8 @@ class EngineState:
     """The files the original check names what it cannot type in, which no change may touch."""
     _type_unlooked: Mapping[str, Tuple[str, Tuple[Tuple[int, int], ...]]]
     """Per file, the digest of its original text and the regions the checker did not look at."""
+    _type_unreadable: FrozenSet[str]
+    """The files of the run that could not be read when it began, as ``_where_checked`` names them."""
     _analysis_paths: Tuple[str, ...]
     """Paths from the latest analysis, used to seed a direct application's initial check."""
     _output_origin: Optional[Tuple[Path, Path]]
@@ -275,12 +303,12 @@ class EngineState:
     # The index of the current analysis's functions, keyed by the list it
     # was built from; see ``_function_index``.
     _function_index_cache: Optional[Tuple[Sequence[FunctionArtifact], FunctionIndex]]
-    # Bounded, path-registered caches: guards per (guard, function, block),
-    # unification results per block-structure pair, and the per-block analyses.
+    # Bounded caches: guards per (guard, block site), unification results per
+    # block-structure pair, and the per-block analyses per block site.
     _block_guard_cache: BoundedCache["GuardKey", bool]
     _unify_cache: BoundedCache[UnifyKey, Optional[StoredSubstitution]]
     # Per-block analyses of several result types; ``_per_block`` narrows each.
-    _per_block_cache: BoundedCache[Tuple[str, str, str], object]
+    _per_block_cache: BoundedCache[PerBlockKey, object]
     # The last few parsed sources of the apply path, which parses each modified
     # file several times per proposal.
     _parse_cache: BoundedCache[str, ast.Module]
@@ -394,6 +422,10 @@ class EngineState:
         raise NotImplementedError
 
     def _sid(self, nodes: Sequence[ast.AST]) -> str:
+        """Provided by UnificationRefactorEngine."""
+        raise NotImplementedError
+
+    def _block_site(self, func: FunctionNode, nodes: Sequence[ast.stmt]) -> Optional[BlockSite]:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError
 

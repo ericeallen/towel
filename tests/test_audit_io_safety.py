@@ -80,7 +80,7 @@ def test_ruff_never_imports_modules_from_the_project(
         "sys.stdout.write(sys.stdin.read())\n"
     )
     module = tmp_path / "source.py"
-    module.write_text("import sys\nimport os\n")
+    module.write_text("import sys\n")
     if mode == "format":
         formatter = formatter_for_project(module).tool
         assert formatter is not None
@@ -88,7 +88,7 @@ def test_ruff_never_imports_modules_from_the_project(
     else:
         sorter = import_sorter_for_project(module).tool
         assert sorter is not None
-        assert sorter(str(module), module.read_text()).startswith("import os\nimport sys\n")
+        assert sorter(str(module), "import sys\nimport os\n").startswith("import os\nimport sys\n")
     assert not marker.exists(), f"Ruff executed project-owned {shadow}"
 
 

@@ -1,0 +1,13 @@
+# The project sorts imports with ruff, but not app.py's; loader.py's own
+# imports are not in ruff's order either. Each module's imports register a
+# plugin, so their order is the order of PLUGINS: re-sorting either module
+# would change what run.py prints, although Towel adds no import to them.
+[project]
+name = "pkg"
+version = "0"
+
+[tool.ruff]
+exclude = ["pkg/app.py"]
+
+[tool.ruff.lint]
+select = ["I"]

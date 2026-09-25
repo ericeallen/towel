@@ -68,14 +68,18 @@ def test_isort_skip_settings_leave_the_file_as_assembled(
     (tmp_path / "pyproject.toml").write_text('[tool.isort]\nskip = ["m.py"]\n')
     sorter = import_sorter_for_project(tmp_path).tool
     assert sorter is not None
+    # Each file held ``import sys``; Towel added ``import os`` after it.
     source = "import sys\nimport os\n"
+    for name, text in (("m.py", "import sys\n"), ("n.py", "# isort: skip_file\nimport sys\n")):
+        (tmp_path / name).write_text(text)
+    (tmp_path / "o.py").write_text("import sys\n")
     with caplog.at_level(logging.WARNING, logger="towel"):
         assert sorter(str(tmp_path / "m.py"), source) == source
-        assert (
-            sorter(str(tmp_path / "n.py"), "# isort: skip_file\n" + source)
-            == "# isort: skip_file\n" + source
-        )
-    assert "isort declined" in caplog.text
+        skip_file = "# isort: skip_file\n" + source
+        assert sorter(str(tmp_path / "n.py"), skip_file) == skip_file
+        assert sorter(str(tmp_path / "o.py"), source) == "import os\nimport sys\n"
+    # The project told isort to leave these files alone; that is no failure.
+    assert caplog.text == ""
 
 
 def _completed(
@@ -146,6 +150,7 @@ def test_ruff_import_sorting_failures_are_reported_not_swallowed(
     sorter = import_sorter_for_project(tmp_path).tool
     assert sorter is not None
     source = "import sys\nimport os\n"
+    (tmp_path / "m.py").write_text("import sys\n")
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _completed("", 1, "boom"))
     with caplog.at_level(logging.WARNING, logger="towel"):
         assert sorter(str(tmp_path / "m.py"), source) == source

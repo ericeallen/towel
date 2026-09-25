@@ -1,0 +1,11 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shop"
+version = "0.1"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shop"]
+exclude = ["src/shop/_devtools.py"]

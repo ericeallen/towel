@@ -305,7 +305,10 @@ def test_a_type_only_import_towel_wrote_refuses_no_later_pair(tmp_path: Path) ->
     first = _dry(tmp_path, types=True)
     assert first.returncode == 0, first.stdout + first.stderr
     direct = (tmp_path / "pkg" / "direct.py").read_text()
-    assert "if TYPE_CHECKING:\n    from .lock import LockError" in direct, direct
+    assert (
+        "if _typing.TYPE_CHECKING:  # pragma: no cover\n    from .lock import LockError as _LockError"
+        in direct
+    ), direct
     for module in ("direct", "lock"):
         with (tmp_path / "pkg" / f"{module}.py").open("a") as handle:
             handle.write(_SUMMARY.format(name=module))

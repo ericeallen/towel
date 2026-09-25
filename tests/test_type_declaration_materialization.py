@@ -358,7 +358,10 @@ def test_cross_file_rollback_removes_declarations_imports_and_calls_together(
     borrowing = "import a\n\n\n" + original
     host.write_text(original)
     caller.write_text(borrowing)
-    proposal = _proposal(host, "from typing import TypeVar\n_T = TypeVar('_T')\n")
+    # Private bindings only: a public ``TypeVar`` would be refused before any file is planned.
+    proposal = _proposal(
+        host, "from typing import TypeVar as _GenericTypeVar\n_T = _GenericTypeVar('_T')\n"
+    )
     site = proposal.replacements[0]
     shifted = (site.line_range[0] + 3, site.line_range[1] + 3)  # below the caller's import
     proposal = replace(

@@ -26,6 +26,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 from pathlib import Path
+import re
 from typing import Dict
 import textwrap
 
@@ -87,7 +88,10 @@ def test_dotted_names_reduce_to_what_the_host_binds() -> None:
     assert box is not None and ast.unparse(box) == "Box"
     sequence = annotation_from_revealed("typing.Sequence[int]", host, True)
     assert sequence is not None and ast.unparse(sequence) == "typing.Sequence[int]"
-    assert annotation_from_revealed("pkg.elsewhere.Thing", host, True) is None
+    # A whole path the host does not bind stays whole, for the caller to import
+    # under TYPE_CHECKING or give up on.
+    kept = annotation_from_revealed("pkg.elsewhere.Thing", host, True)
+    assert isinstance(kept, ast.Constant) and kept.value == "pkg.elsewhere.Thing"
 
 
 @requires_mypy
@@ -213,9 +217,10 @@ def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> Non
     proposals = engine.analyze_file(str(path))
     assert proposals
     result = engine.apply_refactoring(str(path), proposals[0])
-    assert "from typing import Any" in result
+    # ``Any`` is reached through a private alias, so the module gains no public name.
+    assert "import typing as _typing\n" in result and "from typing import Any" not in result
     # ``json`` is the module's import, read bare inside the helper, not a parameter.
-    assert _signature(result) == "def __extracted_func_0(text: str) -> list[Any]:"
+    assert _signature(result) == "def __extracted_func_0(text: str) -> list[_typing.Any]:"
     exec(compile(result, "<any>", "exec"), {})
 
 
@@ -403,7 +408,7 @@ class _Oracle:
             return result
         errors = list(result.errors)
         for file_path, source in sources.items():
-            if "extracted_func" in source and ": Any" not in source and "-> Any" not in source:
+            if "extracted_func" in source and not re.search(r"(:|->) (_typing\.)?Any\b", source):
                 errors.append(
                     TypeDiagnostic(file_path, "Simulated: annotated helper does not type-check")
                 )
@@ -432,8 +437,8 @@ def test_generated_code_that_fails_the_checker_degrades_to_any(tmp_path: Path) -
     )
     proposals = engine.analyze_file(str(path))
     result = engine.apply_refactoring(str(path), proposals[0])
-    assert _signature(result) == "def __extracted_func_0(value: Any) -> Any:"
-    assert "from typing import Any" in result
+    assert _signature(result) == "def __extracted_func_0(value: _typing.Any) -> _typing.Any:"
+    assert "import typing as _typing\n" in result and "from typing import Any" not in result
 
 
 class _CountingOracle(_Oracle):
@@ -471,7 +476,7 @@ def test_each_original_is_checked_once_across_the_fallback_attempts(tmp_path: Pa
     )
     proposals = engine.analyze_file(str(path))
     result = engine.apply_refactoring(str(path), proposals[0])
-    assert "-> Any" in result, "the annotated attempt failed and the all-Any one was kept"
+    assert "-> _typing.Any" in result, "the annotated attempt failed and the all-Any one was kept"
     assert oracle.checks[source] == 1
 
 
@@ -497,8 +502,8 @@ def test_thunk_arguments_get_callable_annotations(tmp_path: Path) -> None:
     proposals = engine.analyze_file(str(path))
     assert proposals
     result = engine.apply_refactoring(str(path), proposals[0])
-    assert "Callable[[], int]" in _signature(result), _signature(result)
-    assert "from typing import Callable" in result
+    assert "_typing.Callable[[], int]" in _signature(result), _signature(result)
+    assert "import typing as _typing\n" in result and "from typing import Callable" not in result
     exec(compile(result, "<callable>", "exec"), {})
 
 

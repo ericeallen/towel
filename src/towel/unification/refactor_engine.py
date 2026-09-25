@@ -67,7 +67,15 @@ from .progress import (
 )
 from .parallel import ParallelEvaluation
 from .bounded_cache import BoundedCache
-from .engine_state import ClusteredSite, ClusterScanKey, GuardKey, HelperNameClaims, UnifyKey
+from .engine_state import (
+    BlockSite,
+    ClusteredSite,
+    ClusterScanKey,
+    GuardKey,
+    HelperNameClaims,
+    PerBlockKey,
+    UnifyKey,
+)
 from .defaults import DEFAULT_MAX_CANDIDATE_PAIRS, DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
 from .function_index import FunctionIndex
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
@@ -435,6 +443,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._type_checked = None
         self._type_names_any = {}
         self._type_unlooked = {}
+        self._type_unreadable = frozenset()
         self.snippet_formatter = snippet_formatter
         self.file_finisher = file_finisher
         self.incremental_global_passes = incremental_global_passes
@@ -462,8 +471,11 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._value_producing_cache: WeakKeyDictionary[ast.AST, Dict[int, bool]] = (
             WeakKeyDictionary()
         )
-        # Block guards are pure in (guard, function, block); a block takes part
-        # in every pair it forms, so its verdicts are computed once.
+        # A block guard is pure in the guard and the block's site (``BlockSite``:
+        # its module's source and its function's and statements' positions); a
+        # block takes part in every pair it forms, so its verdicts are computed
+        # once. Keyed by value, so bounded and self-validating: a rewritten
+        # module has another digest, and never evicted by path.
         self._block_guard_cache: BoundedCache[GuardKey, bool] = BoundedCache(
             self.STRUCTURAL_CACHE_LIMIT
         )
@@ -501,9 +513,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # has dropped is forgotten with it instead of pinning the tree.
         self._function_sources: WeakKeyDictionary[FunctionNode, str] = WeakKeyDictionary()
         # Per-block analyses (binding snapshot, reassignment and unbinding
-        # checks) depend only on the function and the block; a block takes
-        # part in every pair it forms, so each is computed once per analysis.
-        self._per_block_cache: BoundedCache[Tuple[str, str, str], object] = BoundedCache(
+        # checks, the external names another function may rebind) depend on
+        # the block's site, like the guards above, and are keyed the same way.
+        self._per_block_cache: BoundedCache[PerBlockKey, object] = BoundedCache(
             self.STRUCTURAL_CACHE_LIMIT
         )
         self._parse_cache: BoundedCache[str, ast.Module] = BoundedCache(64)
@@ -734,6 +746,23 @@ class UnificationRefactorEngine(ParallelEvaluation):
     def _module_digest(self, func: Optional[FunctionNode]) -> Optional[str]:
         """A digest of the module source a function came from, for module-wide analyses."""
         return self._function_sources.get(func) if func is not None else None
+
+    def _block_site(self, func: FunctionNode, nodes: Sequence[ast.stmt]) -> Optional[BlockSite]:
+        """Where ``nodes`` stand: their module, their function and their statements.
+
+        None for a function this analysis did not record, or an empty block,
+        which is then judged afresh on every call: without its module's
+        digest nothing identifies what a verdict about it would depend on.
+        """
+        digest = self._module_digest(func)
+        if digest is None or not nodes:
+            return None
+        first = nodes[0]
+        return BlockSite(
+            digest,
+            (func.lineno, func.col_offset),
+            (first.lineno, first.col_offset, len(nodes)),
+        )
 
     def _remember(
         self, paths: Iterable[Optional[str]], cache: MutableMapping[Any, Any], key: Any

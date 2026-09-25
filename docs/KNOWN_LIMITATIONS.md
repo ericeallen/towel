@@ -178,9 +178,23 @@ describe belong to that version.
   before and after formatting, and an import sorter's result is kept only
   when it only reorders or merges consecutive imports within one statement
   list while preserving each bound name's ordered providers. Wildcard imports,
-  future imports and non-import statements are barriers. Configured sorting
-  of independent imports can still change import-time side-effect order; static
-  binding checks do not establish that arbitrary module initializers commute.
+  future imports and non-import statements are barriers. An import runs its
+  module where it stands, so the order of a file's own imports is the order
+  of their import-time effects, and the sorter never changes it: it runs only
+  on a file its own configuration selects (ruff's `exclude`,
+  `extend-exclude`, `lint.exclude` and `per-file-ignores`; isort's `skip`,
+  `extend_skip`, `skip_glob`, `extend_skip_glob` and `skip_gitignore`,
+  judged for the project's file rather than the run's staged copy) and only
+  when it already leaves that file's text before the change as it is, so
+  that sorting can move only the imports Towel added; and its result is
+  used only when the file's own imports still bind their names in the order
+  they did. A file that fails either test keeps Towel's imports where it put
+  them, and the run says so once for the file. The formatters leave alone
+  the code Towel writes where their own configuration excludes the path
+  Towel was given: `ruff format` by `--force-exclude`, Black by `exclude`,
+  `extend-exclude` or `force-exclude`. That choice is made for the whole
+  run, since a snippet is formatted before the file it goes into is known;
+  it changes only layout.
 - **Annotations.** Every generated helper and its call sites are checked
   together in the prospective project, including unchanged consumers, and the
   check is compared with the project's own as it stood: an error the project
@@ -346,9 +360,28 @@ between two modules of one package the relative import, or the absolute one
 where the importing module already spells its own package absolutely; across
 top-level packages an absolute import only where the importing package
 already imports the other; and into a directory only where the importing
-side already imports from it, so `bs4` never borrows from `bs4/tests`, which
-its wheel leaves out. A candidate host some borrower cannot import that way
-is never taken, and a pair none survives is declined (`unproven_import`).
+side already imports from it, with an import that runs whenever its module
+is imported, so `bs4` never borrows from `bs4/tests`, which its wheel leaves
+out. An import inside a function shows nothing: shop's `cli.main` imported
+`shop.devtools` only for a developer's command, setuptools' `find` excluded
+it from the wheel, and `shop/stats.py` was made to import it unconditionally
+(the third audit's D5). A module the build configuration declares left out
+of the wheel or the sdist, from which the wheel is usually built, is never a
+host for a module it keeps: hatch's `exclude = ["src/shop/_devtools.py"]`
+kept one module out of a package that ships, and the installed `shop.stats`
+could not import the helper hosted there. The declarations read, only to put
+a host in doubt and never to name a module, are hatch's `exclude`,
+`include`, `only-include` and `packages`; setuptools' `packages.find`
+`include` and `exclude` and an explicit `packages` list, in pyproject.toml
+or setup.cfg; MANIFEST.in's `exclude`, `recursive-exclude`, `global-exclude`
+and `prune`; Poetry's `exclude`, PDM's `excludes`, uv's `source-exclude` and
+`wheel-exclude`, flit's sdist `exclude` and scikit-build-core's excludes; and
+every `.gitignore` above a module. Each is read to leave out at least what
+the backend would, and an include that could put a file back is not read.
+What a setup.py, a build hook or a backend not listed leaves out is not
+known, and a module it leaves out can still host a helper. A candidate host
+some borrower cannot import that way is never taken, and a pair none
+survives is declined (`unproven_import`).
 Names are read from every Python file under the project root, but not from a
 directory `--exclude` names, which is how a stray copy is set aside, nor from
 the directories every scan skips or behind a symbolic link; what an import
@@ -356,19 +389,39 @@ that enters one runs is then unknown, and a host whose import would enter
 one is not taken. The costs, accepted by the owner: sibling packages that
 never import each other share nothing, and nor do subpackages that never
 import from each other (hostile fixture `xf23`); a directory of scripts that
-import nothing local gets no cross-file helpers; and a name the tree leaves
-ambiguous, such as a stale `build/lib/alpha` beside `src/alpha`, or a
-package this interpreter can import from elsewhere, gets none until the
-stray copy is out of the way: excluded, when it is in the tree, and when it
-is installed elsewhere, by running Towel where the package is this tree (an
-editable install) or is not installed, since `--exclude` reaches only the
-tree. Towel runs with the interpreter it was started with,
-which stands for the project's: run it in the project's own environment.
-Before it writes anything, a `--cross-module` run of `dry` or `preview`
-names every such problem with that remedy, and refuses the run when one
-leaves in doubt a top-level name located at or around the target, or lies
-under the target and leaves its own file's name in doubt. An import of a
-module the tree lacks leaves no name in doubt and refuses nothing, from the
+import nothing local gets no cross-file helpers; and a name in doubt gets
+none. A name is in doubt when the tree holds two copies of it, such as a
+stale `build/lib/alpha` beside `src/alpha`, which `--exclude` sets aside;
+when this interpreter can import it from outside the project, the project's
+own `.venv` included, which `--exclude` cannot reach, so Towel must run where
+that name is this tree (the project installed editable) or where nothing
+provides it; and when the project requires a distribution of that name, so
+that installed it imports the distribution and not the directory, which is
+resolved by renaming or excluding the directory, or by dropping the
+requirement. The third audit's P1-2 was such a namesake: `app` required
+`click>=8` and the tree held a `click/` sharing `utils.py` with the library;
+run from `uvx`, which lacks click, Towel hosted a helper in `click/utils.py`,
+and the installed `app` could not import it. A requirement is read from
+PEP 621's dependencies and extras, PEP 735's groups, Poetry's dependency
+tables, setup.cfg's `install_requires` and `extras_require`, the uv, Poetry,
+PDM and Pipenv lockfiles, and `requirements*.txt` at the root, and matched
+to a name by its own normalized name. So a distribution whose import name
+differs from its own (`PyYAML` provides `yaml`), a dependency's dependency
+where no lockfile records it, and whatever a setup.py, `tox.ini` or CI
+recipe installs are known only when this interpreter can import them: Towel
+runs with the interpreter it was started with, which stands for the
+project's, so run it in the project's own environment. A top-level name
+found only as a module inside a package the program imports as one, as
+`pkg/c.py`'s `import helpers_top` finds only `pkg/helpers_top.py`, is in
+doubt too, and the file making the import runs as a script, so it is given
+no new import (the third audit's P1-6). Before it writes anything, a
+`--cross-module` run of `dry` or `preview` names every such problem with the
+remedy for its kind, and refuses the run when one leaves in doubt a
+top-level name located at or around the target, or lies under the target and
+leaves its own file's name in doubt. An import of a module the tree lacks,
+however it is spelled (`from . import gone` and `from pkg import gone` as
+much as `from .gone import x`, where nothing binds `gone`), leaves no name in
+doubt and refuses nothing, from the
 root, on a package or on a subpackage; the file making it is left exactly as
 it was, with no helper hosted, borrowed or extracted within it. The cost is
 that file's own duplicates, and, when it is a package's `__init__.py`, every
@@ -583,6 +636,21 @@ its class and object, reads no cell and moves anywhere.
 Annotations are written only from evidence, and their limits follow from
 where the evidence comes from:
 
+- Every name bound for an annotation is private and spelled nowhere in its
+  module (`import typing as _typing`, `from pkg.models import Item as
+  _Item`, `if _typing.TYPE_CHECKING:`), so nothing the program already binds
+  changes meaning and no module that star-imports the helper's module takes
+  a new public name. The one assumption is the one the helpers' own names
+  rest on: a star import brings a private name only from a provider whose
+  `__all__` lists it. A binding the module already has is used instead only
+  when it is the name's single binding anywhere in the module; the module's
+  own `TYPE_CHECKING`, a flag of its own under that name, is never mistaken
+  for `typing`'s. A new guard carries `# pragma: no cover` where the
+  project's coverage.py exclusions match only with it, as coverage.py's
+  defaults do. A project whose exclusions match neither form, such as one
+  whose `exclude_lines` lists `if TYPE_CHECKING:` and not the pragma, counts
+  the guarded import as a missed line.
+
 - A helper is annotated only when some call site's enclosing function is
   itself annotated. An unannotated project stays unannotated.
 - What the sites declare is copied: a parameter whose every argument is an
@@ -663,7 +731,7 @@ where the evidence comes from:
   whose sites are in other modules, an annotation may name only builtins
   and the `typing` names Towel imports itself (`Any`, `Callable`), since a
   site's imports are not the host's. A class the module cannot reach is
-  imported under `TYPE_CHECKING` and named directly; only where no module of
+  imported under `TYPE_CHECKING` and named by a private alias; only where no module of
   the project owns it, or its short name is already taken, is the type left
   unwritten and the parameter completed with `Any`. Any subscripted
   annotation that would not evaluate at definition time (`memoryview[int]`
@@ -719,14 +787,23 @@ where the evidence comes from:
   is rejected for an error its check reports that the project's check did not:
   in a file no change has touched, the same message at the same line; in one a
   change has touched, the same message on the same line wherever the change
-  moved it, found by a line diff of the two texts, and on the lines the change
-  wrote, no more often than on the lines it replaced. So an error that
-  disappears from a replaced line where another with the very same message
-  appears in the helper or at a call site is taken to have moved, as a
-  duplicated block's error does when the block moves into the helper, and is
-  not new; one that disappears from a line the change left alone accounts for
-  nothing. Where the diff pairs a helper with one copy of its block, an error
-  that came from the other copy is new, which costs a change. A message
+  moved it, found by a line diff of the two texts in which the copies the
+  change replaced and the helper it wrote pair with nothing. An error in the
+  helper must be the same message at the same statement of one copy of the
+  block the helper was made from, statements counted in order through the
+  copy and through the helper's body, and each of that copy's errors accounts
+  for one; an error at a call site must be the same message on the lines that
+  call replaced; any other error on a line the change wrote must be the same
+  message on the lines the same stretch of the diff replaced. Everything else
+  is new. Merging two copies into one helper frees the other copy's errors,
+  and they account for nothing: before this, with both copies holding `n + s`
+  and `s + n`, a helper typed `int | str` whose `p + p` raised the same two
+  messages on a line both copies had clean was accepted. One that disappears
+  from a line the change left alone accounts for nothing either. A helper
+  whose statements do not follow its block's (one Towel added before them)
+  is accounted for by no copy, an error on an import the sorter moved into
+  another stretch of the file is new, and where either text of a changed file
+  is unknown every error in it is new; each costs a change. A message
   that names a line (mypy's `Name "x" already defined on line 12`) reappears
   as new when that line moves, which declines the change rather than hide an
   error: a module with such an error below the place a helper would go keeps
@@ -782,15 +859,50 @@ where the evidence comes from:
   mypy looks at, and only the question put to every checker settles a change.
   A body that shares its header's line (`if x: return`) is probed on a line of
   its own in the text the checker is given; a module in which no probe can be
-  placed is taken to be looked at nowhere. The body of a function without
+  placed is taken to be looked at nowhere. A probe build that fails is not
+  silence: before the run it refuses the run, and for a change it leaves the
+  change not judged. The body of a function without
   annotations, which mypy does not check unless configured to, counts as
   looked at, since mypy answers there (with `Any`): the project's own mypy
-  leaves it unchecked on every platform too.
+  leaves it unchecked on every platform too. A file a checker's configuration
+  has it report nothing on -- pyright's `exclude` and `ignore`, and what its
+  `include` leaves out, read from the configuration and its `extends` chain
+  before the run -- is outside that checker's check, not code it takes to be
+  unreachable: it is not probed with that checker, and the other checkers
+  settle it (param's pyright ignores `version.py`, which its mypy checks; all
+  four proposals there had been declined as unreachable). A language server
+  asked about such a file never answered, and the run waited a minute and
+  then gave the server up; the marker a settle waits for now goes where the
+  server reports. A file no configured checker reports on is changed as the
+  body of an unannotated function is, since the project's own check says
+  nothing there on any platform, and its helper takes only the annotations
+  its sites declare, completed with `Any`: nothing would check an inferred
+  one, and the most precise rung, tried first, was accepted unchecked. The
+  project check still judges what the change does to the files the checkers
+  report on.
 - Where the original check leaves a name it cannot type -- an import it cannot
   resolve or finds no types for (mypy's `import-not-found` and
   `import-untyped`, pyright's `reportMissingImports` and
   `reportMissingTypeStubs`), a decorator without types, a base class of type
-  `Any` -- no change to that file is attempted. Whatever such a name reaches is
+  `Any` -- no change to that file is attempted. A configuration can silence
+  the errors that say so (`ignore_missing_imports`, pyright's
+  `reportMissingImports = "none"`), so every checker is also asked, before the
+  run, what each import of the analyzed files binds: a probe imports the same
+  module and names under names of its own, where the import stands, and
+  reveals them. mypy answers `Any` for a module it cannot resolve or finds no
+  types for, and pyright `Unknown` for a name or attribute such an import
+  binds (pyright gives the module itself a module's type). With the report
+  silenced, uvicorn's `websockets` module missing where Towel ran, a change
+  had left a `type: ignore` unused in the project's own check. A name a typed
+  module declares as `Any` is the same wherever the check runs, and is not
+  named. pyright with `typeCheckingMode = "off"` answers `Any` rather than
+  `Unknown`, and reports missing imports as warnings, which the comparison
+  does not count, so a file importing a module missing where Towel runs is
+  not named there; that mode checks almost nothing. A subtype question about
+  a type that spells `Any`, or that the checker finds assignable to a class
+  of the probe's own (a class with an `Any` base), or one the checker gave no
+  answer about at all, answers unknown, so it never folds one member of a
+  union into another. Whatever such a name reaches is
   `Any`, which accepts every use, and the subtype questions that normalize a
   helper's annotations answer yes about it, so a misuse would pass Towel's
   check while the project's own, which may see the real type, rejects it. The
@@ -817,6 +929,24 @@ where the evidence comes from:
   `files` names it. A change inside such an implementation is therefore not
   verified by mypy, exactly as the project's own mypy run never checks it;
   Pyright, when configured, still checks the implementation as a file.
+- Which files' errors count, and what each module is called, is mypy's own
+  rule under the project's configuration. A file the configuration does not
+  name counts where a module it names imports it and the imported module's
+  own `follow_imports` (its `[[tool.mypy.overrides]]` section, else the
+  global setting) reports what it finds there; a changed file the
+  configuration does not follow at all (`skip`, `error`) is left out of the
+  check, so its importers see what the project's run sees. Modules are named
+  as mypy's walk names them (`explicit_package_bases`, `mypy_path`,
+  namespace packages), and a changed file the configuration does not name is
+  named as the import reaching it names it. A check of a target that leaves
+  the project's own package out (`towel dry tests tests`) finds that package
+  in the tree where an installed copy, typed or not, would answer for it, as
+  the project's run over the tree finds it; where the configuration names
+  `files`, that run is those files, and what they find installed is what the
+  check finds. A lone module named like installed code (`examples/json5.py`)
+  is not taken for it. A configuration mypy only warns about (an option it
+  does not know, a global option in a per-module section, a Python version
+  it has dropped) is checked as mypy checks it, and the warning is passed on.
 - Pyright verification uses a private copy of Python sources, stubs, typing
   markers and checker configuration, made once per run, kept in step with the
   project as it is refactored, and watched by one long-lived language server.
@@ -998,9 +1128,12 @@ the proposals it built and did not apply, by reason:
   `DECLINE-SITE[unsupported_extraction]`, and the pair keeps its helper.
 - Tool directives in the moved code. The comments of a block move into the
   helper with its code, and a directive (`# type: ignore`, `# pyright:
-  ignore`, `# noqa`, `# pragma: no cover`, `# nosec`, `# pylint: ...`,
-  `# fmt: ...`, `# isort: ...`, a type comment) changes what a tool reports
-  for its line, of which the helper has one where the sites had several.
+  ignore`, `# ty: ignore`, `# pyrefly: ignore`, `# zuban: ignore`,
+  `# pyre-ignore` and `# pyre-fixme`, `# noqa`, `# ruff: ...`, `# pragma: no
+  cover`, `# nosec`, `# nosemgrep`, `# pylint: ...`, Fixit's
+  `# lint-ignore`, `# fmt: ...`, `# isort: ...`, a type comment) changes
+  what a tool reports for its line, of which the helper has one where the
+  sites had several.
   `directives_differ`: the blocks do not carry the same directives, written
   alike up to spacing, at the same places, as when only one copy of a line
   needed its `# type: ignore` (mashumaro's `type_name`): the helper's line
@@ -1010,8 +1143,12 @@ the proposals it built and did not apply, by reason:
   the call site, where the directive does not reach: a `# type: ignore` or
   `# noqa` on its line, a `# nosec`, `# fmt: skip` or line-level
   `# pylint: disable`, a `# pragma: no cover` on the statement or the
-  clause it excludes, the statement after a `# noinspection`, or a
-  `# fmt: off` region. The directive is not copied onto the call line
+  clause it excludes, the statement after a `# noinspection`, the next
+  line of code after an ignore on a line of its own (ty and ruff read it
+  as the next logical line, or inside brackets the next physical one;
+  pyre, pyrefly, Semgrep and Fixit as the next line, and pyrefly reads
+  every checker's `<tool>: ignore` that way), or a `# fmt: off` or
+  `# ruff: disable` region. The directive is not copied onto the call line
   either, which would silence or exclude a line its tool never saw it on.
   Measured on September 24, 2026, extending the rule from a checker's
   ignore to every directive cost no refactoring: the `--no-types` fixed
@@ -1034,10 +1171,14 @@ the proposals it built and did not apply, by reason:
   helper might well have been covered; Towel cannot tell, and declines.
   `directive_outlives_block`:
   a region directive on a line of its own (`fmt: off`/`on`, `isort:
-  off`/`on`, `yapf: disable`/`enable`, `pylint: disable`/`enable`) is not
-  closed within the block, so its region reaches code that stays behind,
-  or a file-wide directive (`flake8: noqa`, `ruff: noqa`, `mypy:`, `pyright:
-  strict`) would move into another module. `directive_around_block`:
+  off`/`on`, `yapf: disable`/`enable`, `pylint: disable`/`enable`, `ruff:
+  disable`/`enable`) is not closed within the block, so its region reaches
+  code that stays behind, or a file-wide directive (`flake8: noqa`, `ruff:
+  noqa`, `ruff: file-ignore`, `mypy:`, `pyright: strict`, `pyrefly:
+  ignore-errors`, `pyre-strict`) would move into another module.
+  `directive_around_block`: an ignore on a line of its own above a site's
+  block governs the block's first statement, and would stay above the call
+  that takes its place, silencing the call and not the helper; or
   every site's block is reached by a directive outside it that would not
   reach the helper: `# pragma: no cover` or `# pylint: disable` at the end
   of the header of a statement enclosing the block (its function's `def`

@@ -689,3 +689,168 @@ The third audit tests this case. If it fails, the fix is to put that name
 in doubt, not to return to refusing whole runs.
 
 *Status: implemented on the `audit-1772` branch; not yet released.*
+
+## 2026-09-24: 1.772 fixes defects, and defers widening what Towel accepts
+
+The third audit round classified and priced every place Towel declines. Some
+declines exist only because an analysis is coarser than it could be. A
+nested block's variables are returned without liveness. A `getattr` marks a
+whole module reflective. A block ending in `raise` is never considered.
+
+The owner decided what goes into 1.772, and what waits:
+
+- **In 1.772:** every P1; the cheap P2s (refusals, recovery, remedy text, a
+  slowdown, observability, tests); and every documentation correction.
+- **Deferred to the next release:** declines that would be recovered only
+  by making the safety analysis accept code it now refuses. They are listed,
+  with their measured cost, in `docs/proposals/decline-capabilities.md`.
+
+Each deferred item widens what Towel accepts, and needs its own soundness
+argument and an audit of its own. Adding them now would open another round
+on new and riskier ground. They remain defects by the owner's standard, and
+are recorded as defects, not as limitations.
+
+*Status: decided. The deferred list is the next release's starting point.*
+
+## 2026-09-24: Every release is audited, and every finding becomes a test
+
+Every release gets a full from-scratch audit, run with the discipline of
+1.772's rounds:
+- independent auditors, each on its own dimension;
+- the shipped wheel run on 3.11, 3.12 and 3.13;
+- the owner's P1 and P2 standard;
+- another round after any round that finds a P1.
+
+The audit is not reserved for releases whose design changed.
+
+What an audit finds is not left for the next audit to find again. Every
+defect, and every class of defect it belongs to, becomes a cheap test in
+the default suite:
+- a fast unit test of the logic that failed;
+- the reproducer, added as a fixture to the hostile batteries, with their
+  before-and-after runtime oracle;
+- where the defect is one instance of a class, a property test that
+  checks the class. Examples: the cache off against the cache on; no new
+  public names in any battery fixture; Towel's name analysis against
+  `symtable`; Towel's reading of mypy's configuration against mypy's own.
+
+A performance regression is guarded by a count of calls, not by a
+timing. A seeded, bounded version of the semantic auditor's program
+generator runs in the suite, and a longer run (`just fuzz`) is a
+release-candidate step. The suite then catches the known classes on
+every commit, and each audit spends its time on new ground.
+
+*Status: adopted with 1.772. The round-3 fix branches add the tests.*
+
+## 2026-09-24: Code under a decorator moves only if the decorator leaves bodies alone
+
+Round 3 found Towel moving code out of functions whose decorator rewrites
+the body. typeguard's `@typechecked` recompiles a function from its source
+with checks added, so the moved code lost its checks, and a call that had
+raised `TypeCheckError` returned normally. numba's `@njit` compiles the
+body, so the function stopped compiling once it called a plain Python
+helper. It happened in the default mode, and typeguard's own tests caught
+it.
+
+The owner chose an allowlist over a denylist of known offenders, which is
+unsound for any decorator not yet known, and over inspecting each
+decorator's implementation, which is heuristic. Code may move out of a
+function, or a helper be placed in it, only when every decorator that can
+reach that code is known to leave the body alone. That means decorators on
+the function itself, on every enclosing function and on every enclosing
+class. Decorators are resolved by binding.
+
+A decorator is known to leave the body alone in two cases:
+- it is on a curated list, where each entry records the library source it
+  was verified against;
+- it is a project decorator that Towel can show is a plain wrapper, which
+  returns the function or calls it with its own arguments and never reads
+  its code or source.
+
+Anything else declines the pair, under a reason naming the decorator. This
+is the approach the hosting rule already takes for metaclasses and
+`__init_subclass__`. The cost is measured before the list is settled, and
+the list grows only by verified entries.
+
+The owner has proposed a user-supplied list of trusted decorators, as an
+escape hatch for a later release: `docs/proposals/trusted-decorators.md`.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
+
+## 2026-09-24: Build exclusions may put a host in doubt, but never name a module
+
+This refines "Import names come from the program". The third audit found
+`--cross-module` hosting a helper in a module the wheel leaves out, so the
+installed package failed to import. A hatch `exclude` of one file did it,
+and so did a setuptools `exclude` of a subpackage that a shipped module
+imported lazily, inside a function. The directory rule had counted that
+function-level import as evidence that the directory ships, contrary to
+its own documentation.
+
+Two remedies were measured:
+- **Require import-time evidence for each host module itself.** Helpers
+  imported across modules fell from 34 to 18 over 12 packages, and 84 of
+  the suite's tests broke, mostly on sibling modules that nothing imports.
+- **Read the build's declared exclusions**, only to put a host in doubt.
+  In every corpus package target, the only modules this leaves out are
+  whole test or benchmark subpackages, which the directory rule had
+  already fenced off.
+
+The second was taken. It reads the exclusions of:
+- hatch, setuptools, MANIFEST.in, Poetry, PDM, uv, flit and
+  scikit-build-core;
+- every `.gitignore`.
+
+It errs toward "left out". A module left out of an artifact never hosts a
+helper for a module that artifact keeps, although it may still borrow from
+one. It never names a module, so names still come only from the program's
+imports, and the packaging readers the owner removed from naming stay
+removed. The directory rule's evidence is now what it always claimed to
+be: imports that run whenever their module is imported.
+
+Two residuals remain:
+- exclusions made by a `setup.py`, a build hook or an unread backend
+  (meson-python, maturin), and files left untracked under setuptools-scm;
+- the module that attests a directory may itself be left out.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
+
+## 2026-09-24: An error is accounted for by the original's error where it stood
+
+This supersedes the comparison described in "How a typed run compares, as
+implemented". That comparison matched errors on the lines a change wrote by
+message alone. The third audit showed why that is not enough: when two copies
+of a block are merged into one helper, the second copy's errors are freed.
+They can then hide a genuinely new error with the same message. A helper typed
+`int | str`, whose `p + p` repeated two pre-existing messages, was accepted,
+and the project's mypy rejected it.
+
+An error after a change is now accounted for only in three ways:
+- **On a line the change left alone:** by the original's error on that
+  line, wherever the line now stands.
+- **In the helper's body:** by the same message at the same statement of
+  one copy of the block, each error once. The copy chosen is the one that
+  leaves the fewest errors unexplained.
+- **Elsewhere the change wrote, such as a call site:** by the same message
+  on the lines that stretch replaced, which for a call site is its own
+  copy.
+
+Anything else is new. Where either text of a changed file is unknown, every
+error in it is new. A generated property test holds the rule: every case
+with a genuinely new error is rejected, and every other case is accepted.
+
+Three related rules came with it:
+- **Names the checker types as `Any`** are found by asking the checker
+  what each import binds. So a configuration that silences the report,
+  such as `ignore_missing_imports` or pyright's `reportMissingImports`,
+  no longer hides them. A subtype question about such a type answers
+  unknown.
+- **A file that pyright's configuration excludes or ignores** is outside
+  pyright's jurisdiction, not unreachable. Another configured checker that
+  covers it settles it.
+- **A file no configured checker covers** is treated like the body of an
+  unannotated function: the verdict cannot depend on where Towel runs. Its
+  helper takes only the annotations its sites declare, completed with
+  `Any`.
+
+*Status: being implemented on the `audit-1772` branch; not yet released.*
