@@ -60,6 +60,7 @@ from .models import (
     ClassInfo,
     CodeBlockPair,
     FunctionArtifact,
+    PairVerdict,
     RefactoringProposal,
     proposal_identity,
 )
@@ -92,7 +93,7 @@ _worker_pairs: Optional[List[CodeBlockPair]] = None
 
 
 _worker_probed: FrozenSet[int] = frozenset()
-"""Pairs the parent's probe already judged and counted; a worker judges them again uncounted."""
+"""Pairs the parent's probe already judged; a worker whose chunk spans one leaves it alone."""
 
 
 PARENT_WATCH_INTERVAL_SECONDS = 1.0
@@ -166,37 +167,34 @@ def _start_parent_watchdog() -> None:
     ).start()
 
 
-def _evaluate_pair_chunk(
-    bounds: Tuple[int, int],
-) -> Tuple[List[Tuple[int, RefactoringProposal]], Dict[str, int]]:
-    """Evaluate ``_worker_pairs[start:end]`` in a forked worker.
+def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, PairVerdict]]:
+    """Judge ``_worker_pairs[start:end]`` in a forked worker; the verdicts, by pair index.
 
     The worker inherited the parent's engine, function context, pairs and
     caches copy-on-write at fork time, so nothing is pickled in; only the
-    accepted proposals travel back, with how many pairs were declined for
-    each reason. A pair the parent's probe already judged is judged again,
-    since chunks are contiguous, but counted only once, by the parent.
+    verdicts travel back, and the parent settles them in pair order, where
+    each is traced and counted once. A pair the parent's probe already
+    judged is not judged again, since chunks are contiguous: judging it here
+    too wrote its trace a second time.
     """
     if _worker_engine is None or _worker_functions is None or _worker_class_infos is None:
         raise RuntimeError("Worker not initialized for pair processing")
     if _worker_pairs is None:
         raise RuntimeError("Worker has no pairs to evaluate")
     start, end = bounds
-    # The parent's probe left identities behind at fork time; a chunk's
-    # first-by-index copy must win, so the worker starts from none.
+    # The parent's probe left identities behind at fork time; which pair
+    # repeats which is settled by the parent, so the worker starts from none.
     _worker_engine._seen_proposals.clear()
-    _worker_engine._pair_rejections = {}
-    accepted: List[Tuple[int, RefactoringProposal]] = []
-    for index in range(start, end):
-        judge = (
-            _worker_engine._try_refactor_pair_multi_file
-            if index in _worker_probed
-            else _worker_engine._judge_pair
+    return [
+        (
+            index,
+            _worker_engine._pair_verdict(
+                _worker_pairs[index], _worker_functions, _worker_class_infos
+            ),
         )
-        proposal = judge(_worker_pairs[index], _worker_functions, _worker_class_infos)
-        if proposal is not None:
-            accepted.append((index, proposal))
-    return accepted, dict(_worker_engine._pair_rejections)
+        for index in range(start, end)
+        if index not in _worker_probed
+    ]
 
 
 class _DistinctProposals:
@@ -358,26 +356,32 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         # the early functions are the untouched ones whose analyses are
         # cached, so a prefix would understate the cost; a stride samples
         # cached and cold regions alike.
-        results = _DistinctProposals()
+        # Every pair's verdict, by index, settled in index order at the end:
+        # the probe, the workers and a serial finish each judge out of it.
+        verdicts: Dict[int, PairVerdict] = {}
         stride = max(1, len(cold) // self.PARALLEL_PROBE_PAIRS)
         probe = cold[::stride][: self.PARALLEL_PROBE_PAIRS]
         started = time.monotonic()
         for index in probe:
-            probed = self._judge_pair(block_pairs[index], all_functions, class_infos)
-            if probed is not None:
-                results.add(index, probed)
+            verdicts[index] = self._pair_verdict(block_pairs[index], all_functions, class_infos)
         per_pair = (time.monotonic() - started) / max(1, len(probe))
         evaluated = set(probe)
         cold = [index for index in cold if index not in evaluated]
 
+        def settled() -> List[RefactoringProposal]:
+            results = _DistinctProposals()
+            for index in sorted(verdicts):
+                proposal = self._settle(block_pairs[index], verdicts[index])
+                if proposal is not None:
+                    results.add(index, proposal)
+            return results.in_order()
+
         def finish_serially(indices: Iterable[int]) -> List[RefactoringProposal]:
-            # Pairs evaluated here may precede the probe's; let a lower index win.
+            # Pairs judged here may precede the probe's; settling decides.
             self._seen_proposals.clear()
             for index in indices:
-                serial_proposal = self._judge_pair(block_pairs[index], all_functions, class_infos)
-                if serial_proposal is not None:
-                    results.add(index, serial_proposal)
-            return results.in_order()
+                verdicts[index] = self._pair_verdict(block_pairs[index], all_functions, class_infos)
+            return settled()
 
         if per_pair * len(cold) < self.PARALLEL_MIN_PROJECTED_SECONDS:
             return finish_serially(cold)
@@ -400,7 +404,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         running: Tuple[str, ...] = ()
         try:
             with ExitStack() as pool:
-                outcomes: Iterable[Tuple[List[Tuple[int, RefactoringProposal]], Dict[str, int]]]
+                outcomes: Iterable[List[Tuple[int, PairVerdict]]]
                 outcomes = ()
                 with _alone_at_fork() as running:
                     if not running:
@@ -415,11 +419,8 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
                         # context the first submission forks every worker,
                         # before the pool starts threads of its own.
                         outcomes = executor.map(_evaluate_pair_chunk, chunks)
-                for bounds, (accepted, declined) in zip(chunks, outcomes):
-                    for index, proposal in accepted:
-                        results.add(index, proposal)
-                    for reason, count in declined.items():
-                        self._pair_rejections[reason] = self._pair_rejections.get(reason, 0) + count
+                for bounds, judged in zip(chunks, outcomes):
+                    verdicts.update(judged)
                     evaluated.update(range(*bounds))
         except (BrokenProcessPool, OSError) as error:
             # A pool that cannot be started or that lost a worker; anything a
@@ -432,4 +433,4 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         if running:
             _note_serial_evaluation(running)
             return finish_serially(cold)
-        return results.in_order()
+        return settled()

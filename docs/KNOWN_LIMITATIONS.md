@@ -1545,6 +1545,8 @@ Set `DEBUG_PROPOSAL_REJECTIONS=1` to log the reason for each rejected pair
 (the `towel.rejections` logger, at DEBUG, on stderr), one line per pair
 naming each block by file, function and lines:
 `REJECT[reason]: path::function@(start, end) <-> path::function@(start, end)`.
+Each pair is traced once and in pair order, whatever `TOWEL_WORKERS` is, so
+counting the lines by reason prices a decline the same with any worker count.
 
 ## Performance
 

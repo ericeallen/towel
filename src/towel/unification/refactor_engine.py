@@ -92,10 +92,12 @@ from .models import (
     CodeBlockPair,
     FunctionArtifact,
     ClassInfo,
+    PairVerdict,
     RefactoringProposal,
     RejectReason,
     AppliedChange,
     FunctionNode,
+    identity_digest,
 )
 from ..type_baseline import KnownErrors
 from ..type_inference import TypeOracle
@@ -542,6 +544,11 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._pair_rejection: Optional[RejectReason] = None
         self._pair_rejection_subject: Optional[str] = None
         self._pair_rejections: Dict[str, int] = {}
+        self._pair_identity: Optional[Hashable] = None
+        self._trace_at_identity = 0
+        self._captured_trace: Optional[List[str]] = None
+        # The identities settled by this analysis's pairs so far, in pair order.
+        self._settled_identities: Set[str] = set()
         self._checker_refusals = 0
         # Per-run record of what each applied extraction replaced: the original
         # block and the generated call, for the naming step's before/after view.
@@ -580,7 +587,14 @@ class UnificationRefactorEngine(ParallelEvaluation):
         msg = f"REJECT[{reason}]: {first} <-> {second}"
         if detail:
             msg += f" :: {detail}"
-        REJECTIONS.debug(msg)
+        self._trace_rejection(msg)
+
+    def _trace_rejection(self, line: str) -> None:
+        """Write ``line`` to the rejection trace, or hold it for a verdict settled later."""
+        if self._captured_trace is None:
+            REJECTIONS.debug(line)
+        else:
+            self._captured_trace.append(line)
 
     def _debug_decline_site(
         self,
@@ -601,7 +615,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         site = _traced_block(pair.file_path, function.name, lines)
         first = _traced_block(pair.file_path, pair.function1_name, pair.block1_range)
         second = _traced_block(pair.file_path2, pair.function2_name, pair.block2_range)
-        REJECTIONS.debug(
+        self._trace_rejection(
             f"DECLINE-SITE[{reason}]: {site} joins no helper of {first} <-> {second} :: {detail}"
         )
 
@@ -825,6 +839,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
             return []
 
         self._seen_proposals.clear()
+        self._settled_identities = set()
         self._record_function_paths(all_functions)
         if self._should_use_parallel(len(block_pairs)):
             return self._evaluate_pairs_parallel(
@@ -846,18 +861,63 @@ class UnificationRefactorEngine(ParallelEvaluation):
         """The pair's proposal, counting the reason when it is declined.
 
         A pair declined only because another pair already proposed the same
-        refactoring loses nothing, and forked evaluation deduplicates such
-        pairs differently, so it is not counted. A pair declined without a
-        traced reason is counted as ``other``, and a reason naming something is
-        counted with it: ``decorator_may_transform_body[numba.njit]``.
+        refactoring loses nothing, so it is not counted. A pair declined
+        without a traced reason is counted as ``other``, and a reason naming
+        something is counted with it: ``decorator_may_transform_body[numba.njit]``.
+        Pairs are judged here in their own order; forked evaluation judges
+        them out of it (``_pair_verdict``) and settles them in it.
         """
+        return self._settle(pair, self._pair_verdict(pair, all_functions, class_infos))
+
+    def _pair_verdict(
+        self,
+        pair: CodeBlockPair,
+        all_functions: Sequence[FunctionArtifact],
+        class_infos: List[ClassInfo],
+    ) -> PairVerdict:
+        """``pair`` judged, with its trace held back and nothing counted; see ``PairVerdict``."""
         self._pair_rejection = None
         self._pair_rejection_subject = None
-        proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
-        if proposal is None and self._pair_rejection is not RejectReason.DUPLICATE_PROPOSAL:
-            key = self._rejection_key()
-            self._pair_rejections[key] = self._pair_rejections.get(key, 0) + 1
-        return proposal
+        self._pair_identity = None
+        self._trace_at_identity = 0
+        captured: Optional[List[str]] = [] if debugging(REJECTIONS) else None
+        self._captured_trace = captured
+        try:
+            proposal = self._try_refactor_pair_multi_file(pair, all_functions, class_infos)
+        finally:
+            self._captured_trace = None
+        lines = tuple(captured or ())
+        mark = len(lines) if self._pair_identity is None else self._trace_at_identity
+        duplicate = proposal is None and self._pair_rejection is RejectReason.DUPLICATE_PROPOSAL
+        return PairVerdict(
+            proposal,
+            None if self._pair_identity is None else identity_digest(self._pair_identity),
+            None if proposal is not None or duplicate else self._rejection_key(),
+            lines[:mark],
+            lines[mark:],
+        )
+
+    def _settle(self, pair: CodeBlockPair, verdict: PairVerdict) -> Optional[RefactoringProposal]:
+        """Trace and count ``verdict``, the next pair in this analysis's order; its proposal, if any.
+
+        A pair whose proposal an earlier pair already settled is a duplicate,
+        whatever its own judgement found beyond the duplicate check.
+        """
+        duplicate = verdict.identity is not None and verdict.identity in self._settled_identities
+        if verdict.identity is not None:
+            self._settled_identities.add(verdict.identity)
+        for line in verdict.before_identity:
+            self._trace_rejection(line)
+        if duplicate:
+            self._debug_reject(RejectReason.DUPLICATE_PROPOSAL, pair)
+            return None
+        for line in verdict.after_identity:
+            self._trace_rejection(line)
+        if verdict.counted is not None:
+            self._pair_rejections[verdict.counted] = (
+                self._pair_rejections.get(verdict.counted, 0) + 1
+            )
+        return verdict.proposal
 
     def _rejection_key(self) -> str:
         """What the pair just declined counts under: its reason, with what the reason names."""

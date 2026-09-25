@@ -1277,8 +1277,11 @@ measure is exact and changes no proposal.
   functions are collected.
 - **Fork-based parallelism.** A large cold analysis forks worker processes
   after parsing; each worker inherits the ASTs and caches copy-on-write and
-  returns only accepted proposals, so nothing is pickled in and only results
-  travel back. Forking is decided by a timed serial probe over a strided sample
+  returns only its verdicts (`PairVerdict`: the proposal, what it would count
+  and trace), so nothing is pickled in and only results travel back. The
+  parent settles every verdict in pair order, the probe's included, so a pair
+  repeating an earlier pair's proposal is the same duplicate it is serially,
+  and the rejection trace and counts are the serial run's, line for line. Forking is decided by a timed serial probe over a strided sample
   of all pairs — never by pair count alone, since a worker pool per fixed-point
   iteration can cost more than a small iteration saves. Each worker runs a
   watchdog thread that ends it within a second of its parent's death, so a
