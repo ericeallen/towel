@@ -138,8 +138,6 @@ TRANSFORMED = {
     "p12_one_line_body_after_a_split_header",
     "p13_protocol_default_methods",
     "p14_protocol_common_ancestor",
-    "p15_class_decorator_rebuilds_namespace",
-    "p16_class_decorator_wraps_every_function",
     "p17_decorated_base_rebuilds_namespace",
     # The positive control: every decorator here keeps the helper a method.
     "p18_known_class_decorators_keep_the_helper",
@@ -168,7 +166,15 @@ TRANSFORMED = {
     # the block only calls or consumes moves with it (r157).
     "r156_created_objects_that_escape",
     "r157_created_objects_only_called",
+    # A decorator the project defines that only wraps or registers the
+    # function leaves its body alone; the r7d_instrumenting_* fixtures, whose
+    # decorators recompile the body, are declined.
+    "r7d_plain_wrapper_decorator",
 }
+# p15_class_decorator_rebuilds_namespace and p16_class_decorator_wraps_every_function
+# left the set when a class decorator not known to leave its methods alone began
+# to decline blocks in them: the one rebuilds the class from its namespace, the
+# other wraps every method, and either might as well have recompiled them.
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in
 # their qualified names. Its reads are still what free_variables reports.
