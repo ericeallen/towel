@@ -166,13 +166,14 @@ def test_a_class_revealed_by_its_whole_path_is_imported_for_the_checker(tmp_path
     written = (package / "report.py").read_text()
     tree = ast.parse(written)
     guard = next(node for node in tree.body if isinstance(node, ast.If))
-    assert ast.unparse(guard.body[0]) == "from pkg.models import Row", written
+    # The class is bound privately, so no star-importer of report.py gains a name.
+    assert ast.unparse(guard.body[0]) == "from pkg.models import Row as _Row", written
     helper = next(
         node
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
     )
-    assert "row: 'Row'" in ast.unparse(helper.args), written
+    assert "row: '_Row'" in ast.unparse(helper.args), written
 
 
 def test_a_whole_path_the_host_cannot_import_is_written_any() -> None:

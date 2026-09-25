@@ -212,5 +212,5 @@ def test_a_directory_pyright_excludes_costs_no_wait(tmp_path: Path) -> None:
     written = (tmp_path / "pkg" / "legacy" / "version.py").read_text(encoding="utf-8")
     helper = next(line for line in written.splitlines() if "def __extracted_func_0" in line)
     assert helper.strip() == (
-        "def __extracted_func_0(self, __param_0: Any, prefix: str) -> str:"
+        "def __extracted_func_0(self, __param_0: _typing.Any, prefix: str) -> str:"
     ), "what the sites declare and Any for the rest: nothing would check an inferred type"
