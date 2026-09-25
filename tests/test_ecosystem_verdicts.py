@@ -1,3 +1,17 @@
+# Copyright 2025-2026 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """The release harness must distinguish test outcomes from incomplete commands."""
 
 from __future__ import annotations
@@ -905,7 +919,7 @@ PRE_EXISTING_REPORT = (
     "The rest lie in 1 file(s) the run does not change (tests/conftest.py), where a use of such "
     "a name is checked against Any.\n"
     "warning: the type checker does not look at 2 region(s) of the code this run may change: "
-    "it takes them to be unreachable on the platform and Python it checks for\n"
+    "it takes them to be unreachable, for the platform and Python it checks for\n"
     "  package/windows.py:9-40\n"
     "  package/compat.py:3-5\n"
     "Applied 1 refactoring(s) across 1 file(s)\n"

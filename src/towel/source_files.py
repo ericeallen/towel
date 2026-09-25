@@ -22,6 +22,25 @@ from typing import Iterable
 
 PROBE_PREFIX = "_towel_probe_"
 
+TOOL_DIRECTORIES = frozenset({"__pycache__", "node_modules"})
+"""Directories named for what a tool keeps in them, never a package's source.
+
+CPython writes only bytecode to ``__pycache__``, and npm installs into
+``node_modules``; neither name is one a project chooses for its own code.
+A name a project may choose, ``env`` or ``venv``, says nothing, so an
+environment is known by what it holds (:func:`is_environment`).
+"""
+
+
+def is_environment(directory: Path) -> bool:
+    """Whether ``directory`` is an environment packages are installed into, by its marker.
+
+    Every venv and virtualenv has a ``pyvenv.cfg`` and every conda
+    environment a ``conda-meta`` directory; a project's own package called
+    ``env`` or ``venv`` has neither.
+    """
+    return (directory / "pyvenv.cfg").is_file() or (directory / "conda-meta").is_dir()
+
 
 def is_probe_file(path: Path) -> bool:
     """Whether the filename belongs to an ephemeral type-checker probe."""
@@ -48,6 +67,9 @@ def python_sources(
 ) -> list[Path]:
     """Sorted regular sources, excluding symlinks, tool directories and environments.
 
+    Hidden directories and ``TOOL_DIRECTORIES`` are skipped by name, an
+    environment by what it holds (:func:`is_environment`), whatever its name.
+
     Prune directories before entering them: ignored source, especially an
     environment's incompatible fixtures, is outside both extraction and rename
     analysis. The explicitly requested root may itself have an unusual name.
@@ -62,7 +84,7 @@ def python_sources(
         return []
     if directory.is_file():
         return [directory] if _is_python_source(directory) else []
-    ignored = {"__pycache__", "venv", "env", "node_modules", *excluded}
+    ignored = {*TOOL_DIRECTORIES, *excluded}
     found: list[Path] = []
     for parent, directories, filenames in os.walk(
         directory, followlinks=False, onerror=_raise_walk_error
@@ -75,7 +97,7 @@ def python_sources(
             and not name.startswith(".")
             and name not in ignored
             and not (root / name).is_symlink()
-            and not (root / name / "pyvenv.cfg").is_file()
+            and not is_environment(root / name)
         )
         for name in filenames:
             path = root / name

@@ -1,3 +1,17 @@
+# Copyright 2025-2026 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Towel's notion of which names a function binds and reads, checked against CPython's.
 
 A seeded generator writes small functions out of every construct Python has
@@ -57,7 +71,7 @@ from towel.unification.assignment_analyzer import (
 )
 from towel.unification.definite_assignment import locally_bound_names
 from towel.unification.parameters import parameter_names
-from towel.unification.semantic_safety import _own_scope_locals
+from towel.unification.semantic_safety import own_scope_locals
 from towel.unification.statement_facts import bindings_of, loaded_names
 from towel.unification.visitors import NameCollector
 
@@ -623,7 +637,7 @@ def test_locals_and_declarations_are_the_symbol_tables(index: int) -> None:
     for case in _CASES[index : index + 50]:
         expected = _cpython_locals(case)
         assert _towel_locals(case.function) == expected, _explain(case, "bindings_of")
-        assert _own_scope_locals(case.function) == expected, _explain(case, "_own_scope_locals")
+        assert own_scope_locals(case.function) == expected, _explain(case, "own_scope_locals")
         assert locally_bound_names(case.function) >= expected, _explain(case, "locally_bound_names")
         assert not _towel_locals(case.function) & set(COMPREHENSION_TARGETS)
         declared = {
@@ -632,6 +646,44 @@ def test_locals_and_declarations_are_the_symbol_tables(index: int) -> None:
             if symbol.is_declared_global() or symbol.is_nonlocal()
         }
         assert scope_declarations(case.function) == declared, _explain(case, "scope_declarations")
+
+
+def test_the_engines_kept_locals_are_the_symbol_tables(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One engine answers for every generated function from its cache, keyed by block site.
+
+    Every generated ``f`` stands at the same line and column of its module,
+    and its first statement at the same place, so only the module's digest
+    in the key tells them apart: a key that dropped a dependency would hand
+    one function's locals to the next, and CPython would disagree. Each is
+    asked twice and computed once per site.
+    """
+    from towel.unification import block_analysis
+    from towel.unification.engine_state import BlockSite
+    from towel.unification.models import source_digest_of
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+
+    computed: List[str] = []
+
+    def counted(function: ast.FunctionDef | ast.AsyncFunctionDef) -> FrozenSet[str]:
+        computed.append(function.name)
+        return own_scope_locals(function)
+
+    monkeypatch.setattr(block_analysis, "own_scope_locals", counted)
+    engine = UnificationRefactorEngine()
+    for case in _CASES:
+        first = case.function.body[0]
+        site = BlockSite(
+            source_digest_of(case.source),
+            (case.function.lineno, case.function.col_offset),
+            (first.lineno, first.col_offset, len(case.function.body)),
+        )
+        expected = _cpython_locals(case)
+        for _ in range(2):
+            kept = engine._own_scope_locals(case.function, site)
+            assert kept == expected, _explain(case, "_own_scope_locals, kept per block site")
+    # Once per site: the generator writes one function twice, and the second
+    # copy is the same module, so the same site, and is answered from the cache.
+    assert len(computed) == len({case.source for case in _CASES})
 
 
 @pytest.mark.parametrize("index", range(0, FUNCTIONS, 50))

@@ -48,7 +48,7 @@ from typing import (
     Union,
 )
 
-from .bounded_cache import BoundedCache
+from .bounded_cache import BoundedCache, memoizing
 from .exceptions import ProjectScanLimitError
 from ..import_model import NameStatus
 from ..declared_requirements import installed_with_the_project, normalized_name
@@ -99,6 +99,9 @@ class ImportGraphCache:
         self._stage: Optional[Tuple[Path, Path]] = None
         self._programs: Dict[Path, ProgramImports] = {}
         self._unreadable: Dict[Path, ProjectScanLimitError] = {}
+        self._declared: Dict[Path, FrozenSet[str]] = {}
+        # The project root of each resolved path asked about (``project_root``).
+        self._roots: Dict[Path, Path] = {}
         self.edges: BoundedCache[Tuple[Path, int, int, str], Optional[_Edges]] = BoundedCache(limit)
         self.bindings: BoundedCache[Tuple[Path, int, int], Optional[Dict[str, Tuple[str, ...]]]] = (
             BoundedCache(limit)
@@ -139,8 +142,41 @@ class ImportGraphCache:
         )
         self._programs = {}
         self._unreadable = {}
+        self._declared = {}
+        self._roots = {}
         for table in (self.edges, self.effects, self.quiet_classes):
             table.clear()
+
+    def project_root(self, resolved: Path) -> Path:
+        """``find_project_root(resolved)``, resolved, found once per path until the next run.
+
+        Every cross-module pair asks for each of its files, and so does every
+        call site's coverage question. The root depends only on the project's
+        layout, and a run adds and removes no ``pyproject.toml``, ``setup.cfg``,
+        ``setup.py`` or ``__init__.py``. Under ``memoization_disabled`` it keeps
+        nothing.
+        """
+        if not memoizing():
+            return find_project_root(resolved).resolve()
+        known = self._roots.get(resolved)
+        if known is None:
+            known = self._roots[resolved] = find_project_root(resolved).resolve()
+        return known
+
+    def installed_with_the_project(self, path: Path) -> FrozenSet[str]:
+        """``installed_with_the_project`` for the project holding ``path``, read once per run.
+
+        Every cross-module pair asks, and the answer is what the project's
+        configuration files say, which a run does not change. Under
+        ``memoization_disabled`` it keeps nothing.
+        """
+        root = self.project_root(path.resolve())
+        if not memoizing():
+            return installed_with_the_project(root)
+        known = self._declared.get(root)
+        if known is None:
+            known = self._declared[root] = installed_with_the_project(root)
+        return known
 
     def program_for(self, path: Path) -> ProgramImports:
         """The program imports of the project ``path`` belongs to, read on first use.
@@ -155,7 +191,7 @@ class ImportGraphCache:
         ):
             root, stage_root = stage
         else:
-            root, stage_root = find_project_root(resolved).resolve(), None
+            root, stage_root = self.project_root(resolved), None
         known = self._programs.get(root)
         if known is not None:
             return known
@@ -1766,9 +1802,9 @@ def _new_requirements(
         }
 
     names = {name for name in required(added) - required(present) if not program.is_local(name)}
-    available = (set(sys.stdlib_module_names) - _EFFECTFUL_STDLIB) | installed_with_the_project(
-        find_project_root(program.model.root)
-    )
+    available = (
+        set(sys.stdlib_module_names) - _EFFECTFUL_STDLIB
+    ) | cache.installed_with_the_project(program.model.root)
     return frozenset(name for name in names if normalized_name(name) not in available)
 
 

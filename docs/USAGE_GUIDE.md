@@ -334,8 +334,10 @@ types.
 
 Code the checker does not look at is not changed either. A checker takes
 code to be unreachable where the platform and Python version it checks for
-make a `sys.platform`, `sys.version_info` or `TYPE_CHECKING` test false, or
-after an `assert` it knows fails, and reports nothing there. The engine asks
+make a `sys.platform`, `sys.version_info` or `TYPE_CHECKING` test false,
+after an `assert` it knows fails, or where the declared types rule it out
+(a `return NotImplemented` after an `isinstance` test an annotated argument
+always passes, which no platform checks), and reports nothing there. The engine asks
 it where it looks (`towel.reachability`: a `reveal_type` placed before each
 statement is answered only there): before the run, the inferring checker, about
 the start of every block of the analyzed files, which it logs and does not
@@ -394,7 +396,9 @@ proposals = engine.analyze_directory("src/", recursive=False)
 The scanner automatically skips:
 - Hidden directories (starting with `.`)
 - `__pycache__`
-- `venv`, `env`, `node_modules`, and any directory holding a `pyvenv.cfg`
+- `node_modules`, and every environment: a directory holding a `pyvenv.cfg` or a
+  `conda-meta`, whatever its name (a package of your own called `env` or `venv`
+  is analyzed like any other)
 - The names in `excluded_directories` (`--exclude`)
 - Symlinked files, and Towel's own `_towel_probe_*.py` type-checker probes
 

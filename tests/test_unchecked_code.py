@@ -90,6 +90,34 @@ def test_a_module_that_asserts_another_platform_is_left_alone_and_named(
     assert "m.py:7-18" in caplog.text
 
 
+@requires_mypy
+def test_code_the_declared_types_rule_out_is_left_alone_without_blaming_the_platform(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """packaging's shape: no platform checks a branch an annotation says is never taken."""
+    block = textwrap.indent(textwrap.dedent(BLOCK).strip("\n"), " " * 12)
+    source = "".join(
+        f"def {name}(value: int, other: int) -> int:\n"
+        f"    if not isinstance(other, int):\n{block}\n"
+        f"    return {result}\n\n\n"
+        for name, result in (("first", 1), ("second", 2))
+    )
+    oracle = MypyInferrer()
+    caplog.set_level(logging.DEBUG, logger="towel")
+    try:
+        written, applied, engine = _run(tmp_path, source, oracle)
+    finally:
+        oracle.close()
+    assert applied == 0 and written == source
+    warning = next(
+        record.getMessage()
+        for record in caplog.records
+        if "the type checker does not look at" in record.getMessage()
+    )
+    assert "because the declared types rule them out" in warning
+    assert "another platform" not in warning
+
+
 def _guarded(test: str) -> str:
     """``BLOCK`` in both functions, under ``test``, and a different statement after it."""
     return textwrap.dedent(f"""

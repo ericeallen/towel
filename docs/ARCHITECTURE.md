@@ -1300,11 +1300,14 @@ lines, 45 applied, fixed point, one core), the per-function-facts commit
 difference being the type check of each applied refactoring; Sphinx in the
 ecosystem check at `938d351` went from 2513 s to 2058 s, and function calls
 on Towel's source fell from 464 million to 246 million (September 18,
-2026). The current figure is at `5ff2458`, September 19, 2026 (Apple M5
-Max, `TOWEL_WORKERS=1`, Python 3.12, one other single-core job running):
-`towel dry src/towel` on that day's source (22,690 lines, 15 applied) takes
-8.4 s with a peak resident size of 174 MB under `--no-types --no-format`,
-and 11.9 s and 894 MB with the defaults. The tables in
+2026). At `5ff2458`, September 19, 2026 (Apple M5 Max, `TOWEL_WORKERS=1`,
+Python 3.12, one other single-core job running), `towel dry src/towel` on
+that day's source (22,690 lines, 15 applied) took 8.4 s with a peak
+resident size of 174 MB under `--no-types --no-format`, and 11.9 s and
+894 MB with the defaults. The current figure is at `8cb8b8c`, September 24,
+2026 (the same machine and settings, other work loading it to a load
+average of 11 to 13): on 46,165 lines it takes 35 s under `--no-types
+--no-format` (22 applied) and 138 s with the defaults (21 applied). The tables in
 [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#performance) give the
 per-project figures.
 
@@ -1347,8 +1350,10 @@ back caught failures. A durable journal, `.towel-transaction-<id>` at the
 common parent of the batch's files with a name unique per run, records the
 original bytes so `towel recover` can restore an interrupted batch; a pending
 journal blocks only a run that would change a file its manifest names (a
-journal without a readable manifest blocks everything beneath it); recovery
-refuses detected conflicting edits and keeps the journal for resolution.
+journal without a readable manifest blocks everything beneath it), which
+`changes.journals_covering` decides both for a batch and, before an
+in-place run starts, for the files it would analyze; recovery refuses
+detected conflicting edits and keeps the journal for resolution.
 Sources are decoded to LF text and split on LF alone
 (`source_text.source_lines`), so a form feed or U+2028 inside a comment or
 string does not shift a splice. An out-of-place run publishes its output with

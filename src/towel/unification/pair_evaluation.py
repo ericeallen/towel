@@ -50,7 +50,6 @@ from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, Froz
 
 from ..canonical_ast import canonical_dump
 from ..diagnostics import VALIDATION, debugging
-from ..project_layout import find_project_root
 from ..source_text import read_source
 from .definite_assignment import definitely_bound_after
 from .statement_facts import loaded_names
@@ -592,7 +591,7 @@ class PairEvaluation(
         paths = {host} | {replacement.file_path or host for replacement in placement.replacements}
         sources = {pair.file_path: pair.source1, pair.file_path2: pair.source2}
         for path in sorted(paths):
-            origin = Path(self._origin_of(path)).resolve()
+            origin = self._origin_in_run(path)
             source = sources.get(path)
             if source is None:
                 try:
@@ -601,13 +600,13 @@ class PairEvaluation(
                     unreadable = f"{Path(path).name} cannot be read"
                     found.update({name: unreadable for name in names if name not in found})
                     continue
-            rebound = builtin_rebinding(origin, source, names, self._project_writes(origin))
+            rebound = builtin_rebinding(origin, source, names, self._project_writes(path))
             found.update({name: why for name, why in rebound.items() if name not in found})
         return found
 
-    def _project_writes(self, module: Path) -> ProjectWrites:
-        """The project's own writes into module namespaces, read once per engine and project."""
-        root = find_project_root(module)
+    def _project_writes(self, path: str) -> ProjectWrites:
+        """The own writes into module namespaces of the project holding ``path``, read once per engine."""
+        root = self._project_root_in_run(path)
         writes = self._namespace_writes.get(str(root))
         if writes is None:
             writes = self._namespace_writes[str(root)] = scan_project_writes(root)
@@ -775,7 +774,10 @@ class PairEvaluation(
 
         Blocks with returned variables count as value-producing, since the
         helper will return them. A naturally value-producing block must
-        return on every path, so no partial control flow is extracted.
+        return on every path, so no partial control flow is extracted. When
+        the first block's value is its ``return`` and the second's the
+        variables its caller reads after it, one call cannot be both
+        ``return helper()`` and ``x = helper()``: ``return_versus_variables``.
         """
         debug_enabled = debugging(VALIDATION)
         value_prod1 = self._is_value_producing(pair.block1_nodes) or bool(
@@ -806,6 +808,14 @@ class PairEvaluation(
                 )
                 return None
             if not has_complete_return_coverage(pair.block2_nodes):
+                if analysis.return_variables2:
+                    self._reject(
+                        pair,
+                        RejectReason.RETURN_VERSUS_VARIABLES,
+                        detail=f"block2 binds {sorted(analysis.return_variables2)}",
+                        trace="  REJECTED: Block1 returns, block2 binds variables read after it",
+                    )
+                    return None
                 self._reject(
                     pair,
                     RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK2,
@@ -1143,7 +1153,8 @@ class PairEvaluation(
                 # Use hygienic double-underscore name; engine will prefix underscore for methods.
                 function_name="__extracted_func",
             )
-        except UnsupportedExtraction:
+        except UnsupportedExtraction as error:
+            self._debug_reject(RejectReason.UNSUPPORTED_EXTRACTION, pair, detail=str(error))
             return None
         inline_leading_thunks(func_def, unified.substitution, param_order)
         if has_impure_eager_parameters(unified.substitution, free.available_names):
@@ -1295,7 +1306,10 @@ class PairEvaluation(
                 return_variables=list(unified.ordered_return_variables[block_idx]),
                 hygienic_renames=unified.hygienic_renames,
             )
-        except UnsupportedExtraction:
+        except UnsupportedExtraction as error:
+            self._debug_reject(
+                RejectReason.UNSUPPORTED_EXTRACTION, pair, detail=f"block{block_idx+1}: {error}"
+            )
             return None
         if needs_class_body([call_node]):
             # The call would evaluate ``super()`` in a thunk, a lambda with no
@@ -1311,7 +1325,10 @@ class PairEvaluation(
             self._debug_reject(RejectReason.FORWARDED_CALLEE, pair, detail=f"block{block_idx+1}")
             return None
         function = setup.ctx.func1 if block_idx == 0 else setup.ctx.func2
-        if thunk_reads_possibly_unbound_local(call_node, function, free.available_names[block_idx]):
+        site = setup.ctx.site1 if block_idx == 0 else setup.ctx.site2
+        if thunk_reads_possibly_unbound_local(
+            call_node, self._own_scope_locals(function, site), free.available_names[block_idx]
+        ):
             # See :func:`thunk_reads_possibly_unbound_local`.
             self._debug_reject(
                 RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL, pair, detail=f"block{block_idx+1}"

@@ -45,7 +45,7 @@ from .block_comments import call_argument_lines, directive_conflict, site_commen
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
-from .models import FunctionArtifact, FunctionNode, Replacement
+from .models import FunctionArtifact, FunctionNode, RejectReason, Replacement
 from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import statement_shape
@@ -161,17 +161,27 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         # not identify the meanings of the existing helper's
         # arguments. Only reuse the helper when extraction from
         # this substitution produces the same body/signature.
-        candidate_helper, candidate_order = HygienicExtractor().extract_function(
-            template_block=pair.block1_nodes,
-            substitution=subst2,
-            free_variables=template.free_vars,
-            enclosing_names=template.enclosing_names,
-            is_value_producing=template.is_value_producing,
-            return_variables=list(template.return_variables),
-            global_decls=template.globals_to_declare or None,
-            nonlocal_decls=template.nonlocals_to_declare or None,
-            function_name=template.func_def.name,
-        )
+        try:
+            candidate_helper, candidate_order = HygienicExtractor().extract_function(
+                template_block=pair.block1_nodes,
+                substitution=subst2,
+                free_variables=template.free_vars,
+                enclosing_names=template.enclosing_names,
+                is_value_producing=template.is_value_producing,
+                return_variables=list(template.return_variables),
+                global_decls=template.globals_to_declare or None,
+                nonlocal_decls=template.nonlocals_to_declare or None,
+                function_name=template.func_def.name,
+            )
+        except UnsupportedExtraction as error:
+            self._debug_decline_site(
+                RejectReason.UNSUPPORTED_EXTRACTION,
+                pair,
+                candidate.function,
+                candidate.nodes,
+                error,
+            )
+            return None
         inline_leading_thunks(candidate_helper, subst2, candidate_order)
         if (
             candidate_order != template.param_order
@@ -211,7 +221,14 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 return_variables=returned,
                 hygienic_renames=cluster_renames,
             )
-        except UnsupportedExtraction:
+        except UnsupportedExtraction as error:
+            self._debug_decline_site(
+                RejectReason.UNSUPPORTED_EXTRACTION,
+                pair,
+                candidate.function,
+                candidate.nodes,
+                error,
+            )
             return None
         # A ``super()`` the call itself holds runs in a thunk or in the helper,
         # neither of which reads the method's receiver and cell (``SUPER_IN_CALL``).
@@ -228,7 +245,11 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             permitted=self._builtin_parameter_positions(template.param_order, subst2),
         ):
             return None
-        if thunk_reads_possibly_unbound_local(call_node2, candidate.function, available[1]):
+        if thunk_reads_possibly_unbound_local(
+            call_node2,
+            self._own_scope_locals(candidate.function, candidate.site),
+            available[1],
+        ):
             return None
         # Validate candidate call-site does not reference undefined names
         used2 = self._used_names(call_node2)

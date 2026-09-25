@@ -1,3 +1,17 @@
+# Copyright 2025-2026 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 from pathlib import Path
 import tempfile
@@ -12,6 +26,7 @@ from towel.unification.annotation_ladder import Verified
 from towel.unification.annotation_wiring import HelperAnnotationWiring
 from towel.unification.exceptions import UncheckedCodeError
 from towel.unification.materialize import Materialization
+from towel.source_files import is_environment
 
 LOOKS_NOWHERE = "looks_nowhere"
 """The marker of a test whose typed runs are meant to verify nothing, the checker looking nowhere."""
@@ -25,12 +40,24 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
-_TEST_ONLY_PLACES = tuple(
-    f"{place}{os.sep}"
-    for place in (Path(__file__).resolve().parents[1], Path(tempfile.gettempdir()).resolve())
-)
+_TEST_ONLY_PLACES = (Path(__file__).resolve().parents[1], Path(tempfile.gettempdir()).resolve())
 """The Towel checkout under test, which pytest puts on ``sys.path`` to import ``tests``, and
 the temporary directory the fixtures of earlier tests were imported from."""
+
+
+def _only_this_process_finds(description: str) -> bool:
+    """Whether what the probe found lies where only this test process looks.
+
+    That is the checkout or the temporary directory, but not an environment
+    inside either: ``uv sync`` makes the checkout's own ``.venv``, as CI does,
+    and what is installed there is installed for every interpreter using it.
+    """
+    location = Path(description)
+    for place in _TEST_ONLY_PLACES:
+        if location.is_relative_to(place):
+            between = [parent for parent in location.parents if parent.is_relative_to(place)]
+            return not any(is_environment(directory) for directory in between)
+    return False
 
 
 @pytest.fixture(autouse=True)
@@ -50,7 +77,7 @@ def _probe_as_a_projects_interpreter(monkeypatch: pytest.MonkeyPatch) -> Iterato
 
     def probe(name: str, root: Path) -> Optional[OutsideProvider]:
         found = real(name, root)
-        if found is not None and found.description.startswith(_TEST_ONLY_PLACES):
+        if found is not None and _only_this_process_finds(found.description):
             return None
         return found
 

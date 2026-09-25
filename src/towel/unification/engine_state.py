@@ -50,11 +50,10 @@ from weakref import WeakKeyDictionary
 
 from ..coverage_config import CoverageExclusion, coverage_exclusion
 from ..diagnostics import LOG, Settings
-from ..project_layout import find_project_root
 from ..type_baseline import CheckedChange, KnownErrors
 from ..type_inference import CheckResult, TypeDiagnostic, TypeOracle
 from .block_signature import BlockSignature
-from .bounded_cache import BoundedCache
+from .bounded_cache import BoundedCache, memoizing
 from .extractor import HygienicExtractor
 from .function_index import FunctionIndex
 from .models import (
@@ -205,6 +204,10 @@ class EngineState:
     """The writes into module namespaces each project root's sources make, by root."""
     _coverage_exclusions: Dict[str, CoverageExclusion]
     """What each project root's coverage.py excludes lines by, read once per engine."""
+    _origins_in_run: Dict[Tuple[str, Optional[Tuple[Path, Path]]], Path]
+    """Where each file of the run stands in the project, by the file and the
+    run's ``_output_origin``: kept for one run, in which it does not change,
+    since every call site of every pair asks (``_origin_in_run``)."""
     # Identities of the proposals this analysis has finished; a pair whose
     # proposal repeats one is declined before reuse, filtering and annotation.
     _seen_proposals: Set[Hashable]
@@ -369,8 +372,11 @@ class EngineState:
         Read from the project's own location, since an output directory is
         only a copy of part of it, once per engine and root. A configuration
         coverage.py could not read gives its defaults, and the run says so.
+
+        Every call site of every pair asks, so the project is found once per
+        file and run (``_project_root_in_run``).
         """
-        root = find_project_root(Path(self._origin_of(file_path)))
+        root = self._project_root_in_run(file_path)
         key = str(root)
         found = self._coverage_exclusions.get(key)
         if found is None:
@@ -383,6 +389,36 @@ class EngineState:
                     found.problem,
                 )
         return found
+
+    def _origin_in_run(self, path: str) -> Path:
+        """``_origin_of(path)``, resolved, found once per path for the run.
+
+        Every call site of every pair asks about its file, thousands of times
+        for one file where many blocks are alike. The answer depends only on
+        the path and the run's stage (``_output_origin``), which make the key,
+        and on symbolic links a run does not change; ``_forget_run_lookups``
+        ends the memo with the run, and under ``memoization_disabled`` it keeps
+        nothing.
+        """
+        if not memoizing():
+            return Path(self._origin_of(path)).resolve()
+        key = (path, self._output_origin)
+        known = self._origins_in_run.get(key)
+        if known is None:
+            known = self._origins_in_run[key] = Path(self._origin_of(path)).resolve()
+        return known
+
+    def _project_root_in_run(self, path: str) -> Path:
+        """The root of the project holding ``path`` where it stands, found once per path for the run.
+
+        The import graph remembers it (``ImportGraphCache.project_root``), which
+        cross-module questions ask too.
+        """
+        return self.import_graph.project_root(self._origin_in_run(path))
+
+    def _forget_run_lookups(self) -> None:
+        """Begin or end a run: forget where the files of the last one stood."""
+        self._origins_in_run = {}
 
     def _module_digest(self, func: Optional[FunctionNode]) -> Optional[str]:
         """Provided by UnificationRefactorEngine."""
@@ -398,6 +434,17 @@ class EngineState:
 
     def _debug_reject(
         self, reason: RejectReason, pair: "CodeBlockPair", detail: Optional[str] = None
+    ) -> None:
+        """Provided by UnificationRefactorEngine."""
+        raise NotImplementedError
+
+    def _debug_decline_site(
+        self,
+        reason: RejectReason,
+        pair: "CodeBlockPair",
+        function: FunctionNode,
+        nodes: Sequence[ast.stmt],
+        detail: object,
     ) -> None:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError

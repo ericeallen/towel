@@ -862,9 +862,11 @@ where the evidence comes from:
 - Code the checker does not look at is not changed. A checker takes code to
   be unreachable when the platform and Python version it checks for make a
   `sys.platform`, `sys.version_info` or `TYPE_CHECKING` test false, when an
-  `assert` it knows fails precedes it, or when nothing can reach it (after a
-  `return` on every path), and reports nothing there, so its acceptance of a
-  change there says nothing. Which code that is, is each checker's own rule,
+  `assert` it knows fails precedes it, when nothing can reach it (after a
+  `return` on every path), or when the declared types rule it out on every
+  platform (packaging's `return NotImplemented` after an `isinstance` test
+  its argument's annotation always passes), and reports nothing there, so
+  its acceptance of a change there says nothing. Which code that is, is each checker's own rule,
   so Towel asks it: a `reveal_type((0))` placed before a statement is answered
   exactly where the checker looks. Before accepting a change, every
   configured checker is asked about each statement on the lines the change
@@ -1058,10 +1060,14 @@ the proposals it built and did not apply, by reason:
   helper's `i` would be unbound where the caller's was `-1`.
   `unbinds_external_name`: the block deletes, explicitly or through
   `except ... as`, a name bound before it or declared `global`/`nonlocal`.
-- Shape. `value_producing_mismatch`: one block returns a value and the
-  other does not. `incomplete_return_coverage_block1`/`_block2`: a
-  value-producing block does not leave by `return`, `raise`, `break` or
-  `continue` on every path. `not_structurally_similar`: the blocks'
+- Shape. `value_producing_mismatch`: one block produces a value (a
+  `return`, or variables its caller reads afterwards) and the other does
+  not. `return_versus_variables`: the first block's value is its `return`
+  and the second's the variables its caller reads after it, and one call
+  cannot be both `return helper()` and `x = helper()`.
+  `incomplete_return_coverage_block1`/`_block2`: a block that returns
+  does not leave by `return`, `raise`, `break` or `continue` on every path
+  (block enumeration already leaves such blocks out). `not_structurally_similar`: the blocks'
   per-statement node counts or type histograms differ by more than the
   similarity threshold.
 - Unification. `unification_failed`: the blocks do not anti-unify, which
@@ -1141,6 +1147,12 @@ the proposals it built and did not apply, by reason:
   placeholder, a name bound only inside the block).
   `instantiation_mismatch`: the helper applied to the call's arguments does
   not reproduce the block up to renamed binders.
+  `unsupported_extraction`: the extractor cannot write the helper or one
+  of its calls (a generated parameter name the block already uses, an
+  annotated assignment whose target would become an argument, a parameter
+  with no argument at a site); the trace's detail says which. A further
+  occurrence that cannot join a pair's helper for this reason is traced as
+  `DECLINE-SITE[unsupported_extraction]`, and the pair keeps its helper.
 - Tool directives in the moved code. The comments of a block move into the
   helper with its code, and a directive (`# type: ignore`, `# pyright:
   ignore`, `# ty: ignore`, `# pyrefly: ignore`, `# zuban: ignore`,
@@ -1341,7 +1353,9 @@ formed pair:
   name, and is reached only by the relative imports of its own package.
 
 Set `DEBUG_PROPOSAL_REJECTIONS=1` to log the reason for each rejected pair
-(the `towel.rejections` logger, at DEBUG, on stderr).
+(the `towel.rejections` logger, at DEBUG, on stderr), one line per pair
+naming each block by file, function and lines:
+`REJECT[reason]: path::function@(start, end) <-> path::function@(start, end)`.
 
 ## Performance
 
@@ -1359,10 +1373,13 @@ it tractable, all exact: they change no proposal.
   once per distinct helper template, not once per pair (every pair of N
   near-identical blocks renders the same template; 50 identical functions
   took 17 s and 100 took 134 s under 1.618, before this pass and the reuse
-  index below; at `5ff2458` on September 19, 2026,
-  `scripts/bench_similar_blocks.py` on one core of an Apple M5 Max with one
-  other single-core job running takes 4.0 s for 50 and 15.9 s for 100, a
-  factor of 4.0 for twice the functions), memoizes its per-candidate
+  index below; at `8cb8b8c` on September 24, 2026, the module and command
+  of `scripts/bench_similar_blocks.py` on one core of an Apple M5 Max, with
+  other work loading the machine to a load average of 15 to 19, take 6.4 to
+  7.9 s for 50 and 27 to 29 s for 100, in CPU time as in wall time, a
+  factor of about 4 for twice the functions; at `5ff2458`, with one other
+  single-core job running and before 1.772's per-call-site safety checks,
+  they took 4.0 s and 15.9 s), memoizes its per-candidate
   pipeline on the template, the candidate, and the pair's helper, and
   applies its constant-time filters before the semantic guards. The
   remaining growth is cubic: every one of the N²/2 pairs legitimately
@@ -1418,11 +1435,14 @@ it tractable, all exact: they change no proposal.
   run and heard once more only at the rehearing that ends it. A bounded `--max-refactorings` run is the practical form there.
   Nothing about the result depends on any of this: the checkers are consulted
   identically.
-- What a checker still rejects is, on Sphinx, one thing and one family. The
-  thing is a helper lifted into a base class whose body reads a member only
-  its subclasses have, so the precise signature is refused and the helper
-  keeps `Any`; the family is a generic helper whose inferred type parameter
-  wants a bound. Neither loses the refactoring.
+- What a checker still rejected on Sphinx, when last measured (`2057bf6`,
+  September 21, 2026), was one thing and one family. The family is a
+  generic helper whose inferred type parameter wants a bound, which does
+  not lose the refactoring. The thing was a helper lifted into a base class
+  whose body read a member only its subclasses have; it no longer arises,
+  since from `da05485` a helper goes only into the class that holds both
+  duplicates, and a block that sibling classes share becomes a module
+  function whose receiver is annotated from its call sites.
 - Because the variants are generated lazily, a signature that verifies costs
   nothing further. A precise ordinary signature that passes means no generic
   candidate is ever built or checked, which is the cheapest order as well as
@@ -1505,7 +1525,12 @@ times depend on the input as much as on the engine: at `5ff2458`
 other single-core job running), that day's Towel source, 22,690 lines
 after the later audits' removals, has 15 duplicates to apply and `towel
 dry src/towel` runs in 8.4 s without the type checker and formatter and
-11.9 s with them.
+11.9 s with them. At `8cb8b8c` (September 24, 2026, the same machine and
+settings, other work loading it to a load average of 11 to 13) the source
+is 46,165 lines (`wc -l` over the 80 modules of `src/towel`), and the same
+command applies 22 refactorings in 35 s without the type checker and
+formatter, and 21 in 138 s with them, mypy being the one checker the
+project configures.
 
 The remaining cost is the pairwise evaluation of structurally distinct
 candidates, which no cache can share; large test modules with hundreds of

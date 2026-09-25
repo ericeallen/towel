@@ -283,6 +283,11 @@ class _PairingProgress:
             print(file=sys.stderr)
 
 
+def _traced_block(file_path: str, function: str, block_range: Optional[Tuple[int, int]]) -> str:
+    """A block as the rejection trace names it: ``path::function@(start, end)``."""
+    return f"{file_path}::{function}" + (f"@{block_range}" if block_range else "")
+
+
 def _size_or_zero(path: str) -> int:
     try:
         return os.path.getsize(path)
@@ -532,6 +537,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._namespace_writes: Dict[str, ProjectWrites] = {}
         # What each project's coverage.py excludes, read once per engine.
         self._coverage_exclusions: Dict[str, CoverageExclusion] = {}
+        self._origins_in_run: Dict[Tuple[str, Optional[Tuple[Path, Path]]], Path] = {}
         self._seen_proposals: Set[Hashable] = set()
         self._pair_rejection: Optional[RejectReason] = None
         self._pair_rejections: Dict[str, int] = {}
@@ -553,19 +559,43 @@ class UnificationRefactorEngine(ParallelEvaluation):
     ) -> None:
         """Note why the pair is declined, and trace it when DEBUG_PROPOSAL_REJECTIONS is set.
 
-        The reason is kept for ``_judge_pair``, which counts it; the trace
-        includes function names and block ranges to help triage pruning gates.
+        The reason is kept for ``_judge_pair``, which counts it. The trace
+        names each block by its file, function and line range
+        (``path::function@(start, end)``), so a trace over many files locates
+        every pair it declines.
         """
         self._pair_rejection = reason
         if not debugging(REJECTIONS):
             return
-        msg = (
-            f"REJECT[{reason}]: {pair.function1_name}{'@'+str(pair.block1_range) if pair.block1_range else ''} "
-            f"<-> {pair.function2_name}{'@'+str(pair.block2_range) if pair.block2_range else ''}"
-        )
+        first = _traced_block(pair.file_path, pair.function1_name, pair.block1_range)
+        second = _traced_block(pair.file_path2, pair.function2_name, pair.block2_range)
+        msg = f"REJECT[{reason}]: {first} <-> {second}"
         if detail:
             msg += f" :: {detail}"
         REJECTIONS.debug(msg)
+
+    def _debug_decline_site(
+        self,
+        reason: RejectReason,
+        pair: "CodeBlockPair",
+        function: FunctionNode,
+        nodes: Sequence[ast.stmt],
+        detail: object,
+    ) -> None:
+        """Trace a further occurrence that cannot join ``pair``'s helper, which the pair keeps.
+
+        Not the pair's reason, since the pair is not declined: its helper is
+        still proposed, for the sites that can share it.
+        """
+        if not debugging(REJECTIONS):
+            return
+        lines = (nodes[0].lineno, nodes[-1].end_lineno or nodes[-1].lineno) if nodes else None
+        site = _traced_block(pair.file_path, function.name, lines)
+        first = _traced_block(pair.file_path, pair.function1_name, pair.block1_range)
+        second = _traced_block(pair.file_path2, pair.function2_name, pair.block2_range)
+        REJECTIONS.debug(
+            f"DECLINE-SITE[{reason}]: {site} joins no helper of {first} <-> {second} :: {detail}"
+        )
 
     def analyze_file(self, file_path: str) -> List[RefactoringProposal]:
         """
@@ -649,6 +679,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.analysis_session.hold_at_least(
             len(file_paths), sum(_size_or_zero(path) for path in file_paths)
         )
+        if self._output_origin is None:
+            # Outside a fixed-point run the analysis is the run.
+            self._forget_run_lookups()
         stale = {os.path.abspath(path) for path in (invalidate_paths or ())}
         stale.update(
             os.path.abspath(path) for path in file_paths if not self.analysis_session.reusable(path)

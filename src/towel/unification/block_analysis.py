@@ -64,7 +64,7 @@ from .models import (
 )
 from .parameters import GENERATED_PARAMETER_PREFIX, parameter_names
 from .scope_analyzer import ScopeAnalyzer
-from .semantic_safety import rebound_external_names, walk_own_scope
+from .semantic_safety import own_scope_locals, rebound_external_names, walk_own_scope
 from .statement_facts import memoized_per_node
 from .static_positions import (
     TYPING_FORMS_BY_NAME,
@@ -529,6 +529,23 @@ class BlockAnalysis(EngineState):
         if key in self._per_block_cache:
             return cast(T, self._per_block_cache[key])
         return cast(T, self._per_block_cache.put(key, compute()))
+
+    def _own_scope_locals(
+        self, function: FunctionNode, site: Optional[BlockSite]
+    ) -> FrozenSet[str]:
+        """``own_scope_locals(function)``, computed once per block site of an analysis.
+
+        Every call site of every pair asks, 12,202 times for fifty functions
+        on the similar-blocks benchmark. The answer reads the function's own
+        code and nothing around it, which the site's module digest and the
+        function's position fix, so the block's site holds everything it
+        depends on; the site's block position only divides the reuse by the
+        blocks of each function.
+        """
+        local: FrozenSet[str] = self._per_block(
+            "own_scope_locals", lambda: own_scope_locals(function), site=site
+        )
+        return local
 
     def _build_block_binding_snapshot(
         self,

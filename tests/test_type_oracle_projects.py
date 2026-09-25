@@ -1,3 +1,17 @@
+# Copyright 2025-2026 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Project-level checker and lifecycle regressions from the 1.732 release audit."""
 
 from __future__ import annotations
@@ -6,6 +20,7 @@ import ast
 from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from typing import Iterator
@@ -240,14 +255,26 @@ def test_project_any_rule_triggers_annotation_fallback(tmp_path: Path) -> None:
 
 
 def test_missing_optional_mypy_has_no_unraisable_destructor(tmp_path: Path) -> None:
-    source_root = Path(type_inference.__file__).resolve().parents[1]
+    """Towel alone on the path, so mypy is absent however Towel itself was installed.
+
+    From a checkout the package's parent is ``src``, which holds nothing else;
+    from an installed wheel it is site-packages, which holds mypy too. So the
+    package is copied to a directory of its own, and the interpreter is
+    started isolated, without site-packages or ``PYTHONPATH``.
+    """
+    isolated = tmp_path / "isolated"
+    shutil.copytree(
+        Path(type_inference.__file__).resolve().parent,
+        isolated / "towel",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
     code = (
-        f"import sys; sys.path.insert(0, {str(source_root)!r})\n"
+        f"import sys; sys.path.insert(0, {str(isolated)!r})\n"
         "from towel.type_inference import MypyInferrer\n"
         "try:\n    MypyInferrer()\nexcept ImportError:\n    print('absent')\n"
     )
     result = subprocess.run(
-        [sys.executable, "-P", "-S", "-c", code], cwd=tmp_path, capture_output=True, text=True
+        [sys.executable, "-I", "-S", "-c", code], cwd=tmp_path, capture_output=True, text=True
     )
     assert result.returncode == 0 and result.stdout.strip() == "absent"
     assert result.stderr == ""

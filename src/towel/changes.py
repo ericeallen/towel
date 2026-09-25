@@ -31,7 +31,7 @@ from pathlib import Path
 from .source_text import encode_like
 import stat
 import tempfile
-from typing import Mapping, Set, TypedDict
+from typing import List, Mapping, Optional, Set, TypedDict
 
 from .diagnostics import LOG
 
@@ -46,6 +46,10 @@ class StaleSource(ChangeConflict):
 
 class RecoveryRequired(OSError):
     """Rollback could not finish; the journal must be retained for recovery."""
+
+
+JOURNAL_PREFIX = ".towel-transaction-"
+"""How the name of every journal begins; the rest is random, so concurrent runs never share one."""
 
 
 @dataclass(frozen=True)
@@ -182,6 +186,23 @@ def _cleanup(journal: Path) -> None:
     _sync_directory(journal.parent)
 
 
+def _named_files(journal: Path) -> Optional[Set[Path]]:
+    """The files a pending journal's manifest names, or None when it has no readable one."""
+    try:
+        records: object = json.loads((journal / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return None
+    if not isinstance(records, list):
+        return None
+    named: Set[Path] = set()
+    for record in records:
+        relative = record.get("path") if isinstance(record, dict) else None
+        if not isinstance(relative, str):
+            return None
+        named.add(journal.parent / relative)
+    return named
+
+
 def _journal_covers(journal: Path, targets: Set[Path]) -> bool:
     """Whether a pending journal concerns any of ``targets``.
 
@@ -189,21 +210,51 @@ def _journal_covers(journal: Path, targets: Set[Path]) -> bool:
     changed, so one at a shared ancestor (a file refactored directly in the
     temporary directory, say) must not block every unrelated run beneath
     it. Its manifest names the files; a journal whose manifest is not yet
-    durable, or not readable, is taken to cover everything.
+    durable, or not readable, is taken to cover everything beneath it.
     """
+    named = _named_files(journal)
+    return named is None or bool(named & targets)
+
+
+def journals_covering(targets: Set[Path]) -> List[Path]:
+    """The pending journals that may concern any of ``targets``, which are resolved paths.
+
+    A journal names files relative to the directory it sits in, so only one
+    in a directory holding a target, or above it, can name one; any other,
+    beneath the targets' common directory or not, concerns none of them.
+    """
+    parents = {parent for target in targets for parent in target.parents}
+    return sorted(
+        path
+        for parent in parents
+        for path in parent.glob(f"{JOURNAL_PREFIX}*")
+        if _journal_covers(path, targets)
+    )
+
+
+def pending_journal_remedy(journal: Path, changing: str = "this change writes") -> str:
+    """Why the pending ``journal`` stands in the way of a file ``changing``, and what resolves it.
+
+    That is ``towel recover`` where recovery will read the journal, and
+    otherwise why it will not and what to do instead, so that a refusal
+    never ends in a command that fails too.
+    """
+    if _named_files(journal) is None:
+        why = (
+            f"{journal}, a pending transaction journal, has no manifest that can be read, so it"
+            f" is taken to name every file beneath {journal.parent}, including one {changing}"
+        )
+    else:
+        why = f"{journal}, a pending transaction journal, names a file {changing}"
     try:
-        records: object = json.loads((journal / "manifest.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, UnicodeError):
-        return True
-    if not isinstance(records, list):
-        return True
-    covered: Set[Path] = set()
-    for record in records:
-        relative = record.get("path") if isinstance(record, dict) else None
-        if not isinstance(relative, str):
-            return True
-        covered.add(journal.parent / relative)
-    return bool(covered & targets)
+        distrust = _distrust(_journal_directory(journal))
+    except ChangeConflict as error:
+        distrust = str(error).removeprefix("Invalid transaction directory: ")
+    except OSError as error:
+        distrust = f"{journal} cannot be examined ({error})"
+    if distrust is None:
+        return f"{why}; recover it first: towel recover {journal}"
+    return f"{why}, and towel recover will not read it as it stands: {distrust}"
 
 
 def apply_changes(plan: ChangePlan) -> None:
@@ -218,19 +269,12 @@ def apply_changes(plan: ChangePlan) -> None:
         compile(change.after, str(change.path), "exec")
         _check(change, change.before)
     root = Path(os.path.commonpath([str(change.path.parent) for change in plan.changes]))
-    targets = {change.path for change in plan.changes}
-    parents = {parent for change in plan.changes for parent in change.path.parents}
-    pending = sorted(
-        path
-        for parent in parents
-        for path in parent.glob(".towel-transaction-*")
-        if _journal_covers(path, targets)
-    )
+    pending = journals_covering({change.path for change in plan.changes})
     if pending:
-        raise RecoveryRequired(f"Recover the existing transaction first: {pending[0]}")
+        raise RecoveryRequired(pending_journal_remedy(pending[0]))
     if any(change.path.stat().st_dev != root.stat().st_dev for change in plan.changes):
         raise ChangeConflict("A transaction cannot span filesystems")
-    journal = root / f".towel-transaction-{secrets.token_hex(4)}"
+    journal = root / f"{JOURNAL_PREFIX}{secrets.token_hex(4)}"
     try:
         journal.mkdir(mode=0o700)
     except FileExistsError as error:
@@ -281,18 +325,74 @@ def apply_changes(plan: ChangePlan) -> None:
         LOG.warning("Changes committed; journal cleanup requires attention: %s: %s", journal, error)
 
 
+def _journal_directory(journal: Path) -> Path:
+    """``journal`` spelled canonically, or a ChangeConflict saying why it names no journal.
+
+    A journal restores the files beside it, whose paths must be canonical, so
+    the directory it sits in is resolved: a path through a symbolic link, such
+    as macOS's ``/tmp``, names the same journal. The journal itself must be
+    the directory a run wrote, not a link to one, which would restore files
+    beside the link rather than beside the journal.
+    """
+    absolute = journal.absolute()
+    if not absolute.name.startswith(JOURNAL_PREFIX):
+        raise ChangeConflict(
+            f"Invalid transaction directory: {journal}: a journal's name begins with"
+            f" {JOURNAL_PREFIX}"
+        )
+    canonical = absolute.parent.resolve() / absolute.name
+    try:
+        info = canonical.lstat()
+    except FileNotFoundError:
+        raise ChangeConflict(f"Invalid transaction directory: {journal} does not exist") from None
+    if stat.S_ISLNK(info.st_mode):
+        raise ChangeConflict(
+            f"Invalid transaction directory: {journal} is a symbolic link, not a journal a run"
+            " wrote, and a journal restores the files beside it; recover the journal it points"
+            " to by that journal's own path, or remove the link"
+        )
+    if not stat.S_ISDIR(info.st_mode):
+        raise ChangeConflict(
+            f"Invalid transaction directory: {journal} is not a directory, so not a journal a"
+            " run wrote; rename or remove it"
+        )
+    return canonical
+
+
+def _distrust(journal: Path) -> Optional[str]:
+    """Why ``recover`` will not trust the journal directory ``journal``, and what would; None if it will.
+
+    Every journal a run writes is a directory only its owner can enter, so
+    one that another user owns, or whose mode differs, is not read.
+    """
+    info = journal.stat()
+    if info.st_uid != os.getuid():
+        return (
+            f"{journal} belongs to another user (uid {info.st_uid}); only its owner can recover"
+            f" it, with towel recover {journal}"
+        )
+    mode = stat.S_IMODE(info.st_mode)
+    if mode != 0o700:
+        return (
+            f"{journal} has mode {mode:04o}, and every journal Towel writes has mode 0700; if"
+            f" Towel wrote it, restore that with chmod 700 {journal} and then run towel recover"
+            f" {journal}, and if it did not, rename or remove it"
+        )
+    return None
+
+
 def recover(journal: Path) -> None:
     """Restore originals from a trusted local journal, refusing conflicting edits.
 
     Validate the entire journal and all targets before restoring its first file.
     Recovery is itself restartable after interruption.
     """
-    journal = journal.absolute()
-    if journal.resolve() != journal or not journal.name.startswith(".towel-transaction-"):
-        raise ChangeConflict(f"Invalid transaction directory: {journal}")
-    info = journal.stat()
-    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
-        raise ChangeConflict("Recovery requires an owner-only journal owned by the current user")
+    journal = _journal_directory(journal)
+    distrust = _distrust(journal)
+    if distrust is not None:
+        raise ChangeConflict(
+            f"Recovery requires an owner-only journal owned by the current user: {distrust}"
+        )
     if (journal / "complete").is_file():
         _cleanup(journal)
         return
