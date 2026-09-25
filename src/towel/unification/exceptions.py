@@ -41,6 +41,16 @@ class CheckerUnavailableError(RefactoringError):
     """
 
 
+class CheckerCannotCheckTheProject(TowelError):
+    """The type checker fails on the project as it stands, with no candidate applied.
+
+    Every candidate's check would fail the same way, so none can be judged.
+    Declining each as not judged spent minutes and then exited 1 (sqlmodel ran
+    893 s): the run stops at the first such failure instead, naming it. Not a
+    ``RefactoringError``, which declines one proposal and lets the run go on.
+    """
+
+
 class Untypeable(StrEnum):
     """What an extraction takes from its callers that no signature of the helper gives back.
 

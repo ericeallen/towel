@@ -223,7 +223,10 @@ describe belong to that version.
   below). A change that introduces a type error has its annotations replaced
   by `Any`, and then removed. Every variant must pass; checker failure or a
   new error declines the change. A checker that cannot run at all refuses the
-  typed run, and `--no-types` is the explicit way on. It never silently
+  typed run, and `--no-types` is the explicit way on. So does a candidate's
+  check that fails where the same check of the project as it stands, with no
+  change applied, fails too: no candidate could be judged, and the run stops
+  at the first rather than declining each as not judged. It never silently
   disables verification. A helper is annotated only in code that
   already uses annotations, from what the sites declare and what the checker
   reveals; see *Type annotations on helpers* below.

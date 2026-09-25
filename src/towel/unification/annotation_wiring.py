@@ -80,6 +80,7 @@ from .annotations import (
     _defined_names,
 )
 from .exceptions import (
+    CheckerCannotCheckTheProject,
     CheckerUnavailableError,
     ProjectScanLimitError,
     RefactoringError,
@@ -1587,6 +1588,7 @@ class HelperAnnotationWiring(EngineState):
         introduced: Tuple[TypeDiagnostic, ...] = ()
         for result in checks_in_turn(oracle, modified_files):
             if isinstance(result, CheckFailure):
+                self._refuse_a_check_the_project_fails_unchanged(oracle, modified_files)
                 raise CheckerUnavailableError(
                     f"Prospective project type check failed: {result.reason}"
                 )
@@ -1620,6 +1622,37 @@ class HelperAnnotationWiring(EngineState):
             KnownErrors.of(reported, self._where_checked, texts=texts),
         )
         return ()
+
+    def _refuse_a_check_the_project_fails_unchanged(
+        self, oracle: TypeOracle, modified_files: Mapping[str, str]
+    ) -> None:
+        """Stop the run when a candidate's failed check fails for the project as it stands too.
+
+        The same check is made of the same files with the text they hold now,
+        no change applied. When that fails as well, the failure is not the
+        candidate's, every candidate after it would fail the same way, and each
+        would be declined as not judged: with ``--exclude scripts``, every
+        candidate of sqlmodel was, for fifteen minutes, before the run exited
+        1 with nothing applied. The run is refused at once instead, naming the
+        cause. A failure the unchanged project does not reproduce belongs to
+        the candidate, which is then declined as not judged, as before.
+        """
+        unchanged: Dict[str, str] = {}
+        for path in modified_files:
+            text = self._read_source(path)
+            if text is None:
+                return
+            unchanged[path] = text
+        for result in checks_in_turn(oracle, unchanged):
+            if isinstance(result, CheckFailure):
+                raise CheckerCannotCheckTheProject(
+                    "The type checker cannot check the project as it now stands, with no "
+                    f"change applied, so no change could be judged: {result.reason}\n"
+                    "Its check of the original project passed. If nothing has changed the "
+                    "project since, this is a defect in Towel's verification; please report "
+                    "it. Nothing was written. Fix what stops the checker, or "
+                    f"{UNTYPED_REMEDY}"
+                )
 
     def _change_shape(self, proposal: RefactoringProposal) -> ChangeShape:
         """Where ``proposal``, as rendered, replaced its copies and wrote its helper.
