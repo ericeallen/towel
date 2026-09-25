@@ -48,7 +48,7 @@ from typing import (
     Union,
 )
 
-from .bounded_cache import BoundedCache
+from .bounded_cache import BoundedCache, memoizing
 from .exceptions import ProjectScanLimitError
 from ..import_model import NameStatus
 from ..declared_requirements import installed_with_the_project, normalized_name
@@ -153,8 +153,11 @@ class ImportGraphCache:
         Every cross-module pair asks for each of its files, and so does every
         call site's coverage question. The root depends only on the project's
         layout, and a run adds and removes no ``pyproject.toml``, ``setup.cfg``,
-        ``setup.py`` or ``__init__.py``.
+        ``setup.py`` or ``__init__.py``. Under ``memoization_disabled`` it keeps
+        nothing.
         """
+        if not memoizing():
+            return find_project_root(resolved).resolve()
         known = self._roots.get(resolved)
         if known is None:
             known = self._roots[resolved] = find_project_root(resolved).resolve()
@@ -164,9 +167,12 @@ class ImportGraphCache:
         """``installed_with_the_project`` for the project holding ``path``, read once per run.
 
         Every cross-module pair asks, and the answer is what the project's
-        configuration files say, which a run does not change.
+        configuration files say, which a run does not change. Under
+        ``memoization_disabled`` it keeps nothing.
         """
         root = self.project_root(path.resolve())
+        if not memoizing():
+            return installed_with_the_project(root)
         known = self._declared.get(root)
         if known is None:
             known = self._declared[root] = installed_with_the_project(root)

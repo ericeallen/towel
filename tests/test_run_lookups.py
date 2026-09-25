@@ -172,3 +172,17 @@ def test_a_functions_own_locals_are_found_once_per_block_site(
     assert isinstance(template, ast.FunctionDef)
     statements = len(template.body)
     assert most[0] == most[1] <= statements, most
+
+
+def test_the_run_lookups_keep_nothing_when_memoization_is_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``memoization_disabled`` must reach these memos too, so the suite can see a verdict they change."""
+    from towel.unification.bounded_cache import memoization_disabled
+
+    package = _project(tmp_path, {"mod": 6})
+    engine = UnificationRefactorEngine(min_lines=3, settings=SERIAL)
+    calls = _count_lookups(monkeypatch)
+    with memoization_disabled():
+        assert engine.analyze_directory(str(package), progress="none")
+    assert max(calls.values()) > 1, calls

@@ -53,7 +53,7 @@ from ..diagnostics import LOG, Settings
 from ..type_baseline import CheckedChange, KnownErrors
 from ..type_inference import CheckResult, TypeDiagnostic, TypeOracle
 from .block_signature import BlockSignature
-from .bounded_cache import BoundedCache
+from .bounded_cache import BoundedCache, memoizing
 from .extractor import HygienicExtractor
 from .function_index import FunctionIndex
 from .models import (
@@ -397,8 +397,11 @@ class EngineState:
         for one file where many blocks are alike. The answer depends only on
         the path and the run's stage (``_output_origin``), which make the key,
         and on symbolic links a run does not change; ``_forget_run_lookups``
-        ends the memo with the run.
+        ends the memo with the run, and under ``memoization_disabled`` it keeps
+        nothing.
         """
+        if not memoizing():
+            return Path(self._origin_of(path)).resolve()
         key = (path, self._output_origin)
         known = self._origins_in_run.get(key)
         if known is None:
