@@ -428,12 +428,18 @@ requirement. The third audit's P1-2 was such a namesake: `app` required
 run from `uvx`, which lacks click, Towel hosted a helper in `click/utils.py`,
 and the installed `app` could not import it. A requirement is read from
 PEP 621's dependencies and extras, PEP 735's groups, Poetry's dependency
-tables, setup.cfg's `install_requires` and `extras_require`, the uv, Poetry,
-PDM and Pipenv lockfiles, and `requirements*.txt` at the root, and matched
-to a name by its own normalized name. So a distribution whose import name
+tables, the development dependencies of `[tool.uv]` and `[tool.pdm]`, every
+hatch environment's `dependencies` and `extra-dependencies` (in
+pyproject.toml or hatch.toml), setup.cfg's `install_requires` and
+`extras_require`, a Pipfile, the uv, Poetry, PDM and Pipenv lockfiles, and
+the requirements files at the root (`requirements*.txt`,
+`*-requirements.txt`, `*_requirements.txt`, the same with pip-tools' `.in`,
+and every `.txt` or `.in` in `requirements/`, with what they include), and
+matched to a name by its own normalized name. So a distribution whose import name
 differs from its own (`PyYAML` provides `yaml`), a dependency's dependency
-where no lockfile records it, and whatever a setup.py, `tox.ini` or CI
-recipe installs are known only when this interpreter can import them: Towel
+where no lockfile records it, and whatever a setup.py, `tox.ini`, a
+noxfile, hatch's environment `overrides` or a CI recipe installs are known
+only when this interpreter can import them: Towel
 runs with the interpreter it was started with, which stands for the
 project's, so run it in the project's own environment. A top-level name
 found only as a module inside a package the program imports as one, as

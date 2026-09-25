@@ -169,6 +169,28 @@ _PROJECT = '[project]\nname = "zzapp"\n'
             {"Pipfile.lock": '{"default": {"zz-click": {"version": "==8"}}, "develop": {}}'},
             "Pipfile.lock",
         ),
+        # Round-4 audit P1-3: declarations of an environment's tools, which were not read.
+        (
+            {"pyproject.toml": '[tool.hatch.envs.default]\ndependencies = ["zz-click>=8"]\n'},
+            "pyproject.toml [tool.hatch.envs.default].dependencies",
+        ),
+        (
+            {"hatch.toml": '[envs.test]\nextra-dependencies = ["zz-click"]\n'},
+            "hatch.toml [envs.test].extra-dependencies",
+        ),
+        (
+            {"pyproject.toml": '[tool.uv]\ndev-dependencies = ["zz-click>=8"]\n'},
+            "pyproject.toml [tool.uv].dev-dependencies",
+        ),
+        (
+            {"pyproject.toml": '[tool.pdm.dev-dependencies]\ntest = ["zz-click"]\n'},
+            "pyproject.toml [tool.pdm.dev-dependencies].test",
+        ),
+        ({"Pipfile": '[dev-packages]\nzz-click = "*"\n'}, "Pipfile [dev-packages]"),
+        ({"dev-requirements.txt": "zz-click>=8\npytest\n"}, "dev-requirements.txt"),
+        ({"test_requirements.txt": "zz-click\n"}, "test_requirements.txt"),
+        ({"requirements.in": "zz-click\n"}, "requirements.in"),
+        ({"requirements/dev.in": "zz-click\n"}, "requirements/dev.in"),
     ],
     ids=[
         "pep621",
@@ -187,6 +209,15 @@ _PROJECT = '[project]\nname = "zzapp"\n'
         "poetry-lock",
         "pdm-lock",
         "pipfile-lock",
+        "hatch-env",
+        "hatch-toml",
+        "uv-dev",
+        "pdm-dev",
+        "pipfile",
+        "dev-requirements",
+        "underscore-requirements",
+        "requirements-in",
+        "requirements-dir-in",
     ],
 )
 def test_a_requirement_in_any_form_puts_its_namesake_in_doubt(

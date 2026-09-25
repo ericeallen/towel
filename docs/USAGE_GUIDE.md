@@ -217,9 +217,15 @@ gets none. Each kind of doubt has its own remedy:
   means.
 
 The requirements read are PEP 621's dependencies and extras, PEP 735's
-dependency groups, Poetry's dependency tables and groups, setup.cfg's
-`install_requires` and `extras_require`, the lockfiles uv, Poetry, PDM and
-Pipenv write, and `requirements*.txt` at the project root. A distribution is
+dependency groups, Poetry's dependency tables and groups, the development
+dependencies of `[tool.uv]` and `[tool.pdm]`, every hatch environment's
+`dependencies` and `extra-dependencies` (pyproject.toml or hatch.toml),
+setup.cfg's `install_requires` and `extras_require`, a Pipfile, the
+lockfiles uv, Poetry, PDM and Pipenv write, and the requirements files at
+the project root: `requirements*.txt`, `*-requirements.txt` and
+`*_requirements.txt`, the same with pip-tools' `.in`, and every `.txt` or
+`.in` in `requirements/`, with the files they include. tox.ini, a noxfile
+and CI recipes are not read. A distribution is
 matched to a name by its own normalized name, so one whose import name
 differs (`PyYAML` provides `yaml`) is recognized only where the interpreter
 running Towel can import it: run Towel in the project's own environment.
