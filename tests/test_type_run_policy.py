@@ -203,8 +203,10 @@ def test_clean_unannotated_run_never_disables_for_prospective_errors(
             engine.apply_refactoring(str(path), proposal)
     # The second application renders the same variant against the same
     # project, so a refusal is answered as the first check answered it; a
-    # checker that could not run answered nothing, and is asked again.
-    prospective = 2 if failure else 1
+    # checker that could not run answered nothing, and is asked again, each
+    # time with the unchanged file as well, which it checks, so the failure is
+    # the candidate's.
+    prospective = 4 if failure else 1
     assert len(oracle.checks) == 1 + prospective, "The baseline and the prospective change"
     assert "disabling" not in caplog.text
     assert oracle.inferences == 0
