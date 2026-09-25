@@ -170,6 +170,9 @@ TRANSFORMED = {
     # its accessors; r7d_instrumenting_call_applied_by_hand, whose recompiler is
     # applied by a call, and r7d_metaclass_recompiles_methods are declined.
     "r7d_plain_wrapper_applied_by_hand",
+    # A TestCase, read to be built by type, takes the class-private helper, which
+    # neither unittest nor pytest collects as a test.
+    "r7d_method_helper_in_a_testcase",
 }
 # p09, p13, p14 and p17 left it when the classes code moves out of began to be
 # held to the method-host test of their machinery: p09's metaclass is the

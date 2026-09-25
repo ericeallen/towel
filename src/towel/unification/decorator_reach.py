@@ -988,8 +988,16 @@ class _Resolver:
                 )
                 if other is None or inner is None:
                     return f"base {spelled}"
-                if inner.decorator_list:
-                    return f"decorators of {inner.name}"
+                kept = machinery.ancestor_decorators
+                for decorator in inner.decorator_list:
+                    callee = decorator.func if isinstance(decorator, ast.Call) else decorator
+                    found = self._denotations(
+                        dotted_name(callee) or "?", other.layout[id(inner)], other
+                    )
+                    if not found or not all(
+                        isinstance(item, _Origin) and item.dotted in kept for item in found
+                    ):
+                        return f"decorator {_spelling(callee)} of {inner.name}"
                 if depth < _MOST_HOPS and self._machinery_refused(inner, other) is not None:
                     return self._machinery_culprit(inner, other, depth + 1)
             if targets:

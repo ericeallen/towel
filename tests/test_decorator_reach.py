@@ -693,10 +693,45 @@ SPELLINGS: Tuple[Spelling, ...] = (
         module="pkg/m.py",
     ),
     Spelling(
-        "a base outside the project",
+        "a library base read in its source",
         "import unittest\nclass T(unittest.TestCase):\n    def test_m(self):\n        return 1\n",
         "T.test_m",
-        "base unittest.TestCase",
+        None,
+    ),
+    Spelling(
+        "a library base subscripted",
+        "from collections.abc import Mapping\nclass M(Mapping[str, int]):\n"
+        "    def __len__(self):\n        return 0\n",
+        "M.__len__",
+        None,
+    ),
+    Spelling(
+        "a base outside the project nobody read",
+        "import pydantic\nclass Model(pydantic.BaseModel):\n    def m(self):\n        return 1\n",
+        "Model.m",
+        "base pydantic.BaseModel",
+    ),
+    Spelling(
+        "a builtin imported for compatibility",
+        "try:\n    from builtins import object\nexcept ImportError:\n    pass\n"
+        "class State(object):\n    def m(self):\n        return 1\n",
+        "State.m",
+        None,
+    ),
+    Spelling(
+        "an ancestor skipped by unittest",
+        "import unittest\n@unittest.skipIf(True, 'no graphviz')\nclass Base(unittest.TestCase):\n"
+        "    pass\nclass T(Base):\n    def test_m(self):\n        return 1\n",
+        "T.test_m",
+        None,
+    ),
+    Spelling(
+        "an ancestor whose decorator wraps its tests",
+        "import unittest\nfrom unittest import mock\n@mock.patch('os.getcwd')\n"
+        "class Base(unittest.TestCase):\n    pass\nclass T(Base):\n    def test_m(self):\n"
+        "        return 1\n",
+        "T.test_m",
+        "decorator mock.patch of Base",
     ),
     Spelling(
         "a nested class with no bases",

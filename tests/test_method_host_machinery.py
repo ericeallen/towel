@@ -42,6 +42,7 @@ import pytest
 
 from tests.test_helpers import refactor_to_fixed_point_silently
 from towel.unification.import_graph import _HOSTS_METHOD_HELPERS, _OWN_ATTRIBUTE_LOOKUP
+from towel.unification.known_bases import KNOWN_BASES
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 METHODS = """
@@ -421,10 +422,16 @@ def _resolve(dotted: str) -> object:
     return getattr(importlib.import_module(module), name)
 
 
+# The ``__init_subclass__`` of a library base read in its source (``known_bases``).
+_READ_INIT_SUBCLASS = frozenset(base.init_subclass for base in KNOWN_BASES if base.init_subclass)
+
+
 def _only_quiet_init_subclass(cls: type) -> bool:
-    """Whether every ``__init_subclass__`` a subclass of ``cls`` runs is ``Generic``'s or ``object``'s."""
+    """Whether every ``__init_subclass__`` a subclass of ``cls`` runs is ``Generic``'s, ``object``'s, or one read."""
     return all(
-        "__init_subclass__" not in vars(klass) or klass in {object, typing.Generic}
+        "__init_subclass__" not in vars(klass)
+        or klass in {object, typing.Generic}
+        or f"{klass.__module__}.{klass.__qualname__}" in _READ_INIT_SUBCLASS
         for klass in cls.__mro__
     )
 

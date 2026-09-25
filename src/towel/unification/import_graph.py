@@ -52,6 +52,11 @@ from typing import (
 
 from .bounded_cache import BoundedCache
 from .exceptions import ProjectScanLimitError
+from .known_bases import (
+    ANCESTOR_CLASS_DECORATORS,
+    KNOWN_BASE_ORIGINS,
+    KNOWN_SUBSCRIPTED_BASE_ORIGINS,
+)
 from ..import_model import NameStatus
 from ..project_layout import find_project_root, load_pyproject
 from .module_bindings import (
@@ -798,6 +803,8 @@ class _ClassMachinery:
 
     ``builtin_bases`` are the builtin classes it accepts as bases, and
     ``forbidden_members`` the names no class on the order it accepts may bind.
+    A class of the project on the order may carry only ``ancestor_decorators``,
+    each spelled bare, or called too when ``called_decorators``.
     """
 
     label: str
@@ -806,6 +813,8 @@ class _ClassMachinery:
     metaclasses: FrozenSet[str]
     builtin_bases: FrozenSet[str] = _BUILTIN_CLASSES
     forbidden_members: FrozenSet[str] = frozenset({"__init_subclass__"})
+    ancestor_decorators: FrozenSet[str] = NAMESPACE_PRESERVING_DECORATORS
+    called_decorators: bool = False
 
 
 # Subclassing runs only Python's class machinery: nothing of the project runs.
@@ -818,13 +827,18 @@ _RUNS_NO_CODE = _ClassMachinery(
 # defines ``__getattribute__``, which intercepts every lookup and, in a proxy,
 # answers it from another object. ``__getattr__`` runs only when normal lookup
 # fails, and nothing spells the helper's stored name, so it is allowed.
+# The library classes read to build a subclass with Python's own machinery
+# count as such bases, and the class decorators read to add none of it keep
+# an ancestor of the project quiet, called or not (``known_bases``).
 _HOSTS_METHOD_HELPERS = _ClassMachinery(
     "hosts-method-helpers",
-    frozenset({"abc.ABC"}) | _ENUM_BASES,
-    frozenset({"typing.Generic"}),
+    frozenset({"abc.ABC"}) | _ENUM_BASES | KNOWN_BASE_ORIGINS,
+    frozenset({"typing.Generic"}) | KNOWN_SUBSCRIPTED_BASE_ORIGINS,
     _QUIET_METACLASSES | _ENUM_METACLASSES,
     builtin_bases=_BUILTIN_CLASSES - _OWN_ATTRIBUTE_LOOKUP,
     forbidden_members=frozenset({"__init_subclass__", "__getattribute__"}),
+    ancestor_decorators=NAMESPACE_PRESERVING_DECORATORS | ANCESTOR_CLASS_DECORATORS,
+    called_decorators=True,
 )
 
 # Where the names an evaluated annotation subscripts may come from.
@@ -1284,7 +1298,10 @@ class ImportTimeCode:
             return None
         if not self._bindings.may_bind(head):
             return f"builtins.{dotted}" if head in vars(builtins) else None
-        return self._bindings.resolve(dotted, order)
+        resolved = self._bindings.resolve(dotted, order)
+        if resolved is None and _builtin_on_every_path(self._bindings, head):
+            return f"builtins.{dotted}"
+        return resolved
 
     def _lacks_set_name(self, name: str, order: int, body: _ClassBody) -> bool:
         """Whether the object ``name`` holds in a class body certainly has no ``__set_name__``."""
@@ -1307,9 +1324,11 @@ class ImportTimeCode:
     ) -> bool:
         """Whether subclassing ``base`` runs only the class machinery ``machinery`` accepts."""
         if isinstance(base, ast.Subscript):
-            return self._origin(
-                base.value, order, None
-            ) in machinery.subscripted_bases and not self._annotation(base.slice, order, None)
+            # ``Generic[K, V]`` evaluates each of its arguments as an annotation.
+            parts = base.slice.elts if isinstance(base.slice, ast.Tuple) else [base.slice]
+            return self._origin(base.value, order, None) in machinery.subscripted_bases and not any(
+                self._annotation(part, order, None) for part in parts
+            )
         origin = self._origin(base, order, None)
         if origin in machinery.bases or origin in machinery.builtin_bases:
             return True
@@ -1334,7 +1353,16 @@ class ImportTimeCode:
         """A class of this module whose decorators, machinery and members ``machinery`` accepts."""
         return (
             all(
-                self._origin(decorator, order, None) in NAMESPACE_PRESERVING_DECORATORS
+                self._origin(
+                    (
+                        decorator.func
+                        if machinery.called_decorators and isinstance(decorator, ast.Call)
+                        else decorator
+                    ),
+                    order,
+                    None,
+                )
+                in machinery.ancestor_decorators
                 for decorator in node.decorator_list
             )
             and self._quiet_keywords(node.keywords, order, machinery)
@@ -1373,6 +1401,25 @@ class ImportTimeCode:
     def _quiet_named_class(self, name: str, machinery: _ClassMachinery) -> bool:
         """Whether the class the module binds to ``name`` once it has run is quiet to subclass."""
         return self._quiet_base(ast.Name(id=name, ctx=ast.Load()), len(self._tree.body), machinery)
+
+
+def _builtin_on_every_path(bindings: ModuleBindings, name: str) -> bool:
+    """Whether the builtin ``name`` is what the module's ``name`` holds, whichever of its bindings ran.
+
+    A compatibility import (``try: from builtins import object`` ... ``except
+    ImportError: pass``) binds the builtin itself, and a path that skips it
+    leaves the builtin in effect too.
+    """
+    events = bindings.bindings.get(name, ())
+    return (
+        name in vars(builtins)
+        and bool(events)
+        and not bindings.star_imports
+        and name not in bindings.rebound_by_global
+        and "__builtins__" not in bindings.bindings
+        and "__builtins__" not in bindings.rebound_by_global
+        and all(event.is_import and event.origin == f"builtins.{name}" for event in events)
+    )
 
 
 def _is_constant(node: ast.expr) -> bool:
