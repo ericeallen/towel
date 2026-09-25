@@ -57,14 +57,14 @@ outside the project does is not seen at all.
 from __future__ import annotations
 
 import ast
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AbstractSet, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
 from typing import Tuple, Union
 
-from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
+from ..consumers import MAXIMUM_FILES
+from ..program_files import program_directories, refuse_unparsed_file
 from .bounded_cache import BoundedCache
 from .builtins import BUILTIN_NAMES
 from .module_bindings import global_bindings
@@ -146,20 +146,24 @@ _MAY_WRITE = re.compile(
 )
 
 
-def scan_project_writes(root: Path) -> ProjectWrites:
+def scan_project_writes(
+    root: Path, excluded_names: AbstractSet[str] = frozenset()
+) -> ProjectWrites:
     """The writes into module namespaces that the Python files under ``root`` make.
 
-    The directories the consumer scan skips are skipped here too; stubs never
-    run and are not read. Past the consumer scan's limit the project cannot
-    be read whole, and the answer says so rather than claim no write exists.
+    It reads the program's files (``program_directories``), less the
+    directories ``excluded_names`` names, which the run excludes and so are
+    no part of the program; stubs never run and are not read. A file that
+    does not parse here refuses the run (:func:`_file_writes`). Past the
+    consumer scan's limit the project cannot be read whole, and the answer
+    says so rather than claim no write exists.
     """
     project = root.resolve()
     by_path: Dict[Path, List[NamespaceWrite]] = {}
     by_name: Dict[str, List[NamespaceWrite]] = {}
     count = 0
-    for parent, directories, files in os.walk(project, onerror=lambda _: None):
-        directories[:] = sorted(name for name in directories if name not in SKIPPED_DIRECTORIES)
-        for name in sorted(files):
+    for parent, files in program_directories(project, excluded_names):
+        for name in files:
             if not name.endswith(".py"):
                 continue
             count += 1
@@ -188,7 +192,12 @@ class _FileWrites:
 
 
 def _file_writes(path: Path, root: Path) -> Optional[_FileWrites]:
-    """What ``path`` writes into module namespaces; None when it cannot run or writes nothing."""
+    """What ``path`` writes into module namespaces; None when it cannot be read or writes nothing.
+
+    A file that names no form of write is not parsed. One that does and does
+    not parse here may run on a newer Python and write there, so it refuses
+    the run; one that does not decode runs nowhere, and writes nothing.
+    """
     try:
         data = path.read_bytes()
     except OSError:
@@ -198,7 +207,8 @@ def _file_writes(path: Path, root: Path) -> Optional[_FileWrites]:
     try:
         tree = ast.parse(data, filename=str(path))
     except (SyntaxError, ValueError):
-        return None  # It cannot run, so it writes nothing.
+        refuse_unparsed_file(path, root)
+        return None  # It does not decode in its declared encoding, so it cannot run.
     resolved = path.resolve()
     scanner = _WriteScanner(resolved, tree, _shown(resolved, root))
     scanner.visit(tree)

@@ -45,9 +45,12 @@ so neither is a consumer, and this module never selects one.
 
 What it does select is every file that imports, directly or through another
 such file, a module of a package under refactoring. Import edges are read with
-``ast``, so a file that does not parse is simply not a consumer -- true, since
-it cannot import anything, and true of the checker too, which could not build
-it either. A dynamic import is invisible here, as it is to the checker.
+``ast``, so a file that does not parse here is not a consumer: the checker,
+running here too, could not build it either. It may still run on a newer
+Python, so a run refuses before it starts when such a file is part of the
+program (``towel.program_files``); the only ones this scan can meet are
+outside it: a stub, an environment, a directory the run excludes. A dynamic
+import is invisible here, as it is to the checker.
 """
 
 from __future__ import annotations
@@ -118,7 +121,7 @@ _Stamp = Tuple[int, int, int]
 class _ScannedFile:
     stamp: _Stamp
     statements: Optional[Tuple[_ImportStatement, ...]]
-    """``None`` when the file does not parse: it can import nothing, and no checker can build it."""
+    """``None`` when the file does not parse here, where no checker can build it either."""
 
 
 def _statements(tree: ast.Module) -> Tuple[_ImportStatement, ...]:
@@ -332,7 +335,8 @@ def _scanned(path: Path, stamp: _Stamp) -> _ScannedFile:
     try:
         tree = ast.parse(path.read_bytes(), filename=str(path))
     except (OSError, SyntaxError, ValueError):
-        # It cannot import anything, and the checker could not build it.
+        # The checker could not build it here either; a file of the program
+        # that does not parse refused the run before it began.
         return _ScannedFile(stamp, None)
     return _ScannedFile(stamp, _statements(tree))
 
