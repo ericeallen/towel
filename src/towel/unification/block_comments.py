@@ -43,13 +43,14 @@ same directives at the same places (``DIRECTIVES_DIFFER`` otherwise), no
 directive may reach code of a site's that becomes an argument of the call,
 written at the call site where the directive does not reach
 (``DIRECTIVE_ON_ARGUMENT``), no ignore above a block may govern its first
-statement, which the call takes the place of (``DIRECTIVE_AROUND_BLOCK``),
-a directive whose reach is a region or a file must not reach past the
-moved code (``DIRECTIVE_OUTLIVES_BLOCK``), and no directive may stand on a
-line the block shares with code that stays at the call site
-(``a = 1; b = 2  # noqa`` with the block at ``b``): the directive governs
-the whole line, and splicing the call in parts it from some of that code
-(``DIRECTIVE_ON_SHARED_LINE``).
+statement, which the call takes the place of, nor any region directive
+opened before it reach it unless it also reaches the helper
+(``DIRECTIVE_AROUND_BLOCK``), a directive whose reach is a region or a
+file must not reach past the moved code (``DIRECTIVE_OUTLIVES_BLOCK``), and
+no directive may stand on a line the block shares with code that stays at
+the call site (``a = 1; b = 2  # noqa`` with the block at ``b``): the
+directive governs the whole line, and splicing the call in parts it from
+some of that code (``DIRECTIVE_ON_SHARED_LINE``).
 """
 
 from __future__ import annotations
@@ -63,7 +64,7 @@ import tokenize
 from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple, Union
 
 from ..canonical_ast import canonical_dump
 from .exceptions import RefactoringError
@@ -155,6 +156,8 @@ class BlockComment:
     # Whether a tool reads the comment (``_counts_as_directive``): a pragma
     # the project's coverage.py does not exclude by is a plain comment.
     directive: bool = False
+    # The column the comment starts at, which a region's closer must share.
+    column: int = 0
 
 
 @dataclass(frozen=True)
@@ -183,38 +186,54 @@ class SiteComments:
     # The directive on a line the block shares with code outside it, or the
     # coverage exclusion of such a line (``_shared_line_directive``); or empty.
     shared_line_directive: str = ""
+    # The exclusion of code outside the block by a match of the coverage
+    # regexes that reaches into it, which moving it would end
+    # (``_exclusion_moves``); or empty.
+    excluded_across: str = ""
+
+
+Home = Tuple[str, str]
+"""Where a helper may be written: ``("module", "")``, ``("function", name)``, or a class.
+
+A class is ``("class", name)`` for a helper written after the method holding
+the block, as a method helper is, and ``("whole-class", name)`` for one that
+may be written anywhere in the class body.
+"""
 
 
 @dataclass(frozen=True)
 class Surrounding:
-    """A directive outside a block that reaches it, and the statement whose reach it shares.
+    """A directive outside a block that reaches it, and the helpers it would still reach.
 
-    ``scope`` is ``"class"`` or ``"function"`` when that statement is one,
-    named ``name``, else empty: a helper is only ever written inside a class
-    or a function. ``header`` says the directive ends the statement's
-    header, so it governs all of it; otherwise it is a ``pylint: disable``
-    on a line of its own in the statement's body, and ``to_end`` says no
-    ``enable`` follows it there, so it still governs the body's end, where
-    a method helper is written.
+    ``tool`` is ``"coverage"`` for an exclusion, or the family of a region
+    directive (``_REGION_FAMILIES``), a ``pylint: disable`` ending an
+    enclosing header included. ``reaches`` names the homes whose helper it
+    reaches too: a directive ending the header of the class or function it
+    governs reaches a helper written inside it; a region reaches a module
+    helper when it opens before the module's first definition and is never
+    closed, a class's when it covers the class to its end from before the
+    method holding the block (or from before the class's first statement,
+    for the whole class), and a nested helper when it opens before the
+    function's first statement.
     """
 
     detail: str
-    # "coverage" for a pragma, "pylint" for a disable.
     tool: str = "coverage"
-    scope: str = ""
-    name: str = ""
-    header: bool = True
-    to_end: bool = False
+    reaches: FrozenSet[Home] = frozenset()
+    # Whether the directive keeps a formatter off the block's layout.
+    layout: bool = False
 
     def governs(self, home_class: Optional[str], home_function: Optional[str]) -> bool:
-        """Whether the directive still reaches a helper placed in ``home_class`` or ``home_function``."""
-        if self.scope == "class" and self.name == home_class:
-            return self.header or self.to_end
-        if self.scope == "function" and self.name == home_function:
-            # A nested helper goes before the function's statements, so
-            # only a directive on the ``def`` line reaches it.
-            return self.header
-        return False
+        """Whether the directive still reaches a helper placed in ``home_class`` or ``home_function``.
+
+        A directive that keeps a formatter off the code must reach the
+        helper wherever in its class it is written.
+        """
+        if home_class is not None:
+            return ("whole-class" if self.layout else "class", home_class) in self.reaches
+        if home_function is not None:
+            return ("function", home_function) in self.reaches
+        return ("module", "") in self.reaches
 
 
 @dataclass(frozen=True)
@@ -285,23 +304,26 @@ _STATEMENT_WIDE = re.compile(r"\#\s*pylint\s*:\s*disable\b", re.IGNORECASE)
 # whose ``exclude_lines`` leaves it out.
 _DEFAULT_PRAGMA = re.compile(DEFAULT_EXCLUDE[0])
 
-# pylint's disable and enable, which on a line of their own govern the rest
-# of the block they stand in.
-_PYLINT_DISABLE = re.compile(r"\#\s*pylint\s*:\s*disable\b", re.IGNORECASE)
-_PYLINT_ENABLE = re.compile(r"\#\s*pylint\s*:\s*enable\b", re.IGNORECASE)
-
-# A directive on a line of its own that governs the statement after it.
-_NEXT_STATEMENT = re.compile(r"\#\s*noinspection\b", re.IGNORECASE)
+# A directive on a line of its own that governs the statement after it:
+# PyCharm's ``noinspection``, and isort's code-sorting comments, which sort the
+# literal or the assignments that follow (``isort/core.py``,
+# ``CODE_SORT_COMMENTS``, in isort 9.0.1).
+_NEXT_STATEMENT = re.compile(
+    r"\#\s*(?:noinspection\b"
+    r"|isort\s*:\s*(?:list|dict|set|unique-list|tuple|unique-tuple|assignments)\b)",
+    re.IGNORECASE,
+)
 
 # An ignore on a line of its own that governs the next line of code: ty's and
 # ruff's the next logical line, or inside brackets the next physical line;
-# pyre's, pyrefly's, Semgrep's and Fixit's the next line. pyrefly reads every
-# checker's ``<tool>: ignore`` that way, ``type: ignore`` included, so a
-# project it checks has them all reach the next line.
+# pyre's, pyrefly's, Semgrep's, Fixit's and pylint's ``disable-next`` the next
+# line. pyrefly reads every checker's ``<tool>: ignore`` that way, ``type:
+# ignore`` included, so a project it checks has them all reach the next line.
 _NEXT_LINE = re.compile(
     r"""\#\s*(?:
         (?:type|ty|pyrefly|pyre|pyright|mypy|zuban|ruff)\s*:\s*ignore\b(?!-)
       | pyre-(?:ignore|fixme)\b(?!-) | nosemgrep\b | lint-(?:fixme|ignore)\b
+      | pylint\s*:\s*disable-next\b
     )""",
     re.IGNORECASE | re.VERBOSE,
 )
@@ -314,35 +336,187 @@ _FILE_DIRECTIVE = re.compile(
     re.IGNORECASE,
 )
 
-# A region directive on a line of its own opens or closes a region that
-# reaches the matching directive, or the end of the enclosing block.
-_REGIONS = (
-    ("fmt", re.compile(r"\#\s*fmt\s*:\s*off\b", re.I), re.compile(r"\#\s*fmt\s*:\s*on\b", re.I)),
-    (
+# -- Regions -------------------------------------------------------------------
+#
+# A region directive on a line of its own opens a region its tool applies to
+# every line up to the directive that closes it. Every tool whose directives
+# ``_DIRECTIVE`` reads was checked for one: flake8's ``noqa``, mypy, pyright,
+# ty, pyrefly, zuban, pyre, Bandit's ``nosec``, Semgrep, Fixit, pycln and
+# codespell govern a line, the next line or the file, and have none; the
+# families below are the rest.
+#
+# An opener is recognized broadly, and a closer as its tool is known to read
+# it: a comment a tool may take for a closer when it does not would end the
+# region early, and let code move out of it unnoticed. Where a tool's reading
+# was not verified, only the spellings any reading accepts close a region.
+
+
+class _Scope(Enum):
+    """How far a tool carries a region: what closes it, and where it ends unclosed."""
+
+    BLOCK = "block"
+    """A closer at the opener's column in the same body; unclosed, the end of that body."""
+    FILE = "file"
+    """A closer anywhere after it, line by line; unclosed, the end of the file."""
+    EITHER = "either"
+    """Not verified against the tool: wherever either reading reaches, and closed only as both are."""
+
+
+def _exactly(*spellings: str) -> Callable[[str, str], bool]:
+    """A closing test accepting only ``spellings`` of a closer, whatever the opener."""
+    accepted = frozenset(spellings)
+    return lambda opener, closer: closer.strip() in accepted
+
+
+_NAMED = re.compile(r"\b(disable|enable)\s*=\s*([^#]*)", re.IGNORECASE)
+
+
+def _named(text: str, verb: str) -> Optional[FrozenSet[str]]:
+    """The messages a pylint or pytype ``disable=``/``enable=`` names; None when it names none."""
+    match = _NAMED.search(text)
+    if match is None or match.group(1).lower() != verb:
+        return None
+    names = frozenset(name.strip() for name in match.group(2).split(",") if name.strip())
+    return names or None
+
+
+def _enables_what_it_disabled(opener: str, closer: str) -> bool:
+    """pylint's and pytype's rule: an ``enable`` ends what it names, so it must name all of it.
+
+    ``disable-next`` governs one line and is not closed by anything.
+    """
+    if re.search(r"disable-next\b", opener, re.IGNORECASE):
+        return False
+    disabled, enabled = _named(opener, "disable"), _named(closer, "enable")
+    return (
+        disabled is not None and enabled is not None and ("all" in enabled or disabled <= enabled)
+    )
+
+
+# ruff 0.16's range suppression, ``# ruff: disable[E501]`` ... ``# ruff:
+# enable[E501]``. Measured on ruff 0.16.9: ``ruff`` is read in lower case
+# only, spacing anywhere is ignored, the codes must be the same list in the
+# same order, a closer without codes or at another indentation is invalid
+# (RUF103), and a region left unclosed (RUF104) covers the rest of the body
+# it opens in, as does a trailing ``disable``, which ruff rejects.
+_RUFF_RANGE = re.compile(r"#\s*ruff\s*:\s*(disable|enable)\s*\[([^\]]*)\]")
+
+
+def _ruff_codes(text: str, verb: str) -> Optional[Tuple[str, ...]]:
+    match = _RUFF_RANGE.search(text)
+    if match is None or match.group(1) != verb:
+        return None
+    codes = tuple(code.strip() for code in match.group(2).split(",") if code.strip())
+    return codes or None
+
+
+def _ruff_closes(opener: str, closer: str) -> bool:
+    opened = _ruff_codes(opener, "disable")
+    return opened is not None and opened == _ruff_codes(closer, "enable")
+
+
+@dataclass(frozen=True)
+class _Region:
+    """A family of region directives: the tool reading them, and how it reads them."""
+
+    family: str
+    opens: re.Pattern[str]
+    # Anything its tool might read as a closer; ``closed_by`` says whether it does.
+    closes: re.Pattern[str]
+    scope: _Scope
+    # Whether it keeps a formatter off the code's layout, which then must not
+    # be lost at any site; otherwise it changes what a linter reports, which a
+    # site outside the region already reports for the same code.
+    layout: bool
+    closed_by: Callable[[str, str], bool]
+
+
+def _pattern(*alternatives: str) -> re.Pattern[str]:
+    return re.compile("|".join(rf"\#\s*{alternative}\b" for alternative in alternatives), re.I)
+
+
+_FMT_OFF, _FMT_ON = r"fmt\s*:\s*off", r"fmt\s*:\s*on"
+_YAPF_OFF, _YAPF_ON = r"yapf\s*:\s*disable", r"yapf\s*:\s*enable"
+
+_REGION_FAMILIES: Tuple[_Region, ...] = (
+    # Black (``black/comments.py``, FMT_OFF and FMT_ON, 26.5.1) and ruff format
+    # (measured on 0.16.9): a closer at the opener's level, ``# FMT: ON`` not
+    # one; ``# yapf: disable`` and ``# yapf: enable`` count as ``fmt: off``
+    # and ``fmt: on``.
+    _Region(
+        "black",
+        _pattern(_FMT_OFF, _YAPF_OFF),
+        _pattern(_FMT_ON, _YAPF_ON),
+        _Scope.BLOCK,
+        True,
+        _exactly("# fmt: on", "# fmt:on", "# yapf: enable"),
+    ),
+    # yapf reads its own and Black's spellings, line by line; not verified.
+    _Region(
         "yapf",
-        re.compile(r"\#\s*yapf\s*:\s*disable\b", re.I),
-        re.compile(r"\#\s*yapf\s*:\s*enable\b", re.I),
+        _pattern(_YAPF_OFF, _FMT_OFF),
+        _pattern(_YAPF_ON, _FMT_ON),
+        _Scope.EITHER,
+        True,
+        _exactly("# yapf: enable", "# fmt: on"),
     ),
-    (
-        "isort",
-        re.compile(r"\#\s*isort\s*:\s*off\b", re.I),
-        re.compile(r"\#\s*isort\s*:\s*on\b", re.I),
-    ),
-    (
+    # autopep8 reads its own and Black's spellings, to the end of the file
+    # when not closed; not verified.
+    _Region(
         "autopep8",
-        re.compile(r"\#\s*autopep8\s*:\s*off\b", re.I),
-        re.compile(r"\#\s*autopep8\s*:\s*on\b", re.I),
+        _pattern(r"autopep8\s*:\s*off", _FMT_OFF),
+        _pattern(r"autopep8\s*:\s*on", _FMT_ON),
+        _Scope.EITHER,
+        True,
+        _exactly("# autopep8: on", "# fmt: on"),
     ),
-    (
+    # isort 9.0.1 (``isort/core.py``): a whole line reading exactly ``# isort:
+    # off`` or ``# isort: on``, line by line whatever the indentation.
+    _Region(
+        "isort",
+        _pattern(r"isort\s*:\s*off"),
+        _pattern(r"isort\s*:\s*on"),
+        _Scope.FILE,
+        False,
+        _exactly("# isort: on"),
+    ),
+    # pylint: to the end of the statement the pragma stands in, or an
+    # ``enable`` of every message it named.
+    _Region(
         "pylint",
-        re.compile(r"\#\s*pylint\s*:\s*disable\b", re.I),
-        re.compile(r"\#\s*pylint\s*:\s*enable\b", re.I),
+        _pattern(r"pylint\s*:\s*disable"),
+        _pattern(r"pylint\s*:\s*enable"),
+        _Scope.BLOCK,
+        False,
+        _enables_what_it_disabled,
     ),
-    (
+    _Region(
         "ruff",
-        re.compile(r"\#\s*ruff\s*:\s*disable\b", re.I),
-        re.compile(r"\#\s*ruff\s*:\s*enable\b", re.I),
+        _pattern(r"ruff\s*:\s*disable"),
+        _pattern(r"ruff\s*:\s*enable"),
+        _Scope.BLOCK,
+        False,
+        _ruff_closes,
     ),
+    # pytype's ``disable`` on a line of its own; its reach was not verified.
+    _Region(
+        "pytype",
+        _pattern(r"pytype\s*:\s*disable"),
+        _pattern(r"pytype\s*:\s*enable"),
+        _Scope.EITHER,
+        False,
+        _enables_what_it_disabled,
+    ),
+)
+
+# Any comment that may open or close a region, for a quick test of a module.
+_ANY_REGION = re.compile(
+    "|".join(
+        f"(?:{pattern.pattern})"
+        for family in _REGION_FAMILIES
+        for pattern in (family.opens, family.closes)
+    ),
+    re.IGNORECASE,
 )
 
 
@@ -380,6 +554,28 @@ def _counts_as_directive(text: str, pattern: str) -> bool:
 
 
 @functools.lru_cache(maxsize=16)
+def exclusion_spans(source: str, pattern: str) -> Tuple[Tuple[int, int], ...]:
+    """The first and last line of each match of coverage.py's joined exclusion regexes ``pattern``.
+
+    As coverage.py's ``PythonParser.lines_matching`` finds them, a match
+    spanning lines included; none for an empty ``pattern``, which excludes
+    nothing.
+    """
+    regex = _exclusion_regex(pattern)
+    if regex is None:
+        return ()
+    spans: List[Tuple[int, int]] = []
+    last_start = last_start_line = 0
+    for match in regex.finditer(source):
+        start, end = match.span()
+        start_line = last_start_line + source.count("\n", last_start, start)
+        end_line = last_start_line + source.count("\n", last_start, end)
+        spans.append((start_line + 1, end_line + 1))
+        last_start, last_start_line = start, start_line
+    return tuple(spans)
+
+
+@functools.lru_cache(maxsize=16)
 def excluded_lines(source: str, pattern: str) -> FrozenSet[int]:
     """The lines of ``source`` coverage.py's joined exclusion regexes ``pattern`` match.
 
@@ -387,18 +583,9 @@ def excluded_lines(source: str, pattern: str) -> FrozenSet[int]:
     coverage.py's ``PythonParser.lines_matching`` counts them; none for an
     empty ``pattern``, which excludes nothing.
     """
-    regex = _exclusion_regex(pattern)
-    if regex is None:
-        return frozenset()
-    lines: set[int] = set()
-    last_start = last_start_line = 0
-    for match in regex.finditer(source):
-        start, end = match.span()
-        start_line = last_start_line + source.count("\n", last_start, start)
-        end_line = last_start_line + source.count("\n", last_start, end)
-        lines.update(range(start_line + 1, end_line + 2))
-        last_start, last_start_line = start, start_line
-    return frozenset(lines)
+    return frozenset(
+        line for first, last in exclusion_spans(source, pattern) for line in range(first, last + 1)
+    )
 
 
 def is_file_directive(text: str) -> bool:
@@ -755,7 +942,10 @@ def site_comments(
     first_line, last_line = block[0].lineno, block[-1].end_lineno or block[-1].lineno
     matched = excluded_lines(source, exclusion)
     in_block = frozenset(line for line in matched if first_line <= line <= last_line)
-    around = _around(source, block, matched)
+    beginning_outside, across = _exclusion_moves(source, exclusion, first_line, last_line)
+    around = _around(source, block, matched) + (
+        (Surrounding(beginning_outside, "coverage"),) if beginning_outside else ()
+    )
     commented = any("#" in line for line in lines[first_line - 1 : last_line])
     index = _BlockIndex(block, lines) if in_block or commented else None
     excluded = _excluded(in_block, index)
@@ -769,6 +959,7 @@ def site_comments(
         excluded_start=start,
         directed_start=directed,
         shared_line_directive=_shared_line_directive(shared, excluded, ()),
+        excluded_across=across,
     )
     if index is None or not commented:
         return bare
@@ -783,6 +974,7 @@ def site_comments(
             excluded_start=start,
             directed_start=directed,
             shared_line_directive=bare.shared_line_directive,
+            excluded_across=across,
         )
     positions = [
         position for position, token in enumerate(tokens) if token.kind == tokenize.COMMENT
@@ -816,6 +1008,7 @@ def site_comments(
                 line_start,
                 _reach(tokens, at, own_line, index) if directive else frozenset(),
                 directive,
+                comment.start[1],
             )
         )
     moved = _with_region_reach(comments)
@@ -827,6 +1020,60 @@ def site_comments(
         excluded_start=start,
         directed_start=directed,
         shared_line_directive=_shared_line_directive(shared, excluded, moved),
+        excluded_across=across,
+    )
+
+
+@functools.lru_cache(maxsize=8)
+def _code_lines(source: str) -> FrozenSet[int]:
+    """The lines of ``source`` holding code, which coverage.py measures: not blank, not only a comment."""
+    try:
+        tokens = _tokens(source)
+    except (tokenize.TokenError, SyntaxError):
+        return frozenset(range(1, len(_lines_of(source)) + 1))
+    return frozenset(
+        line
+        for token in tokens
+        if token.kind != tokenize.COMMENT
+        for line in range(token.start[0], token.end[0] + 1)
+    )
+
+
+def _exclusion_moves(source: str, pattern: str, first: int, last: int) -> Tuple[str, str]:
+    """What moving lines ``first`` to ``last`` out of ``source`` changes in what coverage.py excludes.
+
+    A match of coverage.py's regexes may span lines, and one crossing the
+    block's edge is cut by the move. Compared on the lines holding code:
+    the block's lines excluded in the module but not on its own, where the
+    helper will hold them (a match beginning outside it, as a region's
+    marker would); and the lines outside it whose exclusion needed the
+    block's text. Each is described, or empty when the move changes
+    nothing there.
+    """
+    spans = exclusion_spans(source, pattern)
+    if not any(start < first <= end or start <= last < end for start, end in spans):
+        return "", ""
+    lines = _lines_of(source)
+    code = _code_lines(source)
+    inside = range(first, last + 1)
+    matched = excluded_lines(source, pattern)
+    alone = {first - 1 + line for line in excluded_lines("".join(lines[first - 1 : last]), pattern)}
+    in_place = {line for line in inside if line in code and line in matched}
+    lost = in_place ^ {line for line in alone if line in code}
+    blanked = "".join(lines[: first - 1]) + "\n" * (last - first + 1) + "".join(lines[last:])
+    outside = {line for line in code if line not in inside}
+    changed = (matched & outside) ^ (excluded_lines(blanked, pattern) & outside)
+    return (
+        (
+            f"line {min(lost)} is excluded from coverage by a match beginning outside the block"
+            if lost
+            else ""
+        ),
+        (
+            f"line {min(changed)} is excluded from coverage by a match reaching into the block"
+            if changed
+            else ""
+        ),
     )
 
 
@@ -926,34 +1173,17 @@ def _scope_of(node: ast.stmt) -> Tuple[str, str]:
     return "", ""
 
 
-def _around(
-    source: str, block: Sequence[ast.stmt], excluded: FrozenSet[int]
-) -> Tuple[Surrounding, ...]:
-    """Every directive outside ``block`` that reaches it, which a helper holding it may escape.
+def _start_of(statement: ast.stmt) -> int:
+    """The first line of ``statement``, its decorators included."""
+    decorators: Sequence[ast.expr] = getattr(statement, "decorator_list", None) or []
+    return min([statement.lineno, *(decorator.lineno for decorator in decorators)])
 
-    A line of the header of a statement that encloses the block (its
-    function's ``def`` line or decorators, a class, an ``if``, ``for``,
-    ``else:`` or ``except`` line and the like) that coverage.py excludes,
-    by a pragma or a configured regex (``excluded``), excludes the whole of
-    it; so does pylint's ``disable`` at the end of such a line; and a
-    ``pylint: disable`` on a line of its own earlier in a body that
-    encloses the block governs the rest of that body. Whether the helper
-    stays within one depends on where it is written (``Surrounding.governs``).
-    """
-    if not excluded and "pylint" not in source:
-        return ()
-    read = _module_comments(source)
-    if read is None:
-        return ()
-    tree, comments = read
-    lines = _lines_of(source)
+
+def _enclosing(tree: ast.Module, block: Sequence[ast.stmt]) -> List[ast.stmt]:
+    """The statements holding ``block``, outermost first."""
     first, last = block[0].lineno, block[-1].end_lineno or block[-1].lineno
     starts = {(statement.lineno, statement.col_offset) for statement in block}
-    found: List[Surrounding] = []
-
-    def own_line(token: _Token) -> bool:
-        return not lines[token.start[0] - 1][: token.start[1]].strip()
-
+    holders: List[ast.stmt] = []
     node: ast.AST = tree
     while True:
         holder: Optional[ast.stmt] = None
@@ -965,11 +1195,52 @@ def _around(
                 if start <= first and last <= end:
                     holder = statement
         if holder is None:
-            return tuple(found)
-        scope, name = _scope_of(holder)
+            return holders
+        holders.append(holder)
+        node = holder
+
+
+def _header_reach(holder: ast.stmt) -> FrozenSet[Home]:
+    """The homes a directive governing all of ``holder`` from its header reaches: those inside it."""
+    scope, name = _scope_of(holder)
+    if scope == "class":
+        return frozenset({("class", name), ("whole-class", name)})
+    if scope == "function":
+        return frozenset({("function", name)})
+    return frozenset()
+
+
+def _around(
+    source: str, block: Sequence[ast.stmt], excluded: FrozenSet[int]
+) -> Tuple[Surrounding, ...]:
+    """Every directive outside ``block`` that reaches it, which a helper holding it may escape.
+
+    A line of the header of a statement that encloses the block (its
+    function's ``def`` line or decorators, a class, an ``if``, ``for``,
+    ``else:`` or ``except`` line and the like) that coverage.py excludes,
+    by a pragma or a configured regex (``excluded``), excludes the whole of
+    it; so does pylint's ``disable`` at the end of such a line; and a
+    region directive opened before the block and not closed before it
+    reaches it (``_regions_around``). Whether the helper stays within one
+    depends on where it is written (``Surrounding.governs``).
+    """
+    first = block[0].lineno
+    if not excluded and _ANY_REGION.search(source) is None:
+        return ()
+    read = _module_comments(source)
+    if read is None:
+        return ()
+    tree, comments = read
+    lines = _lines_of(source)
+    holders = _enclosing(tree, block)
+    found: List[Surrounding] = []
+
+    def own_line(token: _Token) -> bool:
+        return not lines[token.start[0] - 1][: token.start[1]].strip()
+
+    for holder in holders:
         holder_clauses = _clauses(holder)
-        decorators = getattr(holder, "decorator_list", []) or []
-        header_start = min([holder.lineno] + [decorator.lineno for decorator in decorators])
+        header_start = _start_of(holder)
         header_lines = (
             set(range(header_start, holder_clauses[0][0].lineno)) if holder_clauses else set()
         )
@@ -978,45 +1249,201 @@ def _around(
             clause_start, clause_end = clause[0].lineno, clause[-1].end_lineno or clause[0].lineno
             if clause_start <= first <= clause_end:
                 header_lines.update(range(previous_end + 1, clause_start))
-                # A ``pylint: disable`` on a line of its own earlier in the
-                # clause governs the rest of it, the block included.
-                column = clause[0].col_offset
-                disabled: Optional[_Token] = None
-                enabled_after = False
-                for line in range(max(previous_end, header_start) + 1, clause_end + 1):
-                    for token in comments.get(line, ()):
-                        if not own_line(token) or token.start[1] != column:
-                            continue
-                        if line < first and _PYLINT_DISABLE.search(token.text):
-                            disabled, enabled_after = token, False
-                        elif _PYLINT_ENABLE.search(token.text):
-                            if line < first:
-                                disabled = None
-                            else:
-                                enabled_after = True
-                if disabled is not None:
-                    found.append(
-                        Surrounding(
-                            f"line {disabled.start[0]}: {disabled.text.rstrip()}",
-                            "pylint",
-                            scope,
-                            name,
-                            header=False,
-                            to_end=not enabled_after,
-                        )
-                    )
             previous_end = clause_end
+        reach = _header_reach(holder)
         for line in sorted(header_lines):
             if line in excluded:
                 found.append(
-                    Surrounding(f"line {line} is excluded from coverage", "coverage", scope, name)
+                    Surrounding(f"line {line} is excluded from coverage", "coverage", reach)
                 )
             for token in comments.get(line, ()):
                 if not own_line(token) and _STATEMENT_WIDE.search(token.text):
                     found.append(
-                        Surrounding(f"line {line}: {token.text.rstrip()}", "pylint", scope, name)
+                        Surrounding(f"line {line}: {token.text.rstrip()}", "pylint", reach)
                     )
-        node = holder
+    found.extend(_regions_around(tree, holders, comments, lines, first))
+    return tuple(found)
+
+
+@dataclass(frozen=True)
+class _Clause:
+    """A statement list enclosing a block, and where its own comments stand."""
+
+    statements: Sequence[ast.stmt]
+    # The first line that may hold a comment of the clause's own: the one
+    # after its header or the clause before it, or the module's first.
+    begins: int
+    ends: int
+    column: int
+    # Whether the block is in this clause, not in one before it.
+    holds: bool
+
+    def owns(self, line: int) -> bool:
+        """Whether ``line`` stands between the clause's statements, not inside one of them."""
+        return self.begins <= line <= self.ends and not any(
+            _start_of(statement) <= line <= (statement.end_lineno or statement.lineno)
+            for statement in self.statements
+        )
+
+
+def _clauses_around(
+    tree: ast.Module, holders: Sequence[ast.stmt], first: int, total: int
+) -> List[_Clause]:
+    """The module and every clause of a statement holding line ``first``, outermost first.
+
+    A clause of a compound statement before the one holding the block is
+    listed too, as not holding it: pylint carries a pragma to the end of the
+    statement it stands in, its later clauses included.
+    """
+    found = [_Clause(tree.body, 1, total, 0, True)]
+    for holder in holders:
+        previous_end = _start_of(holder)
+        for clause in _clauses(holder):
+            if clause[0].lineno > first:
+                break
+            clause_end = clause[-1].end_lineno or clause[-1].lineno
+            found.append(
+                _Clause(
+                    clause,
+                    previous_end + 1,
+                    clause_end,
+                    clause[0].col_offset,
+                    clause[0].lineno <= first <= clause_end,
+                )
+            )
+            previous_end = clause_end
+    return found
+
+
+def _left_open(tokens: Iterable[_Token], family: _Region, column: Optional[int]) -> List[_Token]:
+    """The openers of ``family`` among ``tokens`` that no later closer of theirs closes.
+
+    A closer counts only at ``column`` when one is given, and closes the
+    latest opener it closes by its tool's reading.
+    """
+    opened: List[_Token] = []
+    for token in tokens:
+        if family.opens.search(token.text):
+            opened.append(token)
+        elif family.closes.search(token.text) and (column is None or token.start[1] == column):
+            index = next(
+                (
+                    position
+                    for position in range(len(opened) - 1, -1, -1)
+                    if family.closed_by(opened[position].text, token.text)
+                ),
+                None,
+            )
+            if index is not None:
+                del opened[index]
+    return opened
+
+
+def _regions_around(
+    tree: ast.Module,
+    holders: Sequence[ast.stmt],
+    comments: Dict[int, Tuple[_Token, ...]],
+    lines: Sequence[str],
+    first: int,
+) -> List[Surrounding]:
+    """The region directives on lines of their own before line ``first`` whose regions reach it.
+
+    Read as each family's tool reads them (``_Scope``): for a region that
+    lasts to the end of its body, an opener between the statements of a
+    clause enclosing the block, not closed at that clause's column before
+    the block (pylint's also from an earlier clause of the same statement);
+    for one that lasts line by line, any opener before the block not closed
+    anywhere before it.
+    """
+    before = [
+        token
+        for line in sorted(line for line in comments if line < first)
+        for token in comments[line]
+        if not lines[token.start[0] - 1][: token.start[1]].strip()
+    ]
+    if not any(_ANY_REGION.search(token.text) for token in before):
+        return []
+    total = len(lines)
+    clauses = _clauses_around(tree, holders, first, total)
+    found: List[Surrounding] = []
+    for family in _REGION_FAMILIES:
+        opened: Dict[int, _Token] = {}
+        if family.scope is not _Scope.FILE:
+            for clause in clauses:
+                if not clause.holds and family.family != "pylint":
+                    continue
+                owned = [token for token in before if clause.owns(token.start[0])]
+                for token in _left_open(owned, family, clause.column):
+                    opened[token.start[0]] = token
+        if family.scope is not _Scope.BLOCK:
+            for token in _left_open(before, family, None):
+                opened[token.start[0]] = token
+        for line, token in sorted(opened.items()):
+            found.append(
+                Surrounding(
+                    f"line {line}: {token.text.rstrip()}",
+                    family.family,
+                    _homes_reached(line, family, tree, holders, comments, first),
+                    family.layout,
+                )
+            )
+    return found
+
+
+def _homes_reached(
+    opener: int,
+    family: _Region,
+    tree: ast.Module,
+    holders: Sequence[ast.stmt],
+    comments: Dict[int, Tuple[_Token, ...]],
+    first: int,
+) -> FrozenSet[Home]:
+    """Where a helper stays in the region opened on line ``opener`` that reaches line ``first``.
+
+    A module helper is written before the module's first definition or
+    after it, a method helper after the method holding its first call or
+    at the end of the class, and a nested helper before its function's
+    first statement (``insertion``). The region must be open over each
+    such place: opened before it, and not closed, by anything its tool
+    might read as a closer, before the end of what it must cover.
+    """
+
+    def closed_after(low: int, high: int) -> bool:
+        return any(
+            family.closes.search(token.text)
+            for line in range(low + 1, high + 1)
+            for token in comments.get(line, ())
+        )
+
+    homes: set[Home] = set()
+    definitions = [
+        _start_of(statement)
+        for statement in tree.body
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
+    # A module helper goes no later than after the module's last statement.
+    code_ends = max(
+        (statement.end_lineno or statement.lineno for statement in tree.body), default=0
+    )
+    if definitions and opener < min(definitions) and not closed_after(opener, code_ends):
+        homes.add(("module", ""))
+    for position, holder in enumerate(holders):
+        if isinstance(holder, ast.ClassDef):
+            if closed_after(opener, holder.end_lineno or holder.lineno):
+                continue
+            inner = holders[position + 1] if position + 1 < len(holders) else None
+            if inner is not None and opener < _start_of(inner):
+                homes.add(("class", holder.name))
+            if holder.body and opener < _start_of(holder.body[0]):
+                homes.add(("whole-class", holder.name))
+        elif isinstance(holder, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if (
+                holder.body
+                and opener < _start_of(holder.body[0])
+                and not closed_after(opener, first - 1)
+            ):
+                homes.add(("function", holder.name))
+    return frozenset(homes)
 
 
 def _lines_between(first: int, last: int) -> FrozenSet[int]:
@@ -1094,24 +1521,74 @@ def _directive_before(lines: Sequence[str], first_line: int) -> str:
     return ""
 
 
+def _body_of(path: NodePath) -> Tuple[object, ...]:
+    """The statement list holding the node at ``path``: the block's own, or a field of a node in it."""
+    if not path.steps:
+        return ()
+    field_name = path.steps[-1][0]
+    return (path.statement, path.kind, path.steps[:-1], field_name)
+
+
+def _same_level(opener: BlockComment, closer: BlockComment, family: _Region) -> bool:
+    """Whether ``closer`` stands where its tool lets it close ``opener``'s region.
+
+    A region that lasts to the end of its body is closed only at the
+    opener's column in the same body; one read line by line, anywhere.
+    """
+    if family.scope is _Scope.FILE:
+        return True
+    return opener.column == closer.column and _body_of(opener.anchor.node) == _body_of(
+        closer.anchor.node
+    )
+
+
+def _region_pairs(
+    comments: Sequence[BlockComment],
+) -> Tuple[Dict[int, FrozenSet[int]], Optional[BlockComment]]:
+    """The lines each region of ``comments`` closed within them reaches, and the first left unmatched.
+
+    Keyed by the positions of both its opener and its closer, and read for
+    every family whose tool reads the comment. An opener left open, or a
+    comment its tool might read as a closer that closes nothing here, is a
+    region crossing the block's edge (``directive_outlives_block``).
+    """
+    reach: Dict[int, FrozenSet[int]] = {}
+    unmatched: List[BlockComment] = []
+    for family in _REGION_FAMILIES:
+        opened: List[int] = []
+        for position, comment in enumerate(comments):
+            if not comment.anchor.own_line:
+                continue
+            if family.opens.search(comment.text):
+                opened.append(position)
+            elif family.closes.search(comment.text):
+                index = next(
+                    (
+                        candidate
+                        for candidate in range(len(opened) - 1, -1, -1)
+                        if _same_level(comments[opened[candidate]], comment, family)
+                        and family.closed_by(comments[opened[candidate]].text, comment.text)
+                    ),
+                    None,
+                )
+                if index is None:
+                    unmatched.append(comment)
+                    continue
+                start = opened.pop(index)
+                region = _lines_between(comments[start].line, comment.line)
+                reach[start] = reach.get(start, frozenset()) | region
+                reach[position] = reach.get(position, frozenset()) | region
+        unmatched.extend(comments[position] for position in opened)
+    return reach, min(unmatched, key=lambda comment: comment.line) if unmatched else None
+
+
 def _with_region_reach(comments: Sequence[BlockComment]) -> Tuple[BlockComment, ...]:
     """``comments`` with each region directive reaching from its opening to its closing line.
 
     A region left open, or closed without being opened, reaches past the
     block and declines it anyway (``_region_imbalance``).
     """
-    reach: Dict[int, FrozenSet[int]] = {}
-    opened: Dict[str, int] = {}
-    for position, comment in enumerate(comments):
-        if not comment.anchor.own_line:
-            continue
-        for tool, opens, closes in _REGIONS:
-            if opens.search(comment.text):
-                opened.setdefault(tool, position)
-            elif closes.search(comment.text) and tool in opened:
-                start = opened.pop(tool)
-                region = _lines_between(comments[start].line, comment.line)
-                reach[start] = reach[position] = region
+    reach, _ = _region_pairs(comments)
     return tuple(
         (
             BlockComment(
@@ -1121,6 +1598,7 @@ def _with_region_reach(comments: Sequence[BlockComment]) -> Tuple[BlockComment, 
                 comment.line_start,
                 reach[position],
                 comment.directive,
+                comment.column,
             )
             if position in reach
             else comment
@@ -1242,19 +1720,8 @@ def _directives(
 
 
 def _region_imbalance(site: SiteComments) -> Optional[BlockComment]:
-    """The first region directive of ``site`` whose region crosses the block's edge."""
-    opened: Dict[str, BlockComment] = {}
-    for comment in site.comments:
-        if not comment.anchor.own_line:
-            continue
-        for tool, opens, closes in _REGIONS:
-            if opens.search(comment.text):
-                opened.setdefault(tool, comment)
-            elif closes.search(comment.text):
-                if tool not in opened:
-                    return comment
-                del opened[tool]
-    return min(opened.values(), key=lambda comment: comment.line) if opened else None
+    """The first region directive of site whose region crosses the block's edge."""
+    return _region_pairs(site.comments)[1]
 
 
 def directive_conflict(
@@ -1316,6 +1783,8 @@ def directive_conflict(
             return CommentConflict(
                 ConflictKind.DIRECTIVE_OUTLIVES_BLOCK, f"line {crossing.line}: {crossing.text}"
             )
+        if site.excluded_across:
+            return CommentConflict(ConflictKind.DIRECTIVE_OUTLIVES_BLOCK, site.excluded_across)
     return None
 
 
@@ -1331,20 +1800,23 @@ def merge_comments(
     ``statements`` is the helper's body from ``body_offset`` on, and each
     site comes with whether it is in the helper's module. The directives
     must agree (``directive_conflict``), and a file-wide one must stay in its
-    module. A coverage pragma or pylint ``disable`` around a site's block
-    that would not reach the helper where it is written, in ``home_class``
-    or ``home_function`` or at module level (``Surrounding.governs``),
-    declines it when every site has one for that tool: the helper is the
-    code of a site its tool already measured or linted, so only then would
-    it report anything new. The first site's directives are carried. Every other comment is carried
-    from every site that has it: the first site's in its order, then each
-    other site's that the ones before did not already carry at that place,
-    on a line of its own before that code where one of theirs ends its line.
+    module. A directive around a site's block that would not reach the
+    helper where it is written, in ``home_class`` or ``home_function`` or at
+    module level (``Surrounding.governs``), declines the pair: one keeping a
+    formatter off the block's layout wherever a site has one, since that
+    layout would be formatted in the helper; a coverage exclusion or a
+    linter's only when every site has one for that tool, since the helper
+    is the code of a site its tool already measured or linted, so only then
+    would it report anything new. The first site's directives are carried.
+    Every other comment is carried from every site that has it: the first
+    site's in its order, then each other site's that the ones before did
+    not already carry at that place, on a line of its own before that code
+    where one of theirs ends its line.
     """
     conflict = directive_conflict(statements, [site for site, _ in sites])
     if conflict is not None:
         return conflict
-    for tool in ("coverage", "pylint"):
+    for tool in sorted({surrounding.tool for site, _ in sites for surrounding in site.around}):
         escaped = [
             next(
                 (
@@ -1357,9 +1829,12 @@ def merge_comments(
             )
             for site, same_module in sites
         ]
-        if sites and all(surrounding is not None for surrounding in escaped):
-            detail = escaped[0].detail if escaped[0] is not None else ""
-            return CommentConflict(ConflictKind.DIRECTIVE_AROUND_BLOCK, detail)
+        found = [surrounding for surrounding in escaped if surrounding is not None]
+        # A formatter kept off one site's layout would format it in a helper
+        # it does not reach; a linter silenced at one site reports nothing
+        # new while another site, whose code the helper is too, is outside.
+        if found and (found[0].layout or len(found) == len(sites)):
+            return CommentConflict(ConflictKind.DIRECTIVE_AROUND_BLOCK, found[0].detail)
     for site, same_module in sites:
         if same_module:
             continue

@@ -1379,26 +1379,48 @@ the proposals it built and did not apply, by reason:
   its `def` line, where one of them runs on any given Python and the
   helper might well have been covered; Towel cannot tell, and declines.
   `directive_outlives_block`:
-  a region directive on a line of its own (`fmt: off`/`on`, `isort:
-  off`/`on`, `yapf: disable`/`enable`, `pylint: disable`/`enable`, `ruff:
-  disable`/`enable`) is not closed within the block, so its region reaches
-  code that stays behind, or a file-wide directive (`flake8: noqa`, `ruff:
+  a region directive on a line of its own is not closed within the block,
+  so its region reaches code that stays behind; or a match of coverage.py's
+  exclusion regexes spans the block's edge, so the code outside it would
+  stop being excluded; or a file-wide directive (`flake8: noqa`, `ruff:
   noqa`, `ruff: file-ignore`, `mypy:`, `pyright: strict`, `pyrefly:
-  ignore-errors`, `pyre-strict`) would move into another module.
+  ignore-errors`, `pyre-strict`) would move into another module. The
+  region directives are those of every tool the comment table knows that
+  has one: Black's and ruff format's `fmt: off`/`on` (and `yapf:
+  disable`/`enable`, which both read the same way), yapf's, autopep8's
+  `autopep8: off`/`on`, isort's `isort: off`/`on`, pylint's and pytype's
+  `disable`/`enable`, and ruff 0.16's range suppression `ruff:
+  disable[...]`/`enable[...]`; flake8, mypy, pyright, ty, pyrefly, pyre,
+  Bandit, Semgrep, Fixit, pycln and codespell have none. A closer counts
+  only as its tool reads it: Black's at the opener's level and spelled
+  `# fmt: on`, `# fmt:on` or `# yapf: enable` (`# FMT: ON` closes
+  nothing); ruff's with the same codes in the same order; pylint's and
+  pytype's `enable` naming every message the `disable` did; isort's the
+  whole line `# isort: on`. For yapf, autopep8 and pytype, whose reading
+  was not verified, a region is taken to reach as far as either a
+  line-by-line or a block-scoped reading would carry it.
   `directive_around_block`: an ignore on a line of its own above a site's
   block governs the block's first statement, and would stay above the call
-  that takes its place, silencing the call and not the helper; or
-  every site's block is reached by a directive outside it that would not
-  reach the helper: `# pragma: no cover` or `# pylint: disable` at the end
-  of the header of a statement enclosing the block (its function's `def`
-  line, a class, an `if`, loop, `else:` or `except` line), or a `# pylint:
-  disable` on a line of its own earlier in a body enclosing it and not
-  enabled again before it. A helper written inside that class, as a method
-  at the class's end, or inside that function, from a directive on its
-  `def` line, is still reached; one on a line of its own at module level
-  reaches every helper of its module and is not counted. While one site is
-  measured or linted, the helper is that site's code and its tool reports
-  nothing new, so a single site outside is enough. pygments' builtins
+  that takes its place, silencing the call and not the helper (pylint's
+  `disable-next` and isort's `# isort: list` and the like included); or
+  a directive outside a site's block reaches it and would not reach the
+  helper: `# pragma: no cover` or `# pylint: disable` at the end of the
+  header of a statement enclosing the block (its function's `def` line, a
+  class, an `if`, loop, `else:` or `except` line), a region directive
+  opened before the block and not closed before it (pylint's in an earlier
+  clause of the same statement too), or a match of coverage.py's regexes
+  that begins before the block and excludes its lines. A helper is still
+  reached where the region covers it: a module helper when the region
+  opens before the module's first definition and is not closed before its
+  last statement; a method helper when it opens before the method holding
+  the block (before the class's first statement, for a formatter's) and is
+  not closed before the class's end; a nested helper when it opens before
+  its function's first statement; and one inside the class or function
+  whose header carries the directive. A formatter's region declines at any
+  site, since that site's layout would be formatted in the helper. For a
+  coverage exclusion or a linter's directive, while one site is measured
+  or linted, the helper is that site's code and its tool reports nothing
+  new, so every site must be reached for the pair to decline. pygments' builtins
   scripts define functions under `if __name__ == '__main__':  # pragma: no
   cover`; a module helper for two of them took `_lua_builtins.py` from 100%
   to 40% line coverage, and a loop body excluded by its header's pragma
