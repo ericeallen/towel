@@ -39,7 +39,7 @@ from typing import Dict
 
 import pytest
 
-from tests.hostile_execution import module_faces, observe, parsed_or_skipped
+from tests.hostile_execution import ScopeWatch, module_faces, observe, parsed_or_skipped
 from tests.hostile_refactoring import refactor_script, with_known_defects
 
 CASES = Path(__file__).parent / "hostile_cases"
@@ -397,9 +397,14 @@ def test_refactoring_preserves_program_output(case: str) -> None:
         after.parent.mkdir()
         shutil.copy(CASES / f"{case}.py", before)
         shutil.copy(CASES / f"{case}.py", after)
-        applied = refactor_script(after)
+        scopes = ScopeWatch()
+        applied = refactor_script(after, file_finisher=scopes)
         transformed = before.read_bytes() != after.read_bytes()
         assert transformed == (applied > 0)
+        # No change Towel rendered moves a name a kept function reads to
+        # another scope: every local a function loses goes into the helper
+        # with each read of it.
+        assert scopes.found == []
         assert _run(after) == _run(before)
         if transformed:
             # No public name of the module appears, disappears, or changes meaning.

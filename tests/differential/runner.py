@@ -25,7 +25,10 @@ the same whatever the machine.
 
 The original and the refactored program are each observed in a fresh
 interpreter, the one running this code (:mod:`tests.differential.observer`),
-in the emptied environment the batteries use.
+in the emptied environment the batteries use. Every change Towel renders is
+also held to the batteries' scope check (``ScopeWatch``): a name a kept
+function reads must keep its scope, which a probe sees only on the path
+that reads it.
 """
 
 from __future__ import annotations
@@ -43,7 +46,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from tests.differential.cases import Case
 from tests.differential.comparison import Difference, behaviour_changes
-from tests.hostile_execution import ISOLATED_ENV
+from tests.hostile_execution import ISOLATED_ENV, ScopeWatch
 from towel.diagnostics import Settings
 from towel.type_inference import CheckerNotInstalled, TypeOracle, type_oracle_for_project
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -172,14 +175,20 @@ def _uncompilable(sources: Dict[str, str]) -> Optional[str]:
     return None
 
 
-def _refactor(case: Case, mode: Mode, root: Path, oracle: Optional[TypeOracle]) -> int:
-    """Run Towel on the case written at ``root``, in place, and return how many changes it applied."""
+def _refactor(
+    case: Case, mode: Mode, root: Path, oracle: Optional[TypeOracle], scopes: ScopeWatch
+) -> int:
+    """Run Towel on the case written at ``root``, in place, and return how many changes it applied.
+
+    ``scopes`` sees every file Towel would write.
+    """
     engine = UnificationRefactorEngine(
         min_lines=3,
         cross_module_helpers=mode.cross_module,
         annotate_helpers=mode.types,
         type_oracle=oracle,
         settings=Settings.from_environ({"TOWEL_WORKERS": "1"}),
+        file_finisher=scopes,
     )
     single = case.refactored_file
     if single is not None:
@@ -227,6 +236,16 @@ def _observe(case: Case, roots: Tuple[Path, ...], work: Path, call_seconds: floa
     return records
 
 
+def _scope_differences(scopes: ScopeWatch) -> Tuple[Difference, ...]:
+    """Each change of a name's scope in a kept function, as a difference of behaviour."""
+    return tuple(
+        Difference(f"/scope/{file}/{function}", "value", "every read keeps its scope", change)
+        for file, functions in scopes.found
+        for function, changes in functions.items()
+        for change in changes
+    )
+
+
 def run_case(case: Case, mode: Mode, workspace: Path, *, call_seconds: float = 2.0) -> Outcome:
     """Refactor ``case`` in ``mode`` inside ``workspace`` and compare its behaviour before and after."""
     work = workspace.resolve()
@@ -249,9 +268,10 @@ def run_case(case: Case, mode: Mode, workspace: Path, *, call_seconds: float = 2
             return Outcome(case, mode, "unsupported", f"No type checker: {choice.note}")
         oracle = choice.tool
     output = io.StringIO()
+    scopes = ScopeWatch()
     try:
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-            applied = _refactor(case, mode, after, oracle)
+            applied = _refactor(case, mode, after, oracle, scopes)
     except Exception:  # noqa: BLE001 - a crash is the finding, reported with its traceback
         return Outcome(
             case,
@@ -283,7 +303,9 @@ def run_case(case: Case, mode: Mode, workspace: Path, *, call_seconds: float = 2
         return Outcome(
             case, mode, "inconclusive", detail, applied, change, towel_output=towel_output
         )
-    changes = behaviour_changes(observed_before, observed_after, cross_module=mode.cross_module)
+    changes = _scope_differences(scopes) + behaviour_changes(
+        observed_before, observed_after, cross_module=mode.cross_module
+    )
     return Outcome(
         case,
         mode,

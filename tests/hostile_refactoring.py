@@ -43,16 +43,25 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 Fixture = TypeVar("Fixture")
 
 
-def refactor_script(script: Path) -> int:
-    """Refactor the single file ``script`` in place, as the file battery does; the count applied."""
-    engine = UnificationRefactorEngine(min_lines=3)
+def refactor_script(
+    script: Path, *, file_finisher: Optional[Callable[[str, str], str]] = None
+) -> int:
+    """Refactor the single file ``script`` in place, as the file battery does; the count applied.
+
+    ``file_finisher`` sees each file Towel would write (``ScopeWatch``).
+    """
+    engine = UnificationRefactorEngine(min_lines=3, file_finisher=file_finisher)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         _, applied, _ = engine.refactor_to_fixed_point(str(script))
     return applied
 
 
 def refactor_package(
-    package: Path, *, cross_module: bool = True, typed: bool = False
+    package: Path,
+    *,
+    cross_module: bool = True,
+    typed: bool = False,
+    file_finisher: Optional[Callable[[str, str], str]] = None,
 ) -> Dict[str, Tuple[int, List[str]]]:
     """Refactor the directory ``package`` in place, as the package battery does; per-file results.
 
@@ -63,9 +72,16 @@ def refactor_package(
     the project configures, if any, as the command line finishes them. The
     path is resolved first: the checker reports resolved paths, so under a
     symlinked temporary directory (macOS's ``/var``) a typed run would find
-    none of the code reachable and decline every change.
+    none of the code reachable and decline every change. ``file_finisher``
+    then sees each file Towel would write (``ScopeWatch``).
     """
     package = package.resolve()
+    sorter = import_sorter_for_project(package).tool
+
+    def finished(path: str, text: str) -> str:
+        sorted_text = sorter(path, text) if sorter is not None else text
+        return file_finisher(path, sorted_text) if file_finisher is not None else sorted_text
+
     oracle: Optional[TypeOracle] = None
     if typed:
         try:
@@ -79,7 +95,7 @@ def refactor_package(
             min_lines=3,
             cross_module_helpers=cross_module,
             type_oracle=oracle,
-            file_finisher=import_sorter_for_project(package).tool,
+            file_finisher=finished if sorter is not None or file_finisher is not None else None,
         )
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             results, _ = engine.refactor_directory_to_fixed_point(

@@ -29,7 +29,8 @@ another binding outside the block, a ``global`` declaration, a parameter, and
 nested scopes that bind the name for themselves. The engine tests show the
 pair declined under ``moves_only_binding`` and kept where the call assigns
 the name back; ``test_binding_collectors_match_cpython`` checks the function
-against CPython's symbol table on generated code.
+against CPython's symbol table on generated code, and the hostile battery
+checks every change Towel renders the same way (``ScopeWatch``).
 """
 
 from __future__ import annotations

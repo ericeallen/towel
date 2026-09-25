@@ -186,7 +186,11 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   layouts of seeds 0 to 199 with `--cross-module`, a few typed seeds with
   mypy strict, and every seed on which a defect was found. `just fuzz` runs
   the same harness over many seeds (`differential/fuzz.py`) and writes each
-  failure as a fixture (`differential/export.py`).
+  failure as a fixture (`differential/export.py`). Both batteries and the harness also hold
+  every change Towel renders to CPython's symbol table
+  (`hostile_execution.ScopeWatch`): a name a kept function still reads must
+  keep its scope, which a program's output shows only on the path that
+  reads it.
 - **Property-based tests** — `test_properties.py` generates programs from
   small grammars with Hypothesis (300 deterministic examples for the pure
   properties, 60 for each engine property, no deadline). The pure properties:
