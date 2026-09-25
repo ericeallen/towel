@@ -275,8 +275,13 @@ def test_the_marker_is_no_part_of_the_verdict_or_the_project(tmp_path: Path) -> 
 def test_a_directory_the_server_does_not_analyze_falls_back_to_the_command_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No marker will ever be answered there; waiting longer would not change that."""
+    """No marker will ever be answered there; waiting longer would not change that.
+
+    Nothing the configuration names exists, so no directory is one the server
+    analyzes. (With one that does, the marker goes there and is answered.)
+    """
     _project(tmp_path)
+    (tmp_path / "pyrightconfig.json").write_text('{"include": ["missing"]}', encoding="utf-8")
     outside = tmp_path / "scripts"
     outside.mkdir()
     script = outside / "tool.py"
