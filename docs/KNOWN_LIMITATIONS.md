@@ -473,8 +473,8 @@ than a defect to fix (DECISIONS, 2026-09-25). Towel does not detect:
 - a star import without `__all__`, `hasattr`, `dir()` or a module
   `__getattr__` meeting a submodule that a new `--cross-module` import has
   bound on its package;
-- a callee that reads its caller's frame or source, such as
-  inline-snapshot's `snapshot()`, which reads the literal at its call site;
+- a callee that reads its caller's frame or source, other than
+  inline-snapshot, which Towel recognizes by name (above);
 - a callee that rebinds a name between two reads in the block, including a
   builtin passed under `--parameterize-builtins`, which is read at the call.
 

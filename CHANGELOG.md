@@ -30,6 +30,34 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- inline-snapshot tests that differ only in their literal were extracted
+  into one helper, so `snapshot()` read a helper parameter at its call site
+  and passing tests failed: 68 of rich-click's 151. inline-snapshot's
+  readers (`snapshot`, `external`, `snapshot_arg`) are now recognized by
+  binding and their calls stay where they stand. Other callees that read
+  their caller's frame are reflection, a documented limitation.
+- Region directives opened before a block and closed after it declined it
+  only for pylint and coverage.py. Every tool's region directive now does,
+  as that tool reads it (ruff, fmt, yapf, isort), and a block holding
+  `fmt: off` or `fmt: skip` carries its protected layout into the helper as
+  written.
+- A file of the program that does not parse on the Python Towel runs on now
+  refuses the run in every mode, before anything is written. It used to be
+  skipped, so on 3.11 a 3.12 project's hand-applied decorator, or a test's
+  patch of `len` in 3.12 syntax, went unseen. The refusal names each file,
+  the newest Python the project declares, and an `--exclude` that clears
+  it. `--exclude` takes a file name as well as a directory name; an excluded
+  file that parses is still read as evidence, and one that does not parse
+  is taken as no part of the program. Fixtures in syntax newer than a
+  supported Python are stored as `.pynew`.
+- mypy was taken to look at every file it was handed, so a file its own run
+  never checks, one outside `files` or under `ignore_errors`, got annotations
+  nothing verified, and typed runs declined whole projects under
+  `ignore_errors`. Such a file is now treated as one no checker covers. Each
+  mypy configuration group is checked in its own cache over the whole
+  candidate; candidate checks honour `--exclude` and the project's mypy
+  `exclude` as the baseline does; and a project package named `env` is no
+  longer taken for an environment.
 - A project decorator that is a plain wrapper was trusted although another
   module rebinds it, as `app.checks.checked = typeguard.typechecked` before
   the decorated module imports it, and code moved out of the instrumented
