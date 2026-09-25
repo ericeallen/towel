@@ -1683,9 +1683,13 @@ def defer_impure_parameters(
 
 
 def thunk_reads_possibly_unbound_local(
-    call: ast.AST, function: FunctionNode, available: AbstractSet[str]
+    call: ast.AST, local: AbstractSet[str], available: AbstractSet[str]
 ) -> bool:
-    """Whether a thunk in ``call`` reads a local of ``function`` that may be unbound.
+    """Whether a thunk in ``call`` reads a local of the site's function that may be unbound.
+
+    ``local`` is that function's ``own_scope_locals``, which every call site of
+    every pair asks for, so the caller keeps it; ``available`` is what the
+    site has bound on every path.
 
     A thunk keeps a read where the block had it, so the name is looked up only
     on the path that reads it; that is why a local bound on some paths only is
@@ -1699,7 +1703,6 @@ def thunk_reads_possibly_unbound_local(
     declined. A module name or an enclosing function's cell reads the same way
     from both places and is not a concern here.
     """
-    local = _own_scope_locals(function)
     for node in ast.walk(call):
         if isinstance(node, ast.Lambda):
             reader = FreeNameCollector()
@@ -1786,7 +1789,7 @@ def _builtin_values(node: ast.expr, shadowed: FrozenSet[str]) -> Set[str]:
     return set().union(*(_builtin_values(member, shadowed) for member in members))
 
 
-def _own_scope_locals(function: FunctionNode) -> Set[str]:
+def own_scope_locals(function: FunctionNode) -> FrozenSet[str]:
     """The names that are locals of ``function``'s own scope, exactly.
 
     ``locally_bound_names`` over-approximates on purpose and counts a
@@ -1820,7 +1823,7 @@ def _own_scope_locals(function: FunctionNode) -> Set[str]:
         elif isinstance(node, ast.match_case):
             names.update(pattern_capture_names(node.pattern))
         pending.extend(ast.iter_child_nodes(node))
-    return names - declared
+    return frozenset(names - declared)
 
 
 def moves_scope_declaration(function: FunctionNode, nodes: Iterable[ast.AST]) -> bool:

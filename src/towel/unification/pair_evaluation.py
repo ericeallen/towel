@@ -1275,7 +1275,10 @@ class PairEvaluation(
             self._debug_reject(RejectReason.FORWARDED_CALLEE, pair, detail=f"block{block_idx+1}")
             return None
         function = setup.ctx.func1 if block_idx == 0 else setup.ctx.func2
-        if thunk_reads_possibly_unbound_local(call_node, function, free.available_names[block_idx]):
+        site = setup.ctx.site1 if block_idx == 0 else setup.ctx.site2
+        if thunk_reads_possibly_unbound_local(
+            call_node, self._own_scope_locals(function, site), free.available_names[block_idx]
+        ):
             # See :func:`thunk_reads_possibly_unbound_local`.
             self._debug_reject(
                 RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL, pair, detail=f"block{block_idx+1}"

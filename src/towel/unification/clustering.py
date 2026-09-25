@@ -244,7 +244,11 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             permitted=self._builtin_parameter_positions(template.param_order, subst2),
         ):
             return None
-        if thunk_reads_possibly_unbound_local(call_node2, candidate.function, available[1]):
+        if thunk_reads_possibly_unbound_local(
+            call_node2,
+            self._own_scope_locals(candidate.function, candidate.site),
+            available[1],
+        ):
             return None
         # Validate candidate call-site does not reference undefined names
         used2 = self._used_names(call_node2)

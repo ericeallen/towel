@@ -28,6 +28,7 @@ without a timing.
 
 from __future__ import annotations
 
+import ast
 from collections import Counter
 from pathlib import Path
 import sys
@@ -139,3 +140,35 @@ def test_a_fixed_point_run_looks_up_each_input_a_fixed_number_of_times(
         counted.append(sorted(count for count in calls.values()))
     assert counted[0] == counted[1], counted
     assert max(counted[1]) <= 2, counted
+
+
+def test_a_functions_own_locals_are_found_once_per_block_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every call site's thunk check asks; the answer is kept per block site, not recomputed.
+
+    Unkept, fifty near-identical functions computed it 12,202 times. Kept,
+    each function computes it once for each of its blocks that reaches the
+    check, however many other functions it is paired with.
+    """
+    from towel.unification import block_analysis, semantic_safety
+
+    real = semantic_safety.own_scope_locals
+    most = []
+    for count in (6, 18):
+        calls: Counter[tuple[str, int]] = Counter()
+
+        def counted(function: ast.FunctionDef | ast.AsyncFunctionDef) -> frozenset[str]:
+            calls[function.name, function.lineno] += 1
+            return real(function)
+
+        monkeypatch.setattr(block_analysis, "own_scope_locals", counted)
+        package = _project(tmp_path / str(count), {"mod": count})
+        engine = UnificationRefactorEngine(min_lines=3, settings=SERIAL)
+        assert engine.analyze_directory(str(package), progress="none")
+        assert len(calls) == count, calls
+        most.append(max(calls.values()))
+    template = ast.parse(_FUNCTION.format(name="f", index=0)).body[0]
+    assert isinstance(template, ast.FunctionDef)
+    statements = len(template.body)
+    assert most[0] == most[1] <= statements, most
