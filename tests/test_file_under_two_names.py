@@ -94,6 +94,11 @@ def _links(root: Path, links: Mapping[str, str]) -> None:
         _link(root, link, target)
 
 
+def _link_imported_relatively(root: Path) -> None:
+    _write(root, {"src/alpha/uses.py": "from .legacy import m\n"})
+    _link(root, "src/alpha/legacy", "src/alpha/sub")
+
+
 def _hard_link(root: Path, link: str, target: str) -> None:
     os.link(root / target, root / link)
 
@@ -134,6 +139,12 @@ _ALIASES: Mapping[str, tuple[Alias, str, str]] = {
         "src/alpha/sub is reachable both as alpha.legacy and as alpha.sub, through the link"
         " src/alpha/legacy",
     ),
+    "relative-import-through-a-link": (
+        lambda root: _link_imported_relatively(root),
+        "import alpha.a\n",
+        "src/alpha/sub is reachable both as alpha.legacy and as alpha.sub, through the link"
+        " src/alpha/legacy",
+    ),
     "hard-link": (
         lambda root: _hard_link(root, "tool.py", "src/alpha/a.py"),
         "import alpha.a\nimport tool\n",
@@ -157,6 +168,22 @@ def test_a_file_a_link_gives_a_second_name_is_in_doubt(tmp_path: Path, alias: st
         model.names[name].trusted for name in problem.names_in_doubt
     )
     assert model.spelling(model.root / "tests/test_a.py", model.root / "src/alpha/a.py") is None
+    # The remedy: a copy in place of the link is a second file with a name of its own.
+    assert problem.link is not None
+    _replace_with_a_copy(problem.link)
+    assert build_import_model(root, installed=_standard_library_only).problems == ()
+
+
+def _replace_with_a_copy(link: Path) -> None:
+    """``link`` replaced by a copy of the file or directory it names, as the remedy says."""
+    target = link.resolve()
+    if target.is_dir():
+        link.unlink()
+        shutil.copytree(target, link)
+    else:  # A file link, symbolic or hard: its own directory entry, holding the same bytes.
+        content = link.read_bytes()
+        link.unlink()
+        link.write_bytes(content)
 
 
 def test_two_search_path_entries_are_a_stray_package_not_a_link(tmp_path: Path) -> None:
