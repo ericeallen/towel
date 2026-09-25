@@ -82,6 +82,7 @@ from .semantic_safety import (
     module_resolved_names,
     defer_impure_parameters,
     has_impure_eager_parameters,
+    thunk_meets_an_inlined_comprehension,
     thunk_reads_possibly_unbound_local,
 )
 from .clustering import Clustering
@@ -1401,12 +1402,23 @@ class PairEvaluation(
             return None
         function = setup.ctx.func1 if block_idx == 0 else setup.ctx.func2
         site = setup.ctx.site1 if block_idx == 0 else setup.ctx.site2
+        analyzer = setup.ctx.scope_analyzer if block_idx == 0 else setup.ctx.scope_analyzer2
         if thunk_reads_possibly_unbound_local(
             call_node, self._own_scope_locals(function, site), free.available_names[block_idx]
         ):
             # See :func:`thunk_reads_possibly_unbound_local`.
             self._debug_reject(
                 RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL, pair, detail=f"block{block_idx+1}"
+            )
+            return None
+        emptied = thunk_meets_an_inlined_comprehension(call_node, function, analyzer)
+        if emptied:
+            # See :func:`thunk_meets_an_inlined_comprehension`: the thunk's
+            # cell is empty on Python 3.12 and later.
+            self._debug_reject(
+                RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL,
+                pair,
+                detail=f"block{block_idx+1}: {sorted(emptied)} rebound by an inlined comprehension",
             )
             return None
         allowed_before = set(snapshot.bound_before_block) | set(free_here)
@@ -1426,7 +1438,6 @@ class PairEvaluation(
                 detail=f"block{block_idx+1}: {sorted(invalid_names)}",
             )
             return None
-        analyzer = setup.ctx.scope_analyzer if block_idx == 0 else setup.ctx.scope_analyzer2
         mismatch = instantiation_mismatch(
             func_def,
             call_node,

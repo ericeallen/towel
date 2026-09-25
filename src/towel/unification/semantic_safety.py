@@ -63,6 +63,7 @@ from .definite_assignment import (
     definitely_bound_before,
     locally_bound_names,
 )
+from .lexical_scopes import comprehension_targets, free_reads
 from .models import FunctionNode
 from .bounded_cache import BoundedCache
 from .scope_analyzer import ScopeAnalyzer, type_parameter_names
@@ -1755,6 +1756,41 @@ def thunk_reads_possibly_unbound_local(
     return False
 
 
+def thunk_meets_an_inlined_comprehension(
+    call: ast.AST, function: FunctionNode, analyzer: "ScopeAnalyzer"
+) -> FrozenSet[str]:
+    """The names a lambda in ``call`` reads that an inlined comprehension of ``function`` rebinds.
+
+    From Python 3.12 a list, set or dict comprehension is compiled into the
+    frame of the function that holds it (PEP 709). Where the function reads
+    a name from an enclosing function and one of those comprehensions binds
+    the same name as its target, a lambda of the function that reads the
+    name finds its cell empty: CPython 3.12 and 3.13 raise ``NameError``
+    ("cannot access free variable"), where 3.11 reads the enclosing
+    function's value. A thunk the call hands its helper is such a lambda
+    where the block had none, so the call site is declined. A name that is
+    the function's own local, or its module's, reads alike from the thunk.
+    """
+    lambdas = [node for node in ast.walk(call) if isinstance(node, ast.Lambda)]
+    if not lambdas:
+        return frozenset()
+    rebound = {
+        name
+        for statement in function.body
+        for node in walk_own_scope(statement)
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp))
+        for name in comprehension_targets(node)
+    }
+    read = set().union(*(free_reads(node) for node in lambdas)) & rebound
+    if not read:
+        return frozenset()
+    return frozenset(
+        read
+        - own_scope_locals(function)
+        - module_resolved_names(function, analyzer, read, exact=True)
+    )
+
+
 def builtins_passed(
     call: ast.AST,
     helper_name: str,
@@ -1838,8 +1874,10 @@ def own_scope_locals(function: FunctionNode) -> FrozenSet[str]:
     ``locally_bound_names`` over-approximates on purpose and counts a
     comprehension's loop variable, which is a local of the comprehension: a
     read of that name in the function is a global lookup, and reads the same
-    from a thunk. A walrus inside a comprehension does bind in the function,
-    and a ``global`` or ``nonlocal`` declaration makes a name no local at all.
+    from a thunk, unless it is an enclosing function's cell that an inlined
+    comprehension rebinds (``thunk_meets_an_inlined_comprehension``). A
+    walrus inside a comprehension does bind in the function, and a
+    ``global`` or ``nonlocal`` declaration makes a name no local at all.
     Memoized per function node, which analysis never mutates.
     """
     local: FrozenSet[str] = memoized_per_node(_OWN_SCOPE_LOCALS, function, _own_scope_locals_of)
