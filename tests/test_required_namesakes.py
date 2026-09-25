@@ -42,6 +42,7 @@ import pytest
 import towel
 from towel.cli import (
     INSTALLED_COPY_REMEDY,
+    LACKING_MODULE_REMEDY,
     REQUIRED_DISTRIBUTION_REMEDY,
     STRAY_COPY_REMEDY,
     _import_problem_remedies,
@@ -169,6 +170,28 @@ _PROJECT = '[project]\nname = "zzapp"\n'
             {"Pipfile.lock": '{"default": {"zz-click": {"version": "==8"}}, "develop": {}}'},
             "Pipfile.lock",
         ),
+        # Round-4 audit P1-3: declarations of an environment's tools, which were not read.
+        (
+            {"pyproject.toml": '[tool.hatch.envs.default]\ndependencies = ["zz-click>=8"]\n'},
+            "pyproject.toml [tool.hatch.envs.default].dependencies",
+        ),
+        (
+            {"hatch.toml": '[envs.test]\nextra-dependencies = ["zz-click"]\n'},
+            "hatch.toml [envs.test].extra-dependencies",
+        ),
+        (
+            {"pyproject.toml": '[tool.uv]\ndev-dependencies = ["zz-click>=8"]\n'},
+            "pyproject.toml [tool.uv].dev-dependencies",
+        ),
+        (
+            {"pyproject.toml": '[tool.pdm.dev-dependencies]\ntest = ["zz-click"]\n'},
+            "pyproject.toml [tool.pdm.dev-dependencies].test",
+        ),
+        ({"Pipfile": '[dev-packages]\nzz-click = "*"\n'}, "Pipfile [dev-packages]"),
+        ({"dev-requirements.txt": "zz-click>=8\npytest\n"}, "dev-requirements.txt"),
+        ({"test_requirements.txt": "zz-click\n"}, "test_requirements.txt"),
+        ({"requirements.in": "zz-click\n"}, "requirements.in"),
+        ({"requirements/dev.in": "zz-click\n"}, "requirements/dev.in"),
     ],
     ids=[
         "pep621",
@@ -187,6 +210,15 @@ _PROJECT = '[project]\nname = "zzapp"\n'
         "poetry-lock",
         "pdm-lock",
         "pipfile-lock",
+        "hatch-env",
+        "hatch-toml",
+        "uv-dev",
+        "pdm-dev",
+        "pipfile",
+        "dev-requirements",
+        "underscore-requirements",
+        "requirements-in",
+        "requirements-dir-in",
     ],
 )
 def test_a_requirement_in_any_form_puts_its_namesake_in_doubt(
@@ -441,3 +473,147 @@ def test_the_audited_namesake_leaves_the_installed_program_working(
     assert "zzclick could be any of" in ran.stderr and REQUIRED_DISTRIBUTION_REMEDY in ran.stderr
     assert "import __extracted_func" not in (output / "core.py").read_text()
     assert _installed_behaviour(output, site, probe, tmp_path) == expected
+
+
+# -- A directory lacking a module the program imports of its name (round-4 P1-3) --------
+
+_LACKING = {
+    "pyproject.toml": '[project]\nname = "zzapp"\n',
+    "zzapp/__init__.py": "",
+    "zzapp/core.py": "from zz_click.utils import echo\n",
+    "third_party/zz_click/utils.py": "def echo(message):\n    print(message)\n",
+}
+"""The round-4 layout: ``third_party/zz_click`` shares ``utils`` with a library holding more."""
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"zzapp/cli.py": "from zz_click.core import Command\n"},
+        {
+            "zzapp/cli.py": "from zz_click.core import Command\n",
+            "third_party/zz_click/__init__.py": "",
+        },
+        {"zzapp/cli.py": "from zz_click import Command\n"},
+        {"zzapp/cli.py": "def run():\n    import zz_click.core\n"},
+        {
+            "zzapp/cli.py": "from typing import TYPE_CHECKING\n\n"
+            "if TYPE_CHECKING:\n    from zz_click.core import Command\n"
+        },
+    ],
+    ids=["namespace", "regular", "unbound-name", "in-a-function", "type-only"],
+)
+def test_a_directory_lacking_a_module_the_program_imports_is_in_doubt(
+    tmp_path: Path, files: Mapping[str, str]
+) -> None:
+    """The program reaches a ``zz_click`` holding ``core``, so the directory lacking it may not be that name."""
+    _write(tmp_path, {**_LACKING, **files})
+    model = build_import_model(tmp_path, installed=_standard_library_only)
+    (problem,) = model.problems
+    assert isinstance(problem, AmbiguousName) and problem.doubts == {Doubt.LACKING}
+    assert problem.lacking is not None and problem.lacking.site.file == model.root / "zzapp/cli.py"
+    assert "which third_party/zz_click lacks" in problem.describe(model.root)
+    assert model.importers_of_missing_modules == frozenset()
+    utils = model.root / "third_party/zz_click/utils.py"
+    assert model.spelling(model.root / "zzapp/core.py", utils) is None
+    assert model.module_name(utils) is None
+    assert _import_problem_remedies([problem]) == LACKING_MODULE_REMEDY
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        # The project is the distribution zz_click: sphinx's test data mocks a module of its own.
+        {
+            "pyproject.toml": '[project]\nname = "ZZ-Click"\n',
+            "zzapp/cli.py": "import zz_click.core\n",
+        },
+        # The directory's own import of what it lacks is a module its build generates.
+        {"third_party/zz_click/version.py": "from zz_click._version import version\n"},
+        # Expecting the import may fail, or looking along another sys.path, shows nothing.
+        {"zzapp/cli.py": "try:\n    import zz_click.core\nexcept ImportError:\n    pass\n"},
+        {"zzapp/cli.py": "import sys\nsys.path.insert(0, 'vendor')\nimport zz_click.core\n"},
+        # Nothing of the name in the tree: some other distribution's, and no problem.
+        {"zzapp/cli.py": "import zz_nothing_here.core\n"},
+    ],
+    ids=["own-name", "from-inside", "guarded", "changes-sys-path", "wholly-missing"],
+)
+def test_an_import_that_lacks_says_nothing_of_the_name_here(
+    tmp_path: Path, files: Mapping[str, str]
+) -> None:
+    """The controls: DECISIONS' missing modules still refuse nothing and leave the name trusted."""
+    _write(tmp_path, {**_LACKING, **files})
+    model = build_import_model(tmp_path, installed=_standard_library_only)
+    assert model.names["zz_click"].trusted, model.problems
+    assert all(isinstance(problem, UnresolvedImport) for problem in model.problems)
+    spelling = model.spelling(
+        model.root / "zzapp/core.py", model.root / "third_party/zz_click/utils.py"
+    )
+    assert spelling is not None and spelling.module == "zz_click.utils"
+
+
+_LACKING_AUDITED = {
+    "pyproject.toml": '[project]\nname = "zzapp"\nversion = "0"\ndependencies = ["zzblack"]\n'
+    '[tool.setuptools]\npackages = ["zzapp"]\n',
+    "zzapp/__init__.py": "",
+    "zzapp/cli.py": _AUDITED["zzapp/core.py"],
+    "zzapp/main.py": "from zzclick.core import Command\n\nfrom zzapp.cli import use\n",
+    "third_party/zzclick/utils.py": _AUDITED["zzclick/utils.py"],
+}
+"""The round-4 reproducer: zzclick reaches the program only as a dependency's dependency."""
+
+
+def test_the_lacking_namesake_refuses_the_root_run_and_its_remedies_clear_it(
+    tmp_path: Path,
+) -> None:
+    """Installed as it ships, beside the real library, ``zzapp.cli.use(2)`` still returns 14."""
+    root = _write(tmp_path / "project", _LACKING_AUDITED)
+    library = {**_LIBRARY, "zzclick/core.py": "Command = object\n"}
+    site = _write(tmp_path / "site", library)
+    probe = "import zzapp.main, zzapp.cli as c\nprint('use(2) ->', c.use(2))\n"
+    expected = _installed_behaviour(root / "zzapp", site, probe, tmp_path)
+    assert expected == "library 2\napp\nshared 6 13\nuse(2) -> 14\n", expected
+    refused = _towel(root, ".")
+    assert refused.returncode == 1, refused.stdout + refused.stderr
+    assert (
+        "zzclick could be any of: third_party/zzclick; another zzclick, holding the zzclick.core"
+        " that zzapp/main.py:1 imports (from zzclick.core import Command), which"
+        " third_party/zzclick lacks"
+    ) in refused.stderr, refused.stderr
+    assert LACKING_MODULE_REMEDY in refused.stderr
+    assert not (tmp_path / "project-out").exists()
+    # The library's reading: leave the directory out.
+    ran = _towel(root, ".", "--exclude", "zzclick")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert "zzclick could be any of" not in ran.stderr
+    assert _installed_behaviour(tmp_path / "project-out/zzapp", site, probe, tmp_path) == expected
+
+
+def test_where_the_directory_is_what_the_program_means_the_import_that_lacks_is_left_out(
+    tmp_path: Path,
+) -> None:
+    """The other reading, and its remedy: the tree's ``zzclick`` ships, and a tool's import is stale."""
+    files = {
+        **_LACKING_AUDITED,
+        "pyproject.toml": '[project]\nname = "zzapp"\nversion = "0"\n',
+        "zzapp/main.py": "from zzapp.cli import use\n",
+        "tools/stale.py": "from zzclick.core import Command\n",
+    }
+    root = _write(tmp_path / "project", files)
+    probe = "import zzapp.cli as c\nprint('use(2) ->', c.use(2))\n"
+
+    def run(tree: Path) -> str:
+        prelude = f"import sys\nsys.path[:0] = [{str(tree)!r}, {str(tree / 'third_party')!r}]\n"
+        command = [sys.executable, "-I", "-B", "-c", prelude + probe]
+        ran = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        return ran.stdout + ran.stderr
+
+    expected = run(root)
+    assert expected == "local echo 2\napp\nshared 6 13\nuse(2) -> 14\n", expected
+    refused = _towel(root, ".")
+    assert refused.returncode == 1 and LACKING_MODULE_REMEDY in refused.stderr, refused.stderr
+    ran = _towel(root, ".", "--exclude", "tools")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert "zzclick could be any of" not in ran.stderr
+    assert "import __extracted_func" in (tmp_path / "project-out/zzapp/cli.py").read_text()
+    assert run(tmp_path / "project-out") == expected

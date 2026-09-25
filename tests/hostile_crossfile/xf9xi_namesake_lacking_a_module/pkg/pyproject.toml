@@ -1,0 +1,8 @@
+[project]
+name = "zzapp"
+version = "0"
+# zzlib reaches the program only as zzblack's own dependency, which no file here declares.
+dependencies = ["zzblack"]
+
+[tool.setuptools]
+packages = ["zzapp"]

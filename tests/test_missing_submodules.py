@@ -56,6 +56,8 @@ def _standard_library_only(name: str, root: Path) -> Optional[OutsideProvider]:
 
 
 _PACKAGE = {
+    # The project is the distribution zzpkg, so no other copy holds what zzpkg lacks.
+    "pyproject.toml": '[project]\nname = "zzpkg"\n',
     "zzpkg/__init__.py": "",
     "zzpkg/a.py": "",
     "zzpkg/sub/__init__.py": "",
@@ -154,6 +156,7 @@ def test_a_namespace_package_binds_nothing_but_its_modules(tmp_path: Path) -> No
     root = _write(
         tmp_path,
         {
+            "pyproject.toml": '[project]\nname = "zzns"\n',
             "zzns/x.py": "",
             "tests/test_a.py": "import zzns.x\nfrom zzns import generated_at_build\n",
         },
@@ -169,3 +172,42 @@ def test_the_initializers_own_import_of_its_submodule_binds_nothing(tmp_path: Pa
     model = build_import_model(root, installed=_standard_library_only)
     (problem,) = model.problems
     assert isinstance(problem, RelativeImportMissing) and problem.missing == ".generated_at_build"
+
+
+_TYPE_ONLY = (
+    "import zzpkg.a\nfrom typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    {statement}\n"
+)
+
+
+@pytest.mark.parametrize(
+    "importer, statement",
+    [
+        ("zzpkg/c.py", "from ._generated import Row"),
+        ("zzpkg/c.py", "from . import generated_at_build"),
+        ("zzpkg/c.py", "from zzpkg._generated import Row"),
+        ("tests/test_b.py", "from zzpkg._generated import Row"),
+    ],
+)
+def test_a_type_only_import_of_a_missing_module_leaves_its_file_free(
+    tmp_path: Path, importer: str, statement: str
+) -> None:
+    """It never runs, so it is no import edge, and its file loads wherever it did (round-4 P2)."""
+    root = _write(
+        tmp_path,
+        {**_PACKAGE, importer: _TYPE_ONLY.format(statement=statement)},
+    )
+    model = build_import_model(root, installed=_standard_library_only)
+    assert model.problems == ()
+    assert model.importers_of_missing_modules == frozenset()
+    assert model.spelling(model.root / importer, model.root / "zzpkg/a.py") is not None
+
+
+def test_a_type_only_import_that_climbs_out_of_its_package_is_still_reported(
+    tmp_path: Path,
+) -> None:
+    """A checker resolving it sees a larger package than the tree shows, so the name is in doubt."""
+    root = _write(
+        tmp_path, {**_PACKAGE, "zzpkg/c.py": _TYPE_ONLY.format(statement="from ... import x")}
+    )
+    (problem,) = build_import_model(root, installed=_standard_library_only).problems
+    assert type(problem).__name__ == "RelativeImportEscapes"

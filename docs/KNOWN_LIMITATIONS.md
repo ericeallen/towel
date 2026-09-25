@@ -428,27 +428,55 @@ requirement. The third audit's P1-2 was such a namesake: `app` required
 run from `uvx`, which lacks click, Towel hosted a helper in `click/utils.py`,
 and the installed `app` could not import it. A requirement is read from
 PEP 621's dependencies and extras, PEP 735's groups, Poetry's dependency
-tables, setup.cfg's `install_requires` and `extras_require`, the uv, Poetry,
-PDM and Pipenv lockfiles, and `requirements*.txt` at the root, and matched
-to a name by its own normalized name. So a distribution whose import name
+tables, the development dependencies of `[tool.uv]` and `[tool.pdm]`, every
+hatch environment's `dependencies` and `extra-dependencies` (in
+pyproject.toml or hatch.toml), setup.cfg's `install_requires` and
+`extras_require`, a Pipfile, the uv, Poetry, PDM and Pipenv lockfiles, and
+the requirements files at the root (`requirements*.txt`,
+`*-requirements.txt`, `*_requirements.txt`, the same with pip-tools' `.in`,
+and every `.txt` or `.in` in `requirements/`, with what they include), and
+matched to a name by its own normalized name. So a distribution whose import name
 differs from its own (`PyYAML` provides `yaml`), a dependency's dependency
-where no lockfile records it, and whatever a setup.py, `tox.ini` or CI
-recipe installs are known only when this interpreter can import them: Towel
+where no lockfile records it, and whatever a setup.py, `tox.ini`, a
+noxfile, hatch's environment `overrides` or a CI recipe installs are known
+only when this interpreter can import them: Towel
 runs with the interpreter it was started with, which stands for the
-project's, so run it in the project's own environment. A top-level name
+project's, so run it in the project's own environment. A directory the
+program imports a module of that it lacks, from outside it, is in doubt
+too: `third_party/click/` holding `utils.py` is not the `click` whose
+`click.core` the program also imports (the round-4 audit's P1-3), and
+`--exclude` or a rename resolves it. The directory's own import of a module
+it lacks, a build's `_version.py`, is no such sign, and nor is any when the
+project's metadata names the project itself so: sphinx's test data imports
+a `sphinx.missing_module4` its tests mock, and the distribution named
+`Sphinx` is sphinx itself. So a namesake the program imports only modules
+of that it holds, where the library is unseen as above, is still taken for
+the library. A top-level name
 found only as a module inside a package the program imports as one, as
 `pkg/c.py`'s `import helpers_top` finds only `pkg/helpers_top.py`, is in
 doubt too, and the file making the import runs as a script, so it is given
-no new import (the third audit's P1-6). Before it writes anything, a
+no new import (the third audit's P1-6). So is a file a link gives a second
+name the program uses: a directory link `beta -> src/alpha` beside
+`alpha`, a file link, a link inside a package that an import goes through,
+or a hard link, each resolved by replacing the link with a copy (the
+round-4 audit's P1-4). Only an import that attests locates a name,
+makes it ambiguous, or finds it inside a package: one inside
+`try`/`except ImportError`, under `TYPE_CHECKING`, or in a file that
+changes `sys.path`, as graphene's setup.py imports `pyutils.version` after
+appending the package to `sys.path`, does none of these, though one that
+runs still counts where it can load a file under a second name. Before it
+writes anything, a
 `--cross-module` run of `dry` or `preview` names every such problem with the
 remedy for its kind, and refuses the run when one leaves in doubt a
 top-level name located at or around the target, or lies under the target and
 leaves its own file's name in doubt. An import of a module the tree lacks,
 however it is spelled (`from . import gone` and `from pkg import gone` as
 much as `from .gone import x`, where nothing binds `gone`), leaves no name in
-doubt and refuses nothing, from the
+doubt and refuses nothing, and does not make a stray `src/__init__.py` a
+package the program uses, from the
 root, on a package or on a subpackage; the file making it is left exactly as
-it was, with no helper hosted, borrowed or extracted within it. The cost is
+it was, with no helper hosted, borrowed or extracted within it; one under
+`if TYPE_CHECKING:` never runs and leaves its file free. The cost is
 that file's own duplicates, and, when it is a package's `__init__.py`, every
 helper a module outside that package would borrow from a module inside it:
 chardet's `detect` and `detect_all` share a block in its `__init__.py`,

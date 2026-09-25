@@ -26,17 +26,23 @@ Two questions read them, and they need opposite errors:
 - Which top-level names some other distribution may provide where the program
   runs (:func:`declared_requirements`, which the import model reads). A
   requirement missed there lets a project directory named like a library be
-  taken for that library, so every declaration counts: the extras and
-  dependency groups beside those tables, Poetry's development groups,
-  setup.cfg's ``extras_require``, the lockfiles uv, Poetry, PDM and Pipenv
-  write, and the requirements files at the project root.
+  taken for that library, so every declaration counts: the extras and PEP 735
+  dependency groups beside those tables, Poetry's development groups, the
+  development dependencies of ``[tool.uv]`` and ``[tool.pdm]``, the
+  dependencies of every hatch environment (in pyproject.toml or hatch.toml),
+  setup.cfg's ``extras_require``, a Pipfile's packages, the lockfiles uv,
+  Poetry, PDM and Pipenv write, and the requirements files at the project
+  root: ``requirements*.txt``, ``*-requirements.txt`` and
+  ``*_requirements.txt``, the same with pip-tools' ``.in``, every ``.txt``
+  and ``.in`` in ``requirements/``, and the files they include.
 
 A distribution's name is compared with an import name after normalizing both
 (:func:`normalized_name`), so ``Click`` and ``click``, or ``typing-extensions``
 and ``typing_extensions``, are one name. A distribution whose import name
 differs, as ``PyYAML`` provides ``yaml``, is not recognized by its name. A
 setup.py is not run, and a ``file:`` directive or dynamic metadata names a file
-that is not read.
+that is not read; nor are tox.ini, a noxfile, CI recipes, or hatch's
+environment ``overrides``.
 """
 
 from __future__ import annotations
@@ -56,6 +62,7 @@ __all__ = [
     "declared_requirements",
     "installed_with_the_project",
     "normalized_name",
+    "own_names",
 ]
 
 
@@ -99,8 +106,20 @@ def declared_requirements(root: Path) -> Tuple[Requirement, ...]:
     """
     data, parser = load_pyproject(root), _setup_cfg(root)
     own = _own_names(data, parser)
-    found = [*_metadata_requirements(data, parser), *_environment_requirements(root)]
+    found = [
+        *_metadata_requirements(data, parser),
+        *_tool_requirements(root, data),
+        *_environment_requirements(root),
+    ]
     return tuple(requirement for requirement in found if requirement.name not in own)
+
+
+def own_names(root: Path) -> FrozenSet[str]:
+    """The normalized names the metadata of the project at ``root`` gives the project itself.
+
+    A distribution of such a name is the project, wherever it is installed.
+    """
+    return _own_names(load_pyproject(root), _setup_cfg(root))
 
 
 # -- Packaging metadata ---------------------------------------------------------
@@ -169,6 +188,43 @@ def _poetry_requirements(data: Mapping[str, object]) -> Iterator[Requirement]:
         for name in _table(table if isinstance(table, dict) else {}, "dependencies"):
             where = f"pyproject.toml [tool.poetry.group.{group}.dependencies]"
             yield from _poetry_entry(name, where, with_the_project=False)
+
+
+def _tool_requirements(root: Path, data: Mapping[str, object]) -> Iterator[Requirement]:
+    """What the project's tools install into its own environments, never into an installation of it.
+
+    uv's and PDM's development dependencies, and every hatch environment's
+    ``dependencies`` and ``extra-dependencies``, from pyproject.toml's
+    ``[tool.hatch]`` or from hatch.toml, which hatch reads in its place.
+    """
+    yield from _strings(
+        _table(data, "tool", "uv").get("dev-dependencies"),
+        "pyproject.toml [tool.uv].dev-dependencies",
+        with_the_project=False,
+    )
+    for group, requirements in _table(data, "tool", "pdm", "dev-dependencies").items():
+        where = f"pyproject.toml [tool.pdm.dev-dependencies].{group}"
+        yield from _strings(requirements, where, with_the_project=False)
+    hatch = (_table(data, "tool", "hatch"), "pyproject.toml [tool.hatch.envs.{}].{}")
+    standalone = (_toml(root / "hatch.toml"), "hatch.toml [envs.{}].{}")
+    for tables, where in (hatch, standalone):
+        for environment, table in _table(tables, "envs").items():
+            for key in ("dependencies", "extra-dependencies"):
+                listed = table.get(key) if isinstance(table, dict) else None
+                yield from _strings(listed, where.format(environment, key), with_the_project=False)
+    pipfile = _toml(root / "Pipfile")
+    for section in ("packages", "dev-packages"):
+        for name in _table(pipfile, section):
+            yield from _poetry_entry(name, f"Pipfile [{section}]", with_the_project=False)
+
+
+def _toml(path: Path) -> Mapping[str, object]:
+    """The TOML document at ``path``, or an empty one when it is missing or does not parse."""
+    try:
+        with path.open("rb") as stream:
+            return tomllib.load(stream)
+    except (OSError, ValueError):
+        return {}
 
 
 def _poetry_entry(name: object, where: str, *, with_the_project: bool) -> Iterator[Requirement]:
@@ -254,14 +310,7 @@ def _environment_requirements(root: Path) -> List[Requirement]:
 
 def _toml_lockfile(path: Path) -> Iterator[Requirement]:
     """The ``[[package]]`` names uv, Poetry and PDM record."""
-    if not path.is_file():
-        return
-    try:
-        with path.open("rb") as stream:
-            data = tomllib.load(stream)
-    except (OSError, ValueError):
-        return
-    packages = data.get("package")
+    packages = _toml(path).get("package")
     for package in packages if isinstance(packages, list) else ():
         name = package.get("name") if isinstance(package, dict) else None
         if isinstance(name, str) and _NAME.fullmatch(name):
@@ -282,12 +331,22 @@ def _pipfile_lock(path: Path) -> Iterator[Requirement]:
                 yield Requirement(normalized_name(name), name, path.name, with_the_project=False)
 
 
+_REQUIREMENTS_FILES = (
+    "requirements*.txt",
+    "*-requirements.txt",
+    "*_requirements.txt",
+    "requirements*.in",
+    "*-requirements.in",
+    "*_requirements.in",
+    "requirements/*.txt",
+    "requirements/*.in",
+)
+"""Where requirements files are looked for, below the project root: ``dev-requirements.txt`` too."""
+
+
 def _requirements_files(root: Path) -> Iterator[Requirement]:
-    """``requirements*.txt`` at the root and in ``requirements/``, with the files they include."""
-    pending = [
-        *sorted(root.glob("requirements*.txt")),
-        *sorted((root / "requirements").glob("*.txt")),
-    ]
+    """The root's requirements files (:data:`_REQUIREMENTS_FILES`), with the files they include."""
+    pending = sorted({path for pattern in _REQUIREMENTS_FILES for path in root.glob(pattern)})
     seen: Set[Path] = set()
     while pending:
         path = pending.pop(0)

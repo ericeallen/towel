@@ -181,8 +181,8 @@ _SETUPTOOLS = (
 )
 
 
-def _setuptools_project(options: str = "") -> str:
-    return f'{_SETUPTOOLS}[project]\nname = "sample"\nversion = "0"\n{options}'
+def _setuptools_project(options: str = "", name: str = "sample") -> str:
+    return f'{_SETUPTOOLS}[project]\nname = "{name}"\nversion = "0"\n{options}'
 
 
 # -- Layouts -------------------------------------------------------------------
@@ -740,10 +740,15 @@ def test_relative_imports_that_climb_out_or_name_nothing_are_problems(tmp_path):
 
 
 def test_an_import_its_package_does_not_hold_is_a_problem(tmp_path):
-    """``alpha.gone`` is no module of alpha's; ``attribute`` is a name its initializer binds."""
+    """``alpha.gone`` is no module of alpha's; ``attribute`` is a name its initializer binds.
+
+    The project is the distribution ``alpha``, so no other copy of it can
+    hold ``alpha.gone`` (``test_required_namesakes.py`` has the namesake that lacks one).
+    """
     project = _write(
         tmp_path / "project",
         {
+            "pyproject.toml": _setuptools_project(name="alpha"),
             "alpha/__init__.py": "attribute = 1\n",
             "alpha/a.py": "",
             "tests/test_a.py": "import alpha.a\nfrom alpha.gone import thing\nfrom alpha import attribute\n",
@@ -805,6 +810,7 @@ def test_what_is_missing_below_a_module_file_is_the_module_under_it(tmp_path):
     project = _write(
         tmp_path / "project",
         {
+            "pyproject.toml": _setuptools_project(name="alpha"),
             "alpha/__init__.py": "",
             "alpha/util.py": "",
             "alpha/compat.py": "import sys\nsys.modules[__name__ + '.moves'] = sys\n",
@@ -823,11 +829,16 @@ def test_what_is_missing_below_a_module_file_is_the_module_under_it(tmp_path):
 
 
 def _sphinx_shape(root: Path) -> Path:
-    """sphinx's shape: a package importing itself absolutely, and test data importing what it lacks."""
+    """sphinx's shape: a package importing itself absolutely, and test data importing what it lacks.
+
+    Like sphinx, the project is the distribution named as its package is.
+    """
     return _write(
         root,
         {
-            "pyproject.toml": _setuptools_project('[tool.setuptools]\npackages = ["sphx"]\n'),
+            "pyproject.toml": _setuptools_project(
+                '[tool.setuptools]\npackages = ["sphx"]\n', name="Sphx"
+            ),
             "sphx/__init__.py": "",
             "sphx/util.py": "VALUE = 1\n",
             "sphx/a.py": "from sphx.util import VALUE\n",

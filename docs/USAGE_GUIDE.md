@@ -204,6 +204,10 @@ gets none. Each kind of doubt has its own remedy:
   `src/alpha`, or an import that names a module two ways or climbs out of
   its package: leave out the directory holding it with `--exclude`, or fix
   the import;
+- a symbolic or hard link that gives a file a second name the program uses,
+  such as `beta -> src/alpha` beside `alpha`, a file link `tool.py`, or a
+  link inside a package that an import goes through: replace the link with a
+  copy of what it names, or import that file by one name only;
 - a copy the interpreter running Towel can import from outside the project,
   including one installed in the project's own `.venv`: `--exclude` cannot
   reach it, so run Towel from an environment where that name is this tree,
@@ -214,12 +218,26 @@ gets none. Each kind of doubt has its own remedy:
   `click/` beside `dependencies = ["click>=8"]`, which is what the installed
   project imports as `click`: rename the directory or leave it out with
   `--exclude`, or drop the requirement if the directory is what the program
-  means.
+  means;
+- a directory lacking a module the program imports under its name, from
+  outside it, such as a `third_party/click/` holding `utils.py` when the
+  program also imports `click.core`: if the program means the library,
+  rename the directory or leave it out with `--exclude`; if it means the
+  directory, fix that import or leave out the directory holding it. The
+  directory's own import of a module it lacks (a generated `_version.py`)
+  is no such sign, and nor is any when the project's metadata names the
+  project as the name's distribution, as sphinx's names `Sphinx`.
 
 The requirements read are PEP 621's dependencies and extras, PEP 735's
-dependency groups, Poetry's dependency tables and groups, setup.cfg's
-`install_requires` and `extras_require`, the lockfiles uv, Poetry, PDM and
-Pipenv write, and `requirements*.txt` at the project root. A distribution is
+dependency groups, Poetry's dependency tables and groups, the development
+dependencies of `[tool.uv]` and `[tool.pdm]`, every hatch environment's
+`dependencies` and `extra-dependencies` (pyproject.toml or hatch.toml),
+setup.cfg's `install_requires` and `extras_require`, a Pipfile, the
+lockfiles uv, Poetry, PDM and Pipenv write, and the requirements files at
+the project root: `requirements*.txt`, `*-requirements.txt` and
+`*_requirements.txt`, the same with pip-tools' `.in`, and every `.txt` or
+`.in` in `requirements/`, with the files they include. tox.ini, a noxfile
+and CI recipes are not read. A distribution is
 matched to a name by its own normalized name, so one whose import name
 differs (`PyYAML` provides `yaml`) is recognized only where the interpreter
 running Towel can import it: run Towel in the project's own environment.
@@ -229,11 +247,18 @@ it starts, with the remedy for its kind, and refuses when one leaves a name
 of the package it refactors in doubt: an ambiguous name, a file reachable
 under two names, a relative import that climbs out of its package, or a
 top-level name found only inside a package the program also imports as one,
-as `pkg/c.py`'s `import helpers` finds only `pkg/helpers.py`.
+as `pkg/c.py`'s `import helpers` finds only `pkg/helpers.py`. The report
+names the import that treats it as top-level. Only an import that attests
+locates a name, makes it ambiguous, or finds it inside a package: one
+inside `try`/`except ImportError`, under `TYPE_CHECKING`, or in a file
+that changes `sys.path` (a setup.py that appends its package to `sys.path`
+to read its own version) does none of these. One that runs can still load a
+file under a second name, so it still counts for that.
 
 An import of a module the tree lacks refuses nothing, wherever it lies,
 however it is spelled: `from .gone import x`, `from . import gone` or
-`from pkg import gone`, where `pkg`'s initializer binds no `gone`. The
+`from pkg import gone`, where `pkg`'s initializer binds no `gone`. One
+under `if TYPE_CHECKING:` never runs, so it is no such import. The
 run leaves the file making it exactly as it was, neither hosting nor
 borrowing a helper and getting none of its own, and says so, naming the
 file: test data such as sphinx's `need_mocks.py`, which imports a module its

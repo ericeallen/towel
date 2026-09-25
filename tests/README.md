@@ -97,7 +97,10 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   refused when they concern its own package; `test_rename_by_the_programs_names.py`:
   renames follow the program's module names; `test_project_layout_and_imports.py`,
   `test_project_layout_behavior.py`: the project root, configuration and the
-  retired import preferences. The model itself is `test_import_model.py`.
+  retired import preferences. The model itself is `test_import_model.py`;
+  `test_file_under_two_names.py`: a file a link, a hard link or two
+  search-path entries gives two names is in doubt, and a copy in place of
+  the link clears it.
 - **Soundness batteries** — `test_adversarial_semantics.py`,
   `test_adversarial_renaming.py`, `test_*_observational_equivalence.py`:
   instantiation-based equivalence checks and the hostile fixtures behind them.
