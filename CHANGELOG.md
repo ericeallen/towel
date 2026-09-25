@@ -30,6 +30,19 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A typed run on a project reached through a symbolic link now verifies its
+  changes. On macOS that includes every temporary directory, since `/var`
+  is `/private/var`. mypy prints each file by its resolved path, and Towel
+  had matched its answers against the path it was asked about. So every
+  probe went unanswered, with three consequences:
+  - every proposal was declined as code the checker does not look at;
+  - every subtype question read yes;
+  - the check for names typed as `Any` saw no answers, so a missing module
+    could go unnoticed.
+
+  File identities now compare one resolved path throughout. The test suite
+  fails any typed test whose checker declined everything as unlooked and
+  verified nothing, unless that decline is what the test is about.
 - A parallel run could hang for ever. Pair-evaluation workers were forked
   while other threads ran:
   - tqdm's monitor, in every run with the default progress bars;
