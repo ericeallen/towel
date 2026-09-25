@@ -30,6 +30,13 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- Resolving which typing form a name denotes grew exponentially with the
+  number of functions that alias a name to itself (`tok = tok.next_token`,
+  `node = node.parent`), a common way to walk a linked structure. Twelve such
+  functions cost 469 million calls and 371 s, and yapf's `--cross-module`
+  fixed point took 2,083 s. The resolution is now computed once per name and
+  depth, and the same run takes 5 s with byte-identical output. The release
+  corpus's yapf and sphinx runs had timed out on it.
 - inline-snapshot tests that differ only in their literal were extracted
   into one helper, so `snapshot()` read a helper parameter at its call site
   and passing tests failed: 68 of rich-click's 151. inline-snapshot's
