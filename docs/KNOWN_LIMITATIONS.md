@@ -349,10 +349,16 @@ addresses:
   with constants runs nothing. When a name the
   annotations need is defined only after such code, the helper goes before
   it anyway where annotations are postponed (`from __future__ import
-  annotations`), and is declined elsewhere. Cross-file helpers add a module import; a helper
-  import goes after the module's last leading import (after the docstring
-  when there are none), so a script that runs a statement before its
-  imports keeps it first. Static local import cycles are rejected
+  annotations`), and is declined elsewhere. Cross-file helpers add a module
+  import. Every import Towel writes, a helper's and a typed run's `import
+  typing as _typing` alike, goes after each statement ahead of the module's
+  first definition that imports or can run code at import, so a script's
+  `print("loading")` above its imports and a `time.sleep = patch` below them
+  still run before what the new import loads. It goes after the docstring
+  when there is one, and never above a `#!` line, an encoding declaration
+  (line 1 or 2), a file-wide `# type: ignore` or the module's leading
+  comment block. A write that Python would read in another encoding than
+  the file's own is refused, and its proposal dropped. Static local import cycles are rejected
   (including cycles through a package's `__init__`, which `from . import
   name` runs), dynamic ones are not detected. An import under a
   `TYPE_CHECKING` guard, resolved as above, never runs and closes no cycle;

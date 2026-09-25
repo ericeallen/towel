@@ -17,17 +17,20 @@
 A module-level helper is placed before the first definition, after the
 docstring and imports, or after the last definition its annotations name
 when nothing before that point can run code at import (``ImportTimeCode``);
-a method helper goes at
-the end of its class body; a function-local helper goes before the first
-executable statement of its function. The positions are found from the
-parsed module, never from text, so imports inside strings and comments are
-never mistaken for imports. Rendered lines are re-indented to the unit the
-file uses.
+a method helper goes at the end of its class body; a function-local helper
+goes before the first executable statement of its function. A new import
+goes after every statement ahead of the first definition that imports or
+can run code at import, and never above a ``#!`` line, an encoding
+declaration or the leading comment block (:func:`import_line`). The
+positions are found from the parsed module, never from text, so imports
+inside strings and comments are never mistaken for imports. Rendered lines
+are re-indented to the unit the file uses.
 """
 
 from __future__ import annotations
 
 import ast
+import re
 
 from pathlib import Path
 from typing import List, Optional, Sequence, Set, Tuple
@@ -46,6 +49,95 @@ def reindent(line: str, prefix: str) -> str:
     levels = (len(line) - len(stripped)) // 4
     unit = "\t" if "\t" in prefix else "    "
     return prefix + unit * levels + stripped
+
+
+# PEP 263's encoding declaration, which Python honours on line 1 or 2 only.
+_CODING = re.compile(r"^[ \t\f]*#.*?coding[:=][ \t]*[-\w.]+")
+# mypy and pyright ignore a whole file for a ``# type: ignore`` above its first statement.
+_FILE_TYPE_IGNORE = re.compile(r"^[ \t\f]*#\s*type:\s*ignore(?![\w-])")
+
+
+def _is_blank(line: str) -> bool:
+    return not line.strip(" \t\f\r\n")
+
+
+def _is_comment(line: str) -> bool:
+    return line.lstrip(" \t\f").startswith("#")
+
+
+def _after_header(header: Sequence[str]) -> int:
+    """Where an import may go among the comment lines above a module's first statement.
+
+    After the module's leading comment block, its first run of comment lines,
+    where a licence or a description conventionally sits; and in any case
+    after each line whose place matters: a ``#!`` interpreter line, which
+    only line 1 can be, a PEP 263 encoding declaration, which Python reads
+    only on line 1 or 2, and a
+    ``# type: ignore`` that makes the checkers skip the whole file only while
+    no statement comes before it.
+    """
+    index = 0
+    while index < len(header) and _is_blank(header[index]):
+        index += 1
+    while index < len(header) and _is_comment(header[index]):
+        index += 1
+    position = index if index and _is_comment(header[index - 1]) else 0
+    special = [
+        number
+        for number, line in enumerate(header)
+        if (number == 0 and line.startswith("#!"))
+        or (number < 2 and _CODING.match(line))
+        or _FILE_TYPE_IGNORE.match(line)
+    ]
+    return max([position, *(number + 1 for number in special)])
+
+
+def _first_line(statement: ast.stmt) -> int:
+    """The first line of ``statement``, its decorators included."""
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return min(
+            [statement.lineno, *(decorator.lineno for decorator in statement.decorator_list)]
+        )
+    return statement.lineno
+
+
+def import_line(lines: Sequence[str], tree: ast.Module, source: str) -> int:
+    """The 0-based index of the line a new import is inserted before.
+
+    Moving an import earlier is itself a reordering: whatever the import
+    loads then runs before every statement it was placed above. So the
+    import goes after every top-level statement that precedes the module's
+    first definition and either imports or can run code at import
+    (``ImportTimeCode``): a script's ``print("loading")`` above its imports,
+    and a ``time.sleep = patch`` or a ``sys.path`` change below them, all
+    still run before what the new import loads, as they ran before anything
+    the original loaded later. It joins the leading import block where
+    nothing effectful follows the imports, and the project's import sorter
+    merges it there. A module with neither gets the import after its
+    docstring, and never above the lines whose place matters
+    (:func:`_after_header`). Positions come from the parsed module, so text
+    inside comments or docstrings is never mistaken for an import.
+    """
+    body = tree.body
+    first = _first_line(body[0]) if body else len(lines) + 1
+    position = _after_header(lines[: first - 1])
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        position = body[0].end_lineno or body[0].lineno
+    try:
+        runs_code: Sequence[bool] = ImportTimeCode(source).statements()
+    except (SyntaxError, ValueError):
+        runs_code = [True] * len(body)
+    for statement, effectful in zip(body, runs_code):
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            break
+        if effectful or isinstance(statement, (ast.Import, ast.ImportFrom)):
+            position = max(position, statement.end_lineno or statement.lineno)
+    return position
 
 
 class InsertionPoints(EngineState):
@@ -88,32 +180,9 @@ class InsertionPoints(EngineState):
         return lines
 
     def _find_import_position(self, lines: List[str]) -> int:
-        """Return the 0-based line index at which to insert a new import.
-
-        The import goes after the last import statement that precedes the
-        module's first definition, so it joins the leading import block (and
-        the project's import sorter merges it there) while any statement
-        that ran before that block still runs first: a script's
-        ``print("loading")`` above its imports keeps its place. A module with
-        no import before its first definition gets the import right after its
-        docstring. Positions come from the parsed module, so text inside
-        comments or docstrings is never mistaken for an import.
-        """
-        body = self._parse_source("".join(lines)).body
-        position = 0
-        if (
-            body
-            and isinstance(body[0], ast.Expr)
-            and isinstance(body[0].value, ast.Constant)
-            and isinstance(body[0].value.value, str)
-        ):
-            position = body[0].end_lineno or body[0].lineno
-        for statement in body:
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                break
-            if isinstance(statement, (ast.Import, ast.ImportFrom)):
-                position = statement.end_lineno or statement.lineno
-        return position
+        """Return the 0-based line index at which to insert a new import (:func:`import_line`)."""
+        source = "".join(lines)
+        return import_line(lines, self._parse_source(source), source)
 
     def _get_indent(self, line: str) -> str:
         """Get the indentation of a line."""

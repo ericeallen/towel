@@ -101,6 +101,16 @@ class UnencodableText(ValueError):
     """
 
 
+class EncodingNotKept(UnencodableText):
+    """New text, written in its file's encoding, would be read back in another.
+
+    Python takes a file's encoding from its BOM or from a PEP 263 declaration
+    on line 1 or 2, so a line written above the declaration makes the
+    interpreter read the file as UTF-8: a Latin-1 ``"\xc3\xa9"`` then reads
+    as ``"\xe9"``, or does not decode at all.
+    """
+
+
 def _escape(character: str) -> str:
     code = ord(character)
     if code < 0x100:
@@ -165,7 +175,9 @@ def _escaped_for(text: str, encoding: str) -> Optional[str]:
 def encode_like(original: bytes, text: str) -> bytes:
     """``text`` (LF) as bytes in ``original``'s encoding, BOM and newline convention.
 
-    Raises ``UnencodableText`` when that encoding cannot represent ``text``.
+    Raises ``UnencodableText`` when that encoding cannot represent ``text``,
+    and ``EncodingNotKept`` when Python would read the bytes in another
+    encoding: every write keeps the file's encoding as the interpreter sees it.
     """
     encoding = source_encoding(original)
     try:
@@ -181,4 +193,15 @@ def encode_like(original: bytes, text: str) -> bytes:
             f" (U+{ord(character):04X}) on line {line} of the new text"
         ) from error
     newline = dominant_newline(original)
-    return encoded if newline == b"\n" else encoded.replace(b"\n", newline)
+    result = encoded if newline == b"\n" else encoded.replace(b"\n", newline)
+    try:
+        read_as = source_encoding(result)
+    except SyntaxError as error:
+        raise EncodingNotKept(
+            f"the new text declares an encoding Python rejects: {error}"
+        ) from error
+    if read_as != encoding:
+        raise EncodingNotKept(
+            f"the new text would be read as {read_as}, not as the file's own {encoding}"
+        )
+    return result

@@ -166,7 +166,7 @@ def test_an_unencodable_constant_is_escaped_in_every_kind_of_literal() -> None:
     import ast
 
     original = b"# -*- coding: latin-1 -*-\nx = 1\n"
-    text = "x = '€'\ny = f'{x}€\U0001f600'\n"
+    text = "# -*- coding: latin-1 -*-\nx = '€'\ny = f'{x}€\U0001f600'\n"
     written = encode_like(original, text).decode("latin-1")
     assert ast.dump(ast.parse(written)) == ast.dump(ast.parse(text))
     assert "€" not in written
