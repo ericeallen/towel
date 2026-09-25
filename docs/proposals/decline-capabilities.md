@@ -76,3 +76,31 @@ deferred on the same grounds.
 | `global` declared at both sites | A helper with its own `global` would be sound; it is declined as `module_data_lookup` and `moves_scope_declaration`. | semantic harness `misc_global_in_both` |
 | A per-module constant under `--cross-module` | A thunk would be sound. It is common: every module-level `logger`. | semantic harness `bind_x_global_both` |
 | A name used only in a local-variable annotation | Such an annotation never runs, but the name is treated as a run-time read. It declines the pair with a `TYPE_CHECKING` import, and otherwise makes the type a helper parameter. | real-code reproducer `p2_xmod_annotation_only_name` (uvicorn) |
+
+## Found in round 4
+
+These were found by round 4's decline auditor and deferred on the same
+grounds. Each is a decline, never a wrong transformation. The first two are
+places where Towel does not look at all, rather than looks and declines; they
+are the next release's first candidates. Reproducers are in the round-4
+evidence, under `reading/repro/`.
+
+| Decline | What is over-broad | Evidence |
+|---|---|---|
+| Differing expression kinds in a list field | `_unify_lists` gives up whenever list elements differ in node type (`unifier.py`, `_unify_lists`): `load(n)` against `load(n*2)` or `load(n.value)`, `[n, 1]` against `[n+1, 1]`, `a and b` against `a and f(b)`, comparators, dict values. The same difference in a single-valued field is parameterised. The auditor's patch: 37 of 108 pairs fewer declined, and 3 more refactorings on packaging, click, rich and pygments. | `p2_defect_list_element_kinds_never_unify` |
+| `match` case bodies and `except*` bodies | They are never enumerated as block sites. The enumerator walks `body`/`orelse` and handles only `ast.Try`, so a duplicate under `case` or `except*` is never considered, while the same code under `except` is extracted. | `p2_defect_match_case_bodies_never_enumerated`, `p2_defect_except_star_handlers_never_enumerated` |
+| A block containing `await`, `async for` or `async with` | `frame_sensitive_block`. An `async def` helper awaited at each site would be sound. It is routine in async code: 904 of 1,168 frame-sensitive pairs on anyio, httpcore and starlette. | `p2_overbroad_await_block` |
+| Differing module data within one module | `x + LOW` against `x + HIGH`, two constants never rebound, is `module_data_lookup`. An eager argument or a thunk would be sound. | `p2_overbroad_same_module_data` |
+| A subscripted project generic base | `class IntBox(Box[int])`, including PEP 695 spellings, puts the class under `class_machinery_may_transform_methods`. Only `typing.Generic` and the listed bases are accepted subscripted, and the culprit is reported vaguely as `bases of IntBox`. 176 pairs by default, 3,624 across modules; no refactorings lost on the four packages. | `p2_overbroad_subscripted_project_base` |
+| `type` as a base | The methods of a metaclass are declined: 67 pairs by default, 2,213 across modules. | `p2_overbroad_type_as_base` |
+| Standard-library bases not yet verified | `typing.NamedTuple` (29 / 1,037 pairs), `io.*` (106 / 2,364) and `email.policy` (1 / 13). Each needs the same verification as `known_bases.py`'s entries before it is listed. | `p2_overbroad_namedtuple_base` |
+| Project metaclasses | A project decorator can qualify as a plain wrapper; a project metaclass never can. Moving code out of a method into a module function is sound for every pygments lexer method. Hosting a helper in a method the metaclass rewrites, as `LexerMeta` makes `analyse_text` static, is not, so the allowlist's caution is warranted for hosting. This is the 27-of-31 pygments cost. | round-4 pricing of pygments |
+| A lambda passed to a method | `ys.sort(key=lambda v: -v)` is `created_object_escapes`. It is documented under the qualname rule. | `probes/p_sort_key_lambda_method` |
+| A partial-return block | A block that returns on some paths only; a sentinel would do. | reading report, enumeration drops |
+
+**The cost of the decorator and machinery rules together** depends heavily on the
+project. Round 4 measured 33 of 93 refactorings (35%) by default and 39 of 119
+across modules, over packaging, click, rich and pygments. Most of it is
+pygments' project metaclasses. The ten-project figure DECISIONS records, 49 of
+721, is the better estimate of the typical cost; the four-package figure is the
+cost on a metaclass-heavy codebase.
