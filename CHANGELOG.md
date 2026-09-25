@@ -471,8 +471,8 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   - In a file no change touched, an error must match one at the same line.
   - In a file a change touched, the two texts are aligned by a line diff. An
     error on a line the change left alone must match the original's error
-    on that line, and only errors on lines the change wrote are compared by
-    message.
+    on that line. An error on a line the change wrote must match the
+    original's error where that code stood, as described above.
   - A message that names a line fails closed.
   - Each written change's check becomes the reference for the next.
   - The cold confirmation compares the same way.
