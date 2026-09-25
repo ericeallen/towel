@@ -170,3 +170,45 @@ def test_r9xh_a_latin1_borrower_keeps_its_declaration(tmp_path: Path) -> None:
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(tmp_path)},
     )
     assert ran.stdout == "'\\xc3\\xa9 stays'\n"
+
+
+_SUMMARY = (
+    "def summarize_{n}(rows, factor):\n    marker = 0\n    total = 0\n    for r in rows:\n"
+    "        total += len(r) * factor\n    label = f'n={{total}}'\n    marker += 1\n"
+    "    return '{N}' + label.upper() + str(marker)\n"
+)
+
+
+def test_r9xh_the_borrowers_own_patch_still_runs_before_the_host(tmp_path: Path) -> None:
+    """Round 4's P1-7: ``from .a import ...`` went above ``time.sleep = patch``."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'shop'\nversion = '0'\n")
+    package = tmp_path / "shop"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "a.py").write_text(
+        "from time import sleep\n\n\ndef use_sleep():\n    sleep(0)\n\n\n"
+        + _SUMMARY.format(n="a", N="A")
+    )
+    (package / "b.py").write_text(
+        "import time\ntime.sleep = lambda s: print('patched sleep', s)\n\n\n"
+        + _SUMMARY.format(n="b", N="B")
+    )
+    oracle = "import shop.b, shop.a; shop.a.use_sleep(); print(shop.b.summarize_b(['ab'], 2))"
+
+    def run() -> str:
+        return subprocess.run(
+            [sys.executable, "-c", oracle],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(tmp_path)},
+        ).stdout
+
+    before = run()
+    assert _refactor(package, cross_module_helpers=True) > 0
+    lines = (package / "b.py").read_text().splitlines()
+    assert lines.index("from .a import __extracted_func_0") > lines.index(
+        "time.sleep = lambda s: print('patched sleep', s)"
+    )
+    assert run() == before == "patched sleep 0\nBN=41\n"

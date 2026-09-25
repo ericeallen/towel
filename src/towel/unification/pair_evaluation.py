@@ -275,7 +275,6 @@ def _module_namespace_names(
 _IMPORT_CHANGE_REASONS = {
     ImportChange.UNKNOWN: RejectReason.IMPORT_TIME_EFFECTS,
     ImportChange.RUNS_CODE: RejectReason.IMPORT_TIME_EFFECTS,
-    ImportChange.READS_REBOUND_STATE: RejectReason.IMPORT_READS_REBOUND_STATE,
     ImportChange.NEW_REQUIREMENT: RejectReason.NEW_IMPORT_REQUIREMENT,
     ImportChange.CONDITIONAL_HOST: RejectReason.CONDITIONALLY_IMPORTED_HOST,
     ImportChange.OTHER_DISTRIBUTION: RejectReason.OTHER_DISTRIBUTION,

@@ -299,6 +299,14 @@ addresses:
   Calls to the reflection builtins, direct or through an alias the module
   binds by import or assignment, are rejected; rebinding through
   `globals()[...]`, `setattr`, another thread, or a callee is not detected.
+  Nor is rebinding that a new import could reorder: under `--cross-module`
+  a borrower's import of its helper loads the host earlier than the program
+  did, so a host that binds at import what the program rebinds elsewhere,
+  `from time import sleep` where another module or a test sets `time.sleep
+  = patch` or monkeypatches it before importing the host, binds the value
+  it finds then. Towel only places the import after every statement of the
+  borrower's own that runs before its first definition (*Import-time
+  behavior*), so the borrower's own patch still comes first.
 - **Metaclasses and descriptors.** Method extraction into a class assumes the
   usual descriptor protocol. Only a method whose decorators are all known to
   leave its body alone is refactored at all (*Decorators that compile or
@@ -487,18 +495,7 @@ imported (fixtures `xf27`, `xf28`). A module whose classes derive from a
 base with a metaclass of the project's own counts as running code even when
 that metaclass only builds the class, since nothing shows it registers
 nothing; most of Pygments' lexer modules are such, which costs Pygments 12
-of its 23 cross-module helpers. A host whose import-time code reads an
-attribute of another module that some code of the project rebinds is refused
-too (`import_reads_rebound_state`), since the new import loads it earlier than
-the program did: `from time import sleep` binds whatever `time.sleep` holds
-then, and a `time.sleep = patch`, a `monkeypatch.setattr(time, "sleep", ...)`
-or a `config.DEBUG = True` anywhere in the project, tests included, may have
-run first. What it reads counts wherever the module's own scope evaluates an
-expression as it is imported: what it imports from another module, the
-attributes of a module it reads, and the builtins it reads. A write is found
-as `builtin_may_differ_by_module`'s are, so a patch target spelled in a
-string counts, and one computed whole, or made by code outside the project,
-is not seen. Towel also refuses a host
+of its 23 cross-module helpers. Towel also refuses a host
 whose import would require a module the borrower does not already
 import: an unconditional import, including one inside a module-level `if`,
 of anything outside the project, the standard library and the project's
@@ -1527,10 +1524,7 @@ the proposals it built and did not apply, by reason:
   host closes a static import cycle. `import_time_effects`: a cross-file
   helper's host module, which the borrower's import does not already
   load, would run code at import (*Import-time behavior*: a module that
-  prints, registers or connects at import time);
-  `import_reads_rebound_state`: a module it would load reads at import an
-  attribute of another module that the project's code rebinds;
-  `new_import_requirement`: it would require a package outside the project,
+  prints, registers or connects at import time); `new_import_requirement`: it would require a package outside the project,
   the standard library every supported platform and Python has, and the
   declared dependencies no marker limits; `conditionally_imported_host`: the
   program imports the host, or a package it is in, only under a condition;

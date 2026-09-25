@@ -306,7 +306,6 @@ class RejectReason(StrEnum):
     HOST_HAS_STUB = "host_has_stub"
     IMPORT_CYCLE = "import_cycle"
     IMPORT_TIME_EFFECTS = "import_time_effects"
-    IMPORT_READS_REBOUND_STATE = "import_reads_rebound_state"
     IMPURE_EAGER_PARAMETER = "impure_eager_parameter"
     INCOMPLETE_LIFETIME_BLOCK1 = "incomplete_lifetime_block1"
     INCOMPLETE_LIFETIME_BLOCK2 = "incomplete_lifetime_block2"

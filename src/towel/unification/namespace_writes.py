@@ -146,41 +146,13 @@ _MAY_WRITE = re.compile(
 )
 
 
-# The same forms, where an attribute store of any name counts: ``time.sleep = patch``.
-_MAY_WRITE_ANY_ATTRIBUTE = re.compile(
-    r"patch|setattr|delattr|setitem|delitem|__dict__|\bvars\b|\bglobals\b|\blocals\b"
-    r"|\bexec\b|\beval\b|\bmodules\b|import_module"
-    r"|\.\s*[A-Za-z_]\w*\s*(?:(?:[-+*/%@&|^]|//|\*\*|<<|>>)?=(?!=)|[:,])"
-    r"|\bdel\b"
-)
-
-
 def scan_project_writes(root: Path) -> ProjectWrites:
-    """The writes of builtins' names into module namespaces that the Python files under ``root`` make.
+    """The writes into module namespaces that the Python files under ``root`` make.
 
     The directories the consumer scan skips are skipped here too; stubs never
     run and are not read. Past the consumer scan's limit the project cannot
     be read whole, and the answer says so rather than claim no write exists.
-    A write of another name is recorded only where its file also holds a
-    form that may write a builtin's; :func:`scan_attribute_writes` reads them
-    all.
     """
-    return _scan(root, _MAY_WRITE)
-
-
-def scan_attribute_writes(root: Path) -> ProjectWrites:
-    """Every write into a module namespace that the Python files under ``root`` make, of any name.
-
-    What a module reads from another as it is imported, ``from time import
-    sleep`` say, depends on when it is imported wherever the program rebinds
-    that attribute (``time.sleep = patch``, ``monkeypatch.setattr(time,
-    "sleep", ...)``). Read as :func:`scan_project_writes` reads, for every
-    name.
-    """
-    return _scan(root, _MAY_WRITE_ANY_ATTRIBUTE)
-
-
-def _scan(root: Path, may_write: "re.Pattern[str]") -> ProjectWrites:
     project = root.resolve()
     by_path: Dict[Path, List[NamespaceWrite]] = {}
     by_name: Dict[str, List[NamespaceWrite]] = {}
@@ -194,7 +166,7 @@ def _scan(root: Path, may_write: "re.Pattern[str]") -> ProjectWrites:
             if count > MAXIMUM_FILES:
                 return ProjectWrites(project, {}, {}, complete=False)
             path = Path(parent, name)
-            scanned = _file_writes(path, project, may_write)
+            scanned = _file_writes(path, project)
             if scanned is None:
                 continue
             for target, writes in scanned.by_path.items():
@@ -215,16 +187,13 @@ class _FileWrites:
     by_name: Mapping[str, Tuple[NamespaceWrite, ...]]
 
 
-def _file_writes(path: Path, root: Path, may_write: "re.Pattern[str]") -> Optional[_FileWrites]:
-    """What ``path`` writes into module namespaces; None when it cannot run or writes nothing.
-
-    A file ``may_write`` finds nothing in is not parsed.
-    """
+def _file_writes(path: Path, root: Path) -> Optional[_FileWrites]:
+    """What ``path`` writes into module namespaces; None when it cannot run or writes nothing."""
     try:
         data = path.read_bytes()
     except OSError:
         return None
-    if not may_write.search(data.decode("utf-8", errors="replace")):
+    if not _MAY_WRITE.search(data.decode("utf-8", errors="replace")):
         return None
     try:
         tree = ast.parse(data, filename=str(path))
