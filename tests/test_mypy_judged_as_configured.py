@@ -192,6 +192,35 @@ def test_the_worker_answer_carries_what_mypy_said_and_never_a_failure_for_it(
     }
 
 
+def test_r9p2_a_crashed_build_says_where_mypy_crashed_and_on_what(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round 4's D3: a crash inside mypy, or a plugin it loads, was reported as "SystemExit: 2".
+
+    mypy prints the file and line it was checking and exits with 2 while it
+    handles the exception that crashed it, which is what the user can fix;
+    the worker captured that text and dropped it. This crashes the build
+    through mypy's own reporter.
+    """
+    from mypy.errors import Errors, report_internal_error
+
+    def crashing(request: object, cache: str) -> worker._Answered:
+        options = Options()
+        try:
+            raise RuntimeError("r9p2 plugin crashed on pkg.a.__extracted_func_0")
+        except RuntimeError as error:
+            report_internal_error(error, "pkg/a.py", 6, Errors(options), options)
+        raise AssertionError("mypy's reporter always exits")
+
+    monkeypatch.setattr(worker, "_request", crashing)
+    failure = json.loads(worker._answer("{}", "cache"))["failure"]
+    assert failure.startswith(
+        "SystemExit: 2, raised while handling RuntimeError: r9p2 plugin crashed on"
+        " pkg.a.__extracted_func_0; mypy printed:\n"
+    ), failure
+    assert "  pkg/a.py:6: error: INTERNAL ERROR" in failure
+
+
 # --- D9: how a probed module is named ------------------------------------------
 
 
