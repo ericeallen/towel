@@ -585,6 +585,29 @@ that takes the receiver as an argument instead: Towel never adds a method to a
 class that did not already hold the code, and whether such a function belongs
 in a base class or a mixin is left to your review.
 
+### Decorated code
+
+Code is moved out of a function, and a call placed in it, only when every
+decorator that can reach it is known to leave the body alone: the function's
+own decorators, and those of every function and class enclosing it. A
+decorator that compiles or instruments the body it decorates, such as
+typeguard's `@typechecked` or numba's `@njit`, would lose the moved code, so
+the pair is declined and counted under the decorator it names:
+
+```text
+Declined (DEBUG_PROPOSAL_REJECTIONS=1 traces each candidate pair):
+  4 candidate pair(s) declined: decorator_may_transform_body[numba.njit] 4
+```
+
+The known decorators are the standard library's and a few common libraries'
+that were read in their source (`property`, `functools.lru_cache`,
+`contextlib.contextmanager`, `dataclasses.dataclass`, `unittest.mock.patch`,
+`pytest.fixture`, `pytest.mark.*`, `click.command`, and others), and the
+project's own decorators that only return the function, register it, or wrap
+it in a function calling it with its own arguments. [Known
+limitations](KNOWN_LIMITATIONS.md#decorators-that-compile-or-instrument-a-body)
+lists them and what the check does not see.
+
 ## Tips
 
 ### 1. Always Use analyze_files() or analyze_directory() for Cross-File
@@ -643,6 +666,7 @@ simple_proposals = [p for p in proposals if p.parameters_count <= 2]
 - Check `min_lines` - code blocks might be too small
 - Check `max_parameters` - duplicates might differ in too many ways
 - Differing constants become parameters by default; with `parameterize_constants=False` they must match
+- Check `engine.declined_pairs` for `decorator_may_transform_body[...]`: a decorator Towel does not know to leave the body alone, on the functions or an enclosing function or class, keeps their code where it is
 
 ### "Too many proposals"
 

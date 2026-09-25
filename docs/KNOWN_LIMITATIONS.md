@@ -266,9 +266,11 @@ addresses:
   binds by import or assignment, are rejected; rebinding through
   `globals()[...]`, `setattr`, another thread, or a callee is not detected.
 - **Metaclasses and descriptors.** Method extraction into a class assumes the
-  usual descriptor protocol. Methods decorated with anything other than the
-  recognized receiver-preserving decorators receive a module-level helper with
-  the receiver passed explicitly. A class decorator is trusted to leave a
+  usual descriptor protocol. Only a method whose decorators are all known to
+  leave its body alone is refactored at all (*Decorators that compile or
+  instrument a body*); one decorated with any of them but the recognized
+  receiver-preserving decorators receives a module-level helper with the
+  receiver passed explicitly. A class decorator is trusted to leave a
   helper in place only when it is one of `dataclasses.dataclass`,
   `functools.total_ordering`, `typing.final`, `typing_extensions.final` and
   `enum.unique`, reached through the module's own absolute imports; a class
@@ -544,8 +546,9 @@ fails and nothing spells the helper's stored name: a class whose
 a subclass may lie outside the project: one that lets the class's own methods
 through but answers every other name from another object sends
 `self.__extracted_func_0` there too, and the call raises on its instances.
-Local classes, nested classes, duplicated class names, unknown decorators,
-functions nested inside methods, and class-body functions with no parameter or
+Local classes, nested classes, duplicated class names, decorators known to
+leave the body alone but not to preserve the receiver (`mock.patch`,
+`pytest.mark.*`), functions nested inside methods, and class-body functions with no parameter or
 a first parameter other than `self` get a module-level helper that takes the
 receiver explicitly. Additional call sites gathered from the same file join a
 method helper only when they are methods of the same class with the same
@@ -842,6 +845,85 @@ where the evidence comes from:
   when the oracle is closed; a kill signal can leave one there, never in the
   project.
 
+## Decorators that compile or instrument a body
+
+Some decorators do more than wrap the function they decorate. typeguard's
+`@typechecked` recompiles it from its source with a check after every
+annotated assignment, and numba's `@njit` compiles it in nopython mode. Code
+moved out of such a function into a plain helper is no longer checked or
+compiled: the check stops raising, or the kernel calling a Python helper
+stops compiling. So Towel extracts a block, or places a call site, only where
+every decorator that can reach the code is known to leave the body alone, and
+places a helper inside a function or class only under the same condition.
+The decorators that can reach a function's code are its own, those of every
+function enclosing it, and those of every class enclosing it (typeguard
+instruments every method of a decorated class). Anything else is declined
+under `decorator_may_transform_body[...]`, which names the decorator
+(fixtures `r7d_*`).
+
+A decorator is known when it is one of these:
+
+- An entry of `KNOWN_DECORATORS` in `src/towel/unification/decorator_reach.py`,
+  each recording its canonical name and the library version whose source was
+  read to verify it: the builtins `property` (and its `setter`, `getter`,
+  `deleter`), `staticmethod` and `classmethod`; `functools.wraps`, `cache`,
+  `lru_cache`, `cached_property`, `singledispatch`, `singledispatchmethod`,
+  `partialmethod` and, on classes, `total_ordering`; `contextlib.contextmanager`
+  and `asynccontextmanager`; `abc.abstractmethod`; `typing` and
+  `typing_extensions` `overload`, `override`, `final`, `no_type_check`,
+  `runtime_checkable`, `dataclass_transform` and `deprecated` (with
+  `warnings.deprecated`); `dataclasses.dataclass` and `enum.unique` on classes;
+  `unittest.mock.patch` and its `object`, `dict` and `multiple`,
+  `unittest.skip`, `skipIf`, `skipUnless` and `expectedFailure`;
+  `pytest.fixture` and every `pytest.mark.*`; and click's `command` and `group`
+  (without a `cls` argument), `option`, `argument`, `confirmation_option`,
+  `password_option`, `version_option`, `help_option`, `pass_context` and
+  `pass_obj`.
+- A function of the project that Towel can show is a plain wrapper: it returns
+  the function unchanged, perhaps after storing it in a module-level `dict`,
+  `list` or `set` display (a registry) or setting a non-dunder attribute on it,
+  or it returns a wrapper that only calls the function with the wrapper's own
+  arguments, with or without `functools.wraps`. A factory of such a decorator
+  (`@retry(3)`) counts too. It must not read the function's `__code__`,
+  `__globals__`, `__closure__` or any attribute but `__name__`, `__qualname__`,
+  `__module__` and `__doc__`, nor hand it to any callable but `wraps`,
+  `update_wrapper` and a registry's own container methods; a decorator doing
+  anything the analysis cannot show harmless is declined, however harmless it
+  is.
+
+Names are resolved by binding, never by spelling. `from functools import wraps
+as w` makes `@w(f)` `functools.wraps`; a `property` the module or class binds
+itself is not the builtin; `@pytest.mark.parametrize(...)` and
+`@click.option(...)` resolve through the callee of the call, and
+`needs_db = pytest.mark.skipif(...)` makes `@needs_db` that call's decorator. A
+module-level name counts only when every binding the module could give it is
+known, so a compatibility import (`try: from typing import override` ...
+`except ImportError: from typing_extensions import override`) counts and a name
+rebound anywhere in the module to something unknown does not. A decorator
+named through a local of an enclosing function, a method of an object
+(`@app.route("/x")`, `@cli.command()`, `@f.register`), a class, or any other
+expression is declined.
+
+What this does not see:
+
+- **A function handed to a compiler other than as a decorator.** `fast =
+  numba.njit(kernel)`, `f = typechecked(f)`, or a registry that later
+  instruments what it holds, compile code Towel may still move out of
+  `kernel` or `f`.
+- **Instrumentation by other machinery.** A metaclass or `__init_subclass__`
+  that wraps or recompiles every method, and an import hook that rewrites a
+  whole module (typeguard's `install_import_hook`, pytest's assertion
+  rewriting), are not decorators. A same-module helper is instrumented with
+  the rest of its module; a helper shared across modules with `--cross-module`
+  is not, so an assertion moved from a test module into another module loses
+  pytest's rewritten message.
+- **Shadowed library names.** A module of the project named like a
+  third-party library in the list is read as the project's own code, but one
+  named like a standard-library module (`functools.py` at an import root) is
+  taken to be the standard library, as everywhere else in Towel. A class
+  whose metaclass's `__prepare__` fills the class namespace in advance could
+  bind a decorator's name before its body runs; that is not modeled.
+
 ## Conservative rejections
 
 Towel prefers to leave code unchanged rather than transform it under
@@ -852,6 +934,11 @@ nothing prints how many pairs its last analysis declined for each (a pair
 that only repeated another's proposal is not counted), and every run counts
 the proposals it built and did not apply, by reason:
 
+- Decorators. `decorator_may_transform_body[...]`, counted with the
+  decorator it names (`decorator_may_transform_body[typeguard.typechecked]`):
+  a decorator that can reach the code of a block, of a call site, or of the
+  helper's host is not known to leave the body alone. See *Decorators that
+  compile or instrument a body* below.
 - Frame use. `frame_sensitive_block`: the block contains a suspension,
   a namespace read, a frame or stack read, a warning, a loop transfer
   out of the block, a comprehension assignment expression, or a `super()`

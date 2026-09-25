@@ -99,7 +99,15 @@ code.
 Towel checks each proposed extraction by instantiating the helper with each
 call's arguments and comparing it with the block it replaces. It also checks
 name binding, control flow, and evaluation order, and declines transformations
-that fail these checks. It skips trivial extractions that would add
+that fail these checks. It moves no code out of or into a function whose
+decorators, or those of an enclosing function or class, it does not know to
+leave the body alone: a decorator that compiles or instruments its function,
+such as typeguard's `@typechecked` or numba's `@njit`, would lose the moved
+code. The common decorators of the standard library (`property`, `functools`,
+`contextlib`, `typing`, `dataclasses`, `unittest.mock.patch`), of pytest and of
+click, each read in its source, are known, and so are the project's own that
+only wrap or register the function; a pair any other reaches is declined under
+the decorator's name. It skips trivial extractions that would add
 indirection without sharing real logic, wraps arguments that must not be
 evaluated eagerly in zero-argument `lambda`s (see
 [below](#why-some-arguments-are-wrapped-in-lambda)), and leaves naming to you.
