@@ -30,6 +30,31 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A typing name that a helper's annotation needed was imported publicly
+  (`from typing import Callable`). That replaced a same-named binding in
+  every module that star-imports the host. It also replaced one in the host
+  itself, where a star import, a `try` or an assignment had bound the name.
+  `case Callable():` then raised `TypeError`, and a package's own `Any`
+  became `typing.Any`. On click, rich and packaging, 13 modules gained a
+  public name.
+
+  Typing names are now reached through a private `import typing as
+  _typing`, or through the module's own sole `import typing [as t]`.
+- The `from typing import TYPE_CHECKING` written for a new guard rebound a
+  module's own `TYPE_CHECKING`, for example
+  `from pkg.flags import DEBUG as TYPE_CHECKING`, and turned its flag from
+  True to False. A new guard now reads `if _typing.TYPE_CHECKING:`, which
+  mypy and pyright both recognise, unless the module's sole binding of that
+  name is typing's own.
+- A class imported for the checker is bound under a private alias
+  (`from pkg.models import Item as _Item`, spelled `"_Item"`), since
+  checkers carry that import into every star-importer.
+- A new guard carries `# pragma: no cover` only where the project's
+  coverage exclusions would not otherwise match it, so coverage is
+  unchanged.
+- A typing import was skipped when the same line appeared anywhere in the
+  file, even inside a function, and the helper's annotation then raised
+  `NameError` at import.
 - On Python 3.11 and 3.12, Towel compared the syntax trees it builds with
   parsed ones by `ast.dump`. Before 3.13, `ast.dump` spells a field the
   constructor was not given differently from one set empty. On 3.12 the
