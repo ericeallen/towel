@@ -297,3 +297,12 @@ def test_the_audited_alias_refuses_and_a_copy_in_place_of_the_link_clears_it(
     assert ran.returncode == 0, ran.stdout + ran.stderr
     assert "reachable both as" not in ran.stderr
     assert _program(root) == expected
+
+
+def test_a_guarded_import_that_succeeds_still_loads_a_second_name(tmp_path: Path) -> None:
+    """It attests nothing, so places no name; but where it succeeds, the file loads again."""
+    guarded = "import alpha.a\ntry:\n    import src.alpha.b\nexcept ImportError:\n    pass\n"
+    root = _write(tmp_path, {**_ALPHA, "tests/test_a.py": guarded})
+    (problem,) = build_import_model(root, installed=_standard_library_only).problems
+    assert isinstance(problem, FileUnderTwoNames)
+    assert problem.names == ("src.alpha", "alpha")
