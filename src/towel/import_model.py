@@ -67,6 +67,11 @@ end, and are refined where they do; each refinement is argued where it is made:
   ``click`` imports that distribution under the name wherever it is installed,
   so a directory ``click/`` sharing one module with the library is in doubt
   even where this interpreter lacks the library (:func:`_required_elsewhere`).
+  So is one the program imports a module of that it lacks, from outside it:
+  ``third_party/click/`` holding ``utils.py`` is not the ``click`` whose
+  ``click.core`` the program also imports. The directory's own import of a
+  module it lacks, or the project being the distribution of that name,
+  says nothing of another copy (:func:`_lacking_elsewhere`).
   An environment inside the root, the project's own ``.venv``, is outside the
   project: what is installed there is a distribution, not the tree
   (:func:`_in_installation`).
@@ -104,13 +109,16 @@ What the model assumes, and cannot check:
   interpreter Towel runs in stands for the project's (as it already does for
   the type checker);
 - a location holding any module its name's imports need is that name, unless
-  one of those says otherwise. So where this interpreter lacks the library, a
-  directory named like it is taken for it when the project requires it under
-  a different distribution name (``PyYAML`` provides ``yaml``), reaches it
-  only as a dependency's dependency with no lockfile recording it, or
-  installs it from a recipe not read (``tox.ini``, a ``Pipfile``, a CI
-  file, a setup.py); the imports of it the directory does not hold then put
-  only their own files in doubt;
+  one of those says otherwise, or an import from outside it needs one it
+  lacks. So where this interpreter lacks the library, a directory named like
+  it is taken for it only where the program imports nothing of the name the
+  directory lacks, and the project requires the library under a different
+  distribution name (``PyYAML`` provides ``yaml``), reaches it only as a
+  dependency's dependency with no lockfile recording it, or installs it from
+  a recipe not read (``tox.ini``, a noxfile, a CI file, a setup.py); and
+  where the project's metadata names the project itself so, a module the
+  directory lacks is taken to be missing from the project, not held by
+  another copy;
 - what a build leaves out is what its configuration declares, as read by
   :mod:`towel.shipped_files`, and what no import from outside a directory
   shows ships: a module a setup.py or a build hook leaves out of a directory
@@ -154,7 +162,7 @@ from typing import (
 )
 
 from .consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES, ScanLimitExceeded
-from .declared_requirements import Requirement, declared_requirements, normalized_name
+from .declared_requirements import Requirement, declared_requirements, normalized_name, own_names
 from .shipped_files import Artifact, left_out
 
 __all__ = [
@@ -291,6 +299,8 @@ class TopLevelName:
     """What this interpreter would import instead, when something outside the project provides it."""
     required: Optional[str] = None
     """A requirement the project declares on a distribution of this name, which installed provides it."""
+    lacking: Optional[UnresolvedImport] = None
+    """An import, from outside the name's one location, of a module of the name that location lacks."""
     flagged: bool = False
     """Whether a problem leaves the name's location in doubt; a flagged name is never spelled into."""
 
@@ -317,6 +327,8 @@ class Doubt(enum.Enum):
     """A provider the interpreter can import, which no ``--exclude`` reaches."""
     REQUIRED = "a distribution the project requires"
     """A distribution of the name, which is what the installed project imports by it."""
+    LACKING = "a module the tree's copy lacks"
+    """An import of a module of the name that its one location lacks: another copy holds it."""
 
 
 @dataclass(frozen=True)
@@ -334,6 +346,8 @@ class AmbiguousName:
     installed: Optional[str]
     required: Optional[str] = None
     """A requirement the project declares on a distribution of the name, as written and where."""
+    lacking: Optional[UnresolvedImport] = None
+    """An import, from outside the name's one location, of a module of the name it lacks."""
 
     @property
     def names_in_doubt(self) -> FrozenSet[str]:
@@ -351,6 +365,7 @@ class AmbiguousName:
                 (Doubt.TREE, len(self.candidates) > 1),
                 (Doubt.INSTALLED, self.installed is not None),
                 (Doubt.REQUIRED, self.required is not None),
+                (Doubt.LACKING, self.lacking is not None),
             )
             if present
         )
@@ -361,6 +376,13 @@ class AmbiguousName:
             places.append(f"outside the project ({self.installed})")
         if self.required is not None:
             places.append(f"the distribution the project requires ({self.required})")
+        if self.lacking is not None:
+            site = self.lacking.site
+            places.append(
+                f"another {self.name}, holding the {self.lacking.missing} that"
+                f" {site.where(root)} imports ({site.statement()}),"
+                f" which {_shown(self.lacking.location, root)} lacks"
+            )
         return f"{self.name} could be any of: {'; '.join(places)}"
 
 
@@ -374,7 +396,10 @@ class UnresolvedImport:
     Either way it says nothing about where the name lives, which the name's
     imports that do resolve still attest; a name none of whose imports
     resolve is a namesake, and external (:func:`_checked`). So it leaves no
-    name in doubt. The file making it is neither a provider nor given a new
+    name in doubt. It is one only where the location's own file makes it,
+    or the project is the distribution of the name; anywhere else, the
+    import shows another copy of the name, and the name is in doubt
+    (:func:`_lacking_elsewhere`). The file making it is neither a provider nor given a new
     import, and no file is the missing module, so no import is ever spelled
     into it.
     """
@@ -1611,6 +1636,7 @@ def build_import_model(
     installed: Optional[InstalledProbe] = None,
     required: Optional[Iterable[Requirement]] = None,
     left_out_of: Optional[Mapping[Path, FrozenSet[Artifact]]] = None,
+    own: Optional[Iterable[str]] = None,
 ) -> ImportModel:
     """The import model of every Python file under ``root``, outside ``excluded``.
 
@@ -1623,7 +1649,9 @@ def build_import_model(
     declare (:func:`~towel.declared_requirements.declared_requirements`).
     ``left_out_of`` says which modules the build configuration leaves out of
     what ships; it defaults to what ``root``'s configuration declares
-    (:func:`~towel.shipped_files.left_out`).
+    (:func:`~towel.shipped_files.left_out`). ``own`` are the names the
+    project's metadata gives the project itself; they default to
+    :func:`~towel.declared_requirements.own_names` of ``root``.
     Raises :class:`~towel.consumers.ScanLimitExceeded` for a tree too large
     to read, since a partial model could miss the copy that makes a name
     ambiguous.
@@ -1662,8 +1690,13 @@ def build_import_model(
         classified, placing, tree, used_strictly, requirements, lambda name: probe(name, project)
     )
     inside_used = {**inside_used, **modules_inside}
-    names, unresolved = _checked(dict(sorted(classified.items())), absolute, listings)
-    names, unresolved = _required_elsewhere(names, unresolved, requirements)
+    names, lacking = _checked(dict(sorted(classified.items())), absolute, listings)
+    names, lacking = _required_elsewhere(names, lacking, requirements)
+    project_names = own_names(project) if own is None else frozenset(map(normalized_name, own))
+    names, lacking = _lacking_elsewhere(names, lacking, project_names, modules)
+    unresolved = [
+        problem for problems in lacking.values() for problem in problems if problem.site.runtime
+    ]
     located = {
         name: info.candidates
         for name, info in names.items()
@@ -1959,8 +1992,8 @@ def _checked(
     names: Mapping[str, TopLevelName],
     absolute: Mapping[str, Sequence[ImportSite]],
     listings: _Listings,
-) -> Tuple[Dict[str, TopLevelName], List[UnresolvedImport]]:
-    """Each attested name checked against its imports, and the imports its location does not hold.
+) -> Tuple[Dict[str, TopLevelName], Dict[str, List[UnresolvedImport]]]:
+    """Each attested name checked against its imports, and, by name, the imports its location does not hold.
 
     A location that holds none of the modules its name's imports need is not
     that name at all: ``examples/celery/`` beside ``from celery.result import
@@ -1969,10 +2002,11 @@ def _checked(
     name, and each one that does not is a problem, unless it never runs: a
     type-only import is not an import edge (docs/DECISIONS.md, "A type-only
     import is not an import edge"), so its file loads wherever it did. What
-    a type-only import needs still counts in telling a namesake apart.
+    a type-only import needs still counts in telling a namesake apart
+    (:func:`_lacking_elsewhere`), so every unguarded one is returned.
     """
     checked = dict(names)
-    unresolved: List[UnresolvedImport] = []
+    lacking: Dict[str, List[UnresolvedImport]] = {}
     for name, info in names.items():
         location = info.location
         if location is None:
@@ -1986,16 +2020,16 @@ def _checked(
                 missing.append(UnresolvedImport(site, name, location, found.missing))
         if missing and not resolved:
             checked[name] = TopLevelName(name, NameStatus.EXTERNAL, (), info.installed)
-        else:
-            unresolved.extend(problem for problem in missing if problem.site.runtime)
-    return checked, unresolved
+        elif missing:
+            lacking[name] = missing
+    return checked, lacking
 
 
 def _required_elsewhere(
     names: Mapping[str, TopLevelName],
-    unresolved: Sequence[UnresolvedImport],
+    lacking: Mapping[str, List[UnresolvedImport]],
     required: Iterable[Requirement],
-) -> Tuple[Dict[str, TopLevelName], List[UnresolvedImport]]:
+) -> Tuple[Dict[str, TopLevelName], Dict[str, List[UnresolvedImport]]]:
     """Each name the tree places that a distribution the project requires also provides, in doubt.
 
     A project that requires ``click`` imports that distribution under the name
@@ -2019,7 +2053,62 @@ def _required_elsewhere(
     }
     return (
         {**names, **doubted},
-        [problem for problem in unresolved if problem.name not in doubted],
+        {name: problems for name, problems in lacking.items() if name not in doubted},
+    )
+
+
+def _lacking_elsewhere(
+    names: Mapping[str, TopLevelName],
+    lacking: Mapping[str, List[UnresolvedImport]],
+    own: FrozenSet[str],
+    modules: Mapping[Path, _Module],
+) -> Tuple[Dict[str, TopLevelName], Dict[str, List[UnresolvedImport]]]:
+    """Each attested name the program imports a module of that its one location lacks, in doubt.
+
+    ``third_party/click/`` holds ``utils.py`` and the program imports both
+    ``click.utils`` and ``click.core``: that location is no more the name
+    than the library it shares one module with, which the program's own
+    ``import click.core`` shows it reaches. Run where the interpreter lacks
+    click, Towel took the directory for the name and hosted a helper in
+    ``click/utils.py`` that no installation of the program can import
+    (round-4 audit P1-3; docs/DECISIONS.md, "An import problem refuses only
+    when it leaves a name in doubt": "the fix is to put that name in
+    doubt"). An import that lacks is evidence of this only when:
+
+    - it is made from outside the location. The location's own import of a
+      module it lacks, a package's ``_version.py`` its build generates,
+      names itself, not something else;
+    - it may run where the program runs: not guarded, since a guarded import
+      expects to fail, and not in a file that changes ``sys.path``, whose
+      names mean something else. A type-only import counts: the checker
+      reads the program's environment, and it holds the module there;
+    - the name is not one the project's metadata gives the project itself.
+      A distribution of that name is the project, so what its location
+      lacks is missing from the project, as sphinx's test data imports the
+      ``sphinx.missing_module4`` its tests mock, and prompt-toolkit's
+      examples a module it no longer has.
+
+    Such a name's imports its location lacks are then the other copy's, and
+    no problems of their own.
+    """
+    doubted: Dict[str, TopLevelName] = {}
+    for name, problems in lacking.items():
+        info = names[name]
+        if info.status is not NameStatus.ATTESTED or normalized_name(name) in own:
+            continue
+        evidence = next(
+            (
+                problem
+                for problem in problems
+                if not problem.from_inside and not modules[problem.site.file].changes_sys_path
+            ),
+            None,
+        )
+        if evidence is not None:
+            doubted[name] = replace(info, status=NameStatus.AMBIGUOUS, lacking=evidence)
+    return (
+        {**names, **doubted},
+        {name: problems for name, problems in lacking.items() if name not in doubted},
     )
 
 
@@ -2059,7 +2148,7 @@ def _problems(
     (:func:`_places`); so it neither locates a name nor makes one ambiguous.
     """
     problems: List[ImportProblem] = [
-        AmbiguousName(name, info.candidates, info.installed, info.required)
+        AmbiguousName(name, info.candidates, info.installed, info.required, info.lacking)
         for name, info in names.items()
         if info.status is NameStatus.AMBIGUOUS and name in placed
     ]

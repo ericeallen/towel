@@ -441,7 +441,17 @@ where no lockfile records it, and whatever a setup.py, `tox.ini`, a
 noxfile, hatch's environment `overrides` or a CI recipe installs are known
 only when this interpreter can import them: Towel
 runs with the interpreter it was started with, which stands for the
-project's, so run it in the project's own environment. A top-level name
+project's, so run it in the project's own environment. A directory the
+program imports a module of that it lacks, from outside it, is in doubt
+too: `third_party/click/` holding `utils.py` is not the `click` whose
+`click.core` the program also imports (the round-4 audit's P1-3), and
+`--exclude` or a rename resolves it. The directory's own import of a module
+it lacks, a build's `_version.py`, is no such sign, and nor is any when the
+project's metadata names the project itself so: sphinx's test data imports
+a `sphinx.missing_module4` its tests mock, and the distribution named
+`Sphinx` is sphinx itself. So a namesake the program imports only modules
+of that it holds, where the library is unseen as above, is still taken for
+the library. A top-level name
 found only as a module inside a package the program imports as one, as
 `pkg/c.py`'s `import helpers_top` finds only `pkg/helpers_top.py`, is in
 doubt too, and the file making the import runs as a script, so it is given

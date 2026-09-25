@@ -56,6 +56,8 @@ def _standard_library_only(name: str, root: Path) -> Optional[OutsideProvider]:
 
 
 _PACKAGE = {
+    # The project is the distribution zzpkg, so no other copy holds what zzpkg lacks.
+    "pyproject.toml": '[project]\nname = "zzpkg"\n',
     "zzpkg/__init__.py": "",
     "zzpkg/a.py": "",
     "zzpkg/sub/__init__.py": "",
@@ -154,6 +156,7 @@ def test_a_namespace_package_binds_nothing_but_its_modules(tmp_path: Path) -> No
     root = _write(
         tmp_path,
         {
+            "pyproject.toml": '[project]\nname = "zzns"\n',
             "zzns/x.py": "",
             "tests/test_a.py": "import zzns.x\nfrom zzns import generated_at_build\n",
         },
@@ -191,11 +194,7 @@ def test_a_type_only_import_of_a_missing_module_leaves_its_file_free(
     """It never runs, so it is no import edge, and its file loads wherever it did (round-4 P2)."""
     root = _write(
         tmp_path,
-        {
-            **_PACKAGE,
-            "pyproject.toml": '[project]\nname = "zzpkg"\n',
-            importer: _TYPE_ONLY.format(statement=statement),
-        },
+        {**_PACKAGE, importer: _TYPE_ONLY.format(statement=statement)},
     )
     model = build_import_model(root, installed=_standard_library_only)
     assert model.problems == ()

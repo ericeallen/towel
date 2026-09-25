@@ -1060,6 +1060,14 @@ REQUIRED_DISTRIBUTION_REMEDY = (
 )
 """What a user can do about a name a distribution the project requires leaves in doubt."""
 
+LACKING_MODULE_REMEDY = (
+    "For a directory lacking a module the program imports under its name: if the program means"
+    " a library of that name, leave the directory out with --exclude <directory name>, or rename"
+    " it; if it means the directory, fix that import, or leave out the directory holding it with"
+    " --exclude <directory name>."
+)
+"""What a user can do about a name whose one location lacks a module the program imports of it."""
+
 MISSING_MODULE_OUTSIDE_REMEDY = (
     "Fix the import, or leave its directory out with --exclude <directory name>."
 )
@@ -1134,8 +1142,9 @@ def _import_problem_remedies(problems: Sequence["ImportProblem"]) -> str:
     """The remedy for each kind of doubt ``problems`` raise, one line each, in a fixed order.
 
     ``--exclude`` sets aside a stray copy in the tree, but no installed copy,
-    and a directory named like a distribution the project requires is
-    resolved only by telling the two apart.
+    and a directory named like a distribution the project requires, or like
+    a library holding a module it lacks, is resolved only by telling the two
+    apart.
     """
     from towel.import_model import Doubt
 
@@ -1143,6 +1152,7 @@ def _import_problem_remedies(problems: Sequence["ImportProblem"]) -> str:
         Doubt.TREE: STRAY_COPY_REMEDY,
         Doubt.INSTALLED: INSTALLED_COPY_REMEDY,
         Doubt.REQUIRED: REQUIRED_DISTRIBUTION_REMEDY,
+        Doubt.LACKING: LACKING_MODULE_REMEDY,
     }
     present = {doubt for problem in problems for doubt in problem.doubts}
     return "\n".join(remedies[doubt] for doubt in Doubt if doubt in present)

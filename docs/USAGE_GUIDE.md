@@ -214,7 +214,15 @@ gets none. Each kind of doubt has its own remedy:
   `click/` beside `dependencies = ["click>=8"]`, which is what the installed
   project imports as `click`: rename the directory or leave it out with
   `--exclude`, or drop the requirement if the directory is what the program
-  means.
+  means;
+- a directory lacking a module the program imports under its name, from
+  outside it, such as a `third_party/click/` holding `utils.py` when the
+  program also imports `click.core`: if the program means the library,
+  rename the directory or leave it out with `--exclude`; if it means the
+  directory, fix that import or leave out the directory holding it. The
+  directory's own import of a module it lacks (a generated `_version.py`)
+  is no such sign, and nor is any when the project's metadata names the
+  project as the name's distribution, as sphinx's names `Sphinx`.
 
 The requirements read are PEP 621's dependencies and extras, PEP 735's
 dependency groups, Poetry's dependency tables and groups, the development

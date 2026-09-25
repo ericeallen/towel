@@ -33,7 +33,9 @@ whose borrower rebinds ``len`` (``xf17``, ``xf18``, ``xf19``, ``xf22``); and
 ``pkg.y`` never import each other, so neither may gain an import of the
 other (docs/DECISIONS.md, "Import names come from the program");
 ``xf7n_namesake_of_a_required_library``, whose ``zzlib/`` is a namesake of the
-distribution its ``pyproject.toml`` requires; the two
+distribution its ``pyproject.toml`` requires;
+``xf9xi_namesake_lacking_a_module``, whose ``third_party/zzlib/`` lacks the
+``zzlib.core`` the program imports, so is not the ``zzlib`` it imports; the two
 ``xf7fz_extra_typed_read_before_bind_*``, whose block reads a name before
 binding it; and ``xf7fz_late_toplevel_module_in_package``, whose ``pkg/c.py``
 imports a module of ``pkg`` as a top-level name, so runs as a top-level
@@ -48,9 +50,10 @@ command line would: ``xf7t_import_order_is_registration_order`` holds a
 module the sorter's configuration excludes and one whose imports are not in
 its order, and each import registers a plugin.
 
-Three ``xf7n_`` fixtures are projects whose ``run.py`` runs the program as
-it ships rather than from the tree, since only there does their defect
-show: the namesake imports ``zzapp`` beside the installed ``zzlib``;
+Three ``xf7n_`` fixtures, and ``xf9xi_namesake_lacking_a_module``, are
+projects whose ``run.py`` runs the program as it ships rather than from the
+tree, since only there does their defect show: the namesakes import
+``zzapp`` beside the installed ``zzlib``;
 ``xf7n_host_the_wheel_leaves_out`` and ``xf7n_subpackage_the_wheel_leaves_out``
 import ``shop`` without the module hatch, or the subpackage setuptools,
 leaves out of the wheel. Their modules left out may borrow from the ones
@@ -160,6 +163,9 @@ REJECTED = {
     "xf22_borrower_rebinds_builtins_namespace",
     "xf23_relative_import_in_another_package",
     "xf7n_namesake_of_a_required_library",
+    # Round-4 audit P1-3: the program imports a zzlib.core that third_party/zzlib
+    # lacks, so the directory sharing zzlib.utils with the library is in doubt.
+    "xf9xi_namesake_lacking_a_module",
     # Round-3 audit P1-7: the block reads scale before binding it, which only
     # the original's UnboundLocalError shows (incomplete_lifetime_block1).
     "xf7fz_extra_typed_read_before_bind_mypy",
