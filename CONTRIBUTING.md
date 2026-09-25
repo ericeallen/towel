@@ -132,6 +132,18 @@ All code contributions should include tests:
   assignment, or the instantiation check should also keep the property-based
   tests in `tests/test_properties.py` passing, and a new engine defect found on
   real code becomes a hostile fixture
+- Every defect an audit reports becomes a test, so that the next audit need
+  not find it again: at least its reproducer as a hostile fixture, named by
+  your branch's prefix (`tests/hostile_cases/r<prefix>_<family>_<case>.py`,
+  `tests/hostile_crossfile/xf<prefix>_<family>_<case>/`) rather than by the
+  next free number. Until its fix lands the fixture sits in its battery's
+  `KNOWN_DEFECTS`, with the reason from `tests/audit_defects.py`, as a strict
+  expected failure; the fix turns it into an XPASS, which fails the run, and
+  the entry is then removed
+- `tests/test_differential_grammar.py` refactors a fixed set of generated
+  projects and compares each program before and after; a failure prints the
+  seed and the source. `just fuzz` runs many more seeds, and writes each
+  failure as a fixture ready to commit
 - A library module never prints: warnings go to the `towel` logger and traces
   to its child loggers (see `src/towel/diagnostics.py`); a new engine setting
   read from the environment goes into `Settings`, not into `os.environ` reads

@@ -1,0 +1,50 @@
+# Round-3 audit case late_after_block_augassign (late: augassign-after-block-not-a-read). P1-8: a
+# later count += 1 is the only use of count, which the block binds; it is not counted as a read,
+# so the helper does not return count.
+def f1(xs, extra):
+    count = len(xs)
+    total = sum(xs)
+    print("summary", count, total)
+    for item in extra:
+        print("extra", item)
+        count += 1
+    return total
+
+
+def f2(xs, extra):
+    count = len(xs)
+    total = sum(xs)
+    print("summary", count, total)
+    if extra:
+        print("with extras")
+        count += 1
+    return -total
+
+
+if __name__ == "__main__":
+    import sys
+
+    import copy
+    import re
+
+    def _shown(value):
+        return re.sub(r"0x[0-9a-fA-F]+", "0xADDR", repr(value))
+
+    def _calls(label, function, argument_sets):
+        for arguments in argument_sets:
+            arguments = copy.deepcopy(arguments)
+            try:
+                outcome = "-> " + _shown(function(*arguments))
+            except Exception as error:
+                outcome = f"raised {type(error).__name__}: {_shown(str(error))}"
+            print(label, outcome, "| arguments after:", _shown(arguments))
+
+    def _value(label, produce):
+        try:
+            print(label, "=", _shown(produce()))
+        except Exception as error:
+            print(label, "raised", type(error).__name__, _shown(str(error)))
+
+    pkg_m = sys.modules[__name__]
+    _calls('pkg_m.f1', pkg_m.f1, [([1, 2], []), ([1, 2], [9])])
+    _calls('pkg_m.f2', pkg_m.f2, [([1, 2], []), ([1, 2], [9])])

@@ -22,20 +22,25 @@ after refactoring, and that the module shows its importers the same public
 names bound to the same things (``module_faces``), and records per fixture
 whether the current engine transforms it or rejects it, so a change in either
 direction is visible.
+
+A fixture in ``KNOWN_DEFECTS`` shows a defect an audit reported and is not
+yet fixed: it is expected to fail, strictly, and its transformed state is
+not pinned, since the fix may extract it soundly or decline it. When the fix
+lands the fixture passes, pytest reports the XPASS as a failure, and the
+fixture moves from ``KNOWN_DEFECTS`` to ``TRANSFORMED`` or stays out of both.
 """
 
 from __future__ import annotations
 
-import contextlib
-import io
 from pathlib import Path
 import shutil
 import tempfile
+from typing import Dict
 
 import pytest
 
 from tests.hostile_execution import module_faces, observe, parsed_or_skipped
-from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.hostile_refactoring import refactor_script, with_known_defects
 
 CASES = Path(__file__).parent / "hostile_cases"
 
@@ -228,9 +233,112 @@ TRANSFORMED = {
     # An except clause deletes its name as it ends: a try nested in an if
     # leaves nothing bound for the block to lose, and moves.
     "r7bi_except_name_in_nested_block",
+    # The round-3 audit's P1 cases, ported from its families and its grammar
+    # generator (r7fz_grammar_<its case id>_...), each now extracted soundly
+    # by the fix of its defect. Each fixture's opening comment says what it
+    # shows.
+    "r7fz_binding_loop_var_leak",
+    "r7fz_prebound_for_read_in_block",
+    "r7fz_prebound_for_else_prebound",
+    "r7fz_prebound_for_target_attr_prebound",
+    "r7fz_prebound_match_capture_prebound",
+    "r7fz_prebound_def_conditional_rebind",
+    "r7fz_grammar_u0898_for_target_prebound",
+    "r7fz_srctext_semicolons_continuations",
+    "r7fz_thunks2_dict_unhashable",
+    "r7fz_thunks2_dict_unpack",
+    "r7fz_thunks2_lambda_default",
+    "r7fz_thunks2_list_starred",
+    "r7fz_thunks2_set_hash_effect",
+    "r7fz_thunks2_set_unhashable",
+    "r7fz_thunks2_tuple_starred",
+    "r7fz_thunks2_undefined_global",
+    "r7fz_misc_binder_renamed_del_message",
+    "r7fz_grammar_t11254_read_before_bind",
+    "r7fz_late_after_block_augassign",
+    "r7fz_late_after_block_del",
+    "r7fz_grammar_u0417_augassign_after_block",
+    # The round-3 audit's families (r7fz_<family>_<case>): a sample of the
+    # cases the audit found sound, one or more for each thing a family
+    # targets, and every one transformed.
+    "r7fz_binding_builtin_rebound_mid_module",
+    "r7fz_binding_cell_filled_late",
+    "r7fz_binding_cell_read_before_fill",
+    "r7fz_binding_class_attr_vs_local",
+    "r7fz_binding_dunder_name_file_samemodule",
+    "r7fz_binding_global_rebound_by_callee",
+    "r7fz_binding_module_getattr",
+    "r7fz_binding_unbound_local_handler",
+    "r7fz_builtins_differ_in_builtin",
+    "r7fz_builtins_mock_patch_module",
+    "r7fz_builtins_module_shadows_len",
+    "r7fz_builtins_param_named_len",
+    "r7fz_builtins_print_shadowed_local",
+    "r7fz_classhost_dataclass_slots_super",
+    "r7fz_classhost_dunder_class_same_class",
+    "r7fz_classhost_enum_methods",
+    "r7fz_classhost_getattr_fallback",
+    "r7fz_classhost_init_subclass_wraps",
+    "r7fz_classhost_metaclass_registry",
+    "r7fz_classhost_private_same_class",
+    "r7fz_classhost_siblings_plain",
+    "r7fz_classhost_underscore_class_names",
+    "r7fz_classhost_zero_arg_super",
+    "r7fz_cluster_K_cell",
+    "r7fz_cluster_generator_site",
+    "r7fz_cluster_local_K",
+    "r7fz_cluster_method_site",
+    "r7fz_ctrl_break_in_try_finally",
+    "r7fz_ctrl_match_class_pattern",
+    "r7fz_ctrl_nested_try",
+    "r7fz_ctrl_suppress_context",
+    "r7fz_ctrl_walrus_while",
+    "r7fz_directives_fmt_off_region",
+    "r7fz_directives_noqa_on_argument",
+    "r7fz_directives_pragma_branch",
+    "r7fz_directives_type_ignore_line",
+    "r7fz_extra_pragma_with_header",
+    "r7fz_literals_cast_literal",
+    "r7fz_literals_enum_functional",
+    "r7fz_literals_gettext_differ",
+    "r7fz_literals_typevar_name",
+    "r7fz_misc_async_no_await",
+    "r7fz_misc_binder_renamed_unbound_message_inner",
+    "r7fz_misc_block_raises_in_handler_context",
+    "r7fz_misc_decorated_lru_cache",
+    "r7fz_misc_except_star_reraise",
+    "r7fz_misc_generator_return_block",
+    "r7fz_misc_mutable_default_host",
+    "r7fz_misc_nested_host_called_early",
+    "r7fz_misc_super_inside_block",
+    "r7fz_prebound_class_conditional_rebind",
+    "r7fz_prebound_for_tuple_target",
+    "r7fz_prebound_try_except_else_bind",
+    "r7fz_prebound_while_walrus_prebound",
+    "r7fz_prebound_with_enter_raises_caught",
+    "r7fz_srctext_bom",
+    "r7fz_srctext_cp1252_quotes",
+    "r7fz_srctext_crlf",
+    "r7fz_srctext_form_feed",
+    "r7fz_srctext_fstring_nested_quotes",
+    "r7fz_srctext_latin1_literals",
+    "r7fz_srctext_named_escape",
+    "r7fz_srctext_tabs_indent",
+    "r7fz_thunks2_lambda_kwdefault",
+    "r7fz_thunks2_plain_first",
+    "r7fz_thunks2_property_first",
+    "r7fz_thunks2_two_thunks_order",
+    "r7fz_thunks_call_arg_order",
+    "r7fz_thunks_conditional",
+    "r7fz_thunks_dict_order",
+    "r7fz_thunks_lambda_default_first",
+    "r7fz_thunks_match_guard",
+    "r7fz_thunks_short_circuit_and",
 }
 # r7sp_directive_on_a_shared_line is declined: each block starts after, or
 # ends before, a statement that stays on a line carrying a directive.
+# r7fz_grammar_u0217_read_before_bind, a P1-7 case, is declined since its fix:
+# its block reads v6 before binding it (incomplete_lifetime_block1).
 # r153_class_definition_reads left the set when a class defined in the block
 # began to decline it: every instance and the class itself show the helper in
 # their qualified names. Its reads are still what free_variables reports.
@@ -242,12 +350,18 @@ TRANSFORMED = {
 # r86_annotated_assignment_live left the set when the trivial-helper filter
 # began declining its shared block, which binds only a literal and a parameter.
 
+KNOWN_DEFECTS: Dict[str, str] = {}
+"""Fixtures whose defect is reported and not yet fixed, each with its reason from
+``tests/audit_defects.py``. None is open: every round-3 P1 fixture passes."""
+
 
 def _run(script: Path) -> tuple[int, str, list[str]]:
     return observe(script.name, script.parent)
 
 
-@pytest.mark.parametrize("case", sorted(path.stem for path in CASES.glob("*.py")))
+@pytest.mark.parametrize(
+    "case", with_known_defects(sorted(path.stem for path in CASES.glob("*.py")), KNOWN_DEFECTS)
+)
 def test_refactoring_preserves_program_output(case: str) -> None:
     parsed_or_skipped(CASES / f"{case}.py")
     with tempfile.TemporaryDirectory(prefix="towel-hostile-") as directory:
@@ -258,15 +372,14 @@ def test_refactoring_preserves_program_output(case: str) -> None:
         after.parent.mkdir()
         shutil.copy(CASES / f"{case}.py", before)
         shutil.copy(CASES / f"{case}.py", after)
-        engine = UnificationRefactorEngine(min_lines=3)
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            _, applied, _ = engine.refactor_to_fixed_point(str(after))
+        applied = refactor_script(after)
         transformed = before.read_bytes() != after.read_bytes()
         assert transformed == (applied > 0)
         assert _run(after) == _run(before)
         if transformed:
             # No public name of the module appears, disappears, or changes meaning.
             assert module_faces(after.parent, ["m"]) == module_faces(before.parent, ["m"])
-        assert transformed == (case in TRANSFORMED), (
-            "rejected" if not transformed else "transformed"
-        )
+        if case not in KNOWN_DEFECTS:
+            assert transformed == (case in TRANSFORMED), (
+                "rejected" if not transformed else "transformed"
+            )
