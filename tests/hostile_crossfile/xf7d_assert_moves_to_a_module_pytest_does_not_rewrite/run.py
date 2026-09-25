@@ -1,8 +1,9 @@
-# pytest rewrites the asserts of test_values.py and not those of checks.py, so
-# a failing assert says more in the one than in the other. A helper shared by
-# the two, hosted in checks.py, would take the test's assert out of the module
-# pytest rewrites; hosted in test_values.py, it would give checks.py's assert
-# pytest's message. Either changes an AssertionError's message.
+# pytest rewrites the asserts of check_values.py, which python_files names,
+# and not those of checks.py, so a failing assert says more in the one than
+# in the other. A helper shared by the two, hosted in checks.py, would take
+# the test's assert out of the module pytest rewrites; hosted in
+# check_values.py, it would give checks.py's assert pytest's message. Either
+# changes an AssertionError's message.
 import contextlib
 import io
 import sys
