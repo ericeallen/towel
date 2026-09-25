@@ -899,7 +899,11 @@ where the evidence comes from:
   four proposals there had been declined as unreachable). A language server
   asked about such a file never answered, and the run waited a minute and
   then gave the server up; the marker a settle waits for now goes where the
-  server reports. A file no configured checker reports on is changed as the
+  server reports, spelled as the server knows its workspace (a target outside
+  `include = ["src"]` had its marker written in `src` under the resolved
+  `/private/var` spelling of a copy made in `/var`, and waited out the minute
+  all the same), and, for an `include` that names no directory outright, in
+  the first directory whose files it matches. A file no configured checker reports on is changed as the
   body of an unannotated function is, since the project's own check says
   nothing there on any platform, and its helper takes only the annotations
   its sites declare, completed with `Any`: nothing would check an inferred
