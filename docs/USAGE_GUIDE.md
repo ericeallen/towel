@@ -305,13 +305,25 @@ checker cannot type. The errors are left as they are. Every later check is
 compared with them, and a change is rejected only for an error they do not
 account for. In a file no change has touched an error must match one at the
 same line. In a file a change has touched, the texts before and after are
-aligned by a line diff: an error on a line the change left alone must match one
-on that line wherever it now stands, and the errors on the lines the change
-wrote (the helper, the call sites, an import) are counted by message against
-those on the lines it replaced, since that is where a duplicated block's error
-moves from. A message that names a line (mypy's `Name "x" already defined on
-line 12`) therefore reappears as new when its line moves, and rejects the
-change rather than hide an error. Once a driver writes a
+aligned by a line diff, and an error is accounted for only by the original's
+error where it stood:
+
+- on a line the change left alone, by the original's error on that line,
+  wherever the line now stands;
+- in the helper's body, by an error with the same message at the same
+  statement of one copy of the block the helper was made from, each error
+  once, the copy chosen being the one that leaves the fewest errors
+  unexplained. Merging two copies into one helper frees the other copy's
+  errors, and they account for nothing, so a new error cannot hide behind a
+  message the second copy happened to share;
+- anywhere else the change wrote (a call site, an import), by an error with the
+  same message on the lines that stretch of the diff replaced, which for a call
+  site is its own copy.
+
+Any other error is new, and so is every error in a changed file whose text
+before or after is unknown. A message that names a line (mypy's `Name "x"
+already defined on line 12`) therefore reappears as new when its line moves,
+and rejects the change rather than hide an error. Once a driver writes a
 change, the change's own check is the reference for the next, so an error one
 change removed cannot be spent by another; direct `apply_refactoring` calls,
 whose results the engine does not see written, keep comparing with the
