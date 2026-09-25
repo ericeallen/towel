@@ -30,6 +30,35 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A verdict that nothing rebinds a name a block reads was memoized under the
+  structure of the block and its function. It then answered for identical
+  code whose enclosing function rebinds that name with `nonlocal`, in the
+  same module or in another. The name was passed to the helper as an
+  argument, and so read before the rebinding.
+
+  The same key let a top-level copy of a block lend its bindings and escape
+  verdict to an identical copy inside a loop. That copy was then extracted
+  without returning the variable the loop reads next.
+
+  Block guards and per-block analyses are now memoized per block site: the
+  module's source, and the positions of the function and the block. On
+  rich, one core, analysis takes about 6% longer, and the output is
+  unchanged. A test runs the analysis with every memo disabled and requires
+  the same verdicts, so a cache key that leaves out a dependency fails the
+  suite.
+- A block that spells a class-private name only as a parameter, or in an
+  import's module or member, was moved out of its class. There the name is
+  not mangled:
+  - `(lambda __p=0: 7)(__p=y)` raised `TypeError` in a method and returned 7
+    in a module-level helper;
+  - `import __tool` inside `class A` imports `_A__tool`, but `__tool` in a
+    helper.
+
+  Every position CPython mangles now counts. This is checked against the
+  interpreter's own symbol tables for all 37 identifier positions in its
+  grammar. A call's keywords are compared with the parameters as the class
+  stores them, so the same call is declined even when the helper stays in
+  the class, where its `TypeError` would name the helper.
 - A typing name that a helper's annotation needed was imported publicly
   (`from typing import Callable`). That replaced a same-named binding in
   every module that star-imports the host. It also replaced one in the host
