@@ -1057,7 +1057,21 @@ itself is not the builtin; `@pytest.mark.parametrize(...)` and
 module-level name counts only when every binding the module could give it is
 known, so a compatibility import (`try: from typing import override` ...
 `except ImportError: from typing_extensions import override`) counts and a name
-rebound anywhere in the module to something unknown does not. A decorator
+rebound anywhere in the module to something unknown does not. So does every
+binding the rest of the program could give it, at whatever module the name
+passes through: `enable_checks.py` setting `app.checks.checked =
+typeguard.typechecked` before `app.core` imports the no-op `checked` declines
+the code under it. Every write the builtins' question counts (above) counts
+here for a decorator's name, from anywhere in the project, tests included:
+an attribute store, `setattr` with that name or a computed one, a store into
+the module's `__dict__`, the module's own `globals()` before or after the
+definition, `mock.patch` and `monkeypatch.setattr`. An attribute store at the top level of its module, `mod.name = value`, adds its
+`value` as one more possibility, read there, so `functools.cache =
+functools.lru_cache(maxsize=None)` keeps `@functools.cache` known; any other
+write makes the name unknown. A library's name counts the writes into its
+module by name (`functools.cache = ...`, `builtins.property = ...`)
+(fixture `r9dc_decorator_rebound_by_another_module`). A star import makes
+every name of the module unknown. A decorator
 named through a local of an enclosing function, a method of an object
 (`@app.route("/x")`, `@cli.command()`, `@f.register`), a class, or any other
 expression is declined.
@@ -1167,6 +1181,16 @@ What this does not see:
   taken to be the standard library, as everywhere else in Towel. A class
   whose metaclass's `__prepare__` fills the class namespace in advance could
   bind a decorator's name before its body runs; that is not modeled.
+- **Module objects replaced, and writes the scan does not read.** A write
+  into a decorator's module is seen in the forms the builtins' question lists
+  above; not seen are a module replaced whole (`sys.modules["app.checks"] =
+  fake`, or `app.checks = fake` on the package where a relative import
+  reaches the submodule), an attribute store as the target of a `for`, a
+  `with` or a comprehension, a module object reached other than by an import,
+  `importlib.import_module`, `getattr` with a spelled name or `sys.modules`,
+  and what code outside the project does. Any call whose first argument spells a dotted name
+  (`logging.getLogger("app.checks")`) counts as a write of its last part, as
+  it does for the builtins, and may decline code that is safe.
 
 ## Conservative rejections
 

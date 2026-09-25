@@ -834,6 +834,203 @@ def test_decorator_spelling_verdict(tmp_path: Path, case: Spelling) -> None:
     assert _verdict(tmp_path, case) == case.refused
 
 
+# -- What the rest of the program may bind a decorator's name to ------------------
+#
+# Round-4 audit P1-07: ``app.checks.checked`` was a no-op, and a test setup
+# module set ``app.checks.checked = typeguard.typechecked`` before ``app.core``
+# was imported, so the function it decorated was instrumented after all. A
+# binding is known only if every write the program may make over it is known.
+
+_CHECKED = "def checked(fn):\n    return fn\n"
+
+
+def _rebound(
+    name: str,
+    rebinding: str,
+    refused: Optional[str],
+    *,
+    where: str = "enable.py",
+    checks: str = _CHECKED,
+) -> Spelling:
+    """``@checked``, the plain wrapper of ``pkg/checks.py``, with a module ``where`` beside it."""
+    return Spelling(
+        name,
+        "from pkg.checks import checked\n@checked\ndef f():\n    return 1\n",
+        "f",
+        refused,
+        others={
+            "pkg/__init__.py": "",
+            "pkg/checks.py": checks,
+            **({where: rebinding} if rebinding else {}),
+        },
+        module="pkg/m.py",
+    )
+
+
+_TYPECHECKED = "import typeguard\nimport pkg.checks\npkg.checks.checked = typeguard.typechecked\n"
+
+REBINDINGS: Tuple[Spelling, ...] = (
+    _rebound("no module rebinds it", "", None),
+    _rebound("an attribute store in another module", _TYPECHECKED, "pkg.checks.checked"),
+    _rebound(
+        "an attribute store through a relative import",
+        "import typeguard\nfrom . import checks\nchecks.checked = typeguard.typechecked\n",
+        "pkg.checks.checked",
+        where="pkg/enable.py",
+    ),
+    _rebound(
+        "an attribute store to a known decorator",
+        "import functools\nimport pkg.checks\npkg.checks.checked = functools.cache\n",
+        None,
+    ),
+    _rebound(
+        "an attribute store to a known factory's decorator",
+        "import functools\nimport pkg.checks\n"
+        "pkg.checks.checked = functools.lru_cache(maxsize=None)\n",
+        None,
+    ),
+    _rebound(
+        "an attribute store in a function, whose value is not read",
+        "import functools\nimport pkg.checks\ndef enable():\n"
+        "    pkg.checks.checked = functools.cache\n",
+        "pkg.checks.checked",
+    ),
+    _rebound(
+        "an attribute store of another name",
+        "import pkg.checks\npkg.checks.VERBOSE = True\n",
+        None,
+    ),
+    _rebound(
+        "setattr with its name",
+        "import functools\nimport pkg.checks\nsetattr(pkg.checks, 'checked', functools.cache)\n",
+        "pkg.checks.checked",
+    ),
+    _rebound(
+        "setattr with another name",
+        "import pkg.checks\nsetattr(pkg.checks, 'VERBOSE', True)\n",
+        None,
+    ),
+    _rebound(
+        "setattr with a name computed",
+        "import pkg.checks\ndef enable(name, value):\n    setattr(pkg.checks, name, value)\n",
+        "pkg.checks.checked",
+    ),
+    _rebound(
+        "a store into the module's __dict__",
+        "import typeguard\nimport pkg.checks\n"
+        "pkg.checks.__dict__['checked'] = typeguard.typechecked\n",
+        "pkg.checks.checked",
+    ),
+    _rebound(
+        "an update of the module's __dict__",
+        "import pkg.checks\npkg.checks.__dict__.update(checked=print)\n",
+        "pkg.checks.checked",
+    ),
+    _rebound(
+        "globals() of its own module, after the definition",
+        "",
+        "pkg.checks.checked",
+        checks=_CHECKED + "globals()['checked'] = print\n",
+    ),
+    # Counted before the definition too: an import cycle may run the
+    # decorator between the store and the def.
+    _rebound(
+        "globals() of its own module, before the definition",
+        "",
+        "pkg.checks.checked",
+        checks="globals()['checked'] = print\n" + _CHECKED,
+    ),
+    _rebound(
+        "globals() of its own module with a name computed",
+        "",
+        "pkg.checks.checked",
+        checks=_CHECKED + "def define(name, value):\n    globals()[name] = value\n",
+    ),
+    _rebound(
+        "globals() of another module",
+        "globals()['checked'] = print\n",
+        None,
+    ),
+    _rebound(
+        "mock.patch of it in a test",
+        "from unittest import mock\n@mock.patch('pkg.checks.checked')\n"
+        "def test_it(checked):\n    pass\n",
+        "pkg.checks.checked",
+    ),
+    _rebound(
+        "monkeypatch.setattr of it in a test",
+        "import pkg.checks\ndef test_it(monkeypatch):\n"
+        "    monkeypatch.setattr(pkg.checks, 'checked', print)\n",
+        "pkg.checks.checked",
+    ),
+    _rebound(
+        "the importer's own binding of it",
+        "import typeguard\nimport pkg.m\npkg.m.checked = typeguard.typechecked\n",
+        "typeguard.typechecked",
+    ),
+    Spelling(
+        "a library decorator rebound in the project",
+        "import functools\n@functools.cache\ndef f():\n    return 1\n",
+        "f",
+        "functools.cache",
+        others={"enable.py": "import functools\nimport numba\nfunctools.cache = numba.njit\n"},
+    ),
+    Spelling(
+        "a library decorator rebound to a known one",
+        "import functools\n@functools.cache\ndef f():\n    return 1\n",
+        "f",
+        None,
+        others={
+            "enable.py": "import functools\nfunctools.cache = functools.lru_cache(maxsize=None)\n"
+        },
+    ),
+    Spelling(
+        "a builtin decorator rebound in builtins",
+        "class C:\n    @property\n    def m(self):\n        return 1\n",
+        "C.m",
+        "builtins.property",
+        others={"enable.py": "import builtins\nbuiltins.property = print\n"},
+    ),
+    Spelling(
+        "a builtin decorator's name written into the module",
+        "class C:\n    @property\n    def m(self):\n        return 1\n",
+        "C.m",
+        "builtins.print",
+        others={"enable.py": "import m\nm.property = print\n"},
+    ),
+    Spelling(
+        "functools.wraps of a plain wrapper rebound",
+        "from .decorators import logged\n@logged\ndef f():\n    return 1\n",
+        "f",
+        "logged",
+        others={
+            "pkg/__init__.py": "",
+            "pkg/decorators.py": _WRAPPER,
+            "enable.py": "import functools\nfunctools.wraps = print\n",
+        },
+        module="pkg/m.py",
+    ),
+    Spelling(
+        "the registry of a plain registering decorator rebound",
+        "from .decorators import register\n@register\ndef f():\n    return 1\n",
+        "f",
+        "register",
+        others={
+            "pkg/__init__.py": "",
+            "pkg/decorators.py": "HANDLERS = {}\ndef register(fn):\n"
+            "    HANDLERS[fn.__name__] = fn\n    return fn\n",
+            "pkg/enable.py": "from . import decorators\ndecorators.HANDLERS = None\n",
+        },
+        module="pkg/m.py",
+    ),
+)
+
+
+@pytest.mark.parametrize("case", REBINDINGS, ids=[case.name for case in REBINDINGS])
+def test_r9dc_rebinding_verdict(tmp_path: Path, case: Spelling) -> None:
+    assert _verdict(tmp_path, case) == case.refused
+
+
 # -- The engine declines, and names the decorator --------------------------------
 
 _DUPLICATED = """

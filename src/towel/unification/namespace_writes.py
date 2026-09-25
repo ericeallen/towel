@@ -52,6 +52,11 @@ A target computed whole, and a module object reached other than by an
 import, ``importlib.import_module``, ``getattr`` with a spelled name or
 ``sys.modules`` (a fixture's return value), are not followed, and what code
 outside the project does is not seen at all.
+
+The decorator analysis (``decorator_reach``) asks the same scan about a
+decorator's name, any name, so it reads every file; each write records the
+file making it, and an attribute store at that file's top level the value it
+assigns.
 """
 
 from __future__ import annotations
@@ -84,6 +89,11 @@ class NamespaceWrite:
     """The name written, or :data:`ANY_NAME`."""
     site: str
     """Where, as ``path:line`` below the project root."""
+    writer: Optional[Path] = None
+    """The file making the write, resolved."""
+    value: Optional[ast.expr] = None
+    """What an attribute store in the top-level scope of ``writer`` assigns, the
+    ``value`` of ``mod.name = value``, read there; None for any other write."""
 
 
 _ModuleRef = Union[Path, str]
@@ -107,6 +117,21 @@ class ProjectWrites:
         found = list(self.by_path.get(module, ()))
         for name in (*module_names(module, self.root), ANY_MODULE):
             found.extend(self.by_name.get(name, ()))
+        return tuple(found)
+
+    def into_named(self, dotted: str) -> Tuple[NamespaceWrite, ...]:
+        """The writes that may land in the namespace of the module named ``dotted``, wherever it is.
+
+        For a module outside the project, such as ``functools``: the writes
+        naming it, those into a module computed at run time, and those into
+        any file of the project its path names ``dotted``.
+        """
+        if not self.complete:
+            return (NamespaceWrite(ANY_NAME, f"{self.root} is too large to read whole"),)
+        found = [*self.by_name.get(dotted, ()), *self.by_name.get(ANY_MODULE, ())]
+        for path, writes in self.by_path.items():
+            if dotted in module_names(path, self.root):
+                found.extend(writes)
         return tuple(found)
 
 
@@ -146,12 +171,16 @@ _MAY_WRITE = re.compile(
 )
 
 
-def scan_project_writes(root: Path) -> ProjectWrites:
+def scan_project_writes(root: Path, *, every_file: bool = False) -> ProjectWrites:
     """The writes into module namespaces that the Python files under ``root`` make.
 
     The directories the consumer scan skips are skipped here too; stubs never
     run and are not read. Past the consumer scan's limit the project cannot
     be read whole, and the answer says so rather than claim no write exists.
+    A file is read only when its text names a form of write the builtins'
+    question counts, an attribute store of a builtin's name among them;
+    ``every_file`` reads every file, for a question about any name, such as
+    a decorator's (``decorator_reach``).
     """
     project = root.resolve()
     by_path: Dict[Path, List[NamespaceWrite]] = {}
@@ -166,7 +195,7 @@ def scan_project_writes(root: Path) -> ProjectWrites:
             if count > MAXIMUM_FILES:
                 return ProjectWrites(project, {}, {}, complete=False)
             path = Path(parent, name)
-            scanned = _file_writes(path, project)
+            scanned = _file_writes(path, project, None if every_file else _MAY_WRITE)
             if scanned is None:
                 continue
             for target, writes in scanned.by_path.items():
@@ -187,13 +216,16 @@ class _FileWrites:
     by_name: Mapping[str, Tuple[NamespaceWrite, ...]]
 
 
-def _file_writes(path: Path, root: Path) -> Optional[_FileWrites]:
-    """What ``path`` writes into module namespaces; None when it cannot run or writes nothing."""
+def _file_writes(path: Path, root: Path, gate: Optional[re.Pattern[str]]) -> Optional[_FileWrites]:
+    """What ``path`` writes into module namespaces; None when it cannot run or writes nothing.
+
+    A file whose text ``gate`` does not match is not parsed; None parses every file.
+    """
     try:
         data = path.read_bytes()
     except OSError:
         return None
-    if not _MAY_WRITE.search(data.decode("utf-8", errors="replace")):
+    if gate is not None and not gate.search(data.decode("utf-8", errors="replace")):
         return None
     try:
         tree = ast.parse(data, filename=str(path))
@@ -453,32 +485,37 @@ class _WriteScanner(ast.NodeVisitor):
 
     def visit_Assign(self, node: ast.Assign) -> None:
         for target in node.targets:
-            self._store(target)
+            self._store(target, node.value)
         self.generic_visit(node)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
-        self._store(node.target)
+        self._store(node.target, None)
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         if node.value is not None:
-            self._store(node.target)
+            self._store(node.target, node.value)
         self.generic_visit(node)
 
     def visit_Delete(self, node: ast.Delete) -> None:
         for target in node.targets:
-            self._store(target)
+            self._store(target, None)
         self.generic_visit(node)
 
-    def _store(self, target: ast.expr) -> None:
-        """``mod.open = ...`` and ``mod.__dict__["open"] = ...``, inside unpacking too."""
+    def _store(self, target: ast.expr, value: Optional[ast.expr]) -> None:
+        """``mod.open = ...`` and ``mod.__dict__["open"] = ...``, inside unpacking too.
+
+        ``value`` is what the store assigns, kept only for an attribute store
+        of its own in the file's top-level scope, where it can be read.
+        """
         if isinstance(target, (ast.Tuple, ast.List)):
             for element in target.elts:
-                self._store(element)
+                self._store(element, None)
         elif isinstance(target, ast.Starred):
-            self._store(target.value)
+            self._store(target.value, None)
         elif isinstance(target, ast.Attribute):
-            self._record(self._references.of(target.value), [target.attr], target)
+            kept = value if self._nesting == 0 else None
+            self._record(self._references.of(target.value), [target.attr], target, kept)
         elif isinstance(target, ast.Subscript):
             self._record(self._namespaces(target.value), [_name_of(target.slice)], target)
 
@@ -577,10 +614,15 @@ class _WriteScanner(ast.NodeVisitor):
             return _callee(parent.func) not in _READING_CALLEES
         return True
 
-    def _record(self, modules: Iterable[_ModuleRef], names: Sequence[str], node: ast.AST) -> None:
-        writes = [
-            NamespaceWrite(name, f"{self._shown}:{getattr(node, 'lineno', 0)}") for name in names
-        ]
+    def _record(
+        self,
+        modules: Iterable[_ModuleRef],
+        names: Sequence[str],
+        node: ast.AST,
+        value: Optional[ast.expr] = None,
+    ) -> None:
+        site = f"{self._shown}:{getattr(node, 'lineno', 0)}"
+        writes = [NamespaceWrite(name, site, self._path, value) for name in names]
         for module in modules:
             if isinstance(module, Path):
                 self.by_path.setdefault(module, []).extend(writes)

@@ -39,6 +39,9 @@ binding it; and ``xf7fz_late_toplevel_module_in_package``, whose ``pkg/c.py``
 imports a module of ``pkg`` as a top-level name, so runs as a top-level
 module itself.
 
+The ``r9dc_`` packages are the round-4 audit's decorator cases: a plain
+wrapper rebound by another module before its importer runs, declined.
+
 ``xf7d_assert_moves_to_a_module_pytest_does_not_rewrite`` shares a block that
 holds an assert pytest rewrites in one module and not in the other; its
 ``run.py`` runs pytest and prints each failing assert's message.
@@ -169,6 +172,9 @@ REJECTED = {
     # A test module's assert would move to a module pytest does not rewrite,
     # and the AssertionError pytest reports would lose its explanation.
     "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite",
+    # Round-4 audit P1-07: a plain wrapper that a setup module rebinds to an
+    # instrumenting decorator before its importer runs.
+    "r9dc_decorator_rebound_by_another_module",
 }
 
 TYPED = frozenset(
