@@ -642,3 +642,32 @@ def test_a_top_level_import_of_a_module_inside_the_package_still_refuses_and_its
         _SHOP_PROGRAM,
         lambda: _towel(root, "dry", "--cross-module", "--exclude", "tools", target="zzshop"),
     )
+
+
+# -- An import of a module the tree lacks shows no package (round-4 audit) -------------
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"tests/data/old_case.py": "from src.zzalpha_old import thing\n"},
+        {"src/tools.py": "from .gone import thing\n"},
+    ],
+    ids=["absolute", "relative"],
+)
+def test_an_import_of_a_module_the_tree_lacks_makes_no_stray_init_a_package(
+    tmp_path: Path, extra: Mapping[str, str]
+) -> None:
+    """Round-4 p2_missing_import_refuses: the only use of ``src`` as a package named a gone module.
+
+    That import fails wherever it runs, so it shows nothing about whether
+    ``src/__init__.py`` makes ``src`` a package, and it once put ``zzalpha``
+    in doubt as a top-level name inside one and refused the run.
+    """
+    root = _project(tmp_path / "project", {"src/__init__.py": "", **extra})
+    program = (
+        "import zzalpha.a, zzalpha.b\nprint(zzalpha.a.fa([0, 1, 2, 3]), zzalpha.b.fb([3, -1, 5]))\n"
+    )
+    ran = _refactored_alike(root, ["src"], program, lambda: _towel(root, "dry", "--cross-module"))
+    assert "imported as a top-level name" not in ran.stderr, ran.stderr
+    assert "from .a import __extracted_func" in (root / "src/zzalpha/b.py").read_text()

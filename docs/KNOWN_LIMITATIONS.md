@@ -450,7 +450,8 @@ top-level name located at or around the target, or lies under the target and
 leaves its own file's name in doubt. An import of a module the tree lacks,
 however it is spelled (`from . import gone` and `from pkg import gone` as
 much as `from .gone import x`, where nothing binds `gone`), leaves no name in
-doubt and refuses nothing, from the
+doubt and refuses nothing, and does not make a stray `src/__init__.py` a
+package the program uses, from the
 root, on a package or on a subpackage; the file making it is left exactly as
 it was, with no helper hosted, borrowed or extracted within it; one under
 `if TYPE_CHECKING:` never runs and leaves its file free. The cost is

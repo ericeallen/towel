@@ -1649,7 +1649,7 @@ def build_import_model(
     entries = _top_level_entries(tree)
     strict = {name: entries.get(name, ()) for name in absolute}
     used_strictly = _used_packages(
-        tree, [site for site in sites if site.level or _places(site, modules)], strict
+        tree, [site for site in sites if site.level or _places(site, modules)], strict, listings
     )
     relaxed, inside_used = _relaxed_candidates(tree, used_strictly, placing, strict, listings)
     found = {name: strict[name] or relaxed.get(name, ()) for name in absolute}
@@ -1731,17 +1731,33 @@ def _top_level_entries(tree: _Tree) -> Dict[str, Tuple[Path, ...]]:
 
 
 def _used_packages(
-    tree: _Tree, sites: Iterable[ImportSite], candidates: Mapping[str, Sequence[Path]]
+    tree: _Tree,
+    sites: Iterable[ImportSite],
+    candidates: Mapping[str, Sequence[Path]],
+    listings: Optional[_Listings] = None,
 ) -> Set[Path]:
     """The regular packages the program's imports use as packages.
 
     A relative import uses its file's package and every package it climbs
     into; an absolute import uses every package its module path passes
-    through at any candidate location of its top-level name.
+    through at any candidate location of its top-level name. Given
+    ``listings``, an import naming a module the tree lacks there uses none:
+    it fails wherever it runs, so it cannot show that a stray
+    ``__init__.py`` makes a package. Test data importing a gone
+    ``src.alpha_old`` once put ``alpha`` in doubt that way, and refused the
+    run (docs/DECISIONS.md, "An import problem refuses only when it leaves a
+    name in doubt").
     """
     used: Set[Path] = set()
     for site in sites:
         if site.level:
+            base = _climb(site.file.parent, site.level - 1, tree.root)
+            if (
+                listings is not None
+                and base is not None
+                and _missing_below(base, site, listings) is not None
+            ):
+                continue
             directory = site.file.parent
             for _ in range(site.level):
                 if directory not in tree.packages:
@@ -1753,7 +1769,8 @@ def _used_packages(
         elif site.module is not None:
             parts = site.module.split(".")
             for location in candidates.get(parts[0], ()):
-                used.update(_packages_along(tree, location, parts[1:], site.names))
+                if listings is None or listings.submodules(location, site).missing is None:
+                    used.update(_packages_along(tree, location, parts[1:], site.names))
     return used
 
 
@@ -2124,24 +2141,26 @@ def _relative_problems(
                 if base == tree.root:
                     yield RelativeImportEscapes(site)
                 continue  # A namespace directory no name places: not known to be wrong.
-            if not site.runtime:
-                continue
-            if site.module is None:
-                # ``from . import x`` names a submodule or an attribute the package binds.
-                unbound = listings.unbound(base, site.names)
-                if unbound is not None:
-                    yield RelativeImportMissing(site, "." * site.level + unbound, name)
-                continue
-            parts = site.module.split(".")
-            index = listings.first_missing(base, parts)
-            if index is not None:
-                missing = "." * site.level + ".".join(parts[: index + 1])
-                yield RelativeImportMissing(site, missing, name)
-                continue
-            unbound = listings.unbound(base.joinpath(*parts), site.names)
-            if unbound is not None:
-                missing = "." * site.level + ".".join([*parts, unbound])
-                yield RelativeImportMissing(site, missing, name)
+            missing = _missing_below(base, site, listings) if site.runtime else None
+            if missing is not None:
+                yield RelativeImportMissing(site, "." * site.level + missing, name)
+
+
+def _missing_below(base: Path, site: ImportSite, listings: _Listings) -> Optional[str]:
+    """The first module the relative import ``site`` needs that ``base``, where its climb ends, lacks.
+
+    ``from . import x`` names a submodule or an attribute the package binds;
+    ``from .m import x`` needs ``m``, and ``x`` too where ``m`` is a package
+    that binds no ``x``. Dotted below ``base``, without the leading dots.
+    """
+    if site.module is None:
+        return listings.unbound(base, site.names)
+    parts = site.module.split(".")
+    index = listings.first_missing(base, parts)
+    if index is not None:
+        return ".".join(parts[: index + 1])
+    unbound = listings.unbound(base.joinpath(*parts), site.names)
+    return None if unbound is None else ".".join([*parts, unbound])
 
 
 def _flags(problems: Sequence[ImportProblem]) -> Tuple[FrozenSet[str], FrozenSet[Path]]:
