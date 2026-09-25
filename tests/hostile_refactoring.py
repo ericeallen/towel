@@ -22,6 +22,7 @@ from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Typ
 from _pytest.mark.structures import ParameterSet
 import pytest
 
+from towel.formatting import import_sorter_for_project
 from towel.type_inference import CheckerNotInstalled, TypeOracle, type_oracle_for_project
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -44,10 +45,11 @@ def refactor_package(
     ``cross_module`` is ``--cross-module``. ``typed`` runs with the checker
     the project around ``package`` configures, as ``towel dry`` does by
     default, and skips the calling test where it is not installed; without
-    it no checker runs. The path is resolved first: the checker reports
-    resolved paths, so under a symlinked temporary directory (macOS's
-    ``/var``) a typed run would find none of the code reachable and decline
-    every change.
+    it no checker runs. Modified files are finished with the import sorter
+    the project configures, if any, as the command line finishes them. The
+    path is resolved first: the checker reports resolved paths, so under a
+    symlinked temporary directory (macOS's ``/var``) a typed run would find
+    none of the code reachable and decline every change.
     """
     package = package.resolve()
     oracle: Optional[TypeOracle] = None
@@ -60,7 +62,10 @@ def refactor_package(
             pytest.skip("no type checker is installed for this typed fixture")
     try:
         engine = UnificationRefactorEngine(
-            min_lines=3, cross_module_helpers=cross_module, type_oracle=oracle
+            min_lines=3,
+            cross_module_helpers=cross_module,
+            type_oracle=oracle,
+            file_finisher=import_sorter_for_project(package).tool,
         )
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             results, _ = engine.refactor_directory_to_fixed_point(
