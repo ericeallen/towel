@@ -34,9 +34,10 @@ The model is built once from a project's Python files:
   project requires is named like it; *ambiguous* when any of these fails; and
   *external* when it has no candidate at all.
 - The imports are checked, and each problem is a record, never an exception:
-  every ambiguous name; an import of an attested name that its location does
-  not hold; a location reachable under two names; a relative import that
-  climbs out of its package or names a missing module. A name whose location
+  every ambiguous name; an import that runs, of an attested name, that its
+  location does not hold; a location reachable under two names; a relative
+  import that climbs out of its package, or that runs and names a missing
+  module. A name whose location
   a problem leaves in doubt is not trusted, and nothing is ever spelled into
   it; a file holding a problem's import is never a provider and is given no
   new import.
@@ -364,7 +365,7 @@ class AmbiguousName:
 
 @dataclass(frozen=True)
 class UnresolvedImport:
-    """An import of an attested name naming a module that the name's one location does not hold.
+    """An import that runs, of an attested name, naming a module that the name's one location does not hold.
 
     The import is broken, or what it names exists only where it runs:
     sphinx's test data imports ``sphinx.missing_module4``, which its tests
@@ -506,7 +507,7 @@ class RelativeImportEscapes:
 
 @dataclass(frozen=True)
 class RelativeImportMissing:
-    """A relative import naming a module that does not exist where the climb ends.
+    """A relative import that runs, naming a module that does not exist where the climb ends.
 
     Like an :class:`UnresolvedImport`, it names a module and not a place: a
     package's ``from ._version import __version__`` names a module its build
@@ -1918,7 +1919,10 @@ def _checked(
     that name at all: ``examples/celery/`` beside ``from celery.result import
     AsyncResult`` is a namesake of a library this interpreter lacks, and the
     name is external. Where some import does resolve, the location is the
-    name, and each one that does not is a problem.
+    name, and each one that does not is a problem, unless it never runs: a
+    type-only import is not an import edge (docs/DECISIONS.md, "A type-only
+    import is not an import edge"), so its file loads wherever it did. What
+    a type-only import needs still counts in telling a namesake apart.
     """
     checked = dict(names)
     unresolved: List[UnresolvedImport] = []
@@ -1936,7 +1940,7 @@ def _checked(
         if missing and not resolved:
             checked[name] = TopLevelName(name, NameStatus.EXTERNAL, (), info.installed)
         else:
-            unresolved.extend(missing)
+            unresolved.extend(problem for problem in missing if problem.site.runtime)
     return checked, unresolved
 
 
@@ -2057,7 +2061,10 @@ def _relative_problems(
     directory can hold when a runner imports it as a namespace package, and
     one that climbs from a package into a directory without ``__init__.py``
     holds when that directory is a namespace package of the file's name; the
-    tree says which only when an attested name reaches the file.
+    tree says which only when an attested name reaches the file. A type-only
+    import never runs, so a module it names that does not exist is missing
+    from nothing that loads; one that climbs out still says the checker sees
+    a larger package than the tree shows.
     """
     for path, module in modules.items():
         if module.sites is None or path.parent not in tree.packages:
@@ -2080,6 +2087,8 @@ def _relative_problems(
                 if base == tree.root:
                     yield RelativeImportEscapes(site)
                 continue  # A namespace directory no name places: not known to be wrong.
+            if not site.runtime:
+                continue
             if site.module is None:
                 # ``from . import x`` names a submodule or an attribute the package binds.
                 unbound = listings.unbound(base, site.names)

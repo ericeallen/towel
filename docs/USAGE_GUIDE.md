@@ -233,7 +233,8 @@ as `pkg/c.py`'s `import helpers` finds only `pkg/helpers.py`.
 
 An import of a module the tree lacks refuses nothing, wherever it lies,
 however it is spelled: `from .gone import x`, `from . import gone` or
-`from pkg import gone`, where `pkg`'s initializer binds no `gone`. The
+`from pkg import gone`, where `pkg`'s initializer binds no `gone`. One
+under `if TYPE_CHECKING:` never runs, so it is no such import. The
 run leaves the file making it exactly as it was, neither hosting nor
 borrowing a helper and getting none of its own, and says so, naming the
 file: test data such as sphinx's `need_mocks.py`, which imports a module its

@@ -448,7 +448,8 @@ however it is spelled (`from . import gone` and `from pkg import gone` as
 much as `from .gone import x`, where nothing binds `gone`), leaves no name in
 doubt and refuses nothing, from the
 root, on a package or on a subpackage; the file making it is left exactly as
-it was, with no helper hosted, borrowed or extracted within it. The cost is
+it was, with no helper hosted, borrowed or extracted within it; one under
+`if TYPE_CHECKING:` never runs and leaves its file free. The cost is
 that file's own duplicates, and, when it is a package's `__init__.py`, every
 helper a module outside that package would borrow from a module inside it:
 chardet's `detect` and `detect_all` share a block in its `__init__.py`,

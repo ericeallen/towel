@@ -146,6 +146,9 @@ TRANSFORMED = {
     "xf7fz_modules_three_modules_cluster",
     # Two modules pytest does not rewrite share an assert: either may host it.
     "xf7d_asserts_shared_by_modules_rewritten_alike",
+    # A type-only import of a module the tree lacks never runs, so its file
+    # still shares helpers (round-4 audit, p2_typechecking_missing).
+    "xf9xi_type_only_import_of_a_missing_module",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
