@@ -60,7 +60,8 @@ from .decorator_reach import (
     decorator_refusal,
 )
 from .definite_assignment import definitely_bound_after
-from .statement_facts import loaded_names
+from .function_scope import function_names
+from .statement_facts import bindings_of, loaded_names
 from .assignment_analyzer import (
     has_reassignments_without_bindings,
     own_scope_bindings,
@@ -1064,10 +1065,13 @@ class PairEvaluation(
         free_vars = self._working_free_vars(substitution, aug_assign_vars, free_vars1) - (
             spellings.read_bare - passed
         )
-        # A parameter cannot also be declared global or nonlocal in the helper.
-        globals_to_declare, nonlocals_to_declare, free_vars = self._global_nonlocal_declarations(
-            pair, scope_analyzer, free_vars
-        )
+        # A parameter cannot also be declared global or nonlocal in the helper,
+        # and what the helper declares, it declares for every site.
+        declarations = self._global_nonlocal_declarations(pair, (ctx.func1, ctx.func2), free_vars)
+        if declarations is None:
+            self._debug_reject(RejectReason.SCOPE_DECLARATIONS_DIFFER, pair)
+            return None
+        globals_to_declare, nonlocals_to_declare, free_vars = declarations
         module_names = self._names_kept_free(pair, ctx, free_vars - forced_parameters)
         free_vars -= module_names
         if in_class_body:
@@ -1304,6 +1308,10 @@ class PairEvaluation(
                     return_variables=tuple(unified.ordered_return_variables[0]),
                     bound_in_block=frozenset(analysis.snapshot1.bound_in_block),
                     module_names=free.module_names,
+                    declared=(
+                        function_names(setup.ctx.func1).declared_global,
+                        function_names(setup.ctx.func1).declared_nonlocal,
+                    ),
                 ),
                 scope.dce_node,
                 functions,
@@ -1372,6 +1380,21 @@ class PairEvaluation(
         function = setup.ctx.func1 if block_idx == 0 else setup.ctx.func2
         site = setup.ctx.site1 if block_idx == 0 else setup.ctx.site2
         analyzer = setup.ctx.scope_analyzer if block_idx == 0 else setup.ctx.scope_analyzer2
+        # Python makes a name local to a function if any of its code binds it.
+        # Where the block holds the function's only binding of a name, the
+        # rest of the function would read the name somewhere else once the
+        # block moves, a module name or a builtin where it raised
+        # ``UnboundLocalError``, unless the call statement binds it again.
+        moving = self._moves_only_binding(
+            function, nodes, bindings_of(call_node, into_nested_scopes=False), site=site
+        )
+        if moving:
+            self._debug_reject(
+                RejectReason.MOVES_ONLY_BINDING,
+                pair,
+                detail=f"block{block_idx+1}: {sorted(moving)}",
+            )
+            return None
         if thunk_reads_possibly_unbound_local(
             call_node, self._own_scope_locals(function, site), free.available_names[block_idx]
         ):

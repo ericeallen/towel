@@ -64,8 +64,20 @@ describe belong to that version.
   import, a walrus); may not read a local before it binds it (`scale =
   scale(n)`) unless the call site has the name bound on every path; may not
   carry a `global`/`nonlocal` declaration the caller still uses; may not
-  rebind a name a closure outside the block reads; and may not define a
-  closure over a name the caller rebinds after the block. Names bound in the
+  rebind a name a closure outside the block reads; may not define a
+  closure over a name the caller rebinds after the block; and may not hold
+  its function's only binding of a name the function's other code reads,
+  unless the call assigns the name back. Python makes a name local to a
+  function if any of its code binds it, a bare annotation or a `del`
+  included, so without that binding the function's other reads of the name
+  (before the block, in a nested function, lambda, comprehension or class
+  body, a nested `nonlocal`) would find a module name, a builtin or an
+  enclosing function's variable where they raised `UnboundLocalError` or
+  saw the block's value. A name the block binds that its function declares
+  `global` is declared `global` in the helper too, whatever construct binds
+  it, and two sites whose functions declare a name the blocks spell
+  differently share no helper, nor does a clustered occurrence whose
+  function declares differently from the pair's. Names bound in the
   block and read afterwards are returned, where `count += 1` and `del count`
   read `count` as a load does, including targets of annotated assignments
   and assignment expressions, as is a name bound to a class instantiation or
@@ -1423,7 +1435,10 @@ the proposals it built and did not apply, by reason:
   of it (`scale = scale(n)`, which raises `UnboundLocalError`) where the call
   site may not have the name bound: with the block gone the name may not be
   local to the caller, and the argument would find a module name or raise
-  `NameError`. `module_data_lookup`: the helper would receive module data
+  `NameError`. `scope_declarations_differ`: one site's function declares
+  `global` or `nonlocal` a name the blocks spell and the other's does not,
+  so no one set of declarations in the helper serves both.
+  `module_data_lookup`: the helper would receive module data
   (a module-level assignment) as an argument, snapshotting it. `rebound_external_binding`: the helper would receive a
   name another function rebinds through `global` or `nonlocal`, or a name
   the module's reflection makes unreliable. The names both sites resolve
@@ -1462,7 +1477,11 @@ the proposals it built and did not apply, by reason:
   where no frame reads the method's receiver and class cell.
   `forwarded_callee`: a differing expression in call position
   would be passed as `lambda *args, **kwargs: callee(*args, **kwargs)`,
-  which reads worse than the duplication it removes. `builtin_argument`: the
+  which reads worse than the duplication it removes. `moves_only_binding`:
+  the block holds its function's only binding of a name the function reads
+  elsewhere, before or after the block or from a nested scope, and the call
+  would not bind it again, so the name would stop being local to the
+  function. `builtin_argument`: the
   call would hand the helper a builtin, directly, through a lambda, or in a
   literal container, or one site's function binds a builtin's name that the
   other reads as the builtin (*Module names stay module names*).

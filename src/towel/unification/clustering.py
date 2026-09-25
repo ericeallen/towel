@@ -48,7 +48,7 @@ from .instantiation import instantiation_mismatch
 from .models import FunctionArtifact, FunctionNode, RejectReason, Replacement
 from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
-from .statement_facts import statement_shape
+from .statement_facts import bindings_of, statement_shape
 from .substitution import Substitution
 from .decorator_reach import ModuleSource, decorator_refusal
 from .semantic_safety import (
@@ -81,6 +81,7 @@ from .insertion import InsertionPoints
 from .placement import HelperPlacement
 from .block_analysis import BlockAnalysis
 from .function_index import FunctionIndex
+from .function_scope import function_names, identifiers
 from .models import BlockBindingSnapshot, ClusterContext, HelperTemplate, encloses
 
 
@@ -130,6 +131,8 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         memoizes it on exactly those.
         """
         pair = template.pair
+        if not self._declares_alike(template, candidate):
+            return None
         cluster_renames: List[Dict[str, str]] = [{}, {}]
         # Clustering scans the pair's own file, so both blocks are in its module.
         module = ModuleText(pair.file_path, pair.source1)
@@ -237,6 +240,15 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         # neither of which reads the method's receiver and cell (``SUPER_IN_CALL``).
         if needs_class_body([call_node2]):
             return None
+        # The candidate's other code must not lose the only binding of a name
+        # it reads, unless the call binds it again (``MOVES_ONLY_BINDING``).
+        if self._moves_only_binding(
+            candidate.function,
+            candidate.nodes,
+            bindings_of(call_node2, into_nested_scopes=False),
+            site=candidate.site,
+        ):
+            return None
         # A clustered block reading a builtin cannot join a helper whose sites
         # pass their own local of that name: its call would hand over the
         # builtin, which only ``parameterize_builtins`` permits.
@@ -288,6 +300,20 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         ):
             return None
         return call_node2, call_argument_lines(subst2, 1)
+
+    @staticmethod
+    def _declares_alike(template: "HelperTemplate", candidate: "_ClusterCandidate") -> bool:
+        """Whether the candidate's function declares ``global`` and ``nonlocal`` as the template's does.
+
+        Only the names either block mentions count: the helper's declarations
+        hold for every call, so an occurrence whose function binds a declared
+        name locally, or declares one the template's binds locally, would
+        read or write another variable through it.
+        """
+        mentioned = identifiers((*template.pair.block1_nodes, *candidate.nodes))
+        names = function_names(candidate.function)
+        own = (names.declared_global & mentioned, names.declared_nonlocal & mentioned)
+        return own == (template.declared[0] & mentioned, template.declared[1] & mentioned)
 
     def _add_clustered_replacements(
         self,
@@ -511,6 +537,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             template.return_variables,
             template.module_names,
             template.bound_in_block,
+            template.declared,
         )
 
     def _are_structurally_similar(

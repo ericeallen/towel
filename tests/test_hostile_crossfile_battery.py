@@ -77,7 +77,7 @@ from typing import Dict
 
 import pytest
 
-from tests.hostile_execution import module_faces, observe
+from tests.hostile_execution import ScopeWatch, module_faces, observe
 from tests.hostile_refactoring import refactor_package, with_known_defects
 from tests.test_cli_integration import invoke
 
@@ -180,6 +180,9 @@ REJECTED = {
     # A test module's assert would move to a module pytest does not rewrite,
     # and the AssertionError pytest reports would lose its explanation.
     "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite",
+    # Round-4 audit P1-04 across modules: each block holds its function's only
+    # binding of total, read on the early return (moves_only_binding).
+    "xf9bd_only_binding_across_modules",
 }
 
 TYPED = frozenset(
@@ -244,11 +247,17 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
         after = Path(directory) / "after"
         shutil.copytree(CASES / case, before)
         shutil.copytree(CASES / case, after)
+        scopes = ScopeWatch()
         results = refactor_package(
-            after / "pkg", cross_module=case not in WITHOUT_CROSS_MODULE, typed=case in TYPED
+            after / "pkg",
+            cross_module=case not in WITHOUT_CROSS_MODULE,
+            typed=case in TYPED,
+            file_finisher=scopes,
         )
         transformed = _python_files(after) != _python_files(before)
         assert transformed == (sum(applied for applied, _ in results.values()) > 0)
+        # No change moves a name a kept function reads to another scope.
+        assert scopes.found == []
         assert _run(after) == _run(before)
         if transformed:
             # No module's public names appear, disappear, or change meaning.

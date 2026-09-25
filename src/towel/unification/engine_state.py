@@ -142,6 +142,7 @@ class TemplateKey(NamedTuple):
     return_variables: Tuple[str, ...]
     module_names: FrozenSet[str]
     bound_in_block: FrozenSet[str]
+    declared: Tuple[FrozenSet[str], FrozenSet[str]]
 
 
 class ClusterScanKey(NamedTuple):

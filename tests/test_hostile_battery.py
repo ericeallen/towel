@@ -39,7 +39,7 @@ from typing import Dict
 
 import pytest
 
-from tests.hostile_execution import module_faces, observe, parsed_or_skipped
+from tests.hostile_execution import ScopeWatch, module_faces, observe, parsed_or_skipped
 from tests.hostile_refactoring import refactor_script, with_known_defects
 
 CASES = Path(__file__).parent / "hostile_cases"
@@ -343,6 +343,22 @@ TRANSFORMED = {
     "r9sb_fstring_format_spec",
     "r9sb_binding_target_loads",
     "r9sb_lambda_parameter_capture",
+    # Round-4 audit, P1-04: a block holding its function's only binding of a
+    # name the function reads elsewhere is declined, since the name would stop
+    # being local (r9bd_only_binding_read_before_block, the audit's reproducer;
+    # r9bd_only_binding_deleted_read_after; r9bd_type_alias_only_binding). In
+    # these, only the code after each binding moves, and the binding stays.
+    "r9bd_only_binding_every_binder",
+    "r9bd_only_binding_read_by_nested_scopes",
+    # The controls: the call assigns the name back, and a comprehension's own
+    # target of the same spelling reads nothing of the function's.
+    "r9bd_only_binding_kept_local",
+    # A helper declares global every name its sites' functions declare and
+    # the block binds, by any construct; sites whose functions declare
+    # differently share no helper for code touching the name, and only what
+    # follows the binding moves.
+    "r9bd_global_bound_by_every_binder",
+    "r9bd_global_declared_at_one_site",
 }
 # r7fz_classhost_init_subclass_wraps and r7fz_classhost_metaclass_registry,
 # which the round-3 audit found extracted soundly, are declined since code
@@ -393,9 +409,14 @@ def test_refactoring_preserves_program_output(case: str) -> None:
         after.parent.mkdir()
         shutil.copy(CASES / f"{case}.py", before)
         shutil.copy(CASES / f"{case}.py", after)
-        applied = refactor_script(after)
+        scopes = ScopeWatch()
+        applied = refactor_script(after, file_finisher=scopes)
         transformed = before.read_bytes() != after.read_bytes()
         assert transformed == (applied > 0)
+        # No change Towel rendered moves a name a kept function reads to
+        # another scope: every local a function loses goes into the helper
+        # with each read of it.
+        assert scopes.found == []
         assert _run(after) == _run(before)
         if transformed:
             # No public name of the module appears, disappears, or changes meaning.

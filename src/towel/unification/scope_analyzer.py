@@ -22,7 +22,11 @@ from typing import Dict, FrozenSet, Iterator, List, Literal, Optional, Sequence,
 from dataclasses import dataclass, field
 from .builtins import filter_builtins
 from .models import FunctionNode
-from .statement_facts import import_binding_names, pattern_capture_names  # noqa: F401
+from .statement_facts import (  # noqa: F401
+    bindings_of,
+    import_binding_names,
+    pattern_capture_names,
+)
 from .parameters import parameter_names, parameter_nodes
 from .visitors import (
     ScopeVisitor,
@@ -473,6 +477,8 @@ class ScopeAnalyzer(ScopeVisitor):
 
         # Cache for free-variable analysis (keyed by node identity tuple)
         self._free_var_cache: Dict[Tuple[ast.AST, ...], Set[str]] = {}
+        # Every name any code of the analyzed tree binds, by any construct.
+        self._bound_anywhere: FrozenSet[str] = frozenset()
 
     def analyze(self, tree: ast.AST) -> Scope:
         """Analyze an AST and return the root scope."""
@@ -487,6 +493,9 @@ class ScopeAnalyzer(ScopeVisitor):
             # one built at construction, so its scope ids start at zero.
             self.root_scope = self._create_scope(None)
         self.analyzed_tree = tree
+        # The scopes record no binding for ``+=``, ``del``, a starred target or
+        # a ``type`` statement, and each of those makes its name local too.
+        self._bound_anywhere = bindings_of(tree, into_nested_scopes=True)
         self.current_scope = self.root_scope
         self.visit(tree)
         self._external_binding_hazards = self._summarize_external_binding_hazards(tree)
@@ -761,8 +770,10 @@ class ScopeAnalyzer(ScopeVisitor):
 
         # A builtin spelling can be rebound in any lexical scope. Retain names
         # with a known binding; over-approximating shadows is safe because an
-        # unshadowed builtin can also be passed explicitly to the helper.
-        bound_names: Set[str] = set()
+        # unshadowed builtin can also be passed explicitly to the helper. Any
+        # binding counts: ``id += 1`` alone makes ``id`` local to its function,
+        # and a helper reading it bare would find the builtin.
+        bound_names: Set[str] = set(self._bound_anywhere)
         scopes: List[Scope] = [self.root_scope]
         while scopes:
             scope = scopes.pop()

@@ -117,7 +117,11 @@ flowchart TD
       same-file sites that can share the helper (`clustering.py`); a call
       that would pass a callee as `lambda *args, **kwargs: callee(*args,
       **kwargs)`, or that names something the site cannot resolve, declines
-      the pair (`forwarded_callee`, `undefined_names_in_call`); so do tool
+      the pair (`forwarded_callee`, `undefined_names_in_call`), and so does
+      a call replacing a block that holds its function's only binding of a
+      name the function reads elsewhere, unless the call binds the name
+      again: the name would stop being local to the function
+      (`moves_only_binding`, `function_scope.py`); so do tool
       directives the two blocks do not carry alike, or whose reach the
       moved code or its call would leave (`directives_differ`,
       `directive_on_argument`, `directive_outlives_block`,
@@ -1510,7 +1514,7 @@ but the ideas and their names are from the literature.
 | Pair pre-filter | `block_signature.py` |
 | Per-statement facts and the weak per-node memo | `statement_facts.py` |
 | Verification | `instantiation.py` |
-| Scope and bindings | `scope_analyzer.py`, `binding_detector.py`, `assignment_analyzer.py` |
+| Scope and bindings | `scope_analyzer.py`, `binding_detector.py`, `assignment_analyzer.py`, `function_scope.py` |
 | Visitor bases (Template Method) and shared visitors | `visitors.py` |
 | Liveness and orphans | `definite_assignment.py`, `orphan_detector.py` |
 | Safety guards and the pre-scan | `semantic_safety.py` |
