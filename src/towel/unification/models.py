@@ -331,6 +331,8 @@ class RejectReason(StrEnum):
     RETURN_VERSUS_VARIABLES = "return_versus_variables"
     RUN_BY_PATH_IMPORT = "run_by_path_import"
     SCOPE_DECLARATIONS_DIFFER = "scope_declarations_differ"
+    # Counted with the callee it names: source_reading_callee[inline_snapshot.snapshot].
+    SOURCE_READING_CALLEE = "source_reading_callee"
     SUPER_IN_CALL = "super_in_call"
     TRIVIAL_FORWARDING_HELPER = "trivial_forwarding_helper"
     TRIVIAL_RETURN_BLOCKS = "trivial_return_blocks"

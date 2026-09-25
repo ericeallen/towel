@@ -46,6 +46,11 @@ wrapper rebound by another module before its importer runs, declined; and
 star imports, one whose provider's ``__all__`` cannot bind the decorators,
 extracted, and two that do bind an instrumenting ``staticmethod``, declined.
 
+``r9sr_inline_snapshot`` holds the fourth audit's reproducer: two tests that
+differ in the literal each passes to ``snapshot()``. A stub of inline-snapshot
+beside ``pkg``, imported under the library's name, keys each call by its
+position as the library does, and its ``run.py`` runs the tests under pytest.
+
 ``xf7d_assert_moves_to_a_module_pytest_does_not_rewrite`` shares a block that
 holds an assert pytest rewrites in one module and not in the other; its
 ``run.py`` runs pytest and prints each failing assert's message.
@@ -171,6 +176,9 @@ TRANSFORMED = {
     # Round-4 audit P2-02: a star import whose provider's __all__ cannot bind
     # staticmethod or property left both unknown.
     "r9dc_star_import_that_cannot_bind_a_decorator",
+    # Round-4 audit: each inline-snapshot call keeps its place, and the code
+    # before it is still shared.
+    "r9sr_inline_snapshot",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
@@ -242,9 +250,9 @@ TYPED = frozenset(
 )
 """Packages run with the checker their ``pyproject.toml`` configures."""
 
-WITHOUT_CROSS_MODULE = TYPED | {"xf9up_newer_syntax_hides_hand_decoration"}
-"""Packages run without ``--cross-module``: every typed one so far, as the audit ran them, and
-the default-mode refusal."""
+WITHOUT_CROSS_MODULE = TYPED | {"xf9up_newer_syntax_hides_hand_decoration", "r9sr_inline_snapshot"}
+"""Packages run without ``--cross-module``: every typed one so far, as the audit ran them, the
+default-mode refusal, and the inline-snapshot fixture, whose defect the audit found without it."""
 
 KNOWN_DEFECTS: Dict[str, str] = {}
 """Packages whose defect is reported and not yet fixed, each with its reason from

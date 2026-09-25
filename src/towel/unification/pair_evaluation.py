@@ -135,6 +135,7 @@ from .import_graph import (
     relative_imports_resolve_alike,
     would_create_import_cycle,
 )
+from .source_readers import calls_source_reader, source_reader_in
 from .splicing import BlockColumns
 from .thunk_inlining import inline_leading_thunks
 from .typing_forms import ModuleText
@@ -681,6 +682,15 @@ class PairEvaluation(
                 site=site,
             ):
                 self._debug_reject(RejectReason.FRAME_SENSITIVE_BLOCK, pair)
+                return None
+            # A callee that reads the source or position of its call reads the
+            # helper's once the call moves (docs/KNOWN_LIMITATIONS.md).
+            if self._block_rejected(calls_source_reader, nodes, function, analyzer, site=site):
+                self._debug_reject(
+                    RejectReason.SOURCE_READING_CALLEE,
+                    pair,
+                    subject=source_reader_in(analyzer, nodes),
+                )
                 return None
             if self._block_rejected(
                 frame_read_outside_block,
