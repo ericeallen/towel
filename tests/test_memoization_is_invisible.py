@@ -86,19 +86,23 @@ def _function(context: str, block: str, index: int) -> str:
     )
 
 
-def _module(block: str, contexts: Sequence[str], *, reflective: bool = False) -> str:
+def _module(block: str, contexts: Sequence[str], *, reflective: bool = False) -> bytes:
     functions = [_function(context, block, index) for index, context in enumerate(contexts)]
     if reflective:
         functions.append("def reflect():\n    return globals()")
-    return "x = 0\n\n\n" + "\n\n\n".join(functions) + "\n"
+    return ("x = 0\n\n\n" + "\n\n\n".join(functions) + "\n").encode("utf-8")
 
 
 @dataclass(frozen=True)
 class _Case:
-    """Files analyzed together, as one directory analysis would."""
+    """Files analyzed together, as one directory analysis would, each by name and bytes.
+
+    Bytes, not text: a hostile fixture may declare its own encoding, or end
+    its lines with CRLF, and is analyzed exactly as it is.
+    """
 
     name: str
-    files: Tuple[Tuple[str, str], ...]
+    files: Tuple[Tuple[str, bytes], ...]
 
 
 # Each module pairs a context that lets the block move with ones that may not.
@@ -128,7 +132,7 @@ def _generated() -> Iterator[_Case]:
 
 def _hostile() -> Iterator[_Case]:
     for path in sorted(HOSTILE.glob("*.py")):
-        source = path.read_text(encoding="utf-8")
+        source = path.read_bytes()
         try:
             ast.parse(source)
         except SyntaxError:
@@ -172,7 +176,7 @@ def _written(root: Path, cases: Sequence[_Case]) -> Dict[str, List[str]]:
         directory = root / case.name
         directory.mkdir(parents=True)
         for name, source in case.files:
-            (directory / name).write_text(source, encoding="utf-8")
+            (directory / name).write_bytes(source)
         paths[case.name] = [str(directory / name) for name, _ in case.files]
     return paths
 
@@ -238,7 +242,7 @@ def test_memoization_changes_nothing_a_fixed_point_run_writes(tmp_path: Path) ->
             package = root / case.name
             package.mkdir(parents=True)
             for name, source in case.files:
-                (package / name).write_text(source, encoding="utf-8")
+                (package / name).write_bytes(source)
         engine = UnificationRefactorEngine(min_lines=3)
         with contextlib.ExitStack() as stack:
             if not memoized:
