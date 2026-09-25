@@ -103,7 +103,7 @@ def test_a_real_analysis_traces_every_decline_with_its_file(
 
 
 def test_only_the_trace_sets_a_pairs_reason() -> None:
-    """``_judge_pair`` resets it; ``_debug_reject`` alone records one, and always traces it."""
+    """``_pair_verdict`` resets it; ``_debug_reject`` alone records one, and always traces it."""
     writers = sorted(
         (module.name, function.name)
         for module in UNIFICATION.glob("*.py")
@@ -117,7 +117,7 @@ def test_only_the_trace_sets_a_pairs_reason() -> None:
     assert writers == [
         ("refactor_engine.py", "__init__"),
         ("refactor_engine.py", "_debug_reject"),
-        ("refactor_engine.py", "_judge_pair"),
+        ("refactor_engine.py", "_pair_verdict"),
     ]
 
 
