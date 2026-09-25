@@ -192,8 +192,16 @@ def _locally_bound_names(function: FunctionNode) -> Set[str]:
         node = pending.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(node.name)
+            # What a definition evaluates where it stands runs in this scope:
+            # decorators, defaults, annotations, bases and keywords.
+            pending.extend(node.decorator_list)
+            if isinstance(node, ast.ClassDef):
+                pending.extend([*node.bases, *node.keywords])
+            else:
+                pending.extend([node.args, *([node.returns] if node.returns else [])])
             continue  # a nested scope binds its own names
         if isinstance(node, ast.Lambda):
+            pending.append(node.args)
             continue
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             names.add(node.id)

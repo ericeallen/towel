@@ -33,6 +33,8 @@ from dataclasses import dataclass
 from typing import Callable, FrozenSet, List, Optional, Sequence, Set, TypeVar, Union
 from weakref import WeakKeyDictionary
 
+from .parameters import parameter_nodes
+
 _SIGNATURE_SKIPS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
 """Nested scopes the block signature does not look into."""
 
@@ -175,8 +177,12 @@ def bindings_of(statement: ast.AST, *, into_nested_scopes: bool) -> FrozenSet[st
         if isinstance(node, _NESTED_DEFINITIONS):
             names.add(node.name)
             if not into_nested_scopes:
+                # What the definition evaluates where it stands runs in this
+                # scope: an assignment expression there binds here.
+                pending.extend(_evaluated_where_defined(node))
                 continue
         elif isinstance(node, ast.Lambda) and not into_nested_scopes:
+            pending.extend(_evaluated_where_defined(node))
             continue
         elif isinstance(node, ast.comprehension) and not into_nested_scopes:
             pending.append(node.iter)
@@ -191,6 +197,30 @@ def bindings_of(statement: ast.AST, *, into_nested_scopes: bool) -> FrozenSet[st
             continue
         pending.extend(ast.iter_child_nodes(node))
     return frozenset(names)
+
+
+def _evaluated_where_defined(
+    node: Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda],
+) -> List[ast.AST]:
+    """A definition's decorators, defaults, annotations, bases and keywords."""
+    found: List[ast.AST] = []
+    if not isinstance(node, ast.Lambda):
+        found.extend(node.decorator_list)
+    if isinstance(node, ast.ClassDef):
+        found.extend(node.bases)
+        found.extend(keyword.value for keyword in node.keywords)
+        return found
+    found.extend(node.args.defaults)
+    found.extend(default for default in node.args.kw_defaults if default is not None)
+    if not isinstance(node, ast.Lambda):
+        found.extend(
+            argument.annotation
+            for argument in parameter_nodes(node.args)
+            if argument.annotation is not None
+        )
+        if node.returns is not None:
+            found.append(node.returns)
+    return found
 
 
 def loaded_names(node: ast.AST) -> Set[str]:

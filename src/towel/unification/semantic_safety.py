@@ -1739,9 +1739,16 @@ def _own_scope_locals(function: FunctionNode) -> Set[str]:
         node = pending.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names.add(node.name)
-            pending.extend([*node.decorator_list])
+            # What a definition evaluates where it stands runs in this scope:
+            # decorators, defaults, annotations, bases and keywords.
+            pending.extend(node.decorator_list)
+            if isinstance(node, ast.ClassDef):
+                pending.extend([*node.bases, *node.keywords])
+            else:
+                pending.extend([node.args, *([node.returns] if node.returns else [])])
             continue  # a nested scope binds its own names
         if isinstance(node, ast.Lambda):
+            pending.append(node.args)
             continue
         if isinstance(node, ast.comprehension):
             pending.extend([node.iter, *node.ifs])  # the target is the comprehension's own
