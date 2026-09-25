@@ -34,7 +34,13 @@ describe belong to that version.
   those names as arguments.
   A thunk the helper evaluates first, exactly once, and before any other
   effect is passed eagerly after all, because the call site's evaluation is
-  then indistinguishable from the in-place one (`thunk_inlining.py`).
+  then indistinguishable from the in-place one (`thunk_inlining.py`). What
+  the helper evaluates before it must neither run code nor raise: reading a
+  parameter or a name the helper has already bound, building a tuple, list,
+  set or dict of constants and such names, creating a lambda whose defaults
+  are such, a constant, a negative number. A global or builtin read, a set or
+  dict inserting anything but a constant, `*` and `**`, and unpacking a
+  target list are effects, so a thunk after them stays a thunk.
 - **Binding discipline.** The block may not rebind, delete, or `except ... as`
   a name bound before it; may not carry a `global`/`nonlocal` declaration the
   caller still uses; may not rebind a name a closure outside the block reads;

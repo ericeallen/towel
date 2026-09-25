@@ -67,6 +67,9 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   `test_splicing.py`: the call replaces exactly its block's text, keeping
   the other statements of a `;` line, a one-line compound body's header and
   a backslash continuation, with a property over generated modules.
+  `test_effect_free.py`: what may precede a thunk passed eagerly, a verdict
+  for every expression form, and a property that evaluates what the rule
+  accepts among objects recording every operation.
 - **Engine end-to-end** — `test_refactoring_engine.py`,
   `test_engine_adversarial.py`: single-file, directory, and cross-file runs,
   parameter and min-lines limits.
