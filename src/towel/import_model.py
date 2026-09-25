@@ -29,9 +29,10 @@ The model is built once from a project's Python files:
 - Every absolute import contributes its top-level name. A name's *candidates*
   are the directories (regular or namespace) holding Python files, and the
   ``.py`` files, of that name that are not inside a regular package. The name
-  is *attested* at its location when it has exactly one candidate and no module
-  outside the project provides it to this interpreter, *ambiguous* when either
-  fails, and *external* when it has no candidate at all.
+  is *attested* at its location when it has exactly one candidate, no module
+  outside the project provides it to this interpreter, and no distribution the
+  project requires is named like it; *ambiguous* when any of these fails; and
+  *external* when it has no candidate at all.
 - The imports are checked, and each problem is a record, never an exception:
   every ambiguous name; an import of an attested name that its location does
   not hold; a location reachable under two names; a relative import that
@@ -61,6 +62,13 @@ end, and are refined where they do; each refinement is argued where it is made:
   holds none of the modules its name's imports need is a namesake, not the
   name (:func:`_checked`), and a module that registers submodules at run time
   (``six.moves``) is not missing them (:meth:`_Listings.submodules`).
+- A candidate that does hold one may still be a namesake. A project requiring
+  ``click`` imports that distribution under the name wherever it is installed,
+  so a directory ``click/`` sharing one module with the library is in doubt
+  even where this interpreter lacks the library (:func:`_required_elsewhere`).
+  An environment inside the root, the project's own ``.venv``, is outside the
+  project: what is installed there is a distribution, not the tree
+  (:func:`_in_installation`).
 - An import of a module a name's location lacks says nothing about where the
   name lives. sphinx's test data imports ``sphinx.missing_module4``, which its
   tests mock, and every other import of ``sphinx`` still places it; so only
@@ -74,23 +82,40 @@ end, and are refined where they do; each refinement is argued where it is made:
   provider's own package already imports from it, the owner's rule for
   top-level packages applied at every level, because part of a package may
   not ship: ``bs4/tests`` is left out of beautifulsoup4's wheel
-  (:meth:`ImportModel._only_entered_directories`). A package's ``__main__``
-  is never a provider, and neither is a module below a directory without
+  (:meth:`ImportModel._only_entered_directories`). Only an import that runs
+  whenever its file is imported counts, never one inside a function
+  (:attr:`ImportSite.loads`). A build can also leave out one module of a
+  directory it ships, and a module the project's build configuration
+  declares left out of what ships is never a provider to one it keeps
+  (:meth:`ImportModel._ships_wherever`). A package's ``__main__`` is never a
+  provider, and neither is a module below a directory without
   ``__init__.py`` inside a regular package (:func:`_absolute_module`).
 
 What the model assumes, and cannot check:
 
 - the program's existing imports work in every environment it is used in, and
-  its packages are imported from this tree: an installed copy this
-  interpreter can see makes the name ambiguous, but one only the project's own
-  environment holds is invisible here, so the interpreter Towel runs in stands
-  for the project's (as it already does for the type checker);
-- a location holding any module its name's imports need is that name: a
-  directory named like a library it only happens to share a module with
-  would be taken for the library, and the imports of it the directory does
-  not hold would put only their own files in doubt;
+  its packages are imported from this tree. An installed copy this
+  interpreter can see makes the name ambiguous, wherever it is installed, the
+  project's own ``.venv`` included, and so does a distribution the project
+  declares it requires. One that only the project's own environment holds,
+  and that no declaration names by its import name, is invisible here, so the
+  interpreter Towel runs in stands for the project's (as it already does for
+  the type checker);
+- a location holding any module its name's imports need is that name, unless
+  one of those says otherwise. So where this interpreter lacks the library, a
+  directory named like it is taken for it when the project requires it under
+  a different distribution name (``PyYAML`` provides ``yaml``), reaches it
+  only as a dependency's dependency with no lockfile recording it, or
+  installs it from a recipe not read (``tox.ini``, a ``Pipfile``, a CI
+  file, a setup.py); the imports of it the directory does not hold then put
+  only their own files in doubt;
+- what a build leaves out is what its configuration declares, as read by
+  :mod:`towel.shipped_files`, and what no import from outside a directory
+  shows ships: a module a setup.py or a build hook leaves out of a directory
+  the program imports from would pass for shipped;
 - a module inside a regular package is imported through that package, never
-  run by its path with its own directory on ``sys.path``;
+  run by its path with its own directory on ``sys.path``, unless it imports
+  by a top-level name a module that only its package holds;
 - ``sys.path`` is the same when a module is imported as when its functions
   run, except in files that change it, whose imports attest nothing;
 - dynamic imports (``importlib.import_module``, ``__import__``) name nothing,
@@ -102,9 +127,11 @@ from __future__ import annotations
 
 import ast
 import enum
+import functools
 import importlib.machinery
 import os
 import sys
+import sysconfig
 import warnings
 from dataclasses import dataclass, replace
 from keyword import iskeyword
@@ -125,9 +152,12 @@ from typing import (
 )
 
 from .consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES, ScanLimitExceeded
+from .declared_requirements import Requirement, declared_requirements, normalized_name
+from .shipped_files import Artifact, left_out
 
 __all__ = [
     "AmbiguousName",
+    "Doubt",
     "FileUnderTwoNames",
     "ImportModel",
     "ImportProblem",
@@ -215,6 +245,16 @@ class ImportSite:
         """Whether this import shows its top-level name is importable wherever the file runs."""
         return self.level == 0 and self.runtime and not self.guarded
 
+    @property
+    def loads(self) -> bool:
+        """Whether it runs whenever its file is imported: at import time, unguarded, not in a function.
+
+        Only such an import shows that what it names is present wherever the
+        file is; one inside a function may run only on a path, a developer's
+        command say, that the installed program never takes.
+        """
+        return self.runtime and not self.guarded and not self.deferred
+
     def statement(self) -> str:
         """The import as source, for messages."""
         if self.level == 0 and not self.names:
@@ -232,7 +272,7 @@ class NameStatus(enum.Enum):
     ATTESTED = "attested"
     """Exactly one location in the project, and no provider outside it."""
     AMBIGUOUS = "ambiguous"
-    """Several locations in the project, or one and a provider outside it."""
+    """Several locations in the project, or one and a provider outside it or a distribution it requires."""
     EXTERNAL = "external"
     """No location in the project: the standard library or an installed distribution."""
 
@@ -247,6 +287,8 @@ class TopLevelName:
     """Every location in the project that could be this name, sorted."""
     installed: Optional[str] = None
     """What this interpreter would import instead, when something outside the project provides it."""
+    required: Optional[str] = None
+    """A requirement the project declares on a distribution of this name, which installed provides it."""
     flagged: bool = False
     """Whether a problem leaves the name's location in doubt; a flagged name is never spelled into."""
 
@@ -264,6 +306,17 @@ class TopLevelName:
 # -- Problems -----------------------------------------------------------------
 
 
+class Doubt(enum.Enum):
+    """Where a problem's doubt about a name comes from, which decides what can resolve it."""
+
+    TREE = "the project's tree"
+    """A second copy of the name, or an import that names a module two ways or climbs out of it."""
+    INSTALLED = "a copy installed outside the project"
+    """A provider the interpreter can import, which no ``--exclude`` reaches."""
+    REQUIRED = "a distribution the project requires"
+    """A distribution of the name, which is what the installed project imports by it."""
+
+
 @dataclass(frozen=True)
 class AmbiguousName:
     """A name the program imports that could be more than one module.
@@ -277,6 +330,8 @@ class AmbiguousName:
     name: str
     candidates: Tuple[Path, ...]
     installed: Optional[str]
+    required: Optional[str] = None
+    """A requirement the project declares on a distribution of the name, as written and where."""
 
     @property
     def names_in_doubt(self) -> FrozenSet[str]:
@@ -286,10 +341,24 @@ class AmbiguousName:
     def found_at(self) -> Tuple[Path, ...]:
         return self.candidates
 
+    @property
+    def doubts(self) -> FrozenSet[Doubt]:
+        return frozenset(
+            doubt
+            for doubt, present in (
+                (Doubt.TREE, len(self.candidates) > 1),
+                (Doubt.INSTALLED, self.installed is not None),
+                (Doubt.REQUIRED, self.required is not None),
+            )
+            if present
+        )
+
     def describe(self, root: Path) -> str:
         places = [_shown(candidate, root) for candidate in self.candidates]
         if self.installed is not None:
             places.append(f"outside the project ({self.installed})")
+        if self.required is not None:
+            places.append(f"the distribution the project requires ({self.required})")
         return f"{self.name} could be any of: {'; '.join(places)}"
 
 
@@ -315,6 +384,10 @@ class UnresolvedImport:
 
     @property
     def names_in_doubt(self) -> FrozenSet[str]:
+        return frozenset()
+
+    @property
+    def doubts(self) -> FrozenSet[Doubt]:
         return frozenset()
 
     @property
@@ -349,6 +422,10 @@ class FileUnderTwoNames:
         return frozenset(name.partition(".")[0] for name in self.names)
 
     @property
+    def doubts(self) -> FrozenSet[Doubt]:
+        return frozenset({Doubt.TREE})
+
+    @property
     def found_at(self) -> Tuple[Path, ...]:
         return (self.location,)
 
@@ -363,7 +440,11 @@ class TopLevelInsidePackage:
 
     ``import alpha.a`` from the tests finds ``src/alpha`` only with ``src`` on
     ``sys.path``, while another import uses ``src`` itself as a package, so the
-    same files are ``alpha.a`` to one and ``src.alpha.a`` to the other.
+    same files are ``alpha.a`` to one and ``src.alpha.a`` to the other. A module
+    file is the same: ``pkg/c.py`` importing ``helpers_top``, which only
+    ``pkg/helpers_top.py`` provides, runs with ``pkg`` itself on ``sys.path``,
+    as the top-level module ``c``, and a relative import written into it fails
+    there (:func:`_modules_beside_their_importers`).
     """
 
     name: str
@@ -373,6 +454,10 @@ class TopLevelInsidePackage:
     @property
     def names_in_doubt(self) -> FrozenSet[str]:
         return frozenset({self.name})
+
+    @property
+    def doubts(self) -> FrozenSet[Doubt]:
+        return frozenset({Doubt.TREE})
 
     @property
     def found_at(self) -> Tuple[Path, ...]:
@@ -406,6 +491,10 @@ class RelativeImportEscapes:
         return frozenset() if self.name is None else frozenset({self.name})
 
     @property
+    def doubts(self) -> FrozenSet[Doubt]:
+        return frozenset({Doubt.TREE})
+
+    @property
     def found_at(self) -> Tuple[Path, ...]:
         return (self.site.file,)
 
@@ -435,6 +524,10 @@ class RelativeImportMissing:
         return frozenset()
 
     @property
+    def doubts(self) -> FrozenSet[Doubt]:
+        return frozenset()
+
+    @property
     def found_at(self) -> Tuple[Path, ...]:
         return (self.site.file,)
 
@@ -458,7 +551,8 @@ ImportProblem = Union[
 """A reason the program's imports do not name its modules unambiguously.
 
 Each kind says which top-level names it leaves in doubt (``names_in_doubt``),
-which are never spelled into, and where in the tree it lies (``found_at``):
+which are never spelled into, what that doubt comes from (``doubts``), and
+where in the tree it lies (``found_at``):
 the locations it concerns, or the file holding its import, which is never a
 provider and never given a new import.
 """
@@ -510,6 +604,8 @@ class _Module:
     changes_sys_path: bool
     registers_modules: bool = False
     """Whether it stores into ``sys.modules`` or adds a finder: its submodules need no files."""
+    binds: Optional[FrozenSet[str]] = None
+    """The names its module level binds, or ``None`` when it may bind names no statement shows."""
 
 
 @dataclass(frozen=True)
@@ -543,7 +639,9 @@ class ImportModel:
     _blocked: FrozenSet[Path]
     _flagged_files: FrozenSet[Path]
     _entered: Mapping[Path, FrozenSet[Path]]
-    """For each directory, the contexts with a module outside it that imports from it."""
+    """For each directory, the contexts with a module outside it that loads a module in it."""
+    _left_out: Mapping[Path, FrozenSet[Artifact]]
+    """For each module a declared build exclusion covers, what it is left out of."""
 
     def spelling(self, importer: Path, provider: Path) -> Optional[ImportSpelling]:
         """The module ``importer`` can name ``provider`` by, or ``None`` when none is known to work.
@@ -566,6 +664,8 @@ class ImportModel:
         if self._blocked_provider(providing, importing):
             return None
         if not self._only_entered_directories(importing, providing):
+            return None
+        if not self._ships_wherever(importing, providing):
             return None
         package = self._package_of[importing]
         if package is not None and package == self._package_of[providing]:
@@ -687,11 +787,15 @@ class ImportModel:
         relative import of it from ``bs4/formatter.py`` resolves in the source
         tree and breaks every installation. So each directory the new import
         enters, from the provider's own up to the first that holds the
-        importer, must already be imported from, at run time and unguarded, by
-        a module outside it in the importer's context or in the provider's
-        own package: the owner's rule for top-level packages, at every level.
-        An import from anywhere else, a documentation script say, shows only
-        that the directory exists where that script runs.
+        importer, must already be imported from by a module outside it in the
+        importer's context or in the provider's own package, with an import
+        that runs whenever that module is imported (:attr:`ImportSite.loads`):
+        the owner's rule for top-level packages, at every level. An import
+        from anywhere else, a documentation script say, shows only that the
+        directory exists where that script runs, and one inside a function
+        only that it exists where that function is called: shop's
+        ``cli.main`` imports ``shop.devtools`` only for a developer's command,
+        and the wheel leaves ``shop/devtools`` out.
         """
         sides = {self._contexts[importer], self._contexts[provider]}
         directory = provider.parent
@@ -702,6 +806,19 @@ class ImportModel:
                 break
             directory = directory.parent
         return True
+
+    def _ships_wherever(self, importer: Path, provider: Path) -> bool:
+        """Whether the provider ships in every artifact of the project that ships the importer.
+
+        A directory that ships can still leave one of its files behind: hatch's
+        ``exclude = ["src/shop/_devtools.py"]`` keeps ``_devtools.py`` out of the
+        wheel beside a ``shop/stats.py`` that does ship, and a helper hosted in
+        it made the installed ``shop.stats`` raise ``ModuleNotFoundError``. What
+        the build configuration declares left out is read for that alone
+        (:mod:`towel.shipped_files`); it names nothing.
+        """
+        missing = self._left_out.get(provider, frozenset())
+        return not missing or missing <= self._left_out.get(importer, frozenset())
 
     def _blocked_provider(self, provider: Path, importer: Optional[Path] = None) -> bool:
         """Whether importing ``provider`` could load the wrong file, or a file that cannot load.
@@ -810,11 +927,15 @@ def _entered_from_outside(
     contexts: Mapping[Path, Path],
     root: Path,
 ) -> Dict[Path, FrozenSet[Path]]:
-    """For each directory, the contexts that import from it at run time, unguarded, from outside it."""
+    """For each directory, the contexts that load a module in it from outside it.
+
+    Only an import that runs whenever its module is imported counts
+    (:attr:`ImportSite.loads`).
+    """
     entered: Dict[Path, Set[Path]] = {}
     for path, module in modules.items():
         for site in module.sites or ():
-            if not site.runtime or site.guarded:
+            if not site.loads:
                 continue
             reached = _reached(
                 modules, directories, names, root, path, site.level, site.module, site.names
@@ -1095,10 +1216,11 @@ class _Listings:
     def submodules(self, location: Path, site: ImportSite) -> _Submodules:
         """What the absolute import ``site`` names below its top-level name's ``location``.
 
-        ``from Q.x import y`` needs only ``Q.x``, since ``y`` may be an
-        attribute; ``from Q import x`` needs nothing, but ties ``Q`` to the
-        location when ``x`` is a module there. A module is not missing from a
-        package whose initializer registers modules itself.
+        ``from Q.x import y`` needs ``Q.x``, and ``y`` too when ``Q.x`` is a
+        package whose initializer does not bind it (:meth:`unbound`);
+        ``from Q import x`` ties ``Q`` to the location when ``x`` is a module
+        there, and needs ``Q.x`` when nothing there binds ``x``. A module is
+        not missing from a package whose initializer registers modules itself.
         """
         parts = (site.module or "").split(".")
         inner = parts[1:]
@@ -1108,13 +1230,52 @@ class _Listings:
             return _Submodules(False, ".".join(parts[:2]))  # A module file has no submodules.
         if not inner:
             held = any(name != "*" and self.holds_module(location, name) for name in site.names)
-            return _Submodules(held)
+            unbound = self.unbound(location, site.names)
+            return _Submodules(held, None if unbound is None else f"{parts[0]}.{unbound}")
         index = self.first_missing(location, inner)
         if index is None:
-            return _Submodules(True)
+            unbound = self.unbound(location.joinpath(*inner), site.names)
+            return _Submodules(True, None if unbound is None else f"{site.module}.{unbound}")
         if self._registers(self._above(location, inner[:index])):
             return _Submodules(False)
         return _Submodules(False, ".".join(parts[: index + 2]))
+
+    def unbound(self, directory: Path, names: Sequence[str]) -> Optional[str]:
+        """The first of ``names`` a package ``directory`` neither holds as a module nor binds, if any.
+
+        ``from . import generated_at_build`` names a submodule or an attribute
+        of the package, and a package's attributes are what its initializer
+        binds: where it binds no such name and no such module exists, the
+        import fails as ``from .generated_at_build import VERSION`` does. A
+        namespace directory binds nothing but its modules. An initializer
+        that may bind names no statement shows (a star import, a module
+        ``__getattr__``, ``globals()``, a change to ``__path__`` or to
+        ``sys.modules``), or that is not Python source, leaves every name
+        possible. ``directory`` not being a directory leaves every name so too.
+        """
+        subdirectories, files = self.entries(directory)
+        if not subdirectories and not files:
+            return None
+        initializer = self._modules.get(directory / "__init__.py")
+        if initializer is None:
+            if any(file.startswith("__init__.") for file in files):
+                return None
+            binds: FrozenSet[str] = frozenset()
+        elif initializer.binds is None or initializer.registers_modules:
+            return None
+        else:
+            binds = initializer.binds
+        return next(
+            (
+                name
+                for name in names
+                if name != "*"
+                and name not in binds
+                and name not in _IMPLICIT_MODULE_NAMES
+                and not self.holds_module(directory, name)
+            ),
+            None,
+        )
 
     def _above(self, location: Path, inner: Sequence[str]) -> Path:
         """The module a missing submodule of ``inner`` would be registered by, below ``location``.
@@ -1132,6 +1293,22 @@ class _Listings:
 
 
 _EXTENSIONS = tuple(sorted(set(importlib.machinery.EXTENSION_SUFFIXES) | {".so", ".pyd"}))
+
+_IMPLICIT_MODULE_NAMES = frozenset(
+    {
+        "__name__",
+        "__file__",
+        "__path__",
+        "__doc__",
+        "__spec__",
+        "__loader__",
+        "__package__",
+        "__builtins__",
+        "__cached__",
+        "__dict__",
+    }
+)
+"""What every module or package has without binding it."""
 
 
 def _read_module(path: Path) -> _Module:
@@ -1190,7 +1367,73 @@ def _scan(tree: ast.Module, path: Path) -> _Module:
             registers_modules = registers_modules or _registers_modules(node)
             pending.extend(_children(node, when))
     ordered = sorted(sites, key=lambda site: (site.line, site.level, site.module or ""))
-    return _Module(tuple(ordered), changes_sys_path, registers_modules)
+    return _Module(tuple(ordered), changes_sys_path, registers_modules, _module_bindings(tree))
+
+
+_OPAQUE_NAMESPACE_CALLS = frozenset({"globals", "vars", "locals", "setattr", "exec", "eval"})
+"""Names through which a module can bind names no statement shows, from anywhere in it."""
+
+
+def _module_bindings(tree: ast.Module) -> Optional[FrozenSet[str]]:
+    """The names ``tree``'s module level binds, or ``None`` when it may bind names no statement shows.
+
+    Every statement that runs at module level is read, inside ``if``, ``try``,
+    loops and ``with`` too, but no function or class body. An over-count only
+    lets an import pass unreported, so every store counts, guarded or not. A
+    ``from . import x`` binds no attribute of its own: it names the
+    submodule, which either exists or fails to import; ``as y`` binds ``y``.
+    A module-level ``__getattr__``, a star import, a change to ``__path__``,
+    or any use anywhere in the file of ``globals``, ``vars``, ``locals``,
+    ``setattr``, ``exec`` or ``eval``, as bs4's ``register_treebuilders_from``
+    uses ``setattr`` on its own module, leaves every name possible.
+    """
+    if any(
+        (isinstance(node, ast.Name) and node.id in _OPAQUE_NAMESPACE_CALLS)
+        or (isinstance(node, ast.Attribute) and node.attr == "__dict__")
+        for node in ast.walk(tree)
+    ):
+        return None
+    bound: Set[str] = set()
+    pending: List[ast.AST] = list(tree.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == "__getattr__" and not isinstance(node, ast.ClassDef):
+                return None
+            bound.add(node.name)
+            pending.extend(node.decorator_list)
+            continue
+        if isinstance(
+            node, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            continue
+        if isinstance(node, ast.ImportFrom):
+            if any(alias.name == "*" for alias in node.names):
+                return None
+            submodules = node.level and node.module is None
+            bound.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if not submodules or alias.asname not in (None, alias.name)
+            )
+            continue
+        if isinstance(node, ast.Import):
+            bound.update(alias.asname or alias.name.partition(".")[0] for alias in node.names)
+            continue
+        if isinstance(node, ast.Name):
+            if node.id == "__path__" and not isinstance(node.ctx, ast.Load):
+                return None
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                bound.add(node.id)
+            elif node.id == "__path__":
+                return None
+            continue
+        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name is not None:
+            bound.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest is not None:
+            bound.add(node.rest)
+        pending.extend(ast.iter_child_nodes(node))
+    return frozenset(bound)
 
 
 def _children(node: ast.AST, when: _When) -> Iterator[Tuple[ast.AST, _When]]:
@@ -1359,6 +1602,8 @@ def build_import_model(
     excluded: Iterable[Path] = (),
     excluded_names: Iterable[str] = (),
     installed: Optional[InstalledProbe] = None,
+    required: Optional[Iterable[Requirement]] = None,
+    left_out_of: Optional[Mapping[Path, FrozenSet[Artifact]]] = None,
 ) -> ImportModel:
     """The import model of every Python file under ``root``, outside ``excluded``.
 
@@ -1366,6 +1611,12 @@ def build_import_model(
     CLI's ``--exclude`` does, which is how a stray copy is set aside.
     ``installed`` says what outside the project provides a top-level name;
     it defaults to :func:`installed_outside`, this interpreter's own answer.
+    ``required`` are the distributions the project declares it requires; they
+    default to what ``root``'s metadata, lockfiles and requirements files
+    declare (:func:`~towel.declared_requirements.declared_requirements`).
+    ``left_out_of`` says which modules the build configuration leaves out of
+    what ships; it defaults to what ``root``'s configuration declares
+    (:func:`~towel.shipped_files.left_out`).
     Raises :class:`~towel.consumers.ScanLimitExceeded` for a tree too large
     to read, since a partial model could miss the copy that makes a name
     ambiguous.
@@ -1385,15 +1636,20 @@ def build_import_model(
     listings = _Listings(modules)
     entries = _top_level_entries(tree)
     strict = {name: entries.get(name, ()) for name in absolute}
-    relaxed, inside_used = _relaxed_candidates(
-        tree, _used_packages(tree, sites, strict), absolute, strict, listings
-    )
+    used_strictly = _used_packages(tree, sites, strict)
+    relaxed, inside_used = _relaxed_candidates(tree, used_strictly, absolute, strict, listings)
     found = {name: strict[name] or relaxed.get(name, ()) for name in absolute}
     classified = {
         name: _classify(name, found[name], absolute[name], tree, listings, probe, project)
         for name in absolute
     }
+    requirements = tuple(declared_requirements(project) if required is None else required)
+    classified, modules_inside, scripts = _modules_beside_their_importers(
+        classified, absolute, tree, used_strictly, requirements, lambda name: probe(name, project)
+    )
+    inside_used = {**inside_used, **modules_inside}
     names, unresolved = _checked(dict(sorted(classified.items())), absolute, listings)
+    names, unresolved = _required_elsewhere(names, unresolved, requirements)
     located = {
         name: info.candidates
         for name, info in names.items()
@@ -1406,6 +1662,7 @@ def build_import_model(
     package_of = {path: _package_of(path, tree, used, bounds) for path in tree.modules}
     problems = _problems(tree, modules, names, unresolved, inside_used, listings)
     flagged_names, flagged_files = _flags(problems)
+    flagged_files |= scripts
     names = {name: replace(info, flagged=name in flagged_names) for name, info in names.items()}
     trusted = {info.candidates[0]: name for name, info in names.items() if info.trusted}
     blocked = frozenset(
@@ -1416,6 +1673,7 @@ def build_import_model(
     )
     contexts = {path: package_of[path] or path for path in tree.modules}
     entered = _entered_from_outside(modules, tree.holding_modules, names, contexts, project)
+    left = left_out(project, tree.modules) if left_out_of is None else left_out_of
     return ImportModel(
         root=project,
         names=names,
@@ -1430,6 +1688,7 @@ def build_import_model(
         _blocked=blocked,
         _flagged_files=flagged_files,
         _entered=entered,
+        _left_out=left,
     )
 
 
@@ -1536,6 +1795,64 @@ def _relaxed_candidates(
     return {name: tuple(paths) for name, paths in found.items()}, inside_used
 
 
+def _modules_beside_their_importers(
+    names: Mapping[str, TopLevelName],
+    absolute: Mapping[str, Sequence[ImportSite]],
+    tree: _Tree,
+    used: Set[Path],
+    required: Sequence[Requirement],
+    outside: Callable[[str], Optional[OutsideProvider]],
+) -> Tuple[Dict[str, TopLevelName], Dict[str, Tuple[Path, Path]], FrozenSet[Path]]:
+    """Names nothing else provides that a file in a package imports from a module beside it.
+
+    ``pkg/c.py`` imports ``helpers_top``, and only ``pkg/helpers_top.py`` is
+    named so: the import holds only where ``c.py`` runs as a script, with
+    ``pkg`` itself on ``sys.path``, so that module is the name's location.
+    Where the program also uses the package as one, the second mapping
+    records the conflict. Either way the files making such an import, and
+    the module they import, the third result, run as top-level modules,
+    where a relative import fails: they are never a provider and are given
+    no new import. Only an import that
+    attests (:attr:`ImportSite.attests`), from another file of the module's
+    own directory, is such evidence. A module importing its own name
+    (``tqdm/keras.py``'s ``import keras``), or a script elsewhere importing a
+    library named like a package's module (mistune's benchmark importing
+    ``markdown``), names the library; and so does any import of a name
+    something else provides: an installed copy, the standard library, or a
+    distribution the project requires.
+    """
+    requiring = frozenset(requirement.name for requirement in required)
+    placed: Dict[str, TopLevelName] = {}
+    inside: Dict[str, Tuple[Path, Path]] = {}
+    scripts: Set[Path] = set()
+    modules = frozenset(tree.modules)
+    for name, info in names.items():
+        if (
+            info.status is not NameStatus.EXTERNAL
+            or info.installed is not None
+            or normalized_name(name) in requiring
+            or not _is_identifier(name)
+        ):
+            continue
+        importers: Dict[Path, Set[Path]] = {}
+        for site in absolute[name]:
+            sibling = site.file.parent / f"{name}.py"
+            if site.attests and sibling in modules and sibling != site.file:
+                importers.setdefault(sibling, set()).add(site.file)
+        if not importers or outside(name) is not None:
+            continue
+        locations = tuple(sorted(importers))
+        status = NameStatus.ATTESTED if len(locations) == 1 else NameStatus.AMBIGUOUS
+        placed[name] = TopLevelName(name, status, locations)
+        for location in locations:
+            scripts.update({location, *importers[location]})
+            chain = _chain(location.parent, tree.packages, tree.root)
+            package = next((directory for directory in reversed(chain) if directory in used), None)
+            if package is not None:
+                inside.setdefault(name, (location, package))
+    return {**names, **placed}, inside, frozenset(scripts)
+
+
 def _names_a_module_of(sites: Sequence[ImportSite], directory: Path, listings: _Listings) -> bool:
     return any(listings.submodules(directory, site).resolved for site in sites)
 
@@ -1623,6 +1940,38 @@ def _checked(
     return checked, unresolved
 
 
+def _required_elsewhere(
+    names: Mapping[str, TopLevelName],
+    unresolved: Sequence[UnresolvedImport],
+    required: Iterable[Requirement],
+) -> Tuple[Dict[str, TopLevelName], List[UnresolvedImport]]:
+    """Each name the tree places that a distribution the project requires also provides, in doubt.
+
+    A project that requires ``click`` imports that distribution under the name
+    wherever it is installed, whatever the tree holds: a directory ``click/``
+    sharing one module with the library would otherwise be taken for it
+    wherever the interpreter running Towel lacks the library, as ``uvx``
+    does, and a helper hosted there is imported from a module the library
+    lacks. A distribution is matched by its normalized name, so one whose
+    import name differs (``PyYAML`` provides ``yaml``) goes unnoticed unless
+    this interpreter can import it. An import of such a name that the tree's
+    location lacks is then the library's, and no problem of its own.
+    """
+    first: Dict[str, Requirement] = {}
+    for requirement in required:
+        first.setdefault(requirement.name, requirement)
+    doubted = {
+        name: replace(info, status=NameStatus.AMBIGUOUS, required=declared.describe())
+        for name, info in names.items()
+        if info.status is not NameStatus.EXTERNAL
+        and (declared := first.get(normalized_name(name))) is not None
+    }
+    return (
+        {**names, **doubted},
+        [problem for problem in unresolved if problem.name not in doubted],
+    )
+
+
 def _package_of(
     module: Path, tree: _Tree, used: Set[Path], bounds: FrozenSet[Path]
 ) -> Optional[Path]:
@@ -1652,7 +2001,7 @@ def _problems(
     listings: _Listings,
 ) -> List[ImportProblem]:
     problems: List[ImportProblem] = [
-        AmbiguousName(name, info.candidates, info.installed)
+        AmbiguousName(name, info.candidates, info.installed, info.required)
         for name, info in names.items()
         if info.status is NameStatus.AMBIGUOUS
     ]
@@ -1732,11 +2081,20 @@ def _relative_problems(
                     yield RelativeImportEscapes(site)
                 continue  # A namespace directory no name places: not known to be wrong.
             if site.module is None:
-                continue  # ``from . import x`` may name an attribute of the package.
+                # ``from . import x`` names a submodule or an attribute the package binds.
+                unbound = listings.unbound(base, site.names)
+                if unbound is not None:
+                    yield RelativeImportMissing(site, "." * site.level + unbound, name)
+                continue
             parts = site.module.split(".")
             index = listings.first_missing(base, parts)
             if index is not None:
                 missing = "." * site.level + ".".join(parts[: index + 1])
+                yield RelativeImportMissing(site, missing, name)
+                continue
+            unbound = listings.unbound(base.joinpath(*parts), site.names)
+            if unbound is not None:
+                missing = "." * site.level + ".".join([*parts, unbound])
                 yield RelativeImportMissing(site, missing, name)
 
 
@@ -1782,10 +2140,12 @@ def installed_outside(name: str, root: Path) -> Optional[OutsideProvider]:
     of entry set aside: the project's own, since a copy of the project on the
     path (an editable install) is the project and may hide another copy
     behind it, and the working directory, which is where Towel was started
-    and no part of the environment the project runs in. Only a top-level
-    name is asked, so no package's ``__init__`` runs: finders only look. A
-    lookup that fails is an answer too, since nothing is then known about
-    the name.
+    and no part of the environment the project runs in. An environment inside
+    the root, such as the project's own ``.venv``, is not the project's: what
+    is installed there is outside it (:func:`_in_installation`). Only a
+    top-level name is asked, so no package's ``__init__`` runs: finders only
+    look. A lookup that fails is an answer too, since nothing is then known
+    about the name.
     """
     if name in sys.builtin_module_names:
         return OutsideProvider(ProviderKind.UNSHADOWABLE, "a module built into the interpreter")
@@ -1816,7 +2176,7 @@ def _found_outside(name: str, root: Path) -> Optional[OutsideProvider]:
     entries = [
         entry
         for entry in sys.path
-        if not _within(Path(entry or os.curdir).resolve(), root)
+        if not _projects_own(Path(entry or os.curdir).resolve(), root)
         and Path(entry or os.curdir).resolve() != working
     ]
     for finder in sys.meta_path:
@@ -1841,11 +2201,57 @@ def _outside(spec: importlib.machinery.ModuleSpec, root: Path) -> Optional[Outsi
         return OutsideProvider(ProviderKind.UNSHADOWABLE, f"a {origin} module")
     if origin is not None:
         path = Path(origin).resolve()
-        return None if _within(path, root) else OutsideProvider(ProviderKind.MODULE, str(path))
+        if _projects_own(path, root):
+            return None
+        return OutsideProvider(ProviderKind.MODULE, str(path))
     portions = [Path(location).resolve() for location in spec.submodule_search_locations or ()]
-    outside = [str(portion) for portion in portions if not _within(portion, root)]
+    outside = [str(portion) for portion in portions if not _projects_own(portion, root)]
     return OutsideProvider(ProviderKind.NAMESPACE, ", ".join(outside)) if outside else None
 
 
 def _within(path: Path, root: Path) -> bool:
     return path == root or path.is_relative_to(root)
+
+
+def _projects_own(path: Path, root: Path) -> bool:
+    """Whether ``path`` is part of the project at ``root``: inside it, and not in an environment there."""
+    return _within(path, root) and not _in_installation(path, root)
+
+
+def _in_installation(path: Path, root: Path) -> bool:
+    """Whether ``path``, inside ``root``, lies in an environment installed there rather than in its source.
+
+    The project's own ``.venv`` is the usual one, and what is installed in it
+    is a distribution, not the project's tree: the project installed there
+    without ``-e``, or a library a project directory is named like. It is
+    recognized as the tree walk recognizes it, which never reads it: a
+    ``site-packages`` or ``dist-packages`` directory, or a directory holding
+    ``pyvenv.cfg`` or ``conda-meta`` below the root; and also by this
+    interpreter's own installation paths when they lie below the root. The
+    root itself is not asked: a project kept in the directory of its own
+    environment still has its source there.
+    """
+    if any(
+        _within(path, place)
+        for place in _interpreter_places()
+        if place != root and _within(place, root)
+    ):
+        return True
+    directory = root
+    for part in path.relative_to(root).parts:
+        directory = directory / part
+        if part in _INSTALLATIONS or any(
+            (directory / marker).exists() for marker in _ENVIRONMENT_MARKERS
+        ):
+            return True
+    return False
+
+
+@functools.lru_cache(maxsize=1)
+def _interpreter_places() -> FrozenSet[Path]:
+    """This interpreter's prefixes and the directories it installs into, resolved; fixed for a process."""
+    places = {sys.prefix, sys.exec_prefix, sys.base_prefix, sys.base_exec_prefix}
+    places.update(
+        sysconfig.get_paths().get(key, "") for key in ("stdlib", "platstdlib", "purelib", "platlib")
+    )
+    return frozenset(Path(place).resolve() for place in places if place)

@@ -740,10 +740,11 @@ def test_relative_imports_that_climb_out_or_name_nothing_are_problems(tmp_path):
 
 
 def test_an_import_its_package_does_not_hold_is_a_problem(tmp_path):
+    """``alpha.gone`` is no module of alpha's; ``attribute`` is a name its initializer binds."""
     project = _write(
         tmp_path / "project",
         {
-            "alpha/__init__.py": "",
+            "alpha/__init__.py": "attribute = 1\n",
             "alpha/a.py": "",
             "tests/test_a.py": "import alpha.a\nfrom alpha.gone import thing\nfrom alpha import attribute\n",
             "tests/test_b.py": "import alpha.a\n",

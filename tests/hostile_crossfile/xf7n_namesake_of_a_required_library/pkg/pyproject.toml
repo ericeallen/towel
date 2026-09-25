@@ -1,0 +1,7 @@
+[project]
+name = "zzapp"
+version = "0"
+dependencies = ["zzlib>=8"]
+
+[tool.setuptools]
+packages = ["zzapp"]
