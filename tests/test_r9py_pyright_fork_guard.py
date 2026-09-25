@@ -28,11 +28,15 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
+import textwrap
 from typing import Dict, List, Mapping, Sequence
 import warnings
 
 import pytest
 
+import towel
 from towel.checker_project import CheckerSnapshot
 from towel.pyright_session import Diagnostic, FileChange, SessionFailure
 from towel.type_inference import (
@@ -119,3 +123,35 @@ def test_r9py_a_forked_child_asks_nothing_and_removes_none_of_the_parents_copies
     finally:
         oracle.close()
     assert not warm_copy.tree.exists() and not probe_copy.tree.exists(), "the parent removes them"
+
+
+_R9PY_EXITING_CHILD = textwrap.dedent("""
+    import os, sys, warnings
+    from pathlib import Path
+    from towel.checker_project import CheckerSnapshot
+
+    snapshot = CheckerSnapshot(Path(sys.argv[1]))
+    warnings.simplefilter("ignore", DeprecationWarning)
+    if os.fork() == 0:
+        del snapshot  # collected in the child, and then the child exits as a program does
+        sys.exit(0)
+    os.wait()
+    print(snapshot.tree.is_dir())
+    snapshot.close()
+    print(snapshot.tree.exists())
+    """)
+
+
+def test_r9py_a_forked_child_that_exits_leaves_the_parents_copy(tmp_path: Path) -> None:
+    """A copy is removed when collected and at exit, and a child inherits both."""
+    project = _r9py_project(tmp_path / "r9py_project")
+    environment = {**os.environ, "PYTHONPATH": str(Path(towel.__file__).resolve().parents[1])}
+    completed = subprocess.run(
+        [sys.executable, "-c", _R9PY_EXITING_CHILD, str(project)],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=environment,
+        timeout=60,
+    )
+    assert completed.stdout.split() == ["True", "False"], completed

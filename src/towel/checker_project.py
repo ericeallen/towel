@@ -37,6 +37,7 @@ import tomllib
 from pathlib import Path
 import shutil
 import tempfile
+import weakref
 from typing import (
     Dict,
     Final,
@@ -120,7 +121,8 @@ class CheckerSnapshot:
     def __init__(self, root: Path, *, excluded_paths: Sequence[str] = ()) -> None:
         self._root = root
         self._excluded = frozenset(Path(path).resolve() for path in excluded_paths)
-        self._temporary = tempfile.TemporaryDirectory(prefix="towel-check-")
+        temporary = Path(tempfile.mkdtemp(prefix="towel-check-"))
+        self._removal = weakref.finalize(self, _remove_owned, temporary, os.getpid())
         # Copies that show a candidate's text rather than the project's.
         self._dirty: set[Path] = set()
         # For every copy made from a project file: that file, and its stamp then.
@@ -130,13 +132,13 @@ class CheckerSnapshot:
         self._links: Dict[Path, _Link] = {}
         self.revision = 0
         try:
-            self._layout = _layout(Path(self._temporary.name), root, self._excluded)
+            self._layout = _layout(temporary, root, self._excluded)
             self._spellings = _copy_spellings(self._layout)
             self.follow_project()
             _mirror_environment(self._layout)
             self.revision = 0
         except BaseException:
-            self._temporary.cleanup()
+            self._removal()
             raise
 
     @property
@@ -278,7 +280,19 @@ class CheckerSnapshot:
         return _as_changes(changes)
 
     def close(self) -> None:
-        self._temporary.cleanup()
+        self._removal()
+
+
+def _remove_owned(directory: Path, owner: int) -> None:
+    """Remove ``directory``, unless this is a forked child of ``owner``, the process that made it.
+
+    A copy is removed when closed, when collected, and at exit, and a forked
+    child inherits all three: its exit, or a collection there, removed the
+    parent's copy while the parent's checker still watched it, and the
+    parent's next check read a project that was gone. Only the owner removes.
+    """
+    if os.getpid() == owner and directory.exists():
+        shutil.rmtree(directory)
 
 
 @dataclass(frozen=True)
