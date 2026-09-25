@@ -283,6 +283,8 @@ class RejectReason(StrEnum):
     BARE_NAME_DIFFERS_BY_MODULE = "bare_name_differs_by_module"
     BUILTIN_ARGUMENT = "builtin_argument"
     BUILTIN_MAY_DIFFER_BY_MODULE = "builtin_may_differ_by_module"
+    # Counted with what builds the class: class_machinery_may_transform_methods[metaclass M].
+    CLASS_MACHINERY_MAY_TRANSFORM_METHODS = "class_machinery_may_transform_methods"
     CLOSURE_CROSSES_BLOCK_BOUNDARY = "closure_crosses_block_boundary"
     CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"
     CREATED_OBJECT_ESCAPES = "created_object_escapes"

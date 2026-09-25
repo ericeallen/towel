@@ -39,14 +39,9 @@ from typing import Dict, List, Optional, Tuple
 
 import pytest
 
-from towel.unification import decorator_reach
-from towel.unification.decorator_reach import (
-    KNOWN_DECORATORS,
-    Definition,
-    KnownDecorator,
-    ModuleSource,
-    decorator_refusal,
-)
+from towel.unification import known_decorators
+from towel.unification.decorator_reach import Definition, ModuleSource, decorator_refusal
+from towel.unification.known_decorators import KNOWN_DECORATORS, KnownDecorator
 from towel.unification.import_graph import ImportGraphCache
 from towel.unification.models import RejectReason
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -553,6 +548,185 @@ SPELLINGS: Tuple[Spelling, ...] = (
         "click.command",
         others={"click/__init__.py": _TRACED + "def command():\n    return traced\n"},
     ),
+    # -- decorators applied by hand -------------------------------------------
+    Spelling(
+        "compiled by hand",
+        "import numba\ndef kernel(x):\n    return x\nfast = numba.njit(kernel)\n",
+        "kernel",
+        "numba.njit",
+    ),
+    Spelling(
+        "rebound by hand",
+        "from typeguard import typechecked\ndef f(x):\n    return x\nf = typechecked(f)\n",
+        "f",
+        "typeguard.typechecked",
+    ),
+    Spelling(
+        "method wrapped in its class body",
+        "from tracer import trace\nclass C:\n    def m(self):\n        return 1\n    m = trace(m)\n",
+        "C.m",
+        "tracer.trace",
+    ),
+    Spelling(
+        "factory applied by hand",
+        "from numba import njit\ndef kernel(x):\n    return x\nfast = njit(cache=True)(kernel)\n",
+        "kernel",
+        "numba.njit",
+    ),
+    Spelling(
+        "known factory applied by hand",
+        "import functools\ndef f(x):\n    return x\nf = functools.lru_cache(maxsize=None)(f)\n",
+        "f",
+        None,
+    ),
+    Spelling(
+        "known decorator applied by hand",
+        "import functools\ndef f(x):\n    return x\ncached = functools.cache(f)\n",
+        "f",
+        None,
+    ),
+    Spelling(
+        "property built by hand",
+        "class C:\n    def getx(self):\n        return 1\n    def setx(self, value):\n"
+        "        pass\n    x = property(getx, setx)\n",
+        "C.setx",
+        None,
+    ),
+    Spelling(
+        "a sort key assigned at module level",
+        "def key(v):\n    return -v\nORDER = sorted([3, 1], key=key)\n",
+        "key",
+        "builtins.sorted",
+    ),
+    Spelling(
+        "a class decorated by hand",
+        "from typeguard import typechecked\nclass C:\n    def m(self):\n        return 1\n"
+        "C = typechecked(C)\n",
+        "C.m",
+        "typeguard.typechecked",
+    ),
+    Spelling(
+        "an alias compiled by hand",
+        "import numba\ndef kernel(x):\n    return x\nk = kernel\nfast = numba.njit(k)\n",
+        "kernel",
+        "numba.njit",
+    ),
+    Spelling(
+        "compiled by hand in another module",
+        "def slow(x):\n    return x\n",
+        "slow",
+        "numba.njit",
+        others={
+            "pkg/__init__.py": "",
+            "pkg/fast.py": "from numba import njit\nfrom .kernels import slow\nfast = njit(slow)\n",
+        },
+        module="pkg/kernels.py",
+    ),
+    Spelling(
+        "compiled by hand through its module",
+        "def slow(x):\n    return x\n",
+        "slow",
+        "numba.njit",
+        others={
+            "pkg/__init__.py": "",
+            "pkg/fast.py": "import numba\nfrom . import kernels\nfast = numba.njit(kernels.slow)\n",
+        },
+        module="pkg/kernels.py",
+    ),
+    Spelling(
+        "a name that cannot be followed is taken at its word",
+        "from os.path import *\ndef kernel(x):\n    return x\n",
+        "kernel",
+        "numba.njit",
+        others={"other.py": "import numba\nfrom os.path import *\nfast = numba.njit(kernel)\n"},
+    ),
+    Spelling(
+        "a plain decorator of the project applied by hand",
+        _WRAPPER + "def f():\n    return 1\nf = logged(f)\n",
+        "f",
+        None,
+    ),
+    Spelling(
+        "a project function given the function among other arguments",
+        "def register(name, fn):\n    return fn\ndef f():\n    return 1\nf = register('f', f)\n",
+        "f",
+        "register",
+    ),
+    Spelling(
+        "handed to a call inside a function body (not seen)",
+        "import threading\ndef work():\n    return 1\ndef start():\n"
+        "    thread = threading.Thread(target=work)\n    return thread\n",
+        "work",
+        None,
+    ),
+    Spelling(
+        "handed to a call in an expression statement (not seen)",
+        "import atexit\ndef cleanup():\n    return 1\natexit.register(cleanup)\n",
+        "cleanup",
+        None,
+    ),
+    # -- class machinery ------------------------------------------------------
+    Spelling(
+        "a metaclass of the project",
+        "class Traced(type):\n    pass\nclass C(metaclass=Traced):\n    def m(self):\n"
+        "        return 1\n",
+        "C.m",
+        "metaclass Traced",
+    ),
+    Spelling(
+        "an __init_subclass__ on a base",
+        "class Base:\n    def __init_subclass__(cls, **kwargs):\n"
+        "        super().__init_subclass__(**kwargs)\nclass C(Base):\n    def m(self):\n"
+        "        return 1\n",
+        "C.m",
+        "__init_subclass__ of Base",
+    ),
+    Spelling(
+        "a metaclass of a base in another module",
+        "from .base import Base\nclass C(Base):\n    def m(self):\n        return 1\n",
+        "C.m",
+        "metaclass Meta",
+        others={
+            "pkg/__init__.py": "",
+            "pkg/base.py": "class Meta(type):\n    pass\nclass Base(metaclass=Meta):\n    pass\n",
+        },
+        module="pkg/m.py",
+    ),
+    Spelling(
+        "a base outside the project",
+        "import unittest\nclass T(unittest.TestCase):\n    def test_m(self):\n        return 1\n",
+        "T.test_m",
+        "base unittest.TestCase",
+    ),
+    Spelling(
+        "a nested class with no bases",
+        "class Outer:\n    class Inner:\n        def m(self):\n            return 1\n",
+        "Outer.Inner.m",
+        None,
+    ),
+    Spelling(
+        "a nested class with a base",
+        "class Base:\n    pass\nclass Outer:\n    class Inner(Base):\n        def m(self):\n"
+        "            return 1\n",
+        "Outer.Inner.m",
+        "class Inner (not at module level, with bases)",
+    ),
+    Spelling(
+        "a local class binding __init_subclass__",
+        "def make():\n    class Local:\n        def __init_subclass__(cls):\n            pass\n"
+        "        def m(self):\n            return 1\n    return Local\n",
+        "make.Local.m",
+        "__init_subclass__ of Local",
+    ),
+    Spelling(
+        "ABC, ABCMeta, an enum and Generic",
+        "import abc\nimport enum\nimport typing\nT = typing.TypeVar('T')\n"
+        "class A(abc.ABC):\n    pass\nclass B(metaclass=abc.ABCMeta):\n    pass\n"
+        "class Colour(enum.Enum):\n    RED = 1\nclass C(A, B, typing.Generic[T]):\n"
+        "    def m(self):\n        return 1\n",
+        "C.m",
+        None,
+    ),
     # -- what a plain decorator may do with the function ----------------------
     Spelling(
         "wrapper passing other arguments",
@@ -720,7 +894,8 @@ class Usage:
     shape: str = "function"
     """``function``: two decorated functions; ``method``: two decorated methods of ``Holder``;
     ``static``: the same without a receiver; ``class``: two methods of a decorated class;
-    ``accessor``: two properties' decorated accessors."""
+    ``accessor``: two properties' decorated accessors; ``bound``: two methods of a class a
+    call names as the ``bound=`` of a type variable it assigns."""
 
 
 _BLOCK = """total = 0
@@ -756,6 +931,15 @@ def _program(usage: Usage) -> str:
             for name, k in (("first", 3), ("second", 5))
         )
         return f"{usage.prelude}\n\n@{decorator}\nclass Holder:\n    items = (1, 5, 9)\n{members}"
+    if usage.shape == "bound":
+        members = "".join(
+            f"\n    def {name}(self):\n{body('        ', 'self.items', f'return result * {k}')}\n"
+            for name, k in (("first", 3), ("second", 5))
+        )
+        return (
+            f"{usage.prelude}\n\nclass Holder:\n    items = (1, 5, 9)\n{members}\n"
+            f"T = {decorator}('T', bound=Holder)\n"
+        )
     assert usage.shape == "accessor"
     accessor = decorator.rpartition(".")[2]
     members = "".join(
@@ -813,6 +997,10 @@ USAGES: Dict[str, Usage] = {
     "typing_extensions.deprecated": Usage(
         "import typing_extensions", "typing_extensions.deprecated('old')", "class"
     ),
+    "typing.TypeVar": Usage("import typing", "typing.TypeVar", "bound"),
+    "typing_extensions.TypeVar": Usage(
+        "import typing_extensions", "typing_extensions.TypeVar", "bound"
+    ),
     "dataclasses.dataclass": Usage("import dataclasses", "dataclasses.dataclass", "class"),
     "enum.unique": Usage("import enum", "enum.unique", "class"),
     "unittest.mock.patch": Usage("from unittest import mock", "mock.patch('os.getcwd')"),
@@ -841,6 +1029,10 @@ USAGES: Dict[str, Usage] = {
     "click.help_option": Usage("import click", "click.help_option()"),
     "click.pass_context": Usage("import click", "click.pass_context"),
     "click.pass_obj": Usage("import click", "click.pass_obj"),
+    "rich.repr.auto": Usage("import rich.repr", "rich.repr.auto", "class"),
+    "rich.repr.rich_repr": Usage(
+        "from rich.repr import rich_repr", "rich_repr(angular=True)", "class"
+    ),
 }
 
 _VERSION = re.compile(r"\b\d+\.\d+(\.\d+)?\b")
@@ -864,11 +1056,11 @@ def test_every_known_decorator_is_verified_and_still_refactors(
     # The program refactors because of this entry: without it, the pairs are
     # declined under the name the entry reads.
     monkeypatch.setattr(
-        decorator_reach,
+        known_decorators,
         "_BY_ORIGIN",
         {
             origin: known
-            for origin, known in decorator_reach._BY_ORIGIN.items()
+            for origin, known in known_decorators._BY_ORIGIN.items()
             if known is not entry
         },
     )

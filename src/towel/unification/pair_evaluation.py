@@ -610,12 +610,12 @@ class PairEvaluation(
         )
 
     def _reject_decorated(self, pair: CodeBlockPair, refusal: DecoratorRefusal) -> None:
-        self._debug_reject(
-            RejectReason.DECORATOR_MAY_TRANSFORM_BODY,
-            pair,
-            detail=refusal.detail,
-            subject=refusal.decorator,
+        reason = (
+            RejectReason.CLASS_MACHINERY_MAY_TRANSFORM_METHODS
+            if refusal.kind == "machinery"
+            else RejectReason.DECORATOR_MAY_TRANSFORM_BODY
         )
+        self._debug_reject(reason, pair, detail=refusal.detail, subject=refusal.decorator)
 
     def _guard_pair(self, pair: CodeBlockPair, functions: FunctionIndex) -> Optional[_PairSetup]:
         """Reject a pair whose blocks cannot move at all; otherwise resolve their context."""

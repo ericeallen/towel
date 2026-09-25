@@ -131,14 +131,10 @@ TRANSFORMED = {
     "p06_static_helper_called_while_class_body_runs",
     "p07_static_methods_called_while_class_body_runs",
     "p08_classmethod_never_using_cls",
-    "p09_static_helper_metaclass_hides_attribute",
     # Classes that cannot take a helper into their body: it goes to module level.
     "p10_one_line_exception_base",
     "p11_one_line_base_docstring_and_assignment",
     "p12_one_line_body_after_a_split_header",
-    "p13_protocol_default_methods",
-    "p14_protocol_common_ancestor",
-    "p17_decorated_base_rebuilds_namespace",
     # The positive control: every decorator here keeps the helper a method.
     "p18_known_class_decorators_keep_the_helper",
     # The helper is placed before the assignment that calls it, its annotations
@@ -170,7 +166,15 @@ TRANSFORMED = {
     # function leaves its body alone; the r7d_instrumenting_* fixtures, whose
     # decorators recompile the body, are declined.
     "r7d_plain_wrapper_decorator",
+    # The same applied by hand, with a known factory and a property built from
+    # its accessors; r7d_instrumenting_call_applied_by_hand, whose recompiler is
+    # applied by a call, and r7d_metaclass_recompiles_methods are declined.
+    "r7d_plain_wrapper_applied_by_hand",
 }
+# p09, p13, p14 and p17 left it when the classes code moves out of began to be
+# held to the method-host test of their machinery: p09's metaclass is the
+# project's, p13 and p14 derive from Protocol, whose machinery the test does
+# not accept, and p17's base carries a decorator not known to keep it.
 # p15_class_decorator_rebuilds_namespace and p16_class_decorator_wraps_every_function
 # left the set when a class decorator not known to leave its methods alone began
 # to decline blocks in them: the one rebuilds the class from its namespace, the

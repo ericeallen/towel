@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Whether every decorator that can reach a function's body is known to leave the body alone.
+"""Whether everything that can reach a function's body is known to leave the body alone.
 
 Some decorators compile or instrument the body they decorate. typeguard's
 ``@typechecked`` recompiles the function from its source with a check after
@@ -43,6 +43,17 @@ enclosing function is not followed. A decorator factory such as
 A project module that takes the name of a third-party library in the list is
 read as the project's code; one that takes a standard-library module's name
 is taken to be the standard library, as everywhere else in Towel.
+
+A decorator applied by hand reaches the body as surely as one written with
+``@``: ``fast = numba.njit(kernel)``, ``f = typechecked(f)``, ``method =
+wrap(method)`` in a class body, or ``njit(cache=True)(kernel)``. So every call
+in the value of an assignment at module or class level, in any module of the
+project, counts as applying its callee to each definition an argument of it
+names, and is judged as that decorator would be. And a class's machinery
+reaches every method: a metaclass or an ``__init_subclass__`` may wrap or
+recompile them as the class is built. So every class enclosing the code must
+pass the test a class that takes a method helper passes
+(:meth:`ImportTimeCode.hosts_method_helpers`).
 """
 
 from __future__ import annotations
@@ -68,346 +79,32 @@ from typing import (
 )
 from weakref import WeakKeyDictionary
 
+from ..consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
 from ..import_model import NameStatus
+from ..project_layout import find_project_root
 from ..source_text import read_source
 from .bounded_cache import BoundedCache
 from .exceptions import ProjectScanLimitError
-from .import_graph import ImportGraphCache, imported_definition_sites
+from .import_graph import (
+    _HOSTS_METHOD_HELPERS,
+    ImportGraphCache,
+    ImportTimeCode,
+    imported_definition_sites,
+)
+from .known_decorators import (
+    DecoratedKind,
+    Form,
+    KnownDecorator,
+    known_decorator,
+)
 from .module_bindings import ModuleBindings, dotted_name, global_bindings
 from .statement_facts import bindings_of
 
 FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 Definition = Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
-DecoratedKind = Literal["function", "class"]
-Form = Literal["bare", "called"]
 
 _DEFINITIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
-
-FUNCTION: FrozenSet[DecoratedKind] = frozenset({"function"})
-CLASS: FrozenSet[DecoratedKind] = frozenset({"class"})
-EITHER: FrozenSet[DecoratedKind] = FUNCTION | CLASS
-BARE: FrozenSet[Form] = frozenset({"bare"})
-CALLED: FrozenSet[Form] = frozenset({"called"})
-BARE_OR_CALLED: FrozenSet[Form] = BARE | CALLED
-
-
-@dataclass(frozen=True)
-class KnownDecorator:
-    """A decorator read in its library's source and found to leave the body it decorates alone.
-
-    ``origin`` is the absolute dotted name the decorator resolves to; one
-    ending in ``.*`` stands for any single public attribute of the name
-    before it. ``decorates`` says whether the reading covered functions,
-    classes, or both, and ``forms`` whether it covered the decorator used
-    bare (``@lru_cache``), called (``@lru_cache(64)``), or both. A called
-    form passing a keyword in ``refused_keywords``, or ``**`` arguments that
-    could carry one, or more than ``most_positional`` positional arguments,
-    is outside the reading. ``note`` is the verification: the version read,
-    and why the body stays untouched.
-    """
-
-    origin: str
-    decorates: FrozenSet[DecoratedKind]
-    forms: FrozenSet[Form]
-    note: str
-    refused_keywords: FrozenSet[str] = frozenset()
-    most_positional: Optional[int] = None
-
-
-_CPYTHON = "CPython 3.11.15, 3.12.13, 3.13.7"
-_TYPING_EXTENSIONS = "typing_extensions 4.16.0 on " + _CPYTHON
-_PYTEST = "pytest 9.1.1"
-_CLICK = "click 8.5.0"
-
-
-def _known(
-    origins: Sequence[str],
-    decorates: FrozenSet[DecoratedKind],
-    forms: FrozenSet[Form],
-    note: str,
-    *,
-    refused_keywords: FrozenSet[str] = frozenset(),
-    most_positional: Optional[int] = None,
-) -> Tuple[KnownDecorator, ...]:
-    return tuple(
-        KnownDecorator(origin, decorates, forms, note, refused_keywords, most_positional)
-        for origin in origins
-    )
-
-
-KNOWN_DECORATORS: Tuple[KnownDecorator, ...] = (
-    *_known(
-        ["builtins.property"],
-        FUNCTION,
-        BARE,
-        f"{_CPYTHON}, Objects/descrobject.c: property_init stores the function as fget and"
-        " reads only its __doc__; property_descr_get calls fget(obj).",
-    ),
-    *_known(
-        ["builtins.property.setter", "builtins.property.getter", "builtins.property.deleter"],
-        FUNCTION,
-        BARE,
-        f"{_CPYTHON}, Objects/descrobject.c: property_copy builds a new property holding"
-        " the function as fset, fget or fdel, and calls it only through the descriptor.",
-    ),
-    *_known(
-        ["builtins.staticmethod"],
-        FUNCTION,
-        BARE,
-        f"{_CPYTHON}, Objects/funcobject.c: sm_init stores the callable and copies"
-        " __module__, __name__, __qualname__, __doc__, __annotations__; sm_descr_get"
-        " returns it and sm_call calls it.",
-    ),
-    *_known(
-        ["builtins.classmethod"],
-        FUNCTION,
-        BARE,
-        f"{_CPYTHON}, Objects/funcobject.c: cm_init stores the callable and copies the"
-        " same attributes; cm_descr_get binds it to the class (3.11 and 3.12 through the"
-        " function's own __get__).",
-    ),
-    *_known(
-        ["functools.wraps"],
-        EITHER,
-        CALLED,
-        f"{_CPYTHON}, functools.py: partial(update_wrapper, wrapped=...) copies"
-        " WRAPPER_ASSIGNMENTS onto the decorated function, updates its __dict__, sets"
-        " __wrapped__, and returns that same function.",
-    ),
-    *_known(
-        ["functools.cache"],
-        FUNCTION,
-        BARE,
-        f"{_CPYTHON}, functools.py: lru_cache(maxsize=None)(user_function).",
-    ),
-    *_known(
-        ["functools.lru_cache"],
-        FUNCTION,
-        BARE_OR_CALLED,
-        f"{_CPYTHON}, functools.py: _lru_cache_wrapper (the Python fallback of the C"
-        " version) calls user_function(*args, **kwds) on a miss; update_wrapper copies"
-        " attributes.",
-    ),
-    *_known(
-        ["functools.cached_property"],
-        FUNCTION,
-        BARE,
-        f"{_CPYTHON}, functools.py: stores func and its __doc__ and __module__; __get__"
-        " calls func(instance) once and keeps the value in instance.__dict__.",
-    ),
-    *_known(
-        ["functools.singledispatch"],
-        FUNCTION,
-        BARE,
-        f"{_CPYTHON}, functools.py: registers func for object; the wrapper calls"
-        " dispatch(args[0].__class__)(*args, **kw); register() reads only annotations.",
-    ),
-    *_known(
-        ["functools.singledispatchmethod"],
-        FUNCTION,
-        BARE,
-        f"{_CPYTHON}, functools.py: holds singledispatch(func); __get__ dispatches on the"
-        " first argument's class and calls the implementation.",
-    ),
-    *_known(
-        ["functools.partialmethod"],
-        FUNCTION,
-        BARE,
-        f"{_CPYTHON}, functools.py: stores func; the unbound method calls"
-        " self.func(cls_or_self, *self.args, *args, **keywords).",
-    ),
-    *_known(
-        ["functools.total_ordering"],
-        CLASS,
-        BARE,
-        f"{_CPYTHON}, functools.py: sets only the comparison methods the class lacks,"
-        " module functions calling the one it defines; returns the class.",
-    ),
-    *_known(
-        ["contextlib.contextmanager", "contextlib.asynccontextmanager"],
-        FUNCTION,
-        BARE,
-        f"{_CPYTHON}, contextlib.py: helper(*args, **kwds) returns"
-        " _GeneratorContextManager (_AsyncGeneratorContextManager) built from"
-        " func(*args, **kwds); wraps copies attributes.",
-    ),
-    *_known(
-        ["abc.abstractmethod"],
-        FUNCTION,
-        BARE,
-        f"{_CPYTHON}, abc.py: sets __isabstractmethod__ = True and returns the function.",
-    ),
-    *_known(
-        ["typing.overload", "typing_extensions.overload"],
-        FUNCTION,
-        BARE,
-        f"{_CPYTHON}, typing.py (typing_extensions 4.16.0 re-exports it): records func"
-        " under its __code__.co_firstlineno for get_overloads() and returns"
-        " _overload_dummy; the decorated body never runs.",
-    ),
-    *_known(
-        ["typing.override", "typing_extensions.override"],
-        FUNCTION,
-        BARE,
-        "CPython 3.12.13 and 3.13.7 typing.py (3.11 has none), and typing_extensions 4.16.0"
-        f" on {_CPYTHON}: sets __override__ = True and returns the argument.",
-    ),
-    *_known(
-        ["typing.final", "typing_extensions.final"],
-        EITHER,
-        BARE,
-        f"{_CPYTHON}, typing.py (re-exported by typing_extensions 4.16.0): sets"
-        " __final__ = True and returns the argument.",
-    ),
-    *_known(
-        ["typing.no_type_check", "typing_extensions.no_type_check"],
-        EITHER,
-        BARE,
-        f"{_CPYTHON}, typing.py (re-exported by typing_extensions 4.16.0): sets"
-        " __no_type_check__ on the function, or on each function the class defines;"
-        " returns the argument.",
-    ),
-    *_known(
-        ["typing.runtime_checkable", "typing_extensions.runtime_checkable"],
-        CLASS,
-        BARE,
-        f"{_CPYTHON} typing.py, and {_TYPING_EXTENSIONS}: sets _is_runtime_protocol and"
-        " records the non-callable members; returns the class.",
-    ),
-    *_known(
-        ["typing.dataclass_transform", "typing_extensions.dataclass_transform"],
-        EITHER,
-        CALLED,
-        f"{_CPYTHON} typing.py, and {_TYPING_EXTENSIONS}: the decorator sets"
-        " __dataclass_transform__ and returns its argument.",
-    ),
-    *_known(
-        ["warnings.deprecated"],
-        EITHER,
-        CALLED,
-        "CPython 3.13.7, warnings.py (3.11 and 3.12 have none): the wrapper warns, then calls"
-        " arg(*args, **kwargs); on a class only __new__ and __init_subclass__ are wrapped.",
-    ),
-    *_known(
-        ["typing_extensions.deprecated"],
-        EITHER,
-        CALLED,
-        f"{_TYPING_EXTENSIONS} (its own class there; warnings.deprecated from 3.13.8): the"
-        " wrapper warns, then calls arg(*args, **kwargs); on a class only __new__ and"
-        " __init_subclass__ are wrapped.",
-    ),
-    *_known(
-        ["dataclasses.dataclass"],
-        CLASS,
-        BARE_OR_CALLED,
-        f"{_CPYTHON}, dataclasses.py: _process_class adds generated methods only where"
-        " the class lacks them (_set_new_attribute; __hash__ per its table), exec()s only"
-        " their new source, and with slots=True rebuilds the class from a copy of its"
-        " __dict__; no function the class defines is read or rewritten.",
-    ),
-    *_known(
-        ["enum.unique"],
-        CLASS,
-        BARE,
-        f"{_CPYTHON}, enum.py: checks __members__ for aliases and returns the class.",
-    ),
-    *_known(
-        [
-            "unittest.mock.patch",
-            "unittest.mock.patch.object",
-            "unittest.mock.patch.dict",
-            "unittest.mock.patch.multiple",
-        ],
-        EITHER,
-        CALLED,
-        f"{_CPYTHON}, unittest/mock.py: decorate_callable wraps the function in"
-        " patched(*args, **keywargs), which enters the patches and calls"
-        " func(*newargs, **newkeywargs); decorate_class does so for each test* method.",
-    ),
-    *_known(
-        ["unittest.skip"],
-        EITHER,
-        BARE_OR_CALLED,
-        f"{_CPYTHON}, unittest/case.py: replaces a function by skip_wrapper, which raises"
-        " SkipTest without calling it, and marks a class; neither body is read.",
-    ),
-    *_known(
-        ["unittest.skipIf", "unittest.skipUnless"],
-        EITHER,
-        CALLED,
-        f"{_CPYTHON}, unittest/case.py: returns skip(reason) or _id, the identity.",
-    ),
-    *_known(
-        ["unittest.expectedFailure"],
-        EITHER,
-        BARE,
-        f"{_CPYTHON}, unittest/case.py: sets __unittest_expecting_failure__ and returns"
-        " the argument.",
-    ),
-    *_known(
-        ["pytest.fixture"],
-        FUNCTION,
-        BARE_OR_CALLED,
-        f"{_PYTEST}, _pytest/fixtures.py: FixtureFunctionMarker.__call__ wraps the function"
-        " in FixtureFunctionDefinition, which stores it, copies its attributes, and is"
-        " called by pytest; its source is read only to print a failed fixture lookup.",
-    ),
-    *_known(
-        ["pytest.mark.*"],
-        EITHER,
-        BARE_OR_CALLED,
-        f"{_PYTEST}, _pytest/mark/structures.py: MarkGenerator.__getattr__ returns a"
-        " MarkDecorator; called with the function, it appends a Mark to its pytestmark"
-        " and returns it; called otherwise, with_args returns another MarkDecorator.",
-    ),
-    *_known(
-        ["click.command", "click.group"],
-        FUNCTION,
-        BARE_OR_CALLED,
-        f"{_CLICK}, click/decorators.py and core.py: builds Command(name=..., callback=f,"
-        " params=...), and Command.invoke calls ctx.invoke(self.callback, **ctx.params);"
-        " a cls argument can be any class, so that form is not covered.",
-        refused_keywords=frozenset({"cls"}),
-        most_positional=1,
-    ),
-    *_known(
-        [
-            "click.option",
-            "click.argument",
-            "click.confirmation_option",
-            "click.password_option",
-            "click.version_option",
-            "click.help_option",
-        ],
-        FUNCTION,
-        CALLED,
-        f"{_CLICK}, click/decorators.py: _param_memo appends a new Parameter to"
-        " f.__click_params__ (or to the Command's params) and returns f; the"
-        " Parameter never receives f.",
-    ),
-    *_known(
-        ["click.pass_context", "click.pass_obj"],
-        FUNCTION,
-        BARE,
-        f"{_CLICK}, click/decorators.py: new_func(*args, **kwargs) calls"
-        " f(get_current_context(), *args, **kwargs) (or .obj); update_wrapper copies"
-        " attributes.",
-    ),
-)
-
-_BY_ORIGIN: Mapping[str, KnownDecorator] = {entry.origin: entry for entry in KNOWN_DECORATORS}
-
-
-def known_decorator(origin: str) -> Optional[KnownDecorator]:
-    """The entry ``origin`` resolves to: its own, or a ``.*`` entry of the name above it."""
-    entry = _BY_ORIGIN.get(origin)
-    if entry is not None:
-        return entry
-    parent, _, attribute = origin.rpartition(".")
-    if not parent or not attribute or attribute.startswith("_") or attribute == "with_args":
-        return None
-    return _BY_ORIGIN.get(f"{parent}.*")
 
 
 @dataclass(frozen=True, eq=False)
@@ -419,18 +116,34 @@ class ModuleSource:
     tree: ast.Module
 
 
+RefusalKind = Literal["decorator", "machinery"]
+
+
 @dataclass(frozen=True)
 class DecoratorRefusal:
-    """A decorator that can reach some code and is not known to leave its body alone."""
+    """Something that can reach some code and is not known to leave its body alone.
+
+    A decorator, written with ``@`` or applied by a call an assignment makes
+    (``site`` then says where), or the machinery of an enclosing class.
+    """
 
     decorator: str
-    """The decorator's absolute name when it resolves to one, as the module spells it otherwise."""
+    """The decorator's absolute name when it resolves to one, as the module spells it
+    otherwise; for class machinery, what runs it: ``metaclass Meta``,
+    ``__init_subclass__ of Base``."""
     holder: str
-    """The definition it decorates: ``parse_record``, or ``class Model``."""
+    """The definition it reaches: ``parse_record``, or ``class Model``."""
+    kind: RefusalKind = "decorator"
+    site: Optional[str] = None
+    """``module.py:12``, the call applying a decorator by hand."""
 
     @property
     def detail(self) -> str:
-        """``@typeguard.typechecked on parse_record``."""
+        """``@typeguard.typechecked on parse_record``, and the like."""
+        if self.kind == "machinery":
+            return f"{self.decorator} builds {self.holder}"
+        if self.site is not None:
+            return f"{self.decorator}(...) at {self.site} applied to {self.holder}"
         return f"@{self.decorator} on {self.holder}"
 
 
@@ -520,12 +233,18 @@ def _function_scope_names(function: FunctionNode) -> FrozenSet[str]:
 
 @dataclass(frozen=True, eq=False)
 class _Module:
-    """A module this resolution reads: its path, its tree, what its top level binds, its layout."""
+    """A module this resolution reads: its path, text and tree, what its top level binds, its layout."""
 
     path: str
+    source: str
     tree: ast.Module
     bindings: ModuleBindings
     layout: Mapping[int, _Slot]
+
+    @property
+    def key(self) -> str:
+        """The module's file, however the path to it is spelled."""
+        return os.path.realpath(self.path)
 
 
 @dataclass(frozen=True)
@@ -558,6 +277,42 @@ class _CallResult:
 
 _Denotation = Union[_Origin, _ProjectDef, _CallResult]
 
+
+@dataclass(frozen=True, eq=False)
+class _Application:
+    """A callable reaching a definition: one of its decorators, or a call applying one by hand.
+
+    ``callee`` names the callable, read in ``module`` where ``slot`` sits.
+    ``expression`` is what an entry's reading must cover: the decorator
+    itself, the factory call whose result is applied, or the call that
+    applies the callable to the definition among other arguments.
+    """
+
+    callee: ast.expr
+    expression: ast.expr
+    form: Form
+    module: _Module
+    slot: _Slot
+    site: Optional[str] = None
+
+
+_Target = Tuple[str, str]
+"""A definition by the file it is in and its qualified name there: ``(".../m.py", "C.m")``."""
+
+
+@dataclass(frozen=True)
+class _HandIndex:
+    """Every call a module or class body of the project assigns, by the definitions it is given.
+
+    ``by_name`` holds the calls given a name that could not be followed to
+    its definition, under the name's last part, and is matched by name.
+    """
+
+    by_target: Mapping[_Target, Tuple[_Application, ...]]
+    by_name: Mapping[str, Tuple[_Application, ...]]
+    complete: bool
+
+
 _BUILTIN_NAMES = frozenset(vars(builtins))
 _PROPERTY_ACCESSORS = frozenset({"setter", "getter", "deleter"})
 _STANDARD_MODULES = frozenset(sys.stdlib_module_names) | {"builtins"}
@@ -581,6 +336,8 @@ class _Memo:
     refusal: Optional[DecoratorRefusal]
     stamps: Tuple[_Stamp, ...]
     """Every other module the answer read, with its modification time and size then."""
+    cache: int
+    """The ``id`` of the import-graph cache the answer came from: one engine's."""
 
 
 @dataclass(frozen=True)
@@ -592,6 +349,15 @@ class _PlainMemo:
 _REFUSALS: "WeakKeyDictionary[ast.AST, _Memo]" = WeakKeyDictionary()
 _PLAIN: "WeakKeyDictionary[ast.AST, Dict[Form, _PlainMemo]]" = WeakKeyDictionary()
 _LOADED: BoundedCache[_Stamp, Optional[_Module]] = BoundedCache(256)
+_HAND_CALLS: "WeakKeyDictionary[ast.Module, Tuple[Tuple[_Application, str], ...]]" = (
+    WeakKeyDictionary()
+)
+# The project's hand applications, per engine (its import-graph cache) and
+# project root. Towel never writes a module-level or class-level assignment,
+# so what the index holds stays true while the engine rewrites the project.
+_HAND_INDEXES: "WeakKeyDictionary[ImportGraphCache, Dict[str, _HandIndex]]" = WeakKeyDictionary()
+_CODES: "WeakKeyDictionary[ast.Module, Tuple[int, Optional[ImportTimeCode]]]" = WeakKeyDictionary()
+_MACHINERY: "WeakKeyDictionary[ast.AST, Tuple[int, Optional[str]]]" = WeakKeyDictionary()
 
 
 def _stamp(path: str) -> Optional[_Stamp]:
@@ -620,18 +386,23 @@ def decorator_refusal(
 ) -> Optional[DecoratorRefusal]:
     """The first decorator reaching ``definition``'s body not known to leave it alone, if any.
 
-    The decorators of ``definition`` itself come first, then those of each
-    definition enclosing it, innermost first. ``module`` holds the tree
+    The decorators of ``definition`` itself come first, then the calls
+    applying one to it by hand, then, for a class, its machinery; then the
+    same for each definition enclosing it, innermost first. ``module`` holds the tree
     ``definition`` belongs to; ``cache`` answers where an import leads. The
     answer is remembered per definition, together with every other module
     it read, and computed again once one of those changes.
     """
     memo = _REFUSALS.get(definition)
-    if memo is not None and all(_stamp(stamp[0]) == stamp for stamp in memo.stamps):
+    if (
+        memo is not None
+        and memo.cache == id(cache)
+        and all(_stamp(stamp[0]) == stamp for stamp in memo.stamps)
+    ):
         return memo.refusal
     resolver = _Resolver(cache)
     refusal = resolver.chain_refusal(definition, module)
-    _REFUSALS[definition] = _Memo(refusal, tuple(sorted(resolver.stamps)))
+    _REFUSALS[definition] = _Memo(refusal, tuple(sorted(resolver.stamps)), id(cache))
     return refusal
 
 
@@ -660,32 +431,60 @@ class _Resolver:
         bindings = global_bindings(source.source)
         if bindings is None:
             return DecoratorRefusal("(module does not parse)", _holder(definition))
-        module = _Module(source.path, source.tree, bindings, _layout(source.tree))
+        module = _Module(source.path, source.source, source.tree, bindings, _layout(source.tree))
+        index = self._hand_index(module)
+        if not index.complete:
+            return DecoratorRefusal("(project too large to read whole)", _holder(definition))
+        chain: List[Tuple[Definition, _Slot]] = []
         node: Optional[Definition] = definition
         while node is not None:
             slot = module.layout.get(id(node))
             if slot is None:
                 return DecoratorRefusal("(definition outside its module)", _holder(node))
-            for decorator in node.decorator_list:
-                refused = self._refused(decorator, node, module)
-                if refused is not None:
-                    return DecoratorRefusal(refused, _holder(node))
+            chain.append((node, slot))
             node = slot.owner
+        for node, slot in chain:
+            for application in self._applications(node, slot, module, index):
+                refused = self._refused(application, node)
+                if refused is not None:
+                    return DecoratorRefusal(refused, _holder(node), site=application.site)
+        for node, _ in chain:
+            if isinstance(node, ast.ClassDef):
+                machinery = self._machinery_refused(node, module)
+                if machinery is not None:
+                    return DecoratorRefusal(machinery, _holder(node), kind="machinery")
         return None
 
-    def _refused(
-        self, decorator: ast.expr, decorated: Definition, module: _Module
-    ) -> Optional[str]:
-        """The name to report ``decorator`` by when it is not known; None when it is."""
-        callee = decorator.func if isinstance(decorator, ast.Call) else decorator
-        spelled = dotted_name(callee)
+    def _applications(
+        self, node: Definition, slot: _Slot, module: _Module, index: _HandIndex
+    ) -> List[_Application]:
+        """Every callable applied to ``node``: its decorators, then the calls given it by hand."""
+        found = [
+            _Application(
+                decorator.func if isinstance(decorator, ast.Call) else decorator,
+                decorator,
+                "called" if isinstance(decorator, ast.Call) else "bare",
+                module,
+                slot,
+            )
+            for decorator in node.decorator_list
+        ]
+        found.extend(index.by_name.get(node.name, ()))
+        identity = _identity(node, module)
+        if identity is not None:
+            found.extend(index.by_target.get(identity, ()))
+        return found
+
+    def _refused(self, application: _Application, decorated: Definition) -> Optional[str]:
+        """The name to report ``application`` by when it is not known; None when it is."""
+        spelled = dotted_name(application.callee)
         if spelled is None:
-            return _spelling(decorator)
-        denotations = self._denotations(spelled, decorated, module)
+            return _spelling(application.callee)
+        denotations = self._denotations(spelled, application.slot, application.module)
         if denotations is None:
             return spelled
         for denotation in _in_order(denotations):
-            refused = self._denotation_refused(denotation, decorator, decorated, spelled)
+            refused = self._denotation_refused(denotation, application, decorated, spelled)
             if refused is not None:
                 return refused
         return None
@@ -693,27 +492,32 @@ class _Resolver:
     def _denotation_refused(
         self,
         denotation: _Denotation,
-        decorator: ast.expr,
+        application: _Application,
         decorated: Definition,
         spelled: str,
         depth: int = 0,
     ) -> Optional[str]:
-        form: Form = "called" if isinstance(decorator, ast.Call) else "bare"
+        form = application.form
         if isinstance(denotation, _CallResult):
             # Applied bare, the name is the call's decorator; called again, it is
             # whatever that decorator returns, which nothing here has read.
-            if form == "called" or depth > _MOST_HOPS:
+            if form != "bare" or depth > _MOST_HOPS:
                 return spelled
-            return self._denotation_refused(
-                denotation.callee, denotation.call, decorated, spelled, depth + 1
+            made = _Application(
+                denotation.call.func,
+                denotation.call,
+                "called",
+                application.module,
+                application.slot,
             )
+            return self._denotation_refused(denotation.callee, made, decorated, spelled, depth + 1)
         if isinstance(denotation, _ProjectDef):
-            return None if self._plain(denotation, form) else spelled
+            return None if form != "applied" and self._plain(denotation, form) else spelled
         kind: DecoratedKind = "class" if isinstance(decorated, ast.ClassDef) else "function"
         entry = known_decorator(denotation.dotted)
         top = denotation.dotted.partition(".")[0]
         if entry is not None and top in _STANDARD_MODULES:
-            return None if _covers(entry, decorator, kind) else denotation.dotted
+            return None if _covers(entry, application, kind) else denotation.dotted
         if top in _STANDARD_MODULES or depth > _MOST_HOPS:
             return denotation.dotted
         external = self._is_external(denotation.module, top)
@@ -723,7 +527,9 @@ class _Resolver:
             # No module of the project takes the name: it is the installed
             # library an entry was read in, or a decorator nobody read.
             return (
-                None if entry is not None and _covers(entry, decorator, kind) else denotation.dotted
+                None
+                if entry is not None and _covers(entry, application, kind)
+                else denotation.dotted
             )
         # A module of the project: read as the project's code, entry or not.
         sites = self._project_sites(denotation.module, denotation.spelled)
@@ -734,7 +540,7 @@ class _Resolver:
             if found is None:
                 return denotation.dotted
             for inner in _in_order(found):
-                if self._denotation_refused(inner, decorator, decorated, spelled, depth + 1):
+                if self._denotation_refused(inner, application, decorated, spelled, depth + 1):
                     return denotation.dotted
         return None
 
@@ -750,18 +556,17 @@ class _Resolver:
     # -- names -------------------------------------------------------------------
 
     def _denotations(
-        self, dotted: str, decorated: Definition, module: _Module
+        self, dotted: str, slot: _Slot, module: _Module
     ) -> Optional[FrozenSet[_Denotation]]:
-        """Everything ``dotted`` may denote where ``decorated``'s decorators run.
+        """Everything ``dotted`` may denote when read where ``slot`` sits.
 
-        They run in the scope holding the definition: a class body sees its
-        own earlier bindings, a function its locals (which are not followed),
-        and every scope past the first skips class bodies, as Python does.
+        A decorator is read in the scope holding the definition, a call an
+        assignment makes in the scope holding the assignment: a class body
+        sees its own earlier bindings, a function its locals (which are not
+        followed), and every scope past the first skips class bodies, as
+        Python does.
         """
         head = dotted.partition(".")[0]
-        slot = module.layout.get(id(decorated))
-        if slot is None:
-            return None
         owner, first = slot.owner, True
         while owner is not None:
             if isinstance(owner, ast.ClassDef):
@@ -814,7 +619,7 @@ class _Resolver:
         spelled = dotted_name(outer)
         if spelled is None:
             return False
-        found = self._denotations(spelled, function, module)
+        found = self._denotations(spelled, module.layout[id(function)], module)
         if found is None or len(found) != 1:
             return False
         (only,) = found
@@ -969,8 +774,232 @@ class _Resolver:
             return _LOADED.put(stamp, None)
         bindings = global_bindings(source)
         return _LOADED.put(
-            stamp, None if bindings is None else _Module(path, tree, bindings, _layout(tree))
+            stamp,
+            None if bindings is None else _Module(path, source, tree, bindings, _layout(tree)),
         )
+
+    # -- decorators applied by hand --------------------------------------------
+
+    def _hand_index(self, module: _Module) -> _HandIndex:
+        """The hand applications of ``module``'s project, read once per engine and project."""
+        root = os.path.realpath(find_project_root(Path(module.path)))
+        indexes = _HAND_INDEXES.setdefault(self._cache, {})
+        index = indexes.get(root)
+        if index is None:
+            # A resolver of its own: what it reads is the whole project, and no
+            # answer that consults the index depends on any one module of it.
+            index = indexes[root] = _Resolver(self._cache)._read_hand_index(Path(root))
+        return index
+
+    def _read_hand_index(self, root: Path) -> _HandIndex:
+        """Every hand application of the project under ``root``, by the definitions it is given.
+
+        The directories the consumer scan skips are skipped here too; past its
+        limit the project cannot be read whole, and the index says so.
+        """
+        by_target: Dict[_Target, List[_Application]] = {}
+        by_name: Dict[str, List[_Application]] = {}
+        count = 0
+        for parent, directories, files in os.walk(root, onerror=lambda _: None):
+            directories[:] = sorted(name for name in directories if name not in SKIPPED_DIRECTORIES)
+            for name in sorted(files):
+                if not name.endswith(".py"):
+                    continue
+                count += 1
+                if count > MAXIMUM_FILES:
+                    return _HandIndex({}, {}, complete=False)
+                module = self._load(os.path.join(parent, name))
+                if module is None:
+                    continue  # A module that does not parse applies nothing.
+                for application, spelled in _hand_calls(module):
+                    targets = self._argument_targets(module, spelled, application.slot)
+                    if targets is None:
+                        by_name.setdefault(spelled.rpartition(".")[2], []).append(application)
+                        continue
+                    for target in targets:
+                        by_target.setdefault(target, []).append(application)
+        return _HandIndex(
+            {target: tuple(found) for target, found in by_target.items()},
+            {name: tuple(found) for name, found in by_name.items()},
+            complete=True,
+        )
+
+    def _argument_targets(
+        self, module: _Module, spelled: str, slot: _Slot
+    ) -> Optional[FrozenSet[_Target]]:
+        """The project's definitions an argument spelled ``spelled`` may be, where ``slot`` reads it.
+
+        Empty when it can be none of them (a builtin, an import from outside
+        the project); None when that cannot be told, and the argument is then
+        taken to be every definition of its name.
+        """
+        head = spelled.partition(".")[0]
+        owner, first = slot.owner, True
+        while owner is not None:
+            if isinstance(owner, ast.ClassDef):
+                if first:
+                    bound, local = self._class_body_targets(spelled, owner, slot, module)
+                    if bound:
+                        return local
+            elif head in _function_scope_names(owner):
+                return None
+            first = False
+            owner = module.layout[id(owner)].owner
+        return self._module_targets(module, spelled, 0)
+
+    def _class_body_targets(
+        self, spelled: str, klass: ast.ClassDef, slot: _Slot, module: _Module
+    ) -> Tuple[bool, Optional[FrozenSet[_Target]]]:
+        """Whether ``klass``'s body binds the argument's first name before ``slot``, and to what."""
+        head, _, rest = spelled.partition(".")
+        if not slot.direct and head in bindings_of(
+            klass.body[slot.index], into_nested_scopes=False
+        ):
+            return True, None
+        binders = [
+            statement
+            for statement in klass.body[: slot.index]
+            if head in bindings_of(statement, into_nested_scopes=False)
+        ]
+        if not binders:
+            return False, None
+        last = binders[-1]
+        if not isinstance(last, _DEFINITIONS) or last.name != head:
+            return True, None
+        identity = _identity(last, module)
+        if identity is None:
+            return True, None
+        path, qualname = identity
+        return True, frozenset({(path, f"{qualname}.{rest}" if rest else qualname)})
+
+    def _module_targets(
+        self, module: _Module, dotted: str, depth: int
+    ) -> Optional[FrozenSet[_Target]]:
+        """The project's definitions ``dotted`` may name in ``module``'s namespace, on any path."""
+        if depth > _MOST_HOPS:
+            return None
+        bindings = module.bindings
+        head, _, rest = dotted.partition(".")
+        if bindings.star_imports or head in bindings.rebound_by_global:
+            return None
+        events = bindings.bindings.get(head, ())
+        found: Set[_Target] = set()
+        others: Dict[int, int] = {}
+        for event in events:
+            if event.is_import:
+                sites = self._project_sites(module, dotted) if len(events) == 1 else None
+                if sites is None:
+                    return None
+                for site_module, qualname in sites:
+                    inner = self._module_targets(site_module, qualname, depth + 1)
+                    if inner is None:
+                        return None
+                    found |= inner
+            elif event.origin is not None:
+                target = f"{event.origin}.{rest}" if rest else event.origin
+                inner = self._module_targets(module, target, depth + 1)
+                if inner is None:
+                    return None
+                found |= inner
+            else:
+                others[event.order] = others.get(event.order, 0) + 1
+        for order, count in others.items():
+            definitions = [
+                node for node, _ in _definitions_held(module.tree.body[order]) if node.name == head
+            ]
+            if len(definitions) != count:
+                return None
+            found.add((module.key, dotted))
+        return frozenset(found)
+
+    # -- class machinery ---------------------------------------------------------
+
+    def _machinery_refused(self, klass: ast.ClassDef, module: _Module) -> Optional[str]:
+        """What may wrap or recompile ``klass``'s methods as it is built, if anything may.
+
+        The verdict is the method-host test's, :meth:`ImportTimeCode.hosts_method_helpers`.
+        It judges a class of the module's own body where it stands. A class
+        anywhere else is judged only when it has no bases and no keywords,
+        since nothing of it then resolves through the scope holding it: the
+        test is asked of the same class statement standing alone, binding
+        the names its body binds. Any other class is refused. The answer
+        names what fails the test.
+        """
+        known = _MACHINERY.get(klass)
+        if known is not None and known[0] == id(self._cache):
+            return known[1]
+        slot = module.layout[id(klass)]
+        if slot.owner is None and slot.direct:
+            code = self._import_time_code(module)
+            passes = code is not None and code.hosts_method_helpers(klass.name)
+        else:
+            passes = not klass.bases and not klass.keywords and _passes_standing_alone(klass)
+        refused = None if passes else self._machinery_culprit(klass, module, 0)
+        _MACHINERY[klass] = (id(self._cache), refused)
+        return refused
+
+    def _import_time_code(self, module: _Module) -> Optional[ImportTimeCode]:
+        known = _CODES.get(module.tree)
+        if known is not None and known[0] == id(self._cache):
+            return known[1]
+        try:
+            code: Optional[ImportTimeCode] = ImportTimeCode(
+                module.source, path=Path(module.path), cache=self._cache
+            )
+        except (SyntaxError, ValueError):
+            code = None
+        _CODES[module.tree] = (id(self._cache), code)
+        return code
+
+    def _machinery_culprit(self, klass: ast.ClassDef, module: _Module, depth: int) -> str:
+        """What fails the method-host test for ``klass``: its metaclass, a member, or a base's.
+
+        Only names the failure; the verdict is :meth:`_machinery_refused`'s. A
+        base of the project is followed to the class that fails.
+        """
+        slot = module.layout[id(klass)]
+        machinery = _HOSTS_METHOD_HELPERS
+        if (slot.owner is not None or not slot.direct) and (klass.bases or klass.keywords):
+            return f"class {klass.name} (not at module level, with bases)"
+        for keyword in klass.keywords:
+            if keyword.arg != "metaclass":
+                return f"class keyword {keyword.arg}= of {klass.name}"
+            found = self._denotations(dotted_name(keyword.value) or "?", slot, module)
+            if not found or not all(
+                isinstance(item, _Origin) and item.dotted in machinery.metaclasses for item in found
+            ):
+                return f"metaclass {_spelling(keyword.value)}"
+        for member in sorted(machinery.forbidden_members):
+            if any(
+                member in bindings_of(statement, into_nested_scopes=False)
+                for statement in klass.body
+            ):
+                return f"{member} of {klass.name}"
+        for base in klass.bases:
+            named = base.value if isinstance(base, ast.Subscript) else base
+            spelled = dotted_name(named)
+            if spelled is None:
+                return f"base {_spelling(base)}"
+            targets = self._argument_targets(module, spelled, slot)
+            for path, qualname in sorted(targets or ()):
+                other = self._load(path)
+                inner = (
+                    None if other is None or "." in qualname else class_named(other.tree, qualname)
+                )
+                if other is None or inner is None:
+                    return f"base {spelled}"
+                if inner.decorator_list:
+                    return f"decorators of {inner.name}"
+                if depth < _MOST_HOPS and self._machinery_refused(inner, other) is not None:
+                    return self._machinery_culprit(inner, other, depth + 1)
+            if targets:
+                continue
+            found = self._denotations(spelled, slot, module)
+            origins = {item.dotted for item in found or () if isinstance(item, _Origin)}
+            accepted = machinery.bases | machinery.subscripted_bases | machinery.builtin_bases
+            if not found or not origins or not origins <= accepted:
+                return f"base {min(origins) if origins else spelled}"
+        return f"bases of {klass.name}"
 
     # -- decorators the project defines ------------------------------------------
 
@@ -1067,11 +1096,109 @@ def _statements_held(statement: ast.stmt) -> Iterator[ast.stmt]:
                 pending.append(child)
 
 
-def _covers(entry: KnownDecorator, decorator: ast.expr, kind: DecoratedKind) -> bool:
-    """Whether the reading behind ``entry`` covers ``decorator`` applied to a ``kind``."""
-    form: Form = "called" if isinstance(decorator, ast.Call) else "bare"
-    if kind not in entry.decorates or form not in entry.forms:
+def _passes_standing_alone(klass: ast.ClassDef) -> bool:
+    """The method-host test of a class with no bases and no keywords, asked of it standing alone.
+
+    Such a class is built by ``type`` and has only ``object`` after it on
+    its order, wherever it is written, so only the names its body binds
+    decide, and a module holding just the class statement, binding them,
+    asks the test exactly that.
+    """
+    bound = sorted(
+        {
+            name
+            for statement in klass.body
+            for name in bindings_of(statement, into_nested_scopes=False)
+        }
+    )
+    lines = [f"    {name} = None" for name in bound] or ["    pass"]
+    return ImportTimeCode("\n".join(["class _Standing:", *lines, ""])).hosts_method_helpers(
+        "_Standing"
+    )
+
+
+def _qualified_names(definition: Definition, module: _Module) -> List[str]:
+    """The names of ``definition`` and every definition enclosing it, outermost first."""
+    names = [definition.name]
+    owner = module.layout[id(definition)].owner
+    while owner is not None:
+        names.append(owner.name)
+        owner = module.layout[id(owner)].owner
+    return names[::-1]
+
+
+def _identity(definition: Definition, module: _Module) -> Optional[_Target]:
+    """``definition`` by its file and qualified name, when only classes enclose it.
+
+    A definition inside a function is visible to no module-level or
+    class-level assignment of another scope, and has no such name.
+    """
+    owner = module.layout[id(definition)].owner
+    while owner is not None:
+        if not isinstance(owner, ast.ClassDef):
+            return None
+        owner = module.layout[id(owner)].owner
+    return module.key, ".".join(_qualified_names(definition, module))
+
+
+def _hand_calls(module: _Module) -> Tuple[Tuple[_Application, str], ...]:
+    """Every call in the value of an assignment at module or class level, with each name given it.
+
+    Each argument, positional or keyword, spelled as a name or an attribute
+    chain, is paired with the application the call makes of its callee:
+    ``f(x)`` applies ``f`` bare, ``f(a)(x)`` applies the factory call
+    ``f(a)``, and ``f(x, y)`` applies ``f`` to ``x`` among other arguments.
+    Remembered per module tree.
+    """
+    known = _HAND_CALLS.get(module.tree)
+    if known is not None:
+        return known
+    found: List[Tuple[_Application, str]] = []
+    scopes: List[Tuple[Sequence[ast.stmt], Optional[ast.ClassDef]]] = [(module.tree.body, None)]
+    scopes += [
+        (node.body, node) for node in ast.walk(module.tree) if isinstance(node, ast.ClassDef)
+    ]
+    name = os.path.basename(module.path)
+    for body, owner in scopes:
+        for index, statement in enumerate(body):
+            for held in _statements_held(statement):
+                if not isinstance(held, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                    continue
+                if held.value is None:
+                    continue
+                slot = _Slot(owner, index, held is statement)
+                for call in ast.walk(held.value):
+                    if not isinstance(call, ast.Call):
+                        continue
+                    arguments = (*call.args, *(keyword.value for keyword in call.keywords))
+                    for argument in arguments:
+                        given = argument.value if isinstance(argument, ast.Starred) else argument
+                        spelled = dotted_name(given)
+                        if spelled is not None:
+                            site = f"{name}:{call.lineno}"
+                            found.append(
+                                (_hand_application(call, argument, module, slot, site), spelled)
+                            )
+    _HAND_CALLS[module.tree] = tuple(found)
+    return _HAND_CALLS[module.tree]
+
+
+def _hand_application(
+    call: ast.Call, argument: ast.expr, module: _Module, slot: _Slot, site: str
+) -> _Application:
+    """What ``call`` applies to its ``argument``: its callee bare, a factory's result, or among others."""
+    if isinstance(call.func, ast.Call):
+        return _Application(call.func.func, call.func, "called", module, slot, site)
+    if len(call.args) == 1 and not call.keywords and call.args[0] is argument:
+        return _Application(call.func, call.func, "bare", module, slot, site)
+    return _Application(call.func, call, "applied", module, slot, site)
+
+
+def _covers(entry: KnownDecorator, application: _Application, kind: DecoratedKind) -> bool:
+    """Whether the reading behind ``entry`` covers ``application`` to a ``kind``."""
+    if kind not in entry.decorates or application.form not in entry.forms:
         return False
+    decorator = application.expression
     if not isinstance(decorator, ast.Call):
         return True
     if entry.refused_keywords and any(
