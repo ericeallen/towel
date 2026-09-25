@@ -1,0 +1,66 @@
+# Round-3 audit case misc_super_inside_block (misc: super-inside-moved-block), whose behaviour the
+# audit found kept.
+class Base:
+    def val(self, n):
+        print("Base.val", type(self).__name__, n)
+        return n
+
+
+class A(Base):
+    def __init__(self):
+        self.k = 1
+
+    def m1(self, n):
+        t = n + self.k
+        r = super().val(t)
+        s = r * 2
+        print("A.m1", s)
+        return s
+
+    def m2(self, n):
+        t = n + self.k
+        r = super().val(t)
+        s = r * 2
+        print("A.m2", s)
+        return s + 1
+
+
+class C(A):
+    def val(self, n):
+        print("C.val")
+        return -n
+
+
+class D(C):
+    pass
+
+
+if __name__ == "__main__":
+    import sys
+
+    import copy
+    import re
+
+    def _shown(value):
+        return re.sub(r"0x[0-9a-fA-F]+", "0xADDR", repr(value))
+
+    def _calls(label, function, argument_sets):
+        for arguments in argument_sets:
+            arguments = copy.deepcopy(arguments)
+            try:
+                outcome = "-> " + _shown(function(*arguments))
+            except Exception as error:
+                outcome = f"raised {type(error).__name__}: {_shown(str(error))}"
+            print(label, outcome, "| arguments after:", _shown(arguments))
+
+    def _value(label, produce):
+        try:
+            print(label, "=", _shown(produce()))
+        except Exception as error:
+            print(label, "raised", type(error).__name__, _shown(str(error)))
+
+    pkg_m = sys.modules[__name__]
+    _value('pkg_m.A().m1(1)', lambda: pkg_m.A().m1(1))
+    _value('pkg_m.C().m2(1)', lambda: pkg_m.C().m2(1))
+    _value('pkg_m.D().m1(2)', lambda: pkg_m.D().m1(2))
+    _value('pkg_m.A.m2(pkg_m.D(), 3)', lambda: pkg_m.A.m2(pkg_m.D(), 3))

@@ -1,0 +1,79 @@
+# Round-3 audit case pre_with_enter_raises_caught (prebound: with-as-enter-raises), whose
+# behaviour the audit found kept.
+class Boom1:
+    def __init__(self, fail):
+        self.fail = fail
+
+    def __enter__(self):
+        if self.fail:
+            raise RuntimeError("enter failed")
+        return "entered"
+
+    def __exit__(self, *a):
+        return False
+
+
+def f1(fail):
+    x = "pre1"
+    try:
+        with Boom1(fail) as x:
+            print("inside", x)
+    except RuntimeError as e:
+        print("caught", e)
+    y = x + "!"
+    print("f1", y)
+    return y
+
+
+class Boom2:
+    def __init__(self, fail):
+        self.fail = fail
+
+    def __enter__(self):
+        if self.fail:
+            raise RuntimeError("enter failed")
+        return "entered"
+
+    def __exit__(self, *a):
+        return False
+
+
+def f2(fail):
+    x = "pre2"
+    try:
+        with Boom2(fail) as x:
+            print("inside", x)
+    except RuntimeError as e:
+        print("caught", e)
+    y = x + "!"
+    print("f2", y)
+    return y
+
+
+if __name__ == "__main__":
+    import sys
+
+    import copy
+    import re
+
+    def _shown(value):
+        return re.sub(r"0x[0-9a-fA-F]+", "0xADDR", repr(value))
+
+    def _calls(label, function, argument_sets):
+        for arguments in argument_sets:
+            arguments = copy.deepcopy(arguments)
+            try:
+                outcome = "-> " + _shown(function(*arguments))
+            except Exception as error:
+                outcome = f"raised {type(error).__name__}: {_shown(str(error))}"
+            print(label, outcome, "| arguments after:", _shown(arguments))
+
+    def _value(label, produce):
+        try:
+            print(label, "=", _shown(produce()))
+        except Exception as error:
+            print(label, "raised", type(error).__name__, _shown(str(error)))
+
+    pkg_m = sys.modules[__name__]
+    _calls('pkg_m.f1', pkg_m.f1, [(False,), (True,)])
+    _calls('pkg_m.f2', pkg_m.f2, [(False,), (True,)])

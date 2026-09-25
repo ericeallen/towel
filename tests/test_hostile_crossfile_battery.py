@@ -73,6 +73,16 @@ TRANSFORMED = {
     "xf27_registration_decorator_in_host",
     "xf28_registration_decorator_in_reused_module",
     "xf29_type_checking_block_with_branches",
+    # The round-3 audit's families (xf7fz_<family>_<case>): a sample of the
+    # cross-module cases the audit found sound, every one transformed.
+    "xf7fz_binding_x_class_level_name",
+    "xf7fz_binding_x_dunder_file",
+    "xf7fz_builtins_x_shadow_in_b",
+    "xf7fz_modules_b_imports_a",
+    "xf7fz_modules_init_hosts",
+    "xf7fz_modules_rel_import_in_block",
+    "xf7fz_modules_script_main_guard",
+    "xf7fz_modules_three_modules_cluster",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
