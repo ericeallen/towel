@@ -65,3 +65,11 @@ def test_readme_repository_links_match_version_and_existing_paths() -> None:
         assert (ROOT / path).is_file(), f"README link names a missing file: {destination}"
         documentation_links.append(destination)
     assert documentation_links, "README must retain links to its versioned repository documentation"
+
+
+def test_r9p2_the_test_readme_lists_the_example_corpus_it_describes() -> None:
+    """tests/README once stated counts that went stale; its corpus list is checked instead."""
+    readme = (ROOT / "tests" / "README.md").read_text(encoding="utf-8")
+    section = readme[readme.index("Each file of the corpus") : readme.index("## Test Coverage")]
+    listed = re.findall(r"^- `([^`]+\.py)`", section, re.MULTILINE)
+    assert listed == sorted(path.name for path in (ROOT / "test_examples").glob("*.py"))

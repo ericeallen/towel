@@ -31,10 +31,11 @@ error code.
 
 ### Unit Tests (`tests/`)
 
-The suite is 133 `test_*.py` files holding 2,182 tests and 34 subtests (about
-100 s; counts as of this writing, commit 5ff2458, September 19, 2026). Rather
-than list them all (they change often), here is how they group by concern,
-with a representative file for each. Small helpers the tests share (parsing a
+This README states no counts, since each would go stale with the next
+test: `pytest --collect-only -q` counts the tests, and the sets named below
+are the record of what each battery holds. Rather than list the `test_*.py`
+files (they change often), here is how they group by concern, with a
+representative file for each. Small helpers the tests share (parsing a
 dedented block, fixing synthesized positions, taking a module's functions by
 name, writing a module into `tmp_path`, locating and copying `test_examples`
 files, asserting a file was left unmodified, running the engine to a fixed
@@ -151,20 +152,22 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   `--x/--no-x` option pairs and their hidden aliases;
   `test_cli_dispatch_paths.py`: the `recover` subcommand and its error exit,
   the JSON helper listing, a run that finds nothing, and the confirmation an
-  input without a `.py` suffix requires.
+  interactive run asks for an input without a `.py` suffix, which
+  `--no-interactive` never asks.
 - **Hostile batteries** — `test_hostile_battery.py` executes every fixture
-  in `hostile_cases/` (129 fixtures as of this writing, numbered `h*` and
-  `r01` to `r145`) before and after fixed-point refactoring and asserts
-  identical output; its `TRANSFORMED` set names the fixtures that must
-  change (87 today), so a lost extraction fails as loudly as a wrong one.
+  in `hostile_cases/` (`h*` from the first adversarial review, `r*` and the
+  other prefixes from later reviews and audit rounds) before and after
+  fixed-point refactoring and asserts identical output; its `TRANSFORMED` set
+  names the fixtures that must change, so a lost extraction fails as loudly
+  as a wrong one.
   Four of the fixtures (`r142` to `r145`) pin that a same-module helper reads
   a module-level name bare, that `__class__` stays a parameter, and that an
   assigned alias of `sys._getframe` declines.
   `test_hostile_crossfile_battery.py` does the same for the packages in
   `hostile_crossfile/` (`xf*`), with its own `TRANSFORMED` and `REJECTED`
-  sets: every package is in exactly one state. Today twelve are transformed
-  and one is rejected (`xf13_import_time_effects`, whose helper import would
-  load a module that prints at import time). When the engine gains or loses
+  sets: every package is in exactly one state. `xf13_import_time_effects`,
+  for one, is rejected: its helper import would load a module that prints at
+  import time. When the engine gains or loses
   a cross-file extraction, move the package and say why in the commit. A
   fixture that came from a repaired ecosystem defect
   (`xf9_same_named_base_class`) is cited in
@@ -251,8 +254,9 @@ fails the test instead of being regenerated into the baseline unnoticed.
 When such a change is intended, move the file in or out of the set and say
 why in the commit.
 
-The corpus has 28 files; each is a self-contained module whose name says
-what it exercises (see `test_examples/README.md`):
+Each file of the corpus is a self-contained module whose name says what it
+exercises (see `test_examples/README.md`); `test_readme_links.py` checks that
+this list is the corpus:
 
 - `annotated_module.py` (annotated locals in the duplicated blocks,
   keyword-only parameters, a frozen dataclass)
@@ -301,8 +305,7 @@ The test suite covers:
 
 ## Current Status
 
-The full suite passes; `just coverage` reproduces the enforced 85% gate
-(94% of `src/towel` at commit 5ff2458, September 19, 2026). Coverage traces
+The full suite passes; `just coverage` enforces the 85% gate. Coverage traces
 the forked pair workers and their watchdog threads, so
 `src/towel/unification/parallel.py`
 is measured like any other module; each process writes its own data file and
