@@ -166,8 +166,20 @@ describe belong to that version.
   object reached other than by an import, `importlib.import_module`,
   `getattr` with a spelled name or `sys.modules`, such as a fixture's
   return value. A cross-module helper then reads that builtin in its host's
-  namespace, and the patch reaches only the code the host itself runs. A
-  module `__getattr__` changes no bare lookup and is not consulted. In any
+  namespace, and the patch reaches only the code the host itself runs. Nor
+  does this check read a star import as it may run: it takes a provider's
+  literal `__all__` as final, and counts only the provider's own writes.
+  A provider imported part way through an import cycle, before it binds
+  `__all__`, exports every public name bound so far, and a write of the name
+  into the provider from another module reaches every star importer. The
+  round-4 probe `builtin-cycle-probe` shows the first: `pkg/common.py` binds
+  `len`, imports `pkg/b.py`, whose `from .common import *` runs then, and
+  only afterwards binds `__all__ = ["scale"]`; under `--cross-module` the
+  shared helper reads the builtin where `b` read `common.len`, and the
+  program's output changes from `6 110` to `6 6`. The decorator check reads
+  star imports as they may run (*Decorators that compile or instrument a
+  body* below). A module `__getattr__` changes no bare lookup and is not
+  consulted. In any
   pair, same-module or not, no generated call hands its helper a builtin:
   an argument, or what a lambda argument returns, that is a name its site
   reads from the builtins, bare or in a literal tuple, list, set or dict,
@@ -1240,15 +1252,44 @@ itself is not the builtin; `@pytest.mark.parametrize(...)` and
 module-level name counts only when every binding the module could give it is
 known, so a compatibility import (`try: from typing import override` ...
 `except ImportError: from typing_extensions import override`) counts and a name
-rebound anywhere in the module to something unknown does not. A decorator
+rebound anywhere in the module to something unknown does not. So does every
+binding the rest of the program could give it, at whatever module the name
+passes through: `enable_checks.py` setting `app.checks.checked =
+typeguard.typechecked` before `app.core` imports the no-op `checked` declines
+the code under it. Every write the builtins' question counts (above) counts
+here for a decorator's name, from anywhere in the project, tests included:
+an attribute store, `setattr` with that name or a computed one, a store into
+the module's `__dict__`, the module's own `globals()` before or after the
+definition, `mock.patch` and `monkeypatch.setattr`. An attribute store at
+the top level of its module, `mod.name = value`, adds its `value` as one more
+possibility, read there, so `functools.cache =
+functools.lru_cache(maxsize=None)` keeps `@functools.cache` known; any other
+write makes the name unknown. `importlib.reload` needs no rule of its own: it
+runs the module's own statements again, whose every binding the name is
+already held to, and a rebinding it could bring into effect is itself one of
+the writes above. A library's name counts the writes into its
+module by name (`functools.cache = ...`, `builtins.property = ...`). A star
+import makes unknown only the names it may bind (fixtures `r9dc_*`): from a
+module of the project with a literal `__all__`, the names it lists together
+with the module's public names, since an import cycle may run the star import
+before the module binds `__all__`, and it then exports what it has bound so
+far; from one without, its public names, the names a function of it declares
+`global`, and what its own star imports bind; either way with every name the
+project writes into it. From the standard library, from outside the project,
+from a module not found, through a cycle of star imports, or from a module
+whose `__all__` is built at run time, any name. A decorator
 named through a local of an enclosing function, a method of an object
 (`@app.route("/x")`, `@cli.command()`, `@f.register`), a class, or any other
 expression is declined.
 
 A decorator applied by hand counts as one written with `@`: every call in the
 value of an assignment at module or class level, in any module of the
-project, applies its callee to each definition an argument of it names, and
-is judged as that decorator would be. `fast = numba.njit(kernel)` and
+project, applies its callee to each definition an argument of it names, or
+that a call made in the argument is handed, at any depth, and is judged as
+that decorator would be. So `parse_a = typechecked(register(parse_a))` and
+`cmd = click.command(cls=Checked)(click.argument("v")(show_a))` apply every
+callable of the chain to the function (fixture
+`r9dc_stacked_decoration_by_hand`). `fast = numba.njit(kernel)` and
 `fast = njit(cache=True)(kernel)` decline `kernel`, `f = typechecked(f)`
 declines `f`, `method = wrap(method)` in a class body declines `method`, and
 `C = typechecked(C)` declines every method of `C`, however the argument is
@@ -1335,7 +1376,8 @@ What this does not see:
   level alone. An expression statement (`atexit.register(f)`,
   `app.add_url_rule("/", view_func=f)`), a call in a function body
   (`kernel = numba.njit(slow)` inside `setup()`, `Thread(target=f)`), a
-  default value, and a function reached through a container
+  bare call statement on a class (`typechecked(A)`), a default value, and a
+  function reached through a container
   (`njit(KERNELS["slow"])`) or through a name bound other than by a `def`, an
   import or a plain alias (`g = f if fast else h`) are not seen, and code may
   still move out of the function they hand over.
@@ -1350,6 +1392,18 @@ What this does not see:
   taken to be the standard library, as everywhere else in Towel. A class
   whose metaclass's `__prepare__` fills the class namespace in advance could
   bind a decorator's name before its body runs; that is not modeled.
+- **Module objects replaced, and writes the scan does not read.** A write
+  into a decorator's module is seen in the forms the builtins' question lists
+  above; not seen are a module replaced whole (`sys.modules["app.checks"] =
+  fake`, or `app.checks = fake` on the package where a relative import
+  reaches the submodule), an attribute store as the target of a `for`, a
+  `with` or a comprehension, a module object reached other than by an import,
+  `importlib.import_module`, `getattr` with a spelled name or `sys.modules`,
+  and what code outside the project does. A star import nested in a provider
+  is read from the project's file even where that file is named like a
+  standard-library module. Any call whose first argument spells a dotted name
+  (`logging.getLogger("app.checks")`) counts as a write of its last part, as
+  it does for the builtins, and may decline code that is safe.
 
 ## Conservative rejections
 

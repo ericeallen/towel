@@ -37,7 +37,15 @@ Names are resolved by binding, never by spelling: ``from functools import
 wraps as w`` makes ``@w(f)`` ``functools.wraps``, and a ``property`` the
 module or class binds itself is not the builtin. A module-level name counts
 only when every binding the module could give it is known, so which one is
-in effect when the decorator runs never matters. A name bound in an
+in effect when the decorator runs never matters, and so does every binding
+the rest of the program could give it. A write into the module's namespace
+from anywhere in the project (``namespace_writes``: an attribute store,
+``setattr``, its ``__dict__``, its own ``globals()``, a patch) makes the
+name unknown, unless it is an attribute store at the top
+level of its module, ``mod.name = value``, whose ``value`` is known there;
+the same holds of a library's name, ``functools.cache = ...``. A star import
+makes unknown only the names it may bind: what a module of the project
+exports, or any name for one from anywhere else. A name bound in an
 enclosing function is not followed. A decorator factory such as
 ``@pytest.mark.parametrize(...)`` resolves through the callee of its call.
 A project module that takes the name of a third-party library in the list is
@@ -49,7 +57,9 @@ A decorator applied by hand reaches the body as surely as one written with
 wrap(method)`` in a class body, or ``njit(cache=True)(kernel)``. So every call
 in the value of an assignment at module or class level, in any module of the
 project, counts as applying its callee to each definition an argument of it
-names, and is judged as that decorator would be. And a class's machinery
+names, or hands a call made in that argument, at any depth: ``f =
+typechecked(register(f))`` applies both. Each is judged as that decorator
+would be. And a class's machinery
 reaches every method: a metaclass or an ``__init_subclass__`` may wrap or
 recompile them as the class is built. So every class enclosing the code must
 pass the test a class that takes a method helper passes
@@ -97,6 +107,14 @@ from .known_decorators import (
     known_decorator,
 )
 from .module_bindings import ModuleBindings, dotted_name, global_bindings
+from .namespace_writes import (
+    ANY_NAME,
+    NamespaceWrite,
+    ProjectWrites,
+    scan_project_writes,
+    star_bindings,
+    star_imports,
+)
 from .statement_facts import bindings_of
 
 FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
@@ -343,6 +361,9 @@ class _Memo:
 class _PlainMemo:
     plain: bool
     stamps: Tuple[_Stamp, ...]
+    cache: int
+    """The ``id`` of the import-graph cache the answer came from, whose engine read the
+    project's writes (``_PROJECT_WRITES``) the answer depends on."""
 
 
 _REFUSALS: "WeakKeyDictionary[ast.AST, _Memo]" = WeakKeyDictionary()
@@ -357,6 +378,17 @@ _HAND_CALLS: "WeakKeyDictionary[ast.Module, Tuple[Tuple[_Application, str], ...]
 _HAND_INDEXES: "WeakKeyDictionary[ImportGraphCache, Dict[str, _HandIndex]]" = WeakKeyDictionary()
 _CODES: "WeakKeyDictionary[ast.Module, Tuple[int, Optional[ImportTimeCode]]]" = WeakKeyDictionary()
 _MACHINERY: "WeakKeyDictionary[ast.AST, Tuple[int, Optional[str]]]" = WeakKeyDictionary()
+# The writes into module namespaces each project's files make, every file read,
+# per engine and project root; and the names each module's star imports may
+# bind, per engine and module. Towel moves only code in function bodies and
+# adds only private names, so a write that has no value read stays one, and no
+# module's exports change, while the engine rewrites the project.
+_PROJECT_WRITES: "WeakKeyDictionary[ImportGraphCache, Dict[str, ProjectWrites]]" = (
+    WeakKeyDictionary()
+)
+_STAR_NAMES: "WeakKeyDictionary[ImportGraphCache, Dict[str, Optional[FrozenSet[str]]]]" = (
+    WeakKeyDictionary()
+)
 
 
 def _stamp(path: str) -> Optional[_Stamp]:
@@ -421,6 +453,8 @@ class _Resolver:
     def __init__(self, cache: ImportGraphCache) -> None:
         self._cache = cache
         self.stamps: Set[_Stamp] = set()
+        self._writes: Dict[str, ProjectWrites] = {}
+        self._into: Dict[str, Tuple[NamespaceWrite, ...]] = {}
 
     # -- the chain ---------------------------------------------------------------
 
@@ -516,7 +550,10 @@ class _Resolver:
         entry = known_decorator(denotation.dotted)
         top = denotation.dotted.partition(".")[0]
         if entry is not None and top in _STANDARD_MODULES:
-            return None if _covers(entry, application, kind) else denotation.dotted
+            known = _covers(entry, application, kind) and self._rebindings_known(
+                denotation, application, decorated, spelled, depth
+            )
+            return None if known else denotation.dotted
         if top in _STANDARD_MODULES or depth > _MOST_HOPS:
             return denotation.dotted
         external = self._is_external(denotation.module, top)
@@ -525,11 +562,12 @@ class _Resolver:
         if external:
             # No module of the project takes the name: it is the installed
             # library an entry was read in, or a decorator nobody read.
-            return (
-                None
-                if entry is not None and _covers(entry, application, kind)
-                else denotation.dotted
+            known = (
+                entry is not None
+                and _covers(entry, application, kind)
+                and self._rebindings_known(denotation, application, decorated, spelled, depth)
             )
+            return None if known else denotation.dotted
         # A module of the project: read as the project's code, entry or not.
         sites = self._project_sites(denotation.module, denotation.spelled)
         if not denotation.sole_binding or not sites:
@@ -542,6 +580,26 @@ class _Resolver:
                 if self._denotation_refused(inner, application, decorated, spelled, depth + 1):
                     return denotation.dotted
         return None
+
+    def _rebindings_known(
+        self,
+        origin: _Origin,
+        application: _Application,
+        decorated: Definition,
+        spelled: str,
+        depth: int,
+    ) -> bool:
+        """Whether every write the project makes over ``origin``, a library's name, is known too.
+
+        A module of the project is read where its name is bound
+        (:meth:`_module_denotations`); a library's is not read at all, so
+        its writes are found by the name of the module they land in.
+        """
+        rebound = self._origin_rebound(origin, depth)
+        return rebound is not None and not any(
+            self._denotation_refused(inner, application, decorated, spelled, depth + 1)
+            for inner in _in_order(rebound)
+        )
 
     def _is_external(self, module: _Module, top: str) -> Optional[bool]:
         """Whether the program's imports find no module of the project named ``top``; None if unknown."""
@@ -622,10 +680,15 @@ class _Resolver:
         if found is None or len(found) != 1:
             return False
         (only,) = found
-        return isinstance(only, _Origin) and only.dotted in {
-            "builtins.property",
-            *(f"builtins.property.{accessor}" for accessor in _PROPERTY_ACCESSORS),
-        }
+        return (
+            isinstance(only, _Origin)
+            and only.dotted
+            in {
+                "builtins.property",
+                *(f"builtins.property.{accessor}" for accessor in _PROPERTY_ACCESSORS),
+            }
+            and self._origin_rebound(only, 0) == frozenset()
+        )
 
     def _module_denotations(
         self, module: _Module, dotted: str, depth: int
@@ -639,16 +702,25 @@ class _Resolver:
         defines, or a name assigned the result of a call
         (``needs_db = pytest.mark.skipif(...)``), which is that call's
         decorator.
+
+        What the rest of the program may bind the name to counts as well, so
+        that which binding holds when a decorator runs never matters. A star
+        import that may bind the name makes it unknown (:meth:`_star_names`).
+        So does a write into the module's namespace from anywhere in the
+        project (``namespace_writes``), unless it is an attribute store at
+        the top level of its module, ``mod.name = value``, whose value is then
+        one more possibility, read there: ``setattr``, ``mod.__dict__[...]``
+        and ``globals()`` are not read.
         """
         if depth > _MOST_HOPS:
             return None
         bindings = module.bindings
         head, _, rest = dotted.partition(".")
         if (
-            bindings.star_imports
-            or "__builtins__" in bindings.bindings
+            "__builtins__" in bindings.bindings
             or "__builtins__" in bindings.rebound_by_global
             or head in bindings.rebound_by_global
+            or self._star_may_bind(module, head)
         ):
             return None
         events = bindings.bindings.get(head, ())
@@ -687,7 +759,11 @@ class _Resolver:
             if held is None:
                 return None
             found |= held
-        return frozenset(found) if found else None
+        if not found:
+            return None
+        # Only what the module's own bindings make known can a write add to.
+        rebound = self._written(self._writes_into(module), head, depth)
+        return None if rebound is None else frozenset(found | rebound)
 
     def _statement_denotations(
         self, module: _Module, statement: ast.stmt, dotted: str, count: int, depth: int
@@ -719,14 +795,137 @@ class _Resolver:
             return None
         found: Set[_Denotation] = {_ProjectDef(module, node) for node in definitions}
         for call in calls:
-            callee = dotted_name(call.func)
-            inner = None if callee is None else self._module_denotations(module, callee, depth + 1)
-            if inner is None:
+            made = self._call_denotations(module, call, depth)
+            if made is None:
                 return None
-            for denotation in inner:
-                if isinstance(denotation, _CallResult):
-                    return None  # The result of a call's result: nothing here read it.
-                found.add(_CallResult(denotation, call))
+            found |= made
+        return frozenset(found)
+
+    def _call_denotations(
+        self, module: _Module, call: ast.Call, depth: int
+    ) -> Optional[FrozenSet[_Denotation]]:
+        """What the result of ``call``, read at ``module``'s top level, may be: its callee's decorator."""
+        callee = dotted_name(call.func)
+        inner = None if callee is None else self._module_denotations(module, callee, depth + 1)
+        if inner is None:
+            return None
+        callees = [denotation for denotation in inner if not isinstance(denotation, _CallResult)]
+        if len(callees) != len(inner):
+            return None  # The result of a call's result: nothing here read it.
+        return frozenset(_CallResult(denotation, call) for denotation in callees)
+
+    # -- what the rest of the program may bind a name to -------------------------
+
+    def _project_writes(self, module: _Module) -> ProjectWrites:
+        """The writes into module namespaces of ``module``'s project, read once per engine and root."""
+        known = self._writes.get(module.path)
+        if known is not None:
+            return known
+        root = os.path.realpath(self._cache.project_root(Path(module.path).resolve()))
+        roots = _PROJECT_WRITES.setdefault(self._cache, {})
+        writes = roots.get(root)
+        if writes is None:
+            writes = roots[root] = scan_project_writes(Path(root), every_file=True)
+        self._writes[module.path] = writes
+        return writes
+
+    def _writes_into(self, module: _Module) -> Tuple[NamespaceWrite, ...]:
+        """The writes of ``module``'s project that may land in its namespace."""
+        known = self._into.get(module.path)
+        if known is None:
+            known = self._into[module.path] = self._project_writes(module).into(Path(module.key))
+        return known
+
+    def _written(
+        self, writes: Sequence[NamespaceWrite], name: str, depth: int
+    ) -> Optional[FrozenSet[_Denotation]]:
+        """What those of ``writes`` that may bind ``name`` bind it to; None when one is not known.
+
+        Only an attribute store at the top level of its module has a value,
+        read there: a name or attribute chain, or a call of one, which is
+        that call's decorator.
+        """
+        found: Set[_Denotation] = set()
+        for write in writes:
+            if write.name not in (name, ANY_NAME):
+                continue
+            if write.name != name or write.value is None or write.writer is None:
+                return None
+            writer = self._load(str(write.writer))
+            held = None if writer is None else self._value_denotations(writer, write.value, depth)
+            if held is None:
+                return None
+            found |= held
+        return frozenset(found)
+
+    def _value_denotations(
+        self, module: _Module, value: ast.expr, depth: int
+    ) -> Optional[FrozenSet[_Denotation]]:
+        """What ``value``, read at ``module``'s top level, may denote."""
+        if isinstance(value, ast.Call):
+            return self._call_denotations(module, value, depth)
+        spelled = dotted_name(value)
+        return None if spelled is None else self._module_denotations(module, spelled, depth + 1)
+
+    def _origin_rebound(self, origin: _Origin, depth: int) -> Optional[FrozenSet[_Denotation]]:
+        """What the project's writes may bind ``origin`` to, in any module its name passes through.
+
+        ``functools.cache`` is rebound by a write of ``cache`` into
+        ``functools``, ``pytest.mark.skip`` by one of ``mark`` into
+        ``pytest`` or of ``skip`` into ``pytest.mark``.
+        """
+        project = self._project_writes(origin.module)
+        parts = origin.dotted.split(".")
+        found: Set[_Denotation] = set()
+        for split in range(1, len(parts)):
+            into = project.into_named(".".join(parts[:split]))
+            held = self._written(into, parts[split], depth)
+            if held is None:
+                return None
+            found |= held
+        return frozenset(found)
+
+    def rebound_at_run_time(self, module: _Module, name: str) -> bool:
+        """Whether anything but ``module``'s own statements may bind ``name`` there: a star import, a write."""
+        if self._star_may_bind(module, name):
+            return True
+        return any(write.name in (name, ANY_NAME) for write in self._writes_into(module))
+
+    def _star_may_bind(self, module: _Module, name: str) -> bool:
+        """Whether a star import of ``module`` may bind ``name``."""
+        if not module.bindings.star_imports:
+            return False
+        names = _STAR_NAMES.setdefault(self._cache, {})
+        key = module.key
+        if key not in names:
+            names[key] = self._star_names(module)
+        star = names[key]
+        return star is None or name in star
+
+    def _star_names(self, module: _Module) -> Optional[FrozenSet[str]]:
+        """Every name the star imports of ``module`` may bind as they run; None when one may bind any.
+
+        One from a module of the project binds what that module exports
+        (``namespace_writes.star_bindings``, at run time): the names a
+        literal ``__all__`` lists, together with its public names, since an
+        import cycle may run the star import before the module binds
+        ``__all__``; or else its public names; either way with every name
+        the project writes into it, and what its own star imports bind. One
+        from the standard library, from outside the project, or from a
+        module not found may bind any name, and so may a cycle of star
+        imports or an ``__all__`` built at run time.
+        """
+        project = self._project_writes(module)
+        found: Set[str] = set()
+        for statement in star_imports(module.tree):
+            if not statement.level:
+                top = (statement.module or "").partition(".")[0]
+                if top in _STANDARD_MODULES or self._is_external(module, top) is not False:
+                    return None
+            bound = star_bindings(Path(module.key), statement, project.root, at_run_time=project)
+            if bound is None:
+                return None
+            found |= bound
         return frozenset(found)
 
     def _project_sites(
@@ -1018,7 +1217,11 @@ class _Resolver:
         """
         verdicts = _PLAIN.setdefault(denotation.node, {})
         known = verdicts.get(form)
-        if known is not None and all(_stamp(stamp[0]) == stamp for stamp in known.stamps):
+        if (
+            known is not None
+            and known.cache == id(self._cache)
+            and all(_stamp(stamp[0]) == stamp for stamp in known.stamps)
+        ):
             self.stamps.update(known.stamps)
             return known.plain
         reader = _Resolver(self._cache)
@@ -1028,7 +1231,7 @@ class _Resolver:
             if form == "bare"
             else reader._plain_factory(denotation.module, node)
         )
-        verdicts[form] = _PlainMemo(plain, tuple(sorted(reader.stamps)))
+        verdicts[form] = _PlainMemo(plain, tuple(sorted(reader.stamps)), id(self._cache))
         self.stamps.update(reader.stamps)
         return plain
 
@@ -1073,7 +1276,10 @@ class _Resolver:
             return False
         found = self._module_denotations(module, dotted, 0)
         return bool(found) and all(
-            isinstance(item, _Origin) and item.dotted == target for item in found or ()
+            isinstance(item, _Origin)
+            and item.dotted == target
+            and self._origin_rebound(item, 0) == frozenset()
+            for item in found or ()
         )
 
 
@@ -1152,10 +1358,12 @@ def _identity(definition: Definition, module: _Module) -> Optional[_Target]:
 def _hand_calls(module: _Module) -> Tuple[Tuple[_Application, str], ...]:
     """Every call in the value of an assignment at module or class level, with each name given it.
 
-    Each argument, positional or keyword, spelled as a name or an attribute
-    chain, is paired with the application the call makes of its callee:
+    Each name an argument hands the call (:func:`_names_handed`), positional
+    or keyword, is paired with the application the call makes of its callee:
     ``f(x)`` applies ``f`` bare, ``f(a)(x)`` applies the factory call
     ``f(a)``, and ``f(x, y)`` applies ``f`` to ``x`` among other arguments.
+    So ``g = typechecked(register(g))`` applies ``typechecked`` to ``g`` as
+    well as ``register``: whatever ``register`` returns may be ``g`` itself.
     Remembered per module tree.
     """
     known = _HAND_CALLS.get(module.tree)
@@ -1178,17 +1386,31 @@ def _hand_calls(module: _Module) -> Tuple[Tuple[_Application, str], ...]:
                 for call in ast.walk(held.value):
                     if not isinstance(call, ast.Call):
                         continue
-                    arguments = (*call.args, *(keyword.value for keyword in call.keywords))
-                    for argument in arguments:
-                        given = argument.value if isinstance(argument, ast.Starred) else argument
-                        spelled = dotted_name(given)
-                        if spelled is not None:
-                            site = f"{name}:{call.lineno}"
-                            found.append(
-                                (_hand_application(call, argument, module, slot, site), spelled)
-                            )
+                    site = f"{name}:{call.lineno}"
+                    for argument in (*call.args, *(keyword.value for keyword in call.keywords)):
+                        application = _hand_application(call, argument, module, slot, site)
+                        found.extend((application, spelled) for spelled in _names_handed(argument))
     _HAND_CALLS[module.tree] = tuple(found)
     return _HAND_CALLS[module.tree]
+
+
+def _names_handed(argument: ast.expr) -> Iterator[str]:
+    """The names an argument hands its call: its own, or those it hands a call it makes, at any depth.
+
+    ``register(f)`` hands ``f``, and so does ``click.argument("v")(f)``:
+    the function object may be what the call returns. A name reached any
+    other way, through a container or a conditional expression, is not
+    followed.
+    """
+    given = argument.value if isinstance(argument, ast.Starred) else argument
+    spelled = dotted_name(given)
+    if spelled is not None:
+        yield spelled
+    elif isinstance(given, ast.Call):
+        if isinstance(given.func, ast.Call):
+            yield from _names_handed(given.func)
+        for inner in (*given.args, *(keyword.value for keyword in given.keywords)):
+            yield from _names_handed(inner)
 
 
 def _hand_application(
@@ -1547,7 +1769,8 @@ class _PlainDecorator:
         """``dict``, ``list`` or ``set`` when ``name`` is a module-level registry of that kind.
 
         The module binds the name once, unconditionally, to a display or an
-        empty call of the builtin constructor, and no function rebinds it.
+        empty call of the builtin constructor, and no function, star import or
+        write from elsewhere in the program rebinds it or the constructor.
         """
         if any(
             name in _function_scope_names(scope) for scope in (self._function, *self._enclosing)
@@ -1561,7 +1784,7 @@ class _PlainDecorator:
             or events[0].is_import
             or events[0].origin is not None
             or name in bindings.rebound_by_global
-            or bindings.star_imports
+            or self._resolver.rebound_at_run_time(self._module, name)
         ):
             return None
         statement = self._module.tree.body[events[0].order]
@@ -1583,7 +1806,10 @@ class _PlainDecorator:
             and value.func.id in _REGISTRY_METHODS
             and not value.args
             and not value.keywords
-            and not bindings.may_bind(value.func.id)
+            and value.func.id not in bindings.bindings
+            and self._resolver.resolves_to(
+                self._module, value.func.id, (), f"builtins.{value.func.id}"
+            )
         ):
             return value.func.id
         return None

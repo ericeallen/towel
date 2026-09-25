@@ -41,6 +41,11 @@ binding it; and ``xf7fz_late_toplevel_module_in_package``, whose ``pkg/c.py``
 imports a module of ``pkg`` as a top-level name, so runs as a top-level
 module itself.
 
+The ``r9dc_`` packages are the round-4 audit's decorator cases: a plain
+wrapper rebound by another module before its importer runs, declined; and
+star imports, one whose provider's ``__all__`` cannot bind the decorators,
+extracted, and two that do bind an instrumenting ``staticmethod``, declined.
+
 ``xf7d_assert_moves_to_a_module_pytest_does_not_rewrite`` shares a block that
 holds an assert pytest rewrites in one module and not in the other; its
 ``run.py`` runs pytest and prints each failing assert's message.
@@ -154,6 +159,9 @@ TRANSFORMED = {
     "xf9xi_type_only_import_of_a_missing_module",
     # Round-4 P1-03 across modules: the lambda keeps its own parameter.
     "r9sb_lambda_capture_across_modules",
+    # Round-4 audit P2-02: a star import whose provider's __all__ cannot bind
+    # staticmethod or property left both unknown.
+    "r9dc_star_import_that_cannot_bind_a_decorator",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
@@ -183,6 +191,14 @@ REJECTED = {
     # Round-4 audit P1-04 across modules: each block holds its function's only
     # binding of total, read on the early return (moves_only_binding).
     "xf9bd_only_binding_across_modules",
+    # Round-4 audit P1-07: a plain wrapper that a setup module rebinds to an
+    # instrumenting decorator before its importer runs.
+    "r9dc_decorator_rebound_by_another_module",
+    # Star imports that do bind an instrumenting staticmethod: one from a
+    # provider with no __all__, one from a provider part way through an
+    # import cycle, before it binds the __all__ that leaves it out.
+    "r9dc_star_import_binds_an_instrumenting_decorator",
+    "r9dc_star_import_of_a_module_part_way_through_a_cycle",
 }
 
 TYPED = frozenset(
