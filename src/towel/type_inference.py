@@ -1202,12 +1202,18 @@ class PyrightOracle:
             if severity not in {"error", "warning", "information"}:
                 return CheckFailure("pyright returned an invalid diagnostic severity")
             location = diagnostic.get("range")
-            if severity == "error" and (
-                not isinstance(location, dict)
-                or not isinstance(location.get("start"), dict)
-                or not isinstance(location["start"].get("line"), int)
-                or isinstance(location["start"].get("line"), bool)
-                or location["start"]["line"] < 0
+            # A diagnostic about a whole file, such as reportImportCycles, has
+            # no range on the command line (``_file_line``), and is no failure.
+            if (
+                severity == "error"
+                and location is not None
+                and (
+                    not isinstance(location, dict)
+                    or not isinstance(location.get("start"), dict)
+                    or not isinstance(location["start"].get("line"), int)
+                    or isinstance(location["start"].get("line"), bool)
+                    or location["start"]["line"] < 0
+                )
             ):
                 return CheckFailure("pyright error has no valid source position")
             if location is not None:
@@ -1229,6 +1235,16 @@ class PyrightOracle:
         """The one-based line of a diagnostic, or 0 when it carries no position."""
         start = diagnostic.get("range", {}).get("start")
         return start.get("line", -1) + 1 if start is not None else 0
+
+    @staticmethod
+    def _file_line(diagnostic: _PyrightDiagnostic) -> int:
+        """The one-based line a project check reports a diagnostic at.
+
+        A diagnostic about a whole file comes without a range from the command
+        line, and the language server publishes it at the file's first line;
+        it is taken there on both paths, so the two report one error alike.
+        """
+        return PyrightOracle._line(diagnostic) if "range" in diagnostic else 1
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         """Reveal each request by having pyright check a probed copy of its module.
@@ -1276,7 +1292,12 @@ class PyrightOracle:
             return []
         text, signature_line, return_line = _subtype_probes(source, pairs)
         result = self._diagnostics(file_path, text)
-        if isinstance(result, CheckFailure):
+        if isinstance(result, CheckFailure) or any(
+            diagnostic.get("severity") == "error" and "range" not in diagnostic
+            for diagnostic in result.diagnostics
+        ):
+            # Verdicts are read off the lines errors stand on, so an error
+            # that stands on none leaves every verdict unread.
             return [Subtyping.UNKNOWN] * len(pairs)
         error_lines = [
             self._line(diagnostic)
@@ -1318,26 +1339,20 @@ class PyrightOracle:
                 ) as snapshot:
                     # A positional directory would override both configured
                     # include and exclude lists; naming none keeps their scope.
-                    result = self._run_diagnostics(root, snapshot)
+                    result = self._run_diagnostics(root, snapshot.tree)
                     if isinstance(result, CheckFailure):
                         return result
-                    for diagnostic in result.diagnostics:
-                        if diagnostic.get("severity") != "error":
-                            continue
-                        path = Path(diagnostic["file"])
-                        if path.is_relative_to(snapshot):
-                            path = root / path.relative_to(snapshot)
-                        message = (
-                            f"pyright: {diagnostic.get('rule') or ''}: " f"{diagnostic['message']}"
+                    errors.extend(
+                        TypeDiagnostic(
+                            snapshot.original_of(diagnostic["file"]),
+                            snapshot.restore_paths(
+                                f"pyright: {diagnostic.get('rule') or ''}: {diagnostic['message']}"
+                            ),
+                            self._file_line(diagnostic),
                         )
-                        start = diagnostic.get("range", {}).get("start", {}).get("line")
-                        errors.append(
-                            TypeDiagnostic(
-                                str(path),
-                                message.replace(str(snapshot), str(root)),
-                                None if start is None else start + 1,
-                            )
-                        )
+                        for diagnostic in result.diagnostics
+                        if diagnostic.get("severity") == "error"
+                    )
             except UnusableConfiguration as error:
                 return CheckFailure(str(error))
             except (OSError, ValueError, UnicodeError) as error:
@@ -1435,8 +1450,8 @@ class _WarmProject:
     def diagnostics(self, replacements: Mapping[str, str]) -> Dict[str, List[Diagnostic]]:
         """Diagnostics for the project as ``replacements`` would leave it.
 
-        Paths come back as the project's own, not the copy's, so a caller never
-        sees where the check happened.
+        Paths come back as the project's own, not the copy's, in the messages
+        too, so a caller never sees where the check happened.
         """
         followed = self._snapshot.follow_project()
         key = f"{self._snapshot.revision}:{_candidate_key(replacements)}"
@@ -1451,7 +1466,10 @@ class _WarmProject:
         restored: Dict[str, List[Diagnostic]] = {}
         for path, entries in published.items():
             original = self._snapshot.original_of(path)
-            restored[original] = [replace(entry, path=original) for entry in entries]
+            restored[original] = [
+                replace(entry, path=original, message=self._snapshot.restore_paths(entry.message))
+                for entry in entries
+            ]
         self._verdicts[key] = restored
         return {path: list(entries) for path, entries in restored.items()}
 

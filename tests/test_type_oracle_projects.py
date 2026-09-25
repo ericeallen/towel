@@ -444,7 +444,6 @@ def test_shared_pyright_extends_config_is_preserved(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "diagnostic, status",
     [
-        ({"file": "m.py", "severity": "error", "message": "no position"}, 1),
         ({"file": "m.py", "severity": "mystery", "message": "unrecognized"}, 0),
         (None, 1),
         (

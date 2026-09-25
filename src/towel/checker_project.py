@@ -115,6 +115,7 @@ class CheckerSnapshot:
         self.revision = 0
         try:
             self._layout = _layout(Path(self._temporary.name), root)
+            self._spellings = _copy_spellings(self._layout)
             self.follow_project()
             self.revision = 0
         except BaseException:
@@ -133,9 +134,24 @@ class CheckerSnapshot:
     def original_of(self, copied: str) -> str:
         """The project path a copied path stands for, or itself when outside."""
         path = Path(copied)
-        if path.is_relative_to(self._layout.target):
-            return str(self._root / path.relative_to(self._layout.target))
+        for copy, original in self._spellings:
+            if path.is_relative_to(copy):
+                return str(original / path.relative_to(copy))
         return copied
+
+    def restore_paths(self, text: str) -> str:
+        """``text`` with every path into the copy put back where it stands for.
+
+        pyright names files in some messages -- ``reportImportCycles`` lists the
+        modules of the cycle -- and names them in the copy it checked. A
+        message that carries a copy's path differs from the same message from
+        another copy (the original check's, the run's, the cold
+        confirmation's), so an error the project already had read as new, and
+        every change to the project was declined for it.
+        """
+        for copy, original in self._spellings:
+            text = text.replace(str(copy), str(original))
+        return text
 
     def apply(self, replacements: Mapping[str, str]) -> Tuple[CopyChange, ...]:
         """Make the copy show the project as it stands with ``replacements`` over it."""
@@ -227,6 +243,22 @@ class _Layout:
         return self.tree / config.relative_to(self.common)
 
 
+def _copy_spellings(layout: _Layout) -> Tuple[Tuple[Path, Path], ...]:
+    """Each way of writing a directory of the copy, with the directory it stands for.
+
+    The copy's own root, and the tree holding it and the configurations it
+    extends, each as the temporary directory was named and resolved: pyright
+    reports some paths resolved, and macOS's temporary directory is a link.
+    The longest first, so a spelling is never replaced inside a longer one.
+    """
+    pairs = {
+        copy: original
+        for directory, original in ((layout.target, layout.root), (layout.tree, layout.common))
+        for copy in (directory, Path(os.path.realpath(directory)))
+    }
+    return tuple(sorted(pairs.items(), key=lambda pair: -len(str(pair[0]))))
+
+
 def _layout(temporary: Path, root: Path) -> _Layout:
     """An empty copy of ``root`` under ``temporary``, placed so its extends chain resolves.
 
@@ -283,12 +315,12 @@ def _copy_input(source: Path, destination: Path, layout: _Layout) -> None:
 @contextmanager
 def checker_snapshot(
     root: Path, replacements: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
-) -> Iterator[Path]:
+) -> Iterator[CheckerSnapshot]:
     """One copy of ``root`` showing ``replacements``, removed when the block ends."""
     snapshot = CheckerSnapshot(root, excluded_paths=excluded_paths)
     try:
         snapshot.apply(replacements)
-        yield snapshot.tree
+        yield snapshot
     finally:
         snapshot.close()
 
