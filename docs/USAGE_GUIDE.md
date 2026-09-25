@@ -687,8 +687,10 @@ project that qualify in turn), or the pair is counted under
 `class_machinery_may_transform_methods[...]`: a class deriving from a library
 class nobody read keeps its code; and with
 `cross_module_helpers=True`, an `assert` joins two modules only when pytest
-rewrites both alike (`assert_rewriting_differs`). [Known
-limitations](KNOWN_LIMITATIONS.md#decorators-that-compile-or-instrument-a-body)
+rewrites both alike (`assert_rewriting_differs`), and code joins two modules
+only when the project's coverage.py measures and reports both alike, by its
+`omit`, `include`, `source` and `source_pkgs` (`coverage_measurement_differs`).
+[Known limitations](KNOWN_LIMITATIONS.md#decorators-that-compile-or-instrument-a-body)
 lists them and what the check does not see.
 
 ## Tips

@@ -1600,6 +1600,11 @@ class PairEvaluation(
         ) and not rewritten_alike(sorted(participating), self.import_graph.project_root):
             self._debug_reject(RejectReason.ASSERT_REWRITING_DIFFERS, pair)
             return None
+        # Code moved from a file coverage.py does not measure, or does not
+        # report, into one it does would be measured where it was not.
+        if not self._measured_alike(sorted(participating)):
+            self._debug_reject(RejectReason.COVERAGE_MEASUREMENT_DIFFERS, pair)
+            return None
         # The helper runs the template's imports in whichever module hosts
         # it, and every participating module is a candidate host, so each
         # must resolve them alike.
@@ -1655,6 +1660,26 @@ class PairEvaluation(
             return candidate
         self._debug_reject(refusal or RejectReason.IMPORT_CYCLE, pair)
         return None
+
+    def _measured_alike(self, paths: Sequence[str]) -> bool:
+        """Whether the project's coverage.py measures and reports every file of ``paths`` alike.
+
+        Each file's status is read at its origin, from its own project's
+        configuration (``CoverageMeasurement.status``). A source package
+        decides by the module's name, which the program's imports give;
+        where they give none, the status is not known and the files are not
+        taken to be alike.
+        """
+        statuses = set()
+        for path in paths:
+            root = self._project_root_in_run(path)
+            measurement = self._coverage_measurement(path)
+            name: Optional[str] = None
+            if measurement.names_packages(root):
+                program = self.import_graph.program_for(Path(path))
+                name = program.model.module_name(program.origin(Path(path)))
+            statuses.add(measurement.status(self._origin_in_run(path), root, name))
+        return None not in statuses and len(statuses) <= 1
 
     # -- 11 --------------------------------------------------------------------
 

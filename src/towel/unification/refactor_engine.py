@@ -87,7 +87,7 @@ from .block_signature import (
     quick_filter,
     signature_bucket_key,
 )
-from ..coverage_config import CoverageExclusion
+from ..coverage_config import CoverageConfiguration
 from .models import (
     CodeBlockPair,
     FunctionArtifact,
@@ -536,7 +536,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # per engine: patches of a builtin that decline a cross-module pair.
         self._namespace_writes: Dict[str, ProjectWrites] = {}
         # What each project's coverage.py excludes, read once per engine.
-        self._coverage_exclusions: Dict[str, CoverageExclusion] = {}
+        self._coverage_configurations: Dict[str, CoverageConfiguration] = {}
         self._origins_in_run: Dict[Tuple[str, Optional[Tuple[Path, Path]]], Path] = {}
         self._seen_proposals: Set[Hashable] = set()
         self._pair_rejection: Optional[RejectReason] = None

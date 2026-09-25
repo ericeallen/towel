@@ -1205,6 +1205,21 @@ the proposals it built and did not apply, by reason:
   `assert_rewriting_differs`: under `--cross-module`, a block holding an
   `assert` would join modules pytest does not rewrite alike. See *Decorators
   that compile or instrument a body* above.
+  `coverage_measurement_differs`: under `--cross-module`, the modules would
+  share a helper though coverage.py measures one and not another, or
+  reports one and not another, so that code it did not measure, or did not
+  count toward `fail_under`, would be measured or counted in the helper's
+  module (round 4: a block of a module the `.coveragerc` omits, moved into
+  one it measures, raised its missed lines from 4 to 5). Measurement is read
+  from the same configuration as the exclusions below, as coverage.py 7.16
+  reads it: `[run]` `source`, `source_pkgs` and `source_dirs` (a module
+  outside them is not measured; a `source` entry that is no directory names
+  a package, matched by the name the program's imports give the module,
+  and the pair is declined where they give none), else `[run] include`;
+  then `[run] omit`; and `[report] include` and `omit` for what is
+  reported. Patterns are coverage.py's globs, taken from the project's root.
+  What the invocation sets instead, pytest-cov's `--cov=` or a
+  `coverage run --source` or `--omit` on the command line, is not seen.
 - Frame use. `frame_sensitive_block`: the block contains a suspension,
   a namespace read, a frame or stack read, a warning, a loop transfer
   out of the block, a comprehension assignment expression, or a `super()`
@@ -1487,7 +1502,8 @@ the proposals it built and did not apply, by reason:
   is not seen. A configuration coverage.py could not read (it does not
   parse, holds a regex that does not compile or a value of the wrong type,
   or `COVERAGE_RCFILE` names no file) is reported once and replaced by the
-  defaults. Exclusions a coverage plugin makes are not seen. coverage.py
+  defaults, which measure every file alike. Exclusions a coverage plugin
+  makes are not seen. coverage.py
   matches its regexes against the raw text, strings included, and so does
   Towel: pytest excludes `assert False` and `@pytest.mark.xfail` lines, its
   tests write such lines into the files they create with

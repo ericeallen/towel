@@ -1,0 +1,5 @@
+# Round-4 audit: coverage.py omits pkg/a.py and measures pkg/b.py. A helper
+# in b.py holding a.py's block would make a.py's code measured.
+[run]
+omit =
+    pkg/a.py
