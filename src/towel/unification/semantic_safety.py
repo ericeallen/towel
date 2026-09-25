@@ -45,6 +45,7 @@ from typing import (
     Set,
     Tuple,
     Union,
+    cast,
 )
 from dataclasses import dataclass
 from weakref import WeakKeyDictionary
@@ -1456,9 +1457,14 @@ class _LexicalNameScope:
 
 
 def _lexical_name_scopes(
-    function: FunctionNode, analyzer: "ScopeAnalyzer"
+    function: FunctionNode, analyzer: "ScopeAnalyzer", *, exact: bool = False
 ) -> Iterable[_LexicalNameScope]:
-    """Function locals and annotation scopes, nearest first; class attributes are skipped."""
+    """Function locals and annotation scopes, nearest first; class attributes are skipped.
+
+    With ``exact`` a function's locals are ``own_scope_locals``, which leave
+    out a comprehension's targets; otherwise ``locally_bound_names``, which
+    count them, an over-approximation for guards that only decline.
+    """
     module = analyzer.analyzed_tree
     parents = _module_parents(module) if isinstance(module, ast.Module) else {}
     node: Optional[ast.AST] = function
@@ -1472,7 +1478,10 @@ def _lexical_name_scopes(
                 if scope is not None:
                     global_names = analyzer.global_vars.get(scope.scope_id, set())
                     nonlocal_names = analyzer.nonlocal_vars.get(scope.scope_id, set())
-                local_names = locally_bound_names(node) - global_names - nonlocal_names
+                bound: AbstractSet[str] = (
+                    own_scope_locals(node) if exact else locally_bound_names(node)
+                )
+                local_names = set(bound) - global_names - nonlocal_names
             yield _LexicalNameScope(
                 node, frozenset(local_names), type_parameter_names(node), frozenset(global_names)
             )
@@ -1483,7 +1492,11 @@ _MODULE_PARENTS: "WeakKeyDictionary[ast.AST, Dict[ast.AST, ast.AST]]" = WeakKeyD
 
 
 def module_resolved_names(
-    function: FunctionNode, analyzer: "ScopeAnalyzer", names: AbstractSet[str]
+    function: FunctionNode,
+    analyzer: "ScopeAnalyzer",
+    names: AbstractSet[str],
+    *,
+    exact: bool = False,
 ) -> FrozenSet[str]:
     """Of ``names``, those a read inside ``function`` resolves at module scope or nowhere.
 
@@ -1492,13 +1505,16 @@ def module_resolved_names(
     module's. The annotation scopes of generic functions and classes bind
     their type parameters too. Class attributes do not count.
     Anything else reaches the module's namespace, then the builtins, and is
-    the same lookup from any function of the module.
+    the same lookup from any function of the module. A comprehension's
+    target counts as a function's local unless ``exact``
+    (``_lexical_name_scopes``): the answer then under-counts module names,
+    which only declines.
     """
     # ``__class__`` is the cell the compiler gives a method for zero-argument
     # ``super()``; it names the defining class, not a module binding.
     resolved = set(names) - {"__class__"}
     module_only: Set[str] = set()
-    for scope in _lexical_name_scopes(function, analyzer):
+    for scope in _lexical_name_scopes(function, analyzer, exact=exact):
         module_only.update(scope.global_names & resolved)
         resolved -= (scope.local_names | scope.type_parameters) - module_only
     return frozenset(resolved)
@@ -1511,10 +1527,11 @@ def function_scope_names(
 
     ``function``'s own locals and parameters, and an enclosing function's
     cells: the complement, among the names the block mentions, of
-    ``module_resolved_names``. ``__class__`` is left out: a method helper
-    compiled in the class the block's method is defined in has that cell
-    too. The instantiation check tells by these which of the block's free
-    names its helper can read only as arguments.
+    ``module_resolved_names``, resolved exactly, so that a comprehension's
+    target is not taken for the function's local. ``__class__`` is left
+    out: a method helper compiled in the class the block's method is
+    defined in has that cell too. The instantiation check tells by these
+    which of the block's free names its helper can read only as arguments.
     """
     names = {
         name
@@ -1526,7 +1543,8 @@ def function_scope_names(
             else node.names if isinstance(node, ast.Nonlocal) else []
         )
     }
-    return frozenset(names - module_resolved_names(function, analyzer, names) - {"__class__"})
+    module = module_resolved_names(function, analyzer, names, exact=True)
+    return frozenset(names - module - {"__class__"})
 
 
 def _module_parents(module: ast.Module) -> Dict[ast.AST, ast.AST]:
@@ -1822,7 +1840,17 @@ def own_scope_locals(function: FunctionNode) -> FrozenSet[str]:
     read of that name in the function is a global lookup, and reads the same
     from a thunk. A walrus inside a comprehension does bind in the function,
     and a ``global`` or ``nonlocal`` declaration makes a name no local at all.
+    Memoized per function node, which analysis never mutates.
     """
+    local: FrozenSet[str] = memoized_per_node(_OWN_SCOPE_LOCALS, function, _own_scope_locals_of)
+    return local
+
+
+_OWN_SCOPE_LOCALS: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
+
+
+def _own_scope_locals_of(node: ast.AST) -> FrozenSet[str]:
+    function = cast(FunctionNode, node)
     names: Set[str] = set(parameter_names(function.args))
     declared: Set[str] = set()
     pending: List[ast.AST] = list(function.body)
