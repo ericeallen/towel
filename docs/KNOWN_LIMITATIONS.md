@@ -459,11 +459,13 @@ no new import (the third audit's P1-6). So is a file a link gives a second
 name the program uses: a directory link `beta -> src/alpha` beside
 `alpha`, a file link, a link inside a package that an import goes through,
 or a hard link, each resolved by replacing the link with a copy (the
-round-4 audit's P1-4). Only an import that attests does
-any of this: one inside `try`/`except ImportError`, under `TYPE_CHECKING`,
-or in a file that changes `sys.path`, as graphene's setup.py imports
-`pyutils.version` after appending the package to `sys.path`, neither
-locates a name nor puts one in doubt. Before it writes anything, a
+round-4 audit's P1-4). Only an import that attests locates a name,
+makes it ambiguous, or finds it inside a package: one inside
+`try`/`except ImportError`, under `TYPE_CHECKING`, or in a file that
+changes `sys.path`, as graphene's setup.py imports `pyutils.version` after
+appending the package to `sys.path`, does none of these, though one that
+runs still counts where it can load a file under a second name. Before it
+writes anything, a
 `--cross-module` run of `dry` or `preview` names every such problem with the
 remedy for its kind, and refuses the run when one leaves in doubt a
 top-level name located at or around the target, or lies under the target and
