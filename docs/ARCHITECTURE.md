@@ -1530,4 +1530,6 @@ but the ideas and their names are from the literature.
 | Helper renaming | `renaming.py` (at `src/towel/`) |
 | Tool selection (`ToolChoice`) | `project_tools.py` (at `src/towel/`) |
 | Command line | `cli.py` (at `src/towel/`) |
+| The files of the program the whole-program scans read, and the refusal when one does not parse here | `program_files.py` (at `src/towel/`) |
+| The oldest and newest Python a project declares | `declared_python.py` (at `src/towel/`) |
 | Builtin names, exceptions | `builtins.py`, `exceptions.py` |

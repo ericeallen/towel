@@ -1539,6 +1539,36 @@ Set `DEBUG_PROPOSAL_REJECTIONS=1` to log the reason for each rejected pair
 naming each block by file, function and lines:
 `REJECT[reason]: path::function@(start, end) <-> path::function@(start, end)`.
 
+## A program Towel cannot read whole
+
+The checks that decline unsafe changes read the whole program, from the project
+root down (`src/towel/program_files.py`). A file there that does not parse on the
+Python Towel runs on refuses every run before anything is written, because it may
+run on a newer Python and do there what those checks never saw (round-4 audit
+P1-2 and P1-3). Towel cannot tell a file in newer syntax from one that is invalid
+on every Python, so both refuse. A file that does not decode in its declared
+encoding runs on no Python, and is left alone. Of the 140 corpus projects, 8 hold
+a file that does not parse on 3.12 and 3.13: in 7 it is test data that one
+`--exclude` leaves out (black's `tests/data`, parso's `normalizer_issue_files`),
+and in unidecode a script at the root. On 3.11 sphinx and cattrs join them, and
+django holds five more such files, all written for 3.12, which sphinx and django
+require. What remains:
+
+- `--exclude` takes directory names, so a file directly in the project root, such
+  as unidecode's Python 2 `benchmark.py`, cannot be left out; it must be moved,
+  fixed, or parsed by a newer Python.
+- What `--exclude` names is taken to be no part of the program. A test suite
+  excluded only to keep it unchanged is no longer read either, so a test's
+  `mock.patch("pkg.mod.open", ...)` there no longer declines a change it would
+  notice. Of the corpus entries that exclude their tests, mkdocs' tests patch
+  `open` into `mkdocs/structure/files.py` and cheroot's patch `input` into
+  `cheroot/wsgi.py`; neither package's first analysis proposed anything more.
+- The newest Python the refusal names is read from `requires-python` (or
+  setup.cfg's `python_requires`, or Poetry's `python`) and the `Programming
+  Language :: Python :: 3.N` classifiers; a `setup.py` is not read.
+- Past the scans' limit of 20,000 Python files the program is not read whole,
+  and the scans say so themselves.
+
 ## Performance
 
 Analysis is quadratic in candidate blocks per file. The measures below keep
