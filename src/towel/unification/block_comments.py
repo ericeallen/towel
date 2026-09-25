@@ -394,10 +394,12 @@ _FILE_DIRECTIVE = re.compile(
 # codespell govern a line, the next line or the file, and have none; the
 # families below are the rest.
 #
-# An opener is recognized broadly, and a closer as its tool is known to read
-# it: a comment a tool may take for a closer when it does not would end the
-# region early, and let code move out of it unnoticed. Where a tool's reading
-# was not verified, only the spellings any reading accepts close a region.
+# Each family's openers and closers are read as its tool reads them, where
+# its source or its behaviour was read: Black 26.5.1, ruff 0.16.9, yapf
+# 0.43.0, autopep8 2.3.2 and isort 9.0.1. For pylint and pytype an opener is
+# recognized broadly and a closer only as it surely is, since a comment
+# taken for a closer that is none would end the region early, and let code
+# move out of it unnoticed.
 
 
 class _Scope(Enum):
@@ -411,13 +413,60 @@ class _Scope(Enum):
     """Not verified against the tool: wherever either reading reaches, and closed only as both are."""
 
 
+Reading = Callable[[str], bool]
+"""Whether a tool reads a comment's text as one of its directives."""
+
+
+def _searching(pattern: str, flags: int = 0) -> Reading:
+    compiled = re.compile(pattern, flags)
+    return lambda text: compiled.search(text) is not None
+
+
 def _exactly(*spellings: str) -> Callable[[str, str], bool]:
     """A closing test accepting only ``spellings`` of a closer, whatever the opener."""
     accepted = frozenset(spellings)
     return lambda opener, closer: closer.strip() in accepted
 
 
-_NAMED = re.compile(r"\b(disable|enable)\s*=\s*([^#]*)", re.IGNORECASE)
+def _black_reads(*directives: str) -> Reading:
+    """Black's ``contains_fmt_directive`` (``black/comments.py``) for ``directives``.
+
+    The comment reads as one when it is one, or when a part of it split at
+    ``# `` or at ``;`` is: ``# noqa # fmt: off`` is Black's ``fmt: off``.
+    """
+    wanted = frozenset(directives)
+
+    def reads(text: str) -> bool:
+        blocks = [
+            text,
+            *("# " + part.strip() for part in text.split("# ")[1:]),
+            *("# " + part.strip() for part in text.strip("# ").split(";")),
+        ]
+        return any(block in wanted for block in blocks)
+
+    return reads
+
+
+def _either(*readings: Reading) -> Reading:
+    return lambda text: any(reading(text) for reading in readings)
+
+
+# ruff format reads a whole comment, spacing ignored: ``# fmt:  off`` and
+# ``# yapf:disable``, not ``# fmt: off # why`` (measured on 0.16.9).
+_RUFF_FORMAT_OFF = _searching(r"^#\s*(?:fmt\s*:\s*off|yapf\s*:\s*disable)\s*$")
+_RUFF_FORMAT_ON = _searching(r"^#\s*(?:fmt\s*:\s*on|yapf\s*:\s*enable)\s*$")
+
+# yapf 0.43.0, yapflib/yapf_api.py, DISABLE_PATTERN and ENABLE_PATTERN,
+# searched in any comment line without regard to case: prose that says
+# ``fmt: off`` disables it too.
+_YAPF_DISABLE = _searching(r"^#.*\b(?:yapf:\s*disable|fmt: ?off)\b", re.IGNORECASE)
+_YAPF_ENABLE = _searching(r"^#.*\b(?:yapf:\s*enable|fmt: ?on)\b", re.IGNORECASE)
+
+# autopep8 2.3.2, DISABLE_REGEX and ENABLE_REGEX, found anywhere in the text.
+_AUTOPEP8_DISABLE = _searching(r"# *(?:fmt|autopep8): *off")
+_AUTOPEP8_ENABLE = _searching(r"# *(?:fmt|autopep8): *on")
+
+_NAMED = re.compile(r"\b(disable|enable)\s*=\s*([^;#]*)", re.IGNORECASE)
 
 
 def _named(text: str, verb: str) -> Optional[FrozenSet[str]]:
@@ -443,16 +492,17 @@ def _enables_what_it_disabled(opener: str, closer: str) -> bool:
 
 
 # ruff 0.16's range suppression, ``# ruff: disable[E501]`` ... ``# ruff:
-# enable[E501]``. Measured on ruff 0.16.9: ``ruff`` is read in lower case
-# only, spacing anywhere is ignored, the codes must be the same list in the
-# same order, a closer without codes or at another indentation is invalid
-# (RUF103), and a region left unclosed (RUF104) covers the rest of the body
-# it opens in, as does a trailing ``disable``, which ruff rejects.
+# enable[E501]``. Measured on ruff 0.16.9: the comment must start with it
+# (one later in a comment is a trailing one, which ruff rejects), ``ruff`` is
+# read in lower case only, spacing anywhere is ignored, the codes must be the
+# same list in the same order, a closer without codes or at another
+# indentation is invalid (RUF103), and a region left unclosed (RUF104)
+# covers the rest of the body it opens in.
 _RUFF_RANGE = re.compile(r"#\s*ruff\s*:\s*(disable|enable)\s*\[([^\]]*)\]")
 
 
 def _ruff_codes(text: str, verb: str) -> Optional[Tuple[str, ...]]:
-    match = _RUFF_RANGE.search(text)
+    match = _RUFF_RANGE.match(text)
     if match is None or match.group(1) != verb:
         return None
     codes = tuple(code.strip() for code in match.group(2).split(",") if code.strip())
@@ -469,9 +519,9 @@ class _Region:
     """A family of region directives: the tool reading them, and how it reads them."""
 
     family: str
-    opens: re.Pattern[str]
+    opens: Reading
     # Anything its tool might read as a closer; ``closed_by`` says whether it does.
-    closes: re.Pattern[str]
+    closes: Reading
     scope: _Scope
     # Whether it keeps a formatter off the code's layout, which then must not
     # be lost at any site; otherwise it changes what a linter reports, which a
@@ -480,93 +530,84 @@ class _Region:
     closed_by: Callable[[str, str], bool]
 
 
-def _pattern(*alternatives: str) -> re.Pattern[str]:
-    return re.compile("|".join(rf"\#\s*{alternative}\b" for alternative in alternatives), re.I)
-
-
-_FMT_OFF, _FMT_ON = r"fmt\s*:\s*off", r"fmt\s*:\s*on"
-_YAPF_OFF, _YAPF_ON = r"yapf\s*:\s*disable", r"yapf\s*:\s*enable"
-
 _REGION_FAMILIES: Tuple[_Region, ...] = (
-    # Black (``black/comments.py``, FMT_OFF and FMT_ON, 26.5.1) and ruff format
-    # (measured on 0.16.9): a closer at the opener's level, ``# FMT: ON`` not
-    # one; ``# yapf: disable`` and ``# yapf: enable`` count as ``fmt: off``
-    # and ``fmt: on``.
+    # Black and ruff format: a closer at the opener's level; ``# yapf:
+    # disable`` and ``# yapf: enable`` count as ``fmt: off`` and ``fmt: on``;
+    # ``# FMT: ON`` is neither's. An opener either reads, closed only by a
+    # spelling both read.
     _Region(
         "black",
-        _pattern(_FMT_OFF, _YAPF_OFF),
-        _pattern(_FMT_ON, _YAPF_ON),
+        _either(_black_reads("# fmt: off", "# fmt:off", "# yapf: disable"), _RUFF_FORMAT_OFF),
+        _either(_black_reads("# fmt: on", "# fmt:on", "# yapf: enable"), _RUFF_FORMAT_ON),
         _Scope.BLOCK,
         True,
         _exactly("# fmt: on", "# fmt:on", "# yapf: enable"),
     ),
-    # yapf reads its own and Black's spellings, line by line; not verified.
+    # yapf: line by line, to a comment enabling it that does not also disable it.
     _Region(
         "yapf",
-        _pattern(_YAPF_OFF, _FMT_OFF),
-        _pattern(_YAPF_ON, _FMT_ON),
-        _Scope.EITHER,
+        _YAPF_DISABLE,
+        _YAPF_ENABLE,
+        _Scope.FILE,
         True,
-        _exactly("# yapf: enable", "# fmt: on"),
+        lambda opener, closer: _YAPF_ENABLE(closer) and not _YAPF_DISABLE(closer),
     ),
-    # autopep8 reads its own and Black's spellings, to the end of the file
-    # when not closed; not verified.
+    # autopep8: line by line, to the end of the file when not closed.
     _Region(
         "autopep8",
-        _pattern(r"autopep8\s*:\s*off", _FMT_OFF),
-        _pattern(r"autopep8\s*:\s*on", _FMT_ON),
-        _Scope.EITHER,
+        _AUTOPEP8_DISABLE,
+        _AUTOPEP8_ENABLE,
+        _Scope.FILE,
         True,
-        _exactly("# autopep8: on", "# fmt: on"),
+        lambda opener, closer: _AUTOPEP8_ENABLE(closer) and not _AUTOPEP8_DISABLE(closer),
     ),
-    # isort 9.0.1 (``isort/core.py``): a whole line reading exactly ``# isort:
-    # off`` or ``# isort: on``, line by line whatever the indentation.
+    # isort (``isort/core.py``): a whole line reading exactly ``# isort: off``
+    # or ``# isort: on``, line by line whatever the indentation.
     _Region(
         "isort",
-        _pattern(r"isort\s*:\s*off"),
-        _pattern(r"isort\s*:\s*on"),
+        lambda text: text.strip() == "# isort: off",
+        lambda text: text.strip() == "# isort: on",
         _Scope.FILE,
         False,
         _exactly("# isort: on"),
     ),
-    # pylint: to the end of the statement the pragma stands in, or an
-    # ``enable`` of every message it named.
+    # pylint reads ``pylint:`` anywhere in a comment (its pragma parser's
+    # ``OPTION_RGX``): to the end of the statement the pragma stands in, or
+    # an ``enable`` of every message it named.
     _Region(
         "pylint",
-        _pattern(r"pylint\s*:\s*disable"),
-        _pattern(r"pylint\s*:\s*enable"),
+        _searching(r"\#.*?\bpylint\s*:\s*disable\b", re.IGNORECASE),
+        _searching(r"\#.*?\bpylint\s*:\s*enable\b", re.IGNORECASE),
         _Scope.BLOCK,
         False,
         _enables_what_it_disabled,
     ),
     _Region(
         "ruff",
-        _pattern(r"ruff\s*:\s*disable"),
-        _pattern(r"ruff\s*:\s*enable"),
+        lambda text: _ruff_codes(text, "disable") is not None,
+        lambda text: re.match(r"#\s*ruff\s*:\s*enable\b", text) is not None,
         _Scope.BLOCK,
         False,
         _ruff_closes,
     ),
-    # pytype's ``disable`` on a line of its own; its reach was not verified.
+    # pytype's ``disable`` on a line of its own; its reading was not verified.
     _Region(
         "pytype",
-        _pattern(r"pytype\s*:\s*disable"),
-        _pattern(r"pytype\s*:\s*enable"),
+        _searching(r"\#.*?\bpytype\s*:\s*disable\b", re.IGNORECASE),
+        _searching(r"\#.*?\bpytype\s*:\s*enable\b", re.IGNORECASE),
         _Scope.EITHER,
         False,
         _enables_what_it_disabled,
     ),
 )
 
-# Any comment that may open or close a region, for a quick test of a module.
-_ANY_REGION = re.compile(
-    "|".join(
-        f"(?:{pattern.pattern})"
-        for family in _REGION_FAMILIES
-        for pattern in (family.opens, family.closes)
-    ),
-    re.IGNORECASE,
-)
+# Every tool's word before a region directive, for a quick test of a module.
+_ANY_REGION = re.compile(r"(?:fmt|yapf|autopep8|isort|pylint|ruff|pytype)\s*:", re.IGNORECASE)
+
+
+def _may_open_or_close(text: str) -> bool:
+    """Whether the comment ``text`` may open or close a region of some family."""
+    return any(family.opens(text) or family.closes(text) for family in _REGION_FAMILIES)
 
 
 def is_directive(text: str) -> bool:
@@ -1374,9 +1415,9 @@ def _left_open(tokens: Iterable[_Token], family: _Region, column: Optional[int])
     """
     opened: List[_Token] = []
     for token in tokens:
-        if family.opens.search(token.text):
+        if family.opens(token.text):
             opened.append(token)
-        elif family.closes.search(token.text) and (column is None or token.start[1] == column):
+        elif family.closes(token.text) and (column is None or token.start[1] == column):
             index = next(
                 (
                     position
@@ -1454,7 +1495,7 @@ def _region_comments(source: str) -> Tuple[_Token, ...]:
         for line in sorted(comments)
         for token in comments[line]
         if not lines[token.start[0] - 1][: token.start[1]].strip()
-        and _ANY_REGION.search(token.text)
+        and _may_open_or_close(token.text)
     )
 
 
@@ -1478,7 +1519,7 @@ def _homes_reached(
 
     def closed_after(low: int, high: int) -> bool:
         return any(
-            family.closes.search(token.text)
+            family.closes(token.text)
             for line in range(low + 1, high + 1)
             for token in comments.get(line, ())
         )
@@ -1637,9 +1678,9 @@ def _region_pairs(comments: Sequence[BlockComment]) -> _Regions:
         for position, comment in enumerate(comments):
             if not comment.anchor.own_line:
                 continue
-            if family.opens.search(comment.text):
+            if family.opens(comment.text):
                 opened.append(position)
-            elif family.closes.search(comment.text):
+            elif family.closes(comment.text):
                 index = next(
                     (
                         candidate

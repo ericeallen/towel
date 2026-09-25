@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Round-4 audit, beside P1-09: Towel's own rendering rewrote the layout
-# `fmt: off` and `fmt: skip` keep, even when the directive moved with the
-# block. The kept statements are now written into the helper as the sites
-# wrote them.
+# Round-4 audit, beside P1-09: Towel's own rendering rewrote the layout that
+# Black's off and skip directives keep, even when the directive moved with
+# the block. The kept statements are now written into the helper as the
+# sites wrote them. (This comment does not spell the directives: yapf reads
+# them anywhere in a comment.)
 def g1(rows):
     head = rows[:1]
     # fmt: off

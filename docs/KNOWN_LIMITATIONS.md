@@ -1423,13 +1423,19 @@ the proposals it built and did not apply, by reason:
   `disable`/`enable`, and ruff 0.16's range suppression `ruff:
   disable[...]`/`enable[...]`; flake8, mypy, pyright, ty, pyrefly, pyre,
   Bandit, Semgrep, Fixit, pycln and codespell have none. A closer counts
-  only as its tool reads it: Black's at the opener's level and spelled
-  `# fmt: on`, `# fmt:on` or `# yapf: enable` (`# FMT: ON` closes
-  nothing); ruff's with the same codes in the same order; pylint's and
-  pytype's `enable` naming every message the `disable` did; isort's the
-  whole line `# isort: on`. For yapf, autopep8 and pytype, whose reading
-  was not verified, a region is taken to reach as far as either a
-  line-by-line or a block-scoped reading would carry it.
+  as its tool reads it, from its source or its measured behaviour (Black
+  26.5.1, ruff 0.16.9, yapf 0.43.0, autopep8 2.3.2, isort 9.0.1). An
+  opener is what any of them reads as one: yapf reads `fmt: off` anywhere
+  in a comment line, prose included, and autopep8 anywhere in the text, so
+  a comment explaining `# fmt: off` opens their regions. A closer counts
+  only where every reader of that family accepts it: Black's at the
+  opener's level and spelled `# fmt: on`, `# fmt:on` or `# yapf: enable`
+  (`# FMT: ON` closes nothing); ruff's with the same codes in the same
+  order; pylint's and pytype's `enable` naming every message the `disable`
+  did; isort's the whole line `# isort: on`. pytype's reading was not
+  verified, so its region is taken to reach as far as either a
+  line-by-line or a block-scoped reading would carry it. A `fmt: off`
+  written inside a string, which autopep8 also reads, is not seen.
   `directive_around_block`: an ignore on a line of its own above a site's
   block governs the block's first statement, and would stay above the call
   that takes its place, silencing the call and not the helper (pylint's
