@@ -30,6 +30,17 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- A project decorator that is a plain wrapper was trusted although another
+  module rebinds it, as `app.checks.checked = typeguard.typechecked` before
+  the decorated module imports it, and code moved out of the instrumented
+  function. A decorator is now known only when nothing in the program may
+  rebind it, at every module its name passes through. A stacked decoration
+  by hand, `f = typechecked(register(f))`, is judged for every call along
+  the chain.
+- A star import made every decorator of its module unknown; it now makes
+  unknown only the names it may bind, read as it may run (a literal
+  `__all__` with the module's public names, since an import cycle can run
+  the star import first).
 - A lambda, comprehension or nested function whose parameter is spelled
   like a name that becomes a helper parameter read the helper's parameter
   instead of its own, and silently computed the wrong result:

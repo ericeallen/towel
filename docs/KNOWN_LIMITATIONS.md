@@ -445,8 +445,8 @@ than a defect to fix (DECISIONS, 2026-09-25). Towel does not detect:
 - a callee that rebinds a name between two reads in the block, including a
   builtin passed under `--parameterize-builtins`, which is read at the call.
 
-Decoration by hand is not reflection: `f = deco(f)` is judged like the
-decorator it applies.
+Decoration by hand is not reflection: `f = deco(f)` and a stacked
+`f = outer(inner(f))` are judged like the decorators they apply.
 
 Each helper call adds a stack frame. Recursive functions are refactored like
 any other, so a deeply recursive function uses more stack after extraction
