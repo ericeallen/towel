@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
 import textwrap
 from typing import Dict
 
@@ -200,6 +201,7 @@ def test_r9sb_a_nested_scope_declaring_a_parameter_nonlocal_is_not_extracted() -
 POSITIONS: Dict[str, tuple[str, str]] = {
     "format_spec": ('text = f"[{v:>{box}}]"', 'text = f"[{v:>{P}}]"'),
     "nested_format_spec": ('text = f"[{v:>{w:{box}}}]"', 'text = f"[{v:>{w:{P}}}]"'),
+    "two_fields_in_a_format_spec": ('text = f"[{v:{box}^{box}}]"', 'text = f"[{v:{P}^{P}}]"'),
     "value_conversion_and_spec": ('text = f"{box!r:>{box}}"', 'text = f"{P!r:>{P}}"'),
     "fstring_inside_a_field": ("text = f\"{f'{box}'}\"", "text = f\"{f'{P}'}\""),
     "for_attribute_target": (
@@ -273,7 +275,24 @@ POSITIONS: Dict[str, tuple[str, str]] = {
 }
 
 
-@pytest.mark.parametrize("case", sorted(POSITIONS))
+PEP_701_ONLY = frozenset({"nested_format_spec"})
+"""A format spec nested two deep parses only from Python 3.12 (PEP 701)."""
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(
+            case,
+            marks=(
+                [pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 701 f-string")]
+                if case in PEP_701_ONLY
+                else []
+            ),
+        )
+        for case in sorted(POSITIONS)
+    ],
+)
 def test_r9sb_every_evaluated_position_is_substituted(case: str) -> None:
     source, expected = POSITIONS[case]
     assert _substituted(source, "box") == _expected(expected)
