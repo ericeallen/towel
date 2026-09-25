@@ -1547,22 +1547,20 @@ Python Towel runs on refuses every run before anything is written, because it ma
 run on a newer Python and do there what those checks never saw (round-4 audit
 P1-2 and P1-3). Towel cannot tell a file in newer syntax from one that is invalid
 on every Python, so both refuse. A file that does not decode in its declared
-encoding runs on no Python, and is left alone. Of the 140 corpus projects, 8 hold
-a file that does not parse on 3.12 and 3.13: in 7 it is test data that one
-`--exclude` leaves out (black's `tests/data`, parso's `normalizer_issue_files`),
-and in unidecode a script at the root. On 3.11 sphinx and cattrs join them, and
+encoding runs on no Python, and is left alone. `--exclude` still means "leave
+this unchanged": what it names is read as evidence like the rest, and only a file
+it names that does not parse is taken for no part of the program. The refusal
+suggests an `--exclude` for each file that clears it, the directory's name when
+two or more of the files share it, else the file's own; only a file given
+explicitly as the target has none, since it is always analyzed. Of the 140 corpus
+projects, 8 hold a file that does not parse on 3.12 and 3.13, all cleared that
+way (black's `tests/data`, parso's `normalizer_issue_files`, unidecode's
+root-level Python 2 `benchmark.py`). On 3.11 sphinx and cattrs join them, and
 django holds five more such files, all written for 3.12, which sphinx and django
 require. What remains:
 
-- `--exclude` takes directory names, so a file directly in the project root, such
-  as unidecode's Python 2 `benchmark.py`, cannot be left out; it must be moved,
-  fixed, or parsed by a newer Python.
-- What `--exclude` names is taken to be no part of the program. A test suite
-  excluded only to keep it unchanged is no longer read either, so a test's
-  `mock.patch("pkg.mod.open", ...)` there no longer declines a change it would
-  notice. Of the corpus entries that exclude their tests, mkdocs' tests patch
-  `open` into `mkdocs/structure/files.py` and cheroot's patch `input` into
-  `cheroot/wsgi.py`; neither package's first analysis proposed anything more.
+- A name matches at any depth, so `--exclude tests.py` leaves every file of that
+  name unchanged, not only the one that does not parse.
 - The newest Python the refusal names is read from `requires-python` (or
   setup.cfg's `python_requires`, or Poetry's `python`) and the `Programming
   Language :: Python :: 3.N` classifiers; a `setup.py` is not read.
