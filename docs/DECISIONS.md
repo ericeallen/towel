@@ -57,7 +57,7 @@ Three consequences follow, each ruled on explicitly:
   helper. *Superseded the same day, before it was implemented; see "Methods
   keep method helpers" below.*
 
-*Status: implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented in 1.772.*
 
 ## 2026-09-22: Methods keep method helpers
 
@@ -96,8 +96,8 @@ class exists; code using private names is then declined. A helper from
 methods that never read their receiver stays a module-level function, as
 ruled on 2026-09-21 for `A.a(None, 3)`, since that costs nothing.
 
-*Status: implemented on the `audit-1772` branch, the receiver and metaclass
-conditions included; not yet released. Where a helper may be hosted is
+*Status: implemented in 1.772, the receiver and metaclass
+conditions included. Where a helper may be hosted is
 narrowed the same day by the next entry.*
 
 ## 2026-09-22: A method helper lives in the class that holds both duplicates
@@ -179,8 +179,8 @@ Each fact about Python and the checkers in this entry is asserted by
 `tests/test_hosting_rationale.py`. A release of either checker that changes
 one fails that file and returns the decision for review.
 
-*Status: implemented on the `audit-1772` branch, zero-argument `super()` in
-same-class helpers included; not yet released.*
+*Status: implemented in 1.772, zero-argument `super()` in
+same-class helpers included.*
 
 ## 2026-09-22: Towel does not change externally visible class design
 
@@ -252,7 +252,7 @@ The costs, accepted:
   helpers;
 - a project whose imports are ambiguous must exclude the stray copy first.
 
-*Status: implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented in 1.772.*
 
 ## 2026-09-23: How the import model decides, and when a problem refuses
 
@@ -302,9 +302,8 @@ waitress, attrs or pytest. Most of it is test code borrowing across test
 directories inside a package. Relaxing the rule for test code would accept
 the risk that only part of a test tree ships, and the owner kept it strict.
 
-*Status: implemented on the `audit-1772` branch, and refined by "An import
-problem refuses only when it leaves a name in doubt" (2026-09-24); not yet
-released.*
+*Status: implemented in 1.772, and refined by "An import
+problem refuses only when it leaves a name in doubt" (2026-09-24).*
 
 ## 2026-09-23: Cross-module extraction stays on for the third audit
 
@@ -354,7 +353,7 @@ every such exception. The third from-scratch audit covers both modes. The
 stop rule applies to what it probes in each; what to do about a P1 found
 only with the flag on is for the owner to decide when it arises.
 
-*Status: implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented in 1.772.*
 
 ## 2026-09-23: A helper never takes a builtin as a parameter
 
@@ -389,7 +388,7 @@ What remains is an assumption of the opt-in mode, stated in the
 limitations: code outside the project that patches a builtin into one of its
 modules is not seen.
 
-*Status: implemented on the `audit-1772` branch; not yet released. The same
+*Status: implemented in 1.772. The same
 day the owner made this the default rather than a prohibition; see "A name
 is its binding, not its spelling" below.*
 
@@ -432,7 +431,7 @@ builtin as a parameter, so behaviour is preserved. It never makes a builtin
 a parameter where reading it directly is already sound. The owner asked for
 it so that a user who wants those extractions can have them explicitly.
 
-*Status: implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented in 1.772.*
 
 ## 2026-09-23: A typed run compares against its baseline
 
@@ -474,8 +473,7 @@ whether a callee is `typing.cast` or a project's own `cast`, and where an
 absolutely imported base class is defined. It never prints or refuses
 there, and it writes no import that runs.
 
-*Status: implemented on the `audit-1772` branch, as refined on 2026-09-24; not
-yet released.*
+*Status: implemented in 1.772, as refined on 2026-09-24.*
 
 ## 2026-09-22: Checked with the project's own checker, as configured
 
@@ -492,7 +490,7 @@ the checker's own error and the remedies, rather than verifying with less
 than the project's check. A project that configures no checker keeps the
 documented untyped behaviour.
 
-*Status: implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented in 1.772.*
 
 ## 2026-09-22: Well-formed input
 
@@ -579,7 +577,7 @@ sphinx-autodoc-typehints, no longer does: version 3.13.7 has no such
 option. It runs a guarded block only after its module has imported, one
 statement at a time, and mocks whatever fails to import.
 
-*Status: implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented in 1.772.*
 
 ## 2026-09-24: How a typed run compares, as implemented
 
@@ -620,9 +618,9 @@ would. The fifth applies that rule to the cold confirmation.
   about files no change touched.
 
 The fourth point declines where the earlier entry warned. A check against
-`Any` cannot fail, so it verifies nothing. It is recorded here pending the
-owner's confirmation; the alternative is to refactor such files with a
-warning.
+`Any` cannot fail, so it verifies nothing. The owner was asked on
+2026-09-25 whether to keep it or to refactor such files with a warning, and
+raised no objection to keeping it, so it stands.
 
 This still leaves Towel checking as the project configures its checker, not
 as its CI invokes it. On idna the CI adds `--strict`, and on trio it checks
@@ -632,8 +630,8 @@ helper, which is what failed idna's `--strict`, does not apply in a module
 whose functions are all annotated: such a proposal is declined, saying the
 helper would be the one unannotated function of its module.
 
-*Status: implemented on the `audit-1772` branch, including the rule for
-unreachable code; not yet released.*
+*Status: implemented in 1.772, including the rule for
+unreachable code.*
 
 ## 2026-09-24: An import problem refuses only when it leaves a name in doubt
 
@@ -688,7 +686,7 @@ installed libraries, but only those the interpreter Towel runs in can see.
 The third audit tests this case. If it fails, the fix is to put that name
 in doubt, not to return to refusing whole runs.
 
-*Status: implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented in 1.772.*
 
 ## 2026-09-24: 1.772 fixes defects, and defers widening what Towel accepts
 
@@ -788,7 +786,7 @@ list is read in source on 3.11 to 3.13 and re-checked by introspection in
 the suite. Hosting a helper in a class and moving code out of one share
 the list.
 
-*Status: implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented in 1.772.*
 
 ## 2026-09-24: Build exclusions may put a host in doubt, but never name a module
 
@@ -826,7 +824,7 @@ Two residuals remain:
   (meson-python, maturin), and files left untracked under setuptools-scm;
 - the module that attests a directory may itself be left out.
 
-*Status: implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented in 1.772.*
 
 ## 2026-09-24: An error is accounted for by the original's error where it stood
 
@@ -866,7 +864,7 @@ Three related rules came with it:
   helper takes only the annotations its sites declare, completed with
   `Any`.
 
-*Status: implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented in 1.772.*
 
 ## 2026-09-25: Reflection over a namespace is a documented limitation, and recursion is refactored
 
@@ -897,7 +895,7 @@ call adds a stack frame, so a deeply recursive function uses more stack
 after extraction and may reach Python's recursion limit sooner.
 KNOWN_LIMITATIONS says so.
 
-*Status: decided; the documentation is on the `audit-1772` branch.*
+*Status: decided; documented in 1.772.*
 
 ## 2026-09-25: Round-4 refinements to the import model and the typed check
 
@@ -926,7 +924,7 @@ refuse where it had written wrong code, and none widens what it accepts.
   which matches the documented rule that a journal blocks only a run that
   would change a file its manifest names.
 
-*Status: implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented in 1.772.*
 
 ## 2026-09-25: Round-4 rules for substitution, scope and hosting
 
@@ -959,4 +957,25 @@ corrects what Towel wrote wrongly.
   first import earlier can reorder its import-time reads of state another
   module patches is the documented dynamic-rebinding limitation.
 
-*Status: implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented in 1.772.*
+
+## 2026-09-25: 1.772 ships without a clean audit round
+
+The stop rule (2026-09-24, "Every release is audited, and every finding
+becomes a test") releases only after an audit round that finds no P1. Round
+four found about 25 and all were fixed, but a fifth round did not fit in
+the week's budget, so the owner chose to release 1.772 without it.
+
+The ground for that choice was measured against 1.618. Round four's
+semantic defects (lambda capture, format specs, loop targets, moved
+bindings, class machinery, decorators) all reproduce on 1.618 too, so
+they are old debt that 1.772 now repays, not new damage. The one regression
+round four found, an import written above a shebang or an encoding line,
+is fixed. Every defect found is pinned by a test, the gate passed on
+3.11, 3.12 and 3.13, and the release corpus ran against the release
+commit.
+
+The fifth round is run against the next release, with the same discipline,
+and the stop rule applies to it unchanged.
+
+*Status: decided.*

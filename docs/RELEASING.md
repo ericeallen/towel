@@ -1,19 +1,20 @@
 # Preparing a release
 
-The `1.772` beta release is dated September 19, 2026. Its
-[changelog](../CHANGELOG.md#1772---2026-09-21) summarizes the one user-visible
-change: an extracted helper can now keep the relationships among its argument
-and return types through type anti-unification, instead of widening each column
-independently to a union or to `Any`. Generic instance, class, and static
-helper methods are included. The preceding `1.732.post1` release corrected PyPI
-documentation links without changing the Python implementation in `1.732`; its
+The `1.772` release is dated September 25, 2026. Its
+[changelog](../CHANGELOG.md#1772---2026-09-25) records what changed since
+`1.732`. Helpers are shared within one module unless `--cross-module` is
+given. Import names come from the program's own imports. A typed run is
+compared against the project's own check where the original's errors stood.
+Code under decorators that rewrite bodies stays where it is. The rest are the
+defects four rounds of audit found and fixed, each pinned by a test. The
+preceding `1.732.post1` release corrected PyPI documentation links without
+changing the Python implementation in `1.732`; its
 [post-release changelog](../CHANGELOG.md#1732post1---2026-09-19) records that
 fix, and the [1.732 changelog](../CHANGELOG.md#1732---2026-09-19) summarizes
 reuse of existing functions, optional formatting and typing, larger-project
 controls, and that release's audit fixes. The candidate commit and the evidence
 behind each claim are recorded in the
-[readiness report](PRODUCTION_READINESS.md). No subsequent release version has
-been chosen.
+[readiness report](PRODUCTION_READINESS.md).
 
 The `347d62b` report of 118 PASS, 19 NO_CHANGE and 4 BROKEN_KNOWN among
 141 projects is historical. Current coverage combines the complete r6 run

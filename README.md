@@ -24,7 +24,7 @@ finishing; it now reaches a fixed point in well under one, after which Sphinx's
 own test suite reports exactly what it reported before. An extraction that
 would separate a narrowing test from code depending on it is declined outright,
 with or without type checking. See the
-[1.772 changelog](https://github.com/ericeallen/towel/blob/v1.772/CHANGELOG.md#1772---2026-09-21)
+[1.772 changelog](https://github.com/ericeallen/towel/blob/v1.772/CHANGELOG.md#1772---2026-09-25)
 for details.
 
 **New here?** The [Quick start](https://github.com/ericeallen/towel/blob/v1.772/docs/QUICKSTART.md) gets you from install to a reviewed refactoring in four steps.
