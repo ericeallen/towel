@@ -281,12 +281,14 @@ addresses:
   class holding both duplicates takes one only when all of that is known to
   leave a plain function alone: its metaclass is `type`, `abc.ABCMeta` or the
   enum metaclass, it defines no `__init_subclass__` itself, and each base is
-  a builtin class, `abc.ABC`, `typing.Generic[...]`, an enum, or a class of
-  the project that qualifies in turn, resolved through the module's imports.
+  a builtin class, `abc.ABC`, `typing.Generic[...]`, an enum, one of the
+  library classes read to build a subclass with Python's own machinery
+  (*Decorators that compile or instrument a body* below), or a class of the
+  project that qualifies in turn, resolved through the module's imports.
   Any other class (pygments' lexers, whose metaclass is the project's own; a
   base reached through a star import or built by a call such as
-  `with_metaclass(...)`; `NamedTuple`; a library's base class) gets the
-  module-level helper that takes the receiver as an argument. `__slots__`
+  `with_metaclass(...)`; `NamedTuple`; a library base class nobody read)
+  keeps its code: moving it out is refused as well. `__slots__`
   interactions with added methods are not modeled beyond compilation.
 - **Import-time behavior.** Helpers are inserted before the first definition
   in a module, after imports, except that a helper whose annotations name
@@ -926,12 +928,48 @@ enclosing the code must pass the test a class taking a method helper passes
 (*Metaclasses and descriptors* below): a metaclass that is `type`,
 `abc.ABCMeta` or the enum metaclass, no `__init_subclass__` or
 `__getattribute__` of its own, and bases that are builtins, `abc.ABC`,
-`typing.Generic[...]`, enums, or classes of the project that pass in turn. A
+`typing.Generic[...]`, enums, the library classes below, or classes of the
+project that pass in turn, whose decorators are known to add no machinery. A
 class not in a module's own body passes only when it has no bases and no
 keywords, and binds neither name. Anything else declines under
 `class_machinery_may_transform_methods[...]`, which names what fails the test:
-`metaclass LexerMeta`, `__init_subclass__ of Base`, or `base
-unittest.TestCase`, since the test reads no class outside the project.
+`metaclass LexerMeta`, `__init_subclass__ of Base`, `decorator mock.patch of
+Base`, or `base pydantic.BaseModel`, since the test reads no other class
+outside the project.
+
+The library classes are those of `KNOWN_BASES` in
+`src/towel/unification/known_bases.py`, each read in CPython 3.11.15, 3.12.13
+and 3.13.7 and checked of the running interpreter by the suite: `type` or
+`ABCMeta` builds a subclass, nothing on the order defines
+`__getattribute__`, and none defines `__init_subclass__` but
+`unittest.TestCase`, whose own only sets two attributes of the subclass. They
+are `unittest.TestCase`, `IsolatedAsyncioTestCase`, `TestResult` and
+`TextTestResult`; `asyncio.BaseProtocol`, `Protocol`, `BufferedProtocol`,
+`DatagramProtocol` and `SubprocessProtocol`; `ast.NodeVisitor` and
+`NodeTransformer`; `logging.Filterer`, `Filter`, `Formatter`, `Handler` and
+`StreamHandler`; `threading.Thread`; `html.parser.HTMLParser`;
+`json.JSONEncoder` and `JSONDecoder`; `argparse.Action`, `HelpFormatter`,
+`ArgumentParser` and `Namespace`; `http.server.BaseHTTPRequestHandler`;
+`socketserver.ThreadingMixIn`; `string.Formatter`; `textwrap.TextWrapper`;
+`contextlib.ContextDecorator`, `AbstractContextManager` and
+`AbstractAsyncContextManager`; `collections.UserDict`; the `collections.abc`
+classes (`Mapping`, `MutableMapping`, `Sequence`, `Set`, `Iterable` and the
+rest of the common ones, subscripted or not); and `importlib.abc.MetaPathFinder`
+and `Loader`. Classes implemented in C (`io.StringIO`, `datetime.datetime`,
+`threading.local`, `ctypes.Structure`) and third-party classes are not read and
+not listed. An ancestor of the project may carry, besides the decorators that
+keep a class's namespace, `unittest.skip`, `skipIf`, `skipUnless`,
+`expectedFailure`, `typing.no_type_check` and `typing.dataclass_transform`,
+each called or not. A module that binds a builtin by a compatibility import
+(`try: from builtins import object` ... `except ImportError: pass`) holds the
+builtin on every path, and the base resolves to it.
+
+A `TestCase` subclass can therefore take a class-private method helper,
+`_Case__extracted_func_0`. unittest's loader collects only names starting with
+its `testMethodPrefix`, `test`, and pytest collects a `TestCase`'s tests through
+that same loader, so neither collects it (fixture
+`r7d_method_helper_in_a_testcase`); a loader whose prefix starts with an
+underscore would.
 
 Under `--cross-module`, a block holding an `assert` is shared between two
 modules only when pytest rewrites both alike (`assert_rewriting_differs`). A

@@ -609,11 +609,12 @@ project's own decorators that only return the function, register it, or wrap
 it in a function calling it with its own arguments. A class enclosing the code
 must also build its methods with Python's own machinery (a metaclass of `type`,
 `ABCMeta` or the enum metaclass, no `__init_subclass__`, and bases that are
-builtins, `abc.ABC`, `typing.Generic`, enums or classes of the project that
-qualify in turn), or the pair is counted under
+builtins, `abc.ABC`, `typing.Generic`, enums, standard-library classes read to
+be built that way (`unittest.TestCase`, `asyncio.Protocol`, `ast.NodeVisitor`,
+`logging.Handler`, the `collections.abc` classes and others), or classes of the
+project that qualify in turn), or the pair is counted under
 `class_machinery_may_transform_methods[...]`: a class deriving from a library
-class, `unittest.TestCase` included, keeps its code, since Towel reads no class
-outside the project; and with
+class nobody read keeps its code; and with
 `cross_module_helpers=True`, an `assert` joins two modules only when pytest
 rewrites both alike (`assert_rewriting_differs`). [Known
 limitations](KNOWN_LIMITATIONS.md#decorators-that-compile-or-instrument-a-body)

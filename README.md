@@ -110,8 +110,9 @@ click, each read in its source, are known, and so are the project's own that
 only wrap or register the function; a pair any other reaches is declined under
 the decorator's name. The classes holding the code must be built by Python's
 own machinery, as far as Towel can read it, so a class with a metaclass of the
-project's or one deriving from a library class (`unittest.TestCase` included)
-keeps its code. Across modules, an `assert` moves only between modules pytest
+project's, or deriving from a library class other than the standard-library
+ones read for this (`unittest.TestCase`, `asyncio.Protocol`, `logging.Handler`
+and others), keeps its code. Across modules, an `assert` moves only between modules pytest
 rewrites alike. It skips trivial extractions that would add
 indirection without sharing real logic, wraps arguments that must not be
 evaluated eagerly in zero-argument `lambda`s (see
