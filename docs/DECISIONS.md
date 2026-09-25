@@ -775,7 +775,20 @@ the list grows only by verified entries.
 The owner has proposed a user-supplied list of trusted decorators, as an
 escape hatch for a later release: `docs/proposals/trusted-decorators.md`.
 
-*Status: being implemented on the `audit-1772` branch; not yet released.*
+The first measurement cost 7 of 721 refactorings across ten projects.
+Three gaps of the same hazard were then closed under the same rule:
+- decoration by hand;
+- the machinery of the classes code moves out of;
+- pytest's assertion rewriting, under `--cross-module`.
+
+Refusing every base class outside the project cost 278 more refactorings,
+most of them in `unittest.TestCase` subclasses. A verified list of
+standard-library bases recovered all but 49 of the 721. Each base on the
+list is read in source on 3.11 to 3.13 and re-checked by introspection in
+the suite. Hosting a helper in a class and moving code out of one share
+the list.
+
+*Status: implemented on the `audit-1772` branch; not yet released.*
 
 ## 2026-09-24: Build exclusions may put a host in doubt, but never name a module
 
@@ -813,7 +826,7 @@ Two residuals remain:
   (meson-python, maturin), and files left untracked under setuptools-scm;
 - the module that attests a directory may itself be left out.
 
-*Status: being implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented on the `audit-1772` branch; not yet released.*
 
 ## 2026-09-24: An error is accounted for by the original's error where it stood
 
@@ -853,4 +866,4 @@ Three related rules came with it:
   helper takes only the annotations its sites declare, completed with
   `Any`.
 
-*Status: being implemented on the `audit-1772` branch; not yet released.*
+*Status: implemented on the `audit-1772` branch; not yet released.*

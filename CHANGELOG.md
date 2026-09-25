@@ -30,6 +30,38 @@ mypy and Pyright both strict, checked by that project's own venv: **mypy
 that version; Towel's own checks run against a newer mypy and do not show it.
 
 ### Fixed
+- Code moved out of functions whose decorators rewrite or compile their
+  bodies. typeguard's `@typechecked` recompiles a function from its source
+  with checks added, and numba's `@njit` compiles it. The moved code went
+  unchecked or stopped compiling, and typeguard's own
+  `test_unpacking_assign_star_no_annotation_fail[typechecked]` failed after
+  a root run.
+
+  Code now moves out of a function, or a helper into one, only when
+  everything that can reach that code is known to leave bodies alone:
+  - decorators on the function and on every enclosing function and class;
+  - decorators applied by hand (`fast = numba.njit(kernel)`,
+    `f = typechecked(f)`, `njit(cache=True)(kernel)`);
+  - the machinery of every enclosing class: its metaclass,
+    `__init_subclass__` and `__getattribute__`.
+
+  "Known" means one of two things. The decorator or base is on a verified
+  list, each entry recording the source it was read in: the standard
+  library's decorators, pytest's and click's, `rich.repr.auto`, and about
+  forty standard-library bases such as `unittest.TestCase`,
+  `asyncio.Protocol` and `logging.Handler`, which the suite re-checks by
+  introspection on every interpreter. Or it is a project decorator shown to
+  return, register or plainly wrap the function.
+
+  Anything else declines the pair as `decorator_may_transform_body[...]` or
+  `class_machinery_may_transform_methods[...]`, naming the culprit. Across
+  ten projects, 672 of 721 refactorings remain.
+- With `--cross-module`, a block holding an `assert` is shared only between
+  modules pytest rewrites alike, following pytest's own rules and the
+  project's pytest configuration. Otherwise a failing assert would lose the
+  explanation pytest adds to its message.
+- A `TestCase` subclass can now take a class-private method helper, which
+  neither unittest nor pytest collects as a test.
 - An in-place `dry` refused whenever any `.towel-transaction-*` path
   existed under its target. That included an empty directory, one inside
   `.git`, and a journal naming only untouched files, and for the empty
