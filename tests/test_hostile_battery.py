@@ -337,6 +337,12 @@ TRANSFORMED = {
     # A TestCase, read to be built by type, takes the class-private helper, which
     # neither unittest nor pytest collects as a test.
     "r7d_method_helper_in_a_testcase",
+    # Round-4 P1-01 to P1-03: the parameter is substituted in a format
+    # specification and in the loads of a binding target, and not inside a
+    # lambda whose parameter is spelled like it.
+    "r9sb_fstring_format_spec",
+    "r9sb_binding_target_loads",
+    "r9sb_lambda_parameter_capture",
 }
 # r7fz_classhost_init_subclass_wraps and r7fz_classhost_metaclass_registry,
 # which the round-3 audit found extracted soundly, are declined since code

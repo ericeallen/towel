@@ -23,12 +23,35 @@ Generates extracted functions while ensuring:
 """
 
 import ast
+from contextlib import contextmanager
 import copy
-from typing import List, Dict, Sequence, Set, Tuple, Optional, TYPE_CHECKING, Callable, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Dict,
+    FrozenSet,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+    cast,
+)
 from .substitution import Substitution
 from .visitors import all_instances, visit_as
 from .definite_assignment import definitely_bound_after
-from .statement_facts import block_contains_return
+from .lexical_scopes import (
+    Comprehension,
+    NestedScope,
+    ScopeNames,
+    free_reads,
+    innermost_mentioning,
+    nested_scope_names,
+)
+from .models import FunctionNode
+from .statement_facts import block_contains_return, import_binding_names, pattern_capture_names
 
 if TYPE_CHECKING:
     from .scope_analyzer import Scope
@@ -41,9 +64,18 @@ class UnsupportedExtraction(ValueError):
 class ParameterSubstituter(ast.NodeTransformer):
     """Replace the unified expressions of block 0 with the helper's parameter names.
 
-    Binding occurrences (loop targets, comprehension targets, assignment
-    targets) are never replaced; a name that shadows a parameter inside a
-    nested scope is left alone there.
+    An expression is replaced wherever it reads what block 0's did, and
+    nowhere else. Binding occurrences (loop, ``with``, comprehension,
+    assignment and ``del`` targets, ``except`` and match-capture names) are
+    never replaced, but the loads inside an attribute or subscript target
+    are, since they are reads: ``for box.v in items`` reads ``box``. An
+    expression is left alone where a name it reads is another binding: one
+    a nested scope binds (a lambda's or function's parameters and locals, a
+    comprehension's targets, a class body's names, seen from that body),
+    and a parameter's name that the block has rebound on the way there. A
+    function parameter's own bound variables are the exception, since its
+    thunk takes them as arguments. Nothing an f-string evaluates is skipped,
+    its format specification included.
     """
 
     def __init__(
@@ -57,6 +89,11 @@ class ParameterSubstituter(ast.NodeTransformer):
         self.var_to_param: Dict[str, str] = {}
         self.param_name_by_var: Dict[str, str] = {}
         self.shadowed_vars: Set[str] = set()
+        # The nested scopes around the node being visited, outermost first,
+        # and how many of them are functions, lambdas or classes rather than
+        # comprehensions: a binding under one of those is not the block's.
+        self._scopes: List[ScopeNames] = []
+        self._definitions_open = 0
 
         # A parameter whose block-0 expression is a bare name stands for that
         # name wherever the template reads it.
@@ -71,13 +108,32 @@ class ParameterSubstituter(ast.NodeTransformer):
                         self.var_to_param[expr.id] = param_name
                         self.param_name_by_var[expr.id] = param_name
                         break
+        # The names block 0's parameterized expressions read.
+        self._substituted_reads: FrozenSet[str] = frozenset(
+            name
+            for param_name in param_names
+            for block_idx, expr in subst.param_expressions.get(
+                rename_mapping.get(param_name, param_name), []
+            )
+            if block_idx == self.block_idx
+            for name in free_reads(expr)
+        )
 
     def _alias_variable(self, var_name: str, param_name: str) -> None:
+        if self._definitions_open:
+            return
         self.var_to_param[var_name] = param_name
         self.param_name_by_var[var_name] = param_name
         self.shadowed_vars.discard(var_name)
 
     def _mark_shadowed(self, var_name: str) -> None:
+        """Record that the block rebinds ``var_name`` here, shadowing the parameter after it.
+
+        Only the block's own bindings count; a nested function's, lambda's or
+        class body's are that scope's, which ``_scopes`` accounts for.
+        """
+        if self._definitions_open:
+            return
         if var_name in self.param_name_by_var:
             self.var_to_param.pop(var_name, None)
             self.shadowed_vars.add(var_name)
@@ -91,9 +147,19 @@ class ParameterSubstituter(ast.NodeTransformer):
             elif isinstance(node, (ast.Tuple, ast.List)):
                 for elt in node.elts:
                     _collect(elt)
+            elif isinstance(node, ast.Starred):
+                _collect(node.value)
 
         _collect(target)
         return names
+
+    def _is_other_binding(self, name: str) -> bool:
+        """Whether ``name`` read here is not the binding block 0 read at the top of the block."""
+        return name in self.shadowed_vars or innermost_mentioning(self._scopes, name) is not None
+
+    def _reads_other_binding(self, node: ast.expr, param_name: str) -> bool:
+        own = frozenset(self.subst.get_function_param_vars(param_name))
+        return any(self._is_other_binding(name) for name in free_reads(node) if name not in own)
 
     def _maybe_replace_node(self, node: ast.AST) -> Optional[ast.AST]:
         # Only expressions participate in substitution mappings
@@ -108,8 +174,10 @@ class ParameterSubstituter(ast.NodeTransformer):
         if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
             return node
 
-        if isinstance(node, ast.Name) and node.id in self.shadowed_vars:
-            return node
+        # The same text reading another binding is another expression; its
+        # parts may still be substituted where they read block 0's.
+        if self._reads_other_binding(node, maybe_param_name):
+            return None
 
         # Inside an f-string literal component, keep constants intact
         if self.in_joinedstr and isinstance(node, ast.Constant):
@@ -143,59 +211,101 @@ class ParameterSubstituter(ast.NodeTransformer):
                 if isinstance(value, ast.Constant):
                     # String literal parts of f-string must stay as constants
                     new_values.append(value)
-                elif isinstance(value, ast.FormattedValue):
-                    # For FormattedValue, recursively visit the value expression
-                    new_formatted = ast.FormattedValue(
-                        value=visit_as(self, value.value),
-                        conversion=value.conversion,
-                        format_spec=value.format_spec,
-                    )
-                    new_values.append(new_formatted)
                 else:
-                    # Shouldn't happen, but handle gracefully
                     new_values.append(visit_as(self, value))
         finally:
             self.in_joinedstr = previous_state
         return ast.JoinedStr(values=new_values)
 
-    def visit_For(self, node: ast.For) -> ast.For:
-        """
-        Special handling for For loops to avoid replacing binding occurrences.
+    def visit_FormattedValue(self, node: ast.FormattedValue) -> ast.FormattedValue:
+        """The value and the format specification: ``f"{v:>{width}}"`` evaluates ``width`` too."""
+        return ast.FormattedValue(
+            value=visit_as(self, node.value),
+            conversion=node.conversion,
+            format_spec=visit_as(self, node.format_spec) if node.format_spec is not None else None,
+        )
 
-        In 'for target in iter: body', the 'target' is a BINDING occurrence
-        and should NOT be replaced with a parameter.
+    def _bind_target(self, target: ast.expr) -> ast.expr:
+        """Transform a target's loads and record its names as rebound, in assignment order.
+
+        ``for box.v in items`` stores into ``box``, which it reads; a name
+        the target binds is rebound for what follows, and for an element of
+        the same target stored after it.
         """
-        new_iter, new_body, new_orelse = self._loop_parts(node)
-        return ast.For(target=node.target, iter=new_iter, body=new_body, orelse=new_orelse)
+        if isinstance(target, ast.Name):
+            self._mark_shadowed(target.id)
+            return target
+        if isinstance(target, (ast.Tuple, ast.List)):
+            elements = [self._bind_target(element) for element in target.elts]
+            return ast.copy_location(type(target)(elts=elements, ctx=target.ctx), target)
+        if isinstance(target, ast.Starred):
+            return ast.copy_location(
+                ast.Starred(value=self._bind_target(target.value), ctx=target.ctx), target
+            )
+        return self._transform_assignment_target(target)
+
+    def visit_For(self, node: ast.For) -> ast.For:
+        """``for target in iter``: the target binds, and its attribute or subscript loads are reads."""
+        new_target, new_iter, new_body, new_orelse = self._loop_parts(node)
+        return ast.For(target=new_target, iter=new_iter, body=new_body, orelse=new_orelse)
 
     def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AsyncFor:
-        new_iter, new_body, new_orelse = self._loop_parts(node)
-        return ast.AsyncFor(target=node.target, iter=new_iter, body=new_body, orelse=new_orelse)
+        new_target, new_iter, new_body, new_orelse = self._loop_parts(node)
+        return ast.AsyncFor(target=new_target, iter=new_iter, body=new_body, orelse=new_orelse)
 
     def _loop_parts(
         self, node: Union[ast.For, ast.AsyncFor]
-    ) -> Tuple[ast.expr, List[ast.stmt], List[ast.stmt]]:
-        """The transformed iterator, body, and else of a loop; its target is a binding and stays."""
+    ) -> Tuple[ast.expr, ast.expr, List[ast.stmt], List[ast.stmt]]:
+        """The transformed target, iterator, body, and else of a loop."""
         new_iter = visit_as(self, node.iter)
-        for var_name in self._variables_from_target(node.target):
-            self._mark_shadowed(var_name)
+        new_target = self._bind_target(node.target)
         new_body = self._visit_branch_statements(node.body)
         new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
-        return new_iter, new_body, new_orelse
+        return new_target, new_iter, new_body, new_orelse
 
-    def _visit_comprehension_scope(
-        self, node: Union[ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp]
-    ) -> ast.expr:
+    @contextmanager
+    def _nested_scope(self, node: NestedScope, *, own_flow: bool) -> Iterator[None]:
+        """Visit inside the scope ``node`` opens; with ``own_flow``, what it binds is its own.
+
+        A comprehension has no flow of its own: an assignment expression in
+        it binds in the block.
+
+        A nested scope that declares a parameter's name ``nonlocal`` would
+        rebind the helper's parameter instead of the caller's variable, and
+        is not extracted.
+        """
+        scope = nested_scope_names(node)
+        if scope.declared_nonlocal & (self._substituted_reads | set(self.param_name_by_var)):
+            raise UnsupportedExtraction("a nested scope declares a parameter's name nonlocal")
+        self._scopes.append(scope)
+        self._definitions_open += own_flow
+        try:
+            yield
+        finally:
+            self._scopes.pop()
+            self._definitions_open -= own_flow
+
+    def _visit_comprehension_scope(self, node: Comprehension) -> ast.expr:
         """A comprehension binds its targets for its own expressions only.
 
-        The generators come first so their targets shadow a parameter's name
-        inside the element, and the shadowing ends with the comprehension: a
-        read of the same spelling after it is the block's own free name again.
+        The first iterable is evaluated outside, before the targets bind;
+        everything else inside, where the targets shadow a parameter's name,
+        and the shadowing ends with the comprehension: a read of the same
+        spelling after it is the block's own free name again. An assignment
+        expression in it binds in the enclosing function, so its rebinding
+        outlives it.
         """
-        saved_shadowed = set(self.shadowed_vars)
-        saved_mapping = dict(self.var_to_param)
-        try:
-            generators = [self.visit_comprehension(gen) for gen in node.generators]
+        first_iter = visit_as(self, node.generators[0].iter)
+        with self._nested_scope(node, own_flow=False):
+            generators = [
+                ast.comprehension(
+                    target=self._transform_assignment_target(generator.target),
+                    iter=first_iter if index == 0 else visit_as(self, generator.iter),
+                    ifs=[visit_as(self, condition) for condition in generator.ifs],
+                    is_async=generator.is_async,
+                )
+                for index, generator in enumerate(node.generators)
+            ]
             if isinstance(node, ast.DictComp):
                 return ast.copy_location(
                     ast.DictComp(
@@ -208,35 +318,75 @@ class ParameterSubstituter(ast.NodeTransformer):
             return ast.copy_location(
                 type(node)(elt=visit_as(self, node.elt), generators=generators), node
             )
-        finally:
-            self.shadowed_vars = saved_shadowed
-            self.var_to_param = saved_mapping
 
     visit_ListComp = _visit_comprehension_scope
     visit_SetComp = _visit_comprehension_scope
     visit_GeneratorExp = _visit_comprehension_scope
     visit_DictComp = _visit_comprehension_scope
 
-    def visit_comprehension(self, node: ast.comprehension) -> ast.comprehension:
-        """
-        Special handling for comprehensions to avoid replacing binding occurrences.
+    def visit_Lambda(self, node: ast.Lambda) -> ast.Lambda:
+        """Defaults are evaluated where the lambda stands; the body inside its scope."""
+        arguments = self._definition_arguments(node.args, annotations=False)
+        with self._nested_scope(node, own_flow=True):
+            body = visit_as(self, node.body)
+        return ast.copy_location(ast.Lambda(args=arguments, body=body), node)
 
-        In 'for target in iter', the 'target' is a BINDING occurrence.
-        """
-        # Transform the iterator
-        new_iter = visit_as(self, node.iter)
+    def _definition_arguments(
+        self, arguments: ast.arguments, *, annotations: bool
+    ) -> ast.arguments:
+        """A signature with its defaults, and annotations if asked, transformed where it stands."""
+        rebuilt = copy.copy(arguments)
+        rebuilt.defaults = [visit_as(self, default) for default in arguments.defaults]
+        rebuilt.kw_defaults = [
+            visit_as(self, default) if default is not None else None
+            for default in arguments.kw_defaults
+        ]
+        if annotations:
+            for field in ("posonlyargs", "args", "kwonlyargs"):
+                setattr(
+                    rebuilt,
+                    field,
+                    [self._annotated(parameter) for parameter in getattr(arguments, field)],
+                )
+            rebuilt.vararg = self._annotated(arguments.vararg) if arguments.vararg else None
+            rebuilt.kwarg = self._annotated(arguments.kwarg) if arguments.kwarg else None
+        return rebuilt
 
-        # Don't transform the target (comprehension variable) - it's a binding
-        new_target = node.target
-        for var_name in self._variables_from_target(node.target):
-            self._mark_shadowed(var_name)
+    def _annotated(self, parameter: ast.arg) -> ast.arg:
+        rebuilt = copy.copy(parameter)
+        if parameter.annotation is not None:
+            rebuilt.annotation = visit_as(self, parameter.annotation)
+        return rebuilt
 
-        # Transform the filters
-        new_ifs = [visit_as(self, cond) for cond in node.ifs]
+    def _visit_function(self, node: FunctionNode) -> FunctionNode:
+        """A nested function: what it evaluates where it stands, then its body in its scope."""
+        rebuilt = copy.copy(node)
+        rebuilt.decorator_list = [visit_as(self, item) for item in node.decorator_list]
+        rebuilt.args = self._definition_arguments(node.args, annotations=True)
+        rebuilt.returns = visit_as(self, node.returns) if node.returns is not None else None
+        self._mark_shadowed(node.name)
+        with self._nested_scope(node, own_flow=True):
+            rebuilt.body = [visit_as(self, statement) for statement in node.body]
+        return rebuilt
 
-        return ast.comprehension(
-            target=new_target, iter=new_iter, ifs=new_ifs, is_async=node.is_async
-        )
+    visit_FunctionDef = _visit_function
+    visit_AsyncFunctionDef = _visit_function
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.ClassDef:
+        """A class: decorators, bases and keywords where it stands, then its body in its scope."""
+        rebuilt = copy.copy(node)
+        rebuilt.decorator_list = [visit_as(self, item) for item in node.decorator_list]
+        rebuilt.bases = [visit_as(self, base) for base in node.bases]
+        rebuilt.keywords = [visit_as(self, keyword) for keyword in node.keywords]
+        self._mark_shadowed(node.name)
+        with self._nested_scope(node, own_flow=True):
+            rebuilt.body = [visit_as(self, statement) for statement in node.body]
+        return rebuilt
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> ast.NamedExpr:
+        value = visit_as(self, node.value)
+        self._mark_shadowed(node.target.id)
+        return ast.copy_location(ast.NamedExpr(target=node.target, value=value), node)
 
     def visit_Assign(self, node: ast.Assign) -> ast.Assign:
         """
@@ -288,25 +438,37 @@ class ParameterSubstituter(ast.NodeTransformer):
             )
         return ast.AugAssign(target=new_target, op=node.op, value=new_value)
 
-    def visit_With(self, node: ast.With) -> ast.With:
-        new_items = [
-            ast.withitem(
-                context_expr=visit_as(self, item.context_expr),
-                optional_vars=item.optional_vars,
+    def visit_Delete(self, node: ast.Delete) -> ast.Delete:
+        """``del`` unbinds its names; an attribute or subscript target's loads are reads."""
+        targets = [self._bind_target(target) for target in node.targets]
+        return ast.copy_location(ast.Delete(targets=targets), node)
+
+    def _visit_import(self, node: Union[ast.Import, ast.ImportFrom]) -> ast.AST:
+        for name in import_binding_names(node):
+            self._mark_shadowed(name)
+        return node
+
+    visit_Import = _visit_import
+    visit_ImportFrom = _visit_import
+
+    def _with_items(self, items: List[ast.withitem]) -> List[ast.withitem]:
+        """Each manager, then its target, in order: ``with ctx as box.v`` reads ``box``."""
+        rebuilt: List[ast.withitem] = []
+        for item in items:
+            context_expr = visit_as(self, item.context_expr)
+            optional_vars = (
+                self._bind_target(item.optional_vars) if item.optional_vars is not None else None
             )
-            for item in node.items
-        ]
+            rebuilt.append(ast.withitem(context_expr=context_expr, optional_vars=optional_vars))
+        return rebuilt
+
+    def visit_With(self, node: ast.With) -> ast.With:
+        new_items = self._with_items(node.items)
         new_body = self._visit_branch_statements(node.body)
         return ast.With(items=new_items, body=new_body)
 
     def visit_AsyncWith(self, node: ast.AsyncWith) -> ast.AsyncWith:
-        new_items = [
-            ast.withitem(
-                context_expr=visit_as(self, item.context_expr),
-                optional_vars=item.optional_vars,
-            )
-            for item in node.items
-        ]
+        new_items = self._with_items(node.items)
         new_body = self._visit_branch_statements(node.body)
         return ast.AsyncWith(items=new_items, body=new_body)
 
@@ -316,15 +478,32 @@ class ParameterSubstituter(ast.NodeTransformer):
         new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
         return ast.While(test=new_test, body=new_body, orelse=new_orelse)
 
-    def visit_Try(self, node: ast.Try) -> ast.Try:
-        new_body = self._visit_branch_statements(node.body)
-        new_handlers = []
-        for handler in node.handlers:
+    def _handlers(self, handlers: List[ast.ExceptHandler]) -> List[ast.ExceptHandler]:
+        """Each handler's type, then its body with its ``as`` name rebound there.
+
+        Another handler does not see that rebinding; the code after the
+        ``try`` sees every handler's, as it sees every branch's.
+        """
+        rebuilt: List[ast.ExceptHandler] = []
+        entry = set(self.shadowed_vars)
+        rebound = set(entry)
+        for handler in handlers:
+            self.shadowed_vars = set(entry)
             new_type = visit_as(self, handler.type) if handler.type else None
-            new_handler_body = self._visit_branch_statements(handler.body)
-            new_handlers.append(
+            with self._branch():
+                if handler.name:
+                    self._mark_shadowed(handler.name)
+                new_handler_body = [visit_as(self, statement) for statement in handler.body]
+            rebound |= self.shadowed_vars
+            rebuilt.append(
                 ast.ExceptHandler(type=new_type, name=handler.name, body=new_handler_body)
             )
+        self.shadowed_vars = rebound
+        return rebuilt
+
+    def visit_Try(self, node: ast.Try) -> ast.Try:
+        new_body = self._visit_branch_statements(node.body)
+        new_handlers = self._handlers(node.handlers)
         new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
         new_finalbody = self._visit_branch_statements(node.finalbody) if node.finalbody else []
         return ast.Try(
@@ -333,6 +512,41 @@ class ParameterSubstituter(ast.NodeTransformer):
             orelse=new_orelse,
             finalbody=new_finalbody,
         )
+
+    def visit_TryStar(self, node: ast.TryStar) -> ast.TryStar:
+        new_body = self._visit_branch_statements(node.body)
+        new_handlers = self._handlers(node.handlers)
+        new_orelse = self._visit_branch_statements(node.orelse) if node.orelse else []
+        new_finalbody = self._visit_branch_statements(node.finalbody) if node.finalbody else []
+        return ast.TryStar(
+            body=new_body,
+            handlers=new_handlers,
+            orelse=new_orelse,
+            finalbody=new_finalbody,
+        )
+
+    def visit_Match(self, node: ast.Match) -> ast.Match:
+        """Each case's pattern values are reads; its captures rebind for its guard and body.
+
+        Another case does not see those captures; the code after the
+        ``match`` sees every case's.
+        """
+        subject = visit_as(self, node.subject)
+        cases: List[ast.match_case] = []
+        entry = set(self.shadowed_vars)
+        rebound = set(entry)
+        for case in node.cases:
+            self.shadowed_vars = set(entry)
+            with self._branch():
+                pattern = visit_as(self, case.pattern)
+                for name in pattern_capture_names(case.pattern):
+                    self._mark_shadowed(name)
+                guard = visit_as(self, case.guard) if case.guard is not None else None
+                body = [visit_as(self, statement) for statement in case.body]
+            rebound |= self.shadowed_vars
+            cases.append(ast.match_case(pattern=pattern, guard=guard, body=body))
+        self.shadowed_vars = rebound
+        return ast.copy_location(ast.Match(subject=subject, cases=cases), node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
         new_value = visit_as(self, node.value) if node.value else None
@@ -351,9 +565,12 @@ class ParameterSubstituter(ast.NodeTransformer):
                 self._mark_shadowed(node.target.id)
         if not isinstance(new_target, (ast.Name, ast.Attribute, ast.Subscript)):
             raise UnsupportedExtraction("Annotated assignment requires a single assignable target")
+        # A function body never evaluates a variable's annotation; a class
+        # body does, so there it is a read like any other.
+        in_class_body = bool(self._scopes) and self._scopes[-1].is_class
         return ast.AnnAssign(
             target=new_target,
-            annotation=node.annotation,
+            annotation=visit_as(self, node.annotation) if in_class_body else node.annotation,
             value=new_value,
             simple=node.simple,
         )
@@ -365,6 +582,11 @@ class ParameterSubstituter(ast.NodeTransformer):
         if isinstance(target, (ast.Tuple, ast.List)):
             new_elts = [self._transform_assignment_target(elt) for elt in target.elts]
             return ast.copy_location(type(target)(elts=new_elts, ctx=target.ctx), target)
+        if isinstance(target, ast.Starred):
+            return ast.copy_location(
+                ast.Starred(value=self._transform_assignment_target(target.value), ctx=target.ctx),
+                target,
+            )
         if isinstance(target, ast.Attribute):
             new_value = visit_as(self, target.value)
             return ast.copy_location(
@@ -380,23 +602,28 @@ class ParameterSubstituter(ast.NodeTransformer):
         return cast(ast.expr, super().generic_visit(target))
 
     def _visit_branch_statements(self, statements: List[ast.stmt]) -> List[ast.stmt]:
+        with self._branch():
+            return [visit_as(self, stmt) for stmt in statements]
+
+    @contextmanager
+    def _branch(self) -> Iterator[None]:
+        """Code that may not run: afterwards an alias holds only if it held throughout.
+
+        A rebinding inside the branch shadows the parameter's name after it
+        too, since the branch may have run.
+        """
         snapshot = self.var_to_param.copy()
         shadow_snapshot = self.shadowed_vars.copy()
         try:
-            result = [visit_as(self, stmt) for stmt in statements]
-            current_state = self.var_to_param.copy()
+            yield
         finally:
-            current_state = locals().get("current_state", self.var_to_param.copy())
-            restored = snapshot.copy()
-            for var_name, param_name in list(snapshot.items()):
-                if var_name not in current_state:
-                    restored.pop(var_name, None)
-                elif current_state[var_name] != param_name:
-                    restored.pop(var_name, None)
-            self.var_to_param = restored
-            current_shadowed = self.shadowed_vars.copy()
-            self.shadowed_vars = shadow_snapshot | current_shadowed
-        return result
+            current_state = self.var_to_param
+            self.var_to_param = {
+                var_name: param_name
+                for var_name, param_name in snapshot.items()
+                if current_state.get(var_name) == param_name
+            }
+            self.shadowed_vars = shadow_snapshot | self.shadowed_vars
 
     def visit(self, node: ast.AST) -> ast.AST:
         replacement = self._maybe_replace_node(node)

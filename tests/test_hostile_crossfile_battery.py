@@ -146,6 +146,8 @@ TRANSFORMED = {
     "xf7fz_modules_three_modules_cluster",
     # Two modules pytest does not rewrite share an assert: either may host it.
     "xf7d_asserts_shared_by_modules_rewritten_alike",
+    # Round-4 P1-03 across modules: the lambda keeps its own parameter.
+    "r9sb_lambda_capture_across_modules",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
