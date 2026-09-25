@@ -57,7 +57,9 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   mypy configuration group is checked in its own cache over the whole
   candidate; candidate checks honour `--exclude` and the project's mypy
   `exclude` as the baseline does; and a project package named `env` is no
-  longer taken for an environment.
+  longer taken for an environment. A check that fails for the project as it
+  stands now stops the run at once, naming the cause: sqlmodel ran 15
+  minutes and exited 1 with every proposal "not judged".
 - A project decorator that is a plain wrapper was trusted although another
   module rebinds it, as `app.checks.checked = typeguard.typechecked` before
   the decorated module imports it, and code moved out of the instrumented
