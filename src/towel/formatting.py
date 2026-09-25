@@ -77,7 +77,11 @@ DEFAULT_LINE_LENGTH = 88
 
 
 class FormattingChangedCode(ValueError):
-    """A formatter returned code whose syntax tree differs from its input."""
+    """A formatter returned code whose syntax tree differs from its input, or failed on it.
+
+    Either way nothing it returned is written: the proposal it was formatting
+    is declined, and the run goes on.
+    """
 
 
 @dataclass(frozen=True)
@@ -148,12 +152,25 @@ def checked(formatter: SnippetFormatter) -> SnippetFormatter:
     """``formatter`` guarded so it can only change layout, never meaning.
 
     The result is compared with the input as syntax trees; any difference
-    raises :class:`FormattingChangedCode`. Trailing newlines are dropped so
-    the caller can indent and splice the text as it does unformatted output.
+    raises :class:`FormattingChangedCode`, and so does any failure of the
+    formatter itself: Black's ``InvalidInput`` on text it cannot parse, ruff's
+    nonzero exit or timeout, or anything else a formatter raises. Trailing
+    newlines are dropped so the caller can indent and splice the text as it
+    does unformatted output.
     """
 
     def format_snippet(source: str) -> str:
-        formatted = formatter(source)
+        try:
+            formatted = formatter(source)
+        except FormattingChangedCode:
+            raise
+        except Exception as error:
+            # The formatter is another tool's code; whatever stops it declines
+            # the proposal it was given, never the run (numbagg's snippet
+            # that Black could not parse ended every formatted run).
+            raise FormattingChangedCode(
+                f"the formatter failed: {type(error).__name__}: {error}"
+            ) from error
         try:
             formatted_tree = ast.parse(formatted)
         except SyntaxError as error:
