@@ -60,6 +60,7 @@ from typing import (
     IO,
     Dict,
     Final,
+    FrozenSet,
     Iterable,
     Iterator,
     List,
@@ -77,7 +78,14 @@ from .project_tools import ToolChoice, python_tool_environment
 from .unification.exceptions import TowelError
 from .checker_project import CheckerSnapshot, UnusableConfiguration, checker_snapshot
 from .unification.bounded_cache import BoundedCache
-from .pyright_session import Diagnostic, FileChange, PyrightSession, SessionFailure
+from .pyright_session import (
+    Diagnostic,
+    FileChange,
+    PyrightScope,
+    PyrightSession,
+    SessionFailure,
+    pyright_scope,
+)
 from .source_text import read_source, source_lines
 from .project_layout import find_project_root, load_pyproject, package_chain
 from .consumers import (
@@ -106,6 +114,7 @@ __all__ = [
     "TypeOracle",
     "checks_in_turn",
     "is_probe_file",
+    "reports_by_each",
     "reveal_by_each",
     "type_oracle_for_project",
     "relocate_oracle",
@@ -909,6 +918,23 @@ class PyrightOracle:
         self._probe_copies: Dict[Path, CheckerSnapshot] = {}
         # Whether a session ever answered, which abandoning one does not undo.
         self.answered_from_a_session = False
+        # What each project's configuration has pyright report on, read once.
+        self._scopes: Dict[Path, PyrightScope] = {}
+
+    def reports_on(self, file_path: str) -> bool:
+        """Whether the project's configuration has pyright report on ``file_path`` at all.
+
+        Not a file its ``exclude`` or ``ignore`` names, or its ``include``
+        leaves out (``towel.pyright_session.PyrightScope``): pyright answers
+        nothing there, and a probe of it would wait for an answer that never
+        comes. Read from the configuration, without starting pyright.
+        """
+        original = Path(file_path).resolve()
+        root = _configured_root(original, "pyright") or _checker_root(original)
+        scope = self._scopes.get(root)
+        if scope is None:
+            scope = self._scopes[root] = pyright_scope(root)
+        return scope.reports_on(original)
 
     def close(self) -> None:
         """Stop every language server this oracle started and drop its copies."""
@@ -1171,12 +1197,17 @@ class PyrightOracle:
         return start.get("line", -1) + 1 if start is not None else 0
 
     def reveal(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
-        """Reveal each request by having pyright check a probed copy of its module."""
+        """Reveal each request by having pyright check a probed copy of its module.
+
+        A module the configuration has pyright report nothing on is not probed
+        (:meth:`reports_on`): it would answer nothing, after a wait.
+        """
         revealed: Dict[RevealKey, str] = {}
         unanswered: Dict[str, str] = {}
         by_file: Dict[str, List[RevealRequest]] = {}
         for request in requests:
-            by_file.setdefault(request.file_path, []).append(request)
+            if self.reports_on(request.file_path):
+                by_file.setdefault(request.file_path, []).append(request)
         for file_path, file_requests in by_file.items():
             text = file_requests[0].source
             ordered = sorted(file_requests, key=lambda request: request.line)
@@ -1539,6 +1570,24 @@ def reveal_by_each(
     return (oracle.reveal(requests),)
 
 
+def reports_by_each(oracle: TypeOracle, paths: Sequence[str]) -> Tuple[FrozenSet[str], ...]:
+    """For each checker behind ``oracle``, in :func:`reveal_by_each`'s order, those ``paths`` it reports on.
+
+    A file a checker's configuration leaves out of what it reports on
+    (pyright's ``exclude`` and ``ignore``) is outside that checker's check, so
+    its silence there is no sign it takes the code to be unreachable: the
+    project's own run of it says nothing there either. mypy reports on every
+    module it is given or follows to.
+    """
+    if isinstance(oracle, CombinedOracle):
+        return tuple(answer for one in oracle.checkers for answer in reports_by_each(one, paths))
+    if isinstance(oracle, _RelocatedOracle):
+        return oracle.reports_by_each(paths)
+    if isinstance(oracle, PyrightOracle):
+        return (frozenset(path for path in paths if oracle.reports_on(path)),)
+    return (frozenset(paths),)
+
+
 def _every_check(results: Iterable[CheckResult]) -> CheckResult:
     """All the errors of ``results``, or the first that could not be completed."""
     errors: List[TypeDiagnostic] = []
@@ -1632,6 +1681,14 @@ class _RelocatedOracle:
         answers = reveal_by_each(self._oracle, self._originals(requests))
         return tuple(self._outputs(answer) for answer in answers)
 
+    def reports_by_each(self, paths: Sequence[str]) -> Tuple[FrozenSet[str], ...]:
+        """Each checker's :func:`reports_by_each`, asked of the originals, at the copy's paths."""
+        original = {self._original(path): path for path in paths}
+        return tuple(
+            frozenset(original[path] for path in answer)
+            for answer in reports_by_each(self._oracle, list(original))
+        )
+
     def _originals(self, requests: Sequence[RevealRequest]) -> List[RevealRequest]:
         return [
             RevealRequest(
@@ -1689,7 +1746,12 @@ class _RelocatedOracle:
             )
 
     def _restated(self, sources: Mapping[str, str]) -> Dict[str, str] | CheckFailure:
-        """Every module of the copy, and ``sources`` over them, at the original's paths."""
+        """Every module of the copy, and ``sources`` over them, at the original's paths.
+
+        A module that does not decode is left out, and the checker reads the
+        original's, which is the same bytes: Towel changes no file it cannot
+        read. One such file (Latin-1 test data) had failed every check.
+        """
         try:
             current: Dict[str, str] = {}
             if self._directory:
@@ -1716,7 +1778,10 @@ class _RelocatedOracle:
                     for name in files:
                         path = directory / name
                         if path.suffix in {".py", ".pyi"} and not is_probe_file(path):
-                            current[self._original(str(path))] = read_source(path)
+                            try:
+                                current[self._original(str(path))] = read_source(path)
+                            except (ValueError, UnicodeError, SyntaxError):
+                                continue  # unchanged, and read at the original's path
             else:
                 current[str(self._source)] = read_source(self._destination)
             current.update({self._original(path): source for path, source in sources.items()})

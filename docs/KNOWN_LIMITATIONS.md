@@ -787,14 +787,23 @@ where the evidence comes from:
   is rejected for an error its check reports that the project's check did not:
   in a file no change has touched, the same message at the same line; in one a
   change has touched, the same message on the same line wherever the change
-  moved it, found by a line diff of the two texts, and on the lines the change
-  wrote, no more often than on the lines it replaced. So an error that
-  disappears from a replaced line where another with the very same message
-  appears in the helper or at a call site is taken to have moved, as a
-  duplicated block's error does when the block moves into the helper, and is
-  not new; one that disappears from a line the change left alone accounts for
-  nothing. Where the diff pairs a helper with one copy of its block, an error
-  that came from the other copy is new, which costs a change. A message
+  moved it, found by a line diff of the two texts in which the copies the
+  change replaced and the helper it wrote pair with nothing. An error in the
+  helper must be the same message at the same statement of one copy of the
+  block the helper was made from, statements counted in order through the
+  copy and through the helper's body, and each of that copy's errors accounts
+  for one; an error at a call site must be the same message on the lines that
+  call replaced; any other error on a line the change wrote must be the same
+  message on the lines the same stretch of the diff replaced. Everything else
+  is new. Merging two copies into one helper frees the other copy's errors,
+  and they account for nothing: before this, with both copies holding `n + s`
+  and `s + n`, a helper typed `int | str` whose `p + p` raised the same two
+  messages on a line both copies had clean was accepted. One that disappears
+  from a line the change left alone accounts for nothing either. A helper
+  whose statements do not follow its block's (one Towel added before them)
+  is accounted for by no copy, an error on an import the sorter moved into
+  another stretch of the file is new, and where either text of a changed file
+  is unknown every error in it is new; each costs a change. A message
   that names a line (mypy's `Name "x" already defined on line 12`) reappears
   as new when that line moves, which declines the change rather than hide an
   error: a module with such an error below the place a helper would go keeps
@@ -853,12 +862,45 @@ where the evidence comes from:
   change not judged. The body of a function without
   annotations, which mypy does not check unless configured to, counts as
   looked at, since mypy answers there (with `Any`): the project's own mypy
-  leaves it unchecked on every platform too.
+  leaves it unchecked on every platform too. A file a checker's configuration
+  has it report nothing on -- pyright's `exclude` and `ignore`, and what its
+  `include` leaves out, read from the configuration and its `extends` chain
+  before the run -- is outside that checker's check, not code it takes to be
+  unreachable: it is not probed with that checker, and the other checkers
+  settle it (param's pyright ignores `version.py`, which its mypy checks; all
+  four proposals there had been declined as unreachable). A language server
+  asked about such a file never answered, and the run waited a minute and
+  then gave the server up; the marker a settle waits for now goes where the
+  server reports. A file no configured checker reports on is changed as the
+  body of an unannotated function is, since the project's own check says
+  nothing there on any platform, and its helper takes only the annotations
+  its sites declare, completed with `Any`: nothing would check an inferred
+  one, and the most precise rung, tried first, was accepted unchecked. The
+  project check still judges what the change does to the files the checkers
+  report on.
 - Where the original check leaves a name it cannot type -- an import it cannot
   resolve or finds no types for (mypy's `import-not-found` and
   `import-untyped`, pyright's `reportMissingImports` and
   `reportMissingTypeStubs`), a decorator without types, a base class of type
-  `Any` -- no change to that file is attempted. Whatever such a name reaches is
+  `Any` -- no change to that file is attempted. A configuration can silence
+  the errors that say so (`ignore_missing_imports`, pyright's
+  `reportMissingImports = "none"`), so every checker is also asked, before the
+  run, what each import of the analyzed files binds: a probe imports the same
+  module and names under names of its own, where the import stands, and
+  reveals them. mypy answers `Any` for a module it cannot resolve or finds no
+  types for, and pyright `Unknown` for a name or attribute such an import
+  binds (pyright gives the module itself a module's type). With the report
+  silenced, uvicorn's `websockets` module missing where Towel ran, a change
+  had left a `type: ignore` unused in the project's own check. A name a typed
+  module declares as `Any` is the same wherever the check runs, and is not
+  named. pyright with `typeCheckingMode = "off"` answers `Any` rather than
+  `Unknown`, and reports missing imports as warnings, which the comparison
+  does not count, so a file importing a module missing where Towel runs is
+  not named there; that mode checks almost nothing. A subtype question about
+  a type that spells `Any`, or that the checker finds assignable to a class
+  of the probe's own (a class with an `Any` base), or one the checker gave no
+  answer about at all, answers unknown, so it never folds one member of a
+  union into another. Whatever such a name reaches is
   `Any`, which accepts every use, and the subtype questions that normalize a
   helper's annotations answer yes about it, so a misuse would pass Towel's
   check while the project's own, which may see the real type, rejects it. The

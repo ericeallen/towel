@@ -70,6 +70,7 @@ from .annotations import (
     respell_bare,
     sites_use_annotations,
     typing_imports_needed,
+    unwritten_as_any,
     qualified_names_in_annotations,
     shorten_qualified_names,
     defers_annotations,
@@ -91,9 +92,14 @@ from ..diagnostics import LOG, TYPES
 from ..checker_project import _read_json_config
 from ..project_layout import find_project_root, load_pyproject, package_chain
 from ..type_baseline import (
+    NO_SHAPE,
+    ChangeShape,
     CheckedChange,
     KnownErrors,
+    ReplacedCopy,
     files_where_names_are_any,
+    import_probes,
+    imports_typed_as_any,
     names_any_warning,
     pre_existing_summary,
     resolved_path,
@@ -103,6 +109,7 @@ from ..type_baseline import (
 from ..reachability import PROBE, Place, probe_plan
 from ..type_inference import (
     CheckFailure,
+    CheckSuccess,
     CombinedOracle,
     MypyInferrer,
     RevealKey,
@@ -116,6 +123,7 @@ from ..type_inference import (
     checker_module_name,
     checks_in_turn,
     holds_warm_state,
+    reports_by_each,
     reveal_by_each,
     start_cold,
     unanswered_files,
@@ -476,6 +484,7 @@ class HelperAnnotationWiring(EngineState):
         self._type_checked = None
         self._type_names_any = {}
         self._type_unlooked = {}
+        self._type_unreadable = frozenset()
         self._analysis_paths = tuple(file_paths)
         self._output_origin = None
         self.import_graph.begin_run()
@@ -493,17 +502,27 @@ class HelperAnnotationWiring(EngineState):
         the CI never checks. They are reported before anything else happens,
         with the files where they leave names the checker cannot type
         (``_report_pre_existing``).
+
+        A file of the run that cannot be read (undecodable test data, say) is
+        left out: the analysis skips it and says so, so nothing changes it,
+        and the checker reads it, or not, as the project's own check would.
+        It used to refuse the whole typed run, which ``--no-types`` completed.
         """
         if self._type_run_oracle is None:
             return
         if self._type_run_baseline is None and file_paths:
             originals: Dict[str, str] = {}
+            unreadable: Set[str] = set()
             for path in dict.fromkeys(file_paths):
                 source = self._read_source(path)
                 if source is None:
-                    self._type_run_baseline = CheckFailure(f"Cannot read original source: {path}")
-                    break
-                originals[path] = source
+                    TYPES.debug("left out of the original check, since it cannot be read: %s", path)
+                    unreadable.add(self._where_checked(path))
+                else:
+                    originals[path] = source
+            self._type_unreadable = frozenset(unreadable)
+            if not originals:
+                self._type_run_baseline = CheckSuccess(())
             else:
                 baseline = self._type_run_oracle.check_project(originals)
                 self._type_run_baseline = baseline
@@ -515,7 +534,7 @@ class HelperAnnotationWiring(EngineState):
                         self._where_checked,
                         texts={self._where_checked(path): text for path, text in originals.items()},
                     )
-                    self._type_names_any = files_where_names_are_any(self._type_known.errors)
+                    self._type_names_any = self._names_the_checker_cannot_type(originals)
                     self._report_pre_existing(list(originals))
                     try:
                         self._map_what_the_checker_does_not_look_at(originals)
@@ -699,6 +718,31 @@ class HelperAnnotationWiring(EngineState):
         declared = self._declared_pythons[root] or OLDEST_PYTHON
         return max(declared, evaluated_syntax(host)) if host is not None else declared
 
+    def _judged_by_no_checker(self, proposal: RefactoringProposal) -> bool:
+        """Whether no configured checker reports on any file ``proposal`` changes.
+
+        Such files are outside what the project's check checks (pyright's
+        ``exclude`` or ``ignore``, with pyright the only checker), so they are
+        changed as the body of an unannotated function is: the project's own
+        check says nothing there on any platform. What a checker would infer
+        there, nothing would verify, so the helper takes the annotations its
+        sites declare and ``Any`` for the rest, as without types, and one
+        project check still judges what the change does to the files the
+        checkers do report on.
+        """
+        oracle = self._type_run_oracle
+        if oracle is None:
+            return False
+        touched = list(
+            dict.fromkeys(
+                [
+                    proposal.file_path,
+                    *(rep.file_path or proposal.file_path for rep in proposal.replacements),
+                ]
+            )
+        )
+        return not any(reported for reported in reports_by_each(oracle, touched))
+
     def _complete_helper_annotations(self, proposal: RefactoringProposal) -> None:
         """Copied annotations respelled, the rest inferred or completed with ``Any``."""
         module_level = proposal.insert_into_class is None and proposal.insert_into_function is None
@@ -707,7 +751,7 @@ class HelperAnnotationWiring(EngineState):
         host = self._parsed_host(proposal.file_path)
         receiver = self._receiver_name(proposal)
         oracle = self._active_type_oracle()
-        if oracle is None:
+        if oracle is None or self._judged_by_no_checker(proposal):
             respelled = respell_bare(proposal.extracted_function, host, bare_ok)
             completed = complete_with_any(respelled, host, receiver)
             proposal.extracted_function = completed.helper
@@ -735,6 +779,11 @@ class HelperAnnotationWiring(EngineState):
             if selfless is not None:
                 proposal.extracted_function, proposal.helper_type_declarations = selfless
         proposal.type_checking_imports = self._shorten_unreachable_names(proposal, host)
+        proposal.required_imports = tuple(
+            dict.fromkeys(
+                proposal.required_imports + unwritten_as_any(proposal.extracted_function, host)
+            )
+        )
 
     def _annotation_sites(self, proposal: RefactoringProposal) -> List[ApplySite]:
         """Keep the current source and return context of each replacement together."""
@@ -896,7 +945,11 @@ class HelperAnnotationWiring(EngineState):
         finds no signature can answer ends the ladder at once. Each rung is
         named in a ``TYPES`` debug line before it is tried.
         """
-        if not check_types or proposal.reused_function is not None:
+        if (
+            not check_types
+            or proposal.reused_function is not None
+            or self._judged_by_no_checker(proposal)
+        ):
             yield proposal
             return
         known = self._untypeable_as_proposed(proposal)
@@ -1278,9 +1331,14 @@ class HelperAnnotationWiring(EngineState):
         sources: Dict[str, str] = {}
         for path in dict.fromkeys(file_paths):
             source = self._read_source(path)
-            if source is None:
-                return  # A file that cannot be read is reported by the run itself.
-            sources[path] = source
+            if source is not None:
+                sources[path] = source
+            elif self._where_checked(path) not in self._type_unreadable:
+                # Readable when the run began, so the run may have written it.
+                raise RefactoringError(
+                    f"The finished project could not be confirmed: {path} cannot be read.\n"
+                    "Nothing was written."
+                )
         # The same oracle, so the run's own relocation and exclusions still
         # apply; only the warm state goes.
         start_cold(oracle)
@@ -1364,7 +1422,7 @@ class HelperAnnotationWiring(EngineState):
         return tuple(error for error in unseen if id(error) in brought)
 
     def _project_errors(
-        self, modified_files: Dict[str, str], helper_name: str
+        self, modified_files: Dict[str, str], helper_name: str, shape: ChangeShape = NO_SHAPE
     ) -> Tuple[TypeDiagnostic, ...]:
         """What the project check says of a variant, without asking again when nothing it read changed.
 
@@ -1382,7 +1440,9 @@ class HelperAnnotationWiring(EngineState):
         Only refusals are kept; an accepted variant is applied and changes the
         project. The run forgets them all when it begins, and a refusal whose
         dependencies cannot be followed (an error in no file, too many files)
-        is not kept at all.
+        is not kept at all. ``shape`` says where the variant wrote what
+        (:meth:`_change_shape`); what the variant renders to settles it, so
+        the key needs nothing more.
         """
         key = _variant_key(modified_files, helper_name)
         known = self._refused_checks.get(key)
@@ -1400,7 +1460,7 @@ class HelperAnnotationWiring(EngineState):
                 dataclasses.replace(error, message=renamed.sub(helper_name, error.message))
                 for error in known.errors
             )
-        errors = self._new_type_errors(modified_files)
+        errors = self._new_type_errors(modified_files, shape)
         if errors:
             depends_on = self._refusal_dependencies(modified_files, errors)
             if depends_on is not None:
@@ -1492,13 +1552,16 @@ class HelperAnnotationWiring(EngineState):
                 return False
         return True
 
-    def _new_type_errors(self, modified_files: Dict[str, str]) -> Tuple[TypeDiagnostic, ...]:
+    def _new_type_errors(
+        self, modified_files: Dict[str, str], shape: ChangeShape = NO_SHAPE
+    ) -> Tuple[TypeDiagnostic, ...]:
         """What the project, unchanged consumers included, would report with the change and not now.
 
         The project as it stands is checked with ``modified_files`` over it,
         and what that check reports is compared with what the project reports
         already (``towel.type_baseline``): an error the original project had,
-        and still has, is not the change's. Every configured checker must
+        and still has, where the change's ``shape`` puts it, is not the
+        change's. Every configured checker must
         accept, so the first to report a new error settles it and the rest are
         not asked (:func:`~towel.type_inference.checks_in_turn`). An accepted
         change's check is kept: once the driver has written it, it is what the
@@ -1525,7 +1588,7 @@ class HelperAnnotationWiring(EngineState):
                 )
             reported.extend(result.errors)
             introduced = self._type_known.introduced(
-                reported, changing, where=self._where_checked, texts_after=seen
+                reported, changing, where=self._where_checked, texts_after=seen, shape=shape
             )
             if introduced:
                 break
@@ -1553,6 +1616,29 @@ class HelperAnnotationWiring(EngineState):
             KnownErrors.of(reported, self._where_checked, texts=texts),
         )
         return ()
+
+    def _change_shape(self, proposal: RefactoringProposal) -> ChangeShape:
+        """Where ``proposal``, as rendered, replaced its copies and wrote its helper.
+
+        Each copy is given with the text its lines number, as the file stands
+        now: the comparison uses a copy only where that is the text the
+        reference was checked against. A proposal that calls a function
+        already there writes no helper.
+        """
+        copies: List[ReplacedCopy] = []
+        for replacement in proposal.replacements:
+            path = replacement.file_path or proposal.file_path
+            text = self._read_source(path)
+            if text is not None:
+                first, last = replacement.line_range
+                copies.append(ReplacedCopy(self._where_checked(path), first, last, text))
+        if proposal.reused_function is not None:
+            return ChangeShape(tuple(copies))
+        return ChangeShape(
+            tuple(copies),
+            self._where_checked(proposal.file_path),
+            proposal.extracted_function.name,
+        )
 
     def _follow_the_written_change(self) -> None:
         """The driver wrote the change the checker last accepted; compare the next with its check.
@@ -1620,6 +1706,39 @@ class HelperAnnotationWiring(EngineState):
                     f"so a change there cannot be verified: {errors[0].message}"
                 )
 
+    def _names_the_checker_cannot_type(
+        self, originals: Mapping[str, str]
+    ) -> Mapping[str, Tuple[TypeDiagnostic, ...]]:
+        """The files (resolved) where the original check leaves a name typed as ``Any``, and why.
+
+        The original's errors name some (:func:`files_where_names_are_any`),
+        but a configuration can silence exactly those errors: with
+        ``ignore_missing_imports``, or pyright's ``reportMissingImports`` off,
+        an import of a module missing where Towel runs reports nothing, and
+        its names are ``Any`` all the same, so a change was checked against
+        ``Any`` and accepted where the project's own check, which sees the
+        module, rejects it (uvicorn, with ``warn_unused_ignores``). So every
+        checker is also asked what each import of the analyzed files binds
+        (:func:`~towel.type_baseline.import_probes`), in one probe build.
+        """
+        found: Dict[str, List[TypeDiagnostic]] = {
+            path: list(errors)
+            for path, errors in files_where_names_are_any(self._type_known.errors).items()
+        }
+        oracle = self._type_run_oracle
+        probes = {path: import_probes(path, text) for path, text in originals.items()}
+        requests = [request for probe in probes.values() if probe for request in probe.requests]
+        if oracle is None or not requests:
+            return {path: tuple(errors) for path, errors in found.items()}
+        answers = reveal_by_each(oracle, requests)
+        for path, probe in probes.items():
+            if probe is None:
+                continue
+            for finding in imports_typed_as_any(probe, answers, self._where_checked(path)):
+                TYPES.debug("%s:%s: %s", path, finding.line, finding.message)
+                found.setdefault(finding.path, []).append(finding)
+        return {path: tuple(errors) for path, errors in found.items()}
+
     def _report_pre_existing(self, analyzed: Sequence[str]) -> None:
         """Say, before anything else, what the original check reports and what it cannot see.
 
@@ -1630,10 +1749,11 @@ class HelperAnnotationWiring(EngineState):
         has them verified.
         """
         errors = self._type_known.errors
-        if not errors:
+        if not errors and not self._type_names_any:
             return
         root = find_project_root(Path(analyzed[0])) if analyzed else Path.cwd()
-        LOG.warning(pre_existing_summary(errors, root))
+        if errors:
+            LOG.warning(pre_existing_summary(errors, root))
         changed = frozenset(self._where_checked(path) for path in analyzed)
         warning = names_any_warning(self._type_names_any, root, changed)
         if warning:
@@ -1664,6 +1784,17 @@ class HelperAnnotationWiring(EngineState):
         project, named as mypy did not name it -- called every block of the
         project unreachable, declined every proposal, and ended the run at a
         fixed point, exit status 0.
+
+        A file a checker's configuration has it report nothing on (pyright's
+        ``exclude`` or ``ignore``) is outside that checker's check, not code it
+        takes to be unreachable, and is not asked of it
+        (:func:`~towel.type_inference.reports_by_each`): the others settle it.
+        param's pyright ignores ``version.py``, which its mypy checks, and
+        every proposal there had been declined as unreachable. A file no
+        configured checker reports on is taken to be looked at, as the body
+        of an unannotated function is: the project's own check says nothing
+        there on any platform, so the verdict does not depend on where Towel
+        runs.
         """
         requests: List[RevealRequest] = []
         unseen: Dict[str, Set[Place]] = {}
@@ -1677,6 +1808,9 @@ class HelperAnnotationWiring(EngineState):
             for line, indent in sorted({plan.sites[p] for p in wanted[path] if p in plan.sites}):
                 requests.append(RevealRequest(path, plan.text, line, indent, (PROBE,)))
         answers: Tuple[Mapping[RevealKey, str], ...] = ()
+        reported = reports_by_each(oracle, list(probed))
+        if not every_checker:
+            reported = reported[:1]  # the one that infers comes first
         if requests:
             answers = (
                 reveal_by_each(oracle, requests) if every_checker else (oracle.reveal(requests),)
@@ -1691,12 +1825,17 @@ class HelperAnnotationWiring(EngineState):
                     )
         for path, plan in planned.items():
             unseen[path] = set()
+            asked = [
+                answer
+                for answer, covered in zip(answers, reported)
+                if len(answers) != len(reported) or path in covered
+            ]
             for place in wanted[path]:
                 site = plan.sites.get(place)
                 if site is None:
                     continue  # an ``elif``: its body answers for it
                 key = (path, site[0], 0)
-                if not all(isinstance(answer, Mapping) and key in answer for answer in answers):
+                if not all(isinstance(answer, Mapping) and key in answer for answer in asked):
                     unseen[path].add(place)
         return unseen
 

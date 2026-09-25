@@ -438,6 +438,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._type_checked = None
         self._type_names_any = {}
         self._type_unlooked = {}
+        self._type_unreadable = frozenset()
         self.snippet_formatter = snippet_formatter
         self.file_finisher = file_finisher
         self.incremental_global_passes = incremental_global_passes

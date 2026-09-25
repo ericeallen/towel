@@ -44,15 +44,18 @@ from dataclasses import dataclass
 from enum import IntEnum
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import queue
+import re
 import secrets
 import select
 import subprocess
 import threading
 import time
+import tomllib
 from typing import Dict, Iterator, List, Literal, Mapping, Optional, Sequence, Set, Tuple, TypedDict
 
+from .checker_project import UnusableConfiguration, _pyright_config_inputs, _read_json_config
 from .diagnostics import LOG
 from .source_files import PROBE_PREFIX
 
@@ -200,6 +203,123 @@ def server_settings(interpreter: str) -> ServerSettings:
     )
 
 
+_DEFAULT_EXCLUDE = ("**/node_modules", "**/__pycache__", "**/.*")
+"""What pyright leaves out of a project whose configuration names no ``exclude``."""
+
+
+def _wildcard(base: Path, spec: str) -> "re.Pattern[str]":
+    """A path, or a directory and all it holds, that pyright's file spec ``spec`` names.
+
+    As pyright reads a spec: relative to the configuration that states it,
+    ``**`` for any number of directories, ``*`` and ``?`` within one path
+    component.
+    """
+    pattern = ""
+    for component in PurePosixPath(os.path.normpath(str(base / spec))).parts[1:]:
+        if component == "**":
+            pattern += "(/[^/]+)*?"
+            continue
+        pattern += "/" + "".join(
+            "[^/]*" if char == "*" else "[^/]" if char == "?" else re.escape(char)
+            for char in component
+        )
+    return re.compile(f"^{pattern}($|/)")
+
+
+@dataclass(frozen=True)
+class PyrightScope:
+    """The files a project's pyright configuration has pyright report on.
+
+    Those its ``include`` names, less those its ``exclude`` or ``ignore``
+    names. pyright analyzes an excluded module another imports, but reports
+    nothing in it, and nothing in an ignored one, so its silence there says
+    nothing about the code: the file is outside what the project's pyright
+    checks, not code it takes to be unreachable. A language server asked to
+    answer there never does, and a run waited a minute for it and then gave up
+    the server for the rest of the run.
+    """
+
+    include: Tuple["re.Pattern[str]", ...]
+    exclude: Tuple["re.Pattern[str]", ...] = ()
+    ignore: Tuple["re.Pattern[str]", ...] = ()
+
+    def reports_on(self, path: Path) -> bool:
+        """Whether pyright, configured so, reports what it finds in the file at ``path``."""
+        where = Path(os.path.realpath(path)).as_posix()
+        return (
+            any(spec.match(where) for spec in self.include)
+            and not any(spec.match(where) for spec in self.exclude)
+            and not any(spec.match(where) for spec in self.ignore)
+        )
+
+
+EVERYWHERE = PyrightScope((re.compile("^/"),))
+"""The scope of a configuration that cannot be read, where the check itself says why."""
+
+
+def _settings_chain(root: Path) -> List[Tuple[Path, Mapping[str, object]]]:
+    """Each configuration pyright reads for ``root``, its own first, with the directory it is in."""
+    chain: List[Tuple[Path, Mapping[str, object]]] = []
+    for config in _pyright_config_inputs(root):
+        if config.name == "pyproject.toml":
+            with config.open("rb") as handle:
+                tool = tomllib.load(handle).get("tool", {})
+            section = tool.get("pyright", {}) if isinstance(tool, dict) else {}
+            chain.append((config.parent, section if isinstance(section, dict) else {}))
+        else:
+            chain.append((config.parent, _read_json_config(config)))
+    return chain
+
+
+def pyright_scope(root: Path) -> PyrightScope:
+    """What ``root``'s pyright configuration has pyright report on, read without running pyright.
+
+    Of each of ``include``, ``exclude`` and ``ignore``, the first
+    configuration in its ``extends`` chain that states it decides it, as
+    pyright reads the chain, each relative to the file that states it. With
+    no ``include`` pyright checks the directory of its configuration; with no
+    ``exclude`` it leaves out ``node_modules``, ``__pycache__`` and hidden
+    directories. A configuration that cannot be read has no scope here: the
+    check refuses it, saying why.
+    """
+    root = Path(os.path.realpath(root))
+    try:
+        chain = _settings_chain(root)
+    except (OSError, ValueError, UnusableConfiguration, tomllib.TOMLDecodeError):
+        return EVERYWHERE
+    specs: Dict[str, Tuple["re.Pattern[str]", ...]] = {}
+    defaults = {"include": (".",), "exclude": _DEFAULT_EXCLUDE, "ignore": ()}
+    for key, default in defaults.items():
+        stated = next(((base, chosen[key]) for base, chosen in chain if key in chosen), None)
+        base, value = stated if stated is not None else (root, default)
+        values = value if isinstance(value, (list, tuple)) else ()
+        specs[key] = tuple(
+            _wildcard(Path(os.path.realpath(base)), spec)
+            for spec in values
+            if isinstance(spec, str)
+        )
+    return PyrightScope(specs["include"], specs["exclude"], specs["ignore"])
+
+
+def _included_directories(root: Path) -> List[Path]:
+    """The directories ``root``'s pyright configuration includes by name, without wildcards."""
+    try:
+        chain = _settings_chain(Path(os.path.realpath(root)))
+    except (OSError, ValueError, UnusableConfiguration, tomllib.TOMLDecodeError):
+        return []
+    for base, chosen in chain:
+        specs = chosen.get("include")
+        if specs is None:
+            continue
+        named = specs if isinstance(specs, list) else []
+        return [
+            base / spec
+            for spec in named
+            if isinstance(spec, str) and not set("*?[") & set(spec) and (base / spec).is_dir()
+        ]
+    return []
+
+
 def _uri(path: Path) -> str:
     return path.as_uri()
 
@@ -262,6 +382,8 @@ class PyrightSession:
     ) -> None:
         self._root = root
         self._settings = server_settings(interpreter)
+        self._scope = pyright_scope(root)
+        self._included = _included_directories(root)
         try:
             self._process = subprocess.Popen(
                 [*command, "--stdio"],
@@ -547,10 +669,7 @@ class PyrightSession:
         if self._closed:
             raise SessionFailure("session is closed")
         self._drain()
-        # With nothing to stand beside, where the server last answered is the
-        # best place known; the root may lie outside what the project includes.
-        directory = next((path.parent for path in beside), self._marker.directory or self._root)
-        marker, how, first = self._marker.place(directory)
+        marker, how, first = self._marker.place(self._marker_directory(beside))
         self._notify(
             "workspace/didChangeWatchedFiles",
             {
@@ -569,8 +688,30 @@ class PyrightSession:
             )
         except SessionFailure:
             if first and not self._marker_answered:
-                LOG.warning("pyright gave no sign of analyzing %s", directory)
+                LOG.warning("pyright gave no sign of analyzing %s", marker.parent)
             raise
+
+    def _marker_directory(self, beside: Sequence[Path]) -> Path:
+        """Where the marker goes: beside the first of ``beside`` that the server reports on.
+
+        A marker in a directory the configuration excludes or ignores is never
+        answered, however long the wait. With nothing to stand beside, where
+        the server last answered is the best place known, then the root, then
+        a directory the configuration includes; the root may lie outside what
+        the project includes.
+        """
+        candidates = [path.parent for path in beside]
+        if self._marker.directory is not None:
+            candidates.append(self._marker.directory)
+        candidates += [self._root, *self._included]
+        return next(
+            (
+                directory
+                for directory in candidates
+                if self._scope.reports_on(directory / _MARKER_NAME)
+            ),
+            candidates[0],
+        )
 
     def _drain(self) -> None:
         """Absorb anything the server said while nobody was listening."""

@@ -809,11 +809,14 @@ class {name}(Exception):
 def test_a_constraint_from_another_module_is_imported_for_the_checker_end_to_end(
     tmp_path: Path,
 ) -> None:
-    """packaging L, in miniature: the variable ranges over the two modules' error classes.
+    """packaging L, in miniature: the helper's receiver ranges over the two modules' error classes.
 
-    The helper lives in direct.py, which does not import lock.py; the
-    constraint that names lock.py's class is imported under ``TYPE_CHECKING``,
-    as the program's imports show direct.py can, and so never runs.
+    The helper lives in direct.py, which does not import lock.py; the class
+    that lock.py defines is imported under ``TYPE_CHECKING``, as the program's
+    imports show direct.py can, and so never runs. The ordinary signature
+    names both classes directly, which is what the checker reveals: it used
+    to drop ``pkg.lock.LockError`` for a head direct.py does not bind, write
+    ``Any``, and leave the classes to a constrained type variable.
     """
     _project(
         tmp_path,
@@ -828,7 +831,7 @@ def test_a_constraint_from_another_module_is_imported_for_the_checker_end_to_end
     sources = _extract_across_modules(tmp_path / "pkg")
     direct = sources[str(tmp_path / "pkg" / "direct.py")]
     # The checker's import is private, so no star-importer of direct.py sees it.
-    assert "_towel_typevar('_TowelT0', 'DirectError', '_LockError')" in direct, direct
+    assert "def _extracted_func_0(self: 'DirectError | _LockError') -> str:" in direct, direct
     guarded = direct.split("if _typing.TYPE_CHECKING:", 1)[1].splitlines()[1]
     assert guarded.strip() == "from .lock import LockError as _LockError", direct
     assert "Any" not in direct, direct
