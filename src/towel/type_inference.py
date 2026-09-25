@@ -521,6 +521,11 @@ class MypyInferrer:
         # Whether the project's own run reports on each resolved file, as the
         # first complete check to be given it found (``reports_on``).
         self._reporting: Dict[str, bool] = {}
+        # Every configuration group's root a check of this run has had.
+        self._group_roots: set[Path] = set()
+        # The cache each group builds in, by root: the first met keeps the
+        # owned directory (``None``), each other one a directory of its own.
+        self._group_caches: Dict[Path, Optional[str]] = {}
 
     def __call__(self, requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
         return self.reveal(requests)
@@ -541,6 +546,7 @@ class MypyInferrer:
         with self._lock:
             self._run_targets = frozenset(os.path.realpath(path) for path in analyzed)
             self._reporting = {}
+            self._group_roots = set()
 
     def reports_on(self, paths: Sequence[str]) -> FrozenSet[str]:
         """Those of ``paths`` the project's own mypy run reports errors in: mypy's jurisdiction.
@@ -607,6 +613,7 @@ class MypyInferrer:
                 self._cache.cleanup()
             self._cache = tempfile.TemporaryDirectory(prefix="towel-mypy-")
             self._cache_dir = Path(self._cache.name).resolve()
+            self._group_caches = {}
             self._import_scans = {}
             self.answered_from_warm_state = False
 
@@ -664,6 +671,9 @@ class MypyInferrer:
         complete: bool = False,
         excluded_paths: Sequence[str] = (),
         consumers: Sequence[str] = (),
+        root: Optional[Path] = None,
+        foreign: Optional[Mapping[str, str]] = None,
+        nested: Sequence[Path] = (),
     ) -> _BuildMessages | CheckFailure:
         if self._owner_pid != os.getpid():
             return CheckFailure("Create a new mypy oracle after fork")
@@ -672,8 +682,17 @@ class MypyInferrer:
                 return CheckFailure("mypy oracle is closed")
             if not sources:
                 return _BuildMessages(())
-            root = _configured_root(Path(sources[0].path), "mypy") or _checker_root(
-                Path(sources[0].path)
+            if root is None:
+                root = _configured_root(Path(sources[0].path), "mypy") or _checker_root(
+                    Path(sources[0].path)
+                )
+            group = self._group_caches.setdefault(
+                root.resolve(),
+                (
+                    None
+                    if not self._group_caches
+                    else hashlib.sha256(os.fsencode(root.resolve())).hexdigest()[:16]
+                ),
             )
             # Every path goes to the worker resolved, one spelling per file:
             # mypy prints a file by the path it was given, and a file under a
@@ -686,6 +705,8 @@ class MypyInferrer:
                 "complete": complete,
                 "excluded_paths": [os.path.realpath(path) for path in excluded_paths],
                 "consumers": [os.path.realpath(path) for path in consumers],
+                # Which of the owned cache's group caches this build uses.
+                "group": group,
                 "modules": {
                     os.path.realpath(source.path): [source.module, source.root]
                     for source in sources
@@ -693,6 +714,11 @@ class MypyInferrer:
             }
             if complete and self._run_targets is not None:
                 request["targets"] = sorted(self._run_targets)
+            if complete:
+                request["foreign"] = {
+                    os.path.realpath(path): text for path, text in (foreign or {}).items()
+                }
+                request["nested_roots"] = [os.path.realpath(path) for path in nested]
             try:
                 process = self._running_worker()
             except OSError as error:
@@ -845,9 +871,44 @@ class MypyInferrer:
     def check_project(
         self, sources: Mapping[str, str], *, excluded_paths: Sequence[str] = ()
     ) -> CheckResult:
+        """The errors of every configuration group's check of the project with ``sources`` over it.
+
+        A group is the directory of a mypy configuration, or where there is
+        none a project's root (``_source_groups``), and each is checked as mypy
+        run there would check it, under its own configuration and in a cache
+        of its own. Every group that holds any file of ``sources`` is checked,
+        including one an earlier check of the run found and this one holds
+        only nested files of: a configuration covers the directories below
+        it, a nested configuration's included, just as ``mypy`` run from it
+        covers them. Where no configuration covers a group's directory, the
+        groups below it are projects of their own and it leaves them to them.
+        Each group is also given the rest of ``sources`` (``foreign``), so a
+        file of another group that its build reads is read with the
+        candidate's text: a group had seen only its own replacements, and
+        judged its files against the original of another group's change.
+        """
         errors: List[TypeDiagnostic] = []
         reported: set[str] = set()
-        for root, replacements in _source_groups(sources, "mypy").items():
+        every: Dict[str, str] = {}
+        for grouped in _source_groups(sources, "mypy").values():
+            every.update(grouped)
+        with self._lock:
+            self._group_roots.update(_source_groups(sources, "mypy"))
+            known = sorted(self._group_roots)
+        for root in known:
+            nested = (
+                [other for other in known if other != root and other.is_relative_to(root)]
+                if _mypy_config(root) is None
+                else []
+            )
+            replacements = {
+                path: text
+                for path, text in every.items()
+                if Path(path).is_relative_to(root)
+                and not any(Path(path).is_relative_to(other) for other in nested)
+            }
+            if not replacements:
+                continue
             builds = [_build_source(path, source) for path, source in replacements.items()]
             try:
                 consumers = self._consumers(root, replacements)
@@ -858,6 +919,9 @@ class MypyInferrer:
                 complete=True,
                 excluded_paths=excluded_paths,
                 consumers=consumers,
+                root=root,
+                foreign={path: text for path, text in every.items() if path not in replacements},
+                nested=nested,
             )
             if isinstance(result, CheckFailure):
                 return result
@@ -868,7 +932,7 @@ class MypyInferrer:
             )
             reported.update(os.path.realpath(path) for path in result.reported)
         with self._lock:
-            for path in sources:
+            for path in every:
                 resolved = os.path.realpath(path)
                 self._reporting.setdefault(resolved, resolved in reported)
         return CheckSuccess(tuple(errors))

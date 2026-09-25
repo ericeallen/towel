@@ -860,6 +860,7 @@ def _judged_by_the_project(
     root: Path,
     run: Sequence[BuildSource],
     targets: Optional[AbstractSet[str]] = None,
+    nested: Sequence[Path] = (),
 ) -> Callable[[str], bool]:
     """Whether the project's own mypy run would take a file as one of its targets.
 
@@ -872,6 +873,12 @@ def _judged_by_the_project(
     otherwise; in either case less what an ``exclude`` pattern matches, tested
     as mypy's own walk tests it, on the file and on each directory above it.
     ``options.exclude`` must still be the project's, before Towel adds to it.
+
+    A file outside ``root`` is not one: that run is made from ``root``, and
+    reaches such a file only by an import, which :func:`_reporting_modules`
+    follows. Nor is one below a ``nested`` root, another group's, which the
+    caller names only where no mypy configuration covers ``root``: the
+    directories are then separate projects that no run spans.
     """
     if _names_its_targets(options):
         named = {os.path.realpath(source.path) for source in run if source.path is not None}
@@ -883,7 +890,11 @@ def _judged_by_the_project(
         candidate = Path(path)
         if targets is not None and os.path.realpath(path) not in targets:
             return False
-        if not excludes or not candidate.is_relative_to(root):
+        if not candidate.is_relative_to(root) or any(
+            candidate.is_relative_to(other) for other in nested
+        ):
+            return False
+        if not excludes:
             return True
         walked = [candidate, *candidate.parents]
         return not any(
@@ -1061,14 +1072,20 @@ def _request(request: object, cache: str) -> _Answered:
     root = Path(root_value)
     os.chdir(root)
     complete = request.get("complete") is True
-    configured = _options(root, config, cache, probe=not complete)
+    configured = _options(
+        root, config, _group_cache(cache, request.get("group")), probe=not complete
+    )
     options = configured.options
     # The project's own run, read before Towel's exclusions, which name what
     # Towel writes (a relocated output), never the project's own files.
     run = _sources_of_the_projects_run(options, root)
     targets = request.get("targets")
     judged = _judged_by_the_project(
-        options, root, run, None if targets is None else set(_strings(targets))
+        options,
+        root,
+        run,
+        None if targets is None else set(_strings(targets)),
+        [Path(nested) for nested in _strings(request.get("nested_roots") or [])],
     )
     excluded_paths = _strings(request.get("excluded_paths"))
     for excluded in excluded_paths:
@@ -1079,10 +1096,11 @@ def _request(request: object, cache: str) -> _Answered:
         options.exclude += ["^" + re.escape(spelling) + r"(?:/|$)" for spelling in spellings]
     _load_configured_plugins(options)
     replacements = _sources(request.get("sources"))
+    # The record describes the entries of the cache this build uses.
+    given = _text_mypy_must_be_given(replacements, options.cache_dir)
     sources = _build_sources(
         replacements,
-        # The record describes the entries of the cache this build uses.
-        _text_mypy_must_be_given(replacements, options.cache_dir),
+        given,
         options,
         root,
         complete,
@@ -1110,12 +1128,76 @@ def _request(request: object, cache: str) -> _Answered:
     result, sources = _build_as_the_project_reaches(sources, options, judged, complete=complete)
     if not complete:
         return _Answered(list(result.errors), configured.said)
+    foreign = _sources(request.get("foreign") or {})
+    read = _changes_read_from_disk(result.graph, sources, foreign)
+    if read:
+        # Only a source can be given text, and a source is named by mypy's
+        # walk, so each is named as the import that read it named it.
+        _text_mypy_must_be_given(
+            {**replacements, **{path: foreign[path] for path in read}}, options.cache_dir
+        )
+        sources = [
+            *sources,
+            *(
+                BuildSource(path, module, foreign[path], _base_for(path, module))
+                for path, module in read.items()
+            ),
+        ]
+        result, sources = _build_as_the_project_reaches(sources, options, judged, complete=True)
     reported = _files_reported_on(result.graph, sources, judged, options)
     return _Answered(
         _as_the_project_judges(result.errors, result.graph, sources, judged, options),
         configured.said,
-        tuple(sorted(path for path in replacements if os.path.realpath(path) in reported)),
+        tuple(
+            sorted(path for path in [*replacements, *foreign] if os.path.realpath(path) in reported)
+        ),
     )
+
+
+def _group_cache(cache: str, group: object) -> str:
+    """The cache, inside the owned one, of the configuration group a request names.
+
+    Each group builds under its own configuration and from its own sources,
+    and a cache entry written from text one group supplied answers for the
+    file in any build that reads it without text. The record of supplied text
+    (``_SUPPLIED_TEXT_RECORD``) was one per cache and the cache one per
+    oracle, so a sub-project's candidate texts were restored into the root's
+    builds, where the baseline had never put them: an unrelated
+    root-configuration error then declined every change there, and a
+    cross-group import that did not resolve at the baseline resolved later and
+    refused the cold confirmation. A cache per group keeps each group's builds
+    to its own entries and record. The first group an oracle meets names none
+    and keeps the owned directory itself, so a project of one group is laid
+    out as it always was.
+    """
+    if group is None:
+        return cache
+    if not isinstance(group, str) or not group.isalnum():
+        raise ValueError("Expected a configuration group's cache name")
+    return os.path.join(cache, "groups", group)
+
+
+def _changes_read_from_disk(
+    graph: Mapping[str, _Imports], sources: Sequence[BuildSource], foreign: Mapping[str, str]
+) -> dict[str, str]:
+    """The changed files of ``foreign`` that a build read from disk, by the module each was read as.
+
+    ``foreign`` is the rest of a check's files, another group's, with the
+    text the check has for each. A build reads such a file where an import
+    reaches it, and reads what the file holds, not what the candidate made
+    of it: a group must see the candidate's whole change wherever it looks.
+    """
+    given = {os.path.realpath(source.path) for source in sources if source.path is not None}
+    by_file = {os.path.realpath(path): path for path in foreign}
+    read: dict[str, str] = {}
+    for module, state in graph.items():
+        if state.path is None:
+            continue
+        resolved = os.path.realpath(state.path)
+        path = by_file.get(resolved)
+        if path is not None and resolved not in given and not _holds(path, foreign[path]):
+            read[path] = module
+    return read
 
 
 def _answer(line: str, cache: str) -> str:

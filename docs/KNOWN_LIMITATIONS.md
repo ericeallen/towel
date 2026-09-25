@@ -991,6 +991,20 @@ where the evidence comes from:
   is not taken for it. A configuration mypy only warns about (an option it
   does not know, a global option in a per-module section, a Python version
   it has dropped) is checked as mypy checks it, and the warning is passed on.
+- A project with more than one mypy configuration (a `pyproject.toml` with
+  `[tool.mypy]` in a sub-project as well as at the root) is checked once per
+  configuration, each in a cache of its own, as `mypy` run from that
+  configuration's directory checks it: the root's covers the sub-project's
+  files too, under the root's options, unless its own `files` or `exclude`
+  says otherwise, and the sub-project's covers them under its own. A change
+  must pass both, and a check reads a file of the other configuration's with
+  the change's text wherever it imports one. Where that run could not build
+  at all, two sub-projects each with a `tests/conftest.py` outside any
+  package, say, the typed run over the root is refused as that `mypy` run is;
+  run Towel on each sub-project, or have the root's configuration `exclude`
+  them. Directories that no mypy configuration covers, grouped by their
+  packaging files instead, are projects of their own, and no check spans
+  two of them.
 - Pyright verification uses a private copy of Python sources, stubs, typing
   markers and checker configuration, made once per run, kept in step with the
   project as it is refactored, and watched by one long-lived language server.

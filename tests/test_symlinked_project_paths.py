@@ -31,7 +31,7 @@ import importlib.util
 import os
 import textwrap
 from pathlib import Path
-from typing import Mapping, Sequence, Tuple
+from typing import Mapping, Optional, Sequence, Tuple
 
 import pytest
 
@@ -98,6 +98,9 @@ class _Printing(MypyInferrer):
         complete: bool = False,
         excluded_paths: Sequence[str] = (),
         consumers: Sequence[str] = (),
+        root: Optional[Path] = None,
+        foreign: Optional[Mapping[str, str]] = None,
+        nested: Sequence[Path] = (),
     ) -> _BuildMessages | CheckFailure:
         return _BuildMessages(self.messages)
 
