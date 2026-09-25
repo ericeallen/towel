@@ -832,7 +832,9 @@ section of `setup.cfg`, `tox.ini`, or `.flake8`). Only the generated helper
 and the rewritten call statements are formatted, never the surrounding
 file, and every formatter is wrapped by `checked`, which compares each
 snippet's syntax tree before and after and raises if formatting changed
-it. A `FileFinisher` sorts the imports of each modified file the way the
+it. The proposal is then declined, under "the formatter changed its code or
+failed", and the run goes on: Black normalizing a moved string that becomes
+the helper's docstring is enough. A `FileFinisher` sorts the imports of each modified file the way the
 project does, with ruff's `I` rules when selected or isort when configured.
 An import runs its module where it stands, so the order of a file's own
 imports is the order of their import-time effects, which no binding check

@@ -163,6 +163,56 @@ def test_dry_formats_by_default_and_not_with_no_format(tmp_path: Path) -> None:
     assert _evaluate((formatted / "m.py").read_text()) == _evaluate((plain / "m.py").read_text())
 
 
+R9P2_DOCSTRING_BLOCK = textwrap.dedent("""
+    def first(a):
+        if a:
+            x = 1
+        else:
+            x = 2
+        "  explain the next steps  "
+        y = x * 2
+        z = y - 3
+        print(z)
+        return z * 10
+
+
+    def second(b):
+        x = len(b)
+        "  explain the next steps  "
+        y = x * 2
+        z = y - 3
+        print(z)
+        return z * 10
+    """)
+
+
+def test_r9p2_a_formatter_that_changes_code_declines_the_proposal_not_the_directory_run(
+    tmp_path: Path,
+) -> None:
+    """Round 4's D1: Black normalizes a moved string that becomes the helper's docstring.
+
+    ``checked`` refused it with ``FormattingChangedCode``, which the directory
+    loop did not catch, so the whole run failed and wrote nothing. The check
+    stays; the proposal whose formatting it refuses is declined, with its
+    reason, and the rest of the run is applied.
+    """
+    source = tmp_path / "r9p2_pkg"
+    source.mkdir()
+    (source / "__init__.py").write_text("")
+    (source / "docstring.py").write_text(R9P2_DOCSTRING_BLOCK)
+    (source / "strings.py").write_text(DUPLICATED_STRINGS)
+    normalizing = checked(
+        lambda text: text.replace("  explain the next steps  ", "explain the next steps")
+    )
+    engine = UnificationRefactorEngine(min_lines=2, snippet_formatter=normalizing)
+    output = tmp_path / "out"
+    results, _ = engine.refactor_directory_to_fixed_point(str(source), str(output), progress="none")
+    assert engine.run_report.declined_proposals == {"the formatter changed its code or failed": 1}
+    assert (output / "docstring.py").read_text() == R9P2_DOCSTRING_BLOCK
+    assert "__extracted_func" in (output / "strings.py").read_text()
+    assert set(results) == {str(output / "strings.py")}
+
+
 @pytest.mark.parametrize(
     "filename, contents, expected",
     [

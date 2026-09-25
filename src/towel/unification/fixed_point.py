@@ -84,6 +84,7 @@ from .semantic_safety import frame_sensitivity_markers
 from towel.changes import ChangePlan, StaleSource, apply_changes
 from ..consumers import MAXIMUM_FILES
 from ..diagnostics import LOG, OVERLAP, REJECTIONS, TYPES, UNIFIER, VALIDATION, debugging
+from ..formatting import FormattingChangedCode
 from ..filesystem import (
     StagedProject,
     copy_project,
@@ -122,6 +123,7 @@ DeclineReason = Union[
         "not verifiable: its file holds a name the type checker cannot type",
         "not verifiable: the type checker does not look at the code it changes",
         "not representable in its file's encoding",
+        "the formatter changed its code or failed",
         "could not be rendered",
         "changed nothing",
     ],
@@ -425,7 +427,9 @@ class FixedPointDrivers(Materialization):
         file imports was not asked; a refusal no signature of the helper could
         answer (``UntypeableExtraction``) says the extraction itself cannot be
         typed; one that refused a rendered variant judged the proposal
-        (``_checker_refusals`` counts those since the driver started it); text
+        (``_checker_refusals`` counts those since the driver started it); a
+        formatter that would change the code it was given, or that failed on
+        it, is never written through, so its file keeps the proposal out; text
         its file's encoding cannot hold is a limit of that file; anything else
         is a rendering Towel could not produce.
         """
@@ -453,6 +457,11 @@ class FixedPointDrivers(Materialization):
                 "no annotated helper signature types"
                 if reason is Untypeable.UNANNOTATED_IN_ANNOTATED_MODULE
                 else "no helper signature can type"
+            )
+        elif isinstance(error, FormattingChangedCode):
+            reason, said = (
+                "the formatter changed its code or failed",
+                "the formatter could not format faithfully",
             )
         elif isinstance(error, RefactoringError) and self._checker_refusals:
             reason, said = "refused by the type checker", "the type checker refused"
@@ -729,7 +738,10 @@ class FixedPointDrivers(Materialization):
                     # would earn a rehearing the project has not changed for.
                     continue
                 proposal_queue = refreshed
-            except (RefactoringError, SyntaxError, UnencodableText) as error:
+            except (RefactoringError, SyntaxError, UnencodableText, FormattingChangedCode) as error:
+                # A formatter that would change the code it was given is
+                # never written through; that declines this proposal, not the
+                # run, as the single-file loop has always treated it.
                 run.deferred_paths.update(
                     os.path.abspath(path)
                     for path in {
