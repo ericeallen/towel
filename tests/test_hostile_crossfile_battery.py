@@ -169,6 +169,9 @@ REJECTED = {
     # A test module's assert would move to a module pytest does not rewrite,
     # and the AssertionError pytest reports would lose its explanation.
     "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite",
+    # Round-4 audit P1-11: the same, where the module pytest does not rewrite
+    # is one testpaths names beside the directory holding it.
+    "r9dr_assert_testpaths_subsume_the_file",
 }
 
 TYPED = frozenset(

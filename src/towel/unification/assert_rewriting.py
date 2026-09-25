@@ -18,27 +18,50 @@ pytest rewrites the asserts of the modules its import hook claims, and a
 rewritten assert that fails raises ``AssertionError`` with pytest's account of
 the values in its message; a plain one carries only the message it was given.
 Exception messages are preserved, so an assert may move to another module
-only when both are rewritten alike. The rules are pytest 9.1.1's
-(``_pytest/assertion/rewrite.py``, ``AssertionRewritingHook``): a module is
-rewritten when it is a ``conftest.py``, a file given on the command line, a
-file matching ``python_files`` (``test_*.py`` and ``*_test.py`` by default,
-matched as ``fnmatch_ex`` does), or a module named, or inside a package
-named, by ``pytest.register_assert_rewrite``, by ``pytest_plugins``, by
-``-p``, or by an installed distribution's ``pytest11`` entry point; never
-under ``--assert=plain``, and never when its docstring holds
-``PYTEST_DONT_REWRITE``. The configuration is the first of pytest's files
-found from the project's root upward (``_pytest/config/findpaths.py``,
+only when both are rewritten alike. The rules are pytest 9.1.1's, read in its
+source (``_pytest/assertion/rewrite.py``, ``AssertionRewritingHook``): a
+module is rewritten when it is a ``conftest.py``, one of the session's
+initial paths, a file matching ``python_files`` (``test_*.py`` and
+``*_test.py`` by default, matched as ``fnmatch_ex`` does), or a module named,
+or inside a package named, by ``pytest.register_assert_rewrite``, by
+``pytest_plugins``, by ``-p``, or by an installed distribution's ``pytest11``
+entry point; never under ``--assert=plain``, and never when its docstring
+holds ``PYTEST_DONT_REWRITE``. Before that, ``_early_rewrite_bailout`` passes
+over a module whose name's last part is no initial path's stem, whose name
+no pattern matches as a file name, and that is not marked: a package's
+``__init__.py`` matching ``python_files`` is rewritten only if its package's
+name also does. The configuration is the first of pytest's files found from
+the project's root upward (``_pytest/config/findpaths.py``,
 ``locate_config``).
+
+The initial paths are the files ``testpaths`` names, as ``Session.
+perform_collect`` keeps them (``_pytest/main.py``, lines 836-847): run
+without arguments from the root, pytest takes ``testpaths`` for its
+arguments (``Config._decide_args``, ``_pytest/config/__init__.py``, lines
+1411-1438), and ``normalize_collection_arguments`` (lines 1190-1215) drops
+an argument an earlier one subsumes, a file inside a directory also named,
+unless ``--keep-duplicates`` is given. So ``testpaths = ["tests/helpers.py",
+"tests"]`` does not make ``tests/helpers.py`` an initial path. The hook
+consults the initial paths only once the session is set, at collection
+(``_pytest/assertion/__init__.py``, ``pytest_collection``, lines 145-152):
+a module a ``conftest.py`` or a plugin imports while pytest configures itself
+is rewritten only if it is by the other rules.
 
 What depends on how pytest is invoked is not known, and every question it
 could change is answered None: a pytest configuration below the root, which
-an invocation from there would use instead; ``-o``, ``-c`` or ``--rootdir``
-in ``addopts``; a ``pytest11`` entry point of the project itself, which
-rewrites its packages when installed; a ``register_assert_rewrite`` or
-``pytest_plugins`` pytest may or may not run (anywhere but at the top of the
-root's ``conftest.py``), for the modules it names; and a value that is not
-a literal. ``PYTEST_ADDOPTS``, ``PYTEST_PLUGINS`` and paths given on the
-command line are the invoker's, and are taken to be absent.
+an invocation from there would use instead; ``-o``, ``-c``, ``--rootdir`` or
+``--pyargs`` in ``addopts``; a ``testpaths`` entry with a glob or a node id,
+or reached through a symbolic link, for the file it may name; a file named
+by the ``testpaths`` of a configuration above the root, which applies only
+when pytest runs from there; a file rewritten only as an initial path in a
+project with a ``conftest.py`` or a plugin, which may import it before the
+session; a ``pytest11`` entry point of the project itself, which rewrites its
+packages when installed; a ``register_assert_rewrite`` or ``pytest_plugins``
+pytest may or may not run (anywhere but at the top of the root's
+``conftest.py``), for the modules it names; and a value that is not a
+literal. ``PYTEST_ADDOPTS``, ``PYTEST_PLUGINS``, paths given on the command
+line and installed plugins that import the project's modules are the
+invoker's, and are taken to be absent.
 """
 
 from __future__ import annotations
@@ -47,6 +70,7 @@ import ast
 import configparser
 import fnmatch
 import os
+import re
 import shlex
 import tomllib
 from dataclasses import dataclass
@@ -93,10 +117,17 @@ class _Setup:
     rewriting: bool = True
     patterns: Tuple[str, ...] = _DEFAULT_PATTERNS
     initial_paths: FrozenSet[str] = frozenset()
+    """The resolved files among the session's initial paths."""
+    doubtful_paths: FrozenSet[str] = frozenset()
+    """Resolved files that may or may not be initial paths, as pytest is invoked."""
+    stems: FrozenSet[str] = frozenset({"conftest"})
+    """The names ``_early_rewrite_bailout`` looks at whatever the patterns say."""
     marked: FrozenSet[str] = frozenset()
     """Module names surely marked for rewriting, each with every module inside it."""
     uncertain: FrozenSet[str] = frozenset()
     """Module names a statement pytest may or may not run marks."""
+    imports_early: bool = False
+    """Whether a ``conftest.py`` or a plugin may import a project module before the session is set."""
 
 
 _UNKNOWN = _Setup(known=False)
@@ -131,12 +162,31 @@ def rewrites_asserts(
     name = _module_name(Path(real))
     if any(_inside(name, marked) for marked in setup.uncertain):
         return None
-    return (
-        os.path.basename(real) == "conftest.py"
-        or real in setup.initial_paths
-        or any(_fnmatch_ex(pattern, real) for pattern in setup.patterns)
-        or any(_inside(name, marked) for marked in setup.marked)
+    conftest = os.path.basename(real) == "conftest.py"
+    initial = real in setup.initial_paths
+    matched = any(_fnmatch_ex(pattern, real) for pattern in setup.patterns)
+    marked = any(_inside(name, mark) for mark in setup.marked)
+    # ``_should_rewrite``, lines 229-248.
+    if not (conftest or initial or matched or marked):
+        return None if real in setup.doubtful_paths else False
+    # ``_early_rewrite_bailout``, lines 190-227: the module's name, as a file
+    # name, against the patterns; a pattern with a directory never bails out.
+    as_file = PurePath(*name.split(".")).with_suffix(".py") if name else PurePath(real)
+    by_name = marked or any(
+        os.path.dirname(pattern) or _fnmatch_ex(pattern, str(as_file)) for pattern in setup.patterns
     )
+    stem = name.rsplit(".", 1)[-1]
+    if not by_name and stem not in setup.stems:
+        return False
+    # The stem may be one only a doubtful initial path supplies.
+    by_stem = not by_name and stem != "conftest"
+    if by_stem and setup.doubtful_paths:
+        return None
+    # An initial path's stem, and its being an initial path, count only once
+    # the session is set; before, a conftest.py or a plugin may import it.
+    if (by_stem or not (conftest or matched or marked)) and setup.imports_early:
+        return None
+    return True
 
 
 def rewritten_alike(
@@ -186,27 +236,115 @@ def _read_setup(root: Path) -> _Setup:
     options = _arguments(config.get("addopts", []))
     if options is None:
         return _UNKNOWN
-    rewriting, plugins = _read_options(options)
-    if plugins is None:
+    read = _read_options(options)
+    if read is None:
         return _UNKNOWN
+    rewriting, keep_duplicates, plugins = read
     patterns = _arguments(config.get("python_files", list(_DEFAULT_PATTERNS)))
     testpaths = _arguments(config.get("testpaths", []))
-    if patterns is None or testpaths is None or any("*" in entry for entry in testpaths):
+    if patterns is None or testpaths is None:
+        return _UNKNOWN
+    arguments = _initial_arguments(config_dir, testpaths, keep_duplicates)
+    if arguments is None:
         return _UNKNOWN
     marks = _plugin_marks(root, config_dir)
     if marks is None:
         return _UNKNOWN
     sure, uncertain = marks
+    files = [argument for argument in arguments if argument.suffix == ".py"]
+    # A symbolic link on the way makes the hook's comparison of unresolved
+    # paths unreliable; ``testpaths`` above the root apply only when pytest
+    # runs from there.
+    doubtful = {
+        os.path.realpath(argument)
+        for argument in files
+        if os.path.realpath(argument) != str(argument) or config_dir.resolve() != root.resolve()
+    }
     return _Setup(
         known=True,
         rewriting=rewriting,
         patterns=tuple(patterns),
-        initial_paths=frozenset(
-            os.path.realpath(config_dir / entry) for entry in testpaths if entry.endswith(".py")
-        ),
+        initial_paths=frozenset(os.path.realpath(argument) for argument in files) - doubtful,
+        doubtful_paths=frozenset(doubtful),
+        stems=frozenset({"conftest"})
+        | {os.path.splitext(argument.name)[0] for argument in arguments},
         marked=frozenset(plugins) | sure,
         uncertain=uncertain,
+        imports_early=bool(plugins or sure or uncertain) or _conftest_imports_the_project(root),
     )
+
+
+_GLOB = re.compile(r"[*?\[]")
+
+
+def _initial_arguments(
+    config_dir: Path, testpaths: Sequence[str], keep_duplicates: bool
+) -> Optional[List[Path]]:
+    """The session's initial paths when pytest runs without arguments from ``config_dir``.
+
+    ``Config._decide_args`` globs each ``testpaths`` entry from the
+    invocation directory, and takes that directory itself when none
+    exists; ``normalize_collection_arguments`` then keeps, in sorted order,
+    each path the last kept one does not hold (``_pytest/main.py``, lines
+    1166-1215), unless ``--keep-duplicates``. None for an entry with a glob
+    or a node id, whose files are not modeled.
+    """
+    found: List[Path] = []
+    for entry in testpaths:
+        if _GLOB.search(entry) or "::" in entry:
+            return None
+        path = Path(os.path.abspath(config_dir / entry))
+        if os.path.lexists(path):
+            if not path.exists():
+                return None  # pytest refuses a broken link
+            found.append(path)
+    if not found:
+        return [Path(os.path.abspath(config_dir))]
+    if keep_duplicates:
+        return found
+    kept: List[Path] = []
+    for path in sorted(found):
+        if not kept or not (path == kept[-1] or path.is_relative_to(kept[-1])):
+            kept.append(path)
+    return kept
+
+
+_DYNAMIC_IMPORTS = frozenset({"__import__", "import_module", "exec", "run_module", "run_path"})
+
+
+def _conftest_imports_the_project(root: Path) -> bool:
+    """Whether a ``conftest.py`` of the project may import one of its modules, as pytest configures itself.
+
+    An import whose first name is the first name of a module of the
+    project, a relative import, or an import by a call (``importlib``,
+    ``__import__``, ``exec``, ``runpy``); a ``conftest.py`` that cannot be
+    read may do anything.
+    """
+    files = [path for path in _project_files(root) if path.suffix == ".py"]
+    conftests = [path for path in files if path.name == "conftest.py"]
+    if not conftests:
+        return False
+    tops = {_module_name(path).split(".")[0] for path in files}
+    for path in conftests:
+        try:
+            tree = ast.parse(read_source(str(path)))
+        except (OSError, UnicodeError, SyntaxError, ValueError):
+            return True
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) and any(
+                alias.name.split(".")[0] in tops for alias in node.names
+            ):
+                return True
+            if isinstance(node, ast.ImportFrom) and (
+                node.level or (node.module or "").split(".")[0] in tops
+            ):
+                return True
+            if (
+                isinstance(node, ast.Call)
+                and _spelled(node.func).split(".")[-1] in _DYNAMIC_IMPORTS
+            ):
+                return True
+    return False
 
 
 def _declares_pytest_plugin(root: Path) -> bool:
@@ -285,20 +423,34 @@ def _arguments(value: _Value) -> Optional[List[str]]:
         return None
 
 
-def _read_options(options: Sequence[str]) -> Tuple[bool, Optional[List[str]]]:
-    """Whether ``addopts`` leaves rewriting on, and the plugins its ``-p`` loads; None if unknown."""
+def _read_options(options: Sequence[str]) -> Optional[Tuple[bool, bool, List[str]]]:
+    """What ``addopts`` says: whether rewriting is on, whether duplicates are kept, and the ``-p`` plugins.
+
+    None where the options change what the project's files mean: another
+    configuration, root or ini value, or ``--pyargs``, which reads
+    ``testpaths`` as module names.
+    """
     rewriting = True
+    keep_duplicates = False
     plugins: List[str] = []
     tokens = list(options)
     index = 0
     while index < len(tokens):
         token = tokens[index]
         index += 1
-        if token in {"-o", "-c", "--override-ini", "--config-file", "--inifile", "--rootdir"} or (
-            token.startswith(("-o", "--override-ini=", "--config-file=", "--rootdir="))
-        ):
-            return rewriting, None
-        if token == "--assert" and index < len(tokens):
+        if token in {
+            "-o",
+            "-c",
+            "--override-ini",
+            "--config-file",
+            "--inifile",
+            "--rootdir",
+            "--pyargs",
+        } or (token.startswith(("-o", "--override-ini=", "--config-file=", "--rootdir="))):
+            return None
+        if token in {"--keep-duplicates", "--keepduplicates"}:
+            keep_duplicates = True
+        elif token == "--assert" and index < len(tokens):
             rewriting = tokens[index] != "plain"
             index += 1
         elif token.startswith("--assert="):
@@ -308,7 +460,11 @@ def _read_options(options: Sequence[str]) -> Tuple[bool, Optional[List[str]]]:
             index += 1
         elif token.startswith("-p"):
             plugins.append(token[2:].strip())
-    return rewriting, [plugin for plugin in plugins if not plugin.startswith("no:")]
+    return (
+        rewriting,
+        keep_duplicates,
+        [plugin for plugin in plugins if not plugin.startswith("no:")],
+    )
 
 
 def _project_files(root: Path) -> Iterable[Path]:
