@@ -172,8 +172,8 @@ The costs:
 - A pyright-strict project's own check will reject one that reads protected
   attributes.
 - Across modules, such a block needs an import under the import rule below.
-- `rename-helpers`, which today refuses mangled names, must learn to rename
-  class-private helpers.
+- `rename-helpers` renames a class-private helper by the key
+  `path.py:Class.__helper`, and only to another class-private name.
 
 Each fact about Python and the checkers in this entry is asserted by
 `tests/test_hosting_rationale.py`. A release of either checker that changes
@@ -628,9 +628,9 @@ This still leaves Towel checking as the project configures its checker, not
 as its CI invokes it. On idna the CI adds `--strict`, and on trio it checks
 three platforms, and both then rejected output that Towel's check had
 accepted. Proposal (B) addresses that gap. The fallback to an unannotated
-helper, which is what failed idna's `--strict`, is being narrowed
-separately: it will not apply in a module whose functions are all
-annotated.
+helper, which is what failed idna's `--strict`, does not apply in a module
+whose functions are all annotated: such a proposal is declined, saying the
+helper would be the one unannotated function of its module.
 
 *Status: implemented on the `audit-1772` branch, including the rule for
 unreachable code; not yet released.*
