@@ -186,10 +186,17 @@ def _replace_with_a_copy(link: Path) -> None:
         link.write_bytes(content)
 
 
-def test_two_search_path_entries_are_a_stray_package_not_a_link(tmp_path: Path) -> None:
+@pytest.mark.parametrize("linked", [False, True], ids=["plain", "beside-a-link-of-its-name"])
+def test_two_search_path_entries_are_a_stray_package_not_a_link(
+    tmp_path: Path, linked: bool
+) -> None:
+    """A link spelled as the directory it names gives it no second name, so is not the cause."""
     root = _write(tmp_path, {**_ALPHA, "tests/test_a.py": "import alpha.a\nimport src.alpha.b\n"})
+    if linked:
+        _link(root, "lib/alpha", "src/alpha")
     (problem,) = build_import_model(root, installed=_standard_library_only).problems
     assert isinstance(problem, FileUnderTwoNames) and problem.doubts == {Doubt.TREE}
+    assert problem.link is None
     assert _import_problem_remedies([problem]) == STRAY_COPY_REMEDY
 
 

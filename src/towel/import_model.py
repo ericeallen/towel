@@ -401,9 +401,9 @@ class UnresolvedImport:
     name in doubt. It is one only where the location's own file makes it,
     or the project is the distribution of the name; anywhere else, the
     import shows another copy of the name, and the name is in doubt
-    (:func:`_lacking_elsewhere`). The file making it is neither a provider nor given a new
-    import, and no file is the missing module, so no import is ever spelled
-    into it.
+    (:func:`_lacking_elsewhere`). The file making it is neither a provider
+    nor given a new import, and no file is the missing module, so no import
+    is ever spelled into it.
     """
 
     site: ImportSite
@@ -1678,7 +1678,8 @@ def build_import_model(
         top = site.top_level
         if top is not None and top not in _NOT_PROJECT_MODULES:
             absolute.setdefault(top, []).append(site)
-    # Only an import that attests may locate a name or put one in doubt.
+    # Only an import that attests locates a name (_places), and a name no such
+    # import uses is in no doubt.
     placing = {
         name: [site for site in found if _places(site, modules)] for name, found in absolute.items()
     }
@@ -2153,9 +2154,10 @@ def _problems(
 ) -> List[ImportProblem]:
     """What the imports get wrong. A name only imports that attest nothing use is in no doubt.
 
-    Such an import, guarded or in a file that changes ``sys.path``, names
-    nothing the program relies on, and nothing is spelled into its name
-    (:func:`_places`); so it neither locates a name nor makes one ambiguous.
+    Such an import, guarded, type-only or in a file that changes
+    ``sys.path``, names nothing the program relies on, and nothing is
+    spelled into its name (:func:`_places`); so it neither locates a name
+    nor makes one ambiguous.
     """
     problems: List[ImportProblem] = [
         AmbiguousName(name, info.candidates, info.installed, info.required, info.lacking)
@@ -2200,13 +2202,21 @@ def _two_names(
         if target is not None:
             links.setdefault(target, []).append(link)
 
-    def link_to(location: Path) -> Optional[Path]:
-        return min(links[location]) if location in links else None
+    def link_named(location: Path, *names: str) -> Optional[Path]:
+        """The link that alone gives ``location`` one of ``names``, if any.
+
+        A name the location has by its own spelling needs no link, so a link
+        spelled the same (``lib/alpha -> src/alpha``) is not what doubles it.
+        """
+        linked = frozenset(names) - {_entry_name(location)}
+        return min(
+            (link for link in links.get(location, ()) if _entry_name(link) in linked), default=None
+        )
 
     for location, located in sorted(named.items()):
         if location.is_relative_to(root) and len(located) > 1:
             first, second, *_ = sorted(located)
-            yield FileUnderTwoNames(location, (first, second), link_to(location))
+            yield FileUnderTwoNames(location, (first, second), link_named(location, first, second))
     for inner, inner_names in sorted(named.items()):
         if not inner.is_relative_to(root):
             continue
@@ -2219,7 +2229,8 @@ def _two_names(
             parts = _module_parts(inner.relative_to(outer))
             if parts and all(_is_identifier(part) for part in parts):
                 both = (".".join([outer_names[0], *parts]), inner_names[0])
-                yield FileUnderTwoNames(inner, both, link_to(inner))
+                cause = link_named(inner, inner_names[0]) or link_named(outer, outer_names[0])
+                yield FileUnderTwoNames(inner, both, cause)
     first_named = {location: located[0] for location, located in named.items()}
     sites = [site for module in modules.values() for site in module.sites or () if site.runtime]
     for target, into in sorted(links.items()):
@@ -2231,15 +2242,23 @@ def _two_names(
             if (
                 through_link is not None
                 and through_link != through_target
-                and _imported_through(through_link, sites, first_named, root)
+                and _imported_through(through_link, sites, first_named, root, modules)
             ):
                 yield FileUnderTwoNames(target, (through_link, through_target), link)
     for paths in _hard_links(tree.modules):
-        dotted = sorted(
-            {name for path in paths if (name := _dotted(first_named, path, root, modules))}
-        )
-        if len(dotted) > 1:
-            yield FileUnderTwoNames(paths[0], (dotted[0], dotted[1]), paths[1])
+        reached: Dict[str, Path] = {}
+        for path in paths:
+            name = _dotted(first_named, path, root, modules)
+            if name is not None:
+                reached.setdefault(name, path)
+        if len(reached) > 1:
+            (first, location), (second, other), *_ = sorted(reached.items())
+            yield FileUnderTwoNames(location, (first, second), other)
+
+
+def _entry_name(link: Path) -> str:
+    """The top-level name the tree counts ``link`` under: a directory's name, a module's stem."""
+    return link.stem if link.suffix == ".py" else link.name
 
 
 def _link_target(link: Path, root: Path) -> Optional[Path]:
@@ -2280,14 +2299,18 @@ def _dotted(
 
 
 def _imported_through(
-    dotted: str, sites: Sequence[ImportSite], named: Mapping[Path, str], root: Path
+    dotted: str,
+    sites: Sequence[ImportSite],
+    named: Mapping[Path, str],
+    root: Path,
+    modules: Mapping[Path, _Module],
 ) -> bool:
     """Whether an import that runs names ``dotted`` or a module below it, absolutely or relatively."""
     prefix = dotted + "."
     for site in sites:
         if site.level:
             base = _climb(site.file.parent, site.level - 1, root)
-            package = None if base is None else _dotted(named, base, root, {})
+            package = None if base is None else _dotted(named, base, root, modules)
             if package is None:
                 continue
             module = ".".join(part for part in (package, site.module) if part)
