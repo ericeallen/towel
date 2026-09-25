@@ -55,8 +55,9 @@ reproduce the exact code it replaced. Helpers get placeholder names like
 its own, and in annotated code each helper carries the annotations its call
 sites declare or the project's type checker verifies, when those tools are
 installed; `--no-format` and `--no-types` turn either off. A duplicate that is
-the whole body of an existing function is not extracted: the other copies
-call that function.
+the whole body of an existing function is extracted like any other: that
+function and the other copies all call the new helper, and none is rewritten
+to call another, which a test patching one of them would then change too.
 
 When a type checker is available, Towel checks the complete original project
 before creating output, and says what that check reports. Errors it already

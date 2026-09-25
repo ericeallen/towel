@@ -15,8 +15,7 @@
 """Data models for the anti-unification refactoring system: parsed and
 analyzed modules, functions and classes with their context, candidate block
 pairs, the helper template and clustered-site records, replacements and
-proposals (including a redirect to an existing function), applied changes,
-and the typed reasons a pair is declined.
+proposals, applied changes, and the typed reasons a pair is declined.
 """
 
 from __future__ import annotations

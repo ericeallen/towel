@@ -135,9 +135,10 @@ flowchart TD
        placement* and *Cross-file behavior*);
    11. the proposal: one whose helper, home and sites repeat an earlier
        pair's is declined (`duplicate_proposal`, the engine's
-       `_seen_proposals`) before anything further is computed for it; the
-       rest is redirected to an existing function when a site is one (see
-       *Reusing an existing function*), declined when it would reduce a
+       `_seen_proposals`) before anything further is computed for it; a
+       site that is the whole body of an existing function is extracted like
+       any other and never redirected to another function (see *Reusing an
+       existing function*); the rest is declined when it would reduce a
        helper from an earlier pass to a forwarder, then annotated. A proposal that survives those stages is declined once more if it would
    separate a narrowing test from an expression it leaves at the call site
    (`unification/narrowing.py`), which is a property of the transformation
@@ -1179,7 +1180,7 @@ measure is exact and changes no proposal.
   on the helper's dump, the call, and the block's structure, since the same
   helper meets the same block through every pair the block forms
   (`_VERDICTS` in `instantiation.py`); the function lookup every clustered
-  site and the reuse redirect make, `FunctionIndex.innermost_at`, is
+  site and the forwarder rule make, `FunctionIndex.innermost_at`, is
   memoized per file and span.
 - **Structural identity.** `_sid` is the SHA-256 over each statement's
   digest of `canonical_dump(statement)`; the per-statement digests are

@@ -1073,8 +1073,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
     def change_log(self) -> Sequence[AppliedChange]:
         """Every helper call site the last fixed-point run rewrote, in application order.
 
-        Both drivers reset it when they start. A site redirected to an existing
-        function is not recorded: no helper was inserted for it.
+        Both drivers reset it when they start. Every site is a call of a helper
+        the run inserted, since no site is redirected to an existing function.
         """
         return tuple(self._change_log)
 
