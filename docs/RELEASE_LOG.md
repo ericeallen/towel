@@ -24,8 +24,9 @@ describe belong to that version.
 - Scope: the fixes of audit rounds three and four, merged on `audit-1772`;
   the [changelog](../CHANGELOG.md#1772---2026-09-26) lists them.
 - Tests: the full suite at `2b399ef` passed 7,751 on 3.11, 7,882 on 3.12 and
-  7,899 on 3.13, with `just check` passing. `src/towel` is unchanged from
-  there to the release.
+  7,899 on 3.13, with `just check` passing. `src/towel` differs from there
+  to the release only in one corrected docstring, and GitHub CI passed the
+  full suite on the release commit.
 - CI: the first run of the candidate failed ten tests under CI's coverage run
   and Linux link mode, from a `COVERAGE_RCFILE` leak into test projects and a
   harness install linked to uv's cache. Both are fixed at `c3d062a`, and the

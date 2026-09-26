@@ -30,9 +30,11 @@ describe belong to that version.
 
 ## 1.772 release validation (September 26, 2026)
 
-`src/towel` is the same at every commit named here, from `2b399ef` to the
-release; later commits touch only documentation, tests, the corpus manifest
-and the corpus harness.
+`src/towel` is the same at every commit named here from `2b399ef` to the
+release, except for one docstring corrected in the engine's constructor;
+the other later commits touch only documentation, tests, the corpus
+manifest and the corpus harness. GitHub CI passed the full suite on the
+release commit itself.
 
 **Tests**, the full suite on each interpreter at `2b399ef`, with
 `just check` (lint, types, security, licence headers) passing:
