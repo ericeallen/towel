@@ -29,7 +29,7 @@ Publication is a separate maintainer decision.
 
 Recorded during September 2026; verify current remote state before publication:
 
-- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` (September 15, 2026) and `1.618` (September 17, 2026) are published and not yanked; neither may be rebuilt or replaced. Publish the next release as a new version.
+- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` (September 15, 2026), `1.618` (September 17, 2026), and `1.732` and `1.732.post1` (September 19, 2026) are published and not yanked; none may be rebuilt or replaced. Publish the next release as a new version.
 - The GitHub repository was made public on September 15, 2026, and its default branch is `main`. Earlier authenticated inspection (while private) found historical releases `v0.5.0` and `v0.5.1`, an active CI workflow, and an unprotected `main` branch. Verify the actual remote settings before relying on any of them.
 - The public PyPI description still represents the earlier release. A new distribution must carry the current status documentation, known limitations, and Python requirement.
 

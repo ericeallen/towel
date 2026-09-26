@@ -411,8 +411,8 @@ tomli-w, wheel, installer, pyproject-hooks, simpy, termcolor,
 typing_extensions, cheroot, sly, environs, apispec, webargs) and Towel
 itself at `v1.414`, `v1.618`, and current `main`, refactored by the
 candidate engine and then run through Towel's own test suite. The run was
-made with the current defaults, which since 1.618 include the reuse
-redirect, Black or ruff formatting of inserted code, and type annotations
+made with the development tree's defaults of the time, which after 1.618
+had come to include the reuse redirect, Black or ruff formatting of inserted code, and type annotations
 on helpers inferred and verified through mypy (the harness environments
 have Black and mypy installed, so both were exercised on every project).
 
