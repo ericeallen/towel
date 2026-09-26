@@ -375,10 +375,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
             cross_module_helpers: Share a helper between duplicates in different
                 modules, importing it from the one that hosts it into the others
                 (default: False). Off, only duplicates within one module are
-                paired, and no import of a project module is ever written, not
-                even one a helper's annotations would read under
-                ``TYPE_CHECKING``: an extraction then changes nothing about how
-                the project's modules depend on each other.
+                paired, and no import of a project module that runs is ever
+                written: an extraction then changes nothing about how the
+                project's modules depend on each other at run time. A helper
+                whose annotations need a type another module defines still
+                gets a type-only import under ``TYPE_CHECKING``, which never
+                runs (docs/DECISIONS.md, *Cross-module extraction is opt-in*).
             skip_trivial_helpers: Skip proposing a helper whose body is a single
                 forwarding statement -- a lone ``raise``, a ``return`` of one
                 call, or a bare call -- which adds indirection without sharing any

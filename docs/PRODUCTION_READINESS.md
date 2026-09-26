@@ -112,7 +112,9 @@ Its semantic P1s were checked against 1.618, which shows them too.
 
 **Not covered:**
 - no fifth audit round;
-- macOS only, and the corpus on Python 3.12 only;
+- Windows: the local gates and every timing ran on macOS, GitHub CI ran the
+  full suite on Linux for 3.11, 3.12 and 3.13, and the corpus ran in a Linux
+  container, on Python 3.12 only; no run was made on Windows;
 - `placement._dispatches_on` still re-walks each method per candidate pair,
   about a quarter of sphinx's untyped analysis. Memoizing it is deferred to
   the next release, where `TOWEL_CHECK_AST_IMMUTABLE=1`, which verifies that
