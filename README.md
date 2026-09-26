@@ -11,19 +11,15 @@ Towel finds repeated Python code and proposes helper function extractions.
 > `pip install code-towel`
 > Do **not** install `towel`: `pip install towel` and `uvx towel` fetch a different, unrelated project.
 
-**Release status: 1.772 (beta).** Since 1.732, an extracted helper can keep the
-relationships among its argument and return types instead of losing them to
-`Any`: anti-unifying the types alongside the code gives `list[T] -> T` where the
-call sites use `list[int] -> int` and `list[str] -> str`. Generic methods keep
-the type parameters their host class already binds.
-
-The same release made the typed path usable on a large project. Verification,
-not analysis, is what a run with type checking spends its time in, and Sphinx's
-243 modules with mypy and Pyright both strict used to run for hours without
-finishing; it now reaches a fixed point in well under one, after which Sphinx's
-own test suite reports exactly what it reported before. An extraction that
-would separate a narrowing test from code depending on it is declined outright,
-with or without type checking. See the
+**Release status: 1.772 (beta).** This release repays what four rounds of
+audit found in 1.732's design, each defect pinned by a test. Helpers are shared
+only within one module unless `--cross-module` asks for more. Import names are
+taken from the program's own imports. A typed run is judged against the
+project's own check, error by error. Code under a decorator that rewrites
+bodies stays where it is. An extracted helper can also keep the relationships
+among its argument and return types: anti-unifying the types alongside the code
+gives `list[T] -> T` where the call sites use `list[int] -> int` and
+`list[str] -> str`. See the
 [1.772 changelog](https://github.com/ericeallen/towel/blob/v1.772/CHANGELOG.md#1772---2026-09-25)
 for details.
 
@@ -59,7 +55,9 @@ rename afterward) and rewrites both functions to call it. The comments of the
 moved code go into the helper beside the code they were written for, a
 `# type: ignore` or `# pragma: no cover` included; duplicates whose tool
 directives differ are left alone, since the helper would have one line where
-they had two. The inserted code is
+they had two, and so is a block that a region directive (`# fmt: off`,
+`# ruff: disable`, `# isort: off`, `# pylint: disable`) opened before it covers
+from outside. The inserted code is
 formatted the way the project formats its own (`ruff format` when the project
 configures ruff, else Black, at the line length the project declares) and any
 imports Towel adds are sorted with ruff's import rules or isort when the
@@ -105,7 +103,8 @@ name binding, control flow, and evaluation order, and declines transformations
 that fail these checks. It moves no code out of or into a function whose
 decorators, or those of an enclosing function or class, it does not know to
 leave the body alone, whether written with `@` or applied by hand
-(`fast = njit(kernel)`): a decorator that compiles or instruments its function,
+(`fast = njit(kernel)`, or stacked, `f = outer(inner(f))`), and it knows a
+decorator only while no other module may rebind its name: a decorator that compiles or instruments its function,
 such as typeguard's `@typechecked` or numba's `@njit`, would lose the moved
 code. The common decorators of the standard library (`property`, `functools`,
 `contextlib`, `typing`, `dataclasses`, `unittest.mock.patch`), of pytest and of
@@ -176,8 +175,10 @@ minutes, by the dated measurements in the
 [performance section of Known limitations](https://github.com/ericeallen/towel/blob/v1.772/docs/KNOWN_LIMITATIONS.md#performance),
 which is the one table of package timings and says what each figure
 measured; the largest projects in the ecosystem check, networkx and Sphinx
-(150,000 to 200,000 lines), take several minutes to over half an hour
-(Sphinx: 2058 s with the defaults in the ecosystem check, September 2026).
+(150,000 to 200,000 lines), take from several minutes to over an hour. In the
+1.772 ecosystem check, Sphinx took 5,660 s typed, with mypy and Pyright both
+strict and `--cross-module`, on one worker; the typed checks are nearly all of
+that.
 
 The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-pairs the project after each batch of applied changes; later global passes re-pair only the files rewritten since the previous one, which changes no proposal (the argument is in [the architecture document](https://github.com/ericeallen/towel/blob/v1.772/docs/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)), and the ecosystem check still gives both extended budgets. Forking cuts the wall time of a large project several-fold on a multi-core machine. With the type checker and formatter installed, the defaults add to an annotated project's time in proportion to the number of applied refactorings, each of which is type-checked: Towel's own source (commit `8cb8b8c`, September 24, 2026, one core) applies 22 refactorings in 35 s with `--no-types --no-format` and 21 in 138 s with the defaults, its one configured checker, mypy, verifying the complete prospective project through an owned mypy worker that forks a child per build (a project that configures pyright is also checked by a long-lived pyright language server over a private copy of the project). At `5ff2458` (September 19, 2026), on half as much source and with mypy held in-process, the same runs took 8.4 s and 11.9 s, and in-process mypy raised peak memory from about 174 MB to about 894 MB.
 
@@ -204,7 +205,7 @@ towel dry path/to/project path/to/cleaned --no-interactive --no-types --no-forma
 towel dry path/to/project path/to/cleaned --no-interactive --cross-module
 ```
 
-By default Towel extracts only duplicates within one module, and adds no import between the project's modules that runs. `--cross-module` also shares a helper between duplicates in different modules: the helper lives in one module and the others import it, a new dependency between those modules, which is why it has to be asked for. The import is spelled the way the program's own imports show it works wherever the program runs: relatively between modules of one package, and across packages only where the importing package already imports the other; anything else is declined. Before writing anything, a `--cross-module` run names every place where the program's imports do not name its modules unambiguously. It refuses the run when one leaves a name of the code being refactored in doubt: a stale `build/lib` copy beside the package, a name that two directories both provide, a relative import that climbs out of its package, a copy installed outside the project (the project's own `.venv` included), or a directory named like a distribution the project requires. Each is reported with its own remedy: `--exclude build`, or the directory holding the stray copy, for a copy in the tree; an environment where the name is this tree, such as an editable install, for an installed copy, which `--exclude` cannot reach; a rename or `--exclude` of the namesake directory for a required distribution. An import of a module the tree lacks refuses nothing. Test data importing a mocked module, or a `_version.py` that installing the project generates, are examples. The file making such an import is left unchanged and named in the report.
+By default Towel extracts only duplicates within one module, and adds no import between the project's modules that runs. `--cross-module` also shares a helper between duplicates in different modules: the helper lives in one module and the others import it, a new dependency between those modules, which is why it has to be asked for. The import is spelled the way the program's own imports show it works wherever the program runs: relatively between modules of one package, and across packages only where the importing package already imports the other; anything else is declined. Before writing anything, a `--cross-module` run names every place where the program's imports do not name its modules unambiguously. It refuses the run when one leaves a name of the code being refactored in doubt: a stale `build/lib` copy beside the package, a name that two directories both provide, a relative import that climbs out of its package, a copy installed outside the project (the project's own `.venv` included), a directory named like a distribution the project requires, a directory named like a library that lacks a module the program imports under that name, or a file that a symbolic or hard link gives a second module name. Each is reported with its own remedy: `--exclude build`, or the directory holding the stray copy, for a copy in the tree; an environment where the name is this tree, such as an editable install, for an installed copy, which `--exclude` cannot reach; a rename or `--exclude` of the namesake directory for a required distribution. An import of a module the tree lacks refuses nothing. Test data importing a mocked module, or a `_version.py` that installing the project generates, are examples. The file making such an import is left unchanged and named in the report. A helper is hosted only where every borrower can import it: not in a module some supported platform or Python cannot import (one that imports `msvcrt`, say), not in one the program imports only under a condition, not in one the built wheel leaves out, and not in another distribution of a monorepo, which the borrower may be installed without.
 
 A separate output must not already exist or overlap the input. Cancellation leaves the filesystem unchanged. Symlinked Python files are excluded from directory analysis. In place, a hard-linked file is left unchanged and named before the run starts, since replacing it would leave its other links holding the old text; the rest of the run is written. The API accepts an empty output directory for fixture and integration workflows. Every run, in place or not, refactors a private copy of the whole project and writes nothing until it has succeeded, its final type-check confirmation included; an in-place run then writes every file it changed as one batch. Each file is replaced atomically; caught application failures roll back, and interrupted batches retain a recovery journal. Readers can observe a partially applied batch. Keep exclusive write access to the project and its parent while applying or recovering: snapshot checks detect stale files but cannot prevent a noncooperating editor from writing in the final check/replace interval.
 
@@ -222,7 +223,7 @@ Differing sub-expressions become helper parameters. Literals, names the call sit
 
 The refactoring pipeline preserves the original Python operators. Generator/suspension operations and frame-sensitive calls such as `locals()` are conservatively rejected. Nested blocks that bind names used outside the block are rejected until full control-flow liveness is supported. Static local import cycles and cross-module global declarations are rejected. This reduces the number of proposals rather than claiming an unsupported transformation is safe.
 
-Dynamic imports, reflection, arbitrary callbacks, runtime rebinding, metaclasses, and external side effects limit what can be established statically. Each engine owns a bounded analysis session with content checks and isolated AST snapshots. The test import-isolation harness and an individual engine instance require sequential use. Candidates involving detected namespace rebinding, frame inspection, or comprehension assignment expressions are rejected; opaque external reflection and rebinding remain outside the supported model.
+Dynamic imports, reflection, arbitrary callbacks, runtime rebinding, metaclasses, and external side effects limit what can be established statically. Each engine owns a bounded analysis session with content checks and isolated AST snapshots. The test import-isolation harness and an individual engine instance require sequential use. Candidates involving detected namespace rebinding, frame inspection, or comprehension assignment expressions are rejected; opaque external reflection and rebinding remain outside the supported model. A call of inline-snapshot's `snapshot()`, which reads the literal at its call site, stays where it stands. Code that enumerates a class's or module's namespace and wraps what it finds is reflection, and a helper added there is wrapped too ([known limitations](https://github.com/ericeallen/towel/blob/v1.772/docs/KNOWN_LIMITATIONS.md#reflection-over-a-namespace-and-stack-depth)).
 
 ## Why some arguments are wrapped in `lambda`
 
@@ -377,4 +378,4 @@ Project:
 
 ## License
 
-The repository declares the [Apache License 2.0](https://github.com/ericeallen/towel/blob/v1.772/LICENSE), with Eric Allen copyright headers. The audit preserves that declaration. No release or remote publication is performed by the audit workflow.
+Towel is licensed under the [Apache License 2.0](https://github.com/ericeallen/towel/blob/v1.772/LICENSE); its source files carry Eric Allen copyright headers.

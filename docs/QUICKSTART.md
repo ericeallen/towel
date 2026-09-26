@@ -25,7 +25,9 @@ code it inserts and to annotate and type-check the helpers it generates.
 towel preview path/to/project
 ```
 
-For each opportunity, `preview` prints the extracted helper and, per call site, the original block (`-`) next to the generated call (`+`), so you can see exactly what would change before applying anything.
+For each opportunity, `preview` prints the extracted helper and, per call site, the original block (`-`) next to the generated call (`+`). A preview is one untyped pass: `dry` then verifies each change with the type checker, so it may apply fewer, and it pairs again after each change, so it may find more.
+
+By default a helper is shared only between duplicates in one module; add `--cross-module` to share helpers between modules too, which adds imports between them.
 
 On a large project, `--min-lines 5` or `--max-pairs N` bounds the analysis; progress is printed to stderr.
 
@@ -45,6 +47,10 @@ signature is checked against and how many third-party packages their imports
 pull in — and then asks before doing any of it. On a large annotated project
 that is worth reading: a full run can take a while, and `--max-refactorings N`
 stops after N.
+
+If the run refuses because a file of the project does not parse on the Python
+Towel runs on, run Towel on a Python that parses it, or, for deliberately
+invalid test data, leave it out with the `--exclude` the refusal names.
 
 The diff also shows one file that is not code: `.towel-helpers.json`, which
 `dry` writes into the output for the naming step below. It is safe to delete.

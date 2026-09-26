@@ -850,6 +850,27 @@ its class and object, reads no cell and moves anywhere.
 
 ## Type annotations on helpers
 
+Some extractions no helper signature can type, and a typed run declines
+them early, under the reason its summary counts:
+
+- *narrows what its caller reads after the call*: the block tests a name or
+  attribute that the code after it relies on (packaging's `if
+  self._key_cache is None`), and the narrowing ends with the helper;
+- *narrows what a call-site lambda reads*: a test that once governed an
+  expression now passed as a lambda (rich's `task.total is not None` beside
+  `lambda: int(task.total)`);
+- *declares its class's attributes*: assignments through a method's
+  receiver were the class's attribute declarations (nox's
+  `self.location_name = location`), and a function outside the class
+  declares none;
+- *completes its caller's partial type*: mypy learns an empty collection's
+  element type from the next statement that fills it (mistune's `attrs =
+  {}`), and passed to a call first it is an error at the assignment;
+- *would be the one unannotated function of its module*: every annotated
+  signature was refused, in a module whose every function is annotated,
+  where a checker that skips unannotated bodies would accept what the
+  project's stricter CI rejects (idna).
+
 Annotations are written only from evidence, and their limits follow from
 where the evidence comes from:
 
