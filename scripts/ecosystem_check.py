@@ -2201,10 +2201,15 @@ def environment(
         typing_file.write_text(json.dumps(dataclasses.asdict(typing)), encoding="utf-8")
         # Written last: an environment without it is one whose build never finished.
         fingerprint.write_text(wanted)
+    # Copied, not linked: on Linux uv links an install to its cache by default,
+    # so a write into the installed Towel would change the cached wheel's files
+    # and every later reinstall of the candidate would bring the write back.
     _install(
         python,
         log,
         "--no-deps",
+        "--link-mode",
+        "copy",
         "--reinstall-package",
         candidate.distribution,
         str(candidate.wheel),

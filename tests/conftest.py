@@ -61,6 +61,18 @@ def _only_this_process_finds(description: str) -> bool:
 
 
 @pytest.fixture(autouse=True)
+def _no_outer_coverage_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the configuration of a ``coverage run`` measuring the suite out of every project it builds.
+
+    ``coverage run`` exports ``COVERAGE_RCFILE`` naming Towel's own ``pyproject.toml``,
+    and Towel reads coverage.py's configuration as coverage.py does, that variable
+    first, so every test project took Towel's exclusions under CI's coverage run
+    and never without it. A test about the variable sets it itself.
+    """
+    monkeypatch.delenv("COVERAGE_RCFILE", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _probe_as_a_projects_interpreter(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Let the import model's interpreter probe see what a project's own interpreter would.
 
