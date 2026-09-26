@@ -9,6 +9,10 @@ they were when measured; `_find_block_pairs_multi_file` is now
 `get_bound_variables_in_context` is `bound_variables_in_context`, and
 `is_value_producing` is the engine's memoized `_is_value_producing`.
 
+Every figure here was measured on an Apple M5 Max with 18 cores and 128 GiB
+under macOS, writing to its internal APFS volume, at the commit or date it
+names; one marked "under load" shared the machine with other work.
+
 ## Where the time goes
 
 `towel preview src/towel`, serial (`TOWEL_WORKERS=1`), 70,576 candidate

@@ -2052,7 +2052,8 @@ it tractable, all exact: they change no proposal.
   without types changed 108 files in 11 minutes. Sphinx's own test suite, run
   serially, reported the same 2385 passed, 34 skipped and six pre-existing
   failures before and after. In the 1.772 release corpus, typed with
-  `--cross-module` on one worker, Sphinx took 94 minutes and changed 55 files,
+  `--cross-module` on one worker in the release corpus's Docker container, a Linux VM on the same M5 Max given all 18 cores and 8 GB of memory, running four projects at a time, Sphinx took 94 minutes and changed
+  55 files,
   its suite again unchanged; the audit rounds' checks decline more, and typed
   verification is nearly all of the time.
   The tail was the cost: a proposal the project rejected used to be heard

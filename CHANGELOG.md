@@ -22,12 +22,13 @@ September 21 it reached a fixed point in 46 minutes, applying 380 refactorings
 across 105 files, after which Sphinx's own test suite reported exactly what it
 reported before: 2385 passed, 34 skipped, and the same six failures that
 checkout already had. The audit rounds that followed made Towel decline more;
-the release corpus, typed with `--cross-module` on one worker, took 94 minutes
-over Sphinx and changed 55 files, its suite again unchanged.
+the release corpus, typed with `--cross-module` on one worker in the release corpus's Docker container, a Linux VM on the same M5 Max given all 18 cores and 8 GB of memory, running four projects at a time,
+took 94 minutes over Sphinx and changed 55 files, its suite again unchanged.
 
 Every figure in this file was measured on an Apple M5 Max with 18 cores and
 128 GiB. This entry's were taken on macOS 26.5.1 with Python 3.12.13, the
-machine otherwise idle. The Sphinx figures are Sphinx 9.1.1 at `e44a40e`, 243 modules with
+machine otherwise idle, except where a figure says otherwise: the release
+corpus ran in the release corpus's Docker container, a Linux VM on the same M5 Max given all 18 cores and 8 GB of memory, running four projects at a time. The Sphinx figures are Sphinx 9.1.1 at `e44a40e`, 243 modules with
 mypy and Pyright both strict, checked by that project's own venv: **mypy
 1.19.1 and pyright 1.1.407**. The mypy behaviour described below belongs to
 that version; Towel's own checks run against a newer mypy and do not show it.
@@ -37,8 +38,9 @@ that version; Towel's own checks run against a newer mypy and do not show it.
   number of functions that alias a name to itself (`tok = tok.next_token`,
   `node = node.parent`), a common way to walk a linked structure. Twelve such
   functions cost 469 million calls and 371 s, and yapf's `--cross-module`
-  fixed point took 2,083 s. The resolution is now computed once per name and
-  depth, and the same run takes 5 s with byte-identical output. The release
+  fixed point took 2,083 s (macOS, one worker, `--no-types --no-format`, the
+  run sharing the machine with one other). The resolution is now computed once
+  per name and depth, and the same run takes 5 s with byte-identical output. The release
   corpus's yapf and sphinx runs had timed out on it.
 - inline-snapshot tests that differ only in their literal were extracted
   into one helper, so `snapshot()` read a helper parameter at its call site

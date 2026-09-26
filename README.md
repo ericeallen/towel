@@ -163,6 +163,11 @@ Platform, CPU, memory, and disk requirements are in [Requirements](#requirements
 
 ## How long it takes
 
+Every time in this section was measured on an Apple M5 Max (18 cores,
+128 GiB) under macOS, and each figure names its commit and conditions; the
+[measurement environment](https://github.com/ericeallen/towel/blob/v1.772/docs/KNOWN_LIMITATIONS.md#measurement-environment)
+records the rest. Expect other hardware to differ.
+
 There is no time budget; progress is reported per phase on stderr, so stdout can be piped or redirected. Ctrl-C and SIGTERM both end the run cleanly (an interrupted apply is rolled back from its journal), and a reader that closes the pipe early is not an error. Pairing is quadratic in the number of candidate blocks per file, so a few large modules with many near-identical methods are the worst case, not total line count. With N near-identical blocks in one file every pair proposes the same N-site extraction; each distinct proposal is kept once, but evaluating the pairs still grows as N cubed until the first application collapses them into one helper. `--max-pairs` bounds the candidate pairs one analysis evaluates (the largest groups of similar blocks are left out, with a warning) and `--min-lines` raises the smallest block considered.
 
 Rough expectations with the defaults, one core: a 2,000-line module takes
@@ -177,8 +182,8 @@ which is the one table of package timings and says what each figure
 measured; the largest projects in the ecosystem check, networkx and Sphinx
 (150,000 to 200,000 lines), take from several minutes to over an hour. In the
 1.772 ecosystem check, Sphinx took 5,660 s typed, with mypy and Pyright both
-strict and `--cross-module`, on one worker; the typed checks are nearly all of
-that.
+strict and `--cross-module`, on one worker, in the release corpus's Docker container, a Linux VM on the same M5 Max given all 18 cores and 8 GB of memory, running four projects at a time; the typed checks are
+nearly all of that.
 
 The two largest projects in the ecosystem check, networkx and Sphinx, are the slowest because their directory fixed point re-pairs the project after each batch of applied changes; later global passes re-pair only the files rewritten since the previous one, which changes no proposal (the argument is in [the architecture document](https://github.com/ericeallen/towel/blob/v1.772/docs/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)), and the ecosystem check still gives both extended budgets. Forking cuts the wall time of a large project several-fold on a multi-core machine. With the type checker and formatter installed, the defaults add to an annotated project's time in proportion to the number of applied refactorings, each of which is type-checked: Towel's own source (commit `8cb8b8c`, September 24, 2026, one core) applies 22 refactorings in 35 s with `--no-types --no-format` and 21 in 138 s with the defaults, its one configured checker, mypy, verifying the complete prospective project through an owned mypy worker that forks a child per build (a project that configures pyright is also checked by a long-lived pyright language server over a private copy of the project). At `5ff2458` (September 19, 2026), on half as much source and with mypy held in-process, the same runs took 8.4 s and 11.9 s, and in-process mypy raised peak memory from about 174 MB to about 894 MB.
 

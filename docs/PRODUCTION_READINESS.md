@@ -51,8 +51,12 @@ each other and with `src/towel` file for file (96 files). Both pass
 3.13, bare and with both extras. Their hashes are recorded in the release
 tag's annotation, since recording them here would change the sdist.
 
-**The 141-project corpus**, run in a disposable container on Python 3.12,
-typed by default and with `--cross-module` for every project:
+**The 141-project corpus**, run in a disposable Docker container on Python
+3.12, typed by default and with `--cross-module` for every project. The
+container is a Linux VM on the same M5 Max, given all 18 cores and 8 GB of
+memory, and it ran four projects at a time, each with `TOWEL_WORKERS=1`. For
+part of the full run a test gate shared the machine; the sphinx-only run did
+not. Its times are not the idle macOS figures this report otherwise gives.
 
 | Verdict | Projects |
 |---|---:|
@@ -82,8 +86,9 @@ typed by default and with `--cross-module` for every project:
 Resolving which typing form a name denotes grew exponentially with the
 functions that alias a name to itself. yapf's `--cross-module` fixed point
 took 2,083 s; with the resolution kept per name and depth it takes 5 s, with
-byte-identical output (one worker, `--no-types --no-format`; the slow run
-shared the machine with one other).
+byte-identical output (native macOS on the M5 Max, Python 3.12.13, one
+worker, `--no-types --no-format`; the slow run shared the machine with one
+other).
 
 **Audits.** Round three found 22 P1s and round four about 26, across the
 real-code, semantic, verification and reading dimensions. All are fixed and
