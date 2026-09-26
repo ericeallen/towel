@@ -9,9 +9,10 @@ they were when measured; `_find_block_pairs_multi_file` is now
 `get_bound_variables_in_context` is `bound_variables_in_context`, and
 `is_value_producing` is the engine's memoized `_is_value_producing`.
 
-Every figure here was measured on an Apple M5 Max with 18 cores and 128 GiB
-under macOS, writing to its internal APFS volume, at the commit or date it
-names; one marked "under load" shared the machine with other work.
+Unless a section says otherwise, figures here were measured on an Apple
+M5 Max with 18 cores and 128 GiB under macOS, writing to its internal APFS
+volume, at the commit or date it names. A measurement marked "under load"
+shared the machine with other work.
 
 ## Where the time goes
 
@@ -173,3 +174,39 @@ and imported bases, and compares exact fixed-point output with memoization
 enabled and disabled. Its count regressions fail against the 1.772 source.
 These measurements establish less repeated work; they do not measure the
 speedup of a complete typed project refactoring.
+
+## Typed Sphinx investigation after 1.772: still open
+
+A bounded diagnostic run on September 26, 2026, used Towel `088a4c7`,
+Sphinx `e44a40eb2f810558ccd9da1425421270ccb81351` (9.1.1), Python 3.12.14,
+mypy 1.19.1 and pyright 1.1.407. It ran in an isolated copy of the retained
+corpus environment, in the Linux Docker VM on the M5 Max with about 8 GiB
+available, `TOWEL_WORKERS=1`, and concurrent tests on the host. The command
+was `towel dry sphinx OUTPUT --cross-module --no-interactive --max-refactorings 10`,
+with a 1,200-second outer timeout. Lightweight wrappers timed checker
+method boundaries without tracing individual AST operations.
+
+Completed startup calls took:
+
+| Operation | Wall seconds |
+|---|---:|
+| mypy initial project check | 6.98 |
+| pyright initial project check | 11.49 |
+| mypy first reveal batch | 2.29 |
+| pyright first reveal batch | 1,084.32 |
+
+The pyright reveal returned before the run entered analysis. The outer
+timeout then stopped the run at 20 minutes, before candidate application;
+the container exited 124 and was not OOM-killed. This is an incomplete
+profile, not a fixed-point runtime or a decomposition of the corpus's
+5,660-second run. These wall times were measured under load.
+
+`PyrightOracle.reveal` groups requests by file and calls `_diagnostics`
+separately for each file. On the warm path each call reaches
+`_WarmProject.diagnostics` and the language server's `diagnostics_after`.
+The first reveal batch is therefore a concrete next target. The current
+trace does not split that batch into individual file round-trips or show
+how much later candidate checking repeats work. The next profile should
+record entries as well as exits, per-file calls and exact repeated inputs,
+and then continue through a fixed point. Checker coverage and the accepted
+proposal set must remain unchanged by any optimization.
