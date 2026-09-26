@@ -9,7 +9,7 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
-## [1.772] - 2026-09-25
+## [1.772] - 2026-09-26
 
 Changes since 1.732.
 

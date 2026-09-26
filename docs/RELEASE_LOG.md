@@ -16,22 +16,27 @@ project's own rather than Towel's: the Sphinx measurements run mypy 1.19.1
 and pyright 1.1.407 from Sphinx 9.1.1 at `e44a40e`, and the mypy costs they
 describe belong to that version.
 
-## 2026-09-25 (1.772)
+## 2026-09-26 (1.772)
 
 - Version: 1.772; release tag `v1.772`, moved from the September 19
   candidate to this commit. The tag's annotation records the wheel and sdist
   hashes.
 - Scope: the fixes of audit rounds three and four, merged on `audit-1772`;
-  the [changelog](../CHANGELOG.md#1772---2026-09-25) lists them.
+  the [changelog](../CHANGELOG.md#1772---2026-09-26) lists them.
 - Tests: the full suite at `2b399ef` passed 7,751 on 3.11, 7,882 on 3.12 and
   7,899 on 3.13, with `just check` passing. `src/towel` is unchanged from
   there to the release.
+- CI: the first run of the candidate failed ten tests under CI's coverage run
+  and Linux link mode, from a `COVERAGE_RCFILE` leak into test projects and a
+  harness install linked to uv's cache. Both are fixed at `c3d062a`, and the
+  suite passed as CI runs it before the release commit was pushed. The tag
+  first pushed for that candidate was deleted before anything was uploaded.
 - Distributions: the wheel, the sdist and `src/towel` agree file for file.
   `twine check --strict` passes, and the wheel imports on 3.11, 3.12 and
   3.13, bare and with extras.
 - Corpus: 141 projects, typed and with `--cross-module`, gave 90 PASS,
   45 NO_CHANGE and 6 import-problem refusals. The
-  [readiness report](PRODUCTION_READINESS.md#1772-release-validation-september-25-2026)
+  [readiness report](PRODUCTION_READINESS.md#1772-release-validation-september-26-2026)
   gives the details.
 - Not run: a fifth audit round. The owner released without it; see DECISIONS,
   "1.772 ships without a clean audit round".
@@ -39,7 +44,7 @@ describe belong to that version.
 ## 2026-09-19 (1.772 candidate)
 
 - Version: 1.772, beta candidate. The `v1.772` tag was first placed here and
-  moved to the release on 2026-09-25.
+  moved to the release on 2026-09-26.
 - Runtime: `src/towel` is **not** unchanged from `ba539d4`. That claim was
   written for an earlier candidate and is withdrawn. The type-checking path was
   rewritten for this release; dependencies and build configuration are
@@ -61,7 +66,7 @@ describe belong to that version.
   Generic instance, class, and static helper methods are included; fresh
   declarations are emitted at module scope before the host class and roll back
   with a failed candidate. See the
-  [changelog](../CHANGELOG.md#1772---2026-09-25) and the
+  [changelog](../CHANGELOG.md#1772---2026-09-26) and the
   [type-parameter design](proposals/type-parameters.md).
 - Inference order: a precise ordinary signature is preferred, and a generic
   candidate is tried when that signature contains `Any` or the whole project

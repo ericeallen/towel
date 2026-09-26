@@ -1,7 +1,7 @@
 # Preparing a release
 
-The `1.772` release is dated September 25, 2026. Its
-[changelog](../CHANGELOG.md#1772---2026-09-25) records what changed since
+The `1.772` release is dated September 26, 2026. Its
+[changelog](../CHANGELOG.md#1772---2026-09-26) records what changed since
 `1.732`. Helpers are shared within one module unless `--cross-module` is
 given. Import names come from the program's own imports. A typed run is
 compared against the project's own check where the original's errors stood.
@@ -18,7 +18,7 @@ behind each claim are recorded in the
 
 The 1.772 corpus, typed and with `--cross-module`, gave 90 `PASS`,
 45 `NO_CHANGE` and six import-problem refusals among 141 projects; the
-[readiness report](PRODUCTION_READINESS.md#1772-release-validation-september-25-2026)
+[readiness report](PRODUCTION_READINESS.md#1772-release-validation-september-26-2026)
 gives the commits, the refusals' causes and the four projects that took the
 untyped path. Earlier corpus reports belong to their own commits. Preparing
 artifacts does not authorize uploading

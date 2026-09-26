@@ -1,13 +1,13 @@
 # Production readiness
 
-**1.772 is released on September 25, 2026, from `audit-1772`.** It repays
+**1.772 is released on September 26, 2026, from `audit-1772`.** It repays
 the defects that four audit rounds found in 1.732's design. Helpers are shared
 within one module unless `--cross-module` is given. Import names come only
 from the program's own imports. A typed run is judged against the project's
 own check, error by error, where the original's errors stood. Code under a
 decorator that rewrites bodies stays where it is. Type anti-unification, the
 change the September 19 candidate carried, is part of it. The
-[changelog](../CHANGELOG.md#1772---2026-09-25) lists every change.
+[changelog](../CHANGELOG.md#1772---2026-09-26) lists every change.
 
 Release evidence is valid only for the exact source it was taken from. The
 validation below names its commits; `src/towel` is identical at each of them.
@@ -28,10 +28,11 @@ project's own rather than Towel's: the Sphinx measurements run mypy 1.19.1
 and pyright 1.1.407 from Sphinx 9.1.1 at `e44a40e`, and the mypy costs they
 describe belong to that version.
 
-## 1.772 release validation (September 25, 2026)
+## 1.772 release validation (September 26, 2026)
 
 `src/towel` is the same at every commit named here, from `2b399ef` to the
-release; later commits touch only documentation and the corpus manifest.
+release; later commits touch only documentation, tests, the corpus manifest
+and the corpus harness.
 
 **Tests**, the full suite on each interpreter at `2b399ef`, with
 `just check` (lint, types, security, licence headers) passing:
@@ -44,6 +45,16 @@ release; later commits touch only documentation and the corpus manifest.
 
 The 3.11 skips are fixtures in syntax 3.11 does not parse (PEP 695, PEP 701),
 stored as `.pynew`.
+
+The first CI run of the release candidate failed ten tests on every
+interpreter that pass the table's run, for two reasons that only CI's
+conditions reach. Under `coverage run`, `COVERAGE_RCFILE` names Towel's own
+configuration, and test projects took its exclusions. On Linux, uv links an
+install to its cache, so the ecosystem harness's tamper test wrote through
+into the cached candidate. Both are fixed at `c3d062a`: the suite clears the
+variable for each test, and the harness installs the candidate by copy. The
+full suite then passed as CI runs it, under `coverage run`, with bytecode
+written and uv in its Linux link mode: the same 7,751, 7,882 and 7,899.
 
 **Distributions.** The wheel and sdist, built from a clean clone, agree with
 each other and with `src/towel` file for file (96 files). Both pass

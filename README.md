@@ -20,7 +20,7 @@ bodies stays where it is. An extracted helper can also keep the relationships
 among its argument and return types: anti-unifying the types alongside the code
 gives `list[T] -> T` where the call sites use `list[int] -> int` and
 `list[str] -> str`. See the
-[1.772 changelog](https://github.com/ericeallen/towel/blob/v1.772/CHANGELOG.md#1772---2026-09-25)
+[1.772 changelog](https://github.com/ericeallen/towel/blob/v1.772/CHANGELOG.md#1772---2026-09-26)
 for details.
 
 **New here?** The [Quick start](https://github.com/ericeallen/towel/blob/v1.772/docs/QUICKSTART.md) gets you from install to a reviewed refactoring in four steps.
