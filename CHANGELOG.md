@@ -17,10 +17,13 @@ A typed run over a large project did not finish. Sphinx, 243 modules with mypy
 and Pyright both strict, ran 3 h 21 min without reaching a fixed point where
 the same run without types takes 11 minutes. Nearly all of that was the mypy
 worker getting slower with every request it served, and most of the rest was
-asking the checkers questions whose answers were already known. It now reaches
-a fixed point in 46 minutes, applying 380 refactorings across 105 files, after
-which Sphinx's own test suite reports exactly what it reported before: 2385
-passed, 34 skipped, and the same six failures that checkout already had.
+asking the checkers questions whose answers were already known. On
+September 21 it reached a fixed point in 46 minutes, applying 380 refactorings
+across 105 files, after which Sphinx's own test suite reported exactly what it
+reported before: 2385 passed, 34 skipped, and the same six failures that
+checkout already had. The audit rounds that followed made Towel decline more;
+the release corpus, typed with `--cross-module` on one worker, took 94 minutes
+over Sphinx and changed 55 files, its suite again unchanged.
 
 Every figure in this file was measured on an Apple M5 Max with 18 cores and
 128 GiB. This entry's were taken on macOS 26.5.1 with Python 3.12.13, the

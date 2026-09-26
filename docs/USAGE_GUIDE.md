@@ -185,14 +185,41 @@ import those show to work wherever the program runs
   with an import that runs whenever its module is imported, not one inside a
   function, so a library never borrows from the test package inside it;
 - never from a module the build configuration leaves out of what ships into
-  one it keeps: hatch's `exclude`, `include`, `only-include` and
-  `packages`, setuptools' `packages.find` excludes or an explicit
-  `packages` list, MANIFEST.in's `exclude`, `recursive-exclude`,
-  `global-exclude` and `prune` (a wheel built from the sdist lacks what the
-  sdist does), Poetry's `exclude`, PDM's `excludes`, uv's, flit's and
-  scikit-build-core's excludes, and what a `.gitignore` covers. The module
-  left out may still borrow from the one that ships. What a setup.py or a
-  build hook leaves out is not known.
+  one it keeps, read in each distribution's own configuration:
+  - hatch's `exclude`, `include`, `only-include`, `packages`,
+    `only-packages` and its default wheel selection;
+  - setuptools' `packages.find` (`where`, `include`, `exclude`), an explicit
+    `packages` list, `package-dir` and `py-modules`;
+  - MANIFEST.in's `exclude`, `recursive-exclude`, `global-exclude` and
+    `prune` (a wheel built from the sdist lacks what the sdist does);
+  - Poetry's `packages` (`include`, `from`, `format`), `include`, `exclude`
+    and its default package;
+  - PDM's `includes`, `excludes`, `source-includes`, `package-dir` and its
+    default;
+  - uv's `module-name`, `module-root`, `source-include`, `source-exclude`
+    and `wheel-exclude`;
+  - flit's module and sdist `exclude`;
+  - scikit-build-core's `wheel.packages` and excludes;
+  - what a `.gitignore` covers.
+
+  The module left out may still borrow from the one that ships. What a
+  setup.py or a build hook leaves out is not known, and a setting Towel
+  cannot interpret puts the host in doubt;
+- never from a module some supported platform or Python cannot import: one
+  whose module-level code imports what CPython's documentation marks as
+  available on some platforms only (`msvcrt`, `fcntl`, `os.startfile`,
+  `signal.SIGALRM`), a module a supported Python removed, or a dependency a
+  marker limits. A `try` that catches `ImportError` keeps its imports
+  optional;
+- never from a module the program imports only under a condition (an `if`,
+  a `try`, a function body), for a borrower that does not already load it
+  (`conditionally_imported_host`);
+- never across distributions: a borrower in a distribution, the nearest
+  directory with a `setup.py`, a `setup.cfg` with `[metadata]` or
+  `[options]`, or a `pyproject.toml` with `[project]`, `[build-system]` or
+  `[tool.poetry]`, borrows only from a host in the same one, since it may be
+  installed against the other's released version (`other_distribution`). A
+  module in no distribution, such as a root test or script, is exempt.
 
 A host that no participating module can import that way is not taken, and a
 pair with no such host is declined (`unproven_import`). The costs: sibling

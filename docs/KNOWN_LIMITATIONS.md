@@ -1574,7 +1574,12 @@ the proposals it built and did not apply, by reason:
   `thunk_of_possibly_unbound_local`: a lambda the helper call would carry
   reads a local of the calling function that may be unbound there. The
   original raises `UnboundLocalError` at that read; a thunk can only raise
-  `NameError`, so an `except UnboundLocalError` would stop matching.
+  `NameError`, so an `except UnboundLocalError` would stop matching. The
+  same reason declines a thunk that reads a closure variable an inlined
+  list, set or dict comprehension of the calling function rebinds: from
+  Python 3.12 (PEP 709) that comprehension shares the function's scope, and
+  the thunk would raise `NameError`. It declines on 3.11 too, where the
+  thunk would work.
 - Type information the move would destroy. `narrowing_lost_at_call_site`: a
   test in the block narrows a name, and an expression the two sites differ in
   reads that name, so extraction would leave the reading outside the region
@@ -2042,10 +2047,14 @@ it tractable, all exact: they change no proposal.
 - A full typed fixed point over a large project is still long. Sphinx had
   applied 276 refactorings across 101 files after 57 minutes and had not
   finished. That was measured before the verification work of 1.772: the same
-  run now reaches a fixed point in 46 minutes, applying 380 refactorings
-  across 105 files, where the same project without types changes 108 files in
-  11 minutes. Sphinx's own test suite, run serially, reports the same 2385
-  passed, 34 skipped and six pre-existing failures before and after.
+  run reached a fixed point in 46 minutes on September 21, before the audit
+  rounds, applying 380 refactorings across 105 files, where the same project
+  without types changed 108 files in 11 minutes. Sphinx's own test suite, run
+  serially, reported the same 2385 passed, 34 skipped and six pre-existing
+  failures before and after. In the 1.772 release corpus, typed with
+  `--cross-module` on one worker, Sphinx took 94 minutes and changed 55 files,
+  its suite again unchanged; the audit rounds' checks decline more, and typed
+  verification is nearly all of the time.
   The tail was the cost: a proposal the project rejected used to be heard
   again at every whole-project analysis, and families of near-identical
   methods pair many ways. A declined proposal is now remembered for the whole
