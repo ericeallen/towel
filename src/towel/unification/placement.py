@@ -32,6 +32,7 @@ from __future__ import annotations
 import ast
 
 from pathlib import Path
+from weakref import WeakKeyDictionary
 from typing import (
     Dict,
     FrozenSet,
@@ -54,7 +55,7 @@ from .class_private import mangling_prefix
 from .scope_analyzer import ScopeAnalyzer
 from .module_bindings import ModuleBindings, dotted_name, global_bindings, import_origin
 from .import_graph import ImportTimeCode, module_scope_statements
-from .statement_facts import imported_binding_name
+from .statement_facts import imported_binding_name, memoized_per_node
 from .visitors import MethodCallRewriter, visit_as
 from ..source_text import read_source
 
@@ -88,6 +89,19 @@ _IMPLICIT_RECEIVER_SPECIAL_METHODS = frozenset(
 )
 
 
+_DISPATCHED_NAMES: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
+"""Names whose attributes a method reads, kept only while its immutable AST lives."""
+
+
+def _dispatched_names(node: ast.AST) -> FrozenSet[str]:
+    """All names used as the base of an attribute, computed in one walk of the method."""
+    return frozenset(
+        child.value.id
+        for child in ast.walk(node)
+        if isinstance(child, ast.Attribute) and isinstance(child.value, ast.Name)
+    )
+
+
 def _dispatches_on(func: FunctionNode, implicit_param: str) -> bool:
     """Whether the method ever asks anything of its own receiver.
 
@@ -111,12 +125,7 @@ def _dispatches_on(func: FunctionNode, implicit_param: str) -> bool:
     passes ``self`` on still works with ``None``, and the helper still
     receives it as an ordinary argument.
     """
-    return any(
-        isinstance(node, ast.Attribute)
-        and isinstance(node.value, ast.Name)
-        and node.value.id == implicit_param
-        for node in ast.walk(func)
-    )
+    return implicit_param in memoized_per_node(_DISPATCHED_NAMES, func, _dispatched_names)
 
 
 def _implicit_param_for(kind: MethodKind, first: MethodInfo, second: MethodInfo) -> Optional[str]:
@@ -746,10 +755,13 @@ class HelperPlacement(EngineState):
         """
         source = sources.get(info.file_path)
         try:
+            if source is None:
+                source = read_source(info.file_path)
             code = ImportTimeCode(
-                source if source is not None else read_source(info.file_path),
+                source,
                 path=Path(info.file_path),
                 cache=self.import_graph,
+                tree=self._parse_source(source),
             )
         except (OSError, UnicodeError, SyntaxError, ValueError):
             return False

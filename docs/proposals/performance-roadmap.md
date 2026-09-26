@@ -146,3 +146,30 @@ and the verdict of the instantiation check is memoized on the helper, the
 call and the block's structure. The CHANGELOG's `[Unreleased]` section
 records each step with its measurement; the current end-to-end figures are
 in docs/KNOWN_LIMITATIONS.md.
+
+## Method placement after 1.772
+
+Measured September 26, 2026, on Python 3.13.7 against packaging 26.3's 20
+Python files, copied out of its installation. Two analysis passes with
+`TOWEL_CHECK_AST_IMMUTABLE=1` made 17,405 receiver-dispatch queries on 245
+distinct method/receiver inputs. `_dispatches_on` now computes the immutable
+set of names used as attribute receivers once per method AST. A weak-key
+cache releases the facts when the AST dies, and the differential-testing
+switch disables this memo along with the other node memos.
+
+The same passes asked 354 class-hosting questions on six distinct
+source/class inputs. Those answers are not cached: imported bases and the
+import graph can change while the host's source stays the same. Only the
+source parse is shared, through the engine's existing bounded parse cache.
+`ImportTimeCode` constructor parses fell from 368 to 14; all 354 hosting
+questions still ran. Counting every analysis parse, including the six that
+populate the source cache, gives 511 before and 163 after, a net reduction of
+348. Both versions found the same 23 proposals on each pass,
+and every rendered proposal was byte-identical.
+
+`tests/test_placement_memoization.py` guards the reduction by counting walks
+and parses, checks that the caches release ASTs or respond to revised source
+and imported bases, and compares exact fixed-point output with memoization
+enabled and disabled. Its count regressions fail against the 1.772 source.
+These measurements establish less repeated work; they do not measure the
+speedup of a complete typed project refactoring.

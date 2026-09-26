@@ -989,8 +989,13 @@ class ImportTimeCode:
         path: Optional[Path] = None,
         cache: Optional[ImportGraphCache] = None,
         depth: int = 0,
+        tree: Optional[ast.Module] = None,
     ) -> None:
-        self._tree = ast.parse(source)
+        # Placement asks repeatedly about one module. Its bounded parse cache
+        # can supply the tree of this exact source; this analysis only reads
+        # it. Only parsing is shared: imported bases are still judged against
+        # the current import graph and files whenever a verdict is requested.
+        self._tree = ast.parse(source) if tree is None else tree
         self._bindings = global_bindings(source)
         self._guards = TypeCheckingGuards(self._tree, self._bindings)
         self._path = path

@@ -9,6 +9,17 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+### Performance
+
+- Repeated method-placement questions share a method's receiver analysis and
+  the parse of its module. The receiver facts live only as long as their AST;
+  parsed modules use the engine's bounded source cache. Class-hosting verdicts
+  still follow the current imported bases on every request. On two analysis
+  passes over packaging 26.3, receiver walks fell from 17,405 to 245 and
+  total analysis parses from 511 to 163, with all 23 proposals'
+  rendered output unchanged. See the
+  [measurement and regression checks](docs/proposals/performance-roadmap.md#method-placement-after-1772).
+
 ## [1.772] - 2026-09-26
 
 Changes since 1.732.
