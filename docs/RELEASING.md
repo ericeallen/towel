@@ -282,12 +282,18 @@ Before uploading to PyPI:
 2. Resolve publication permissions, including any standing prohibition on
    pushing. An agent must not upload while leaving an unresolved GitHub push
    for the maintainer afterward.
-3. Publish the release commit and tag to GitHub, wait for all CI jobs on that
-   exact commit to pass, and verify the README's documentation URLs against
-   that tag.
-4. Upload the verified distributions to PyPI, then compare the remote hashes
+3. Push the release commit to GitHub, without its tag, and wait for all CI
+   jobs on that exact commit to pass.
+4. Confirm the version is still free on PyPI
+   (`https://pypi.org/pypi/code-towel/json` lists every published version).
+   Only then create the annotated tag on that commit, recording the artifacts'
+   hashes, and push it. A tag pushed before CI passes, or for a version PyPI
+   may already hold, can only be undone by deleting a public tag or by
+   releasing under another number. Verify the README's documentation URLs
+   against the pushed tag.
+5. Upload the verified distributions to PyPI, then compare the remote hashes
    and description with the local artifacts and smoke-test a fresh installation.
-5. Create the GitHub release from the existing tag with the same artifacts and
+6. Create the GitHub release from the existing tag with the same artifacts and
    release notes. Verify its tag, assets, and links before declaring completion.
 
 Uploaded artifacts cannot be replaced. A documentation-only correction after
