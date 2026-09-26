@@ -1570,3 +1570,20 @@ but the ideas and their names are from the literature.
 | The files of the program the whole-program scans read, which excluded files do not parse, and the refusal when one does not parse here | `program_files.py` (at `src/towel/`) |
 | The oldest and newest Python a project declares | `declared_python.py` (at `src/towel/`) |
 | Builtin names, exceptions | `builtins.py`, `exceptions.py` |
+| The names a helper's annotations need its module to bind, bound so that nothing else changes | `annotation_imports.py` |
+| What each rung of the annotation ladder writes, and which refusals end it | `annotation_ladder.py` |
+| Reading a type checker's spelling of a type as the annotation it means | `revealed_types.py` |
+| The errors a project's type check already reports, and what a later check adds | `type_baseline.py` (at `src/towel/`) |
+| Where to ask the type checker whether it looks at a statement at all | `reachability.py` (at `src/towel/`) |
+| Whether everything that can reach a function's body, decorators and class machinery, is known to leave it alone | `decorator_reach.py` |
+| The decorators and library base classes read in their source and found safe | `known_decorators.py`, `known_bases.py` |
+| Whether pytest rewrites a module's `assert` statements, as the project configures it | `assert_rewriting.py` |
+| Where a program may write into a module's namespace (builtins patched, decorators rebound) | `namespace_writes.py` |
+| What a module's top level binds, statement by statement | `module_bindings.py` |
+| The names each Python scope binds, and which scope a name resolves in | `lexical_scopes.py` |
+| The standard library some platform or supported Python lacks, per its documentation | `known_platforms.py` |
+| Which modules a project's build configuration leaves out of what it ships | `shipped_files.py` (at `src/towel/`) |
+| The distributions a project says it requires, and where it says so | `declared_requirements.py` (at `src/towel/`) |
+| The modules a change can reach: what imports the packages under refactoring | `consumers.py` (at `src/towel/`) |
+| Discovering a project's Python sources under one exclusion policy | `source_files.py` (at `src/towel/`) |
+| A syntax tree's structure as one string, the same for every builder and Python | `canonical_ast.py` (at `src/towel/`) |
