@@ -47,6 +47,7 @@ from .models import (
 from .visitors import body_without_docstring
 
 from .engine_state import EngineState
+from ..canonical_ast import canonical_dump
 from ..source_text import read_source
 from .function_index import FunctionIndex
 from .module_bindings import global_bindings
@@ -179,7 +180,7 @@ class ExistingFunctionReuse(EngineState):
             helper_bodies = {
                 (
                     tuple(arg.arg for arg in site.node.args.posonlyargs + site.node.args.args),
-                    tuple(ast.dump(statement) for statement in site.node.body),
+                    tuple(canonical_dump(statement) for statement in site.node.body),
                 )
                 for _, site in inserted
             }

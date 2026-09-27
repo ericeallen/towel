@@ -55,6 +55,7 @@ import ast
 from pathlib import Path
 from typing import Callable, Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence, Set
 
+from ..canonical_ast import canonical_dump
 from ..source_text import read_source
 from .exceptions import ProjectScanLimitError
 from .function_index import FunctionIndex
@@ -669,7 +670,8 @@ def _optional_before_test(
     local_names = function_names(function).local
     for statement in function.body:
         if isinstance(statement, ast.If) and (
-            statement.test.lineno == test.lineno and ast.dump(statement.test) == ast.dump(test)
+            statement.test.lineno == test.lineno
+            and canonical_dump(statement.test) == canonical_dump(test)
         ):
             return optional
         assigned: Optional[ast.expr] = None
