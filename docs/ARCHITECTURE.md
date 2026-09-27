@@ -388,8 +388,13 @@ decides:
   Namespace scans and lookup hooks observing the added private helper are
   reflection, outside the preservation contract. The engine therefore does
   not walk the ancestry to approve class machinery or require a base-class
-  allowlist. Explicit decorators remain subject to the body-preservation
-  rule, and a `Protocol` cannot gain a required member.
+  allowlist. `decorator_reach.py` does follow resolved class hooks to locate
+  supported body instrumentation. `instrumentation_flow.py` tracks the
+  specific values passed through aliases, wrappers and namespace iteration,
+  killing facts on rebinding; hook dispatch respects overrides and delegation.
+  Source/AST compilation of a method receives the same protection as an
+  explicit instrumenting decorator. Namespace observation alone does not.
+  A `Protocol` cannot gain a required member.
   `protocol_bases.py` follows direct-base aliases through project imports
   and conditional expressions. It stops at class definitions, since a
   concrete implementation of a protocol may host a helper. An unresolved

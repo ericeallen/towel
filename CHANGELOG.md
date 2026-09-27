@@ -11,6 +11,11 @@ ecosystem evidence behind each claim. The format follows
 
 ### Changed
 
+- Recognized body instrumentation is protected across decorators, ordinary
+  calls and executed class hooks. Binding and argument flow distinguish
+  method recompilation from unrelated instrumentation and namespace
+  observation, and hook dispatch respects overrides and explicit delegation.
+
 - Release documentation has offline regression checks against retained 1.772
   evidence and current CI configuration. They protect platform coverage,
   test and corpus counts, typed fallbacks, measurement units and resource

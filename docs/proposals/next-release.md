@@ -127,6 +127,23 @@ reruns: 59 import tests, one audited-wheel test, six ladder tests (included
 in the 93 above), and three watchdog tests. No final-source full-suite,
 coverage, interpreter-matrix or release-corpus completion is claimed.
 
+## Instrumentation checkpoint
+
+The forward flow recognizes typeguard and numba applications and project
+source/AST recompilation through ordinary calls and executed construction
+hooks. It follows local callee and argument aliases, namespace iteration,
+returns and comprehensions. Hook dispatch respects overrides and both forms
+of `super`. The specific source argument matters: using method source only
+as a diagnostic filename is not a body transformation. Namespace observation
+and transforming an unrelated function remain eligible.
+
+One independent review's counterexamples are permanent documented tests.
+Its runtime checks preserve the original and inline compiler traces with
+extraction refused, and permit one extraction in an overridden-hook control
+with identical output. General dynamic metaprograms remain outside the
+supported model. Full final-source release validation still follows the
+remaining implementation work below.
+
 ## Validation before release
 
 Run the full interpreter matrix, full corpus, self-dogfooding, documentation

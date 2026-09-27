@@ -386,11 +386,11 @@ addresses:
   `enum.unique`, reached through the module's own absolute imports; a class
   carrying any other decorator takes no helper. A metaclass,
   `__init_subclass__` or lookup hook can observe the new private helper,
-  wrap it, register it, redirect its lookup or drop it. Those observations
-  fall under the reflection limitation below. Their presence, or a base
-  that Towel has not inspected, does not alone prevent extraction. This
-  boundary does not exempt an explicit decorator from the body-preservation
-  rule. `__slots__` interactions with added methods are not modeled beyond
+  register it or redirect its lookup. Those observations fall under the
+  reflection limitation below. Their presence, or a base that Towel has not
+  inspected, does not alone prevent extraction. Recognized body-transforming
+  instrumentation is protected across decorators, ordinary calls and hooks;
+  this boundary does not exempt those transformations. `__slots__` interactions with added methods are not modeled beyond
   compilation.
 - **Import-time behavior.** Helpers are inserted before the first definition
   in a module, after imports, except that a helper whose annotations name
@@ -454,10 +454,10 @@ A program that asks what a namespace holds can see a helper appear there.
 This is reflection, and the owner ruled it a documented limitation rather
 than a defect to fix (DECISIONS, 2026-09-25). Towel does not detect:
 
-- a loop over `vars(C)`, `dir(C)` or `C.__dict__`, or a call such as
-  `instrument(C)` or typeguard's `typechecked(C)` on a class, that wraps or
-  rewrites every function it finds: a class-private helper hosted in `C`
-  is wrapped too;
+- arbitrary namespace observation through `vars(C)`, `dir(C)` or `C.__dict__`.
+  Adding a class-private helper changes what such a scan observes. Recognized
+  body transformations, including typeguard's `typechecked(C)`, are protected
+  separately as described below;
 - a descriptor whose `__set_name__` wraps its owner's functions, which then
   wraps the helper, or instruments methods that code has moved out of;
 - a metaclass or `__init_subclass__` that scans the namespace a helper joins,
@@ -475,8 +475,10 @@ than a defect to fix (DECISIONS, 2026-09-25). Towel does not detect:
 - a callee that rebinds a name between two reads in the block, including a
   builtin passed under `--parameterize-builtins`, which is read at the call.
 
-Decoration by hand is not reflection: `f = deco(f)` and a stacked
-`f = outer(inner(f))` are judged like the decorators they apply.
+The boundary is intentional support, not a distinction based on syntax or
+whether an operation uses reflection. `f = deco(f)` and a stacked
+`f = outer(inner(f))` are judged like the decorators they apply. Supported
+body instrumentation is also recognized in ordinary calls and class hooks.
 
 Each helper call adds a stack frame. Recursive functions are refactored like
 any other, so a deeply recursive function uses more stack after extraction
@@ -1388,7 +1390,18 @@ An enclosing class is therefore not rejected solely for a project metaclass,
 `__init_subclass__`, lookup hook, or an unlisted library base. This removes the
 1.772 machinery allowlist and its `class_machinery_may_transform_methods`
 declines. Decorators explicitly applied to the original code still obey the
-rule above. The method-host constraints also remain: same class, private
+rule above. Supported instrumenters also receive that protection when
+applied in an expression, return, comprehension or function body, or in an
+executed `__init_subclass__`, metaclass `__new__` or metaclass `__init__`.
+The analysis follows imported and local aliases, the particular arguments
+passed through project wrappers, and class methods drawn from a namespace.
+It recognizes typeguard, numba, and project source/AST recompilation flows.
+An overridden hook is followed only through actual delegation; reassigning
+an alias ends its connection to the original class. Instrumenting an
+unrelated function does not refuse this class. The regression suites
+`test_instrumentation_forms.py` and `test_instrumentation_flow_regressions.py`
+protect these distinctions; the hostile source-compiler fixture checks runtime
+assignment tracing. The method-host constraints remain: same class, private
 name, compatible receiver, and no new `Protocol` requirement.
 
 A `TestCase` subclass can take a class-private method helper,
@@ -1434,16 +1447,13 @@ values it compared. Whether a test passes or fails does not change.
 
 What this does not see:
 
-- **A function handed to a compiler or source reader only inside another
-  call.** Decoration by hand is read from assignments at module or class
-  level alone. An expression statement (`atexit.register(f)`,
-  `app.add_url_rule("/", view_func=f)`), a call in a function body
-  (`kernel = numba.njit(slow)` inside `setup()`, `Thread(target=f)`), a
-  bare call statement on a class (`typechecked(A)`), a default value, and a
-  function reached through a container
-  (`njit(KERNELS["slow"])`) or through a name bound other than by a `def`, an
-  import or a plain alias (`g = f if fast else h`) are not seen, and code may
-  still move out of the function they hand over.
+- **Arbitrary dynamic instrumentation.** General callback protocols, functions
+  reached through arbitrary containers (`njit(KERNELS["slow"])`), dynamically
+  assembled source and unrecognized code transformers are not generally
+  resolved. The supported value flow is bounded through project wrappers;
+  it is not execution of arbitrary metaprograms. Unknown explicit decorators
+  still decline conservatively. Reading or logging source alone does not
+  establish body instrumentation.
 - **Import hooks.** A hook that rewrites a whole module (typeguard's
   `install_import_hook`) is neither a decorator nor class machinery. A helper
   in the same module is rewritten with it; one shared across modules with

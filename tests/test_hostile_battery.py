@@ -403,7 +403,6 @@ KNOWN_DEFECTS: Dict[str, str] = {}
 REFLECTION_CASES: Dict[str, str] = {
     "r7fz_classhost_init_subclass_wraps": "a subclass hook wraps names found by scanning vars(cls)",
     "r7fz_classhost_metaclass_registry": "a metaclass publishes the scanned class namespace",
-    "r7d_metaclass_recompiles_methods": "a metaclass recompiles methods from inspect.getsource",
 }
 
 

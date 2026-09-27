@@ -1221,14 +1221,13 @@ STACKED_BY_HAND: Tuple[Spelling, ...] = (
         "show_a",
         None,
     ),
-    # A bare call statement on a class is reflection over its namespace, which
-    # the owner leaves a documented limitation (docs/DECISIONS.md).
+    # Supported instrumentation has the same boundary in a bare call.
     Spelling(
-        "a bare call statement on a class (not seen)",
+        "a bare supported instrumentation call on a class",
         "from typeguard import typechecked\nclass A:\n    def m(self):\n        return 1\n"
         "typechecked(A)\n",
         "A.m",
-        None,
+        "typeguard.typechecked",
     ),
 )
 

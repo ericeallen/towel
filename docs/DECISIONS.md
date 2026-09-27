@@ -1088,8 +1088,10 @@ not evidence that it transforms this class; neither is an overridden hook
 that does not run. Tests must cover equivalent supported spellings and
 positive examples of namespace observation and unrelated instrumentation.
 
-*Status: policy approved; implementation is in progress. The current draft
-and its form tests do not yet close the independent review findings.*
+*Status: implemented on the post-1.772 branch. Independent regressions cover
+local bindings, argument-specific source compilation, AST rewriting, overridden
+hooks and explicit `super` dispatch. The hostile metaclass fixture preserves its
+assignment traces; the overridden-hook runtime control permits extraction.*
 
 ## 2026-09-27: Keep caller-side refinements at the call site
 

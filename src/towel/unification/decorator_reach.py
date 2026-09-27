@@ -59,9 +59,10 @@ in the value of an assignment at module or class level, in any module of the
 project, counts as applying its callee to each definition an argument of it
 names, or hands a call made in that argument, at any depth: ``f =
 typechecked(register(f))`` applies both. Each is judged as that decorator
-would be. Implicit class hooks and attribute lookup are outside this
-explicit-decorator policy; they may inspect the helper namespace, which is
-not preserved by refactoring.
+would be. Supported body transformers are also followed through ordinary
+calls and the class-construction hooks that actually run. The forward flow
+recognizes local bindings, method enumeration, and source/AST compilation.
+Namespace inspection and attribute lookup alone remain outside the contract.
 """
 
 from __future__ import annotations
@@ -92,7 +93,7 @@ from ..program_files import program_directories, refuse_unparsed_file
 from ..source_text import read_source
 from .bounded_cache import BoundedCache
 from .exceptions import ProjectScanLimitError
-from .import_graph import ImportGraphCache, imported_definition_sites
+from .import_graph import ImportGraphCache, imported_alias_sites, imported_definition_sites
 from .known_decorators import (
     DecoratedKind,
     Form,
@@ -109,6 +110,7 @@ from .namespace_writes import (
     star_imports,
 )
 from .statement_facts import bindings_of
+from .instrumentation_flow import UNKNOWN, Flow, Symbol, Value, ValueKind
 
 FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 Definition = Union[ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef]
@@ -297,6 +299,7 @@ class _Application:
     module: _Module
     slot: _Slot
     site: Optional[str] = None
+    instrumenter: Optional[str] = None
 
 
 _Target = Tuple[str, str]
@@ -465,6 +468,10 @@ class _Resolver:
                 refused = self._refused(application, node)
                 if refused is not None:
                     return DecoratorRefusal(refused, _holder(node), site=application.site)
+            if isinstance(node, ast.ClassDef):
+                refusal = self._class_instrumentation(node, module)
+                if refusal is not None:
+                    return refusal
         return None
 
     def _applications(
@@ -489,6 +496,8 @@ class _Resolver:
 
     def _refused(self, application: _Application, decorated: Definition) -> Optional[str]:
         """The name to report ``application`` by when it is not known; None when it is."""
+        if application.instrumenter is not None:
+            return application.instrumenter
         spelled = dotted_name(application.callee)
         if spelled is None:
             return _spelling(application.callee)
@@ -499,6 +508,373 @@ class _Resolver:
             refused = self._denotation_refused(denotation, application, decorated, spelled)
             if refused is not None:
                 return refused
+        return None
+
+    def _flow_denotations(
+        self, value: Value, slot: _Slot, module: _Module, depth: int = 0
+    ) -> FrozenSet[_Denotation]:
+        found: Set[_Denotation] = set()
+        if depth > _MOST_HOPS:
+            return frozenset()
+        for symbol in value.symbols:
+            if symbol.imported:
+                origin = _Origin(symbol.name, module, symbol.name, True)
+                resolved: FrozenSet[_Denotation] = frozenset({origin})
+            else:
+                resolved = self._denotations(symbol.name, slot, module) or frozenset()
+            for target in resolved:
+                if isinstance(target, _Origin):
+                    top, _, rest = target.dotted.partition(".")
+                    if top not in _STANDARD_MODULES and self._is_external(module, top) is False:
+                        if symbol.imported:
+                            alias = ast.alias(name=top)
+                            sites = imported_alias_sites(
+                                module.path, ast.Import(names=[alias]), alias, rest, self._cache
+                            )
+                            project = tuple(
+                                (self._load(str(path)), qualified)
+                                for path, qualified in sites or ()
+                            )
+                        else:
+                            project = self._project_sites(target.module, target.spelled) or ()
+                        for other, qualified in project:
+                            if other is not None and qualified:
+                                found.update(
+                                    self._flow_denotations(
+                                        Value(symbols=frozenset({Symbol(qualified)})),
+                                        _Slot(None, 0, True),
+                                        other,
+                                        depth + 1,
+                                    )
+                                )
+                        continue
+                found.add(target)
+        return frozenset(found)
+
+    def _flow(
+        self,
+        body: Sequence[ast.stmt],
+        slot: _Slot,
+        module: _Module,
+        initial: Mapping[str, Value],
+        depth: int = 0,
+        hook: Optional[Tuple[Sequence[Tuple[ast.ClassDef, _Module]], int, str]] = None,
+    ) -> Tuple[Value, Tuple[Tuple[str, ast.Call, FrozenSet[_Target]], ...]]:
+        """Follow only the supplied arguments into recognized body transformations."""
+        if depth > _MOST_HOPS:
+            return UNKNOWN, ()
+        refusals: List[Tuple[str, ast.Call, FrozenSet[_Target]]] = []
+
+        def identified(value: Value) -> Value:
+            targets: Set[_Target] = set(value.targets)
+            for symbol in value.symbols:
+                if symbol.imported:
+                    top, _, rest = symbol.name.partition(".")
+                    if self._is_external(module, top) is not False:
+                        continue
+                    alias = ast.alias(name=top)
+                    sites = imported_alias_sites(
+                        module.path, ast.Import(names=[alias]), alias, rest, self._cache
+                    )
+                    targets.update((str(path), name) for path, name in sites or ())
+                else:
+                    targets.update(self._argument_targets(module, symbol.name, slot) or ())
+            kinds = set(value.kinds)
+            for path, qualified in targets - set(value.targets):
+                other = module if path == module.key else self._load(path)
+                if other is not None:
+                    for node in ast.walk(other.tree):
+                        if isinstance(node, _DEFINITIONS) and _identity(node, other) == (
+                            path,
+                            qualified,
+                        ):
+                            kinds.add(
+                                ValueKind.CLASS
+                                if isinstance(node, ast.ClassDef)
+                                else ValueKind.METHOD
+                            )
+            return Value(frozenset(kinds), value.symbols, frozenset(targets))
+
+        def call(
+            node: ast.Call, callee: Value, args: Tuple[Value, ...], keywords: Mapping[str, Value]
+        ) -> Value:
+            denotations = self._flow_denotations(callee, slot, module)
+            origins = {
+                item.dotted
+                for item in denotations
+                if isinstance(item, _Origin) and self._origin_rebound(item, 0) == frozenset()
+            }
+            values = (*args, *keywords.values())
+            kinds = frozenset(kind for value in values for kind in value.kinds)
+            targets = frozenset(target for value in values for target in value.targets)
+            supplied = Value(kinds, targets=targets)
+
+            def argument(position: int, *names: str) -> Value:
+                if position < len(args):
+                    return args[position]
+                return next((keywords[name] for name in names if name in keywords), UNKNOWN)
+
+            first = argument(0, "target", "func", "signature_or_function")
+            result = UNKNOWN
+            for origin in origins & {"typeguard.typechecked", "numba.jit", "numba.njit"}:
+                if self._is_external(module, origin.partition(".")[0]) is True:
+                    if first.kinds & {ValueKind.CLASS, ValueKind.METHOD}:
+                        refusals.append((origin, node, first.targets))
+                    # Decorator factories preserve the callable identity for their next call.
+                    result = result.join(Value(first.kinds, callee.symbols, first.targets))
+            inspected = argument(0, "object")
+            if origins & {"inspect.getsource", "inspect.getsourcelines"} and inspected.kinds & {
+                ValueKind.CLASS,
+                ValueKind.METHOD,
+            }:
+                result = result.join(Value.kind(ValueKind.SOURCE, inspected))
+            compiled = argument(0, "source", "code")
+            if origins & {"builtins.compile", "types.FunctionType"} and compiled.kinds & {
+                ValueKind.SOURCE,
+                ValueKind.CODE,
+                ValueKind.AST,
+            }:
+                refusals.append((sorted(origins)[0], node, compiled.targets))
+                result = result.join(Value.kind(ValueKind.CODE, compiled))
+            if "ast.parse" in origins and ValueKind.SOURCE in compiled.kinds:
+                result = result.join(Value.kind(ValueKind.AST, compiled))
+            tree = argument(0, "node")
+            if (
+                origins & {"ast.fix_missing_locations", "ast.increment_lineno"}
+                and ValueKind.AST in tree.kinds
+            ):
+                result = result.join(Value.kind(ValueKind.AST, tree))
+            if ValueKind.TRANSFORMER in callee.kinds:
+                result = result.join(callee)
+            if "textwrap.dedent" in origins and ValueKind.SOURCE in kinds:
+                result = result.join(Value.kind(ValueKind.SOURCE, supplied))
+            if "builtins.vars" in origins and ValueKind.CLASS in kinds:
+                result = result.join(Value.kind(ValueKind.NAMESPACE, supplied))
+            if "builtins.getattr" in origins and args and ValueKind.CLASS in args[0].kinds:
+                result = result.join(Value.kind(ValueKind.METHOD, supplied))
+            if origins & {"builtins.list", "builtins.tuple", "builtins.iter"} and args:
+                result = result.join(args[0])
+            if "builtins.super" in origins:
+                result = result.join(
+                    Value(
+                        symbols=frozenset({Symbol("<super>")}),
+                        targets=args[0].targets if args else frozenset(),
+                    )
+                )
+            if isinstance(node.func, ast.Attribute):
+                receiver = flow.evaluated.get(id(node.func.value), UNKNOWN)
+                if (
+                    ValueKind.TRANSFORMER in receiver.kinds
+                    and node.func.attr == "visit"
+                    and ValueKind.AST in kinds
+                ):
+                    result = result.join(Value.kind(ValueKind.AST, supplied))
+                if ValueKind.NAMESPACE in receiver.kinds:
+                    member = {
+                        "items": ValueKind.ITEMS,
+                        "values": ValueKind.METHODS,
+                        "get": ValueKind.METHOD,
+                    }.get(node.func.attr)
+                    if member is not None:
+                        result = result.join(Value.kind(member, receiver))
+                if ValueKind.SOURCE in receiver.kinds and node.func.attr in {
+                    "replace",
+                    "strip",
+                    "lstrip",
+                    "rstrip",
+                    "join",
+                }:
+                    result = result.join(Value.kind(ValueKind.SOURCE, receiver))
+                super_call = Symbol("<super>") in receiver.symbols
+                if super_call and hook is not None:
+                    lineage, index, _name = hook
+                    if receiver.targets:
+                        index = next(
+                            (
+                                position
+                                for position, (base, owner) in enumerate(lineage)
+                                if _identity(base, owner) in receiver.targets
+                            ),
+                            len(lineage),
+                        )
+                    inherited = self._hook_flow(lineage, index + 1, node.func.attr, depth + 1)
+                    result = result.join(inherited[0])
+                    refusals.extend(inherited[1])
+                if (
+                    node.func.attr == "__new__"
+                    and ValueKind.NAMESPACE in kinds
+                    and (
+                        super_call
+                        or any(symbol.name == "type" for symbol in receiver.symbols)
+                        and "builtins.type.__new__" in origins
+                    )
+                ):
+                    result = result.join(Value.kind(ValueKind.CLASS, supplied))
+            for target in denotations:
+                if not isinstance(target, _ProjectDef) or not kinds:
+                    continue
+                function = target.node
+                parameters = [*function.args.posonlyargs, *function.args.args]
+                bound = {name: UNKNOWN for name in _function_scope_names(function)}
+                bound.update((param.arg, value) for param, value in zip(parameters, args))
+                bound.update(
+                    (param.arg, keywords[param.arg])
+                    for param in (*parameters, *function.args.kwonlyargs)
+                    if param.arg in keywords
+                )
+                returned, nested = self._flow(
+                    function.body, _Slot(function, 0, True), target.module, bound, depth + 1
+                )
+                result = result.join(returned)
+                refusals.extend(nested)
+            return result
+
+        def definition(node: Definition, bases: Tuple[Value, ...]) -> Value:
+            known = any(
+                ValueKind.TRANSFORMER in base.kinds
+                or any(
+                    isinstance(origin, _Origin)
+                    and origin.dotted == "ast.NodeTransformer"
+                    and self._origin_rebound(origin, 0) == frozenset()
+                    for origin in self._flow_denotations(base, slot, module)
+                )
+                for base in bases
+            )
+            identity = _identity(node, module)
+            kinds = (
+                ({ValueKind.CLASS} if isinstance(node, ast.ClassDef) else {ValueKind.METHOD})
+                if identity is not None
+                else set()
+            )
+            if known:
+                kinds.add(ValueKind.TRANSFORMER)
+            return Value(
+                frozenset(kinds),
+                frozenset({Symbol(node.name)}),
+                frozenset({identity}) if identity is not None else frozenset(),
+            )
+
+        flow = Flow(call, initial, definition, identified)
+        flow.statements(body)
+        return flow.returned, tuple(refusals)
+
+    def _class_bases(
+        self, klass: ast.ClassDef, module: _Module, expressions: Sequence[ast.expr]
+    ) -> List[Tuple[ast.ClassDef, _Module]]:
+        result: List[Tuple[ast.ClassDef, _Module]] = []
+        slot = module.layout[id(klass)]
+        for expression in expressions:
+            base = expression.value if isinstance(expression, ast.Subscript) else expression
+            name = dotted_name(base)
+            targets = None if name is None else self._argument_targets(module, name, slot)
+            for path, qualified in sorted(targets or ()):
+                other = module if path == module.key else self._load(path)
+                if other is not None:
+                    result.extend(
+                        (node, other)
+                        for node in ast.walk(other.tree)
+                        if isinstance(node, ast.ClassDef)
+                        and _identity(node, other) == (path, qualified)
+                    )
+        return result
+
+    def _class_lineage(
+        self, klass: ast.ClassDef, module: _Module, seen: FrozenSet[Tuple[str, int]] = frozenset()
+    ) -> List[Tuple[ast.ClassDef, _Module]]:
+        """C3 order of the resolved project classes, without inventing unknown hooks."""
+        identity = (module.key, id(klass))
+        if identity in seen:
+            return []
+        bases = self._class_bases(klass, module, klass.bases)
+        sequences = [
+            self._class_lineage(base, owner, seen | {identity}) for base, owner in bases
+        ] + [bases.copy()]
+        result = [(klass, module)]
+        while any(sequences):
+            sequences = [sequence for sequence in sequences if sequence]
+            head = next(
+                (
+                    sequence[0]
+                    for sequence in sequences
+                    if not any(sequence[0] in other[1:] for other in sequences)
+                ),
+                None,
+            )
+            if head is None:
+                break  # Inconsistent or unresolved inheritance is not evidence of instrumentation.
+            result.append(head)
+            for sequence in sequences:
+                if sequence[0] == head:
+                    sequence.pop(0)
+        return result
+
+    def _hook_flow(
+        self, lineage: Sequence[Tuple[ast.ClassDef, _Module]], start: int, name: str, depth: int = 0
+    ) -> Tuple[Value, Tuple[Tuple[str, ast.Call, FrozenSet[_Target]], ...]]:
+        for index in range(start, len(lineage)):
+            klass, module = lineage[index]
+            definitions = [
+                function
+                for statement in klass.body
+                for function, _ in _definitions_held(statement)
+                if function.name == name
+            ]
+            if not definitions:
+                continue
+            function = definitions[-1]
+            if not isinstance(function, _FUNCTIONS):
+                return UNKNOWN, ()
+            parameters = [*function.args.posonlyargs, *function.args.args]
+            bound = {local: UNKNOWN for local in _function_scope_names(function)}
+            if name == "__init_subclass__" and parameters:
+                bound[parameters[0].arg] = Value(
+                    frozenset({ValueKind.CLASS}), targets=frozenset({("<constructed>", "")})
+                )
+            elif name in {"__new__", "__init__"} and len(parameters) >= 4:
+                bound[parameters[3].arg] = Value(
+                    frozenset({ValueKind.NAMESPACE}), targets=frozenset({("<constructed>", "")})
+                )
+                if name == "__init__":
+                    bound[parameters[0].arg] = Value(
+                        frozenset({ValueKind.CLASS}), targets=frozenset({("<constructed>", "")})
+                    )
+            return self._flow(
+                function.body,
+                _Slot(function, 0, True),
+                module,
+                bound,
+                depth,
+                (lineage, index, name),
+            )
+        return UNKNOWN, ()
+
+    def _class_instrumentation(
+        self, klass: ast.ClassDef, module: _Module
+    ) -> Optional[DecoratorRefusal]:
+        lineage = self._class_lineage(klass, module)
+        checks = [self._hook_flow(lineage, 1, "__init_subclass__")]
+        metas = [
+            meta
+            for base, owner in lineage
+            for meta in self._class_bases(
+                base,
+                owner,
+                [keyword.value for keyword in base.keywords if keyword.arg == "metaclass"],
+            )
+        ]
+        # Python selects the most derived compatible metaclass.
+        meta_lineages = [self._class_lineage(meta, owner) for meta, owner in metas]
+        selected = next(
+            (candidate for candidate in meta_lineages if all(meta in candidate for meta in metas)),
+            [],
+        )
+        checks.extend(self._hook_flow(selected, 0, name) for name in ("__new__", "__init__"))
+        for _, found in checks:
+            for instrumenter, call, targets in found:
+                if ("<constructed>", "") in targets:
+                    return DecoratorRefusal(
+                        instrumenter, _holder(klass), site=f"class construction:{call.lineno}"
+                    )
         return None
 
     def _denotation_refused(
@@ -995,6 +1371,33 @@ class _Resolver:
                 if module is None:
                     refuse_unparsed_file(Path(parent, name), root, self._cache.excluded_names)
                     continue  # Excluded, gone, or not text: it applies nothing that can be read.
+                scopes: List[Tuple[Sequence[ast.stmt], Optional[Definition]]] = [
+                    (module.tree.body, None)
+                ]
+                scopes.extend(
+                    (node.body, node)
+                    for node in ast.walk(module.tree)
+                    if isinstance(node, _DEFINITIONS)
+                )
+                for body, owner in scopes:
+                    initial = (
+                        {local: UNKNOWN for local in _function_scope_names(owner)}
+                        if isinstance(owner, _FUNCTIONS)
+                        else {}
+                    )
+                    _, found = self._flow(body, _Slot(owner, 0, True), module, initial)
+                    for instrumenter, call, affected in found:
+                        application = _Application(
+                            call.func,
+                            call,
+                            "applied",
+                            module,
+                            _Slot(owner, 0, True),
+                            f"{os.path.basename(module.path)}:{call.lineno}",
+                            instrumenter,
+                        )
+                        for target in affected:
+                            by_target.setdefault(target, []).append(application)
                 for application, spelled in _hand_calls(module):
                     targets = self._argument_targets(module, spelled, application.slot)
                     if targets is None:
