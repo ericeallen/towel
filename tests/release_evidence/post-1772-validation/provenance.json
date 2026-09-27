@@ -1,0 +1,254 @@
+{
+  "archive_root": "/Users/ericeallen/Knowledge/handoffs/towel/20260927T181305Z-codex-next-validation/final-gates",
+  "frozen_commit": "3f09421f2139508c5c9549b6791eca43f30c5c41",
+  "retained_raw": {
+    "artifacts.json.gz": {
+      "bytes": 536,
+      "sha256": "fe55c09ffb9a47691dee3242e945bef6fe0eabeb60c997060d55adfa407a4591",
+      "source": "artifacts.json"
+    },
+    "candidate--pyproject.toml.gz": {
+      "bytes": 3992,
+      "sha256": "0b13cee0229110390fcf0dc7a2b1a1bea75c43f66e81dacadd87cb9c91e42243",
+      "source": "candidate/pyproject.toml"
+    },
+    "coverage-3.11.xml.gz": {
+      "bytes": 1065726,
+      "sha256": "f41b9950816fc7401596efd6a3c3f59456779ba25fa229c97aa9ab9b4b13f37a",
+      "source": "coverage-3.11.xml"
+    },
+    "coverage-3.12.xml.gz": {
+      "bytes": 1065720,
+      "sha256": "e92a0dab64f9902782577d5803aaa23550063f02391e749c0c972ea38fd0c54a",
+      "source": "coverage-3.12.xml"
+    },
+    "coverage-3.13.xml.gz": {
+      "bytes": 1065720,
+      "sha256": "98500a0b66c54b6391ae2b5a08d5d4d6c38a591e40e24b96c35f0aea222c40ac",
+      "source": "coverage-3.13.xml"
+    },
+    "dependencies-dev-audit.log.gz": {
+      "bytes": 457,
+      "sha256": "37be8c4b03bc31f76cf0bec27da30073391e7c3855aee54acb4d6762d8fb58cb",
+      "source": "dependencies-dev-audit.log"
+    },
+    "dependencies-dev.txt.gz": {
+      "bytes": 1131,
+      "sha256": "3a690ec83e720ffd113276610f1610567b0601a8f9d5d64a27a7cf879a693ecd",
+      "source": "dependencies-dev.txt"
+    },
+    "diagrams-writable-cache.log.gz": {
+      "bytes": 31,
+      "sha256": "14c46c3446dbd1c872021fd8ff5b46246377c7e07f0ddcf1591a96cf874f10da",
+      "source": "diagrams-writable-cache.log"
+    },
+    "distribution-contents.json.gz": {
+      "bytes": 1997,
+      "sha256": "977e51c99320f53821d5867f962bf04c8cde375dcaef5fb2885b98481100b150",
+      "source": "distribution-contents.json"
+    },
+    "fuzz-grammar.log.gz": {
+      "bytes": 5429,
+      "sha256": "35223de4e8f138e9d57061c10ae7e290c42d2900a9717c301994489820a455a1",
+      "source": "fuzz-grammar.log"
+    },
+    "fuzz-scope.log.gz": {
+      "bytes": 1202,
+      "sha256": "4d6ecc50ee8520a0b4f463ff44e0282f29cc61207ec90070fdd8874494d05b38",
+      "source": "fuzz-scope.log"
+    },
+    "inspect_artifacts.py.gz": {
+      "bytes": 2349,
+      "sha256": "eb9c0303236bbed27493404d701a174497df0e1adc7382167636583122ed6ed7",
+      "source": "inspect_artifacts.py"
+    },
+    "matrix-3.11-launch.json.gz": {
+      "bytes": 834,
+      "sha256": "9174e051f117608d171e4ab49e37e13ded229ca38dbd83f7f4f590a8fbb3e1b5",
+      "source": "matrix-3.11-launch.json"
+    },
+    "matrix-3.11-result.json.gz": {
+      "bytes": 652,
+      "sha256": "eb6d0227472b37853a0c4b8be8ba9829b660c7acb6304950afcefef2bd38f338",
+      "source": "matrix-3.11-result.json"
+    },
+    "matrix-3.11.log.gz": {
+      "bytes": 19191,
+      "sha256": "60fdfedde5f626e977073da7e12e924ad31535c67d6469a6627f9dec3b854d88",
+      "source": "matrix-3.11.log"
+    },
+    "matrix-3.12-launch.json.gz": {
+      "bytes": 834,
+      "sha256": "fc0526154588de60084784349ceec335d16ea229ae70a042b66cc6953f6ca5d6",
+      "source": "matrix-3.12-launch.json"
+    },
+    "matrix-3.12-result.json.gz": {
+      "bytes": 649,
+      "sha256": "f974f87b8dd0356440482c6c739dbd07d035517ce62834bfe4da6fcf821e1ead",
+      "source": "matrix-3.12-result.json"
+    },
+    "matrix-3.12.log.gz": {
+      "bytes": 19246,
+      "sha256": "89a5c6face8e196a95fce0d1d2abf406d8845bb8b024f6cb09cd300061909b9e",
+      "source": "matrix-3.12.log"
+    },
+    "matrix-3.13-launch.json.gz": {
+      "bytes": 834,
+      "sha256": "f3059f18a0148afcff1fc45a02c2f983c49b542f9d0f59b52f816104582067f1",
+      "source": "matrix-3.13-launch.json"
+    },
+    "matrix-3.13-result.json.gz": {
+      "bytes": 652,
+      "sha256": "ea1150fb32f80008ece42ca7768c6ab5b35ca306b4ca14d5a86f70e26da2f4e4",
+      "source": "matrix-3.13-result.json"
+    },
+    "matrix-3.13.log.gz": {
+      "bytes": 19286,
+      "sha256": "ee8dc0e75b5a700f4e2001309d6b11912f15c0679d063a715483e312da41db35",
+      "source": "matrix-3.13.log"
+    },
+    "matrix-driver.log.gz": {
+      "bytes": 387,
+      "sha256": "5afed9a2b7a464b819597082bb6459a1711092dee3c75fe2bd4f5b78b3e5100a",
+      "source": "matrix-driver.log"
+    },
+    "observe_cold_cli.py.gz": {
+      "bytes": 555,
+      "sha256": "4d5ad595857a956d519139a5863a79fb2e04292c73d913618dd90465cc889722",
+      "source": "observe_cold_cli.py"
+    },
+    "quality-313.log.gz": {
+      "bytes": 1067,
+      "sha256": "d0fe72ebf15517fd081be5e1a6f0916bb9f47228d70dd47883cb7d40a054a8cc",
+      "source": "quality-313.log"
+    },
+    "run-matrix.py.gz": {
+      "bytes": 2670,
+      "sha256": "d917e5ada9e1cfcfee81a35cdae310deb19968d07d45af7240d6f510aa951f5d",
+      "source": "run-matrix.py"
+    },
+    "run-matrix.sh.gz": {
+      "bytes": 2185,
+      "sha256": "2a5974f9b1d59e3e81f104570278a5c3bd1cb39033d5aa2bda6d06ea65a398dc",
+      "source": "run-matrix.sh"
+    },
+    "run-self-project.py.gz": {
+      "bytes": 2689,
+      "sha256": "c0a4716f7df37e152c98e809e4bfbb99408a4d4b841959e7e0974e15cc542da6",
+      "source": "run-self-project.py"
+    },
+    "selfdogfood--imported-source.log.gz": {
+      "bytes": 208,
+      "sha256": "95a95b7d9ad0af1d6feb43daf26d13f48048e50057c5b89c36e6e727ca57a325",
+      "source": "selfdogfood/imported-source.log"
+    },
+    "selfdogfood--post-test-integrity.json.gz": {
+      "bytes": 210,
+      "sha256": "f67bd3bc1d70bd812a868131d83ce3f1fec086ec16c179e41adf15125ff5b8ec",
+      "source": "selfdogfood/post-test-integrity.json"
+    },
+    "selfdogfood--results.json.gz": {
+      "bytes": 1575,
+      "sha256": "a0ed6bb67ea34316f4a7a401d0fe9572466756f095533dd991f5c5402911411c",
+      "source": "selfdogfood/results.json"
+    },
+    "selfdogfood--source.json.gz": {
+      "bytes": 22571,
+      "sha256": "2e547d3ed118a5902fb7d9ea9684dea53b6bf6651918297d6d4e6e72f9fe73b3",
+      "source": "selfdogfood/source.json"
+    },
+    "selfdogfood--tests.log.gz": {
+      "bytes": 11300,
+      "sha256": "757971fd2db463aeb87af00e019d947212be56f599bc8fee08119344b7b9f02e",
+      "source": "selfdogfood/tests.log"
+    },
+    "selfdogfood--typecheck.log.gz": {
+      "bytes": 45,
+      "sha256": "704142db6dfb575a7e314352873f1cb9d7d530e7f1e3c49cb4651e538f221174",
+      "source": "selfdogfood/typecheck.log"
+    },
+    "selfdogfood.log.gz": {
+      "bytes": 15035,
+      "sha256": "fefa8d861b2b65171fac681d9a6e55b79674fc2dfd19ffe5078a2ca25716ca70",
+      "source": "selfdogfood.log"
+    },
+    "smoke_wheels.py.gz": {
+      "bytes": 5444,
+      "sha256": "34b5b3b0c2e179481bda5e7511faa56612e002cfd43421bc4b7fa49ce4e1cbcb",
+      "source": "smoke_wheels.py"
+    },
+    "source.json.gz": {
+      "bytes": 11252,
+      "sha256": "98c20f2370e67b125a3e05c916a0421a0f34cd31ce971f391161d9427b499966",
+      "source": "source.json"
+    },
+    "twine-313.log.gz": {
+      "bytes": 108,
+      "sha256": "97247d4fa1f9b263a82ea1008824d24a4a16ec95ef44048863c75c898c9586c1",
+      "source": "twine-313.log"
+    },
+    "verify_distribution_contents.py.gz": {
+      "bytes": 3638,
+      "sha256": "9cae74b7e6e1d58ca4488182d28b15217f32ec19c67b355a8a7ef56d1116edf3",
+      "source": "verify_distribution_contents.py"
+    },
+    "wheel-smoke--3.11-bare--commands.json.gz": {
+      "bytes": 12471,
+      "sha256": "a6011d35fb6467c76aa44e74288d0f9fc87220317886cb05c37bb8aeed358240",
+      "source": "wheel-smoke/3.11-bare/commands.json"
+    },
+    "wheel-smoke--3.11-extras--cold-check.json.gz": {
+      "bytes": 216,
+      "sha256": "df7f128aa1a28f36f3de91d6573ec8ae67feb1883f513d003c27b72bd2b7e37a",
+      "source": "wheel-smoke/3.11-extras/cold-check.json"
+    },
+    "wheel-smoke--3.11-extras--commands.json.gz": {
+      "bytes": 16255,
+      "sha256": "c08f629eb35fa0c8230dd222d792987ba5a6a5e6789616482f1cf568952232c6",
+      "source": "wheel-smoke/3.11-extras/commands.json"
+    },
+    "wheel-smoke--3.12-bare--commands.json.gz": {
+      "bytes": 12446,
+      "sha256": "a18e6a7e3abc634dacf5af9a9ffd5ddad2e0c60341ddd30779ba1849b55d51f6",
+      "source": "wheel-smoke/3.12-bare/commands.json"
+    },
+    "wheel-smoke--3.12-extras--cold-check.json.gz": {
+      "bytes": 216,
+      "sha256": "35d7e5f74912272e6eb82dbed65212c009e3aaa6c030d166b600b02c384dc23c",
+      "source": "wheel-smoke/3.12-extras/cold-check.json"
+    },
+    "wheel-smoke--3.12-extras--commands.json.gz": {
+      "bytes": 16254,
+      "sha256": "6f79320d91a85e3605e136f5f81282dc3c8df8e9d380788a520e7aa17bff35c7",
+      "source": "wheel-smoke/3.12-extras/commands.json"
+    },
+    "wheel-smoke--3.13-bare--commands.json.gz": {
+      "bytes": 12450,
+      "sha256": "4c3a1d2d3e6c9d46881d699b9c3d92f826c3b3a13a8e11421a4e03880e518925",
+      "source": "wheel-smoke/3.13-bare/commands.json"
+    },
+    "wheel-smoke--3.13-extras--cold-check.json.gz": {
+      "bytes": 216,
+      "sha256": "070c7e4e345aae20ff226f3a4f6912bbc2e2a34ce037dd5b88370b3ff89b76b0",
+      "source": "wheel-smoke/3.13-extras/cold-check.json"
+    },
+    "wheel-smoke--3.13-extras--commands.json.gz": {
+      "bytes": 16258,
+      "sha256": "64a8086d62aac2f22c1be06cc4c36abecf8e271a61e19cb9ff89280569b17784",
+      "source": "wheel-smoke/3.13-extras/commands.json"
+    },
+    "wheel-smoke--results.json.gz": {
+      "bytes": 4999,
+      "sha256": "6e0591f3489d9a96e2ff7ebb0d97e0476d7ce59fa4ca4c1b791a2a1f213765e6",
+      "source": "wheel-smoke/results.json"
+    }
+  },
+  "retention_checks": [
+    "Frozen candidate runtime bytes matched all 97 Git blobs; Python SHA256 values matched source.json.",
+    "Wheel and sdist hashes matched artifacts.json; both contained every frozen runtime file byte-for-byte; wheel RECORD hashes were verified.",
+    "All 97 self-refactored runtime files matched their after hashes and generated counterparts after the test run."
+  ],
+  "runtime_tree": "747008c225808e48bfaf97455e1d808e8800aa59",
+  "scope": "Completed non-corpus validation of frozen 3f09421. Later documentation tests and artifacts are separate.",
+  "tests_tree": "829ef595f3249c06d92685ff702ed536e6b6c3a2"
+}
