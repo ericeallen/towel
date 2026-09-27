@@ -73,6 +73,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import (
     Dict,
     FrozenSet,
@@ -583,11 +584,8 @@ class _Resolver:
             for path, qualified in targets - set(value.targets):
                 other = module if path == module.key else self._load(path)
                 if other is not None:
-                    for node in ast.walk(other.tree):
-                        if isinstance(node, _DEFINITIONS) and _identity(node, other) == (
-                            path,
-                            qualified,
-                        ):
+                    for node in _definition_index(other.tree).by_name.get(qualified, ()):
+                        if isinstance(node, _DEFINITIONS):
                             kinds.add(
                                 ValueKind.CLASS
                                 if isinstance(node, ast.ClassDef)
@@ -772,9 +770,8 @@ class _Resolver:
                 if other is not None:
                     result.extend(
                         (node, other)
-                        for node in ast.walk(other.tree)
+                        for node in _definition_index(other.tree).by_name.get(qualified, ())
                         if isinstance(node, ast.ClassDef)
-                        and _identity(node, other) == (path, qualified)
                     )
         return result
 
@@ -1611,18 +1608,50 @@ def _qualified_names(definition: Definition, module: _Module) -> List[str]:
     return names[::-1]
 
 
-def _identity(definition: Definition, module: _Module) -> Optional[_Target]:
-    """``definition`` by its file and qualified name, when only classes enclose it.
+@dataclass(frozen=True)
+class _Definitions:
+    by_node: Mapping[int, str]
+    by_name: Mapping[str, Tuple[Definition, ...]]
 
-    A definition inside a function is visible to no module-level or
-    class-level assignment of another scope, and has no such name.
+
+_DEFINITIONS_BY_TREE: WeakKeyDictionary[ast.Module, _Definitions] = WeakKeyDictionary()
+
+
+def _definition_index(tree: ast.Module) -> _Definitions:
+    """Immutable lexical identities, retained only while their module AST lives.
+
+    The production packaging scan asked 36,741 identity questions about 558
+    distinct definitions. These names depend solely on the immutable AST;
+    imports, file content revisions and hook verdicts are not cached here.
     """
-    owner = module.layout[id(definition)].owner
-    while owner is not None:
-        if not isinstance(owner, ast.ClassDef):
-            return None
-        owner = module.layout[id(owner)].owner
-    return module.key, ".".join(_qualified_names(definition, module))
+    known = _DEFINITIONS_BY_TREE.get(tree)
+    if known is not None:
+        return known
+    by_node: Dict[int, str] = {}
+    by_name: Dict[str, List[Definition]] = {}
+
+    def visit(body: Sequence[ast.stmt], prefix: str = "") -> None:
+        for statement in body:
+            for definition, _ in _definitions_held(statement):
+                name = prefix + definition.name
+                by_node[id(definition)] = name
+                by_name.setdefault(name, []).append(definition)
+                if isinstance(definition, ast.ClassDef):
+                    visit(definition.body, name + ".")
+
+    visit(tree.body)
+    known = _Definitions(
+        MappingProxyType(by_node),
+        MappingProxyType({name: tuple(nodes) for name, nodes in by_name.items()}),
+    )
+    _DEFINITIONS_BY_TREE[tree] = known
+    return known
+
+
+def _identity(definition: Definition, module: _Module) -> Optional[_Target]:
+    """A module/class definition's identity; function-local definitions have none."""
+    name = _definition_index(module.tree).by_node.get(id(definition))
+    return (module.key, name) if name is not None else None
 
 
 def _hand_calls(module: _Module) -> Tuple[Tuple[_Application, str], ...]:

@@ -31,6 +31,10 @@ ecosystem evidence behind each claim. The format follows
 
 ### Performance
 
+- Instrumentation resolution indexes immutable module/class definitions once
+  per module tree. A packaging scan made 558 identity queries instead of
+  36,741, retaining the exact same application index. The index is released
+  with its AST and does not cache project-dependent decisions.
 - Non-None assertions and guarded attribute initialization whose refinements
   are needed by remaining caller operations stay at the call site during block discovery.
   Filtering before maximal-block pairing keeps smaller valid extractions

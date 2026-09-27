@@ -146,6 +146,19 @@ remaining implementation work below.
 
 ## Validation before release
 
+### Instrumentation indexing measurement
+
+The production packaging scan repeated 36,741 lexical identity questions
+over 558 distinct definitions. A module-tree index removes the repeated
+walks; cached maps and tuples are immutable and their lifetime follows the
+AST. Resolving imports or deciding whether a hook transforms a body is not
+part of this memo. A comparison against frozen commit `35035a7` produced
+identical complete application indexes, including unresolved names, with
+558 identity calls. Evidence and the comparison script are retained in
+`~/Knowledge/handoffs/towel/20260927T172821Z-codex-typed-performance/`.
+
+### Remaining release validation
+
 Run the full interpreter matrix, full corpus, self-dogfooding, documentation
 and artifact checks, and the deferred fifth audit under the existing stop
 rule. Mechanical checks run as processes. Use at most one focused independent
