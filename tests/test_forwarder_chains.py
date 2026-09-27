@@ -266,10 +266,38 @@ def collect(items, offset):
 """
 
 
-def test_a_generated_helper_is_not_reduced_to_a_forwarder(tmp_path: Path) -> None:
-    final, applied = refactor_to_fixed_point_silently(
-        write_module(tmp_path, GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT), min_lines=3
+def _continue_from_generated_helper(
+    tmp_path: Path, *, skip_trivial_helpers: bool
+) -> tuple[str, int]:
+    """Resume the real loop from an earlier pass's generated state.
+
+    A helper-shaped name alone is not evidence that Towel introduced it.
+    This fixture represents a helper inserted into the private stage, absent
+    from the original input. Keep that provenance rather than weakening the
+    no-forwarding assertion or treating user-defined names as generated ones.
+    """
+    origin, stage = tmp_path / "origin", tmp_path / "stage"
+    origin.mkdir()
+    stage.mkdir()
+    original = "def collect" + GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT.split("def collect", 1)[1]
+    for root, source in ((origin, original), (stage, GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT)):
+        (root / "pyproject.toml").write_text("[project]\nname='forwarder-fixture'\nversion='0'\n")
+        (root / "module.py").write_text(source)
+    engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=skip_trivial_helpers)
+    engine._output_origin = (origin, stage)
+    final, applied, _ = engine._refactor_file_in_place(
+        str(stage / "module.py"),
+        GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT.encode(),
+        GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT,
+        0,
+        "none",
     )
+    assert (origin / "module.py").read_text() == original
+    return final, applied
+
+
+def test_a_generated_helper_is_not_reduced_to_a_forwarder(tmp_path: Path) -> None:
+    final, applied = _continue_from_generated_helper(tmp_path, skip_trivial_helpers=True)
     assert applied == 0
     assert (
         unparsed_body(module_functions(final)["__extracted_func_0"])
@@ -278,11 +306,7 @@ def test_a_generated_helper_is_not_reduced_to_a_forwarder(tmp_path: Path) -> Non
 
 
 def test_the_forwarder_check_is_part_of_skipping_trivial_helpers(tmp_path: Path) -> None:
-    final, applied = refactor_to_fixed_point_silently(
-        write_module(tmp_path, GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT),
-        min_lines=3,
-        skip_trivial_helpers=False,
-    )
+    final, applied = _continue_from_generated_helper(tmp_path, skip_trivial_helpers=False)
     assert applied == 1
     assert (
         unparsed_body(module_functions(final)["__extracted_func_0"])

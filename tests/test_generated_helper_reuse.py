@@ -184,6 +184,47 @@ def test_names_already_in_input_keep_independent_monkeypatch_behavior(
     assert other(2) == -7
 
 
+@pytest.mark.parametrize("name", ["existing", "__extracted_func_0"])
+def test_input_name_does_not_hide_a_whole_body_matching_another_prefix(
+    tmp_path: Path, name: str
+) -> None:
+    """Audit5: provenance, not helper spelling, governs the forwarder quality guard.
+
+    The input function's whole computation also occurs before another
+    function's residual print. Both functions can share a new helper while
+    retaining independent lookup; requiring both sites to be whole bodies
+    incorrectly hid this valid extraction only for the reserved-looking name.
+    """
+    from tests.test_scope_guard_boundaries import _extract
+
+    original = f"""events = []
+def {name}(n):
+    value = n + 3
+    result = value * 2
+    events.append(('same', result))
+    return result
+def second(n):
+    value = n + 3
+    result = value * 2
+    events.append(('same', result))
+    print('after block', result)
+    return result
+first = {name}
+print(first(1), second(2), events)
+{name} = lambda n: 'patched'
+print(second(3), events)
+"""
+    final, count = _extract(tmp_path, original)
+    assert count == 1, final
+    tree = ast.parse(final)
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    assert name in functions and "second" in functions
+    assert not any(
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name
+        for node in ast.walk(functions["second"])
+    ), "The existing input function must never become the shared call target"
+
+
 def test_initial_name_allocation_and_later_reuse_keep_borrower_bindings(tmp_path: Path) -> None:
     """The initial allocator sees all analyzed files, and reuse retains its fresh name."""
     root, output = tmp_path / "input", tmp_path / "output"

@@ -159,7 +159,7 @@ class ExistingFunctionReuse(EngineState):
             for replacement in proposal.replacements
         ]
         inserted = [
-            site.node.name
+            (replacement, site)
             for replacement, site in sites
             if site is not None
             and is_generated_helper_name(site.node.name)
@@ -167,31 +167,26 @@ class ExistingFunctionReuse(EngineState):
                 site.node.name, replacement.file_path or proposal.file_path
             )
         ]
-        if not inserted and all(
-            site is not None and self._site_is_whole_body(replacement, site.node)
-            for replacement, site in sites
-        ):
+        if not inserted:
             # Names already in the input, even helper-shaped ones, keep their
-            # own independent binding behavior by sharing a new helper.
+            # own independent binding behavior by sharing a new helper. The
+            # same applies when only one of the sites is a whole body.
             return None
-        for replacement, site in sites:
-            if site is None or not is_generated_helper_name(site.node.name):
-                continue
+        for replacement, site in inserted:
             if self._site_is_whole_body(replacement, site.node):
                 return site.node.name
-        if inserted and len(inserted) == len(sites):
+        if len(inserted) == len(sites):
             helper_bodies = {
                 (
                     tuple(arg.arg for arg in site.node.args.posonlyargs + site.node.args.args),
                     tuple(ast.dump(statement) for statement in site.node.body),
                 )
-                for _, site in sites
-                if site is not None
+                for _, site in inserted
             }
             if len(helper_bodies) == 1:
                 # Splitting equivalent helpers already introduced by separate
                 # batches only adds another layer; their existing callers remain.
-                return inserted[0]
+                return inserted[0][1].node.name
         return None
 
     def _helper_introduced_during_run(self, name: str, path: str) -> bool:

@@ -1276,3 +1276,12 @@ Independent batches may still leave duplicate real helpers; redirecting all
 their existing consumers is outside this bounded change. The regressions
 cover three, four and eight modules, runtime effects, strict-mypy compatible
 and incompatible calls, defaults, decorators, receiver and shadowing cases.
+
+The fifth audit caught a remaining spelling-based forwarder refusal when an
+input function's whole body matched another function's prefix. Provenance is
+required for this refusal at every site, not just when both sites are whole
+bodies. The regression compares an ordinary name with a helper-shaped input
+name and requires useful extraction with unchanged runtime and monkeypatch
+behavior. The older no-forwarding fixture now represents an actual private
+stage with a helper absent from its original input; its assertions remain
+unchanged. A reserved-looking spelling alone must not replace that setup.
