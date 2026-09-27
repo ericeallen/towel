@@ -50,6 +50,14 @@ from tests.hostile_refactoring import refactor_script, with_known_defects
 CASES = Path(__file__).parent / "hostile_cases"
 
 TRANSFORMED = {
+    # September 27: mixed expression list children can be passed as thunks;
+    # nxt() and nxt() * 10 are still called once per iteration, in order.
+    "h03_loop_reeval",
+    # The complete inner body, including both del X and its later read, moves
+    # together. X stays local and unbound in the helper; no read is left in
+    # inner to resolve to the enclosing X. ScopeWatch and execution both check
+    # this boundary, so a future partial move must not be accepted here.
+    "r9bd_only_binding_deleted_read_after",
     "p09_static_helper_metaclass_hides_attribute",
     "p13_protocol_default_methods",
     "p14_protocol_common_ancestor",
