@@ -48,6 +48,9 @@ ecosystem evidence behind each claim. The format follows
 
 ### Performance
 
+The typed timings below compare intermediate commits `35035a7` and `1b97196`;
+later changes are outside these measurements.
+
 - Typed signatures preserve argument/result correlations before validation
   and retain mypy's return-context treatment of `NotImplemented`. A known
   erased-None-predicate construction stays at its caller instead of falling

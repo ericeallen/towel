@@ -150,11 +150,14 @@ Frozen baseline `35035a7` and candidate `1b97196` were compared on September
 27. The candidate includes precise signature construction, the erased-None
 predicate guard, immutable definition indexing and Pyright reveal batching.
 These are controlled experiments, not the final release corpus.
+Both source commits are intermediate post-1.772 snapshots; later edits are
+outside these timings.
 
 Packaging 26.3 used the actual CLI through a fixed point, strict mypy 2.3.1,
 Python 3.13.7 on macOS arm64, one worker, same-module extraction and no
-formatter. Four runs were sequential in baseline / candidate / candidate /
-baseline order, after the Sphinx profile finished. Imported source paths,
+formatter. The mypy configuration targeted Python 3.10. Four runs were
+sequential in baseline / candidate / candidate / baseline order, after the
+Sphinx profile finished. Imported source paths,
 complete outputs and every signature attempt are recorded. Output Python
 files are byte-identical within each arm.
 
@@ -186,6 +189,8 @@ checker failures. Per-file exchanges took 980.72 seconds; one project batch
 took 8.65 seconds. This single comparison measures initial reveal time, not
 the full fixed point. Final project validation and consumer coverage are
 unchanged.
+The run enabled cross-module extraction, disabled formatting and network
+access, and used one Towel worker.
 
 Durable scripts, frozen sources/wheels, inputs, output hashes, request/answer
 comparisons and logs are under

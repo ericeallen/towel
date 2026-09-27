@@ -1,0 +1,360 @@
+{
+  "archive_root": "/Users/ericeallen/Knowledge/handoffs/towel/20260927T172821Z-codex-typed-performance",
+  "baseline_commit": "35035a747e446368b6a5c4f3b1cee3fd1b5487c3",
+  "candidate_commit": "1b9719612ae9e844df8fbab2775c0646a0ab7ebf",
+  "omitted_sphinx_dumps": {
+    "after": {
+      "answers": 7387,
+      "answers_bytes": 775231,
+      "answers_sha256": "568860e0c867adae5f43cc9757b8ca2b00ba06283c7592985b6cc83deb73d99b",
+      "expressions": 7391,
+      "files": 218,
+      "missing_expression_keys": [
+        [
+          "/work/sphinx-ready/sphinx/_cli/util/colour.py",
+          19,
+          0
+        ],
+        [
+          "/work/sphinx-ready/sphinx/_cli/util/colour.py",
+          19,
+          1
+        ],
+        [
+          "/work/sphinx-ready/sphinx/cmd/quickstart.py",
+          114,
+          0
+        ],
+        [
+          "/work/sphinx-ready/sphinx/cmd/quickstart.py",
+          114,
+          1
+        ]
+      ],
+      "requests": 2949,
+      "requests_bytes": 76572412,
+      "requests_sha256": "707dc13f4fb2d558baec36847b523a1f5f01065aaf400cf2930ed0b86863ef8c",
+      "unanswered_files": {},
+      "unexpected_answers": 0,
+      "unique_expression_keys": 7391,
+      "unique_requests": 2949
+    },
+    "before": {
+      "answers": 7387,
+      "answers_bytes": 775231,
+      "answers_sha256": "568860e0c867adae5f43cc9757b8ca2b00ba06283c7592985b6cc83deb73d99b",
+      "expressions": 7391,
+      "files": 218,
+      "missing_expression_keys": [
+        [
+          "/work/sphinx-ready/sphinx/_cli/util/colour.py",
+          19,
+          0
+        ],
+        [
+          "/work/sphinx-ready/sphinx/_cli/util/colour.py",
+          19,
+          1
+        ],
+        [
+          "/work/sphinx-ready/sphinx/cmd/quickstart.py",
+          114,
+          0
+        ],
+        [
+          "/work/sphinx-ready/sphinx/cmd/quickstart.py",
+          114,
+          1
+        ]
+      ],
+      "requests": 2949,
+      "requests_bytes": 76572412,
+      "requests_sha256": "707dc13f4fb2d558baec36847b523a1f5f01065aaf400cf2930ed0b86863ef8c",
+      "unanswered_files": {},
+      "unexpected_answers": 0,
+      "unique_expression_keys": 7391,
+      "unique_requests": 2949
+    }
+  },
+  "packaging_output_sha256": {
+    "packaging-after-1": {
+      "__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+      "_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+      "_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+      "_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+      "_parser.py": "f024670cc158cb9695abad6f35a1fe34dccf910da1bdd9fd16152c5b5f57ce2d",
+      "_ranges.py": "fee98f660ad82bb4d3199ce942490bc5006326f717cb9d2ea49e9022caf5fff5",
+      "_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+      "_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+      "dependency_groups.py": "b86b0b21e5a62f55188afce5218408bb209012d9f735045f4a4f787a93783079",
+      "direct_url.py": "843baa95d04cbb49288de9d9fd77ee946e862cb603123e7e46a69e171fa7d06b",
+      "errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+      "licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+      "licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+      "markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+      "metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+      "pylock.py": "1f7b1ae627511ddb33caa66dddea3917b00c6d5db7a57c6f821a76b03263fd0a",
+      "ranges.py": "5eea5fb60a7cbfd58d5ac2d9584ff0a877ced1281ff5361478e953e138137ae6",
+      "requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+      "specifiers.py": "33a81c21c5f2df2317d7ba2af97082c5651e775283603028186d2ce41be24b44",
+      "tags.py": "afb1014b15c205b785748ef571a1c25def16e5227b0802ace1031f23b2f04a99",
+      "utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+      "version.py": "ff73e7c586498b1470e3dbe1a7917566ff1f90277f1098b8cb0cfc6befa84565"
+    },
+    "packaging-after-2": {
+      "__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+      "_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+      "_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+      "_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+      "_parser.py": "f024670cc158cb9695abad6f35a1fe34dccf910da1bdd9fd16152c5b5f57ce2d",
+      "_ranges.py": "fee98f660ad82bb4d3199ce942490bc5006326f717cb9d2ea49e9022caf5fff5",
+      "_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+      "_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+      "dependency_groups.py": "b86b0b21e5a62f55188afce5218408bb209012d9f735045f4a4f787a93783079",
+      "direct_url.py": "843baa95d04cbb49288de9d9fd77ee946e862cb603123e7e46a69e171fa7d06b",
+      "errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+      "licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+      "licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+      "markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+      "metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+      "pylock.py": "1f7b1ae627511ddb33caa66dddea3917b00c6d5db7a57c6f821a76b03263fd0a",
+      "ranges.py": "5eea5fb60a7cbfd58d5ac2d9584ff0a877ced1281ff5361478e953e138137ae6",
+      "requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+      "specifiers.py": "33a81c21c5f2df2317d7ba2af97082c5651e775283603028186d2ce41be24b44",
+      "tags.py": "afb1014b15c205b785748ef571a1c25def16e5227b0802ace1031f23b2f04a99",
+      "utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+      "version.py": "ff73e7c586498b1470e3dbe1a7917566ff1f90277f1098b8cb0cfc6befa84565"
+    },
+    "packaging-baseline-1": {
+      "__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+      "_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+      "_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+      "_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+      "_parser.py": "da1e294cf2cdd04bc244d9f0d2f9fe5e96e006a348379f1b6ecc82d409fb24cf",
+      "_ranges.py": "ecbdb1ed0c92e87dba60184dc947dbf067fc57b98bf286f18e5a9b88ab9c236c",
+      "_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+      "_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+      "dependency_groups.py": "90e18f8759ab83a08bae27eafdd6bea172f3afa65f4f151464c72b3eb02b49a0",
+      "direct_url.py": "843baa95d04cbb49288de9d9fd77ee946e862cb603123e7e46a69e171fa7d06b",
+      "errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+      "licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+      "licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+      "markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+      "metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+      "pylock.py": "46896404ffe374eaf74350a84aa09c7c8dd8a6d7e43fe7a8d1c6f1f94234dbd3",
+      "ranges.py": "aaab7c3d7dc18f4e1baa55781e17465ce17363348e4e5aafcc9111576a61187c",
+      "requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+      "specifiers.py": "dac7729f0d9c1efdbdb7a41a57851b24e43b1d83eb31c4352f34951529fb1620",
+      "tags.py": "48dd6b2cbe524c36d616faad273b028bebee155d8e475ccc18d9ebb345c0db0f",
+      "utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+      "version.py": "ff73e7c586498b1470e3dbe1a7917566ff1f90277f1098b8cb0cfc6befa84565"
+    },
+    "packaging-baseline-2": {
+      "__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+      "_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+      "_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+      "_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+      "_parser.py": "da1e294cf2cdd04bc244d9f0d2f9fe5e96e006a348379f1b6ecc82d409fb24cf",
+      "_ranges.py": "ecbdb1ed0c92e87dba60184dc947dbf067fc57b98bf286f18e5a9b88ab9c236c",
+      "_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+      "_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+      "dependency_groups.py": "90e18f8759ab83a08bae27eafdd6bea172f3afa65f4f151464c72b3eb02b49a0",
+      "direct_url.py": "843baa95d04cbb49288de9d9fd77ee946e862cb603123e7e46a69e171fa7d06b",
+      "errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+      "licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+      "licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+      "markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+      "metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+      "pylock.py": "46896404ffe374eaf74350a84aa09c7c8dd8a6d7e43fe7a8d1c6f1f94234dbd3",
+      "ranges.py": "aaab7c3d7dc18f4e1baa55781e17465ce17363348e4e5aafcc9111576a61187c",
+      "requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+      "specifiers.py": "dac7729f0d9c1efdbdb7a41a57851b24e43b1d83eb31c4352f34951529fb1620",
+      "tags.py": "48dd6b2cbe524c36d616faad273b028bebee155d8e475ccc18d9ebb345c0db0f",
+      "utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+      "version.py": "ff73e7c586498b1470e3dbe1a7917566ff1f90277f1098b8cb0cfc6befa84565"
+    }
+  },
+  "retained_raw": {
+    "after-commit.txt.gz": {
+      "bytes": 41,
+      "sha256": "035978932fb435e9b99db41258cecfe395fe168a860b2075c4debd104560e718",
+      "source": "after-commit.txt"
+    },
+    "after-fixed_point.py.gz": {
+      "bytes": 56387,
+      "sha256": "c1f20fc255b964b234835a046810d7ea3dec779070afa84e423c28715dbecf43",
+      "source": "snapshot-after/src/towel/unification/fixed_point.py"
+    },
+    "before-fixed_point.py.gz": {
+      "bytes": 56387,
+      "sha256": "c1f20fc255b964b234835a046810d7ea3dec779070afa84e423c28715dbecf43",
+      "source": "snapshot-before/src/towel/unification/fixed_point.py"
+    },
+    "operator-record.md.gz": {
+      "bytes": 2887,
+      "sha256": "5573f4c2078415155c92ce7515cff4276132253a0490b98efecc9eca1581ca56",
+      "source": "README.md"
+    },
+    "packaging-after-1-boundary.json.gz": {
+      "bytes": 95,
+      "sha256": "0b54f36e7e08de7a06050e3103b5da7648962d3a827de5182fdcf05ce8f8d55a",
+      "source": "packaging-after-1/boundary.json"
+    },
+    "packaging-after-1-events.jsonl.gz": {
+      "bytes": 48675,
+      "sha256": "847765748369ead47b35f45d4638cdc9e9b2fcfec59f3b55c84d55bdead96367",
+      "source": "packaging-after-1/events.jsonl"
+    },
+    "packaging-after-1-run.log.gz": {
+      "bytes": 8232,
+      "sha256": "acb56f1834cc38baab7067484b19998b2866e7b781bf44d8317c651d8c124dce",
+      "source": "packaging-after-1/run.log"
+    },
+    "packaging-after-2-boundary.json.gz": {
+      "bytes": 93,
+      "sha256": "277d4d397b041b06b3822dd2f00326e3f1acdbab551f3b9a4233432446bc7c7d",
+      "source": "packaging-after-2/boundary.json"
+    },
+    "packaging-after-2-events.jsonl.gz": {
+      "bytes": 48679,
+      "sha256": "04505abc61f1ebd0236f34e676bba121d33d118c32b1d7f3675f2ae36fb16fc7",
+      "source": "packaging-after-2/events.jsonl"
+    },
+    "packaging-after-2-run.log.gz": {
+      "bytes": 8232,
+      "sha256": "dc7ac5c70cf20fe31c3d932dcfd8cc12e5d53cd424cff8741d1f198cbefa1c98",
+      "source": "packaging-after-2/run.log"
+    },
+    "packaging-after-source.json.gz": {
+      "bytes": 322,
+      "sha256": "6d22e74d4f1158caf7ea6f89bdbd81b667778c9bcbb722c9462ec4ce48da0cbc",
+      "source": "packaging-after-1/source.json"
+    },
+    "packaging-baseline-1-boundary.json.gz": {
+      "bytes": 93,
+      "sha256": "78fa0431a341d78520ce7be543da6f522e86d6466faf531acc28af24990c0dbe",
+      "source": "packaging-baseline-1/boundary.json"
+    },
+    "packaging-baseline-1-events.jsonl.gz": {
+      "bytes": 55191,
+      "sha256": "43a1d032da7de62cbd4cc747898e0f84e5b14e1f27280d512cd8306fd85a06f1",
+      "source": "packaging-baseline-1/events.jsonl"
+    },
+    "packaging-baseline-1-run.log.gz": {
+      "bytes": 8356,
+      "sha256": "935e051d692c9c03e93e099616d365bffc12ab16338db584f377441f99fe98b9",
+      "source": "packaging-baseline-1/run.log"
+    },
+    "packaging-baseline-2-boundary.json.gz": {
+      "bytes": 92,
+      "sha256": "bc95c2a7e38199ddcad9ac3e1aea9212061f3deb29bd79cb1c041c2b39425e23",
+      "source": "packaging-baseline-2/boundary.json"
+    },
+    "packaging-baseline-2-events.jsonl.gz": {
+      "bytes": 55196,
+      "sha256": "54266f44b0a252bb655f56c00cbfb7b4303994447bd6c649d53ff15e79df1af9",
+      "source": "packaging-baseline-2/events.jsonl"
+    },
+    "packaging-baseline-2-run.log.gz": {
+      "bytes": 8356,
+      "sha256": "25840148fa51f3980ca4d2c871f53d25f43c96640b7a4e0a8bf039a7a5e611d6",
+      "source": "packaging-baseline-2/run.log"
+    },
+    "packaging-before-source.json.gz": {
+      "bytes": 323,
+      "sha256": "ad6943a29618f1aec170b10c62c642c29c281a461955e6fcf3e3add9d3a04a91",
+      "source": "packaging-baseline-1/source.json"
+    },
+    "packaging-comparison.json.gz": {
+      "bytes": 10085,
+      "sha256": "fff6fc3d7f0b138c46ce73ebb0559a11d0fdd007e1f09eb6290434388df0a8e7",
+      "source": "packaging-comparison.json"
+    },
+    "packaging-comparison.log.gz": {
+      "bytes": 1030,
+      "sha256": "ead9662a57e922f059dd3ab57e20b5f8c46b458ed30b80da3276484dbf35ae20",
+      "source": "packaging-comparison.log"
+    },
+    "packaging-config.toml.gz": {
+      "bytes": 133,
+      "sha256": "f0614796cab0fd138f7bfd05db2d05e2dbeb28ab651dae54ea9a7367f3a06de9",
+      "source": "packaging-baseline-1/input/pyproject.toml"
+    },
+    "packaging-measure.py.gz": {
+      "bytes": 4074,
+      "sha256": "ffa2172f20bc35ed33ade62500d396274b3d957b9aacec503ab36516ad28d072",
+      "source": "packaging-baseline-1/measure.py"
+    },
+    "sphinx-after-inputs.json.gz": {
+      "bytes": 347,
+      "sha256": "f2adb867b1d1498db041b8b11c11546eea8bf409895f66ab53abfa4c70e3549f",
+      "source": "sphinx-after/inputs.json"
+    },
+    "sphinx-after-profile.py.gz": {
+      "bytes": 2970,
+      "sha256": "13820061154b7450adea6ae484a9bc7c172a429151c4e838166383ccb7ead1a1",
+      "source": "sphinx_probe_profile_after.py"
+    },
+    "sphinx-after-spans.jsonl.gz": {
+      "bytes": 25899,
+      "sha256": "b2719efecdd8fe5ad8ef24033aba0d77f002888596e7015ae269c11a0b8d03a2",
+      "source": "sphinx-after/spans.jsonl"
+    },
+    "sphinx-after-summary.json.gz": {
+      "bytes": 138,
+      "sha256": "6e406fdb8fefc63106cda311baf0c13fcf385a0e3fa57e2f0a955c35935f6b2e",
+      "source": "sphinx-after/summary.json"
+    },
+    "sphinx-after.log.gz": {
+      "bytes": 1888,
+      "sha256": "7bd41bd8b4cb9a55f5d21cf6e86374a5a9275d979a0e70a0f9d2eb20b78d4d6d",
+      "source": "sphinx-after.log"
+    },
+    "sphinx-before-inputs.json.gz": {
+      "bytes": 347,
+      "sha256": "f2adb867b1d1498db041b8b11c11546eea8bf409895f66ab53abfa4c70e3549f",
+      "source": "sphinx-before/inputs.json"
+    },
+    "sphinx-before-profile.py.gz": {
+      "bytes": 2798,
+      "sha256": "22d4f08686cc9d698d2cb1ceb72257ac2dc70a7903547e87e6129c7ac637d554",
+      "source": "sphinx_probe_profile.py"
+    },
+    "sphinx-before-spans.jsonl.gz": {
+      "bytes": 45435,
+      "sha256": "3bb263663d13df53f182746b35c0887eaf74b31fec55d7d631b6c046efc27283",
+      "source": "sphinx-before/spans.jsonl"
+    },
+    "sphinx-before-summary.json.gz": {
+      "bytes": 134,
+      "sha256": "af4aa84ed2ee0085905039adc8ff56366ccade9a8ede14404395428ea22e013a",
+      "source": "sphinx-before/summary.json"
+    },
+    "sphinx-before.log.gz": {
+      "bytes": 16332,
+      "sha256": "b8bc6de9da9fc5db5bf74e7354cf374f09bdf8b7efbf49ff5201998030b18b9a",
+      "source": "sphinx-before.log"
+    },
+    "sphinx-comparison.json.gz": {
+      "bytes": 489,
+      "sha256": "da6e36041eb00032c1c8c20dc309652b259ed86dac7a49afdfb6d35d6070b6b0",
+      "source": "sphinx-comparison.json"
+    }
+  },
+  "source_identity": {
+    "after": {
+      "commit": "1b9719612ae9e844df8fbab2775c0646a0ab7ebf",
+      "fixed_point_sha256": "c1f20fc255b964b234835a046810d7ea3dec779070afa84e423c28715dbecf43",
+      "materialize_sha256": "b6fdf1f1755a8fa84b429aa6ed269a309c6322430a3f504f51a6b106f9fdcb09",
+      "source_files": 97,
+      "source_manifest_sha256": "e6f6bcb3d4ca38a67defa3d5054cff34ba1e4b00625937e0721e58d9097f7e19"
+    },
+    "before": {
+      "commit": "35035a747e446368b6a5c4f3b1cee3fd1b5487c3",
+      "fixed_point_sha256": "c1f20fc255b964b234835a046810d7ea3dec779070afa84e423c28715dbecf43",
+      "materialize_sha256": "b6fdf1f1755a8fa84b429aa6ed269a309c6322430a3f504f51a6b106f9fdcb09",
+      "source_files": 97,
+      "source_manifest_sha256": "752edf2981eafb6deb96553679c31b1bfcf1c1d71b0d767ec14a17ebb5ece4cd"
+    }
+  }
+}
