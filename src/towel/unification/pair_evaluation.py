@@ -1877,6 +1877,9 @@ class PairEvaluation(
             return None
         self._seen_proposals.add(identity)
         if self.skip_trivial_helpers:
+            reused = self._reusing_generated_helper(proposal, functions)
+            if reused is not None:
+                return reused
             forwarder = self._helper_reduced_to_forwarder(proposal, functions)
             if forwarder is not None:
                 self._debug_reject(
