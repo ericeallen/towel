@@ -216,6 +216,32 @@ identical complete application indexes, including unresolved names, with
 558 identity calls. Evidence and the comparison script are retained in
 `~/Knowledge/handoffs/towel/20260927T172821Z-codex-typed-performance/`.
 
+### Preview and helper-quality checkpoint
+
+The implementation sequence is complete. Default preview shares dry's
+executor, flags, checker and formatter behavior, fixed-point passes, caps and
+final cold validation. It shows the complete final diff and helper inventory.
+Explicit `--quick` remains a partial structural listing. Tests compare actual
+output bytes and inventories and verify input immutability and failure cleanup.
+
+Helper construction drops free names captured only inside substituted
+caller-side expressions and avoids orphan parameters when differing attribute
+names force a whole lookup to be parameterized. A disposable scope-analysis
+copy keeps mutable generated ASTs out of the source-analysis memos.
+
+Equivalent plain module helpers introduced during this staged run can be
+reused with their original signatures and host; user-defined names, including
+helper-shaped names already in the input, retain independent behavior. Three
+modules now share one real helper; independent batches across four or eight
+modules retain two or four real helpers without chains. General consumer
+redirection to merge these remaining duplicates is deferred.
+
+Completed focused checks include 137 CLI/capability/runtime-equivalence tests,
+40 latest preview/input-construction tests, 121 reuse/capability integration
+tests, and the independent implementer's 143 reuse/type/import cases. These
+sets overlap and their counts must not be summed. Full candidate validation
+remains separate below.
+
 ### Remaining release validation
 
 Run the full interpreter matrix, full corpus, self-dogfooding, documentation

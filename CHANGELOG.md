@@ -9,6 +9,16 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Preview now runs the same checked, formatted fixed-point pipeline as dry in
+  private output and shows its final diff and helper inventory. Use explicit
+  `--quick` for a partial structural listing. Input files remain unchanged.
+- Reuse equivalent helpers introduced earlier in the current run where the
+  call and host are proved compatible, avoiding redundant forwarding chains
+  while preserving existing functions' independent bindings.
+- Generated helper signatures omit free names used only inside caller-side
+  thunks; differing attribute lookups no longer spend unused child parameters.
+
+
 ### Changed
 
 - Extraction discovery now includes match-case bodies and except-star

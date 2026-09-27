@@ -1241,3 +1241,38 @@ assignment values and annotation targets can execute and remain protected.
 require successful useful extraction and equivalent runtime traces, alongside
 negative controls for the actual hazards. An unchanged program is not a
 passing substitute for their positive capability assertions.
+
+
+### Complete preview and generated helper inputs (September 27, 2026)
+
+Preview must use the same executor and options as dry, including formatting,
+checker refusals, later fixed-point passes, caps and final cold validation.
+A single structural analysis cannot promise what dry will apply; `--quick`
+must remain explicit and labelled partial, not an upper bound. The complete
+preview shows the final diff and helper inventory, with private paths mapped
+back to input paths. Tests compare actual output bytes and inventories and
+require no input content, mode, inode or mtime changes, including on failure.
+
+Helper inputs are determined after expression substitution. If an attribute
+name differs, its whole lookup is parameterized before visiting its receiver:
+otherwise an unused child parameter can exhaust the parameter budget. A free
+name captured only in the resulting caller-side thunk is not a separate
+helper input. Retain nested free reads, binding operations and returned values.
+This is construction of new calls, not permission to remove effectful
+arguments from existing calls. The generated-parameter regressions require
+useful extraction and unchanged runtime traces. Older call-mapping fixtures
+now actually read the free variables whose mappings they assert.
+
+
+Generated helpers introduced during the current private staged run may be
+reused when the proposal proves a whole-body identity call with the same
+plain positional parameters and the same module host. Keep the existing
+definition and signature; normal import, binding and project type checks
+still apply. Never use a helper-shaped name alone as provenance: a function
+already present in the input retains its independent monkeypatch behavior.
+A proposal must not turn an existing generated helper into a forwarding
+layer or split two identical generated bodies merely to add another layer.
+Independent batches may still leave duplicate real helpers; redirecting all
+their existing consumers is outside this bounded change. The regressions
+cover three, four and eight modules, runtime effects, strict-mypy compatible
+and incompatible calls, defaults, decorators, receiver and shadowing cases.
