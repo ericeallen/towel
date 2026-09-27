@@ -1272,8 +1272,16 @@ still apply. Never use a helper-shaped name alone as provenance: a function
 already present in the input retains its independent monkeypatch behavior.
 A proposal must not turn an existing generated helper into a forwarding
 layer or split two identical generated bodies merely to add another layer.
-Independent batches may still leave duplicate real helpers; redirecting all
-their existing consumers is outside this bounded change. The regressions
+Equivalent module helpers from independent batches may instead share the
+selected safe home through a module alias. Both names must be proved generated
+during this run; their plain positional signatures and bodies must match, and
+removing a definition must discard no evaluated defaults, decorators or
+annotations. Annotations are limited here to inert strings and `None`.
+The existing import-cycle and effect checks choose the home; materialization
+also proves that the alias reads an earlier import of that exact module and
+helper. Existing calls keep their bindings, without a forwarding call. Same-name
+collisions, same-module consolidation and general consumer redirection remain
+outside this bounded change. The regressions
 cover three, four and eight modules, runtime effects, strict-mypy compatible
 and incompatible calls, defaults, decorators, receiver and shadowing cases.
 

@@ -232,9 +232,17 @@ copy keeps mutable generated ASTs out of the source-analysis memos.
 Equivalent plain module helpers introduced during this staged run can be
 reused with their original signatures and host; user-defined names, including
 helper-shaped names already in the input, retain independent behavior. Three
-modules now share one real helper; independent batches across four or eight
-modules retain two or four real helpers without chains. General consumer
-redirection to merge these remaining duplicates is deferred.
+modules now share one real helper. The four- and eight-module regressions also
+share one real helper: equivalent module helpers generated in independent
+batches become aliases of the helper in the safe home, so their existing calls
+retain their bindings without forwarding layers. The alias requires identical
+plain positional signatures and bodies, inert annotations, generated provenance,
+and a verified earlier import of the exact helper. Same-name collisions,
+same-module consolidation and general consumer redirection remain deferred.
+Only string and `None` annotations are admitted for this alias case; ordinary
+inferred signatures such as `n: int` retain separate definitions. The typed
+alias regression therefore starts from an explicit private stage with quoted
+signatures and checks materialization, all consumers, and runtime behavior.
 
 Completed focused checks include 137 CLI/capability/runtime-equivalence tests,
 40 latest preview/input-construction tests, 121 reuse/capability integration

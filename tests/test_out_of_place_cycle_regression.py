@@ -128,6 +128,31 @@ class TestOutOfPlaceCycleRegression(unittest.TestCase):
         self.assertIn("def __extracted_func", b_source)
         self.assertNotRegex(b_source, r"from (?:app\.|\.)a import")
 
+    def test_shared_helper_preserves_results_after_adoption(self) -> None:
+        program = (
+            "from app import a, b\n"
+            "for function in (a.a1, a.a2, b.b1, b.b2, b.b3, b.b4):\n"
+            "    for seq in ([], [1, 2, 3], [-2, 0, 5], None):\n"
+            "        for factor in (0, 2, -3):\n"
+            "            try: print(function(seq, factor))\n"
+            "            except Exception as error: print(type(error).__name__, str(error))\n"
+        )
+
+        def observe() -> tuple[str, str]:
+            result = subprocess.run(
+                [sys.executable, "-B", "-c", program],
+                cwd=self.pkg.parent,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=True,
+            )
+            return result.stdout, result.stderr
+
+        before = observe()
+        self._refactor_and_adopt()
+        self.assertEqual(observe(), before)
+
 
 if __name__ == "__main__":
     unittest.main()

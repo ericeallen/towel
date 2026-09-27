@@ -16,8 +16,8 @@
 
 The round-four four-module repro and its eight-module extension originally
 ended with three and seven helpers in chains. Independent first-pass batches
-may still create two or four real helpers; this bounded reuse neither merges
-their consumers nor redirects any function already named in the input.
+now share one equivalent definition through aliases, preserving their existing
+consumers without redirecting any function already named in the input.
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ def _helpers(package: Path) -> list[ast.FunctionDef]:
     ]
 
 
-@pytest.mark.parametrize("count, expected_helpers", [(3, 1), (4, 2), (8, 4)])
+@pytest.mark.parametrize("count, expected_helpers", [(3, 1), (4, 1), (8, 1)])
 def test_cross_module_batches_keep_real_helpers_without_forwarding_chains(
     tmp_path: Path, count: int, expected_helpers: int
 ) -> None:

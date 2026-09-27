@@ -1863,10 +1863,17 @@ the proposals it built and did not apply, by reason:
 - The proposal. `duplicate_proposal`: the helper, home and sites repeat an
   earlier pair's, found through another pair of the same family.
   `existing_helper_becomes_forwarder`: a site is the whole body of a helper
-  an earlier pass inserted, which would keep only the new call, while
-  another site is not a whole body. When every site is the whole body of its
-  function, each of them, an earlier helper included, becomes a call of the
-  new helper, since no function is ever redirected to another.
+  this run inserted, which would keep only a new forwarding call. A proved
+  whole-body identity call may instead reuse that helper. Equivalent module
+  helpers with distinct generated names can share one definition through an
+  alias when their plain signatures and bodies match, their annotations are
+  literal strings or `None`, and the alias's earlier import resolves to the
+  exact proved helper. Evaluated annotations such as `n: int` retain separate
+  definitions under this conservative rule.
+  Same-module consolidation and general consumer redirection are not attempted.
+  A helper-shaped function already in the input retains its independent
+  binding: its body may share a fresh helper, but its name is never reused or
+  aliased merely because of its spelling.
 
 Other behaviors that leave a duplicate in place are not rejections of a
 formed pair:
