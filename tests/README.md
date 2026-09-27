@@ -257,6 +257,15 @@ second module repeating its base class's method body),
 verifying the new output (`just regenerate-baseline`) and review the diff,
 since regeneration is not validation.
 
+The September 27 helper cleanup changes three goldens intentionally: the
+class example drops `self` once its only uses are captured by a caller-side
+thunk; the functional example similarly drops the unused `result` argument;
+and `multi_level/api/checkout.py` reuses the generated validation helper
+without inserting a forwarding layer. These expectations protect helper
+quality as well as behavior. Restore neither unused inputs nor forwarding
+layers merely to match a later implementation; check the focused helper
+parameter and generated reuse regressions when changing them.
+
 Three goldens are byte-identical to their inputs because single-file mode
 finds nothing to extract in them. `EXPECTED_UNCHANGED_EXAMPLES` in
 `test_regression.py` names them, and the regression test asserts that the

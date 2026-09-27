@@ -3,7 +3,7 @@ Checkout API.
 """
 
 
-def __extracted_func_1(amount, currency):
+def __extracted_func_0(amount, currency):
     if amount <= 0:
         return False
     if not currency:
@@ -15,10 +15,6 @@ def __extracted_func_1(amount, currency):
     if amount > 1000000:
         return False
     return True
-
-
-def __extracted_func_0(amount, currency):
-    return __extracted_func_1(amount, currency)
 
 
 def validate_checkout_amount(amount, currency):

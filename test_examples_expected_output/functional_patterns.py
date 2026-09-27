@@ -11,7 +11,7 @@ def __extracted_func_8(result, values):
     return {'reduced': result, 'normalized': normalized}
 
 
-def __extracted_func_7(__param_0, __param_1, result):
+def __extracted_func_7(__param_0, __param_1):
     if __param_0:
         return __param_1()
     return []
@@ -19,6 +19,7 @@ def __extracted_func_7(__param_0, __param_1, result):
 
 def __extracted_func_6(__param_0, base_func, modifier, values):
     apply_modifier = lambda x: base_func(x, modifier, __param_0)
+    # Use partially applied function
     processed = list(map(apply_modifier, values))
     filtered = list(filter(lambda x: x > 100, processed))
     return {'processed': processed, 'filtered': filtered, 'count': len(filtered)}
@@ -28,14 +29,15 @@ def __extracted_func_5(__param_0, data, multiplier):
     transform = lambda x: x * multiplier + __param_0
     filtered = filter(lambda x: x > 0, data)
     result = list(map(transform, filtered))
-    return __extracted_func_7(len(result) > 0, lambda: sorted(result, key=lambda x: x, reverse=True), result)
+    return __extracted_func_7(len(result) > 0, lambda: sorted(result, key=lambda x: x, reverse=True))
 
 
 def __extracted_func_4(transformed):
     filtered = (x for x in transformed if x > 10)
     squared = (x ** 2 for x in filtered)
+    # Consume generator
     result = list(squared)
-    return __extracted_func_7(result, lambda: sorted(result, key=lambda x: -x)[:100], result)
+    return __extracted_func_7(result, lambda: sorted(result, key=lambda x: -x)[:100])
 
 
 def __extracted_func_3(__param_0, curried, data, param1, param2):
@@ -55,6 +57,7 @@ def __extracted_func_2(__param_0, data, filter_func, map_func):
     step3 = filter(filter_func, step2)
     step4 = map(map_func, step3)
     result = list(step4)
+    # Final transformation
     if result:
         return sorted(result, key=lambda x: (x % 10, x))
     return []
