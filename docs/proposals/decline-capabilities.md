@@ -8,6 +8,17 @@ leave. Each would be fixed by making the safety analysis accept code it now
 refuses, so each needs its own soundness argument, tests that fail before
 and pass after, and a from-scratch audit of its own.
 
+On the post-1.772 branch, list-field expression values of differing kinds,
+match-case suites and except-star handlers/finally are now considered.
+Nonlocal declarations and private names elsewhere in a function no longer
+block an unrelated extraction. Local-variable annotation names are no longer
+treated as runtime module lookups. The historical tables below retain what
+the audits measured; `tests/test_candidate_recovery.py` and
+`tests/test_scope_guard_boundaries.py` protect these recovered capabilities
+with positive extraction and runtime controls. Store/delete targets, pattern
+headers, escaping captured bindings and real evaluated annotations keep their
+existing safety checks. Broader nested-block liveness remains deferred.
+
 ## How the costs were measured
 
 The costs come from the third audit round of 1.772, at `077a712`, on

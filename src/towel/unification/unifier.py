@@ -1099,7 +1099,17 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             elements = [lst[i] for lst in lists]
 
             elem_types = set(type(e) for e in elements)
-            if len(elem_types) > 1:
+            if len(elem_types) > 1 and not (
+                all_instances(elements, ast.expr)
+                and all(
+                    getattr(element, "ctx", None) is None
+                    or isinstance(getattr(element, "ctx"), ast.Load)
+                    for element in elements
+                )
+            ):
+                # An expression value may differ in kind just as it can in a
+                # scalar field. Targets, patterns and control nodes cannot:
+                # a parameter is a value, not a new binding or statement.
                 return False
 
             first_elem = elements[0]

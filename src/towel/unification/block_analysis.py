@@ -444,13 +444,18 @@ class BlockAnalysis(EngineState):
 
                 # With and AsyncWith already covered by .body
                 # Try/Except/Finally blocks
-                if isinstance(stmt, ast.Try):
+                if isinstance(stmt, (ast.Try, ast.TryStar)):
                     if stmt.handlers:
                         for h in stmt.handlers:
                             if hasattr(h, "body") and isinstance(h.body, list):
                                 results.extend(extract_from_body(h.body))
                     if hasattr(stmt, "finalbody") and isinstance(stmt.finalbody, list):
                         results.extend(extract_from_body(stmt.finalbody))
+                # A case owns a statement suite even though Match has no
+                # .body. Its pattern and guard remain at the original site.
+                if isinstance(stmt, ast.Match):
+                    for case in stmt.cases:
+                        results.extend(extract_from_body(case.body))
 
             return results
 

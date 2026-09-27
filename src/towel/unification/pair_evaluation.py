@@ -41,6 +41,7 @@ None for a rejection that was already traced through ``_debug_reject``:
 from __future__ import annotations
 
 import ast
+import copy
 import dataclasses
 import os
 import symtable
@@ -60,7 +61,7 @@ from .decorator_reach import (
     decorator_refusal,
 )
 from .definite_assignment import definitely_bound_after
-from .function_scope import function_names
+from .function_scope import code_names, function_names
 from .statement_facts import bindings_of, loaded_names
 from .assignment_analyzer import (
     has_reassignments_without_bindings,
@@ -251,6 +252,40 @@ class _Placed:
     differing_reads: FrozenSet[str] = frozenset()
 
 
+class _RuntimeAnnotations(ast.NodeTransformer):
+    """Hide non-evaluated local annotations from CPython's symbolic read set.
+
+    The symbol table lists their names even though function bodies never
+    evaluate them. Keep the annotated assignment itself: a bare annotation
+    still establishes a local binding. Class annotations and nested function
+    signatures can evaluate, and remain intact.
+    """
+
+    def __init__(self) -> None:
+        self.in_function = False
+
+    def _scope(self, node: ast.AST, *, function: bool) -> ast.AST:
+        outer, self.in_function = self.in_function, function
+        try:
+            return self.generic_visit(node)
+        finally:
+            self.in_function = outer
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        return self._scope(node, function=True)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        return self._scope(node, function=True)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+        return self._scope(node, function=False)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AST:
+        if self.in_function:
+            node.annotation = ast.copy_location(ast.Constant(value=None), node.annotation)
+        return self.generic_visit(node)
+
+
 def _module_namespace_names(
     helper: ast.FunctionDef,
 ) -> Optional[Tuple[FrozenSet[str], FrozenSet[str]]]:
@@ -259,10 +294,12 @@ def _module_namespace_names(
     CPython's own symbol table answers, so a name read inside a lambda or a
     comprehension of the helper that nothing in the helper binds is among
     them, and a parameter or a local is not. None when the helper does not
-    compile to a table.
+    compile to a table. Local-variable annotations do not run, although the
+    symbol table lists their names; hide those annotations before asking it.
     """
     try:
-        table = symtable.symtable(ast.unparse(helper), "<helper>", "exec")
+        runtime = _RuntimeAnnotations().visit(copy.deepcopy(helper))
+        table = symtable.symtable(ast.unparse(runtime), "<helper>", "exec")
     except SyntaxError:
         return None
     names: Set[str] = set()
@@ -295,6 +332,36 @@ def _analyzed_module(analyzer: Optional[ScopeAnalyzer]) -> Optional[ast.Module]:
     """The module ``analyzer`` analyzed, when it analyzed a whole module."""
     tree = analyzer.analyzed_tree if analyzer is not None else None
     return tree if isinstance(tree, ast.Module) else None
+
+
+def _touches_nonlocal(function: FunctionNode, block: Sequence[ast.stmt]) -> bool:
+    """Whether this block, rather than unrelated caller code, uses a nonlocal cell."""
+    declared = function_names(function).declared_nonlocal
+    if not declared:
+        return False
+    names = code_names(block)
+    return bool(declared & (names.references.keys() | names.bound.keys() | names.declared_nonlocal))
+
+
+def _replacement_statements(function: FunctionNode, replacement: Replacement) -> List[ast.stmt]:
+    """The original statements that move, including exact semicolon boundaries."""
+    first, last = replacement.line_range
+    columns = replacement.columns
+    start = (first, columns.start if columns is not None else 0)
+    end = (last, columns.end if columns is not None else float("inf"))
+    pending: List[ast.AST] = list(reversed(function.body))
+    found: List[ast.stmt] = []
+    while pending:
+        node = pending.pop()
+        if (
+            isinstance(node, ast.stmt)
+            and start <= (node.lineno, node.col_offset)
+            and (node.end_lineno or node.lineno, node.end_col_offset or 0) <= end
+        ):
+            found.append(node)
+        else:
+            pending.extend(reversed(list(ast.iter_child_nodes(node))))
+    return found
 
 
 @dataclass(frozen=True)
@@ -1536,9 +1603,9 @@ class PairEvaluation(
                     and sites.cluster_contexts[index].method == setup.method_info1
                 )
             ]
-        # Closures with nonlocal variables are left alone.
-        if self._declares_nonlocal(ctx.func1, ctx.scope_analyzer) or self._declares_nonlocal(
-            ctx.func2, ctx.scope_analyzer2
+        # Only moving the cell's reads, writes or declaration needs this guard.
+        if _touches_nonlocal(ctx.func1, pair.block1_nodes) or _touches_nonlocal(
+            ctx.func2, pair.block2_nodes
         ):
             self._debug_reject(RejectReason.NONLOCAL_SAFETY_SKIP, pair)
             return None
@@ -1560,7 +1627,7 @@ class PairEvaluation(
                     if (
                         a.class_name == replacement.class_name
                         and span_contains(a.node, replacement.line_range)
-                        and uses_class_private_names(a.node.body)
+                        and uses_class_private_names(_replacement_statements(a.node, replacement))
                     ):
                         self._debug_reject(RejectReason.PRIVATE_NAME_LEXICAL_CLASS, pair)
                         return None

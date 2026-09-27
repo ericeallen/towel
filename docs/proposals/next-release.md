@@ -144,6 +144,65 @@ with identical output. General dynamic metaprograms remain outside the
 supported model. Full final-source release validation still follows the
 remaining implementation work below.
 
+## Typed performance comparisons
+
+Frozen baseline `35035a7` and candidate `1b97196` were compared on September
+27. The candidate includes precise signature construction, the erased-None
+predicate guard, immutable definition indexing and Pyright reveal batching.
+These are controlled experiments, not the final release corpus.
+
+Packaging 26.3 used the actual CLI through a fixed point, strict mypy 2.3.1,
+Python 3.13.7 on macOS arm64, one worker, same-module extraction and no
+formatter. Four runs were sequential in baseline / candidate / candidate /
+baseline order, after the Sphinx profile finished. Imported source paths,
+complete outputs and every signature attempt are recorded. Output Python
+files are byte-identical within each arm.
+
+| Per run | Baseline | Candidate |
+| --- | ---: | ---: |
+| Elapsed seconds, two runs | 34.18, 34.57 | 28.81, 28.95 |
+| Applied extractions | 19 | 18 |
+| Signature attempts | 27 | 18 |
+| Rejected signatures | 8 | 0 |
+| Failed materializations | 0 | 0 |
+
+Mean time fell from 34.37 to 28.88 seconds, about 16% in this small sample.
+The one fewer extraction is intentional: `_matches_literal`/`contains`
+previously erased the connection between a None predicate and its subject,
+then passed only after changing that parameter to Any. The guard now stays
+with its caller. Correlated signatures and the comparison return signature
+pass first time. One distinct checker-coverage refusal remains, attempted
+twice in each run. Each run completed its final cold type check; no packaging
+runtime suite was included in this timing experiment.
+
+The Sphinx comparison used its actual production CLI startup with both
+strict checkers, stopping immediately after the first Pyright reveal. Both
+frozen wheels ran sequentially in the same Docker Linux environment:
+CPython 3.12.14, Sphinx 9.1.1, mypy 1.19.1 and Pyright 1.1.407. Both asked
+exactly 2,949 distinct requests across 218 files, containing 7,391 expression
+probes, and returned the same 7,387 types with no failed-file reports. Four
+unanswered expression probes were identical in both runs; they are not
+checker failures. Per-file exchanges took 980.72 seconds; one project batch
+took 8.65 seconds. This single comparison measures initial reveal time, not
+the full fixed point. Final project validation and consumer coverage are
+unchanged.
+
+Durable scripts, frozen sources/wheels, inputs, output hashes, request/answer
+comparisons and logs are under
+`~/Knowledge/handoffs/towel/20260927T172821Z-codex-typed-performance/`.
+
+## Capability recovery checkpoint
+
+List-field expression values, match cases and except-star handler/finally
+suites now reach existing safety analysis. Nonlocal and class-private guards
+use only the moving block; local-variable annotation names no longer count
+as runtime module reads. Positive extraction tests accompany controls for
+real nonlocal cells, private-name mangling, evaluated annotations, store and
+delete targets, pattern headers, exception subgroup cleanup and caller loop
+control. The focused combined battery passes 137 tests. Broader nested-block
+liveness remains separate: a captured name reassigned inside a case and used
+later still receives the existing escape refusal.
+
 ## Validation before release
 
 ### Instrumentation indexing measurement

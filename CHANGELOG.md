@@ -11,6 +11,13 @@ ecosystem evidence behind each claim. The format follows
 
 ### Changed
 
+- Extraction discovery now includes match-case bodies and except-star
+  handlers/finally. List-valued AST fields can unify differing expression
+  values while retaining restrictions on bindings and control flow.
+- Scope guards examine the moving block: unrelated nonlocal declarations
+  and private names elsewhere in a method no longer hide a safe extraction.
+  Names used only in local-variable annotations no longer become runtime
+  helper arguments or prevent cross-module extraction.
 - Recognized body instrumentation is protected across decorators, ordinary
   calls and executed class hooks. Binding and argument flow distinguish
   method recompilation from unrelated instrumentation and namespace
@@ -31,6 +38,17 @@ ecosystem evidence behind each claim. The format follows
 
 ### Performance
 
+- Typed signatures preserve argument/result correlations before validation
+  and retain mypy's return-context treatment of `NotImplemented`. A known
+  erased-None-predicate construction stays at its caller instead of falling
+  back to an Any parameter. In a controlled packaging comparison, rejected
+  signatures fell from eight to zero and mean elapsed time fell about 16%;
+  the run intentionally applied 18 extractions instead of 19.
+- Pyright reveal probes share one checker exchange per project. On a frozen
+  Sphinx startup workload, 218 exchanges became one, with identical requests
+  and reported types; initial reveal time fell from 980.7 to 8.65 seconds.
+  This is a phase measurement, not a full-run timing. See the
+  [comparison details](docs/proposals/next-release.md#typed-performance-comparisons).
 - Instrumentation resolution indexes immutable module/class definitions once
   per module tree. A packaging scan made 558 identity queries instead of
   36,741, retaining the exact same application index. The index is released

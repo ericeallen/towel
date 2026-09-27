@@ -731,7 +731,7 @@ visible class design"). The rule's costs:
 
 - A block shared across classes is a module function with an explicit
   receiver, which is sound but less idiomatic than a method.
-- Such a block is declined when the function holding it uses a
+- Such a block is declined when the code moving out of the class uses a
   class-private name (`self.__x`), which a module function would have to
   spell mangled, `receiver._A__x`, a spelling mypy and pyright both reject
   (`private_name_lexical_class`). `__class__` is passed to it as an
@@ -1829,8 +1829,9 @@ the proposals it built and did not apply, by reason:
 - Placement. `needs_class_body`: the blocks use zero-argument `super()` and
   the helper cannot be a method of the class holding both, reached through
   the same receiver (*Method insertion*); nothing else binds `super()` alike.
-  `nonlocal_safety_skip`: either block's function declares
-  `nonlocal`. `private_name_lexical_class`: a site's method uses a
+  `nonlocal_safety_skip`: a block reads, writes or declares a name its
+  function makes `nonlocal`. An unrelated declaration does not block the
+  extraction. `private_name_lexical_class`: the moving block uses a
   `__private` name and the helper would live in another class, which
   changes name mangling. `cross_module_global_declaration`: a cross-file
   helper's participating modules include one whose functions declare

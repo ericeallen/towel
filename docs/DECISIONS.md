@@ -1217,3 +1217,27 @@ corpus. Add new evidence for a new release. Revising historical expectations
 requires corroborating evidence and a recorded explanation, under the
 policy-regression rule in `CONTRIBUTING.md`; do not change them merely to fit
 new output or silence a failure.
+
+## 2026-09-27: Recover valid blocks without moving unrelated scope constraints
+
+List-valued AST fields should admit the same independently evaluable
+expression differences as scalar fields. A store/delete target, pattern or
+control statement is not an expression value and retains its separate rules.
+Case bodies and except-star handler/finally suites are extraction sites;
+patterns, guards, subgroup dispatch and cleanup remain in their caller.
+These additions do not imply complete nested-block liveness analysis.
+
+A nonlocal declaration or private name elsewhere in a function must not
+exclude a block that neither uses that cell nor moves that private spelling.
+Inspect the statements and exact columns being replaced, including a suffix
+sharing a line with code that stays. Local-variable annotations establish
+bindings but their annotation expressions do not execute; never turn a name
+used only there into a runtime argument. CPython's symbol table includes such
+names, so using it without removing those annotation expressions does not
+prove a runtime lookup. Class annotations, nested function signatures,
+assignment values and annotation targets can execute and remain protected.
+
+`tests/test_candidate_recovery.py` and `tests/test_scope_guard_boundaries.py`
+require successful useful extraction and equivalent runtime traces, alongside
+negative controls for the actual hazards. An unchanged program is not a
+passing substitute for their positive capability assertions.
