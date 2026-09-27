@@ -139,6 +139,53 @@ from .generic_annotations import MethodContext, generic_helpers
 from .type_bindings import CheckerImports, ModuleNames
 from .program_imports import ProgramImports
 
+
+def _annotation_expression(annotation: Optional[ast.expr]) -> Optional[ast.expr]:
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            return ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return None
+    return annotation
+
+
+def _may_lose_result_correlation(helper: ast.FunctionDef) -> bool:
+    """A union input and a structured result merit checking for a shared type parameter.
+
+    This only orders existing candidates; it does not suppress a signature or
+    declare one valid. Simple fixed results, such as bool, gain no precision
+    from relating the input types to the result.
+    """
+    result = _annotation_expression(helper.returns)
+    if not isinstance(result, (ast.Subscript, ast.BinOp)):
+        return False
+    return any(
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.BitOr)
+        or isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in {"Union", "Optional"}
+        for parameter in (*helper.args.posonlyargs, *helper.args.args, *helper.args.kwonlyargs)
+        if (annotation := _annotation_expression(parameter.annotation)) is not None
+        for node in ast.walk(annotation)
+    )
+
+
+def _relates_result(variant: RefactoringProposal) -> bool:
+    """Whether a newly declared generic parameter occurs in the result contract."""
+    names = {
+        target.id
+        for statement in variant.helper_type_declarations
+        if isinstance(statement, ast.Assign)
+        for target in statement.targets
+        if isinstance(target, ast.Name)
+    }
+    result = _annotation_expression(variant.extracted_function.returns)
+    return result is not None and any(
+        isinstance(node, ast.Name) and node.id in names for node in ast.walk(result)
+    )
+
+
 UNTYPED_REMEDY = "rerun with --no-types (library: type_oracle=None, annotate_helpers=False)."
 """The way out when the checker cannot run at all: the one thing such a user can act on."""
 
@@ -739,9 +786,21 @@ class HelperAnnotationWiring(EngineState):
             oracle,
             bare_ok,
             receiver,
+            return_as_any=(
+                frozenset(
+                    {
+                        "types.NotImplementedType",
+                        "builtins._NotImplementedType",
+                        "_typeshed.NotImplementedType",
+                    }
+                )
+                if verifies_with_mypy(oracle)
+                else frozenset()
+            ),
         )
         completed = complete_with_any(respell_bare(inferred.helper, host, bare_ok), host, receiver)
         proposal.extracted_function = completed.helper
+        proposal.observed_return_any = inferred.observed_return_any
         proposal.required_imports = tuple(
             dict.fromkeys(inferred.required_imports + completed.required_imports)
         )
@@ -899,8 +958,9 @@ class HelperAnnotationWiring(EngineState):
 
         Untyped, or reusing a function whose signature stays, the proposal as it
         is. Otherwise: generic candidates first when the ordinary signature has
-        already lost information to ``Any``, then the ordinary signature, then
-        generic candidates when it had not; then the targeted rung, ``Any``
+        already lost information to ``Any`` or independent unions would lose a
+        result relationship, then the ordinary signature, then remaining
+        generic candidates; then the targeted rung, ``Any``
         exactly where the ordinary signature's own errors point
         (``targeted_any``); then every annotation ``Any``, where the checker
         does not refuse a helper returning ``Any`` wherever its value is
@@ -930,17 +990,31 @@ class HelperAnnotationWiring(EngineState):
         policy = self._ladder_policy(proposal.file_path)
         lossy = self._helper_uses_any(proposal)
 
-        def generics() -> Iterator[RefactoringProposal]:
-            for index, variant in enumerate(self._generic_helper_variants(proposal)):
+        candidates = self._generic_helper_variants(proposal)
+        # Preserve complete rows before trying an independent union in each
+        # position. Compute this list once: later fallback reuses the same
+        # candidates, never another set of checker reveals.
+        early: List[RefactoringProposal] = []
+        later: List[RefactoringProposal] = []
+        if (
+            not lossy
+            and not proposal.observed_return_any
+            and _may_lose_result_correlation(proposal.extracted_function)
+        ):
+            for variant in candidates:
+                (early if _relates_result(variant) else later).append(variant)
+            candidates = iter(later)
+
+        def generics(variants: Iterator[RefactoringProposal]) -> Iterator[RefactoringProposal]:
+            for index, variant in enumerate(variants):
                 TYPES.debug("ladder rung generic#%d for %s", index, proposal.description)
                 yield self._finished(variant)
                 if hearing.settled_by() is not None:
                     return
 
-        if lossy:
-            yield from generics()
-            if hearing.settled_by() is not None:
-                return
+        yield from generics(candidates if lossy else iter(early))
+        if hearing.settled_by() is not None:
+            return
         ordinary = self._finished(proposal)
         TYPES.debug("ladder rung ordinary for %s", proposal.description)
         yield ordinary
@@ -948,7 +1022,7 @@ class HelperAnnotationWiring(EngineState):
             return
         refusal = hearing.of(ordinary)
         if not lossy:
-            yield from generics()
+            yield from generics(candidates)
             if hearing.settled_by() is not None:
                 return
         targeted = self._targeted_variant(ordinary, refusal) if refusal is not None else None
@@ -1162,7 +1236,8 @@ class HelperAnnotationWiring(EngineState):
             for arg in helper.args.posonlyargs + helper.args.args
             if arg.arg != receiver
         ]
-        annotations.append(helper.returns)
+        if not proposal.observed_return_any:
+            annotations.append(helper.returns)
         for annotation in annotations:
             if annotation is None:
                 return True

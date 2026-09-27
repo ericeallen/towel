@@ -212,6 +212,8 @@ class RefactoringProposal:
     helper_type_declarations: Tuple[ast.stmt, ...] = ()
     # The comments of the sites' blocks the helper carries (``block_comments``).
     helper_comments: HelperComments = HelperComments()
+    observed_return_any: bool = False
+    """The checker revealed Any for a result; do not mistake that fact for failed inference."""
 
 
 @dataclass

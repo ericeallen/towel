@@ -95,7 +95,11 @@ from .engine_state import BlockSite
 from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
-from .narrowing import caller_narrowing_leaves_with_block, narrowing_lost_at_call_site
+from .narrowing import (
+    caller_narrowing_leaves_with_block,
+    narrowing_lost_at_call_site,
+    parameterized_narrowing_lost,
+)
 from .namespace_writes import ProjectWrites, builtin_rebinding, scan_project_writes
 from .models import (
     HelperHome,
@@ -1780,10 +1784,20 @@ class PairEvaluation(
             helper_comments=comments,
         )
         separated = narrowing_lost_at_call_site(rendered.func_def, placement.replacements)
+        if separated is None:
+            separated = parameterized_narrowing_lost(
+                rendered.func_def,
+                placement.replacements,
+                functions,
+                home.file_path,
+                self._parse_source,
+                self.import_graph,
+            )
         if separated is not None:
-            # Both halves are well typed where they were written and the pair
-            # is not; no signature on the helper can repair it. Refusing here
-            # spares a whole-project check per candidate signature.
+            # A thunk outside its test cannot be repaired by a helper signature.
+            # An erased predicate can instead force Any on a separately passed
+            # subject; retain its original refinement rather than erase types.
+            # Both constructions can be recognized before project validation.
             self._debug_reject(RejectReason.NARROWING_LOST_AT_CALL_SITE, pair, detail=separated)
             return None
         identity = proposal_identity(proposal)

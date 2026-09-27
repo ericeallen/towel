@@ -60,7 +60,19 @@ import builtins
 import copy
 import textwrap
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, cast
+from typing import (
+    Callable,
+    Dict,
+    FrozenSet,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    cast,
+)
 
 from ..canonical_ast import canonical_dump
 from .revealed_types import parse_revealed
@@ -938,6 +950,8 @@ class _InferredHelper:
 
     helper: ast.FunctionDef
     required_imports: Tuple[Tuple[str, str], ...]
+    observed_return_any: bool = False
+    """Any was actually revealed in a result, rather than substituted for missing information."""
 
 
 def qualified_names_in_annotations(helper: ast.FunctionDef) -> List[str]:
@@ -1154,6 +1168,8 @@ def infer_missing_annotations(
     inferrer: TypeOracle,
     bare_ok: Optional[Set[str]] = None,
     receiver: Optional[str] = None,
+    *,
+    return_as_any: FrozenSet[str] = frozenset(),
 ) -> _InferredHelper:
     """A copy of ``helper`` with its annotations completed and normalized by a type checker.
 
@@ -1269,26 +1285,39 @@ def infer_missing_annotations(
             parameter.annotation = _renormalized(
                 parameter.annotation, host, same_module, subtypes, allowed
             )
+    observed_return_any = False
     if want_return:
         texts = [
             revealed.get((path, line, offset))
             for path, line, count in return_probes
             for offset in range(count)
         ]
+        # A checker's type for an expression can differ in a return context.
+        # mypy reveals NotImplementedType but treats it as Any when returned.
+        texts = ["Any" if text in return_as_any else text for text in texts]
+        observed_return_any = any(text == "Any" for text in texts)
         revealed_return: Optional[ast.expr] = None
         if return_variables and len(return_variables) > 1:
             revealed_return = _joined_tuple(
                 texts, len(return_variables), host, same_module, subtypes, allowed
             )
         elif texts:
-            revealed_return = _joined_revealed(texts, host, same_module, subtypes, allowed)
-        if returns_call and any(d is not None for d in declared):
+            revealed_return = _joined_revealed(
+                texts, host, same_module, subtypes, allowed, preserve_any=True
+            )
+        if observed_return_any and revealed_return is not None:
+            # Subtype probes deliberately cannot establish a relation through
+            # Any. Meeting the callers' declarations would therefore erase an
+            # actual result alternative and create a known-invalid signature.
+            # Keep the observed union; project validation checks its callers.
+            annotated.returns = revealed_return
+        elif returns_call and any(d is not None for d in declared):
             annotated.returns = _return_under_declarations(
                 revealed_return, declared, host, same_module, subtypes
             )
         elif revealed_return is not None or annotated.returns is None:
             annotated.returns = revealed_return
-    return _InferredHelper(annotated, typing_imports_needed(annotated, host))
+    return _InferredHelper(annotated, typing_imports_needed(annotated, host), observed_return_any)
 
 
 def _narrower(declared: ast.expr, seen: ast.expr, subtypes: _Subtypes) -> ast.expr:
@@ -1550,6 +1579,8 @@ def _joined_revealed(
     subtypes: _Subtypes = _unknown_subtypes,
     allowed: Optional[Set[str]] = None,
     fallbacks: Sequence[Optional[str]] = (),
+    *,
+    preserve_any: bool = False,
 ) -> Optional[ast.expr]:
     """The normalized union of what mypy revealed at every site, when all of it can be written.
 
@@ -1569,6 +1600,7 @@ def _joined_revealed(
     if not present or len(present) != len(texts):
         return None
     known = [index for index, text in enumerate(present) if text.strip() != "Any"]
+    returned_any = preserve_any and bool(known) and len(known) != len(present)
     if known and len(known) != len(present):
         spare_by_index = list(fallbacks) + [None] * (len(present) - len(fallbacks))
         present = [present[index] for index in known]
@@ -1585,9 +1617,18 @@ def _joined_revealed(
     ]
     if any(candidate is None for candidate in candidates):
         return None
-    return _joined(
+    joined = _joined(
         [_unquoted(c) for c in candidates if c is not None], host, same_module, extra, subtypes
     )
+    if returned_any and joined is not None:
+        # Any at an input can be accepted by a concrete parameter. Any actually
+        # returned is an output alternative, not evidence of that concrete
+        # result. In particular mypy treats NotImplemented as Any and grants a
+        # special return exception to __eq__, but not to its extracted helper.
+        return ast.BinOp(
+            left=_unquoted(joined), op=ast.BitOr(), right=ast.Name(id="Any", ctx=ast.Load())
+        )
+    return joined
 
 
 def _written_or_fallback(
@@ -1621,7 +1662,8 @@ def _joined_tuple(
         return None
     columns = [texts[offset::width] for offset in range(width)]
     elements = [
-        _joined_revealed(column, host, same_module, subtypes, allowed) for column in columns
+        _joined_revealed(column, host, same_module, subtypes, allowed, preserve_any=True)
+        for column in columns
     ]
     if any(element is None for element in elements):
         return None

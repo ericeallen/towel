@@ -100,11 +100,11 @@ def test_a_call_site_error_under_every_any_ends_the_ladder(
     the ladder at all means setting that refusal aside. The ladder rule is the
     second line and is worth keeping tested: an error no helper signature can
     reach ends the ladder rather than costing two more project checks. The
-    second check is the rung that gives ``Any`` where the ordinary signature's
-    errors point; where mypy does not refuse a helper returning ``Any``
-    (``warn_return_any``, which ``strict`` sets) the rung that makes every
-    annotation ``Any`` is the second instead, the targeted one having nothing
-    the errors point at.
+    ordinary signature already retains the Any result alternative of returned
+    NotImplemented, so strict mypy needs no targeted retry to discover it.
+    Where mypy does not refuse a helper returning ``Any`` (``warn_return_any``,
+    which ``strict`` sets), the all-Any rung is still tried. Neither case may
+    proceed to an unannotated helper for an error in the caller's thunk.
     """
     monkeypatch.setattr(
         "towel.unification.pair_evaluation.narrowing_lost_at_call_site", lambda *_: None
@@ -159,6 +159,6 @@ def test_a_call_site_error_under_every_any_ends_the_ladder(
     signatures = [
         signature for signature in _helper_signatures(oracle.checked) if "_TowelT" not in signature
     ]
-    assert len(signatures) == 2, signatures
+    assert len(signatures) == (1 if strict else 2), signatures
     every_any = signatures[-1].count(": _typing.Any") == signatures[-1].count(",") + 1
     assert every_any is not strict, signatures

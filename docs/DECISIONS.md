@@ -1126,6 +1126,17 @@ type information, including bare arguments/returns and arbitrary TypeGuard
 calls. Broader nested-block
 liveness remains separate work; a boundary filter alone does not supply it.
 
+Parameterizing `value is None` as an independent Boolean also loses the
+relationship to a separately passed `value`. Decline this construction when
+explicit declarations prove the value is optional and a helper operation or
+unambiguously resolved project callee needs it nonoptional. Keep the predicate
+with its subject and discover smaller valid windows. A consumer accepting
+None, a redundant guard on an already narrowed value, and a class thunk used
+by `isinstance` are positive controls, not grounds for refusal. Unknown types
+and dynamic bindings retain checker validation rather than speculative
+declines. `tests/test_parameterized_narrowing.py` records these distinctions,
+including the imported producer and consumer from the packaging failure.
+
 *Status: implemented and covered by targeted regressions on the post-1.772
 branch; this is not a claim of complete static narrowing analysis.*
 
@@ -1153,6 +1164,25 @@ Keep exact valid discovery and use positive regression cases alongside
 refusals. Memoization follows measured repeated inputs and observable purity,
 with bounded lifetimes and immutable cached results. Do not optimize by
 silently suppressing valid opportunities.
+
+The first signature should retain a relationship between an input type and
+the result, rather than writing independent unions and discovering the loss
+through a rejected project check. Existing generic candidates that express
+that result relationship precede the ordinary signature. A fixed result such
+as `bool` does not itself motivate generic inference. The existing final
+checks and fallback candidates remain available.
+
+Treat an actual checker-reported `Any` result differently from missing type
+information. In particular, mypy reveals `NotImplementedType` but treats it
+as `Any` in a return statement, granting comparison methods an exception
+that a generated helper does not receive. Preserve that result alternative
+in the helper's first return annotation; do not erase the input types or
+try unrelated generic signatures. `tests/test_signature_construction.py`
+protects first-check success for these cases. The strict comparison fixture
+in `test_annotation_ladder.py` consequently needs only one ordinary attempt:
+the previous targeted retry rediscovered this same return alternative. Its
+stopping rule for an irreparable call-site error is unchanged.
+
 
 ## 2026-09-27: Release documentation must agree with its validation evidence
 

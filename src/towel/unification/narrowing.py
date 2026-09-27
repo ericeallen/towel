@@ -52,10 +52,16 @@ still legal, only wider, and the complaint arrives somewhere else entirely.
 from __future__ import annotations
 
 import ast
-from typing import Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence, Set
+from pathlib import Path
+from typing import Callable, Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence, Set
 
+from ..source_text import read_source
+from .exceptions import ProjectScanLimitError
+from .function_index import FunctionIndex
+from .function_scope import function_names
+from .import_graph import ImportGraphCache, host_has_stub, imported_alias_sites
 from .models import FunctionNode, Replacement
-from .module_bindings import dotted_name
+from .module_bindings import dotted_name, global_bindings
 
 _NARROWING_CALLS = frozenset({"isinstance", "issubclass", "hasattr", "callable"})
 """Builtins whose result narrows their first argument in mypy and pyright."""
@@ -488,4 +494,304 @@ def narrowing_lost_at_call_site(
             if depends:
                 subject = sorted(depends)[0]
                 return f"{ast.unparse(argument)} reads {subject} outside the test that narrows it"
+    return None
+
+
+class _ProjectDeclarations:
+    """Explicit declarations reached through unambiguous project imports.
+
+    Assignment aliases, overloads, decorated functions and unresolved bases
+    retain the checker fallback. Trees share the engine parse cache; this
+    query's module table never outlives construction of the proposal.
+    """
+
+    def __init__(
+        self,
+        source: str,
+        tree: ast.Module,
+        path: str,
+        imports: ImportGraphCache,
+        parse: Callable[[str], ast.Module],
+        modules: Optional[Dict[str, _ProjectDeclarations]] = None,
+    ) -> None:
+        self.tree = tree
+        self.bindings = global_bindings(source)
+        self.path = path
+        self.imports = imports
+        self.parse = parse
+        self.modules = modules if modules is not None else {}
+        self.modules[path] = self
+
+    def definition(
+        self, name: str, seen: FrozenSet[tuple[str, str]] = frozenset()
+    ) -> Optional[tuple[ast.stmt, _ProjectDeclarations]]:
+        key = self.path, name
+        if self.bindings is None or key in seen or len(seen) >= 16:
+            return None
+        head, _, rest = name.partition(".")
+        # Multiple bindings include overload sets and rebinding imports. Their
+        # effective static signature need not be the last runtime definition.
+        if len(self.bindings.bindings.get(head, ())) != 1:
+            return None
+        binding = self.bindings.in_effect(head, len(self.tree.body) + 1)
+        if binding is None:
+            return None
+        statement = self.tree.body[binding.order]
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            alias = next(
+                (
+                    item
+                    for item in statement.names
+                    if (item.asname or item.name.split(".")[0]) == head
+                ),
+                None,
+            )
+            sites = (
+                imported_alias_sites(self.path, statement, alias, rest, self.imports)
+                if alias is not None
+                else None
+            )
+            if sites is None or len(sites) != 1:
+                return None
+            path, qualname = next(iter(sites))
+            owner = self.modules.get(str(path))
+            if owner is None:
+                try:
+                    # The checker may see a different signature or a structural
+                    # type from a stub instead of this runtime declaration.
+                    if host_has_stub(str(path), self.imports):
+                        return None
+                    source = read_source(path)
+                    owner = _ProjectDeclarations(
+                        source,
+                        self.parse(source),
+                        str(path),
+                        self.imports,
+                        self.parse,
+                        self.modules,
+                    )
+                except (OSError, UnicodeError, SyntaxError, ValueError, ProjectScanLimitError):
+                    return None
+            return owner.definition(qualname, seen | {key})
+        return None if rest else (statement, self)
+
+    def function(self, name: str) -> Optional[tuple[ast.FunctionDef, _ProjectDeclarations]]:
+        found = self.definition(name)
+        if found is None:
+            return None
+        definition, owner = found
+        if (
+            isinstance(definition, ast.FunctionDef)
+            and not definition.decorator_list
+            and not getattr(definition, "type_params", ())
+        ):
+            return definition, owner
+        return None
+
+    def excludes_none(
+        self, annotation: Optional[ast.expr], seen: FrozenSet[tuple[str, str]] = frozenset()
+    ) -> bool:
+        if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+            return self.excludes_none(annotation.left, seen) and self.excludes_none(
+                annotation.right, seen
+            )
+        if not isinstance(annotation, ast.Name):
+            return False
+        found = self.definition(annotation.id)
+        definition, owner = found if found is not None else (None, self)
+        if isinstance(definition, ast.ClassDef):
+            key = owner.path, definition.name
+            # A base can be Protocol or an unresolved structural alias. Only
+            # a chain of explicit nominal classes proves None is not accepted.
+            return (
+                key not in seen
+                and len(seen) < 16
+                and not (definition.keywords or definition.decorator_list)
+                and all(owner.excludes_none(base, seen | {key}) for base in definition.bases)
+            )
+        return (
+            annotation.id in {"str", "bytes", "int", "float", "complex", "bool"}
+            and self.bindings is not None
+            and not self.bindings.may_bind(annotation.id)
+        )
+
+    def includes_none(self, annotation: Optional[ast.expr]) -> bool:
+        """An explicit None union, without assuming what an imported alias means."""
+        if isinstance(annotation, ast.Constant):
+            return annotation.value is None
+        if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+            return self.includes_none(annotation.left) or self.includes_none(annotation.right)
+        return False
+
+    def argument_needs_non_none(self, call: ast.Call, parameter: str) -> bool:
+        if not isinstance(call.func, ast.Name):
+            return False
+        found = self.function(call.func.id)
+        if found is None or any(isinstance(arg, ast.Starred) for arg in call.args):
+            return False
+        function, owner = found
+        annotations = {
+            argument.arg: argument.annotation
+            for argument in (
+                *function.args.posonlyargs,
+                *function.args.args,
+                *function.args.kwonlyargs,
+            )
+        }
+        arguments = dict(zip(_parameters(function), call.args))
+        arguments.update({keyword.arg: keyword.value for keyword in call.keywords if keyword.arg})
+        return any(
+            isinstance(argument, ast.Name)
+            and argument.id == parameter
+            and owner.excludes_none(annotations.get(name))
+            for name, argument in arguments.items()
+        )
+
+
+def _optional_before_test(
+    function: FunctionNode, test: ast.expr, subject: str, declarations: _ProjectDeclarations
+) -> bool:
+    """A local's optional type immediately before a top-level test, when explicit.
+
+    Stop claiming a fact after any intervening use or store we do not model.
+    A redundant None test on an already narrowed value must remain extractable.
+    """
+    arguments = (*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs)
+    if any(
+        isinstance(node, (ast.Global, ast.Nonlocal)) and subject in node.names
+        for node in ast.walk(function)
+    ):
+        return False
+    optional = any(
+        argument.arg == subject and declarations.includes_none(argument.annotation)
+        for argument in arguments
+    )
+    local_names = function_names(function).local
+    for statement in function.body:
+        if isinstance(statement, ast.If) and (
+            statement.test.lineno == test.lineno and ast.dump(statement.test) == ast.dump(test)
+        ):
+            return optional
+        assigned: Optional[ast.expr] = None
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == subject
+        ):
+            assigned = statement.value
+        if assigned is not None:
+            callee = (
+                declarations.function(assigned.func.id)
+                if isinstance(assigned, ast.Call)
+                and isinstance(assigned.func, ast.Name)
+                and assigned.func.id not in local_names
+                else None
+            )
+            optional = callee is not None and declarations.includes_none(callee[0].returns)
+        elif any(
+            isinstance(node, ast.Name) and node.id == subject for node in _own_scope(statement)
+        ):
+            optional = False
+    return False
+
+
+def _operation_needs_non_none(node: ast.AST, parameter: str) -> bool:
+    """A direct consumer, excluding operators an unknown opposite operand can supply."""
+    operand: Optional[ast.expr] = None
+    if isinstance(node, ast.Attribute) and node.attr not in _NONE_ATTRIBUTES:
+        operand = node.value
+    elif isinstance(node, ast.Subscript):
+        operand = node.value
+    elif isinstance(node, ast.Call):
+        operand = node.func
+    elif isinstance(node, ast.UnaryOp) and not isinstance(node.op, ast.Not):
+        operand = node.operand
+    return isinstance(operand, ast.Name) and operand.id == parameter
+
+
+def parameterized_narrowing_lost(
+    helper: ast.FunctionDef,
+    replacements: Sequence[Replacement],
+    functions: FunctionIndex,
+    file_path: str,
+    parse: Callable[[str], ast.Module],
+    imports: ImportGraphCache,
+) -> Optional[str]:
+    """An erased None predicate whose separately passed subject needs its proof.
+
+    This deliberately recognizes a bounded construction, not arbitrary Python
+    typing. A direct parameter replaces an original top-level None test, the
+    caller's subject is provably optional, and the helper consumes that subject
+    without another test or assignment. Bare reads and Optional-aware consumers
+    are valid; unknown callees and type aliases retain the checker fallback.
+    """
+    predicates = {
+        node.test.id
+        for statement in helper.body
+        for node in _own_scope(statement)
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Name)
+    }
+    if not predicates:
+        return None
+    parameters = _parameters(helper)
+    retained = narrowed_names(helper.body) | _stored_references(helper.body)
+    # A comprehension's own target is a different binding, even when spelled
+    # like a parameter. Do not mistake its uses for consumers of that parameter.
+    comprehension_names = {
+        target.id
+        for node in ast.walk(helper)
+        if isinstance(node, ast.comprehension)
+        for target in ast.walk(node.target)
+        if isinstance(target, ast.Name)
+    }
+    retained |= comprehension_names
+    local_names = function_names(helper).local | comprehension_names
+    declarations: Optional[_ProjectDeclarations] = None
+    for replacement in replacements:
+        if replacement.file_path not in (None, file_path):
+            continue
+        call = _call_in(replacement.node, helper.name)
+        function = functions.innermost_at(file_path, replacement.line_range)
+        if call is None or function is None or function.enclosing_function is not None:
+            continue
+        arguments = _arguments_by_parameter(call, parameters, helper)
+        for predicate in predicates:
+            test = arguments.get(predicate)
+            if not isinstance(test, ast.Compare):
+                continue
+            subjects = _non_none_test(test) | _non_none_test(test, False)
+            for parameter, argument in arguments.items():
+                if (
+                    parameter in retained
+                    or not isinstance(argument, ast.Name)
+                    or argument.id not in subjects
+                ):
+                    continue
+                if declarations is None:
+                    declarations = _ProjectDeclarations(
+                        function.source,
+                        parse(function.source),
+                        str(Path(file_path).resolve()),
+                        imports,
+                        parse,
+                    )
+                if not _optional_before_test(function.node, test, argument.id, declarations):
+                    continue
+                for statement in helper.body:
+                    required = any(
+                        _operation_needs_non_none(node, parameter)
+                        or (
+                            isinstance(node, ast.Call)
+                            and isinstance(node.func, ast.Name)
+                            and node.func.id not in local_names
+                            and declarations.argument_needs_non_none(node, parameter)
+                        )
+                        for node in _own_scope(statement)
+                    )
+                    if required:
+                        return (
+                            f"parameterizing {ast.unparse(test)} removes the None refinement "
+                            f"needed by {parameter} in the helper"
+                        )
     return None
