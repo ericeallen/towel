@@ -42,6 +42,7 @@ from typing import (
 from .substitution import Substitution
 from .visitors import all_instances, visit_as
 from .definite_assignment import definitely_bound_after
+from .function_scope import code_names
 from .lexical_scopes import (
     Comprehension,
     NestedScope,
@@ -809,8 +810,6 @@ class HygienicExtractor:
         all_param_names = param_names_unified + sorted(free_variables)
         if len(set(all_param_names)) != len(all_param_names):
             raise UnsupportedExtraction("Generated parameter name collides with a free variable")
-        param_order = {name: idx for idx, name in enumerate(all_param_names)}
-
         body_nodes = self._substitute_parameters(
             copy.deepcopy(list(template_block)),
             substitution,
@@ -827,6 +826,22 @@ class HygienicExtractor:
         final_body = _declarations(global_decls, nonlocal_decls) + body
         if return_variables:
             final_body.append(ast.Return(value=_names_tuple(return_variables)))
+        # Substituting a whole expression can move all its free reads into a
+        # caller-side thunk. Construct inputs from the resulting body, so those
+        # captured names are not also passed as unused arguments. Count nested
+        # free reads and bindings (including del/nonlocal), not just own loads.
+        # Scope facts memoize by AST identity. This helper will still be
+        # rewritten (thunk inlining and annotations), so query a disposable
+        # copy rather than putting its mutable construction nodes in a memo.
+        names = code_names(copy.deepcopy(final_body))
+        needed = (
+            set(names.references)
+            | set(names.bound)
+            | names.declared_global
+            | names.declared_nonlocal
+        )
+        all_param_names = [name for name in all_param_names if name in needed]
+        param_order = {name: idx for idx, name in enumerate(all_param_names)}
         func_def = ast.FunctionDef(
             name=function_name,
             args=ast.arguments(

@@ -73,8 +73,8 @@ def bar():
 
 def test_extract_function_injects_global_nonlocal_and_multi_return():
     block = ast.parse("""
-value = a + b
-other = value * 2
+value = a + b + free1
+other = value * free2
 """).body
     subst = make_substitution(
         {"__param_0": [(0, "a"), (1, "x")], "__param_1": [(0, "b"), (1, "y")]}
@@ -200,7 +200,7 @@ def test_generate_call_aug_assign_mapping():
     subst.add_mapping(0, ast.Name(id="b", ctx=ast.Load()), "__param_1")
     subst.add_mapping(1, ast.Name(id="y", ctx=ast.Load()), "__param_1")
     extractor = HygienicExtractor()
-    block = ast.parse("total = a + b\nresult = total * 2").body
+    block = ast.parse("total = a + b\nresult = total * __param_2").body
     func_def, param_order = extractor.extract_function(
         template_block=block,
         substitution=subst,

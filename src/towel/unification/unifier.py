@@ -276,6 +276,15 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             return handler(self, nodes, substitution, list(block_indices))
         if isinstance(first_node, ast.pattern):
             return self._unify_pattern(nodes, substitution, block_indices)
+        if all_instances(nodes, ast.Attribute) and any(
+            node.attr != nodes[0].attr for node in nodes
+        ):
+            # The attribute name forces the whole lookup to be a parameter.
+            # Descending into its receiver first would create an unused child
+            # parameter and can exhaust the budget before this one is built.
+            return all(isinstance(node.ctx, ast.Load) for node in nodes) and self._try_parameterize(
+                nodes, substitution, block_indices
+            )
         return self._unify_fields(nodes, substitution, block_indices)
 
     def _unify_pattern(

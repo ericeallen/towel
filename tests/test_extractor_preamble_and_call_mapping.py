@@ -31,14 +31,14 @@ def _name_ids(nodes: Sequence[ast.expr]) -> list[str]:
 class TestExtractorPreambleAndCallMapping(unittest.TestCase):
     def test_preamble_injection_and_generate_call_mapping(self) -> None:
         # Template block contains a call where unified Name 'x' is used as callee:
-        # res = x(1)
+        # res = x(fv); fv must really be read to test free-variable call mapping.
         # This should mark __param_0 as params_used_as_callee
         template_block_raw: list[ast.stmt] = [
             ast.Assign(
                 targets=[ast.Name(id="res", ctx=ast.Store())],
                 value=ast.Call(
                     func=ast.Name(id="x", ctx=ast.Load()),
-                    args=[ast.Constant(value=1)],
+                    args=[ast.Name(id="fv", ctx=ast.Load())],
                     keywords=[],
                 ),
             )
