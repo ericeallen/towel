@@ -255,10 +255,30 @@ tests, and the independent implementer's 143 reuse/type/import cases. These
 sets overlap and their counts must not be summed. Full candidate validation
 remains separate below.
 
-### Remaining release validation
+### Validation progress and remaining work
 
-Run the full interpreter matrix, full corpus, self-dogfooding, documentation
-and artifact checks, and the deferred fifth audit under the existing stop
-rule. Mechanical checks run as processes. Use at most one focused independent
-reviewer for semantic changes; revisit review only for changed code or an
-unresolved finding. No completed final validation is claimed yet.
+The fifth independent audit is complete. Its findings and the subsequent
+star-import resolution defect are fixed. Completed non-corpus checks for an
+earlier frozen source are recorded in [next-validation.md](next-validation.md);
+those historical results do not establish validation of the current branch.
+
+A later full corpus run on `acb176a` found that generated Tornado annotations
+performed qualified attribute lookups while their module was still importing.
+Commit `fb52d90` keeps generated compound annotations wholly quoted, including
+unions and subscriptions that can invoke user-defined operations. Precise
+checker types and existing source annotations are preserved. Regression tests
+record both the import-order defect and overloaded-operation counterexamples;
+[the design decision](../DECISIONS.md#generated-annotations-must-not-add-evaluation-september-27-2026)
+explains why this is part of runtime preservation. Focused tests and quality
+checks pass. A diagnostic repair of the old transformed Tornado output
+restored its exact baseline outcomes; production CLI validation is still
+required.
+
+Let the running corpus finish to expose any other defects, then validate one
+corrected frozen source with the full corpus, interpreter matrix,
+self-dogfooding, fuzzing, documentation and artifact checks. Retain every raw
+outcome, including known reflection failures, explicit refusals, untyped
+fallbacks and pre-existing upstream failures. Full final validation is still
+pending. Mechanical checks run as processes. Use at most one focused
+independent reviewer for semantic changes; revisit review only for changed
+code or an unresolved finding.
