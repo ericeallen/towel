@@ -202,13 +202,8 @@ def own_scope_bindings(nodes: Iterable[ast.AST]) -> List[Binding]:
     ]
 
 
-def scope_declarations(function: FunctionNode) -> FrozenSet[str]:
-    """The names ``function``'s own scope declares ``global`` or ``nonlocal``, at any depth.
-
-    A declaration anywhere in the function's own code (inside an ``if``, a
-    loop, a handler) covers the whole scope; one in a nested function or
-    class is that scope's.
-    """
+def _scope_declarations(function: ast.AST) -> FrozenSet[str]:
+    assert isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
     declared: Set[str] = set()
     pending: List[ast.AST] = list(function.body)
     while pending:
@@ -220,6 +215,20 @@ def scope_declarations(function: FunctionNode) -> FrozenSet[str]:
         ):
             pending.extend(ast.iter_child_nodes(node))
     return frozenset(declared)
+
+
+_SCOPE_DECLARATIONS: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
+
+
+def scope_declarations(function: FunctionNode) -> FrozenSet[str]:
+    """The names ``function``'s own scope declares ``global`` or ``nonlocal``, at any depth.
+
+    A declaration anywhere in the function's own code (inside an ``if``, a
+    loop, a handler) covers the whole scope; one in a nested function or
+    class is that scope's. Computed once per immutable function tree; the
+    names do not keep that tree alive.
+    """
+    return memoized_per_node(_SCOPE_DECLARATIONS, function, _scope_declarations)
 
 
 def analyze_assignments(func: FunctionNode) -> Dict[int, bool]:

@@ -41,6 +41,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Tuple,
     cast,
 )
 from .models import (
@@ -260,7 +261,7 @@ def _imported_origin(statement: ast.stmt, name: str) -> Optional[str]:
     return origins.pop() if len(origins) == 1 else None
 
 
-def _module_scope_bindings(module: ast.Module, name: str) -> List[ast.stmt]:
+def _find_module_scope_bindings(module: ast.Module, name: str) -> Tuple[ast.stmt, ...]:
     """Every statement of the module's own scope that may bind ``name``, however conditionally.
 
     A star import may bind any name. A compound statement counts when
@@ -279,6 +280,25 @@ def _module_scope_bindings(module: ast.Module, name: str) -> List[ast.stmt]:
             )
         if binds:
             found.append(statement)
+    return tuple(found)
+
+
+_MODULE_SCOPE_BINDINGS: "WeakKeyDictionary[ast.AST, Dict[str, Tuple[ast.stmt, ...]]]" = (
+    WeakKeyDictionary()
+)
+
+
+def _module_scope_bindings(module: ast.Module, name: str) -> Tuple[ast.stmt, ...]:
+    """The module's possible bindings of ``name``, once per name and immutable module tree.
+
+    The statements retain no parent reference, so the tuple does not keep
+    the weakly keyed module alive. Callers only inspect these shared nodes.
+    """
+    by_name = memoized_per_node(_MODULE_SCOPE_BINDINGS, module, lambda _: {})
+    found = by_name.get(name)
+    if found is None:
+        found = _find_module_scope_bindings(module, name)
+        by_name[name] = found
     return found
 
 
