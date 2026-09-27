@@ -64,6 +64,20 @@ class Value:
 
 UNKNOWN = Value()
 Call = Callable[[ast.Call, Value, tuple[Value, ...], Mapping[str, Value]], Value]
+_VALUE_EXPRESSIONS = (
+    ast.Name,
+    ast.Attribute,
+    ast.Subscript,
+    ast.Call,
+    ast.NamedExpr,
+    ast.IfExp,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+    ast.Lambda,
+)
+"""Expressions with value or scope semantics in ``Flow._value``."""
 
 
 class Flow:
@@ -152,9 +166,26 @@ class Flow:
             return UNKNOWN
         if isinstance(node, ast.Lambda):
             return UNKNOWN
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.expr):
-                self.value(child)
+        # Operators and displays discard their children's abstract values,
+        # but calls and bindings inside them must still be visited in order.
+        # A generated arithmetic chain can be much deeper than Python's call
+        # stack even when the module parses; skipping it would hide instrumenters.
+        pending = [node]
+        while pending:
+            current = pending.pop()
+            if isinstance(current, _VALUE_EXPRESSIONS):
+                self.value(current)
+                continue
+            self.evaluated[id(current)] = UNKNOWN
+            pending.extend(
+                reversed(
+                    [
+                        child
+                        for child in ast.iter_child_nodes(current)
+                        if isinstance(child, ast.expr)
+                    ]
+                )
+            )
         return UNKNOWN
 
     def bind(self, target: ast.expr, value: Value) -> None:

@@ -420,7 +420,15 @@ def decorator_refusal(
     ):
         return memo.refusal
     resolver = _Resolver(cache)
-    refusal = resolver.chain_refusal(definition, module)
+    try:
+        refusal = resolver.chain_refusal(definition, module)
+    except RecursionError as error:
+        # An unread remainder may instrument this definition from another
+        # module. Analysis exhaustion is not evidence that its body is plain.
+        raise ProjectScanLimitError(
+            f"Cannot establish decorator safety for {module.path}: "
+            "the project's instrumentation analysis exceeds the source nesting limit"
+        ) from error
     _REFUSALS[definition] = _Memo(refusal, tuple(sorted(resolver.stamps)), id(cache))
     return refusal
 
