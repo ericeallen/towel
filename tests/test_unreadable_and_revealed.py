@@ -129,6 +129,8 @@ ROW = textwrap.dedent("""\
 
     def first(k: int) -> int:
         row = make_row(k)
+        if row.n < 0:
+            raise ValueError("negative row")
         print("first row", row.n)
         total = row.n * 2
         return total
@@ -136,6 +138,7 @@ ROW = textwrap.dedent("""\
 
     def second(k: int) -> int:
         row = make_row(k + 1)
+        assert row.n >= 0
         print("second row", row.n)
         total = row.n * 2
         return total
@@ -153,7 +156,13 @@ MODELS = textwrap.dedent("""\
 
 
 def test_a_class_revealed_by_its_whole_path_is_imported_for_the_checker(tmp_path: Path) -> None:
-    """D13: ``pkg.models.Row``, which report.py does not import, is named ``"Row"``."""
+    """D13: name an actually required Row input through its private type import.
+
+    The distinct caller guards keep row construction outside the shared suffix.
+    Without them, expression unification legitimately moves construction into
+    the helper and no Row input needs annotating, so the fixture no longer
+    exercises D13. Retain the original private-import and annotation checks.
+    """
     package = tmp_path / "pkg"
     package.mkdir()
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "pkg"\nversion = "0"\n')

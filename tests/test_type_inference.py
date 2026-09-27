@@ -226,6 +226,12 @@ def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> Non
 
 @requires_mypy
 def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
+    """Normalize int/float to float without retaining an unread receiver.
+
+    The approved unused-input construction leaves ``box`` at each call site.
+    Its removal must not broaden the value parameter to Any or convert the
+    actual int value to float: the two runtime string results still differ.
+    """
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
             class Box:
@@ -243,13 +249,25 @@ def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
                 label = str(scaled).upper()
                 return label.strip()
             """))
-    engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
-    )
-    proposals = engine.analyze_file(str(path))
-    assert proposals
-    result = engine.apply_refactoring(str(path), proposals[0])
-    assert _signature(result) == "def __extracted_func_0(__param_0: float, box: Box) -> str:"
+    oracle = MypyInferrer()
+    try:
+        engine = UnificationRefactorEngine(
+            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        )
+        proposals = engine.analyze_file(str(path))
+        assert proposals
+        result = engine.apply_refactoring(str(path), proposals[0])
+        assert oracle.check(str(path), result) == CheckSuccess()
+    finally:
+        oracle.close()
+    assert _signature(result) == "def __extracted_func_0(__param_0: float) -> str:"
+    for source in (path.read_text(), result):
+        namespace: dict[str, object] = {}
+        exec(
+            compile(source + "\nobserved = first(Box()), second(Box())\n", str(path), "exec"),
+            namespace,
+        )
+        assert namespace["observed"] == ("2", "5.0")
 
 
 @requires_mypy

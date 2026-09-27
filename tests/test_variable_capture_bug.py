@@ -40,12 +40,12 @@ from towel.unification.extractor import HygienicExtractor
 class TestVariableCaptureBug(unittest.TestCase):
     """Test variable capture bug in generated function calls."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Create unifier and extractor instances."""
         self.unifier = Unifier()
         self.extractor = HygienicExtractor()
 
-    def test_different_variable_names_in_calls(self):
+    def test_different_variable_names_in_calls(self) -> None:
         """
         Test that generated calls use correct variable names from each block.
 
@@ -67,22 +67,21 @@ if not admin.get("id"):
         block1 = ast.parse(code1).body
         block2 = ast.parse(code2).body
 
-        # Unify the blocks
+        # Unify exactly the moving suffix: user/admin are free there, though
+        # bound in the complete blocks. The engine uses that same boundary.
         hygienic_renames: list[dict[str, str]] = [{}, {}]
-        substitution = self.unifier.unify_blocks([block1, block2], hygienic_renames)
+        substitution = self.unifier.unify_blocks([block1[1:], block2[1:]], hygienic_renames)
 
         self.assertIsNotNone(substitution, "Blocks should unify")
         assert substitution is not None
 
-        # Extract function (only the validation part for simplicity)
-        validation_code = """
-if not var.get("id"):
-    raise ValueError("ID required")
-"""
-        template_block = ast.parse(validation_code).body
-
-        # Extract function with 'var' as parameter
-        free_variables = {"var"}
+        # An unrelated template spelling ``var`` has no relationship to this
+        # substitution. The old test unified whole blocks but extracted that
+        # unrelated suffix; it passed only because unused get_user/get_admin
+        # arguments contained the substrings it looked for. Keep the actual
+        # caller-name contract when unused arguments are removed.
+        template_block = block1[1:]
+        free_variables = {"user"}
         enclosing_names: set[str] = set()
 
         func_def, param_order = self.extractor.extract_function(
@@ -104,6 +103,7 @@ if not var.get("id"):
             free_variables=free_variables,
             is_value_producing=False,
             return_variables=[],
+            hygienic_renames=hygienic_renames,
         )
 
         call2 = self.extractor.generate_call(
@@ -114,20 +114,32 @@ if not var.get("id"):
             free_variables=free_variables,
             is_value_producing=False,
             return_variables=[],
+            hygienic_renames=hygienic_renames,
         )
 
-        # Check that calls use correct variable names
+        # Exact calls prevent an unused get_user/get_admin argument from
+        # masking the wrong variable. Execution checks the actual binding.
         call1_code = ast.unparse(call1)
         call2_code = ast.unparse(call2)
+        self.assertEqual(call1_code, "validate(user)")
+        self.assertEqual(call2_code, "validate(admin)")
+        for binding, call in ((block1[0], call1), (block2[0], call2)):
+            module = ast.fix_missing_locations(
+                ast.Module(body=[func_def, binding, call], type_ignores=[])
+            )
+            for record in ({"id": 7}, {}):
+                namespace: dict[str, object] = {
+                    "get_user": lambda: record,
+                    "get_admin": lambda: record,
+                }
+                program = compile(module, "<caller-binding>", "exec")
+                if record:
+                    exec(program, namespace)
+                else:
+                    with self.assertRaisesRegex(ValueError, "^ID required$"):
+                        exec(program, namespace)
 
-        # Call 1 should use 'user'
-        self.assertIn("user", call1_code, f"Call 1 should use 'user', got: {call1_code}")
-
-        # Call 2 should use 'admin' (NOT 'user')
-        self.assertIn("admin", call2_code, f"Call 2 should use 'admin', got: {call2_code}")
-        self.assertNotIn("user", call2_code, f"Call 2 should NOT use 'user', got: {call2_code}")
-
-    def test_example1_simple_scenario(self):
+    def test_example1_simple_scenario(self) -> None:
         """
         Test the exact scenario from example1_simple.py.
 
@@ -197,6 +209,7 @@ if not guest.get("name"):
                 free_variables=free_variables,
                 is_value_producing=False,
                 return_variables=[],
+                hygienic_renames=hygienic_renames,
             )
             calls.append(ast.unparse(call))
 
@@ -214,7 +227,7 @@ if not guest.get("name"):
         self.assertNotIn("admin", calls[2], f"Block 2 should NOT use 'admin', got: {calls[2]}")
 
 
-def main():
+def main() -> None:
     """Run the tests."""
     unittest.main(verbosity=2)
 
