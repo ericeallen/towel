@@ -547,13 +547,15 @@ def test_the_callable_a_signature_writes_is_imported_end_to_end(tmp_path: Path) 
 
 
 @requires_mypy
-def test_a_parameter_the_body_never_reads_is_object_end_to_end(tmp_path: Path) -> None:
-    """mistune M3, in miniature: ``self`` reaches the helper unread, and its type is moot.
+def test_an_unread_receiver_is_omitted_without_losing_type_correlations(tmp_path: Path) -> None:
+    """mistune M3: caller thunks capture ``self``; the helper never reads it.
 
-    The two sites' receivers are unrelated classes, which no variable the
-    host could constrain would name; ``object`` accepts both. What remains
-    is one variable over ``int`` and ``str``, whose ``+`` checks only when
-    constrained to them.
+    The old signature passed the unrelated receivers as ``object``. The
+    approved unused-input change removes that argument altogether; do not
+    restore it just to satisfy a typing expectation. Preserve the original
+    type-safety requirement: one variable relates the remaining ``int`` and
+    ``str`` inputs and result, and ``+`` checks without an Any fallback.
+    Both runtime branches must retain their original results.
     """
     _project(
         tmp_path,
@@ -595,10 +597,35 @@ def test_a_parameter_the_body_never_reads_is_object_end_to_end(tmp_path: Path) -
         oracle.close()
     helper = _helper(changed)
     kinds = {parameter.arg: _annotation(parameter.annotation) for parameter in helper.args.args}
-    assert kinds["self"] == "object" and "Any" not in changed, changed
+    assert "self" not in kinds and "Any" not in changed, changed
     assert "_towel_typevar('_TowelT0', 'int', 'str')" in changed, changed
-    namespace: dict[str, object] = {}
-    exec(compile(changed, str(path), "exec"), namespace)
+    probe = """
+observed = [BlockState('abc').line_end(end) for end in (-2, -1, 0, 4)]
+observed += [Renderer(escape).block_html(html)
+             for escape in (False, True) for html in ('', '  x  ', 'λ')]
+"""
+
+    def results(source: str) -> object:
+        namespace: dict[str, object] = {}
+        exec(compile(source + probe, str(path), "exec"), namespace)
+        return namespace["observed"]
+
+    assert (
+        results(changed)
+        == results(path.read_text())
+        == [
+            3,
+            3,
+            1,
+            5,
+            "\n",
+            "  x  \n",
+            "λ\n",
+            "<p></p>\n",
+            "<p>x</p>\n",
+            "<p>λ</p>\n",
+        ]
+    )
 
 
 def _extract_first(path: Path) -> str:

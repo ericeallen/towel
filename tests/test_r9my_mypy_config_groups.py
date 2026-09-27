@@ -41,7 +41,7 @@ from typing import Mapping
 
 import pytest
 
-from towel.type_inference import CheckFailure, MypyInferrer
+from towel.type_inference import CheckFailure, CheckSuccess, MypyInferrer
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
@@ -152,6 +152,14 @@ CONSUMER = """\
 def test_r9my_a_cross_group_import_leaves_the_cold_confirmation_nothing_to_refuse(
     tmp_path: Path,
 ) -> None:
+    """Keep cross-group consumer checking even when construction gets more precise.
+
+    List-expression unification now parameterizes the integer argument to
+    ``make_od`` instead of losing the returned OrderedDict's type. That valid
+    extraction should pass. A deliberately type-erased candidate below must
+    still fail in the root consumer: do not replace this regression with only
+    an accepted-proposal count or weaken its original verification contract.
+    """
     _write(
         tmp_path,
         {
@@ -168,10 +176,29 @@ def test_r9my_a_cross_group_import_leaves_the_cold_confirmation_nothing_to_refus
             "sub/subpkg/mod.py": HOLDER,
         },
     )
-    engine = _typed_run(tmp_path)  # raised: the finished project reports 1 type error(s)
-    # The root's own ``mypy .`` checks the test against the change and rejects
-    # it (``h.data`` would be ``Any``); the run's checks now see that too.
-    assert engine.run_report.declined_proposals == {"refused by the type checker": 1}
+    engine = _typed_run(tmp_path)  # The completed run includes its cold confirmation.
+    assert engine.run_report.declined_proposals == {}
+    mod = tmp_path / "sub" / "subpkg" / "mod.py"
+    assert "def __extracted_func_" in mod.read_text()
+    assert "Any" not in mod.read_text()
+
+    accepted = {str(path): path.read_text() for path in tmp_path.rglob("*.py")}
+    erased = (
+        "from typing import Any\n\n"
+        + textwrap.dedent(HOLDER).replace("self.data = od", "self.data = lose_type(od)")
+        + "\n\ndef lose_type(value: object) -> Any:\n    return value\n"
+    )
+    oracle = MypyInferrer()
+    try:
+        assert oracle.check_project(accepted) == CheckSuccess()
+        rejected = oracle.check_project(accepted | {str(mod): erased})
+    finally:
+        oracle.close()
+    assert not isinstance(rejected, CheckFailure), rejected
+    assert len(rejected.errors) == 1, rejected
+    error = rejected.errors[0]
+    assert Path(error.path) == tmp_path / "tests" / "test_mod.py"
+    assert "Returning Any" in error.message
 
 
 @requires_mypy
