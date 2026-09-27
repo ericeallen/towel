@@ -1,6 +1,12 @@
 # A preview that shows what `dry` would do
 
-Status: proposal, 2026-09-25, from the owner; for a release after 1.772.
+Status: implemented on the post-1.772 branch, September 27, 2026.
+
+Default preview now shares dry's executor, options and final validation,
+using disposable output. It prints the final source diff, helper inventory,
+call-site history and run report. `--quick` explicitly requests the old
+partial structural analysis. The history and motivation follow; `--json`
+and `--stat` remain possible presentation extensions, not implemented flags.
 
 ## The problem
 
@@ -9,7 +15,7 @@ so. `preview` builds its engine with no type oracle and runs one analysis
 pass, so it lists the untyped proposals of the first pass. `dry` runs the
 default typed pipeline to a fixed point: it verifies each change with the
 project's checker, formats it, and pairs again after each batch of
-applied changes. On a typed project, then, a preview is only an upper bound
+applied changes. That listing is not an upper bound
 on what `dry` applies. Some of what it lists, typed verification declines,
 and it cannot show what later passes find once earlier changes are in.
 
@@ -84,11 +90,9 @@ Implementation cost is small. Most of it is output:
 - A refusal `dry` gives, `preview` gives with the same message and exit
   status.
 
-## Open questions for the owner
+## Resolved design choices
 
-- **Keep the quick listing?** Today's single-pass untyped listing is fast and
-  sometimes all that is wanted. My recommendation is to keep it under an
-  explicit flag, `--quick`, labelled as an upper bound on what `dry`
-  applies, rather than as the default.
-- **The output format** of the diff: unified diff by default, with
-  `--stat` for a per-file summary.
+- Keep the quick listing under explicit `--quick`, labelled partial and
+  not an upper bound: later passes can discover further extractions.
+- Show the final unified source diff and structured helper inventory.
+  `--stat` and a single structured `--json` response remain deferred.

@@ -97,4 +97,4 @@ def test_preview_of_one_file_is_silent_under_progress_none(
     _run_preview(arguments)
     captured = capsys.readouterr()
     assert "\r" not in captured.out and "\r" not in captured.err
-    assert "Found 1 refactoring opportunit" in captured.out
+    assert "Would apply 1 refactoring" in captured.out

@@ -196,10 +196,13 @@ The two largest projects in the ecosystem check, networkx and Sphinx, are the sl
 ## Use
 
 ```bash
-# Read-only analysis: lists each opportunity with the extracted helper and,
-# per call site, the original block (-) next to the generated call (+).
-# One untyped pass: dry verifies each change, so it may apply fewer.
+# Preview the complete dry run: checks, formatting and follow-up extractions.
+# Shows the final diff, helper inventory and call-site before/after records.
+# Uses private temporary output; input files stay unchanged.
 towel preview path/to/project
+
+# Faster partial structural listing, without checks or follow-up extractions
+towel preview path/to/project --quick
 
 # Write to a new output directory
 towel dry path/to/project path/to/cleaned --no-interactive
