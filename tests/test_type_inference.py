@@ -65,19 +65,21 @@ def _signature(source: str) -> str:
     [
         ("builtins.int", "int"),
         ("int", "int"),
-        ("list[str]", "list[str]"),
-        ("str | None", "str | None"),
+        ("list[str]", "'list[str]'"),
+        ("str | None", "'str | None'"),
         ("Literal['x']?", "str"),
-        ("Literal[3]? | None", "int | None"),
-        ("tuple[int, str | None]", "tuple[int, str | None]"),
+        ("Literal[3]? | None", "'int | None'"),
+        ("tuple[int, str | None]", "'tuple[int, str | None]'"),
         ("Any", None),
-        ("dict[str, Any]", "dict[str, Any]"),
-        ("list[Any]", "list[Any]"),
-        ("def () -> int", "Callable[[], int]"),
+        ("dict[str, Any]", "'dict[str, Any]'"),
+        ("list[Any]", "'list[Any]'"),
+        ("def () -> int", "'Callable[[], int]'"),
         ("<nothing>", None),
     ],
 )
 def test_revealed_spellings_become_annotations(revealed: str, expected: str | None) -> None:
+    # Preserve each precise type and quote compounds: evaluating a generated
+    # union, subscription or attribute can invoke code or precede its definition.
     result = annotation_from_revealed(revealed, ast.parse(""), True)
     assert (ast.unparse(result) if result is not None else None) == expected
 
@@ -87,7 +89,7 @@ def test_dotted_names_reduce_to_what_the_host_binds() -> None:
     box = annotation_from_revealed("pkg.other.Box", host, True)
     assert box is not None and ast.unparse(box) == "Box"
     sequence = annotation_from_revealed("typing.Sequence[int]", host, True)
-    assert sequence is not None and ast.unparse(sequence) == "typing.Sequence[int]"
+    assert sequence is not None and ast.unparse(sequence) == "'typing.Sequence[int]'"
     # A whole path the host does not bind stays whole, for the caller to import
     # under TYPE_CHECKING or give up on.
     kept = annotation_from_revealed("pkg.elsewhere.Thing", host, True)
@@ -193,7 +195,8 @@ def test_inferrer_names_a_non_identifier_package_with_a_placeholder(tmp_path: Pa
 
 @requires_mypy
 def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> None:
-    # The project declares 3.10, so the revealed type is written as it is spelled.
+    # Python 3.10 supports the inferred type syntax; generated compound
+    # annotations must still avoid adding runtime evaluation.
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "m"\nrequires-python = ">=3.10"\n')
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
@@ -220,7 +223,7 @@ def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> Non
     # ``Any`` is reached through a private alias, so the module gains no public name.
     assert "import typing as _typing\n" in result and "from typing import Any" not in result
     # ``json`` is the module's import, read bare inside the helper, not a parameter.
-    assert _signature(result) == "def __extracted_func_0(text: str) -> list[_typing.Any]:"
+    assert _signature(result) == "def __extracted_func_0(text: str) -> 'list[_typing.Any]':"
     exec(compile(result, "<any>", "exec"), {})
 
 
@@ -394,10 +397,10 @@ def test_declared_return_meets_through_the_checker(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "revealed, expected",
     [
-        ("def () -> int", "Callable[[], int]"),
-        ("def (x: int, y: str) -> bool", "Callable[[int, str], bool]"),
-        ("def (*args: Any, **kwargs: Any) -> str", "Callable[..., str]"),
-        ("def (x: int = ...) -> int", "Callable[..., int]"),
+        ("def () -> int", "'Callable[[], int]'"),
+        ("def (x: int, y: str) -> bool", "'Callable[[int, str], bool]'"),
+        ("def (*args: Any, **kwargs: Any) -> str", "'Callable[..., str]'"),
+        ("def (x: int = ...) -> int", "'Callable[..., int]'"),
     ],
 )
 def test_callable_spellings(revealed: str, expected: str) -> None:
@@ -575,9 +578,9 @@ def test_pyright_oracle_judges_subtypes_and_checks(tmp_path: Path) -> None:
 
 def test_pyright_callable_spelling() -> None:
     result = annotation_from_revealed("(x: int) -> str", ast.parse(""), True)
-    assert result is not None and ast.unparse(result) == "Callable[[int], str]"
+    assert result is not None and ast.unparse(result) == "'Callable[[int], str]'"
     result = annotation_from_revealed("() -> int", ast.parse(""), True)
-    assert result is not None and ast.unparse(result) == "Callable[[], int]"
+    assert result is not None and ast.unparse(result) == "'Callable[[], int]'"
 
 
 @requires_mypy
@@ -644,7 +647,8 @@ def test_pyright_project_gets_pyright_types_end_to_end(tmp_path: Path) -> None:
 @requires_mypy
 def test_two_returned_variables_get_a_tuple_of_revealed_types(tmp_path: Path) -> None:
     """A helper returning two variables is annotated with the tuple of their revealed types."""
-    # The project declares 3.10, so the revealed type is written as it is spelled.
+    # Python 3.10 supports the inferred type syntax; generated compound
+    # annotations must still avoid adding runtime evaluation.
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "m"\nrequires-python = ">=3.10"\n')
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
@@ -671,7 +675,7 @@ def test_two_returned_variables_get_a_tuple_of_revealed_types(tmp_path: Path) ->
     proposals = engine.analyze_file(str(path))
     assert [p.description for p in proposals] == ["Extract common code from first and second"]
     result = engine.apply_refactoring(str(path), proposals[0])
-    assert _signature(result) == "def __extracted_func_0(box: Box) -> tuple[str, int]:"
+    assert _signature(result) == "def __extracted_func_0(box: Box) -> 'tuple[str, int]':"
     assert result.count("label, scaled = __extracted_func_0(box)") == 2
     exec(compile(result, "<inferred>", "exec"), {})
 

@@ -316,7 +316,7 @@ def test_an_unannotated_test_the_projects_mypy_never_checks_does_not_refuse_the_
     run = _dry(tmp_path)
     assert run.returncode == 0, run.stdout + run.stderr
     written = (tmp_path / "pkg" / "core.py").read_text(encoding="utf-8")
-    assert "def __extracted_func_0(values: list[int]) -> int:" in written, written
+    assert "def __extracted_func_0(values: 'list[int]') -> int:" in written, written
     assert (tmp_path / "tests" / "test_core.py").read_text(encoding="utf-8") == textwrap.dedent(
         UNCHECKED_TEST
     ).lstrip()
@@ -334,7 +334,7 @@ def test_an_error_the_projects_mypy_reports_in_the_package_is_left_as_it_was(
     assert "The original project's type check reports 1 error(s) in 1 file(s)." in run.stderr
     assert "  pkg/core.py: 1" in run.stderr
     written = (tmp_path / "pkg" / "core.py").read_text(encoding="utf-8")
-    assert "def __extracted_func_0(values: list[int]) -> int:" in written, written
+    assert "def __extracted_func_0(values: 'list[int]') -> int:" in written, written
     assert "WRONG: str = first([1])" in written
     after = _plain_mypy(tmp_path, ("pkg",))
     assert before[0] == after[0] == "checked"
@@ -429,6 +429,9 @@ def test_a_helper_shared_with_an_unannotated_function_keeps_the_types_probes_fin
 
     Such a probe writes ``def __extracted_func_0(values):`` here. This is the
     signature Towel wrote while its checks still checked untyped defs.
+    The exact inferred list element type must survive. Quoting the compound
+    type keeps it inert at runtime; it must not be replaced by Any or erased
+    merely because one caller has no annotations.
     """
     _write(tmp_path, {"pyproject.toml": PACKAGING, "pkg/__init__.py": ""})
     core = tmp_path / "pkg" / "core.py"
@@ -440,7 +443,7 @@ def test_a_helper_shared_with_an_unannotated_function_keeps_the_types_probes_fin
         written = engine.apply_refactoring(str(core), proposal)
     finally:
         oracle.close()
-    assert _helper_signature(written) == "def __extracted_func_0(values: list[int]) -> int:"
+    assert _helper_signature(written) == "def __extracted_func_0(values: 'list[int]') -> int:"
 
 
 @pytest.mark.parametrize("configured", [False, True])

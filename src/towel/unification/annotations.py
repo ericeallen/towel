@@ -1602,8 +1602,16 @@ def _joined_tuple(
     ]
     if any(element is None for element in elements):
         return None
-    return ast.Subscript(
-        value=ast.Name(id="tuple", ctx=ast.Load()),
-        slice=ast.Tuple(elts=[e for e in elements if e is not None], ctx=ast.Load()),
-        ctx=ast.Load(),
+    # The outer subscription is new evaluation even when every element is
+    # inert. Compose the types first, then spell the complete annotation by
+    # the same runtime policy as a directly revealed tuple.
+    return _spelled_for_host(
+        ast.Subscript(
+            value=ast.Name(id="tuple", ctx=ast.Load()),
+            slice=ast.Tuple(elts=[_unquoted(e) for e in elements if e is not None], ctx=ast.Load()),
+            ctx=ast.Load(),
+        ),
+        host,
+        same_module,
+        allowed if allowed is not None else set(_TYPING_NAMES),
     )

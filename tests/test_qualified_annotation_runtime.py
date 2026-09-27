@@ -30,7 +30,7 @@ import sys
 import pytest
 
 from tests.typed_fixtures import STRICT, apply_one, requires_mypy
-from towel.unification.annotations import _joined_revealed, respell_bare
+from towel.unification.annotations import _joined_revealed, _joined_tuple, respell_bare
 
 
 @pytest.mark.parametrize(
@@ -62,6 +62,18 @@ def test_an_observed_any_result_does_not_unquote_its_qualified_alternative() -> 
     assert result.value == "pkg.websocket.First | Any"
     ordinary = _joined_revealed(["int", "Any"], host, True, preserve_any=True)
     assert isinstance(ordinary, ast.Constant) and ordinary.value == "int | Any"
+
+
+def test_tuple_composition_quotes_the_whole_type_after_joining_its_members() -> None:
+    """A late tuple constructor must not undo each member's runtime protection."""
+    result = _joined_tuple(
+        ["pkg.websocket.First", "int", "Any", "int"],
+        2,
+        ast.parse("import pkg.util"),
+        True,
+    )
+    assert isinstance(result, ast.Constant)
+    assert result.value == "tuple[pkg.websocket.First | Any, int]"
 
 
 @pytest.mark.parametrize("annotation", ["int", "Optional", "object"])
@@ -131,6 +143,82 @@ def test_resolved_names_do_not_prove_compound_annotation_inertness(
     assert isinstance(atom, ast.FunctionDef)
     atom_final = respell_bare(atom, ast.parse(prelude), set())
     assert isinstance(atom_final.args.args[0].annotation, ast.Name)
+
+
+@requires_mypy
+@pytest.mark.parametrize("annotated_locals", [False, True])
+def test_a_composed_tuple_return_adds_no_runtime_subscription(
+    tmp_path: Path, annotated_locals: bool
+) -> None:
+    """Exercise both declared-local and checker-revealed tuple return composition."""
+    (tmp_path / "dependency.py").write_text(
+        "events: list[str] = []\n"
+        "class tuple:\n"
+        "    def __class_getitem__(cls, item: object) -> object:\n"
+        "        events.append('tuple subscription evaluated')\n"
+        "        return cls\n"
+    )
+    source = """from typing import TYPE_CHECKING
+
+if not TYPE_CHECKING:
+    from dependency import tuple
+
+class Box:
+    def __init__(self) -> None:
+        self.count = 1
+        self.name = "n"
+
+def first(box: Box) -> str:
+    scaled = box.count * 2
+    label = box.name.upper()
+    print(scaled)
+    return label + str(scaled)
+
+def second(box: Box) -> str:
+    scaled = box.count * 2
+    label = box.name.upper()
+    print(scaled)
+    return label * scaled
+"""
+    if annotated_locals:
+        source = source.replace("scaled =", "scaled: int =").replace("label =", "label: str =")
+    path = tmp_path / "module.py"
+    path.write_text(source)
+
+    def run() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-c",
+                "import module, dependency\n"
+                "print(module.first(module.Box()), module.second(module.Box()))\n"
+                "print(dependency.events)",
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+
+    before = run()
+    assert before.stdout == "2\n2\nN2 NN\n[]\n"
+    outcome = apply_one(
+        tmp_path,
+        source,
+        pick="first and second",
+        config='[project]\nname = "m"\nrequires-python = ">=3.10"\n' + STRICT,
+    )
+    assert outcome.error is None, outcome.error
+    assert outcome.module is not None
+    path.write_text(outcome.module)
+    after = run()
+    assert (after.stdout, after.stderr) == (before.stdout, before.stderr)
+    result = outcome.helper().returns
+    assert isinstance(result, ast.Constant) and result.value == "tuple[str, int]"
+    assert "Any" not in outcome.signature(), outcome.signature()
+    assert outcome.module.count("label, scaled = ") == 2
 
 
 @requires_mypy

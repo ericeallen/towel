@@ -1328,9 +1328,16 @@ or source layout. A familiar type spelling is not a proof of inert evaluation.
 Where the host evaluates annotations, keep generated compound annotations
 quoted as whole expressions. Retain precise checker types, including unions,
 generic arguments and observed return alternatives; later signature variants
-must not undo that quotation. Existing name-availability checks still govern
-simple names. A host that already defers annotations can retain its own
-spelling convention. Do not add a module-wide future import: that would change
+must not undo that quotation. Constructed tuple returns must apply the rule to
+the complete tuple, not merely to each element: a runtime-only import can
+shadow `tuple` with a class whose subscription has effects while the checker
+still resolves the builtin. Quote the whole expression without nesting string
+literals around its component types. Existing name-availability checks still
+govern simple names. Materialization may qualify an atomic typing name through
+a fresh hygienic import or an existing, uniquely bound, preceding typing import;
+that rewrite relies on the import binding rather than an arbitrary attribute
+spelling. A host that already defers annotations can retain its own spelling
+convention. Do not add a module-wide future import: that would change
 the evaluation of annotations belonging to the original program.
 
 The regressions require useful typed extraction, a fresh-process import and
