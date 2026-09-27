@@ -109,8 +109,11 @@ towel preview src/
 towel dry src/ src_cleaned/ --no-interactive
 ```
 
-`preview` lists each opportunity with the extracted helper and, per call site,
-the original block next to the generated call; `dry` writes the refactored copy.
+`preview` runs the complete `dry` pipeline in a disposable copy and prints its
+final source diff and helper inventory. With the same options, it includes the
+same type checking, formatting, repeated extraction and final verification.
+`--quick` requests a partial, untyped analysis whose proposals are not the final
+result or an upper bound. `dry` writes the verified refactored copy.
 `dry` refactors the target inside a private temporary copy of its whole project,
 in place or not, so every decision sees the modules around the target (an import
 cycle through a module outside the target is seen), and writes nothing until the

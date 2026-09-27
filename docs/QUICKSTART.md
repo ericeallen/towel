@@ -25,7 +25,7 @@ code it inserts and to annotate and type-check the helpers it generates.
 towel preview path/to/project
 ```
 
-For each opportunity, `preview` prints the extracted helper and, per call site, the original block (`-`) next to the generated call (`+`). A preview is one untyped pass: `dry` then verifies each change with the type checker, so it may apply fewer, and it pairs again after each change, so it may find more.
+`preview` runs the complete `dry` pipeline in a disposable copy, including type checking, formatting, repeated extraction and final verification with the same options. It prints the final source diff and helper inventory without changing the input. Use `--quick` for a partial, untyped analysis; its proposals are not the final result or an upper bound on what `dry` can extract.
 
 By default a helper is shared only between duplicates in one module; add `--cross-module` to share helpers between modules too, which adds imports between them.
 
