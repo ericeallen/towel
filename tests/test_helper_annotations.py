@@ -19,12 +19,12 @@ annotated, never-rebound parameter of its enclosing function or a literal of
 one builtin type, and the sites agree. The return is annotated from the sites'
 declared return type, from annotated locals the helper returns, or as ``None``
 for a helper that returns nothing. Annotations are inserted unquoted only
-where they cannot fail to resolve; otherwise as strings; across modules only
-builtin names are used. An unannotated project stays unannotated.
+where they resolve and are proved inert; otherwise as strings; across modules
+only builtin names are used. An unannotated project stays unannotated.
 
-The fixture project declares Python 3.10, so a union written with ``|`` and a
-subscripted builtin evaluate where the helper is defined; what an older or an
-undeclared Python gets is test_annotations_for_the_oldest_python's subject.
+Compound annotations stay quoted even on current Python: a spelling alone
+does not establish whether its operators or subscriptions invoke user code.
+Interpreter syntax accounting is test_annotations_for_the_oldest_python's subject.
 """
 
 from __future__ import annotations
@@ -95,7 +95,9 @@ def test_disagreeing_sites_join_into_a_union(tmp_path: Path) -> None:
         def second(value: float, prefix: str) -> None:{BODY}
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(prefix: str, value: int | float) -> None:"
+    assert (
+        _signature(result) == "def __extracted_func_0(prefix: str, value: 'int | float') -> None:"
+    )
 
 
 def test_unrelated_sites_join_into_a_union(tmp_path: Path) -> None:
@@ -106,7 +108,7 @@ def test_unrelated_sites_join_into_a_union(tmp_path: Path) -> None:
         def second(value: str, prefix: str) -> None:{BODY}
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(prefix: str, value: int | str) -> None:"
+    assert _signature(result) == "def __extracted_func_0(prefix: str, value: 'int | str') -> None:"
 
 
 def test_a_none_site_makes_the_parameter_optional(tmp_path: Path) -> None:
@@ -122,7 +124,7 @@ def test_a_none_site_makes_the_parameter_optional(tmp_path: Path) -> None:
             print(len(items), limit)
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(items: list, limit: int | None) -> None:"
+    assert _signature(result) == "def __extracted_func_0(items: list, limit: 'int | None') -> None:"
 
 
 def test_declared_return_types_need_a_checker_to_meet(tmp_path: Path) -> None:
@@ -237,8 +239,8 @@ def test_annotated_locals_give_the_return_type_of_returned_variables(tmp_path: P
         """,
     )
     header = _signature(result)
-    assert header.startswith("def __extracted_func_0(value: int) -> tuple["), header
-    assert header.endswith("-> tuple[int, str]:") or header.endswith("-> tuple[str, int]:")
+    assert header.startswith("def __extracted_func_0(value: int) -> 'tuple["), header
+    assert header.endswith("-> 'tuple[int, str]':") or header.endswith("-> 'tuple[str, int]':")
     exec(compile(result, "<locals>", "exec"), {})
 
 
@@ -338,7 +340,7 @@ def test_deferred_annotations_are_copied_unquoted(tmp_path: Path) -> None:
     exec(compile(result, "<deferred>", "exec"), {})
 
 
-def test_import_bound_names_are_copied_unquoted(tmp_path: Path) -> None:
+def test_import_bound_compounds_keep_their_type_without_evaluation(tmp_path: Path) -> None:
     result = _refactor(
         tmp_path,
         """
@@ -353,7 +355,7 @@ def test_import_bound_names_are_copied_unquoted(tmp_path: Path) -> None:
             print(total, value)
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(value: Optional[int]) -> None:"
+    assert _signature(result) == "def __extracted_func_0(value: 'Optional[int]') -> None:"
     exec(compile(result, "<imported>", "exec"), {})
 
 
@@ -378,12 +380,13 @@ def test_cross_file_helper_keeps_only_builtin_annotations(tmp_path: Path) -> Non
     assert proposals
     header = ast.unparse(proposals[0].extracted_function).split("\n", 1)[0]
     # ``Optional[str]`` needs typing; its members ``str | None`` are builtins.
-    assert header == "def __extracted_func(label: str | None, value: int) -> None:"
+    assert header == "def __extracted_func(label: 'str | None', value: int) -> None:"
 
 
-def test_subscripted_annotations_are_quoted_unless_known_generic(tmp_path: Path) -> None:
+def test_subscripted_annotations_are_quoted_even_with_familiar_names(tmp_path: Path) -> None:
     # ``memoryview`` is not subscriptable at runtime on every interpreter
-    # (tornado failed to import); ``list[int]`` and ``Sequence[int]`` are.
+    # (tornado failed to import). Even a familiar generic spelling does not
+    # prove its runtime binding or rule out overloaded behavior on its arguments.
     result = _refactor(
         tmp_path,
         """
@@ -400,7 +403,7 @@ def test_subscripted_annotations_are_quoted_unless_known_generic(tmp_path: Path)
     )
     assert (
         _signature(result)
-        == "def __extracted_func_0(items: list[int], seq: Sequence[int], view: 'memoryview[int]') -> None:"
+        == "def __extracted_func_0(items: 'list[int]', seq: 'Sequence[int]', view: 'memoryview[int]') -> None:"
     )
     exec(compile(result, "<generic>", "exec"), {})
 

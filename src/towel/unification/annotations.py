@@ -34,7 +34,7 @@ An annotation is written unquoted only when it evaluates where the helper is
 defined: every name is a builtin, a ``typing`` name the caller imports, a
 definition the helper is placed after (:func:`respell_bare`), or, in the
 same module, a name bound by a module-level import; and only when evaluating
-it is both safe and inert (:func:`_evaluates_at_runtime`, :func:`_is_inert`).
+it is both safe and inert (:func:`_evaluates_at_runtime`).
 Otherwise it is a string, which never evaluates and which type checkers
 resolve in the module. Across modules only builtin names and the caller's
 ``typing`` names are used, since a site's imports are not the host's.
@@ -79,7 +79,7 @@ from .revealed_types import parse_revealed
 from .semantic_safety import walk_own_scope
 from ..type_inference import RevealRequest, Subtyping, TypeOracle
 from .models import FunctionNode
-from .statement_facts import import_binding_names, imported_binding_name
+from .statement_facts import import_binding_names
 from ..diagnostics import TYPES, debugging
 from ..source_text import source_lines
 
@@ -486,7 +486,7 @@ def _spelled_for_host(
     if host is not None and _defers_annotations(host):
         return expression
     if names <= resolved:
-        if _evaluates_at_runtime(expression, host):
+        if _evaluates_at_runtime(expression):
             return expression
         return annotation if quoted else ast.Constant(value=ast.unparse(expression))
     if not same_module or host is None:
@@ -496,103 +496,31 @@ def _spelled_for_host(
         if names - resolved <= _dotted_heads(expression):
             return annotation if quoted else ast.Constant(value=ast.unparse(expression))
         return None
-    if names - resolved <= _import_bound_names(host) and _evaluates_at_runtime(expression, host):
+    if names - resolved <= _import_bound_names(host) and _evaluates_at_runtime(expression):
         return expression
     return annotation if quoted else ast.Constant(value=ast.unparse(expression))
 
 
 _RUNTIME_GENERICS = frozenset({"list", "dict", "set", "frozenset", "tuple", "type"})
-_TYPING_MODULES = frozenset({"typing", "typing_extensions", "collections.abc"})
-
-_INERT_OPERATORS = (ast.BitOr, ast.USub, ast.UAdd, ast.Invert)
-"""The only operators an annotation may apply bare: union, and a negated literal."""
-
-_INERT_NODES = (
-    ast.Name,
-    ast.Attribute,
-    ast.Subscript,
-    ast.Slice,
-    ast.Tuple,
-    ast.List,
-    ast.Starred,
-    ast.Constant,
-    ast.Load,
-) + _INERT_OPERATORS
-"""Node kinds whose evaluation cannot reach a statement of the project's own."""
 
 
-def _is_inert(expression: ast.expr) -> bool:
-    """Whether evaluating the annotation runs none of the program's own code.
+def _evaluates_at_runtime(expression: ast.expr) -> bool:
+    """Whether evaluating a generated annotation is inert once its names resolve.
 
-    Copying an annotation copies an expression, and the copy is evaluated
-    where the helper is defined: once more than the program evaluated it, or,
-    where the source quoted the annotation, once where the program never
-    evaluated it at all. ``Annotated[int, mark('a')]`` calls ``mark`` again;
-    so do ``Field(...)``, ``Depends(...)`` and every other annotation whose
-    metadata is built by a call. The extra call is an observable change in
-    behaviour that no type checker reports, because a checker reads the
-    annotation for its type and never runs it.
+    Only atoms are proved inert here. Every compound expression stays wholly
+    quoted: operators can invoke a metaclass, subscription can invoke
+    ``__class_getitem__``, and attributes can invoke ``__getattr__`` or refer
+    to a module/class still being initialized. A familiar builtin or typing
+    spelling does not establish the binding's identity; an import or local
+    definition may shadow it. Even trusted generic constructors can dispatch
+    to the program's code on their arguments.
 
-    Only a shape that resolves names and asks the type system to subscript,
-    union or spell them is inert: anything else -- a call, a lambda, a
-    comprehension, a conditional, an f-string, a walrus -- is written as a
-    string instead, which a checker resolves identically and the interpreter
-    never evaluates.
+    Quoting keeps the complete type visible to the checker without adding
+    runtime evaluation, so no binding resolver or compound allowlist is
+    needed. Existing source annotations are left untouched. Hosts that already
+    defer annotations need no quotation and are handled by the caller.
     """
-    for node in ast.walk(expression):
-        if isinstance(node, (ast.BinOp, ast.UnaryOp)):
-            if not isinstance(node.op, _INERT_OPERATORS):
-                return False
-        elif not isinstance(node, _INERT_NODES):
-            return False
-    return True
-
-
-def _evaluates_at_runtime(expression: ast.expr, host: Optional[ast.Module]) -> bool:
-    """Whether the annotation can be written bare where the helper is defined.
-
-    Two things have to hold, and a failure of either is written as a string.
-
-    Evaluating it must be inert (:func:`_is_inert`): a copied annotation is
-    evaluated one more time than the program evaluated the original, so an
-    annotation carrying a call would run that call again at import.
-
-    And it must not raise. Every name resolving is not enough:
-    ``memoryview[int]`` resolves and raises ``TypeError`` at definition time
-    on interpreters where ``memoryview`` is not generic (tornado). A
-    subscript is trusted only on a PEP 585 builtin generic, on a name
-    imported from ``typing`` or ``collections.abc``, or on ``typing.X`` with
-    ``typing`` imported.
-    """
-    if not _is_inert(expression):
-        return False
-    generic_names = set(_RUNTIME_GENERICS) | set(_TYPING_NAMES)
-    typing_modules: Set[str] = set()
-    if host is not None:
-        for node in host.body:
-            if isinstance(node, ast.ImportFrom) and node.module in _TYPING_MODULES:
-                generic_names.update(import_binding_names(node))
-            elif isinstance(node, ast.Import):
-                typing_modules.update(
-                    bound
-                    for alias in node.names
-                    if alias.name in _TYPING_MODULES
-                    and (bound := imported_binding_name(alias)) is not None
-                )
-    for sub in ast.walk(expression):
-        if not isinstance(sub, ast.Subscript):
-            continue
-        head = sub.value
-        if isinstance(head, ast.Name) and head.id in generic_names:
-            continue
-        if (
-            isinstance(head, ast.Attribute)
-            and isinstance(head.value, ast.Name)
-            and head.value.id in typing_modules
-        ):
-            continue
-        return False
-    return True
+    return isinstance(expression, (ast.Name, ast.Constant))
 
 
 def _referenced_names(expression: ast.expr) -> Set[str]:
@@ -722,7 +650,7 @@ def written_for_python(
     module raise ``TypeError`` on import under Python 3.9, however clean the
     checker, which runs on a newer interpreter, found it. A string is never
     evaluated and a checker reads it as the type it spells: the quotation that
-    keeps an annotation's calls from running (``_is_inert``) is the whole cure.
+    keeps generated annotations inert (``_evaluates_at_runtime``) is the whole cure.
     """
     written = copy.deepcopy(helper)
     if host is not None and _defers_annotations(host):
@@ -1123,7 +1051,7 @@ def respell_bare(
         expression = _unquoted(annotation)
         if expression is annotation or not _referenced_names(expression) <= resolved:
             return annotation
-        if not _evaluates_at_runtime(expression, host):
+        if not _evaluates_at_runtime(expression):
             return annotation
         return expression
 
@@ -1625,8 +1553,15 @@ def _joined_revealed(
         # returned is an output alternative, not evidence of that concrete
         # result. In particular mypy treats NotImplemented as Any and grants a
         # special return exception to __eq__, but not to its extracted helper.
-        return ast.BinOp(
-            left=_unquoted(joined), op=ast.BitOr(), right=ast.Name(id="Any", ctx=ast.Load())
+        # Joining must not undo the runtime quotation of a qualified or
+        # otherwise forward-referenced result. Spell the whole union again.
+        return _spelled_for_host(
+            ast.BinOp(
+                left=_unquoted(joined), op=ast.BitOr(), right=ast.Name(id="Any", ctx=ast.Load())
+            ),
+            host,
+            same_module,
+            extra | {"Any"},
         )
     return joined
 

@@ -1306,3 +1306,36 @@ probes rather than asserting wall time, protects both ordinary and Protocol
 bases, and rereads a changed dependency while reusing the caller AST. Do not
 replace its bounded-work assertion with a longer timeout or relax Protocol
 protection to recover speed.
+
+
+### Generated annotations must not add evaluation (September 27, 2026)
+
+The Tornado corpus run found that strict type checking accepted a generated
+module-level helper whose annotation evaluated
+`tornado.websocket.WebSocketHandler` while `tornado.websocket` was still
+initializing. Its parent package did not yet expose that submodule, and its
+classes had not been defined. Importing the output therefore raised an
+`AttributeError`. Binding an annotation's root name does not prove that its
+attribute path is ready or that evaluating it is inert.
+
+The same distinction applies to operators and subscriptions: an imported
+class can implement a metaclass `__or__`, and a class imported as `list` can
+implement `__class_getitem__`. Copying or unquoting their annotation expressions
+would introduce calls that the original program did not make. These are
+effects of constructing the new helper, not merely observations of its name
+or source layout. A familiar type spelling is not a proof of inert evaluation.
+
+Where the host evaluates annotations, keep generated compound annotations
+quoted as whole expressions. Retain precise checker types, including unions,
+generic arguments and observed return alternatives; later signature variants
+must not undo that quotation. Existing name-availability checks still govern
+simple names. A host that already defers annotations can retain its own
+spelling convention. Do not add a module-wide future import: that would change
+the evaluation of annotations belonging to the original program.
+
+The regressions require useful typed extraction, a fresh-process import and
+unchanged runtime effects, including existing annotation metadata evaluation.
+They also preserve checker precision and source-AST immutability. String
+annotations are a deliberate safety property here, not a reason to weaken
+the type assertions, refuse an otherwise valid extraction, or restore bare
+compound spelling merely to match an older textual expectation.

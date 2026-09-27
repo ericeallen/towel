@@ -226,17 +226,19 @@ def test_respell_bare_unquotes_only_annotations_that_run_nothing() -> None:
     Resolvability is not the test it needs. ``mark`` resolves where the helper
     is defined, and that is exactly what makes unquoting ``Annotated[int,
     mark('a')]`` dangerous rather than safe; a conditional or a comprehension
-    in an annotation is the same. An annotation built only from names,
-    subscripts and unions runs none of the program's code and is still
-    unquoted, so the rule stays a rule about evaluation rather than a blanket
-    refusal that would leave every helper quoted.
+    in an annotation is the same. Even operators and subscriptions can
+    dispatch to the program's code, so only resolving an atom is proved
+    inert; compound annotations keep the same type as a whole string.
     """
-    assert _respelled("'Optional[int]'", IMPORTS) == "Optional[int]"
-    assert _respelled("'list[int] | None'", IMPORTS) == "list[int] | None"
-    assert _respelled("'Annotated[int, MARKER]'", IMPORTS, ["MARKER"]) == "Annotated[int, MARKER]"
+    assert _respelled("'int'", IMPORTS) == "int"
+    assert _respelled("'None'", IMPORTS) == "None"
+    assert _respelled("'MARKER'", IMPORTS, ["MARKER"]) == "MARKER"
+    assert _respelled("'Optional[int]'", IMPORTS) is None
+    assert _respelled("'list[int] | None'", IMPORTS) is None
+    assert _respelled("'Annotated[int, MARKER]'", IMPORTS, ["MARKER"]) is None
     assert _respelled("\"Annotated[int, mark('a')]\"", IMPORTS, ["mark"]) is None
     assert _respelled("'list[int] if FLAG else str'", IMPORTS, ["FLAG"]) is None
-    assert _respelled("'tuple[int, *Ts]'", IMPORTS, ["Ts"]) == "tuple[int, *Ts]"
+    assert _respelled("'tuple[int, *Ts]'", IMPORTS, ["Ts"]) is None
 
 
 @pytest.mark.parametrize("program", [METADATA_PROGRAM, QUOTED_PROGRAM, DEFERRED_PROGRAM])
