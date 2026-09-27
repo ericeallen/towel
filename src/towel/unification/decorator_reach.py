@@ -59,11 +59,9 @@ in the value of an assignment at module or class level, in any module of the
 project, counts as applying its callee to each definition an argument of it
 names, or hands a call made in that argument, at any depth: ``f =
 typechecked(register(f))`` applies both. Each is judged as that decorator
-would be. And a class's machinery
-reaches every method: a metaclass or an ``__init_subclass__`` may wrap or
-recompile them as the class is built. So every class enclosing the code must
-pass the test a class that takes a method helper passes
-(:meth:`ImportTimeCode.hosts_method_helpers`).
+would be. Implicit class hooks and attribute lookup are outside this
+explicit-decorator policy; they may inspect the helper namespace, which is
+not preserved by refactoring.
 """
 
 from __future__ import annotations
@@ -79,7 +77,6 @@ from typing import (
     FrozenSet,
     Iterator,
     List,
-    Literal,
     Mapping,
     Optional,
     Sequence,
@@ -95,12 +92,7 @@ from ..program_files import program_directories, refuse_unparsed_file
 from ..source_text import read_source
 from .bounded_cache import BoundedCache
 from .exceptions import ProjectScanLimitError
-from .import_graph import (
-    _HOSTS_METHOD_HELPERS,
-    ImportGraphCache,
-    ImportTimeCode,
-    imported_definition_sites,
-)
+from .import_graph import ImportGraphCache, imported_definition_sites
 from .known_decorators import (
     DecoratedKind,
     Form,
@@ -134,32 +126,25 @@ class ModuleSource:
     tree: ast.Module
 
 
-RefusalKind = Literal["decorator", "machinery"]
-
-
 @dataclass(frozen=True)
 class DecoratorRefusal:
     """Something that can reach some code and is not known to leave its body alone.
 
     A decorator, written with ``@`` or applied by a call an assignment makes
-    (``site`` then says where), or the machinery of an enclosing class.
+    (``site`` then says where).
     """
 
     decorator: str
     """The decorator's absolute name when it resolves to one, as the module spells it
-    otherwise; for class machinery, what runs it: ``metaclass Meta``,
-    ``__init_subclass__ of Base``."""
+    otherwise."""
     holder: str
     """The definition it reaches: ``parse_record``, or ``class Model``."""
-    kind: RefusalKind = "decorator"
     site: Optional[str] = None
     """``module.py:12``, the call applying a decorator by hand."""
 
     @property
     def detail(self) -> str:
         """``@typeguard.typechecked on parse_record``, and the like."""
-        if self.kind == "machinery":
-            return f"{self.decorator} builds {self.holder}"
         if self.site is not None:
             return f"{self.decorator}(...) at {self.site} applied to {self.holder}"
         return f"@{self.decorator} on {self.holder}"
@@ -377,8 +362,6 @@ _HAND_CALLS: "WeakKeyDictionary[ast.Module, Tuple[Tuple[_Application, str], ...]
 # project root. Towel never writes a module-level or class-level assignment,
 # so what the index holds stays true while the engine rewrites the project.
 _HAND_INDEXES: "WeakKeyDictionary[ImportGraphCache, Dict[str, _HandIndex]]" = WeakKeyDictionary()
-_CODES: "WeakKeyDictionary[ast.Module, Tuple[int, Optional[ImportTimeCode]]]" = WeakKeyDictionary()
-_MACHINERY: "WeakKeyDictionary[ast.AST, Tuple[int, Optional[str]]]" = WeakKeyDictionary()
 # The writes into module namespaces each project's files make, every file read,
 # per engine and project root; and the names each module's star imports may
 # bind, per engine and module. Towel moves only code in function bodies and
@@ -419,8 +402,8 @@ def decorator_refusal(
     """The first decorator reaching ``definition``'s body not known to leave it alone, if any.
 
     The decorators of ``definition`` itself come first, then the calls
-    applying one to it by hand, then, for a class, its machinery; then the
-    same for each definition enclosing it, innermost first. ``module`` holds the tree
+    applying one to it by hand, then the same for each definition enclosing
+    it, innermost first. ``module`` holds the tree
     ``definition`` belongs to; ``cache`` answers where an import leads. The
     answer is remembered per definition, together with every other module
     it read, and computed again once one of those changes.
@@ -482,11 +465,6 @@ class _Resolver:
                 refused = self._refused(application, node)
                 if refused is not None:
                     return DecoratorRefusal(refused, _holder(node), site=application.site)
-        for node, _ in chain:
-            if isinstance(node, ast.ClassDef):
-                machinery = self._machinery_refused(node, module)
-                if machinery is not None:
-                    return DecoratorRefusal(machinery, _holder(node), kind="machinery")
         return None
 
     def _applications(
@@ -1118,103 +1096,6 @@ class _Resolver:
             found.add((module.key, dotted))
         return frozenset(found)
 
-    # -- class machinery ---------------------------------------------------------
-
-    def _machinery_refused(self, klass: ast.ClassDef, module: _Module) -> Optional[str]:
-        """What may wrap or recompile ``klass``'s methods as it is built, if anything may.
-
-        The verdict is the method-host test's, :meth:`ImportTimeCode.hosts_method_helpers`.
-        It judges a class of the module's own body where it stands. A class
-        anywhere else is judged only when it has no bases and no keywords,
-        since nothing of it then resolves through the scope holding it: the
-        test is asked of the same class statement standing alone, binding
-        the names its body binds. Any other class is refused. The answer
-        names what fails the test.
-        """
-        known = _MACHINERY.get(klass)
-        if known is not None and known[0] == id(self._cache):
-            return known[1]
-        slot = module.layout[id(klass)]
-        if slot.owner is None and slot.direct:
-            code = self._import_time_code(module)
-            passes = code is not None and code.hosts_method_helpers(klass.name)
-        else:
-            passes = not klass.bases and not klass.keywords and _passes_standing_alone(klass)
-        refused = None if passes else self._machinery_culprit(klass, module, 0)
-        _MACHINERY[klass] = (id(self._cache), refused)
-        return refused
-
-    def _import_time_code(self, module: _Module) -> Optional[ImportTimeCode]:
-        known = _CODES.get(module.tree)
-        if known is not None and known[0] == id(self._cache):
-            return known[1]
-        try:
-            code: Optional[ImportTimeCode] = ImportTimeCode(
-                module.source, path=Path(module.path), cache=self._cache
-            )
-        except (SyntaxError, ValueError):
-            code = None
-        _CODES[module.tree] = (id(self._cache), code)
-        return code
-
-    def _machinery_culprit(self, klass: ast.ClassDef, module: _Module, depth: int) -> str:
-        """What fails the method-host test for ``klass``: its metaclass, a member, or a base's.
-
-        Only names the failure; the verdict is :meth:`_machinery_refused`'s. A
-        base of the project is followed to the class that fails.
-        """
-        slot = module.layout[id(klass)]
-        machinery = _HOSTS_METHOD_HELPERS
-        if (slot.owner is not None or not slot.direct) and (klass.bases or klass.keywords):
-            return f"class {klass.name} (not at module level, with bases)"
-        for keyword in klass.keywords:
-            if keyword.arg != "metaclass":
-                return f"class keyword {keyword.arg}= of {klass.name}"
-            found = self._denotations(dotted_name(keyword.value) or "?", slot, module)
-            if not found or not all(
-                isinstance(item, _Origin) and item.dotted in machinery.metaclasses for item in found
-            ):
-                return f"metaclass {_spelling(keyword.value)}"
-        for member in sorted(machinery.forbidden_members):
-            if any(
-                member in bindings_of(statement, into_nested_scopes=False)
-                for statement in klass.body
-            ):
-                return f"{member} of {klass.name}"
-        for base in klass.bases:
-            named = base.value if isinstance(base, ast.Subscript) else base
-            spelled = dotted_name(named)
-            if spelled is None:
-                return f"base {_spelling(base)}"
-            targets = self._argument_targets(module, spelled, slot)
-            for path, qualname in sorted(targets or ()):
-                other = self._load(path)
-                inner = (
-                    None if other is None or "." in qualname else class_named(other.tree, qualname)
-                )
-                if other is None or inner is None:
-                    return f"base {spelled}"
-                kept = machinery.ancestor_decorators
-                for decorator in inner.decorator_list:
-                    callee = decorator.func if isinstance(decorator, ast.Call) else decorator
-                    found = self._denotations(
-                        dotted_name(callee) or "?", other.layout[id(inner)], other
-                    )
-                    if not found or not all(
-                        isinstance(item, _Origin) and item.dotted in kept for item in found
-                    ):
-                        return f"decorator {_spelling(callee)} of {inner.name}"
-                if depth < _MOST_HOPS and self._machinery_refused(inner, other) is not None:
-                    return self._machinery_culprit(inner, other, depth + 1)
-            if targets:
-                continue
-            found = self._denotations(spelled, slot, module)
-            origins = {item.dotted for item in found or () if isinstance(item, _Origin)}
-            accepted = machinery.bases | machinery.subscripted_bases | machinery.builtin_bases
-            if not found or not origins or not origins <= accepted:
-                return f"base {min(origins) if origins else spelled}"
-        return f"bases of {klass.name}"
-
     # -- decorators the project defines ------------------------------------------
 
     def _plain(self, denotation: _ProjectDef, form: Form) -> bool:
@@ -1315,27 +1196,6 @@ def _statements_held(statement: ast.stmt) -> Iterator[ast.stmt]:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.stmt, ast.excepthandler, ast.match_case)):
                 pending.append(child)
-
-
-def _passes_standing_alone(klass: ast.ClassDef) -> bool:
-    """The method-host test of a class with no bases and no keywords, asked of it standing alone.
-
-    Such a class is built by ``type`` and has only ``object`` after it on
-    its order, wherever it is written, so only the names its body binds
-    decide, and a module holding just the class statement, binding them,
-    asks the test exactly that.
-    """
-    bound = sorted(
-        {
-            name
-            for statement in klass.body
-            for name in bindings_of(statement, into_nested_scopes=False)
-        }
-    )
-    lines = [f"    {name} = None" for name in bound] or ["    pass"]
-    return ImportTimeCode("\n".join(["class _Standing:", *lines, ""])).hosts_method_helpers(
-        "_Standing"
-    )
 
 
 def _qualified_names(definition: Definition, module: _Module) -> List[str]:

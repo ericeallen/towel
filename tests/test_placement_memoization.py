@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Repeated placement questions share parsing and method walks, never graph-dependent verdicts."""
+"""Repeated receiver questions share immutable method walks."""
 
 from __future__ import annotations
 
@@ -27,9 +27,6 @@ from unittest.mock import patch
 import pytest
 
 from towel.unification.bounded_cache import memoization_disabled
-from towel.unification.import_graph import ImportGraphCache, ImportTimeCode
-from towel.unification.models import ClassInfo
-from towel.unification.module_bindings import global_bindings
 from towel.unification.placement import _dispatches_on
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -76,85 +73,6 @@ def test_receiver_memo_does_not_retain_the_method_tree() -> None:
     del function
     gc.collect()
     assert reference() is None
-
-
-def test_host_questions_parse_a_source_once_without_mutating_it(tmp_path: Path) -> None:
-    path = tmp_path / "box.py"
-    info = ClassInfo(name="Box", qualname="Box", file_path=str(path))
-    engine = UnificationRefactorEngine()
-    # ModuleBindings has its own independent parse cache; count only the
-    # repeated parsing of ImportTimeCode under examination here.
-    assert global_bindings(METHODS) is not None
-    with patch.object(ast, "parse", wraps=ast.parse) as parses:
-        for _ in range(10):
-            assert engine._hosts_method_helpers(info, {str(path): METHODS})
-    assert parses.call_count == 1
-    tree = engine._parse_source(METHODS)
-    before = ast.dump(tree, include_attributes=True)
-    assert engine._hosts_method_helpers(info, {str(path): METHODS})
-    assert ast.dump(tree, include_attributes=True) == before
-    assert engine._parse_source(METHODS) is tree
-
-
-def test_host_question_reads_revised_source_at_the_same_path(tmp_path: Path) -> None:
-    path = tmp_path / "box.py"
-    info = ClassInfo(name="Box", qualname="Box", file_path=str(path))
-    engine = UnificationRefactorEngine()
-    path.write_text(METHODS)
-    assert engine._hosts_method_helpers(info, {})
-    path.write_text(METHODS + "\n    def __getattribute__(self, name):\n        return 0\n")
-    assert not engine._hosts_method_helpers(info, {})
-    # The pair's source takes precedence over a different version on disk.
-    assert engine._hosts_method_helpers(info, {str(path): METHODS})
-
-
-def test_host_verdict_follows_a_changed_imported_base(tmp_path: Path) -> None:
-    base = tmp_path / "base.py"
-    path = tmp_path / "box.py"
-    source = "from base import Base\n\n" + METHODS.replace("class Box:", "class Box(Base):")
-    base.write_text("class Base:\n    pass\n")
-    path.write_text(source)
-    info = ClassInfo(name="Box", qualname="Box", file_path=str(path))
-    engine = UnificationRefactorEngine()
-    assert engine._hosts_method_helpers(info, {str(path): source})
-    tree = engine._parse_source(source)
-    base.write_text("class Base:\n    def __getattribute__(self, name):\n        return 0\n")
-    engine.import_graph.begin_run()
-    assert not engine._hosts_method_helpers(info, {str(path): source})
-    # The host's source did not change; its parse can still be reused even
-    # though the inherited class machinery requires a different answer.
-    assert engine._parse_source(source) is tree
-
-
-@pytest.mark.parametrize("intercepts_attributes", [False, True])
-def test_supplied_tree_matches_fresh_parsing_through_guards_and_imported_bases(
-    tmp_path: Path, intercepts_attributes: bool
-) -> None:
-    (tmp_path / "base.py").write_text(
-        "class Base:\n"
-        + (
-            "    def __getattribute__(self, name):\n        return 0\n"
-            if intercepts_attributes
-            else "    pass\n"
-        )
-    )
-    path = tmp_path / "box.py"
-    source = (
-        "from typing import TYPE_CHECKING\nfrom base import Base\n\n"
-        "if TYPE_CHECKING:\n    raise RuntimeError('type-only')\n\n"
-        + METHODS.replace("class Box:", "class Box(Base):")
-    )
-    path.write_text(source)
-    tree = ast.parse(source)
-    before = ast.dump(tree, include_attributes=True)
-    fresh = ImportTimeCode(source, path=path, cache=ImportGraphCache())
-    shared = ImportTimeCode(source, path=path, cache=ImportGraphCache(), tree=tree)
-    for _ in range(2):
-        assert shared.statements() == fresh.statements()
-        assert shared.hosts_method_helpers("Box") == fresh.hosts_method_helpers("Box")
-        assert shared.hosts_method_helpers("Box") is not intercepts_attributes
-    assert shared.tree is tree
-    assert ast.dump(tree, include_attributes=True) == before
 
 
 def test_placement_memos_preserve_exact_fixed_point_output(

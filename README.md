@@ -110,12 +110,12 @@ code. The common decorators of the standard library (`property`, `functools`,
 `contextlib`, `typing`, `dataclasses`, `unittest.mock.patch`), of pytest and of
 click, each read in its source, are known, and so are the project's own that
 only wrap or register the function; a pair any other reaches is declined under
-the decorator's name. The classes holding the code must be built by Python's
-own machinery, as far as Towel can read it, so a class with a metaclass of the
-project's, or deriving from a library class other than the standard-library
-ones read for this (`unittest.TestCase`, `asyncio.Protocol`, `logging.Handler`
-and others), keeps its code. Across modules, an `assert` moves only between modules pytest
-rewrites alike. It skips trivial extractions that would add
+the decorator's name. A class-private helper stays in the one class that
+already contains both duplicates. Class machinery that observes the added
+helper, including lookup hooks and scans of a class namespace, falls under
+the documented reflection limitation; an unlisted base or metaclass alone
+does not prevent extraction. Across modules, an `assert` moves only between
+modules pytest rewrites alike. It skips trivial extractions that would add
 indirection without sharing real logic, wraps arguments that must not be
 evaluated eagerly in zero-argument `lambda`s (see
 [below](#why-some-arguments-are-wrapped-in-lambda)), and leaves naming to you.

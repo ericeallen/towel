@@ -378,28 +378,20 @@ addresses:
 - **Metaclasses and descriptors.** Method extraction into a class assumes the
   usual descriptor protocol. Only a method whose decorators are all known to
   leave its body alone is refactored at all (*Decorators that compile or
-  instrument a body*), in a class whose machinery passes the test below; one
-  decorated with any of them but the recognized
+  instrument a body*); one decorated with any of them but the recognized
   receiver-preserving decorators receives a module-level helper with the
   receiver passed explicitly. A class decorator is trusted to leave a
   helper in place only when it is one of `dataclasses.dataclass`,
   `functools.total_ordering`, `typing.final`, `typing_extensions.final` and
   `enum.unique`, reached through the module's own absolute imports; a class
-  carrying any other decorator takes no helper. A metaclass, and every
-  `__init_subclass__` on the class's method resolution order, sees the
-  namespace a method helper joins and may wrap, register or drop it, so the
-  class holding both duplicates takes one only when all of that is known to
-  leave a plain function alone: its metaclass is `type`, `abc.ABCMeta` or the
-  enum metaclass, it defines no `__init_subclass__` itself, and each base is
-  a builtin class, `abc.ABC`, `typing.Generic[...]`, an enum, one of the
-  library classes read to build a subclass with Python's own machinery
-  (*Decorators that compile or instrument a body* below), or a class of the
-  project that qualifies in turn, resolved through the module's imports.
-  Any other class (pygments' lexers, whose metaclass is the project's own; a
-  base reached through a star import or built by a call such as
-  `with_metaclass(...)`; `NamedTuple`; a library base class nobody read)
-  keeps its code: moving it out is refused as well. `__slots__`
-  interactions with added methods are not modeled beyond compilation.
+  carrying any other decorator takes no helper. A metaclass,
+  `__init_subclass__` or lookup hook can observe the new private helper,
+  wrap it, register it, redirect its lookup or drop it. Those observations
+  fall under the reflection limitation below. Their presence, or a base
+  that Towel has not inspected, does not alone prevent extraction. This
+  boundary does not exempt an explicit decorator from the body-preservation
+  rule. `__slots__` interactions with added methods are not modeled beyond
+  compilation.
 - **Import-time behavior.** Helpers are inserted before the first definition
   in a module, after imports, except that a helper whose annotations name
   classes or functions of the module goes after the last of them, so the
@@ -468,6 +460,11 @@ than a defect to fix (DECISIONS, 2026-09-25). Towel does not detect:
   is wrapped too;
 - a descriptor whose `__set_name__` wraps its owner's functions, which then
   wraps the helper, or instruments methods that code has moved out of;
+- a metaclass or `__init_subclass__` that scans the namespace a helper joins,
+  or a `__getattribute__` that logs or redirects the new helper's lookup.
+  Class-private names prevent accidental overrides, but do not conceal the
+  helper from reflection. Towel does not reject a class merely for having
+  one of these hooks;
 - a package `__init__` that wraps every function of a submodule, including
   a new module-level helper;
 - a star import without `__all__`, `hasattr`, `dir()` or a module
@@ -795,27 +792,26 @@ for a class method. `def m(self: HasV)` declares that any object with the
 protocol's attributes may be passed, as `Box.m(other)`, and
 `self.__extracted_func_0()` would raise `AttributeError` on it, so such a
 method gets the module-level helper that takes the receiver as an argument.
-The class must also be able to hold the helper as an ordinary member: not a
+The class's declared contract and explicit decorators must permit adding a
+private helper: not a
 `Protocol` (a method there is one more member every structural implementer
 lacks, so a runtime-checkable `isinstance` turns false), not written with its
 body on the header's line (`class Base: pass` takes no further statement), and
 not decorated beyond the known namespace-preserving decorators. A base that
 could be `Protocol` on any path through its module, or is spelled
-`Protocol`, counts as one. Its metaclass and every `__init_subclass__` it
-runs must be known to leave a plain function alone (see *Metaclasses and
-descriptors* above), and no class on its method resolution order may bind
-`__getattribute__`, which intercepts every attribute lookup, the helper's
-included: a proxy that answers attributes from another object would look the
-helper up there. A builtin base must look attributes up as `object` does,
-which rules out `type` and `super`, so a metaclass's methods share a module
-function. `__getattr__` is allowed, since it runs only when normal lookup
-fails and nothing spells the helper's stored name: a class whose
-`__getattr__` serves every unknown name from its data keeps serving
-`_extracted_func_0` (fixture `r158`). A subclass that defines
-`__getattribute__` is not examined, since the rule judges the class alone and
-a subclass may lie outside the project: one that lets the class's own methods
-through but answers every other name from another object sends
-`self.__extracted_func_0` there too, and the call raises on its instances.
+`Protocol`, counts as one. Direct-base aliases are followed through project
+imports, assignments and conditional expressions. A concrete class that
+implements a protocol is still eligible; an unresolved computed base, such
+as a factory call, takes a module helper instead. This does not evaluate
+arbitrary calls or inspect aliases inside external libraries.
+Namespace scans and lookup interception that
+observe the added helper are reflection (see *Reflection over a namespace,
+and stack depth*). Towel does not inspect ancestry to approve that machinery.
+The class-private name prevents an ordinary subclass method from accidentally
+overriding the helper; it does not bypass a hook that observes every lookup.
+A `__getattr__` that serves unknown names still runs only when normal lookup
+fails, so an existing `_extracted_func_0` supplied from data remains separate
+from the new mangled name (fixture `r158`).
 Local classes, nested classes, duplicated class names, decorators known to
 leave the body alone but not to preserve the receiver (`mock.patch`,
 `pytest.mark.*`), functions nested inside methods, and class-body functions with no parameter or
@@ -1387,50 +1383,15 @@ covers it. A name that cannot be followed to its definition (through a star
 import, a name bound by a loop) is taken to be every definition of its name.
 So `ORDER = sorted(items, key=rank)` at module level declines `rank`.
 
-The class that holds the code is judged by its machinery as well: a
-metaclass, or an `__init_subclass__` anywhere on its method resolution order,
-may wrap or recompile its methods while the class is built. Every class
-enclosing the code must pass the test a class taking a method helper passes
-(*Metaclasses and descriptors* below): a metaclass that is `type`,
-`abc.ABCMeta` or the enum metaclass, no `__init_subclass__` or
-`__getattribute__` of its own, and bases that are builtins, `abc.ABC`,
-`typing.Generic[...]`, enums, the library classes below, or classes of the
-project that pass in turn, whose decorators are known to add no machinery. A
-class not in a module's own body passes only when it has no bases and no
-keywords, and binds neither name. Anything else declines under
-`class_machinery_may_transform_methods[...]`, which names what fails the test:
-`metaclass LexerMeta`, `__init_subclass__ of Base`, `decorator mock.patch of
-Base`, or `base pydantic.BaseModel`, since the test reads no other class
-outside the project.
+Class machinery observing the new helper is outside the reflection contract.
+An enclosing class is therefore not rejected solely for a project metaclass,
+`__init_subclass__`, lookup hook, or an unlisted library base. This removes the
+1.772 machinery allowlist and its `class_machinery_may_transform_methods`
+declines. Decorators explicitly applied to the original code still obey the
+rule above. The method-host constraints also remain: same class, private
+name, compatible receiver, and no new `Protocol` requirement.
 
-The library classes are those of `KNOWN_BASES` in
-`src/towel/unification/known_bases.py`, each read in CPython 3.11.15, 3.12.13
-and 3.13.7 and checked of the running interpreter by the suite: `type` or
-`ABCMeta` builds a subclass, nothing on the order defines
-`__getattribute__`, and none defines `__init_subclass__` but
-`unittest.TestCase`, whose own only sets two attributes of the subclass. They
-are `unittest.TestCase`, `IsolatedAsyncioTestCase`, `TestResult` and
-`TextTestResult`; `asyncio.BaseProtocol`, `Protocol`, `BufferedProtocol`,
-`DatagramProtocol` and `SubprocessProtocol`; `ast.NodeVisitor` and
-`NodeTransformer`; `logging.Filterer`, `Filter`, `Formatter`, `Handler` and
-`StreamHandler`; `threading.Thread`; `html.parser.HTMLParser`;
-`json.JSONEncoder` and `JSONDecoder`; `argparse.Action`, `HelpFormatter`,
-`ArgumentParser` and `Namespace`; `http.server.BaseHTTPRequestHandler`;
-`socketserver.ThreadingMixIn`; `string.Formatter`; `textwrap.TextWrapper`;
-`contextlib.ContextDecorator`, `AbstractContextManager` and
-`AbstractAsyncContextManager`; `collections.UserDict`; the `collections.abc`
-classes (`Mapping`, `MutableMapping`, `Sequence`, `Set`, `Iterable` and the
-rest of the common ones, subscripted or not); and `importlib.abc.MetaPathFinder`
-and `Loader`. Classes implemented in C (`io.StringIO`, `datetime.datetime`,
-`threading.local`, `ctypes.Structure`) and third-party classes are not read and
-not listed. An ancestor of the project may carry, besides the decorators that
-keep a class's namespace, `unittest.skip`, `skipIf`, `skipUnless`,
-`expectedFailure`, `typing.no_type_check` and `typing.dataclass_transform`,
-each called or not. A module that binds a builtin by a compatibility import
-(`try: from builtins import object` ... `except ImportError: pass`) holds the
-builtin on every path, and the base resolves to it.
-
-A `TestCase` subclass can therefore take a class-private method helper,
+A `TestCase` subclass can take a class-private method helper,
 `_Case__extracted_func_0`. unittest's loader collects only names starting with
 its `testMethodPrefix`, `test`, and pytest collects a `TestCase`'s tests through
 that same loader, so neither collects it (fixture
@@ -1517,14 +1478,11 @@ nothing prints how many pairs its last analysis declined for each (a pair
 that only repeated another's proposal is not counted), and every run counts
 the proposals it built and did not apply, by reason:
 
-- Decorators and class machinery. `decorator_may_transform_body[...]`,
-  counted with the decorator it names
-  (`decorator_may_transform_body[typeguard.typechecked]`): a decorator,
+- Decorators. `decorator_may_transform_body[...]`, counted with the decorator
+  it names (`decorator_may_transform_body[typeguard.typechecked]`): a decorator,
   written with `@` or applied by a call a module or class body assigns, that
   can reach the code of a block, of a call site, or of the helper's host is
-  not known to leave the body alone. `class_machinery_may_transform_methods[...]`,
-  counted with what fails the test (`...[metaclass LexerMeta]`): a class
-  enclosing the code does not pass the method-host test of its machinery.
+  not known to leave the body alone.
   `assert_rewriting_differs`: under `--cross-module`, a block holding an
   `assert` would join modules pytest does not rewrite alike. See *Decorators
   that compile or instrument a body* above. Which files coverage.py

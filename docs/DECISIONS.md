@@ -1025,3 +1025,39 @@ the provider binds its `__all__`. A decoration by hand is judged at every
 call along its chain, `f = outer(inner(f))` included.
 
 *Status: implemented in 1.772.*
+
+## 2026-09-26: Class-private extraction follows the reflection boundary
+
+A method helper stays private to the one class containing its call sites.
+Its hygienic, mangled name protects it from accidental overrides; inspecting
+ancestors cannot establish that property for arbitrary future subclasses.
+A lookup hook logging the added lookup, or a metaclass or `__init_subclass__`
+scanning, wrapping or registering the added member, observes the program's
+namespace. Such reflection is already outside the preservation contract.
+
+This supersedes the reflection-only restrictions in the September 22
+method-host decision and the September 24 class-machinery extensions.
+Neither an unlisted base, a subscripted project base, a metaclass nor a
+class hook alone makes an extraction invalid. Remove the hosting allowlist
+and the duplicate class-machinery veto in decorator analysis, rather than
+memoizing those unnecessary judgments. Retain their standard-library cases
+as positive extraction and compilation tests.
+
+The boundaries that affect ordinary calls remain: same class and file,
+compatible receivers, private helper naming, and no new required member of
+a `Protocol`. Resolve direct Protocol bases through project reexports and
+assignment aliases; a concrete class derived from a protocol is not itself
+a protocol merely because of that ancestry. A computed base whose value
+cannot be resolved takes a module helper instead. Explicit decorators that
+compile or instrument the original body still prevent moving code out of it.
+Import-time analysis still follows
+bases to determine which statements can execute project code; admitting a
+helper does not permit reordering those effects.
+
+Count emitted proposals separately from candidate pairs and type-annotation
+attempts. A high count of early declines or repeated annotation attempts is
+not evidence of many invalid emitted proposals. Keep materialization and
+type checks as final validation; preserve exact proposal discovery while
+memoizing repeated pure analysis with immutable results and bounded lifetime.
+
+*Status: implemented on the post-1.772 branch.*

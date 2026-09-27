@@ -49,11 +49,6 @@ from typing import (
 
 from .bounded_cache import BoundedCache, memoizing
 from .exceptions import ProjectScanLimitError
-from .known_bases import (
-    ANCESTOR_CLASS_DECORATORS,
-    KNOWN_BASE_ORIGINS,
-    KNOWN_SUBSCRIPTED_BASE_ORIGINS,
-)
 from .known_platforms import platform_only, stdlib_everywhere
 from ..import_model import NameStatus
 from ..declared_requirements import (
@@ -718,6 +713,43 @@ def imported_definition_sites(
     if bound is None:
         return None
     target, remainder = bound
+    return _imported_sites(current, target, remainder, cache)
+
+
+def imported_alias_sites(
+    current_file: str,
+    statement: Union[ast.Import, ast.ImportFrom],
+    alias: ast.alias,
+    remainder: str,
+    cache: ImportGraphCache,
+) -> Optional[FrozenSet[Tuple[Path, str]]]:
+    """Where one explicit import binding leads, including a binding inside a branch.
+
+    Unlike ``imported_definition_sites``, the caller supplies the exact import
+    statement instead of requiring an unconditional module binding. A star
+    import with ``remainder`` asks where that exported name may be defined.
+    """
+    if isinstance(statement, ast.Import):
+        target = tuple(alias.name.split(".")) if alias.asname else (alias.name.split(".")[0],)
+    else:
+        prefix: Tuple[str, ...] = ("." * statement.level,) if statement.level else ()
+        module = tuple(statement.module.split(".")) if statement.module else ()
+        target = (*prefix, *module, *((alias.name,) if alias.name != "*" else ()))
+    return _imported_sites(
+        Path(current_file).resolve(),
+        target,
+        tuple(remainder.split(".")) if remainder else (),
+        cache,
+    )
+
+
+def _imported_sites(
+    current: Path,
+    target: Tuple[str, ...],
+    remainder: Tuple[str, ...],
+    cache: ImportGraphCache,
+) -> Optional[FrozenSet[Tuple[Path, str]]]:
+    """Resolve an import target and its attribute suffix through the program's imports."""
     full = (*target, *remainder)
     # ``target`` may end in an attribute rather than a module, so every
     # split at or after the bound module's own length is tried.
@@ -863,73 +895,8 @@ _QUIET_SUBSCRIPTED_BASES = frozenset(
 )
 _QUIET_METACLASSES = frozenset({"abc.ABCMeta", "builtins.type"})
 
-# Class machinery known to leave a plain function of the class body in place,
-# unwrapped and unregistered, while it builds the class; each is checked in
-# tests/test_method_host_machinery.py. ``type`` and ``ABCMeta`` keep the
-# namespace as given, ``Generic`` and ``object`` define the only
-# ``__init_subclass__`` their subclasses run, and the enum metaclass makes
-# members of the body's other values but never of a function. ``Protocol``
-# is absent: a function in a protocol's body becomes one of its members.
-_ENUM_BASES = frozenset(
-    {"enum.Enum", "enum.Flag", "enum.IntEnum", "enum.IntFlag", "enum.ReprEnum", "enum.StrEnum"}
-)
-_ENUM_METACLASSES = frozenset({"enum.EnumMeta", "enum.EnumType"})
-
 _BUILTIN_CLASSES = frozenset(
     f"builtins.{name}" for name, value in vars(builtins).items() if isinstance(value, type)
-)
-
-# The builtin classes whose instances are not looked up by ``object``'s own
-# ``__getattribute__``: an instance of ``type`` is a class, looked up through
-# its metaclass first, and ``super`` answers for the next class on an order.
-# Every other builtin class runs that generic lookup; before CPython 3.14 many
-# carry a ``__getattribute__`` slot of their own that wraps it
-# (tests/test_method_host_machinery.py checks both against the interpreter).
-_OWN_ATTRIBUTE_LOOKUP = frozenset({"builtins.type", "builtins.super"})
-
-
-@dataclass(frozen=True)
-class _ClassMachinery:
-    """The bases, metaclasses and class members one judgment of a class takes as Python's own.
-
-    ``builtin_bases`` are the builtin classes it accepts as bases, and
-    ``forbidden_members`` the names no class on the order it accepts may bind.
-    A class of the project on the order may carry only ``ancestor_decorators``,
-    each spelled bare, or called too when ``called_decorators``.
-    """
-
-    label: str
-    bases: FrozenSet[str]
-    subscripted_bases: FrozenSet[str]
-    metaclasses: FrozenSet[str]
-    builtin_bases: FrozenSet[str] = _BUILTIN_CLASSES
-    forbidden_members: FrozenSet[str] = frozenset({"__init_subclass__"})
-    ancestor_decorators: FrozenSet[str] = NAMESPACE_PRESERVING_DECORATORS
-    called_decorators: bool = False
-
-
-# Subclassing runs only Python's class machinery: nothing of the project runs.
-_RUNS_NO_CODE = _ClassMachinery(
-    "runs-no-code", _QUIET_BASES, _QUIET_SUBSCRIPTED_BASES, _QUIET_METACLASSES
-)
-# A method helper stays what its class's methods reach: building the class
-# leaves every plain function of its body a plain member, and looking up
-# ``self.__extracted_func_0`` is Python's own, so that no class on the order
-# defines ``__getattribute__``, which intercepts every lookup and, in a proxy,
-# answers it from another object. ``__getattr__`` runs only when normal lookup
-# fails, and nothing spells the helper's stored name, so it is allowed.
-# The library classes read to build a subclass with Python's own machinery
-# count as such bases, and the class decorators read to add none of it keep
-# an ancestor of the project quiet, called or not (``known_bases``).
-_HOSTS_METHOD_HELPERS = _ClassMachinery(
-    "hosts-method-helpers",
-    frozenset({"abc.ABC"}) | _ENUM_BASES | KNOWN_BASE_ORIGINS,
-    frozenset({"typing.Generic"}) | KNOWN_SUBSCRIPTED_BASE_ORIGINS,
-    _QUIET_METACLASSES | _ENUM_METACLASSES,
-    builtin_bases=_BUILTIN_CLASSES - _OWN_ATTRIBUTE_LOOKUP,
-    forbidden_members=frozenset({"__init_subclass__", "__getattribute__"}),
-    ancestor_decorators=NAMESPACE_PRESERVING_DECORATORS | ANCESTOR_CLASS_DECORATORS,
-    called_decorators=True,
 )
 
 # Where the names an evaluated annotation subscripts may come from.
@@ -989,13 +956,8 @@ class ImportTimeCode:
         path: Optional[Path] = None,
         cache: Optional[ImportGraphCache] = None,
         depth: int = 0,
-        tree: Optional[ast.Module] = None,
     ) -> None:
-        # Placement asks repeatedly about one module. Its bounded parse cache
-        # can supply the tree of this exact source; this analysis only reads
-        # it. Only parsing is shared: imported bases are still judged against
-        # the current import graph and files whenever a verdict is requested.
-        self._tree = ast.parse(source) if tree is None else tree
+        self._tree = ast.parse(source)
         self._bindings = global_bindings(source)
         self._guards = TypeCheckingGuards(self._tree, self._bindings)
         self._path = path
@@ -1250,43 +1212,11 @@ class ImportTimeCode:
         self,
         keywords: Sequence[ast.keyword],
         order: int,
-        machinery: _ClassMachinery = _RUNS_NO_CODE,
     ) -> bool:
         return all(
             keyword.arg == "metaclass"
-            and self._origin(keyword.value, order, None) in machinery.metaclasses
+            and self._origin(keyword.value, order, None) in _QUIET_METACLASSES
             for keyword in keywords
-        )
-
-    def hosts_method_helpers(self, name: str) -> bool:
-        """Whether a method helper placed in the top-level class ``name`` is what its methods reach.
-
-        A helper placed in the body is seen by the class's metaclass, which
-        builds the class from the namespace, and by the ``__init_subclass__``
-        of every class on its method resolution order, its own included for
-        each subclass: any of them may wrap it, register it, or drop it. And
-        every call of it is an attribute lookup, which a ``__getattribute__``
-        anywhere on that order intercepts: a forwarding proxy answers it from
-        another object. So the metaclass must be ``type``, ``abc.ABCMeta`` or
-        the enum metaclass, the class must bind neither ``__init_subclass__``
-        nor ``__getattribute__``, and every base must be a builtin class other
-        than ``type`` and ``super``, ``abc.ABC``, ``typing.Generic[...]``, an
-        enum, or a class of the project that qualifies in turn, each resolved
-        through the module's imports (``_HOSTS_METHOD_HELPERS``). The class's
-        decorators are :meth:`ModuleBindings.keeps_namespace`'s question.
-        """
-        if self._bindings is None:
-            return False
-        order = self._bindings.class_orders.get(name)
-        if order is None:
-            return False
-        node = self._tree.body[order]
-        return (
-            isinstance(node, ast.ClassDef)
-            and node.name == name
-            and self._quiet_keywords(node.keywords, order, _HOSTS_METHOD_HELPERS)
-            and not _binds_any(node, _HOSTS_METHOD_HELPERS.forbidden_members)
-            and all(self._quiet_base(base, order, _HOSTS_METHOD_HELPERS) for base in node.bases)
         )
 
     def _quiet_call(self, call: ast.Call, order: int, body: Optional[_ClassBody]) -> bool:
@@ -1415,18 +1345,16 @@ class ImportTimeCode:
             return not statement.decorator_list
         return isinstance(statement, ast.Assign) and _is_constant(statement.value)
 
-    def _quiet_base(
-        self, base: ast.expr, order: int, machinery: _ClassMachinery = _RUNS_NO_CODE
-    ) -> bool:
-        """Whether subclassing ``base`` runs only the class machinery ``machinery`` accepts."""
+    def _quiet_base(self, base: ast.expr, order: int) -> bool:
+        """Whether subclassing ``base`` runs only Python's own class machinery."""
         if isinstance(base, ast.Subscript):
             # ``Generic[K, V]`` evaluates each of its arguments as an annotation.
             parts = base.slice.elts if isinstance(base.slice, ast.Tuple) else [base.slice]
-            return self._origin(base.value, order, None) in machinery.subscripted_bases and not any(
+            return self._origin(base.value, order, None) in _QUIET_SUBSCRIPTED_BASES and not any(
                 self._annotation(part, order, None) for part in parts
             )
         origin = self._origin(base, order, None)
-        if origin in machinery.bases or origin in machinery.builtin_bases:
+        if origin in _QUIET_BASES or origin in _BUILTIN_CLASSES:
             return True
         dotted = dotted_name(base)
         if dotted is None or self._bindings is None or self._depth > 8:
@@ -1436,39 +1364,24 @@ class ImportTimeCode:
             return False
         if binding.class_qualname is not None and binding.class_qualname == dotted:
             node = self._tree.body[binding.order]
-            return isinstance(node, ast.ClassDef) and self._quiet_ancestor(
-                node, binding.order, machinery
-            )
+            return isinstance(node, ast.ClassDef) and self._quiet_ancestor(node, binding.order)
         if binding.is_import:
-            return self._quiet_imported_class(dotted, machinery)
+            return self._quiet_imported_class(dotted)
         return False
 
-    def _quiet_ancestor(
-        self, node: ast.ClassDef, order: int, machinery: _ClassMachinery = _RUNS_NO_CODE
-    ) -> bool:
-        """A class of this module whose decorators, machinery and members ``machinery`` accepts."""
+    def _quiet_ancestor(self, node: ast.ClassDef, order: int) -> bool:
+        """A class whose creation and subclass hooks run no project code."""
         return (
             all(
-                self._origin(
-                    (
-                        decorator.func
-                        if machinery.called_decorators and isinstance(decorator, ast.Call)
-                        else decorator
-                    ),
-                    order,
-                    None,
-                )
-                in machinery.ancestor_decorators
+                self._origin(decorator, order, None) in NAMESPACE_PRESERVING_DECORATORS
                 for decorator in node.decorator_list
             )
-            and self._quiet_keywords(node.keywords, order, machinery)
-            and not _binds_any(node, machinery.forbidden_members)
-            and all(self._quiet_base(base, order, machinery) for base in node.bases)
+            and self._quiet_keywords(node.keywords, order)
+            and not _binds_any(node, frozenset({"__init_subclass__"}))
+            and all(self._quiet_base(base, order) for base in node.bases)
         )
 
-    def _quiet_imported_class(
-        self, dotted: str, machinery: _ClassMachinery = _RUNS_NO_CODE
-    ) -> bool:
+    def _quiet_imported_class(self, dotted: str) -> bool:
         """An imported class of the project, judged in the module that defines it."""
         if self._path is None or self._cache is None:
             return False
@@ -1482,7 +1395,7 @@ class ImportTimeCode:
             stat = module.stat()
         except OSError:
             return False
-        key = (module, stat.st_mtime_ns, stat.st_size, f"{qualname} {machinery.label}")
+        key = (module, stat.st_mtime_ns, stat.st_size, qualname)
         known = self._cache.quiet_classes.get(key)
         if known is not None:
             return known
@@ -1492,11 +1405,11 @@ class ImportTimeCode:
             )
         except (OSError, UnicodeError, SyntaxError, ValueError):
             return self._cache.quiet_classes.put(key, False)
-        return self._cache.quiet_classes.put(key, other._quiet_named_class(qualname, machinery))
+        return self._cache.quiet_classes.put(key, other._quiet_named_class(qualname))
 
-    def _quiet_named_class(self, name: str, machinery: _ClassMachinery) -> bool:
+    def _quiet_named_class(self, name: str) -> bool:
         """Whether the class the module binds to ``name`` once it has run is quiet to subclass."""
-        return self._quiet_base(ast.Name(id=name, ctx=ast.Load()), len(self._tree.body), machinery)
+        return self._quiet_base(ast.Name(id=name, ctx=ast.Load()), len(self._tree.body))
 
 
 def _builtin_on_every_path(bindings: ModuleBindings, name: str) -> bool:

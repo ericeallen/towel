@@ -665,13 +665,13 @@ SPELLINGS: Tuple[Spelling, ...] = (
         "cleanup",
         None,
     ),
-    # -- class machinery ------------------------------------------------------
+    # -- implicit class hooks do not apply explicit decorators ------------------------------------------------------
     Spelling(
         "a metaclass of the project",
         "class Traced(type):\n    pass\nclass C(metaclass=Traced):\n    def m(self):\n"
         "        return 1\n",
         "C.m",
-        "metaclass Traced",
+        None,
     ),
     Spelling(
         "an __init_subclass__ on a base",
@@ -679,13 +679,13 @@ SPELLINGS: Tuple[Spelling, ...] = (
         "        super().__init_subclass__(**kwargs)\nclass C(Base):\n    def m(self):\n"
         "        return 1\n",
         "C.m",
-        "__init_subclass__ of Base",
+        None,
     ),
     Spelling(
         "a metaclass of a base in another module",
         "from .base import Base\nclass C(Base):\n    def m(self):\n        return 1\n",
         "C.m",
-        "metaclass Meta",
+        None,
         others={
             "pkg/__init__.py": "",
             "pkg/base.py": "class Meta(type):\n    pass\nclass Base(metaclass=Meta):\n    pass\n",
@@ -709,7 +709,7 @@ SPELLINGS: Tuple[Spelling, ...] = (
         "a base outside the project nobody read",
         "import pydantic\nclass Model(pydantic.BaseModel):\n    def m(self):\n        return 1\n",
         "Model.m",
-        "base pydantic.BaseModel",
+        None,
     ),
     Spelling(
         "a builtin imported for compatibility",
@@ -731,7 +731,7 @@ SPELLINGS: Tuple[Spelling, ...] = (
         "class Base(unittest.TestCase):\n    pass\nclass T(Base):\n    def test_m(self):\n"
         "        return 1\n",
         "T.test_m",
-        "decorator mock.patch of Base",
+        None,
     ),
     Spelling(
         "a nested class with no bases",
@@ -744,14 +744,14 @@ SPELLINGS: Tuple[Spelling, ...] = (
         "class Base:\n    pass\nclass Outer:\n    class Inner(Base):\n        def m(self):\n"
         "            return 1\n",
         "Outer.Inner.m",
-        "class Inner (not at module level, with bases)",
+        None,
     ),
     Spelling(
         "a local class binding __init_subclass__",
         "def make():\n    class Local:\n        def __init_subclass__(cls):\n            pass\n"
         "        def m(self):\n            return 1\n    return Local\n",
         "make.Local.m",
-        "__init_subclass__ of Local",
+        None,
     ),
     Spelling(
         "ABC, ABCMeta, an enum and Generic",

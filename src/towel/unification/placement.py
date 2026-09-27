@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import ast
 
-from pathlib import Path
 from weakref import WeakKeyDictionary
 from typing import (
     Dict,
@@ -55,7 +54,8 @@ from .models import (
 from .class_private import mangling_prefix
 from .scope_analyzer import ScopeAnalyzer
 from .module_bindings import ModuleBindings, dotted_name, global_bindings, import_origin
-from .import_graph import ImportTimeCode, module_scope_statements
+from .import_graph import module_scope_statements
+from .protocol_bases import bases_allow_private_helpers
 from .statement_facts import imported_binding_name, memoized_per_node
 from .visitors import MethodCallRewriter, visit_as
 from ..source_text import read_source
@@ -755,37 +755,24 @@ class HelperPlacement(EngineState):
         return global_bindings(source)
 
     def _can_host(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
-        """Whether a helper placed in ``info``'s body stays a plain member of the class.
+        """Whether the class's declared contract and decorators permit a helper.
 
         See :meth:`ModuleBindings.refuses_helper` for what rules a class out.
         """
         table = self._module_bindings(info.file_path, sources)
-        return table is not None and table.refuses_helper(info.qualname) is None
-
-    def _hosts_method_helpers(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
-        """Whether a helper placed in the class's body stays what its methods reach.
-
-        A metaclass that wraps every callable of the namespace, or a base whose
-        ``__init_subclass__`` registers them, would wrap or register the helper
-        too, and a ``__getattribute__`` on the class's method resolution order
-        intercepts ``self.__extracted_func_0`` itself: a forwarding proxy looks
-        it up on another object (:meth:`ImportTimeCode.hosts_method_helpers`).
-        The helper then stays at module level and takes the receiver as an
-        argument.
-        """
+        if table is None or table.refuses_helper(info.qualname) is not None:
+            return False
         source = sources.get(info.file_path)
         try:
             if source is None:
                 source = read_source(info.file_path)
-            code = ImportTimeCode(
-                source,
-                path=Path(info.file_path),
-                cache=self.import_graph,
-                tree=self._parse_source(source),
-            )
+            tree = self._parse_source(source)
         except (OSError, UnicodeError, SyntaxError, ValueError):
             return False
-        return code.hosts_method_helpers(info.qualname)
+        klass = tree.body[table.class_orders[info.qualname]]
+        return isinstance(klass, ast.ClassDef) and bases_allow_private_helpers(
+            klass, tree, table, info.file_path, self.import_graph, self._parse_source
+        )
 
     def _choose_class_insertion(
         self,
@@ -845,7 +832,7 @@ class HelperPlacement(EngineState):
             # ordinary member any subclass may override.
             return None
         sources = {pair.file_path: pair.source1}
-        if not self._can_host(host, sources) or not self._hosts_method_helpers(host, sources):
+        if not self._can_host(host, sources):
             return None
         return ClassInsertionPlan(
             class_name=class_name,

@@ -754,17 +754,12 @@ that were read in their source (`property`, `functools.lru_cache`,
 `contextlib.contextmanager`, `dataclasses.dataclass`, `unittest.mock.patch`,
 `pytest.fixture`, `pytest.mark.*`, `click.command`, and others), and the
 project's own decorators that only return the function, register it, or wrap
-it in a function calling it with its own arguments. A class enclosing the code
-must also build its methods with Python's own machinery (a metaclass of `type`,
-`ABCMeta` or the enum metaclass, no `__init_subclass__`, and bases that are
-builtins, `abc.ABC`, `typing.Generic`, enums, standard-library classes read to
-be built that way (`unittest.TestCase`, `asyncio.Protocol`, `ast.NodeVisitor`,
-`logging.Handler`, the `collections.abc` classes and others), or classes of the
-project that qualify in turn), or the pair is counted under
-`class_machinery_may_transform_methods[...]`: a class deriving from a library
-class nobody read keeps its code; and with
-`cross_module_helpers=True`, an `assert` joins two modules only when pytest
-rewrites both alike (`assert_rewriting_differs`). [Known
+it in a function calling it with its own arguments. An unlisted base,
+metaclass, `__init_subclass__` or lookup hook alone does not prevent
+extraction: observing the new helper through class machinery is covered by
+the reflection limitation. Explicit decorators still obey the rule above.
+With `cross_module_helpers=True`, an `assert` joins two modules only when
+pytest rewrites both alike (`assert_rewriting_differs`). [Known
 limitations](KNOWN_LIMITATIONS.md#decorators-that-compile-or-instrument-a-body)
 lists them and what the check does not see.
 

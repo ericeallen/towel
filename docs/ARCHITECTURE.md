@@ -372,17 +372,23 @@ decides:
   other (docs/DECISIONS.md, "A method helper lives in the class that holds
   both duplicates"). Its name is class-private, `__extracted_func_0`, which
   the class stores as `_A__extracted_func_0` and its methods call as
-  `self.__extracted_func_0()`, so no subclass, inside the project or outside
-  it, can override it or collide with it; `class_private.py` holds CPython's
+  `self.__extracted_func_0()`, protecting it from accidental overrides by
+  ordinary subclass methods; `class_private.py` holds CPython's
   mangling rule, which allocation, the project scan and renaming share. The
-  class must keep the helper what its methods reach: not a `Protocol`, no
+  class's declared contract and explicit decorators must permit adding a
+  private helper: not a `Protocol`, no
   decorator beyond the known namespace-preserving ones, a body below its
-  header, a metaclass and every `__init_subclass__` on its order known to
-  leave a plain function alone, no `__getattribute__` on that order (which
-  intercepts the helper's own lookup), no builtin base but those that look
-  attributes up as `object` does, a name that mangles (not only
-  underscores), and receivers annotated, if at all, as the class
-  (`ImportTimeCode.hosts_method_helpers`, `ModuleBindings.refuses_helper`).
+  header, a name that mangles (not only underscores), and receivers
+  annotated, if at all, as the class (`ModuleBindings.refuses_helper`).
+  Namespace scans and lookup hooks observing the added private helper are
+  reflection, outside the preservation contract. The engine therefore does
+  not walk the ancestry to approve class machinery or require a base-class
+  allowlist. Explicit decorators remain subject to the body-preservation
+  rule, and a `Protocol` cannot gain a required member.
+  `protocol_bases.py` follows direct-base aliases through project imports
+  and conditional expressions. It stops at class definitions, since a
+  concrete implementation of a protocol may host a helper. An unresolved
+  computed base takes a module helper instead.
   A source method that never reads an attribute of its receiver, and a
   `staticmethod`, get a module-level helper instead: such a method runs when
   it is called through its class with anything in the receiver's place, and a
@@ -1122,15 +1128,16 @@ previous pass produced from them has since been consumed:
 1. *What a verdict depends on.* `_try_refactor_pair_multi_file` decides a
    pair from the two functions' syntax trees and the scope analyses of their
    modules; from the same-file clustering scan (`_add_clustered_replacements`
-   looks only at the pair's own file); from the class hierarchy (whether the
-   class holding both methods can take a method helper); and from the
+   looks only at the pair's own file); from the classes and receiver types
+   holding the methods (whether both can call a private helper in the same
+   class); and from the
    project's import graph (the
    cycle guard). Nothing else. Proposal priority is a pure function of the
    proposals themselves (size, then position).
 2. *Unchanged files, unchanged scans.* An unchanged file has the same
    syntax tree, the same scope analysis, and the same clustering scan, since
    the analysis session reuses the parsed module.
-3. *The class hierarchy is invariant.* Refactoring inserts helper functions
+3. *The class identities are invariant.* Refactoring inserts helper functions
    and methods and rewrites call sites; it never adds, removes, or renames a
    class, and never changes a base list. `ClassInfo` for every module is
    therefore the same in every pass.
@@ -1575,8 +1582,9 @@ but the ideas and their names are from the literature.
 | Reading a type checker's spelling of a type as the annotation it means | `revealed_types.py` |
 | The errors a project's type check already reports, and what a later check adds | `type_baseline.py` (at `src/towel/`) |
 | Where to ask the type checker whether it looks at a statement at all | `reachability.py` (at `src/towel/`) |
-| Whether everything that can reach a function's body, decorators and class machinery, is known to leave it alone | `decorator_reach.py` |
-| The decorators and library base classes read in their source and found safe | `known_decorators.py`, `known_bases.py` |
+| Whether explicit decorators that can reach a function's body are known to leave it alone | `decorator_reach.py` |
+| Whether a direct base resolves to `Protocol`, including project aliases and reexports | `protocol_bases.py` |
+| The decorators read in their source and found to leave bodies alone | `known_decorators.py` |
 | Whether pytest rewrites a module's `assert` statements, as the project configures it | `assert_rewriting.py` |
 | Where a program may write into a module's namespace (builtins patched, decorators rebound) | `namespace_writes.py` |
 | What a module's top level binds, statement by statement | `module_bindings.py` |

@@ -9,16 +9,32 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Class-private extractions no longer require approved base classes or
+  class machinery. Hygienic private names protect against accidental
+  overrides; namespace scans and lookup hooks observing the new helper fall
+  under the documented reflection limitation. The same-class, receiver,
+  `Protocol`, explicit-decorator and import-time checks remain. This admits
+  valid extractions previously declined solely for a metaclass, class hook,
+  subscripted project base or unlisted library base.
+
 ### Performance
 
-- Repeated method-placement questions share a method's receiver analysis and
-  the parse of its module. The receiver facts live only as long as their AST;
-  parsed modules use the engine's bounded source cache. Class-hosting verdicts
-  still follow the current imported bases on every request. On two analysis
-  passes over packaging 26.3, receiver walks fell from 17,405 to 245 and
-  total analysis parses from 511 to 163, with all 23 proposals'
-  rendered output unchanged. See the
+- Repeated method-placement questions share a method's receiver analysis.
+  The receiver facts live only as long as their AST. On two analysis passes
+  over packaging 26.3, receiver walks fell from 17,405 to 245. The follow-up
+  above removes the repeated class-machinery analysis altogether.
+- Function-scope `global` and `nonlocal` declarations are computed once per
+  immutable function tree. Two analysis passes over the same packaging
+  fixture needed 226 walks instead of 2,666 with this memo alone; all 23
+  proposals rendered byte-identically and compiled. The combined policy
+  change and memo also preserved those outputs. See the
   [measurement and regression checks](docs/proposals/performance-roadmap.md#method-placement-after-1772).
+- Resolving a receiver annotation now shares the module's binding scan for
+  that name. An eight-method `Self` fixture makes 336 queries but scans once,
+  producing the same proposal. Cached statement tuples preserve order and
+  are released with their module tree.
 
 ## [1.772] - 2026-09-26
 

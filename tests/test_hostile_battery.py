@@ -28,6 +28,10 @@ yet fixed: it is expected to fail, strictly, and its transformed state is
 not pinned, since the fix may extract it soundly or decline it. When the fix
 lands the fixture passes, pytest reports the XPASS as a failure, and the
 fixture moves from ``KNOWN_DEFECTS`` to ``TRANSFORMED`` or stays out of both.
+
+``REFLECTION_CASES`` instead records examples outside the equivalence contract.
+Their separate test demonstrates that adding private helpers remains permitted
+and that implicit hooks inspecting namespaces or source can observe the change.
 """
 
 from __future__ import annotations
@@ -46,6 +50,10 @@ from tests.hostile_refactoring import refactor_script, with_known_defects
 CASES = Path(__file__).parent / "hostile_cases"
 
 TRANSFORMED = {
+    "p09_static_helper_metaclass_hides_attribute",
+    "p13_protocol_default_methods",
+    "p14_protocol_common_ancestor",
+    "p17_decorated_base_rebuilds_namespace",
     "r101_same_named_method_forces_module_helper",
     "h04_closure_freevar",
     "h05_cond_return_plus_retvar",
@@ -335,7 +343,8 @@ TRANSFORMED = {
     "r7d_plain_wrapper_decorator",
     # The same applied by hand, with a known factory and a property built from
     # its accessors; r7d_instrumenting_call_applied_by_hand, whose recompiler is
-    # applied by a call, and r7d_metaclass_recompiles_methods are declined.
+    # applied by a call, is declined. Implicit metaclass source inspection is
+    # covered separately by REFLECTION_CASES.
     "r7d_plain_wrapper_applied_by_hand",
     # r9dc_stacked_decoration_by_hand, whose recompiler is applied by hand around
     # a plain decorator and through a factory, is declined (round-4 audit P1-06).
@@ -365,18 +374,13 @@ TRANSFORMED = {
     "r9bd_global_bound_by_every_binder",
     "r9bd_global_declared_at_one_site",
 }
-# r7fz_classhost_init_subclass_wraps and r7fz_classhost_metaclass_registry,
-# which the round-3 audit found extracted soundly, are declined since code
-# stopped moving out of classes whose machinery the method-host test cannot
-# read: an __init_subclass__ that wraps methods, and a project metaclass.
 # r7sp_directive_on_a_shared_line is declined: each block starts after, or
 # ends before, a statement that stays on a line carrying a directive.
 # r7fz_grammar_u0217_read_before_bind, a P1-7 case, is declined since its fix:
 # its block reads v6 before binding it (incomplete_lifetime_block1).
-# p09, p13, p14 and p17 left it when the classes code moves out of began to be
-# held to the method-host test of their machinery: p09's metaclass is the
-# project's, p13 and p14 derive from Protocol, whose machinery the test does
-# not accept, and p17's base carries a decorator not known to keep it.
+# p09, p13, p14 and p17 transform again without the implicit-machinery guard.
+# Static helpers and helpers extracted from a Protocol remain at module level;
+# an ancestor's decorator does not decorate the subclass's own methods.
 # p15_class_decorator_rebuilds_namespace and p16_class_decorator_wraps_every_function
 # left the set when a class decorator not known to leave its methods alone began
 # to decline blocks in them: the one rebuilds the class from its namespace, the
@@ -396,13 +400,23 @@ KNOWN_DEFECTS: Dict[str, str] = {}
 """Fixtures whose defect is reported and not yet fixed, each with its reason from
 ``tests/audit_defects.py``. None is open: every round-3 P1 fixture passes."""
 
+REFLECTION_CASES: Dict[str, str] = {
+    "r7fz_classhost_init_subclass_wraps": "a subclass hook wraps names found by scanning vars(cls)",
+    "r7fz_classhost_metaclass_registry": "a metaclass publishes the scanned class namespace",
+    "r7d_metaclass_recompiles_methods": "a metaclass recompiles methods from inspect.getsource",
+}
+
 
 def _run(script: Path) -> tuple[int, str, list[str]]:
     return observe(script.name, script.parent)
 
 
 @pytest.mark.parametrize(
-    "case", with_known_defects([path.stem for path in fixture_sources(CASES)], KNOWN_DEFECTS)
+    "case",
+    with_known_defects(
+        [path.stem for path in fixture_sources(CASES) if path.stem not in REFLECTION_CASES],
+        KNOWN_DEFECTS,
+    ),
 )
 def test_refactoring_preserves_program_output(case: str) -> None:
     fixture = fixture_named(CASES, case)
@@ -431,3 +445,19 @@ def test_refactoring_preserves_program_output(case: str) -> None:
             assert transformed == (case in TRANSFORMED), (
                 "rejected" if not transformed else "transformed"
             )
+
+
+@pytest.mark.parametrize("case", sorted(REFLECTION_CASES))
+def test_implicit_reflection_can_observe_extraction(tmp_path: Path, case: str) -> None:
+    fixture = fixture_named(CASES, case)
+    parsed_or_skipped(fixture)
+    script = tmp_path / "m.py"
+    shutil.copy(fixture, script)
+    before = _run(script)
+    scopes = ScopeWatch()
+    assert refactor_script(script, file_finisher=scopes) > 0
+    compile(script.read_text(), str(script), "exec")
+    assert scopes.found == []
+    after = _run(script)
+    assert before[0] == after[0] == 0
+    assert before[1] != after[1], REFLECTION_CASES[case]

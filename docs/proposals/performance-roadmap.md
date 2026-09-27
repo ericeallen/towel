@@ -151,29 +151,56 @@ in docs/KNOWN_LIMITATIONS.md.
 ## Method placement after 1.772
 
 Measured September 26, 2026, on Python 3.13.7 against packaging 26.3's 20
-Python files, copied out of its installation. Two analysis passes with
-`TOWEL_CHECK_AST_IMMUTABLE=1` made 17,405 receiver-dispatch queries on 245
+Python files, copied out of its installation. Two untyped analysis passes
+with `TOWEL_CHECK_AST_IMMUTABLE=1` made 17,405 receiver-dispatch queries on 245
 distinct method/receiver inputs. `_dispatches_on` now computes the immutable
 set of names used as attribute receivers once per method AST. A weak-key
 cache releases the facts when the AST dies, and the differential-testing
 switch disables this memo along with the other node memos.
 
 The same passes asked 354 class-hosting questions on six distinct
-source/class inputs. Those answers are not cached: imported bases and the
-import graph can change while the host's source stays the same. Only the
-source parse is shared, through the engine's existing bounded parse cache.
-`ImportTimeCode` constructor parses fell from 368 to 14; all 354 hosting
-questions still ran. Counting every analysis parse, including the six that
-populate the source cache, gives 511 before and 163 after, a net reduction of
-348. Both versions found the same 23 proposals on each pass,
-and every rendered proposal was byte-identical.
+source/class inputs. The first optimization, `470d763`, shared their parses
+through the engine's bounded source cache: `ImportTimeCode` constructor
+parses fell from 368 to 14, and total analysis parses from 511 to 163. It
+still ran all hosting judgments because they followed imported bases.
 
-`tests/test_placement_memoization.py` guards the reduction by counting walks
-and parses, checks that the caches release ASTs or respond to revised source
-and imported bases, and compares exact fixed-point output with memoization
-enabled and disabled. Its count regressions fail against the 1.772 source.
-These measurements establish less repeated work; they do not measure the
-speedup of a complete typed project refactoring.
+The subsequent reflection-boundary correction removes those judgments
+entirely, including the second class-machinery veto in decorator analysis.
+A hygienic private helper stays in its original class; observing its added
+name or lookup is outside the reflection contract. No ancestry-based
+hosting cache is needed. Import-time effect analysis remains separate and
+still follows bases where required to preserve execution order.
+
+The same fixture also made 2,666 requests for function-scope `global` and
+`nonlocal` declarations on 226 distinct function trees. Memoizing that pure
+walk alone reduces its executions to 226. It returns a `frozenset` and uses
+weak AST keys, so neither callers nor the cache can mutate the result or
+keep the tree alive. With the policy correction included, 227 distinct
+function trees are walked. All three versions (baseline `7335e1c`, scope
+memo alone, and policy plus memo) find the same 23 proposals on both passes;
+every proposal compiles and its rendered output is byte-identical.
+Rendering here disables helper annotations; this checks proposal
+materialization, not acceptance by the project's type checkers.
+The final analysis reports 4,461 declined candidate pairs and emits 23
+proposals, all 23 of which render and compile. Candidate declines therefore
+must not be read as invalid emitted proposals. Annotation retries are a
+third count: several attempted annotations can belong to one proposal.
+
+A generated eight-method class with `self: Self` still made 336 requests for
+the bindings of `Self` in its one module after the machinery guard was
+removed. The receiver-annotation lookup now shares an immutable tuple of
+those statements by module tree and name: 336 queries require one scan and
+produce the same one proposal. The scan's existing conservative treatment
+of conditional bindings and star imports is unchanged. Its weak key does
+not retain the module, and its value contains no parent pointers.
+
+`tests/test_placement_memoization.py` and
+`tests/test_scope_declaration_memoization.py`, together with
+`tests/test_receiver_binding_memoization.py`, count real walks, check weak
+cache lifetime and distinct trees, and compare exact fixed-point output
+with memoization enabled and disabled. Declaration results are also checked
+against CPython's symbol table. These measurements establish less repeated
+work; they do not measure the speedup of a complete typed project refactoring.
 
 ## Typed Sphinx investigation after 1.772: still open
 

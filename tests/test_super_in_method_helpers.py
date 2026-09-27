@@ -805,13 +805,8 @@ def main():
 @pytest.mark.parametrize(
     "source, reason",
     [
-        # A class whose machinery fails the method-host test keeps every
-        # method's code, super() or not (decorator_reach).
-        (PROTOCOL, "class_machinery_may_transform_methods"),
+        (PROTOCOL, "needs_class_body"),
         (DECORATED, "needs_class_body"),
-        (METACLASS, "class_machinery_may_transform_methods"),
-        (INIT_SUBCLASS, "class_machinery_may_transform_methods"),
-        (GETATTRIBUTE, "class_machinery_may_transform_methods"),
         (SELF_TYPE, "needs_class_body"),
         (UNDERSCORES, "needs_class_body"),
         (SIBLINGS, "needs_class_body"),
@@ -826,9 +821,6 @@ def main():
     ids=[
         "protocol",
         "class-decorator",
-        "metaclass",
-        "init-subclass",
-        "getattribute",
         "declared-self-type",
         "underscore-class-name",
         "different-classes",
@@ -849,6 +841,16 @@ def test_super_is_declined_where_no_helper_of_its_class_can_hold_it(
     assert outcome.applied == 0, outcome.source
     assert outcome.source == textwrap.dedent(source).lstrip("\n")
     assert any(key.partition("[")[0] == reason for key in outcome.reasons), outcome.reasons
+
+
+@pytest.mark.parametrize("source", [METACLASS, INIT_SUBCLASS, GETATTRIBUTE])
+def test_implicit_hooks_allow_super_in_private_method_helpers(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, source: str
+) -> None:
+    outcome = _refactored(tmp_path, source, caplog)
+    assert outcome.applied > 0
+    assert len(_class_helpers(outcome.source)["One"]) == 1
+    assert not _module_helpers(outcome.source)
 
 
 EXPLICIT = BASE + """
