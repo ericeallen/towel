@@ -11,6 +11,11 @@ ecosystem evidence behind each claim. The format follows
 
 ### Changed
 
+- Release documentation has offline regression checks against retained 1.772
+  evidence and current CI configuration. They protect platform coverage,
+  test and corpus counts, typed fallbacks, measurement units and resource
+  context. The Windows support implication and the concurrency attributed
+  to the Sphinx-only timing are corrected.
 - Class-private extractions no longer require approved base classes or
   class machinery. Hygienic private names protect against accidental
   overrides; namespace scans and lookup hooks observing the new helper fall
@@ -54,14 +59,19 @@ asking the checkers questions whose answers were already known. On
 September 21 it reached a fixed point in 46 minutes, applying 380 refactorings
 across 105 files, after which Sphinx's own test suite reported exactly what it
 reported before: 2385 passed, 34 skipped, and the same six failures that
-checkout already had. The audit rounds that followed made Towel decline more;
-the release corpus, typed with `--cross-module` on one worker in the release corpus's Docker container, a Linux VM on the same M5 Max given all 18 cores and 8 GB of memory, running four projects at a time,
-took 94 minutes over Sphinx and changed 55 files, its suite again unchanged.
+checkout already had. The audit rounds that followed made Towel decline more.
+The Sphinx-only rerun at `29454ab` took 5,660 s (about 94 minutes) and changed
+55 files. It ran alone in a Docker Linux VM with 18 cores and 8 GB of memory,
+using Python 3.12, `TOWEL_WORKERS=1`, `--cross-module`, and default typing
+(mypy and Pyright both strict). These are measured conditions, not minimum
+resource requirements or time guarantees. Its suite was again unchanged.
 
 Every figure in this file was measured on an Apple M5 Max with 18 cores and
 128 GiB. This entry's were taken on macOS 26.5.1 with Python 3.12.13, the
 machine otherwise idle, except where a figure says otherwise: the release
-corpus ran in the release corpus's Docker container, a Linux VM on the same M5 Max given all 18 cores and 8 GB of memory, running four projects at a time. The Sphinx figures are Sphinx 9.1.1 at `e44a40e`, 243 modules with
+full corpus ran in a Docker Linux VM on the same M5 Max given all 18 cores
+and 8 GB of memory, running four projects at a time; the Sphinx-only rerun
+ran alone. The Sphinx figures are Sphinx 9.1.1 at `e44a40e`, 243 modules with
 mypy and Pyright both strict, checked by that project's own venv: **mypy
 1.19.1 and pyright 1.1.407**. The mypy behaviour described below belongs to
 that version; Towel's own checks run against a newer mypy and do not show it.

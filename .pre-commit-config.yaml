@@ -37,7 +37,8 @@ repos:
     hooks:
       # Remove trailing whitespace
       - id: trailing-whitespace
-        exclude: ^(test_examples.*_expected_output/|tests/(hostile_cases|hostile_crossfile)/)
+        # Retained validation output is evidence: preserve its original bytes.
+        exclude: ^(test_examples.*_expected_output/|tests/(hostile_cases|hostile_crossfile)/|tests/release_evidence/[^/]+/[^/]+\.txt$)
 
       # Ensure files end with newline
       - id: end-of-file-fixer

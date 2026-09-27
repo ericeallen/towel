@@ -2009,11 +2009,14 @@ it tractable, all exact: they change no proposal.
   rounds, applying 380 refactorings across 105 files, where the same project
   without types changed 108 files in 11 minutes. Sphinx's own test suite, run
   serially, reported the same 2385 passed, 34 skipped and six pre-existing
-  failures before and after. In the 1.772 release corpus, typed with
-  `--cross-module` on one worker in the release corpus's Docker container, a Linux VM on the same M5 Max given all 18 cores and 8 GB of memory, running four projects at a time, Sphinx took 94 minutes and changed
-  55 files,
-  its suite again unchanged; the audit rounds' checks decline more, and typed
-  verification is nearly all of the time.
+  failures before and after.
+  The Sphinx-only rerun at `29454ab` took 5,660 s (about 94 minutes) and changed
+  55 files. It ran alone in a Docker Linux VM with 18 cores and 8 GB of memory,
+  using Python 3.12, `TOWEL_WORKERS=1`, `--cross-module`, and default typing
+  (mypy and Pyright both strict). These are measured conditions, not minimum
+  resource requirements or time guarantees. Its suite was again unchanged;
+  the audit rounds' checks decline more, and typed verification is nearly all
+  of the time.
   The tail was the cost: a proposal the project rejected used to be heard
   again at every whole-project analysis, and families of near-identical
   methods pair many ways. A declined proposal is now remembered for the whole
@@ -2131,10 +2134,10 @@ without `--run-untrusted-code`; use a disposable machine or container.
 
 ## Resources and platform
 
-Towel runs on Python 3.11 to 3.13 on a POSIX system. Applying changes needs
-POSIX filesystem semantics. Parallel analysis uses the `fork` start method, so
-where `fork` is unavailable (Windows, or a non-`fork` start method) the tool
-runs correctly on a single core and produces the same output.
+Python 3.11 to 3.13 on a POSIX system (macOS or Linux). Applying changes needs
+POSIX filesystem semantics. Parallel analysis uses the `fork` start method;
+under other start methods analysis runs on a single core. Windows is not a
+supported or validated release platform.
 
 One core suffices; more cores shorten a large analysis. Memory is the binding
 constraint on the largest projects. A single analysis process holds the parsed

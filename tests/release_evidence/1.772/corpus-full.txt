@@ -1,0 +1,147 @@
+ecosystem check: 141 projects, towel 2b399ef2d4ce, candidate code_towel-1.772-py3-none-any.whl (sha256 b599053a00c1), typing mode: default
+NO_CHANGE       tabulate           files=0   refactor=   2.4s [4 pre-existing]
+NO_CHANGE       markdown-it-py     files=0   refactor=   8.3s 
+PASS            toolz              files=5   refactor=  30.1s [17 pre-existing]
+NO_CHANGE       pyparsing          files=0   refactor=  10.1s 
+NO_CHANGE       humanize           files=0   refactor=   1.5s 
+PASS            boltons            files=8   refactor=  47.5s [17 pre-existing]
+PASS            more-itertools     files=1   refactor=  15.3s 
+PASS            marshmallow        files=1   refactor=   8.7s 
+PASS            sqlparse           files=2   refactor=   4.6s [4 pre-existing]
+PASS            tomli              files=1   refactor=   3.4s 
+PASS            click              files=3   refactor=  50.4s [5 pre-existing]
+PASS            pluggy             files=3   refactor=   2.9s 
+PASS            attrs              files=1   refactor=  68.6s [192 pre-existing]
+PASS            cachetools         files=2   refactor=  15.0s 
+NO_CHANGE       bidict             files=0   refactor=   1.6s [1 pre-existing]
+PASS            sortedcontainers   files=2   refactor=  29.0s [13 pre-existing]
+NO_CHANGE       pycodestyle        files=0   refactor=   2.4s [3 pre-existing]
+PASS            packaging          files=9   refactor=  62.1s 
+PASS            pathspec           files=1   refactor=   4.9s [9 pre-existing]
+PASS            wcwidth            files=1   refactor=   9.2s 
+PASS            idna               files=1   refactor=  10.0s 
+PASS            funcy              files=1   refactor=   2.8s [4 pre-existing]
+PASS            jinja2             files=2   refactor= 182.4s [46 pre-existing]
+PASS            natsort            files=1   refactor=   2.9s 
+PASS            glom               files=4   refactor=  13.3s [39 pre-existing]
+NO_CHANGE       python-slugify     files=0   refactor=   1.1s 
+PASS            tenacity           files=1   refactor=   5.5s [4 pre-existing]
+PASS            colorama           files=6   refactor=   7.9s [7 pre-existing]
+NO_CHANGE       itsdangerous       files=0   refactor=   6.4s 
+PASS            pyflakes           files=9   refactor= 101.2s [5 pre-existing]
+PASS            voluptuous         files=1   refactor=  16.9s 
+PASS            tomlkit            files=2   refactor=  16.1s [29 pre-existing]
+PASS            platformdirs       files=1   refactor=   3.2s [20 pre-existing]
+PASS            parso              files=2   refactor=   8.5s [9 pre-existing]
+PASS            oauthlib           files=11  refactor=  18.5s [56 pre-existing]
+NO_CHANGE       python-dateutil    files=0   refactor=   6.4s [30 pre-existing]
+NO_CHANGE       decorator          files=0   refactor=   1.3s [1 pre-existing]
+NO_CHANGE       schema             files=0   refactor=   1.5s [7 pre-existing]
+PASS            pygments           files=3   refactor=  46.1s [2001 pre-existing]
+PASS            wrapt              files=1   refactor=   4.7s 
+PASS            flask              files=1   refactor=  36.1s [1 pre-existing]
+PASS            starlette          files=3   refactor=  20.9s [3 pre-existing]
+PASS            httpx              files=5   refactor=  84.4s 
+PASS            werkzeug           files=5   refactor= 115.8s [92 pre-existing]
+CRASH           anyio              files=0   refactor=   0.9s For a stray copy, or an import that names a module two ways or climbs out of its
+PASS            jsonschema         files=5   refactor=  66.4s 
+NO_CHANGE       virtualenv         files=0   refactor=   5.9s [144 pre-existing]
+NO_CHANGE       tqdm               files=0   refactor=   5.6s [39 pre-existing]
+PASS            markdown           files=7   refactor=  20.0s [183 pre-existing]
+PASS            nox                files=1   refactor=   7.6s 
+NO_CHANGE       peewee             files=0   refactor=  24.7s [27 pre-existing]
+PASS            filelock           files=1   refactor=   7.1s [18 pre-existing]
+PASS            lark               files=2   refactor=  69.7s [125 pre-existing]
+PASS            astroid            files=7   refactor=  64.5s 
+PASS            python-prompt-toolkit files=18  refactor= 335.3s 
+PASS            black              files=4   refactor=  30.5s 
+PASS            networkx           files=22  refactor= 295.3s 
+PASS            django-utils       files=4   refactor=  69.6s [375 pre-existing]
+PASS            django-forms       files=2   refactor=  71.1s [374 pre-existing]
+PASS            typer              files=4   refactor=  34.4s 
+PASS            structlog          files=2   refactor=  23.6s 
+PASS            rich               files=10  refactor= 151.7s 
+CRASH           isort              files=0   refactor=   0.7s For a distribution the project requires, which is what the installed project imp
+NO_CHANGE       pyjwt              files=0   refactor=   4.3s [3 pre-existing]
+NO_CHANGE       xmltodict          files=0   refactor=   1.5s [1 pre-existing]
+NO_CHANGE       arrow              files=0   refactor=   4.3s 
+NO_CHANGE       six                files=0   refactor=   1.5s [6 pre-existing]
+PASS            pytest             files=5   refactor= 640.9s [288 pre-existing]
+PASS            cattrs             files=1   refactor=  17.7s [478 pre-existing]
+PASS            h11                files=1   refactor=   8.7s [32 pre-existing]
+PASS            trio               files=28  refactor=  47.2s [no-types]CompileError: /work/trio-env/lib/python3.12/site-packages/sphinx/util/typing.py:
+PASS            tornado            files=20  refactor= 237.1s 
+PASS            dpath              files=1   refactor=   1.9s [15 pre-existing]
+PASS            deepdiff           files=2   refactor=  19.7s [123 pre-existing]
+NO_CHANGE       markupsafe         files=0   refactor=   3.8s [4 pre-existing]
+NO_CHANGE       sniffio            files=0   refactor=   1.4s 
+NO_CHANGE       outcome            files=0   refactor=   0.9s 
+PASS            mako               files=7   refactor=  29.5s [35 pre-existing]
+PASS            html5lib           files=2   refactor=  92.5s [83 pre-existing]
+PASS            loguru             files=2   refactor=  40.0s [5 pre-existing]
+PASS            feedparser         files=7   refactor=   7.1s 
+PASS            jmespath           files=3   refactor=   3.4s [2 pre-existing]
+NO_CHANGE       croniter           files=0   refactor=   3.5s 
+NO_CHANGE       prettytable        files=0   refactor=   5.4s 
+PASS            parsimonious       files=4   refactor=   8.3s [3 pre-existing]
+NO_CHANGE       inflection         files=0   refactor=   1.0s 
+NO_CHANGE       pyrsistent         files=0   refactor=   2.6s [10 pre-existing]
+NO_CHANGE       jsonpatch          files=0   refactor=   1.4s [7 pre-existing]
+PASS            mistune            files=11  refactor=  21.2s 
+NO_CHANGE       blinker            files=0   refactor=   0.5s [no-types]CompileError: /work/blinker-env/lib/python3.12/site-packages/_pytest/logging.py:
+PASS            pycparser          files=3   refactor=  27.3s [18 pre-existing]
+CRASH           invoke             files=0   refactor=   0.7s For a stray copy, or an import that names a module two ways or climbs out of its
+PASS            cerberus           files=7   refactor=  43.3s [14 pre-existing]
+PASS            python-fire        files=5   refactor=  12.3s [9 pre-existing]
+NO_CHANGE       bottle             files=0   refactor=   4.7s [37 pre-existing]
+PASS            waitress           files=1   refactor=   4.7s [8 pre-existing]
+PASS            wsproto            files=2   refactor=   3.9s 
+PASS            hpack              files=1   refactor=   2.9s 
+PASS            hyperframe         files=1   refactor=   3.0s 
+PASS            h2                 files=3   refactor=  23.5s 
+NO_CHANGE       pyupgrade          files=0   refactor=   3.1s [52 pre-existing]
+NO_CHANGE       python-dotenv      files=0   refactor=   1.3s 
+PASS            backoff            files=3   refactor=   2.8s 
+PASS            schedule           files=1   refactor=   3.7s 
+PASS            traitlets          files=2   refactor=   7.7s 
+PASS            soupsieve          files=1   refactor=   6.8s 
+PASS            beautifulsoup4     files=15  refactor= 109.3s [6 pre-existing]
+PASS            bleach             files=5   refactor= 517.9s [26 pre-existing]
+NO_CHANGE       mkdocs             files=0   refactor=   3.9s [13 pre-existing]
+PASS            pyasn1             files=6   refactor=  24.3s [26 pre-existing]
+PASS            ecdsa              files=2   refactor=  21.7s [247 pre-existing]
+PASS            rsa                files=3   refactor=   4.7s 
+PASS            gunicorn           files=19  refactor= 173.3s [861 pre-existing]
+PASS            chardet            files=4   refactor=  13.3s [1 pre-existing]
+NO_CHANGE       unidecode          files=0   refactor=   2.8s 
+PASS            ply                files=2   refactor=  24.3s 
+NO_CHANGE       inflect            files=0   refactor=   2.0s [5 pre-existing]
+NO_CHANGE       texttable          files=0   refactor=   1.3s 
+NO_CHANGE       docopt-ng          files=0   refactor=   1.5s [4 pre-existing]
+PASS            flake8             files=2   refactor=   6.4s [3 pre-existing]
+NO_CHANGE       jsonpointer        files=0   refactor=   1.2s 
+NO_CHANGE       mccabe             files=0   refactor=   1.2s [3 pre-existing]
+PASS            yapf               files=5   refactor=  12.4s [24 pre-existing]
+NO_CHANGE       tomli-w            files=0   refactor=   1.2s 
+NO_CHANGE       uritemplate        files=0   refactor=   1.1s 
+NO_CHANGE       wheel              files=0   refactor=   2.2s [62 pre-existing]
+NO_CHANGE       installer          files=0   refactor=   1.8s 
+PASS            pyproject-hooks    files=2   refactor=   6.1s 
+NO_CHANGE       termcolor          files=0   refactor=   1.1s 
+PASS            rfc3986            files=1   refactor=  27.7s [60 pre-existing]
+NO_CHANGE       simpy              files=0   refactor=   1.3s 
+NO_CHANGE       typing_extensions  files=0   refactor=   1.4s [no-types]CompileError: /work/typing_extensions-ready/src/typing_extensions.py: error: Thi
+NO_CHANGE       environs           files=0   refactor=   1.9s 
+PASS            sly                files=1   refactor=  11.0s [11 pre-existing]
+PASS            apispec            files=2   refactor=   5.0s 
+PASS            webargs            files=1   refactor=   7.3s [2 pre-existing]
+PASS            cheroot            files=1   refactor=   4.2s [no-types]The type checker could not build the probes that find the code it looks at in ch
+CRASH           towel-v1.414       files=0   refactor=   1.3s For a copy installed outside the project, which --exclude cannot reach: run Towe
+CRASH           towel-v1.618       files=0   refactor=   1.2s For a copy installed outside the project, which --exclude cannot reach: run Towe
+CRASH           towel-main         files=0   refactor=   1.6s For a copy installed outside the project, which --exclude cannot reach: run Towe
+TIMEOUT         sphinx             files=0   refactor=5400.3s refactor exceeded 5400s
+Totals: CRASH 6, NO_CHANGE 45, PASS 89, TIMEOUT 1
+Declined the typed path and rerun without types: checker-failed 4
+Typed against pre-existing errors (errors, of them leaving a name the checker cannot type, files and proposals declined for it): attrs (192, 2, 1, 0); beautifulsoup4 (6, 20, 6, 16); bidict (1, 0, 0, 0); bleach (26, 18, 6, 1); boltons (17, 0, 0, 0); bottle (37, 64, 1, 0); cattrs (478, 10, 4, 3); cerberus (14, 2, 1, 1); chardet (1, 0, 0, 0); click (5, 2, 2, 3); colorama (7, 0, 0, 0); decorator (1, 2, 1, 0); deepdiff (123, 23, 5, 1); django-forms (374, 3, 0, 0); django-utils (375, 5, 2, 1); docopt-ng (4, 0, 0, 0); dpath (15, 0, 0, 0); ecdsa (247, 60, 20, 42); filelock (18, 1, 1, 1); flake8 (3, 34, 2, 0); flask (1, 3, 3, 0); funcy (4, 0, 0, 0); glom (39, 34, 9, 4); gunicorn (861, 57, 11, 12); h11 (32, 0, 0, 0); html5lib (83, 74, 25, 96); inflect (5, 0, 0, 0); jinja2 (46, 2, 1, 0); jmespath (2, 0, 0, 0); jsonpatch (7, 2, 1, 3); lark (125, 17, 7, 0); loguru (5, 0, 0, 0); mako (35, 45, 5, 0); markdown (183, 13, 3, 0); markupsafe (4, 1, 1, 0); mccabe (3, 2, 1, 0); mkdocs (13, 42, 9, 1); oauthlib (56, 0, 0, 0); parsimonious (3, 2, 1, 0); parso (9, 0, 0, 0); pathspec (9, 14, 7, 0); peewee (27, 9, 1, 17); platformdirs (20, 7, 1, 1); pyasn1 (26, 0, 0, 0); pycodestyle (3, 0, 0, 0); pycparser (18, 0, 0, 0); pyflakes (5, 0, 0, 0); pygments (2001, 19, 5, 6); pyjwt (3, 0, 0, 0); pyrsistent (10, 2, 1, 0); pytest (288, 56, 19, 6); python-dateutil (30, 24, 8, 5); python-fire (9, 8, 4, 0); pyupgrade (52, 162, 52, 3); rfc3986 (60, 10, 7, 2); schema (7, 0, 0, 0); six (6, 0, 0, 0); sly (11, 0, 0, 0); sortedcontainers (13, 0, 0, 0); sqlparse (4, 0, 0, 0); starlette (3, 2, 1, 0); tabulate (4, 2, 1, 0); tenacity (4, 5, 1, 0); tomlkit (29, 0, 0, 0); toolz (17, 17, 1, 0); tqdm (39, 68, 12, 0); virtualenv (144, 2, 1, 0); waitress (8, 0, 0, 0); webargs (2, 7, 4, 5); werkzeug (92, 18, 16, 11); wheel (62, 3, 1, 0); xmltodict (1, 0, 0, 0); yapf (24, 46, 13, 2)
+Code the type checker does not look at (regions, proposals declined for it): apispec (2, 0); arrow (4, 0); astroid (6, 0); attrs (6, 0); backoff (1, 0); beautifulsoup4 (20, 0); bidict (4, 0); black (5, 0); bleach (10, 0); boltons (4, 0); bottle (1, 0); cattrs (27, 1); cerberus (5, 0); click (14, 0); colorama (7, 0); croniter (1, 0); deepdiff (4, 0); django-forms (1, 0); django-utils (2, 0); docopt-ng (1, 0); ecdsa (9, 0); feedparser (1, 0); filelock (19, 0); flake8 (5, 0); flask (9, 0); funcy (1, 0); glom (6, 0); gunicorn (20, 0); h11 (1, 0); h2 (7, 0); hpack (2, 0); html5lib (15, 0); httpx (8, 0); humanize (2, 0); hyperframe (3, 0); inflect (1, 0); installer (1, 0); itsdangerous (1, 0); jinja2 (5, 0); lark (9, 0); loguru (15, 0); mako (6, 0); markdown (6, 0); markdown-it-py (6, 0); marshmallow (2, 0); mistune (3, 0); mkdocs (9, 0); natsort (1, 0); networkx (1, 0); nox (5, 0); oauthlib (4, 0); outcome (1, 0); packaging (24, 1); parsimonious (1, 0); parso (11, 0); pathspec (19, 0); peewee (1, 0); platformdirs (9, 0); pluggy (2, 0); ply (1, 0); prettytable (3, 0); pyasn1 (18, 0); pycodestyle (8, 0); pycparser (4, 0); pyflakes (7, 0); pygments (12, 1); pyjwt (18, 0); pyparsing (44, 0); pyrsistent (2, 0); pytest (63, 0); python-dateutil (13, 0); python-dotenv (2, 0); python-fire (4, 0); python-prompt-toolkit (24, 6); python-slugify (1, 0); rfc3986 (3, 0); rich (25, 2); rsa (1, 0); schedule (8, 0); schema (2, 0); simpy (12, 0); six (16, 0); sly (4, 0); soupsieve (1, 0); sphinx (67, 0); starlette (14, 0); structlog (8, 0); tabulate (4, 0); tenacity (3, 0); tomlkit (8, 0); toolz (1, 0); tornado (46, 1); tqdm (1, 0); traitlets (16, 0); typer (14, 0); virtualenv (15, 0); waitress (13, 0); webargs (2, 0); werkzeug (44, 2); wheel (4, 0); wrapt (4, 0); wsproto (1, 0); yapf (2, 0)
+Cross-module extraction off: none

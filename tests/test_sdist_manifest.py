@@ -35,6 +35,8 @@ import pytest
 REPOSITORY = Path(__file__).resolve().parents[1]
 
 READ_BY_THE_SUITE = (
+    ".github/workflows/ci.yml",
+    ".github/workflows/ecosystem.yml",
     "tests",
     "test_examples",
     "test_examples_expected_output",

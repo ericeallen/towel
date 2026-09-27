@@ -45,6 +45,31 @@ report. If dependencies or extras changed, review and commit the refreshed
 `uv.lock` before the frozen runs. Record the candidate commit, commands,
 interpreter/tool versions, exit statuses, and retained evidence paths.
 
+### Configured automation
+
+This table describes the current workflow configuration, not a completed run
+or a promise that the next candidate passes. Historical release results keep
+their original platforms and interpreter versions in the readiness report.
+
+| Job | Runner | Python | Scope |
+| --- | --- | --- | --- |
+| Full tests and coverage | `ubuntu-latest` | 3.11, 3.12, 3.13 | 85% coverage gate |
+| Quality and distributions | `ubuntu-latest` | 3.13 | Black, Flake8, mypy, Bandit, dependency audit, build |
+| Scheduled/manual corpus | `ubuntu-latest` | 3.13 | untyped (`--no-types`); 2 concurrent projects; 180-minute job limit |
+
+`tests/test_release_documentation.py` compares this table with the workflow
+files and advertised Python classifiers. It also checks the 1.772 results
+against retained logs and the separately identified operator-recorded
+environment in `tests/release_evidence/1.772/`. Those tests preserve timing
+units, resource context, typed/untyped scope and untested platforms; they do
+not run benchmarks or declare an old release validated on today's machine.
+
+For each new release, retain completed outputs and record the source revision,
+OS, interpreter/checker versions, host and container resources, concurrency,
+flags and measurement units. Add its documentation checks before publication.
+Correct a historical record only with corroborating evidence and a recorded
+explanation. Never update an expectation solely because a new run differs.
+
 ### Consumer and typing evidence
 
 Run the ecosystem harness from a committed snapshot (`--towel-src` names that

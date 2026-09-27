@@ -1151,3 +1151,29 @@ Keep exact valid discovery and use positive regression cases alongside
 refusals. Memoization follows measured repeated inputs and observable purity,
 with bounded lifetimes and immutable cached results. Do not optimize by
 silently suppressing valid opportunities.
+
+## 2026-09-27: Release documentation must agree with its validation evidence
+
+The owner requires regression tests for documented validation results,
+including the platforms tested, resources used and elapsed time. Treat the
+environment, flags, concurrency, units and source revision as part of a
+measurement. The 1.772 Sphinx-only rerun's 5,659.6 seconds may be rounded to
+5,660 seconds or about 94 minutes; it may not be attributed to the earlier
+four-project run. Host memory, VM allocation and observed process memory
+are different quantities, and none alone establishes a minimum requirement.
+
+`tests/test_release_documentation.py` compares current automation claims with
+the workflow files and Python classifiers, and historical claims with the
+retained release outputs in `tests/release_evidence/1.772/`. The latter
+records identify operator-reported context separately from values present
+in machine output. Configured CI is not evidence of a completed run. A
+future configuration change must not rewrite which platforms an old release
+tested; the untested Windows platform remains explicit.
+
+Tests must also demonstrate that false counts, timings, resource allocations,
+typing claims and coverage claims are rejected, while line wrapping is
+irrelevant. They run offline without timing the pytest host or rerunning a
+corpus. Add new evidence for a new release. Revising historical expectations
+requires corroborating evidence and a recorded explanation, under the
+policy-regression rule in `CONTRIBUTING.md`; do not change them merely to fit
+new output or silence a failure.

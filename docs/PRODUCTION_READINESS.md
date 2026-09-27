@@ -67,7 +67,8 @@ tag's annotation, since recording them here would change the sdist.
 **The 141-project corpus**, run in a disposable Docker container on Python
 3.12, typed by default and with `--cross-module` for every project. The
 container is a Linux VM on the same M5 Max, given all 18 cores and 8 GB of
-memory, and it ran four projects at a time, each with `TOWEL_WORKERS=1`. For
+memory, with `TOWEL_WORKERS=1` per project. The full corpus ran four projects
+at a time; the Sphinx-only rerun ran alone. For
 part of the full run a test gate shared the machine; the sphinx-only run did
 not. Its times are not the idle macOS figures this report otherwise gives.
 
@@ -96,6 +97,12 @@ not. Its times are not the idle macOS figures this report otherwise gives.
   sphinx at `29454ab`. Both were built from the same `src/towel`.
 
 **Performance.** The corpus found yapf and sphinx over their time budgets.
+The Sphinx-only rerun at `29454ab` took 5,660 s (about 94 minutes) and changed
+55 files. It ran alone in a Docker Linux VM with 18 cores and 8 GB of memory,
+using Python 3.12, `TOWEL_WORKERS=1`, `--cross-module`, and default typing
+(mypy and Pyright both strict). These are measured conditions, not minimum
+resource requirements or time guarantees.
+
 Resolving which typing form a name denotes grew exponentially with the
 functions that alias a name to itself. yapf's `--cross-module` fixed point
 took 2,083 s; with the resolution kept per name and depth it takes 5 s, with
@@ -114,7 +121,7 @@ Its semantic P1s were checked against 1.618, which shows them too.
 
 **Not covered:**
 - no fifth audit round;
-- Windows: the local gates and every timing ran on macOS, GitHub CI ran the
+- Windows: the local gates and native timings ran on macOS, GitHub CI ran the
   full suite on Linux for 3.11, 3.12 and 3.13, and the corpus ran in a Linux
   container, on Python 3.12 only; no run was made on Windows;
 - `placement._dispatches_on` still re-walks each method per candidate pair,

@@ -104,6 +104,8 @@ docs/docs_local/
 
 # Temporary debug files
 *.txt
+# Retained release output is intentional, versioned test evidence.
+!tests/release_evidence/**/*.txt
 !requirements.txt
 
 # Local task/scratch state (not part of the project)
