@@ -158,6 +158,16 @@ All code contributions should include tests:
   ```
 - Aim for high test coverage of new code
 - Include both positive and negative test cases
+- **Preserve the intent of policy regressions.** Tests linked to an approved
+  entry in `docs/DECISIONS.md` encode a design requirement. When one fails,
+  investigate the implementation against that requirement; changed engine
+  output is not evidence that the expected behavior has changed. Revise an
+  expectation only with evidence that the test contradicts the recorded rule,
+  or a separately agreed revision of that rule. Record the rationale and
+  update the decision and test together. Keep each test's explanation of the
+  invariant and the failure it prevents. For example, caller-narrowing tests
+  must protect both avoiding wasted typed validation and retaining smaller
+  valid extractions; making every proposal disappear satisfies neither goal.
 
 ### Running Tests
 

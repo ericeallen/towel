@@ -22,7 +22,11 @@ three comparison pairs, rich's progress columns and JSON and bar ``__init__``s,
 mistune's image attributes, nox's environments) are four patterns; each has a
 miniature here, run under strict mypy as those projects are.
 
-Two are decided from the proposal alone and cost no check: a lambda at the call
+Caller-side assertions and guarded initialization are now kept at the call site
+during construction (test_narrowing_boundaries.py). The checker-side judgment
+remains a backstop for narrowing forms construction does not recognize.
+
+Two further patterns are decided from the proposal alone and cost no check: a lambda at the call
 that needs a test's narrowing, and, under mypy, a collection whose partial type
 the block completed. Two need the checker's verdict, because whether the code
 after the call needed the narrower type, and whether another declaration of an
@@ -43,49 +47,6 @@ def _declined(outcome: object, reason: str) -> str:
     message = str(error)
     assert f"No helper signature can type this extraction: it {reason}" in message, message
     return message
-
-
-@requires_mypy
-def test_a_narrowing_the_code_after_the_call_relied_on_is_declined_after_one_check(
-    tmp_path: Path,
-) -> None:
-    """packaging's ``Version.__lt__``/``__le__``: ``if self._key_cache is None: ...`` then ``<``."""
-    outcome = apply_one(
-        tmp_path,
-        """
-        def _key(a: int, b: int) -> tuple[int, int]:
-            return (a, b)
-
-
-        class Version:
-            def __init__(self, a: int, b: int) -> None:
-                self.a = a
-                self.b = b
-                self._key_cache: tuple[int, int] | None = None
-
-            def __lt__(self, other: object) -> bool:
-                if isinstance(other, Version):
-                    if self._key_cache is None:
-                        self._key_cache = _key(self.a, self.b)
-                    if other._key_cache is None:
-                        other._key_cache = _key(other.a, other.b)
-                    return self._key_cache < other._key_cache
-                return NotImplemented
-
-            def __le__(self, other: object) -> bool:
-                if isinstance(other, Version):
-                    if self._key_cache is None:
-                        self._key_cache = _key(self.a, self.b)
-                    if other._key_cache is None:
-                        other._key_cache = _key(other.a, other.b)
-                    return self._key_cache <= other._key_cache
-                return NotImplemented
-        """,
-        pick="__lt__ and __le__",
-    )
-    message = _declined(outcome, "narrows what its caller reads after the call")
-    assert "_key_cache" in message
-    assert outcome.prospective_checks == 1, outcome.checked_helpers
 
 
 @requires_mypy

@@ -21,6 +21,12 @@ ecosystem evidence behind each claim. The format follows
 
 ### Performance
 
+- Non-None assertions and guarded attribute initialization whose refinements
+  are needed by remaining caller operations stay at the call site during block discovery.
+  Filtering before maximal-block pairing keeps smaller valid extractions
+  available and avoids signature checks for the recognized invalid shapes.
+  Strict-mypy regressions cover both refusal and successful extraction inside
+  a retained guard and assignment.
 - Repeated method-placement questions share a method's receiver analysis.
   The receiver facts live only as long as their AST. On two analysis passes
   over packaging 26.3, receiver walks fell from 17,405 to 245. The follow-up

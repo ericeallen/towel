@@ -32,6 +32,8 @@ from typing import List, Mapping, Sequence
 import pytest
 
 from towel.type_inference import CheckResult, CheckSuccess, RevealRequest, TypeDiagnostic
+from towel.unification.models import FunctionNode, RefactoringProposal
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 from tests.probe_answers import answer_probes, only_probes
 from tests.typed_fixtures import STRICT, CountingMypy, apply_one, requires_mypy
@@ -167,8 +169,33 @@ class Version:
 """
 
 
+def _validation_proposal(
+    engine: UnificationRefactorEngine, path: Path, monkeypatch: pytest.MonkeyPatch
+) -> RefactoringProposal:
+    """Supply a legacy invalid proposal to test the validation backstop independently.
+
+    These tests protect refusal replay and dependency invalidation, not
+    discovery's willingness to emit the packaging defect. The approved
+    caller-narrowing boundary now prevents that emission, tested separately
+    in test_narrowing_boundaries.py. Bypass only that discovery filter while
+    building the fixture; every materialization/type check remains real and
+    all cache/reachability expectations remain unchanged.
+    """
+
+    def keep(function: FunctionNode, block: List[ast.stmt]) -> bool:
+        return False
+
+    with monkeypatch.context() as fixture:
+        for module in ("block_analysis", "pair_evaluation"):
+            fixture.setattr(f"towel.unification.{module}.caller_narrowing_leaves_with_block", keep)
+        (proposal,) = [p for p in engine.analyze_file(str(path)) if "__lt__" in p.description]
+    return proposal
+
+
 @requires_mypy
-def test_a_refusal_is_replayed_until_something_it_read_changes(tmp_path: Path) -> None:
+def test_a_refusal_is_replayed_until_something_it_read_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from towel.unification.exceptions import RefactoringError
     from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -184,7 +211,7 @@ def test_a_refusal_is_replayed_until_something_it_read_changes(tmp_path: Path) -
         engine = UnificationRefactorEngine(
             min_lines=2, reuse_existing_functions=False, type_oracle=oracle
         )
-        (proposal,) = [p for p in engine.analyze_file(str(path)) if "__lt__" in p.description]
+        proposal = _validation_proposal(engine, path, monkeypatch)
 
         def hear() -> str:
             try:
@@ -283,7 +310,7 @@ def test_a_variant_accepted_after_a_replayed_refusal_is_still_probed_for_reachab
         engine = UnificationRefactorEngine(
             min_lines=2, reuse_existing_functions=False, type_oracle=oracle
         )
-        (proposal,) = [p for p in engine.analyze_file(str(path)) if "__lt__" in p.description]
+        proposal = _validation_proposal(engine, path, monkeypatch)
         for _ in range(2):
             with pytest.raises(RefactoringError):
                 engine.apply_refactoring(str(path), proposal)
@@ -302,7 +329,7 @@ def test_a_variant_accepted_after_a_replayed_refusal_is_still_probed_for_reachab
         engine = UnificationRefactorEngine(
             min_lines=2, reuse_existing_functions=False, type_oracle=oracle
         )
-        (proposal,) = [p for p in engine.analyze_file(str(path)) if "__lt__" in p.description]
+        proposal = _validation_proposal(engine, path, monkeypatch)
         engine.apply_refactoring(str(path), proposal)
         assert len(oracle.checked) > refused_checks
         assert probed, "the accepted variant's lines were probed"

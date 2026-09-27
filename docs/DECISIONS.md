@@ -888,8 +888,10 @@ does not block a release. The same applies to a callee that rebinds a name
 between two reads in a block, including a builtin passed under
 `--parameterize-builtins`.
 
-Decoration by hand is not reflection, and stays inside the decorator rule
-in every spelling: `f = deco(f)` and a stacked `f = outer(inner(f))` alike.
+The September 27 instrumentation decision below refines this boundary.
+Decoration by hand can use reflection, just as `@` decoration can; syntax
+does not determine what Towel preserves. Explicit applications such as
+`f = deco(f)` and `f = outer(inner(f))` remain within the decorator rule.
 
 Recursive functions are refactored like any other. The owner favours a
 functional style, and declining recursion would penalise it. Each helper
@@ -1061,3 +1063,91 @@ type checks as final validation; preserve exact proposal discovery while
 memoizing repeated pure analysis with immutable results and bounded lifetime.
 
 *Status: implemented on the post-1.772 branch.*
+
+## 2026-09-27: Supported body instrumentation is protected regardless of syntax
+
+The owner approved one preservation rule for recognized body-transforming
+instrumentation: when Towel establishes that an instrumenter reaches the
+original body, preserve that instrumentation whether it arrives through
+`@deco`, an ordinary call, or a class-construction hook. For example,
+`typechecked(method)` in a metaclass must receive the same protection as
+`@typechecked` on that method. Project code recompiling a method's source
+belongs to the same supported category when its flow is established.
+
+This refines the September 25 and 26 decisions. Observations of the new
+helper's name, namespace membership, lookup, stack frame or source layout
+remain excluded. A metaclass, base class or lookup hook alone is not grounds
+for refusal. Existing interfaces, including Protocol requirements, remain
+protected. Unknown explicit decorators retain their conservative treatment.
+Arbitrary dynamic instrumentation is not generally resolved: this is
+explicit support for selected metaprogramming, not a claim that decorators
+are nonreflective or that all reflective behavior is preserved.
+
+Binding and argument flow matter. An unrelated call to an instrumenter is
+not evidence that it transforms this class; neither is an overridden hook
+that does not run. Tests must cover equivalent supported spellings and
+positive examples of namespace observation and unrelated instrumentation.
+
+*Status: policy approved; implementation is in progress. The current draft
+and its form tests do not yet close the independent review findings.*
+
+## 2026-09-27: Keep caller-side refinements at the call site
+
+The owner requires extraction boundaries to preserve type refinements on
+which remaining caller code depends. In
+`if obj.cache is None: obj.cache = compute()`, both the test and assignment
+matter when subsequent caller code reads `obj.cache` as nonoptional.
+Moving only the assignment into a side-effecting helper loses the fact too.
+Keep those statements at the call site; extract eligible computation within
+or around them. Assertions establishing a caller's refinement follow the
+same rule.
+
+This is not a ban on narrowing inside helpers. A guard and all its dependent
+code may move together when no refinement must survive in the caller. A
+returned value assigned at the call site can also carry its precise type.
+Do not discard smaller valid windows because a larger window crosses this
+boundary. Filter such windows before maximal-block pairing; finding the
+defect only after pairing can hide the smaller extraction entirely.
+
+The regression suite is `tests/test_narrowing_boundaries.py`. It checks the
+packaging cache-initialization defect before signature validation, successful
+typed extraction inside a retained guard and assignment, movement of a whole
+guarded computation, later rebinding, and sibling scopes. The existing
+`test_narrowing_refusal.py` protects refinements needed by call-site thunks.
+The early filter recognizes explicit None tests and operations that consume
+their nonoptional result. It distinguishes an ordinary later read from such
+an operation, accounts for an enclosing guard that already supplies the fact,
+and keeps comprehension-local bindings separate from caller bindings.
+Returning an object does not return refinements of that object's attributes.
+Final checker validation remains the backstop for contexts requiring more
+type information, including bare arguments/returns and arbitrary TypeGuard
+calls. Broader nested-block
+liveness remains separate work; a boundary filter alone does not supply it.
+
+*Status: implemented and covered by targeted regressions on the post-1.772
+branch; this is not a claim of complete static narrowing analysis.*
+
+The owner explicitly requires the intent of these tests to remain attached
+to them. Their outcomes express this decision, not the latest engine output.
+A failure calls for investigation; changing the expectation requires evidence
+that the test misstates the decision or a separately agreed policy revision.
+Record that rationale with the decision and the regression. The rule in
+`CONTRIBUTING.md`, *Preserve the intent of policy regressions*, applies to
+other decision-linked tests as well.
+
+## 2026-09-27: Construction changes must speed up typed extraction
+
+The objective is faster valid typed extractions. Rejecting an invalid shape
+earlier is useful when its analysis costs less than the work it avoids.
+Measure elapsed time with the actual checker enabled, prospective checker
+calls, successful output, and the early analysis's own cost. Moving a check
+before a proposal counter, by itself, is not a performance improvement.
+
+Precisely distinguish candidate-pair declines, distinct emitted proposals,
+signature attempts, invalid extractions and unverifiable extractions.
+Accurate signatures should inform construction and avoid preventable
+annotation-search retries; project validation remains a final backstop.
+Keep exact valid discovery and use positive regression cases alongside
+refusals. Memoization follows measured repeated inputs and observable purity,
+with bounded lifetimes and immutable cached results. Do not optimize by
+silently suppressing valid opportunities.

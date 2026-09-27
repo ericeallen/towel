@@ -95,7 +95,7 @@ from .engine_state import BlockSite
 from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
-from .narrowing import narrowing_lost_at_call_site
+from .narrowing import caller_narrowing_leaves_with_block, narrowing_lost_at_call_site
 from .namespace_writes import ProjectWrites, builtin_rebinding, scan_project_writes
 from .models import (
     HelperHome,
@@ -735,6 +735,7 @@ class PairEvaluation(
         )
 
         for guard, reason in (
+            (caller_narrowing_leaves_with_block, RejectReason.NARROWING_LOST_AT_CALL_SITE),
             (nested_bindings_escape, RejectReason.NESTED_BINDING_ESCAPES),
             (nested_scopes_cross_block_boundary, RejectReason.CLOSURE_CROSSES_BLOCK_BOUNDARY),
             (moves_scope_declaration, RejectReason.MOVES_SCOPE_DECLARATION),

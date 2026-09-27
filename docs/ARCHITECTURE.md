@@ -68,7 +68,12 @@ flowchart TD
    declared `global`/`nonlocal`.
 3. **Enumerate candidate blocks.** Contiguous runs of statements inside each
    function body become candidate blocks. Blocks that can never be accepted are
-   never enumerated (see *Enumeration filter*).
+   never enumerated (see *Enumeration filter*). The caller-narrowing filter
+   in `narrowing.py` keeps recognized non-None guards and assignments at the
+   call site when later operations need the refinement. It runs before
+   maximal-block pairing so a larger invalid window cannot hide a smaller
+   valid extraction inside the guarded region. This is not a ban on moving
+   a guard together with all its dependent code.
 4. **Pair.** `block_signature.py` computes a cheap structural signature per
    block; `find_block_pairs` buckets blocks on their statement-type sequence
    and rejects incompatible pairs before the expensive step, and, when the
@@ -824,7 +829,8 @@ assignments declared its class's attributes; the block completed its caller's
 partial type (mypy only); or only the unannotated helper is left in a module
 whose every function is annotated, which a stricter check than the
 configuration Towel reads would refuse. The lambda and partial-type cases are
-read off the proposal and cost no check; the others need the checker's verdict
+read off the proposal and cost no check. Known caller-narrowing boundaries
+are filtered during discovery; the remaining cases need the checker's verdict
 and cost the one refusal that shows them. Each rung is rendered with the
 comments of the moved code woven in, and with only the imports its own
 annotations name. A variant rendered again with nothing it could depend on

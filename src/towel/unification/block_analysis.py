@@ -65,6 +65,7 @@ from .models import (
     is_generated_helper_name,
 )
 from .parameters import GENERATED_PARAMETER_PREFIX, parameter_names
+from .narrowing import caller_narrowing_leaves_with_block
 from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import own_scope_locals, rebound_external_names, walk_own_scope
 from .statement_facts import memoized_per_node
@@ -423,6 +424,10 @@ class BlockAnalysis(EngineState):
                         continue
 
                     if line_count >= self.min_lines:
+                        # Filter before maximal-block pairing, so an invalid
+                        # large window cannot hide a smaller valid extraction.
+                        if caller_narrowing_leaves_with_block(function, block):
+                            continue
                         results.append(((start_line, end_line), block))
 
             # Recurse into nested bodies for control-flow/container statements

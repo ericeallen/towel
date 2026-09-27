@@ -54,7 +54,8 @@ from __future__ import annotations
 import ast
 from typing import Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence, Set
 
-from .models import Replacement
+from .models import FunctionNode, Replacement
+from .module_bindings import dotted_name
 
 _NARROWING_CALLS = frozenset({"isinstance", "issubclass", "hasattr", "callable"})
 """Builtins whose result narrows their first argument in mypy and pyright."""
@@ -135,6 +136,219 @@ def _own_scope(node: ast.AST) -> Iterator[ast.AST]:
         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
             continue
         yield from _own_scope(child)
+
+
+def _following_block(
+    function: FunctionNode, block: Sequence[ast.stmt]
+) -> Optional[tuple[tuple[ast.stmt, ...], FrozenSet[str], FrozenSet[str]]]:
+    """The block's continuation and the tests enclosing it, without sibling branches."""
+
+    def find(
+        body: Sequence[ast.stmt],
+        after: tuple[ast.stmt, ...],
+        guarded: FrozenSet[str],
+        non_none: FrozenSet[str],
+    ) -> Optional[tuple[tuple[ast.stmt, ...], FrozenSet[str], FrozenSet[str]]]:
+        for index, statement in enumerate(body):
+            if statement is block[0]:
+                if list(body[index : index + len(block)]) == list(block):
+                    return (*body[index + len(block) :], *after), guarded, non_none
+                return None
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            continuation = (*body[index + 1 :], *after)
+            inner = guarded
+            if isinstance(statement, (ast.If, ast.While)):
+                inner |= frozenset(
+                    _non_none_test(statement.test) | _non_none_test(statement.test, False)
+                )
+            for suite, tail in _suites(statement):
+                known = non_none
+                if isinstance(statement, ast.If):
+                    known |= frozenset(_non_none_test(statement.test, suite is statement.body))
+                result = find(suite, (*tail, *continuation), inner, known)
+                if result is not None:
+                    return result
+            written = _stored_references([statement])
+            non_none = frozenset(
+                reference
+                for reference in non_none
+                if not any(
+                    reference == name or reference.startswith(name + ".") for name in written
+                )
+            )
+            if isinstance(statement, ast.Assert):
+                non_none |= frozenset(_non_none_test(statement.test))
+        return None
+
+    return find(function.body, (), frozenset(), frozenset()) if block else None
+
+
+def _non_none_test(test: ast.expr, truth: bool = True) -> Set[str]:
+    """References an explicit None test makes nonoptional on this branch."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return _non_none_test(test.operand, not truth)
+    if isinstance(test, ast.BoolOp):
+        parts = [_non_none_test(part, truth) for part in test.values]
+        if isinstance(test.op, ast.And) == truth:
+            return {reference for part in parts for reference in part}
+        return set.intersection(*parts) if parts else set()
+    if isinstance(test, ast.Compare) and len(test.ops) == 1:
+        left, right = test.left, test.comparators[0]
+        if isinstance(left, ast.Constant) and left.value is None:
+            left, right = right, left
+        if isinstance(right, ast.Constant) and right.value is None:
+            operator = test.ops[0]
+            if (truth and isinstance(operator, ast.IsNot)) or (
+                not truth and isinstance(operator, ast.Is)
+            ):
+                name = dotted_name(left)
+                return {name} if name is not None else set()
+    return set()
+
+
+def _suites(statement: ast.stmt) -> Iterator[tuple[Sequence[ast.stmt], Sequence[ast.stmt]]]:
+    """Nested statement lists and the suites executed after each one."""
+    if isinstance(statement, (ast.Try, ast.TryStar)):
+        yield statement.body, (*statement.orelse, *statement.finalbody)
+        for handler in statement.handlers:
+            yield handler.body, statement.finalbody
+        yield statement.orelse, statement.finalbody
+        yield statement.finalbody, ()
+    elif isinstance(statement, ast.Match):
+        for case in statement.cases:
+            yield case.body, ()
+    elif isinstance(statement, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+        yield statement.body, statement.orelse if not isinstance(statement, ast.If) else ()
+        yield statement.orelse, ()
+    elif isinstance(statement, (ast.With, ast.AsyncWith)):
+        yield statement.body, ()
+
+
+def _stored_references(nodes: Iterable[ast.AST]) -> Set[str]:
+    own = [node for root in nodes for node in _own_scope(root)]
+    comprehension_locals = {
+        id(target)
+        for node in own
+        if isinstance(node, ast.comprehension)
+        for target in ast.walk(node.target)
+        if isinstance(target, ast.Name)
+    }
+    return {
+        name
+        for node in own
+        if isinstance(node, (ast.Name, ast.Attribute))
+        and isinstance(node.ctx, ast.Store)
+        and id(node) not in comprehension_locals
+        and (name := dotted_name(node)) is not None
+    }
+
+
+_NONE_ATTRIBUTES = frozenset(dir(None))
+
+
+def _needs_non_none(node: ast.AST, reference: str, refinements: FrozenSet[str]) -> bool:
+    """Operations that consume the refinement, rather than merely read its value.
+
+    Passing or returning a bare value can accept its declared optional type.
+    Those contexts require type information and remain the checker's concern.
+    """
+    for inner in _own_scope(node):
+        operands: Sequence[ast.expr] = ()
+        if isinstance(inner, ast.Attribute) and inner.attr not in _NONE_ATTRIBUTES:
+            operands = (inner.value,)
+        elif isinstance(inner, ast.Subscript):
+            operands = (inner.value,)
+        elif isinstance(inner, ast.Call):
+            operands = (inner.func,)
+        elif isinstance(inner, ast.BinOp):
+            # An unknown opposite operand can implement a reflected operator
+            # accepting None; its type is needed before ruling that out.
+            if not all(
+                isinstance(operand, ast.Constant) or dotted_name(operand) in refinements
+                for operand in (inner.left, inner.right)
+            ):
+                continue
+            operands = (inner.left, inner.right)
+        elif isinstance(inner, ast.UnaryOp) and not isinstance(inner.op, ast.Not):
+            operands = (inner.operand,)
+        elif isinstance(inner, ast.Compare) and any(
+            isinstance(operator, (ast.Lt, ast.LtE, ast.Gt, ast.GtE)) for operator in inner.ops
+        ):
+            operands = (inner.left, *inner.comparators)
+        if any(dotted_name(operand) == reference for operand in operands):
+            return True
+    return False
+
+
+def _reads_before_rebinding(
+    body: Sequence[ast.stmt], reference: str, refinements: FrozenSet[str]
+) -> bool:
+    """Whether a continuation reads a refinement before replacing or reasserting it."""
+    for statement in body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if isinstance(statement, ast.Assert) and reference in _non_none_test(statement.test):
+            return False
+        if isinstance(statement, ast.If):
+            if _needs_non_none(statement.test, reference, refinements):
+                return True
+            for branch, truth in ((statement.body, True), (statement.orelse, False)):
+                if reference not in _non_none_test(
+                    statement.test, truth
+                ) and _reads_before_rebinding(branch, reference, refinements):
+                    return True
+            continue
+        if _needs_non_none(statement, reference, refinements):
+            return True
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            if any(
+                reference == stored or reference.startswith(stored + ".")
+                for stored in _stored_references([statement])
+            ):
+                return False
+        if isinstance(statement, (ast.Return, ast.Raise)):
+            return False
+    return False
+
+
+def caller_narrowing_leaves_with_block(function: FunctionNode, block: List[ast.stmt]) -> bool:
+    """Keep assertions and guarded attribute initialization with their later caller reads.
+
+    In ``if obj.cache is None: obj.cache = compute()`` the assignment is
+    essential too: extracting just the branch body would leave the caller's
+    cache optional. Smaller windows can move the computation while retaining
+    both the guard and assignment. A local returned by the helper can instead
+    carry its type through the call's assignment. This exemption applies to
+    the local itself, not refinements of its attributes.
+
+    This recognizes explicit None tests and operations needing their result.
+    Passing or returning a bare value, arbitrary TypeGuard calls, and other
+    refinements still require the final checker backstop.
+    """
+    tested: Set[str] = set()
+    asserted: Set[str] = set()
+    for statement in block:
+        for node in _own_scope(statement):
+            if isinstance(node, (ast.If, ast.While)):
+                tested |= _non_none_test(node.test) | _non_none_test(node.test, False)
+            elif isinstance(node, ast.Assert):
+                asserted |= _non_none_test(node.test)
+    stored = _stored_references(block)
+    if not asserted and not any("." in name for name in stored):
+        return False
+    context = _following_block(function, block)
+    if context is None:
+        return False
+    following, enclosing, non_none = context
+    tested |= enclosing
+    established = (asserted - non_none) | (tested & stored)
+    rebound = {name for name in stored if "." not in name}
+    return any(
+        ("." in reference or reference not in rebound)
+        and _reads_before_rebinding(following, reference, frozenset(established))
+        for reference in established
+    )
 
 
 def _parameters(helper: ast.FunctionDef) -> List[str]:
