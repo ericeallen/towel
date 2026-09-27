@@ -1318,32 +1318,56 @@ class PyrightOracle:
         self._warmed.clear()
 
     def _diagnostics(self, file_path: str, text: str) -> _PyrightDiagnostics | CheckFailure:
-        if self._forked():
-            return CheckFailure(_AFTER_FORK)
         original = Path(file_path).resolve()
         root = _configured_root(original, "pyright") or _checker_root(original)
+        return self._probe_diagnostics(root, {str(original): text})[str(original)]
+
+    def _probe_diagnostics(
+        self, root: Path, sources: Mapping[str, str]
+    ) -> Mapping[str, _PyrightDiagnostics | CheckFailure]:
+        """Probe one revision of a project's modules in one checker exchange.
+
+        Each path is resolved and belongs to this checker root. A reveal's
+        diagnostics stay attached to its own file, even when imported modules
+        publish diagnostics at the same line. Project validation remains a
+        separate operation over every configured consumer.
+        """
+        if self._forked():
+            return dict.fromkeys(sources, CheckFailure(_AFTER_FORK))
         warm = self._warm(root, ())
         if warm is not None:
             try:
-                published = warm.diagnostics({str(original): text})
+                published = warm.diagnostics(sources)
             except SessionFailure as error:
                 self._abandon_sessions(error)
             else:
-                # Only this module's diagnostics: a probe's answer is read from
-                # the line it landed on, and the command line saw this file alone.
-                return _PyrightDiagnostics(
-                    tuple(_as_entry(entry) for entry in published.get(str(original), ()))
-                )
+                return {
+                    path: _PyrightDiagnostics(
+                        tuple(_as_entry(entry) for entry in published.get(path, ()))
+                    )
+                    for path in sources
+                }
         copy = self._probe_copy(root)
         if isinstance(copy, CheckFailure):
-            return copy
+            return dict.fromkeys(sources, copy)
         try:
             # The copy follows the project, then shows the probe as the module
             # itself, where every import it makes resolves as it would there.
-            copy.apply({str(original): text})
+            copy.apply(sources)
         except (OSError, ValueError, UnicodeError) as error:
-            return CheckFailure(f"Could not write a pyright probe into Towel's copy: {error}")
-        return self._run_diagnostics(root, copy.tree, [str(copy.path_of(str(original)))])
+            failure = CheckFailure(f"Could not write a pyright probe into Towel's copy: {error}")
+            return dict.fromkeys(sources, failure)
+        result = self._run_diagnostics(
+            root, copy.tree, [str(copy.path_of(path)) for path in sources]
+        )
+        if isinstance(result, CheckFailure):
+            return dict.fromkeys(sources, result)
+        by_file: Dict[str, List[_PyrightDiagnostic]] = {path: [] for path in sources}
+        for diagnostic in result.diagnostics:
+            original = copy.original_of(diagnostic["file"])
+            if original in by_file:
+                by_file[original].append(diagnostic)
+        return {path: _PyrightDiagnostics(tuple(entries)) for path, entries in by_file.items()}
 
     def _run_diagnostics(
         self, root: Path, project: Path, paths: Sequence[str] = ()
@@ -1476,6 +1500,8 @@ class PyrightOracle:
         for request in requests:
             if self.reports_on(request.file_path):
                 by_file.setdefault(request.file_path, []).append(request)
+        probes: Dict[str, Dict[int, RevealKey]] = {}
+        groups: Dict[Path, Dict[str, str]] = {}
         for file_path, file_requests in by_file.items():
             text = file_requests[0].source
             ordered = sorted(file_requests, key=lambda request: request.line)
@@ -1491,13 +1517,23 @@ class PyrightOracle:
                 for index in range(len(request.expressions)):
                     probe_lines[request.line + shift + index] = (file_path, request.line, index)
                 shift += len(request.expressions)
-            result = self._diagnostics(file_path, text)
+            probes[file_path] = probe_lines
+            original = Path(file_path).resolve()
+            root = _configured_root(original, "pyright") or _checker_root(original)
+            groups.setdefault(root, {})[str(original)] = text
+        results = {
+            path: result
+            for root, replacements in groups.items()
+            for path, result in self._probe_diagnostics(root, replacements).items()
+        }
+        for file_path in by_file:
+            result = results[str(Path(file_path).resolve())]
             if isinstance(result, CheckFailure):
                 unanswered[file_path] = result.reason
                 continue
             for diagnostic in result.diagnostics:
                 match = _PYRIGHT_REVEALED.match(str(diagnostic.get("message", "")))
-                key = probe_lines.get(self._line(diagnostic))
+                key = probes[file_path].get(self._line(diagnostic))
                 if match is not None and key is not None:
                     revealed[key] = match.group("type")
         return Revealed(revealed, unanswered)

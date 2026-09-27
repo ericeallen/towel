@@ -1184,6 +1184,14 @@ the previous targeted retry rediscovered this same return alternative. Its
 stopping rule for an irreparable call-site error is unchanged.
 
 
+Batch distinct Pyright reveal requests for the same checker project into
+one coherent revision. Keep file-specific diagnostic attribution, exclusions,
+failure reporting, project revision invalidation and final consumer checking.
+Tests in `tests/test_pyright_reveal_batches.py` require parity with individual
+probes on both server and command-line paths; reducing exchanges at the cost
+of different answers or narrower validation is a regression.
+
+
 ## 2026-09-27: Release documentation must agree with its validation evidence
 
 The owner requires regression tests for documented validation results,
