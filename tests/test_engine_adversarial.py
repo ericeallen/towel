@@ -1015,10 +1015,13 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         exec(new_src, ns2)
         self.assertEqual(orig, ns2["outer"](7))
 
-    def test_dce_nonlocal_skips_and_global_injection(self):
-        # Nonlocal case should be skipped conservatively; Global case should inject a global decl
-        # into the extracted helper inserted into function scope.
-        # Nonlocal scenario
+    def test_dce_keeps_nonlocal_access_at_the_site(self):
+        """The nonlocal read stays; the independent suffix remains extractable.
+
+        The September 27 scope-boundary decision intentionally replaces the
+        former whole-function refusal. Do not restore that blanket refusal to
+        satisfy this regression: preserve the actual nonlocal access instead.
+        """
         code_nonlocal = """
         def outer():
             x = 0
@@ -1038,10 +1041,48 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self.addCleanup(m1.cleanup)
         engine = self._engine(min_lines=2)
         props1 = engine.analyze_file(str(m1.path))
-        # Expect no proposals due to nonlocal conservative skip
-        self.assertEqual(props1, [], "Expected proposals to be skipped when nonlocal is present")
+        self.assertTrue(props1, "An unrelated suffix must remain extractable")
+        original = _run_driver(m1.dir, "from mod import outer; print(outer())")
+        self.assertEqual(original, "4\n|")
+        for proposal in props1:
+            self.assertFalse(
+                any(
+                    isinstance(node, ast.Nonlocal) or isinstance(node, ast.Name) and node.id == "x"
+                    for node in ast.walk(proposal.extracted_function)
+                ),
+                "The helper must not acquire the enclosing nonlocal binding",
+            )
+            output = engine.apply_refactoring(str(m1.path), proposal)
+            self.assertEqual(output.count("nonlocal x"), 2)
+            self.assertEqual(output.count("t = x + 1"), 2)
+            transformed = TempModule(output)
+            self.addCleanup(transformed.cleanup)
+            self.assertEqual(
+                _run_driver(transformed.dir, "from mod import outer; print(outer())"), original
+            )
 
-        # Global scenario
+    def test_dce_does_not_extract_a_nonlocal_read_or_write(self):
+        """A moving block that actually touches the nonlocal still must refuse."""
+        module = TempModule("""
+            def outer():
+                x = 0
+                def first():
+                    nonlocal x
+                    x += 1
+                    return x
+                def second():
+                    nonlocal x
+                    x += 1
+                    return x
+                return first() + second()
+            """)
+        self.addCleanup(module.cleanup)
+        engine = self._engine(min_lines=2)
+        self.assertEqual(engine.analyze_file(str(module.path)), [])
+
+    def test_dce_injects_global_declarations_into_the_nested_helper(self):
+        # The extracted helper must still write the module's binding.
+        engine = self._engine(min_lines=2)
         code_global = """
         G = 0
         def outer(a):
