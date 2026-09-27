@@ -18,12 +18,16 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from tests.test_helpers import refactor_to_fixed_point_silently
 from tests.test_method_host_machinery import _module, _run
 from towel.unification.models import ClassInfo
+from towel.unification import import_graph
+from towel.unification.module_bindings import global_bindings
+from towel.unification.protocol_bases import bases_allow_private_helpers
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
@@ -208,3 +212,55 @@ def test_reexport_verdict_reads_changed_dependency_source(tmp_path: Path) -> Non
     assert not engine._can_host(info, {info.file_path: source})
     assert engine._parse_source(source) is tree
     assert ast.dump(tree, include_attributes=True) == before
+
+
+def test_cyclic_star_exports_stay_finite_and_reread_protocol_bindings(tmp_path: Path) -> None:
+    """A real package cycle must not create growing imaginary parent-package names.
+
+    Pyparsing exposed this before the first extraction: the resolver made
+    hundreds of thousands of filesystem probes. Count work instead of timing
+    this machine, retain both hosting outcomes, and change the dependency
+    without changing the caller AST so a stale verdict cache cannot pass.
+    """
+    source = "from .errors import *\nfrom .helpers import *\nclass Box(Contract):\n    pass\n"
+    _files(
+        tmp_path,
+        {
+            "pkg/__init__.py": "from .core import *\nfrom .errors import *\nfrom .helpers import *\n",
+            "pkg/core.py": source,
+            "pkg/errors.py": "import warnings\n",
+            "pkg/helpers.py": "from .core import *\nclass Contract:\n    pass\n",
+        },
+    )
+    tree = ast.parse(source)
+    klass = tree.body[-1]
+    assert isinstance(klass, ast.ClassDef)
+    bindings = global_bindings(source)
+    assert bindings is not None
+    cache = import_graph.ImportGraphCache()
+    original = import_graph._module_definition_file
+    snapshot = ast.dump(tree, include_attributes=True)
+    for protocol in (False, True, False):
+        (tmp_path / "pkg/helpers.py").write_text(
+            "from .core import *\n"
+            + (
+                "from typing import Protocol as Contract\n"
+                if protocol
+                else "class Contract:\n    pass\n"
+            )
+        )
+        calls = 0
+
+        def counted(base: Path, parts: tuple[str, ...]) -> Path | None:
+            nonlocal calls
+            calls += 1
+            assert calls <= 50, "Cyclic star exports expanded impossible module prefixes"
+            return original(base, parts)
+
+        with patch.object(import_graph, "_module_definition_file", counted):
+            allowed = bases_allow_private_helpers(
+                klass, tree, bindings, str(tmp_path / "pkg/core.py"), cache, ast.parse
+            )
+        assert allowed is not protocol
+        assert calls > 0
+        assert ast.dump(tree, include_attributes=True) == snapshot

@@ -740,6 +740,7 @@ def imported_alias_sites(
         target,
         tuple(remainder.split(".")) if remainder else (),
         cache,
+        module_target=isinstance(statement, ast.ImportFrom) and alias.name == "*",
     )
 
 
@@ -748,12 +749,17 @@ def _imported_sites(
     target: Tuple[str, ...],
     remainder: Tuple[str, ...],
     cache: ImportGraphCache,
+    *,
+    module_target: bool = False,
 ) -> Optional[FrozenSet[Tuple[Path, str]]]:
     """Resolve an import target and its attribute suffix through the program's imports."""
     full = (*target, *remainder)
-    # ``target`` may end in an attribute rather than a module, so every
-    # split at or after the bound module's own length is tried.
-    splits = range(max(1, len(target) - 1), len(full))
+    # An ordinary ``from m import x`` may name an attribute or a submodule.
+    # In ``from m import *``, however, m itself must be a module. Trying its
+    # parent as an attribute host invents qualified names that grow through
+    # cyclic reexports (the Pyparsing Protocol-base performance regression).
+    minimum = len(target) if module_target else max(1, len(target) - 1)
+    splits = range(minimum, len(full))
     if set(full[0]) == {"."}:
         base = current.parent
         for _ in range(len(full[0]) - 1):

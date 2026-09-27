@@ -1293,3 +1293,16 @@ name and requires useful extraction with unchanged runtime and monkeypatch
 behavior. The older no-forwarding fixture now represents an actual private
 stage with a helper absent from its original input; its assertions remain
 unchanged. A reserved-looking spelling alone must not replace that setup.
+
+The full-corpus Pyparsing run exposed an import-resolution performance defect:
+`from package.module import *` was also searched as an attribute of the parent
+package. Cyclic reexports then generated longer and longer impossible qualified
+names. The star import's target must be a module; resolve at that module or a
+descendant exported submodule, never at a shorter parent-package prefix.
+Ordinary `from package import name` retains its real attribute/submodule
+ambiguity. This is a correction to the search space, not a heuristic work limit
+or a cache of incomplete cyclic verdicts. The regression counts filesystem
+probes rather than asserting wall time, protects both ordinary and Protocol
+bases, and rereads a changed dependency while reusing the caller AST. Do not
+replace its bounded-work assertion with a longer timeout or relax Protocol
+protection to recover speed.
