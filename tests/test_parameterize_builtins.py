@@ -417,34 +417,36 @@ def test_the_flag_reaches_the_engine_from_the_command_line(tmp_path: Path) -> No
 
 
 # What the checker reveals for a builtin, and the annotation Towel writes.
+# Precise callable and class-object types remain whole strings so constructing
+# the helper cannot add subscription or operator effects at runtime.
 REVEALED = [
-    ("len", "def (typing.Sized) -> int", "Callable[..., int]"),
+    ("len", "def (typing.Sized) -> int", "'Callable[..., int]'"),
     (
         "print",
         "Overload(def (*values: object, sep: str | None =, end: str | None =, file: "
         "_typeshed.SupportsWrite[str] | None =, flush: Literal[False] =), def (*values: object, "
         "sep: str | None =, end: str | None =, file: _SupportsWriteAndFlush[str] | None =, "
         "flush: bool))",
-        "Callable[..., None]",
+        "'Callable[..., None]'",
     ),
     (
         "str",
         "Overload(def (object: object =) -> str, def (object: _collections_abc.Buffer, "
         "encoding: str =, errors: str =) -> str)",
-        "type[str]",
+        "'type[str]'",
     ),
     (
         "list",
         "Overload(def [_T] () -> list[_T], def [_T] (typing.Iterable[_T]) -> list[_T])",
-        "type[list]",
+        "'type[list]'",
     ),
-    ("repr", "def (object) -> str", "Callable[[object], str]"),
+    ("repr", "def (object) -> str", "'Callable[[object], str]'"),
     (
         "isinstance",
         "def (object, type | types.UnionType | tuple[..., ...]) -> bool",
-        "Callable[..., bool]",
+        "'Callable[..., bool]'",
     ),
-    ("IndexError", "def (*args: object) -> IndexError", "type[IndexError]"),
+    ("IndexError", "def (*args: object) -> IndexError", "'type[IndexError]'"),
     # Overloads returning different types, and a generic, have no annotation.
     (
         "open",
@@ -477,7 +479,7 @@ def test_the_checkers_own_spelling_wins_wherever_it_can_be_written() -> None:
         False,
         fallbacks=[builtin_object_revealed("filter", "def (builtins.object) -> builtins.str")],
     )
-    assert exact is not None and ast.unparse(exact) == "Callable[[object], str]"
+    assert exact is not None and ast.unparse(exact) == "'Callable[[object], str]'"
     # The builtin ``len``, whose exact type names a protocol the host lacks.
     loosened = _joined_revealed(
         ["def (typing.Sized) -> int"],
@@ -485,7 +487,7 @@ def test_the_checkers_own_spelling_wins_wherever_it_can_be_written() -> None:
         False,
         fallbacks=["def (*args: Any, **kwargs: Any) -> int"],
     )
-    assert loosened is not None and ast.unparse(loosened) == "Callable[..., int]"
+    assert loosened is not None and ast.unparse(loosened) == "'Callable[..., int]'"
 
 
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")

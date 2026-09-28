@@ -18,8 +18,10 @@ The texts are what the checkers print, measured from mypy 2.3.1, mypy 1.14.1
 (which rich's lock file pins) and pyright: a callable returning ``None``
 without an arrow, one returning another, generic callables, named tuples and
 their constructors, ``Union``/``Optional`` beside ``|``, and literals whose
-text holds ``<``. Each case names the corpus decline it came from
-(packaging, rich, mistune).
+text holds ``<``. Compound ordinary-rung annotations stay wholly quoted:
+their precise type is preserved without adding runtime evaluation. The generic
+rung below resolves type terms before host spelling. Each case names the corpus
+decline it came from (packaging, rich, mistune).
 """
 
 from __future__ import annotations
@@ -90,32 +92,32 @@ def resolved(revealed: str, source: str = CLASSES) -> str | None:
     "revealed, expected",
     [
         # rich R5: mypy leaves out ``-> None``, in 2.x and in 1.14.
-        ("def (x: int)", "Callable[[int], None]"),
-        ("def (builtins.int)", "Callable[[int], None]"),
-        ("def ()", "Callable[[], None]"),
+        ("def (x: int)", "'Callable[[int], None]'"),
+        ("def (builtins.int)", "'Callable[[int], None]'"),
+        ("def ()", "'Callable[[], None]'"),
         # packaging K and _parser: a function returning a function.
-        ("def () -> def (key: str) -> int", "Callable[[], Callable[[str], int]]"),
+        ("def () -> def (key: str) -> int", "'Callable[[], Callable[[str], int]]'"),
         (
             "() -> ((key: str) -> ((int) -> str))",
-            "Callable[[], Callable[[str], Callable[[int], str]]]",
+            "'Callable[[], Callable[[str], Callable[[int], str]]]'",
         ),
         # packaging K: a generic callable keeps its binders' names, for the checker to
         # resolve where the helper is (written as a string: the host binds no T).
         ("def [T] (x: T) -> T", "'Callable[[T], T]'"),
         # rich R3, R4, R8: a named tuple is its class; its constructor makes the class.
         ("tuple[builtins.int, Union[builtins.str, probe.Style], fallback=probe.Span]", "Span"),
-        ("def (tuple[int, str | probe.Style, fallback=probe.Span])", "Callable[[Span], None]"),
+        ("def (tuple[int, str | probe.Style, fallback=probe.Span])", "'Callable[[Span], None]'"),
         ("TypedDict(probe.Span, {'name': str})", "Span"),
         ("TypedDict('probe.Span', {'name': builtins.str})", "Span"),
         # mypy 1.14 writes Union and Optional, and a callable member bare inside them.
-        ("Union[builtins.str, None]", "Union[str, None]"),
-        ("Union[def () -> builtins.int, None]", "Union[Callable[[], int], None]"),
-        ("(def () -> int) | None", "Callable[[], int] | None"),
+        ("Union[builtins.str, None]", "'Union[str, None]'"),
+        ("Union[def () -> builtins.int, None]", "'Union[Callable[[], int], None]'"),
+        ("(def () -> int) | None", "'Callable[[], int] | None'"),
         # mistune M4: text inside a literal is not notation, and only an inferred literal widens.
         ("Literal['<a href=\"']?", "str"),
         ("Literal[True]?", "bool"),
-        ("Literal['r'] | Literal['w']", "Literal['r'] | Literal['w']"),
-        ("Literal[-1]", "Literal[-1]"),
+        ("Literal['r'] | Literal['w']", "\"Literal['r'] | Literal['w']\""),
+        ("Literal[-1]", "'Literal[-1]'"),
         # Anything with no annotation.
         ("<nothing>", None),
         ("Never", None),
@@ -132,10 +134,10 @@ def test_the_ordinary_rung_writes_what_the_checker_spells(revealed: str, expecte
 @pytest.mark.parametrize(
     "revealed, expected",
     [
-        ("def (a: int, *, b: str =) -> int", "Callable[..., int]"),
-        ("def (*args: int, **kwargs: str)", "Callable[..., None]"),
-        ('(a: int, *, b: str = "") -> int', "Callable[..., int]"),
-        ("def [B <: int] (x: B) -> int", "Callable[..., int]"),
+        ("def (a: int, *, b: str =) -> int", "'Callable[..., int]'"),
+        ("def (*args: int, **kwargs: str)", "'Callable[..., None]'"),
+        ('(a: int, *, b: str = "") -> int', "'Callable[..., int]'"),
+        ("def [B <: int] (x: B) -> int", "'Callable[..., int]'"),
     ],
 )
 def test_the_ordinary_rung_keeps_the_result_of_a_callable_no_list_states(

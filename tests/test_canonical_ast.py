@@ -268,11 +268,12 @@ def test_a_union_of_a_built_and_a_parsed_spelling_has_one_member() -> None:
     assert [ast.unparse(m) for m in normalize_union(members, _unknown_subtypes)] == ["list[int]"]
 
 
-def test_one_spelling_everywhere_is_kept_as_written() -> None:
+def test_one_type_spelling_everywhere_keeps_its_type_without_evaluation() -> None:
     built = ast.Subscript(value=_load("Optional"), slice=_load("int"))
     joined = _joined([built, _expression("Optional[int]")], None, True, {"Optional"})
-    assert joined is not None
-    assert ast.unparse(joined) == "Optional[int]"
+    # Built and parsed copies must deduplicate without rewriting Optional into
+    # a union. Preserve that exact type while avoiding new runtime subscription.
+    assert isinstance(joined, ast.Constant) and joined.value == "Optional[int]"
 
 
 def test_a_built_helper_instantiates_to_the_parsed_block() -> None:
