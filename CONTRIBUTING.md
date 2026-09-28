@@ -185,6 +185,22 @@ uv run --frozen coverage combine
 uv run --frozen coverage report --fail-under=85
 ```
 
+## Local release verification
+
+Choose and commit a release version before freezing its validation source.
+`just build` and `just bump-version VERSION` are development commands; they do
+not establish release fitness. The supported local release path is
+`just release VERSION /path/to/release-evidence.json`. It requires a clean
+checkout and completed, reviewed evidence bound to the exact prebuilt wheel
+and source archive. It does not rebuild, publish, tag, or enforce remote policy.
+
+Use `just verify-release-evidence VERSION /path/to/release-evidence.json` for
+validation-only artifacts. Preserve their nonpublication status. Additional
+documentation/tests/evidence need exact source hashes, an explicit review and
+supplemental checks; their results are not part of the frozen suite counts.
+Runtime, configuration and corpus-harness changes invalidate old evidence.
+See [the evidence schema and release procedure](docs/RELEASING.md#repository-owned-evidence-gate).
+
 ## Documentation
 
 - Update the README.md if you change functionality, and add an entry under

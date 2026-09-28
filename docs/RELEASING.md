@@ -35,6 +35,131 @@ Recorded during September 2026; verify current remote state before publication:
 
 Recheck live version availability immediately before publishing. The proposed version number is not reserved.
 
+## Repository-owned evidence gate
+
+The supported local release command is now:
+
+```sh
+just release VERSION /path/to/release-evidence.json
+```
+
+Choose and commit `VERSION` **before** freezing validation. This command
+requires a clean checkout and verifies completed evidence for the exact
+prebuilt wheel and source archive; it never changes the version or rebuilds
+after verification. `just bump-version VERSION` and `just build` remain
+separate development operations. The verifier neither uploads nor tags and
+does not prevent an owner from invoking an upload tool manually. A successful
+local check does not reserve a version or replace the final maintainer decision.
+
+For an unreleased experiment, use
+`just verify-release-evidence VERSION /path/to/release-evidence.json`.
+This explicitly reports validation only, never permission to upload. The
+post-1.772 frozen validation artifacts still numbered `1.772` have that scope;
+they must not be relabelled as a new release. The release path also checks the
+current hashed `source.json` and `artifacts.json` publication-status fields,
+so changing only the bundle's purpose cannot override their no-upload status.
+Historical documentation and old fixtures are not scanned for such wording.
+
+### Evidence schema 1
+
+Keep the bundle external to the checkout. No tracked file needs to contain
+the hash of the commit that includes itself. All file references below contain
+a relative path and the SHA-256 of the bytes at that path. Paths cannot escape
+the bundle directory, including through symlinks. Named records may be stored
+as `.gz`; their reference hashes the compressed file and the verifier reads
+the decompressed record. Artifacts are always the original archive bytes.
+Run the verifier from the frozen development environment (`uv sync --frozen
+--extra dev`), which includes its hardened `defusedxml` parser through the
+locked dependency-audit tools. Coverage evidence cannot declare a DTD or
+expand custom entities, even when its file hash matches.
+
+```json
+{
+  "schema": 1,
+  "version": "VERSION",
+  "purpose": "validation",
+  "validation_commit": "FULL_FROZEN_GIT_SHA",
+  "artifacts": {
+    "wheel": {"path": "dist/code_towel-VERSION-py3-none-any.whl", "sha256": "SHA256"},
+    "sdist": {"path": "dist/code_towel-VERSION.tar.gz", "sha256": "SHA256"}
+  },
+  "records": {
+    "source.json": {"path": "source.json", "sha256": "SHA256"}
+  },
+  "review": {"path": "release-review.json", "sha256": "SHA256"},
+  "amendments": null
+}
+```
+
+The example abbreviates `records`: every name exported by
+`scripts.verify_release_evidence.REQUIRED_RECORDS` is mandatory. List them with
+`python -c 'from scripts.verify_release_evidence import REQUIRED_RECORDS; print("\n".join(REQUIRED_RECORDS))'`.
+These are the retained native source/artifact inventories, five build/quality
+steps, dependency/diagram checks, both 2,000-case fuzz families, all three
+interpreter results with the matrix driver, full runtime coverage XML and logs, six clean-wheel command
+records, sdist documentation tests, complete self-dogfood tests and integrity
+records, and corpus launch/completion/environment/summary records. Also include
+each `corpus-report/PROJECT.json` and every referenced raw phase log as
+`corpus-logs/BASENAME`. A PASS reached through retesting also requires its
+`corpus-logs/PROJECT-retest.json` and isolated/full before-and-after logs.
+Missing, partial, failed or inconsistent records refuse the gate. A free-form
+`status: passed` is insufficient; the verifier examines exit records, actual
+pytest summaries, coverage line hits, archive contents and RECORD hashes,
+corpus membership/pins, and completed before/after outcomes and failed-test IDs.
+
+The structured review has `validation_commit`, `wheel_sha256`, `reviewer`, a
+nonempty `report` file reference, `open_findings: []`, and four maps:
+`reviewed_nonaccepted`, `reviewed_fallbacks`, `reviewed_known_failures`, and
+`reviewed_baseline_failures`. Each map must contain exactly the projects in
+that category, with no missing or stale entries. Each entry contains a
+nonempty `reason`, `disposition` (`accepted-refusal`, `typed-fallback`,
+`known-limitation`, or `pre-existing-baseline`) and a nonempty `evidence`
+array of file references. Those dispositions respectively belong to
+`reviewed_nonaccepted`, `reviewed_fallbacks`, `reviewed_known_failures` and
+`reviewed_baseline_failures`.
+Describe a baseline failure as pre-existing **in this run/environment**, not
+as a claim about upstream CI. NO_CHANGE and early refusals do not establish
+a transformed-suite result. Known differences still require pinned manifest
+expectations and explicit review; a new regression is not an accepted refusal.
+Every project needs a completed baseline. Only a completed CRASH or UNSUPPORTED
+refactor refusal with zero changed files and no after-suite can receive
+`accepted-refusal`. Setup errors, timeouts, killed processes and incomplete
+suites refuse the gate regardless of review text. A known limitation must
+preserve baseline failure identities and introduce only manifest-listed failures.
+
+Native records must come from the frozen source. Where an older command
+capture lacks its own source field, the bundle and review record its
+provenance alongside the independently source-bound matrix/corpus/self runs.
+This is a guard against incomplete or mismatched local evidence, not an
+authentication mechanism: someone able to fabricate every record can also
+fabricate observations. The verifier never executes retained commands.
+
+### Changes after a validation freeze
+
+A different HEAD is not automatically accepted. Runtime, project/build/type
+configuration, dependency locks, corpus scripts/manifest, differential harness
+or conftest changes require new validation. Documentation, ordinary regression
+tests and retained evidence may be reconciled explicitly. Bootstrapping this
+verifier permits its new script and changes confined to the justfile release
+block, with the same checks; later verifier edits require a new freeze.
+
+When these permitted files differ, `amendments` must contain `files` mapping
+**every** changed repository-relative path to its current SHA-256 (or `null`
+for deletion), a `report` file reference, and `checks`. Every check contains
+`kind` (`tests`, `quality`, or `diagrams`), its actual `command` argument array,
+timezone-aware `started`/`finished`, integer `exit_status: 0`, a `log` file
+reference, the same complete `files` map, and `covers` listing the changed
+files it checked. Every change requires successful supplemental tests; Python
+and justfile changes also require successful `just check`. Preserve these
+counts separately from the frozen matrix. Checks are tied to content, so a
+subsequent edit requires recording them again.
+
+Validation-only verification can reconcile later documentation against old
+validation artifacts while retaining their exact original source identity.
+For an actual release, changes to a file already shipped in those archives
+refuse the gate: freeze and validate the final release contents and artifacts
+instead. No version-only drift exception is provided.
+
 ## Local evidence required
 
 Use Python 3.13 for the pinned quality tools and `uv sync --frozen --extra dev`. Run `just check-diagrams` as well: GitHub renders the documentation's mermaid diagrams and no Python check looks at them, so a syntax error would otherwise appear only once the page is published. It needs Node and installs mermaid and jsdom on first use.

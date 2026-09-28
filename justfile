@@ -169,14 +169,14 @@ bump-version VERSION:
 build:
     uv run --frozen python -m build
 
-# Prepare a local release: bump, full checks, tests, build (does not publish or tag)
-release VERSION:
-    just bump-version {{quote(VERSION)}}
-    just check
-    just audit-dependencies
-    just test
-    just build
-    @echo "Local distributions built. Review the audit and artifacts before publication."
+# Check completed local validation without declaring the artifacts publishable
+verify-release-evidence VERSION EVIDENCE:
+    uv run --frozen python scripts/verify_release_evidence.py {{quote(VERSION)}} {{quote(EVIDENCE)}} --validation-only
+
+# Verify an already-versioned clean source and its exact prebuilt release artifacts
+# Never bump or rebuild after checking evidence; publication/tagging remain separate.
+release VERSION EVIDENCE:
+    uv run --frozen python scripts/verify_release_evidence.py {{quote(VERSION)}} {{quote(EVIDENCE)}}
 
 # Everything CI runs: quality gates, tests, coverage gate, build
 ci: check audit-dependencies coverage build
