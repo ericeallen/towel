@@ -36,9 +36,17 @@ several):
 | The CI checks only stubs, never the implementation | 2 |
 | A CI-only flag, a different checker (ty), Python-version pins | 1 each |
 
-The corpus harness now installs projects' typing dependencies and pinned
-checkers, which removes the second row. A defect in Towel's pyright session
-behind two further disagreements is being fixed separately.
+The corpus harness now adds projects' missing typing dependencies and selects
+pinned checkers. It preserves dependencies already installed for tests, so this
+does not by itself reproduce every project's locked environment. The next-version
+corpus found one such mismatch in Blinker: pytest 9.1.1 contains syntax its mypy
+Python 3.9 target cannot parse. The manifest now pins pytest 8.3.5 and
+pytest-asyncio 1.0.0 from that project's lockfile. With that pair, its declared
+mypy and Pyright checks, Pyright's package completeness check, all 25 tests, and
+Towel's default typed invocation pass (the latter makes no changes). This is a
+specific environment correction, not an implementation of this proposal's
+general CI discovery. A defect in Towel's pyright session behind two further
+disagreements was addressed separately.
 
 ## What the project's own check is
 

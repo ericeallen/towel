@@ -57,6 +57,24 @@ def test_manifest_supplies_declared_test_prerequisites(name: str, dependency: st
     ), f"{name} must install {dependency} so its declared test suite can run"
 
 
+def test_blinker_test_dependencies_preserve_its_declared_typing_target() -> None:
+    # This pin's uv.lock selects pytest 8.3.5 and pytest-asyncio 1.0.0. The
+    # corpus installed pytest 9.1.1, whose match syntax makes mypy abort for
+    # Blinker's Python 3.9 target before checking the project. Merely accepting
+    # the fallback would lose typed coverage. The locked pair restores both
+    # declared checkers and all 25 runtime tests; a newer asyncio plugin also
+    # requires a newer pytest. Review these constraints with the upstream pin,
+    # not by changing this test to bless another checker-failed fallback.
+    project = _project("blinker")
+    assert project.rev == "c3364059663df1ddce32799d6b1922af89a345f6"
+    requirements = {
+        canonicalize_name(requirement.name): requirement
+        for requirement in map(Requirement, project.deps)
+    }
+    assert str(requirements[canonicalize_name("pytest")].specifier) == "==8.3.5"
+    assert str(requirements[canonicalize_name("pytest-asyncio")].specifier) == "==1.0.0"
+
+
 def test_ply_manifest_runs_both_scripts_against_each_source_copy(tmp_path: Path) -> None:
     project = _project("ply")
     command = [part.format(python=sys.executable) for part in project.test]

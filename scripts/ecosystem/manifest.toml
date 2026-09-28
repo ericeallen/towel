@@ -761,7 +761,11 @@ url = "https://github.com/pallets-eco/blinker.git"
 rev = "c3364059663df1ddce32799d6b1922af89a345f6"
 package = "src/blinker"
 pythonpath = "src"
-deps = ["pytest-asyncio"]
+# This revision's uv.lock pins both test dependencies. Its mypy target is 3.9;
+# pytest 9's match syntax prevents the checker from running at that target.
+# A newer pytest-asyncio also requires a newer pytest. Keep the pair aligned
+# before the add-only typing setup preserves the installed test environment.
+deps = ["pytest==8.3.5", "pytest-asyncio==1.0.0"]
 
 [[project]]
 name = "pycparser"
