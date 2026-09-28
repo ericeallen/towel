@@ -270,9 +270,13 @@ checker types and existing source annotations are preserved. Regression tests
 record both the import-order defect and overloaded-operation counterexamples;
 [the design decision](../DECISIONS.md#generated-annotations-must-not-add-evaluation-september-27-2026)
 explains why this is part of runtime preservation. Focused tests and quality
-checks pass. A diagnostic repair of the old transformed Tornado output
-restored its exact baseline outcomes; production CLI validation is still
-required.
+checks pass. The installed production CLI at `a2e6734` subsequently changed
+35 Tornado files and preserved the exact before/after outcomes: 748 passed,
+474 pre-existing failures and 186 skipped in the private Linux environment.
+The generated output differs from the failed run only in helper annotation
+quotation, with precise types and all other AST nodes unchanged. This closes
+the observed runtime defect; it does not make Tornado's upstream suite green
+or establish completion of the final full corpus.
 
 Let the running corpus finish to expose any other defects, then validate one
 corrected frozen source with the full corpus, interpreter matrix,

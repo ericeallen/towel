@@ -257,6 +257,11 @@ class TestSingleFileRegression(unittest.TestCase):
 
         This test ensures that changes to the refactoring engine don't
         unintentionally change the output on known test cases.
+
+        The annotated_module golden deliberately quotes only generated
+        compound annotations. Keep their precise types and every original
+        annotation: blanket regeneration or annotation-insensitive comparison
+        would hide regressions in the runtime-preservation policy.
         """
         # Get all test example Python files
         python_files = [

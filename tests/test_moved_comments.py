@@ -784,7 +784,9 @@ def test_an_ignore_the_checker_needs_lets_the_helper_type_check(tmp_path: Path) 
         oracle.close()
     helper = _helper_source(result)
     assert _line_holding(helper, "_get(d, Mapping").endswith("  # type: ignore[type-abstract]")
-    assert "d: Mapping[str, Any]" in helper, helper
+    # Preserve the exact Mapping type as well as the necessary ignore. The
+    # generated subscription is quoted so extraction adds no runtime lookup.
+    assert "d: 'Mapping[str, Any]'" in helper, helper
     # Checked again by the command line, strictly, with unused ignores reported.
     checked_copy = tmp_path / "checked"
     checked_copy.mkdir()

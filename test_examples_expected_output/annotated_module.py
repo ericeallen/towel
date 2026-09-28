@@ -23,7 +23,7 @@ def __extracted_func_2(counts: _typing.Any, key: _typing.Any, order: _typing.Any
     counts[key] += 1
 
 
-def __extracted_func_0(floor: float, values: list[float]) -> tuple[int, float, float]:
+def __extracted_func_0(floor: float, values: 'list[float]') -> 'tuple[int, float, float]':
     total: float = 0.0
     peak: float = float(floor)
     count: int = 0
@@ -99,7 +99,7 @@ class Ledger:
         lowest, running = self.__extracted_func_1(opening)
         return lowest < 0
 
-    def __extracted_func_1(self, opening: int) -> tuple[int, int]:
+    def __extracted_func_1(self, opening: int) -> 'tuple[int, int]':
         running: int = opening
         lowest: int = opening
         for entry in self.entries:
