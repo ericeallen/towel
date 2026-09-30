@@ -1,6 +1,6 @@
 # Towel — command runner
 #
-# Recipes use `uv run --frozen`, matching the README, CONTRIBUTING, and CI, so
+# Recipes use `uv run --frozen`, matching CONTRIBUTING and CI, so
 # `just` and CI run the same commands. Run `just` or `just --list` for the list.
 
 # Show the available recipes

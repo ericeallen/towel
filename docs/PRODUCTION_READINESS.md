@@ -1,5 +1,20 @@
 # Production readiness
 
+[Documentation index](README.md)
+
+Start with the current release preparation. The later sections retain the evidence for earlier releases and candidates.
+
+**Contents**
+
+- [1.792 preparation](#1792-release-preparation) · [Previous published release](#previous-published-release)
+- [1.772 release validation](#1772-release-validation-september-26-2026) · [Earlier 1.772 candidate](#earlier-1772-candidate-validation-september-19-2026)
+- [1.732 validation](#historical-1732-validation-september-19-2026) · [1.732 candidate](#historical-1732-candidate-run-september-19-2026)
+- [September 17–18 corpus](#historical-141-project-corpus-september-1718-2026)
+- [1.414 report](#the-1414-report-september-1215-2026) · [Readiness criteria](#what-production-ready-means-here)
+- [1.414 repairs](#defects-found-and-repaired-in-this-pass) · [Consumer evidence](#consumer-evidence) · [Ecosystem check](#ecosystem-check)
+- [1.414 verification gates](#verification-gates-on-the-1414-tree) · [Historical limitations](#historical-1414-limitations-and-outstanding-work)
+- [Measurement environment](#measurement-environment)
+
 ## 1.792 release preparation
 
 Version **1.792** carries the [post-1.772 changes](../CHANGELOG.md#1792):

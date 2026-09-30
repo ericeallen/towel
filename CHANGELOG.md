@@ -27,6 +27,11 @@ release verification binds the final versioned source to its own evidence.
 
 ### Changed
 
+- The README is a short introduction, with a documentation index and separate
+  guides for CLI use, typing, generated code, naming, cross-module extraction,
+  resources and performance. Long references have contents lists. Navigation
+  regressions check guide discovery and local links; moved measurement claims
+  retain their evidence checks.
 - The supported local release command requires completed, reviewed evidence
   for the exact source and prebuilt distributions. Missing phases, interrupted
   baselines, changed failure identities and stale artifacts refuse verification.

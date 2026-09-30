@@ -1,5 +1,7 @@
 # Design decisions
 
+[Documentation index](README.md)
+
 Each entry records a decision about what Towel promises or refuses, when it
 was made, what it rules out, and why. An entry is not rewritten when it is
 superseded; a later entry says so. Where an entry's consequences are still
@@ -10,6 +12,18 @@ what a program does is unsound, however rarely it triggers, and "rarely" is
 not a defence. Declining is acceptable only where no sound transformation
 exists; a decline that exists only because Towel lost information of its own
 is a defect to fix, not a limitation to document.
+
+**Contents by topic — selected entries**
+
+- [Preservation contract](#2026-09-22-what-towel-preserves) · [Binding identity](#2026-09-23-a-name-is-its-binding-not-its-spelling)
+- [Same-class helpers](#2026-09-22-a-method-helper-lives-in-the-class-that-holds-both-duplicates) · [Class design](#2026-09-22-towel-does-not-change-externally-visible-class-design)
+- [Import names](#2026-09-22-import-names-come-from-the-program) · [Cross-module opt-in](#2026-09-23-cross-module-extraction-is-opt-in) · [Import refusals](#2026-09-24-an-import-problem-refuses-only-when-it-leaves-a-name-in-doubt)
+- [Typed baselines](#2026-09-23-a-typed-run-compares-against-its-baseline) · [Error accounting](#2026-09-24-an-error-is-accounted-for-by-the-originals-error-where-it-stood)
+- [Reflection boundary](#2026-09-26-class-private-extraction-follows-the-reflection-boundary) · [Body instrumentation](#2026-09-27-supported-body-instrumentation-is-protected-regardless-of-syntax)
+- [Caller-side refinements](#2026-09-27-keep-caller-side-refinements-at-the-call-site) · [Typed performance](#2026-09-27-construction-changes-must-speed-up-typed-extraction)
+- [Unreadable input](#2026-09-25-a-file-that-does-not-parse-refuses-the-run) · [Scope constraints](#2026-09-27-recover-valid-blocks-without-moving-unrelated-scope-constraints)
+- [Complete preview and helper inputs](#complete-preview-and-generated-helper-inputs-september-27-2026) · [Annotation evaluation](#generated-annotations-must-not-add-evaluation-september-27-2026)
+- [Release audits](#2026-09-24-every-release-is-audited-and-every-finding-becomes-a-test) · [Evidence and documentation](#2026-09-27-release-documentation-must-agree-with-its-validation-evidence)
 
 ## 2026-09-22: What Towel preserves
 

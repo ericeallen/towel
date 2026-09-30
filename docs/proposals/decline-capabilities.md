@@ -1,5 +1,7 @@
 # Declines that need a wider analysis
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 Status: partially implemented for 1.792. The original deferral after 1.772
 was made by the owner on 2026-09-24
 (see `docs/DECISIONS.md`). Each item below is a defect by the owner's

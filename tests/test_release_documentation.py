@@ -24,7 +24,10 @@ Changing engine output is not grounds for updating these expectations. Add
 new release evidence, or substantiate a correction to the old record. Keep
 the intent with each test; see docs/DECISIONS.md, September 27, and the policy
 regression rule in CONTRIBUTING.md. Formatting changes are harmless; removing
-conditions or changing a number without evidence is not.
+conditions or changing a number without evidence is not. The readability pass
+moves resource and timing claims from README to their dedicated guides; the
+same source records, conditions and false-claim mutations must still check
+those claims in their new locations.
 """
 
 from __future__ import annotations
@@ -45,6 +48,8 @@ EVIDENCE = ROOT / "tests/release_evidence/1.772"
 PATHS = (
     "README.md",
     "CHANGELOG.md",
+    "docs/REQUIREMENTS.md",
+    "docs/PERFORMANCE.md",
     "docs/KNOWN_LIMITATIONS.md",
     "docs/PRODUCTION_READINESS.md",
     "docs/RELEASING.md",
@@ -140,6 +145,7 @@ def _check_automation(documents: Mapping[str, str]) -> None:
         "Windows is not a supported or validated release platform."
     )
     _contains(_section(documents["README.md"], "## Requirements"), platform)
+    _contains(_section(documents["docs/REQUIREMENTS.md"], "## Requirements"), platform)
     _contains(
         _section(documents["docs/KNOWN_LIMITATIONS.md"], "## Resources and platform"), platform
     )
@@ -264,9 +270,12 @@ def _check_completed_results(documents: Mapping[str, str]) -> None:
 
 def _check_measurements(documents: Mapping[str, str]) -> None:
     context = _context()
-    for heading in ("## Requirements", "## How long it takes"):
+    for path, heading in (
+        ("docs/REQUIREMENTS.md", "## Requirements"),
+        ("docs/PERFORMANCE.md", "## How long it takes"),
+    ):
         _contains(
-            _section(documents["README.md"], heading),
+            _section(documents[path], heading),
             f"{context['host']} ({context['host_cores']} cores, {context['host_memory_gib']} GiB)",
         )
     for path in ("docs/KNOWN_LIMITATIONS.md", "docs/PRODUCTION_READINESS.md"):
@@ -288,7 +297,7 @@ def _check_measurements(documents: Mapping[str, str]) -> None:
         f"{context['corpus_python']} only; no run was made on {context['untested_platform']}",
     )
     _contains(
-        documents["README.md"],
+        documents["docs/PERFORMANCE.md"],
         f"Native timings use {context['local_platform']}; the release-corpus timing below "
         f"uses a Docker {context['corpus_platform']} VM.",
     )
@@ -309,7 +318,7 @@ def _check_measurements(documents: Mapping[str, str]) -> None:
         "These are measured conditions, not minimum resource requirements or time guarantees."
     )
     for path in (
-        "README.md",
+        "docs/PERFORMANCE.md",
         "CHANGELOG.md",
         "docs/KNOWN_LIMITATIONS.md",
         "docs/PRODUCTION_READINESS.md",
@@ -355,6 +364,12 @@ def test_documented_measurements_keep_their_platform_resources_and_conditions(
             _check_automation,
         ),
         (
+            "docs/REQUIREMENTS.md",
+            "Windows is not a supported or validated",
+            "Windows is a supported and validated",
+            _check_automation,
+        ),
+        (
             ".github/workflows/ci.yml",
             "['3.11', '3.12', '3.13']",
             "['3.12', '3.13']",
@@ -386,13 +401,19 @@ def test_documented_measurements_keep_their_platform_resources_and_conditions(
             "**All projects were typed**",
             _check_completed_results,
         ),
-        ("README.md", "5,660 s", "560 s", _check_measurements),
-        ("README.md", "128 GiB", "8 GiB", _check_measurements),
+        ("docs/PERFORMANCE.md", "5,660 s", "560 s", _check_measurements),
+        ("docs/PERFORMANCE.md", "128 GiB", "8 GiB", _check_measurements),
+        ("docs/REQUIREMENTS.md", "128 GiB", "8 GiB", _check_measurements),
         ("docs/KNOWN_LIMITATIONS.md", "128 GiB", "8 GiB", _check_measurements),
-        ("README.md", "18 cores and 8 GB", "18 cores and 128 GB", _check_measurements),
-        ("README.md", "It ran alone", "It ran with four other projects", _check_measurements),
+        ("docs/PERFORMANCE.md", "18 cores and 8 GB", "18 cores and 128 GB", _check_measurements),
         (
-            "README.md",
+            "docs/PERFORMANCE.md",
+            "It ran alone",
+            "It ran with four other projects",
+            _check_measurements,
+        ),
+        (
+            "docs/PERFORMANCE.md",
             "not minimum resource requirements or time guarantees",
             "minimum resource requirements and time guarantees",
             _check_measurements,

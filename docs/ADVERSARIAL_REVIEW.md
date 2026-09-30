@@ -1,10 +1,20 @@
 # Adversarial review
 
+[Documentation index](README.md)
+
 A cumulative log of adversarial counterexamples and their repairs, across the September 2026 audit rounds. Each row is now covered by a fixture and, where noted, by the ecosystem check.
 
 The review used executable counterexamples, independent agents, fault injection, consumer projects' own tests, and repeated transformations. Passing evidence establishes the tested cases, not universal equivalence of arbitrary Python programs.
 
 Fixture counts below are as of each round; at `5ff2458` (September 19, 2026) `tests/hostile_cases` holds 129 fixtures (87 transformed, 42 rejected) and `tests/hostile_crossfile` 12 (11 transformed).
+
+**Contents**
+
+- [Confirmed repairs](#confirmed-defects-repaired) · [Hostile execution battery](#additional-hostile-execution-battery)
+- [Filesystem boundary](#filesystem-boundary) · [Performance and isolation](#performance-and-isolation) · [Final verification](#final-verification)
+- [Second review: September 13](#second-review--production-readiness-september-13-2026)
+- [Third review: September 17–19](#third-review--september-1719-2026)
+- [Measurement environment](#measurement-environment)
 
 ## Measurement environment
 

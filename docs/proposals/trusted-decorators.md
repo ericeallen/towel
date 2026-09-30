@@ -1,5 +1,7 @@
 # Trusted decorators
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 Status: proposal, 2026-09-24, from the owner; for a release after 1.772.
 
 ## The problem

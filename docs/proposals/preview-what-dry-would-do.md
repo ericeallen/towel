@@ -1,5 +1,7 @@
 # A preview that shows what `dry` would do
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 Status: implemented on the post-1.772 branch, September 27, 2026.
 
 Default preview now shares dry's executor, options and final validation,

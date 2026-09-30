@@ -1,5 +1,7 @@
 # Published 1.772 versus the next candidate
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 The baseline is the published PyPI wheel, not a rebuilt tag. Both artifacts
 report version 1.772; their hashes distinguish them. These are measurements
 of a development candidate; its artifact must not be uploaded as 1.772.

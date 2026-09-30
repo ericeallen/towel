@@ -13,7 +13,9 @@ Thank you for your interest in contributing to Towel! We welcome contributions f
 - [Development Setup](#development-setup)
 - [Coding Standards](#coding-standards)
 - [Testing](#testing)
+- [Local release verification](#local-release-verification)
 - [Documentation](#documentation)
+- [Pull Request Process](#pull-request-process)
 
 ## Code of Conduct
 
@@ -185,6 +187,67 @@ uv run --frozen coverage combine
 uv run --frozen coverage report --fail-under=85
 ```
 
+### CI commands and behavioral evidence
+
+Use Python 3.13 for formatting and typing gates; the lockfile also resolves
+test dependencies for supported older interpreters. Python 3.11 is the minimum.
+`just ci` runs the local quality, test, dependency-audit and build gates:
+
+```bash
+uv sync --frozen --extra dev
+uv run --frozen black --check src/towel tests scripts
+uv run --frozen flake8 src/towel scripts tests
+uv run --frozen mypy
+uv run --frozen coverage run -m pytest -q
+uv run --frozen coverage combine
+uv run --frozen coverage report --fail-under=85
+uv run --frozen bandit -r src/towel scripts -ll
+just audit-dependencies
+uv run --frozen python -m build
+```
+
+Behavioral tests compare sampled return values and types, exceptions, output,
+and argument mutations. Cross-file tests isolate imports for each execution.
+Empty selections, unsupported class construction and cross-file returned
+closures do not count as success. Single-file comparison samples one layer of
+returned callables; it does not validate deeper layers. This is regression
+evidence, not a proof of equivalence for arbitrary programs.
+
+Set `TOWEL_CHECK_AST_IMMUTABLE=1` to check on every cache reuse that analysis
+has left the module's AST unchanged. Large analyses fork workers when a timed
+probe projects enough work; `TOWEL_WORKERS=1` forces one worker.
+
+### Ecosystem checks
+
+`just ecosystem --run-untrusted-code --no-types` runs the standing ecosystem
+check (`scripts/ecosystem_check.py`) on all 141 manifest entries. It tests each
+project before and after refactoring a copy. Revisions are pinned except for
+the deliberate check of Towel's current `main`, whose resolved commit is recorded.
+
+Weekly CI explicitly uses `--no-types`: the manifest supplies runtime test
+dependencies, not every project's complete typing environment. Omit the flag
+to retain Towel's default typing policy; the harness never disables checking
+automatically. Reports record the requested typing mode and every outcome.
+
+The harness accepts `PASS`, `NO_CHANGE` and specifically documented
+`BROKEN_KNOWN` outcomes. Setup failures, typing failures, timeouts and incomplete
+test runs fail its gate. A no-change result does not validate a transformation.
+A release review must separately account for any refusal or fallback under
+[the evidence gate](docs/RELEASING.md#repository-owned-evidence-gate).
+
+These checks execute third-party code with your privileges, so use a disposable
+machine or container. The opt-in is `--run-untrusted-code` or
+`TOWEL_ECOSYSTEM_RUN_UNTRUSTED=1`.
+
+Towel runs inside each project's environment, alongside an installation of
+that project from the tested tree, Towel's `format` and `types` extras, and the
+configured checker dependencies. One wheel is built from `--towel-src` or
+supplied with `--towel-wheel`; a wheel whose code differs from the source is
+refused. Point `--towel-src` at a committed snapshot's `src` directory. Reports
+record the actual commit and dirty state; source archives need an independently
+retained source manifest. See [Production readiness](docs/PRODUCTION_READINESS.md)
+for results and qualifications.
+
 ## Local release verification
 
 Choose and commit a release version before freezing its validation source.
@@ -203,8 +266,17 @@ See [the evidence schema and release procedure](docs/RELEASING.md#repository-own
 
 ## Documentation
 
-- Update the README.md if you change functionality, and add an entry under
-  `[Unreleased]` in CHANGELOG.md
+- Keep the README focused on the project overview and first-use path. Put
+  detailed tasks and explanations in the appropriate guide linked from
+  [the documentation index](docs/README.md), and add user-visible changes
+  under `[Unreleased]` in CHANGELOG.md
+- Give each new guide an index entry and a backlink. Longer references should
+  have a compact contents list using their existing headings. Prefer relative
+  links inside `docs/`; the root README needs release-pinned absolute links
+  because it is also the PyPI description
+- When moving a measured claim, move its documentation regression to the new
+  canonical page. Preserve the evidence, numerical expectations and negative
+  mutation tests; a new layout does not change what a historical run measured
 - Add docstrings to new functions and classes
 - Update relevant documentation in the `docs/` directory: a new guard or
   rejection belongs in KNOWN_LIMITATIONS.md, a new stage or rule in
@@ -243,6 +315,11 @@ If you have questions, feel free to:
 
 Thank you for contributing to Towel!
 
-For reproducible tool versions, use `uv sync --frozen --extra dev` and the commands in README.md (`just ci` runs the same set locally). CI runs the full tests and an unconditional 85% coverage gate for each supported Python version, and on Python 3.13 also Black, flake8, mypy, Bandit, `pip-audit --strict`, and a wheel and source build; a separate weekly and on-demand workflow runs the 141-project ecosystem check on a discarded runner, and Dependabot proposes grouped dependency updates weekly. `just release VERSION /path/to/release-evidence.json` verifies completed evidence for prebuilt distributions; it never builds, publishes or tags. Publication requires maintainer review of the exact release source, artifacts, CI and policy decisions.
+CI runs the full tests and the 85% coverage gate on each supported Python
+minor. Python 3.13 also runs formatting, lint, typing, Bandit, the strict
+dependency audit and distribution builds. The separate ecosystem workflow runs
+weekly or on demand on a discarded runner; Dependabot proposes grouped updates
+weekly. Publication still requires review of the exact source, artifacts, CI
+and policy decisions.
 
 Release maintainers should follow [docs/RELEASING.md](docs/RELEASING.md).

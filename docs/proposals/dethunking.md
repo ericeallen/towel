@@ -1,5 +1,7 @@
 # Dethunking: where the remaining `lambda` arguments come from
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 Status: evidence gathered 2026-09-17 on the 1.618 outputs; item 2 was
 resolved differently on 2026-09-18 (see below); items 1, 3 and 4 remain
 open. The exact, meaning-preserving improvements left are small; the large

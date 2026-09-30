@@ -1,5 +1,7 @@
 # Towel refactoring architecture
 
+[Documentation index](README.md)
+
 Towel finds repeated Python code by unifying statement blocks, extracts each
 family of duplicates into one helper function, and rewrites the duplicates as
 calls. It is a source-to-source transformation tool. Its design goal is not to
@@ -9,6 +11,22 @@ The checks below are all syntactic and lexical: they do not establish general
 behavioral equivalence for programs that observe their own frames, names, or
 source, so the intended use is preview, review the diff, and run the project's
 own tests.
+
+Start with the pipeline for the overall flow, or use the module map to find the implementation.
+
+**Contents**
+
+- [Pipeline](#the-pipeline) · [Core algorithm](#the-core-algorithm-anti-unification-into-a-helper)
+- [Soundness invariant](#the-soundness-invariant) · [Scope and liveness](#scope-binding-and-liveness) · [Guards](#guards)
+- [Helper placement](#helper-placement) · [Reuse](#reusing-an-existing-function) · [Annotations](#helper-annotations)
+- [Formatting](#generated-code-formatting) · [Comments](#comments-of-moved-code)
+- [Cross-file behavior](#cross-file-behavior) · [Clustering](#the-clustering-pass)
+- [Frame and source scan](#pre-run-frame--and-source-sensitivity-scan)
+- [Fixed-point loop](#the-fixed-point-loop) · [Incremental global passes](#incremental-global-passes-and-why-they-are-exact)
+- [Performance](#performance-architecture) · [Measurement environment](#measurement-environment)
+- [Diagnostics and settings](#diagnostics-and-settings) · [Application and recovery](#application-and-recovery)
+- [Helper naming](#helper-naming) · [Verification and evidence](#verification-and-evidence)
+- [References](#references) · [Module map](#module-map)
 
 The engine is `UnificationRefactorEngine` in
 [`refactor_engine.py`](../src/towel/unification/refactor_engine.py). It is
@@ -1477,7 +1495,7 @@ only in that class's body, where the compiler stores it as
 written there, to a name that must be class-private too, and refuses the batch
 when the stored name is spelled anywhere else (explicitly, as a string, or as
 `__extracted_func_0` in another class of the same name) or when the class's
-body looks attributes up by a computed name. See the README for the end-to-end
+body looks attributes up by a computed name. See the [naming guide](NAMING.md) for the end-to-end
 workflow.
 
 ## Verification and evidence

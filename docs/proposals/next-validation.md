@@ -1,5 +1,7 @@
 # Frozen validation of the post-1.772 candidate
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 The completed non-corpus gates below validate commit
 `3f09421f2139508c5c9549b6791eca43f30c5c41`, with runtime tree
 `747008c225808e48bfaf97455e1d808e8800aa59` and test tree

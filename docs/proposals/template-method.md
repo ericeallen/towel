@@ -1,5 +1,7 @@
 # Proposal: form a Template Method instead of extracting a free helper
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 Status: idea recorded 2026-09-18; not designed, not implemented. Research
 needed before design (see *What we need to find out*). Since 2026-09-22 the
 owner's decision "Towel does not change externally visible class design"

@@ -1,7 +1,10 @@
 # Work leading to 1.792
 
-The owner authorized this scope on September 27, 2026. Work stays on
-`codex/post-1772-performance`; publication remains the owner's action. The implementation and development
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
+The owner authorized this scope on September 27, 2026. Development ran on
+`codex/post-1772-performance`; final versioned validation uses `release/1.792`.
+Publication remains the owner's action. The implementation and development
 validation are complete; the owner selected 1.792 on September 30. Final
 versioned validation follows [the release procedure](../RELEASING.md).
 Sections below preserve intermediate checkpoints under their recorded dates;

@@ -1,7 +1,18 @@
 # Release Log
 
+[Documentation index](README.md)
+
 This log records notable repository states and the scope of their validation.
 A historical passing result applies to its recorded commit and test environment.
+
+**Contents — release checkpoints**
+
+- [1.792 preparation](#2026-09-30-1792-preparation)
+- [1.772 release](#2026-09-26-1772) · [1.772 candidate](#2026-09-19-1772-candidate)
+- [1.732.post1](#2026-09-19-1732post1) · [1.732 release](#2026-09-19-1732) · [Candidate checkpoints](#2026-09-19-historical-1732-candidate-checkpoints)
+- [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
+- [November 2025 entries](#2025-11-25)
+- [Measurement environment](#measurement-environment)
 
 ## 2026-09-30 (1.792 preparation)
 

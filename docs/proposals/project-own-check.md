@@ -1,5 +1,7 @@
 # Checking a project the way its own CI checks it
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 Status: proposal, 2026-09-23. Not scheduled. For 1.772 the owner chose a
 differential baseline instead: typed mode proceeds on a project whose
 baseline has errors, and rejects only a candidate that adds one (see

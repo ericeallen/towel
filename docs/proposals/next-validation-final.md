@@ -1,5 +1,7 @@
 # Completed corrected-source validation after 1.772
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 The records below validate commit `3af8c4bfe8acd56c204f5e31c7cf80f4f028b654`, runtime tree
 `78c8c6ea954f370a1afa8846a41988856589acc5`, and test tree `63c2bb4b75e17dbe12947d83dc9219346eecd6af`.
 Artifacts still carry version 1.772 and must not be uploaded. Later documentation

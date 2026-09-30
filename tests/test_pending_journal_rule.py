@@ -14,7 +14,7 @@
 
 """A pending journal stops an in-place run only when it may name a file the run would change.
 
-The rule is the README's: a journal names files relative to the directory it
+The rule is the CLI guide's: a journal names files relative to the directory it
 sits in, so only one in a directory above a file can name it, and one whose
 manifest cannot be read is taken to name every file beneath it. The third
 audit found the command line refusing whenever any ``.towel-transaction-*``

@@ -1,9 +1,22 @@
 # Known limitations
 
+[Documentation index](README.md)
+
 This document states what Towel verifies about a transformation, what it
 rejects, and what remains outside its model. Read it together with
 [the production readiness report](PRODUCTION_READINESS.md) and
 [the adversarial review](ADVERSARIAL_REVIEW.md).
+
+**Contents**
+
+- [What every accepted proposal verifies](#what-is-verified-for-every-accepted-proposal)
+- [Observable differences](#observable-differences-that-remain) · [Reflection and stack depth](#reflection-over-a-namespace-and-stack-depth)
+- [Cross-file imports](#a-cross-file-helper-adds-an-import-of-its-host-module)
+- [Method insertion](#method-insertion) · [Helper types](#type-annotations-on-helpers)
+- [Body instrumentation](#decorators-that-compile-or-instrument-a-body)
+- [Conservative rejections](#conservative-rejections)
+- [Unreadable programs](#a-program-towel-cannot-read-whole)
+- [Performance](#performance) · [Resources and platform](#resources-and-platform) · [Measurement environment](#measurement-environment)
 
 ## Measurement environment
 
@@ -2109,7 +2122,7 @@ above (macOS, Python 3.13,
 single core unless stated): the wall time of a whole `towel dry` run on the
 ecosystem check's clone of each project, before and after the measures
 above, with identical output in every case. These are the measured tables
-of package timings; the README refers here rather than repeating figures.
+of package timings; the [performance guide](PERFORMANCE.md) refers here rather than repeating figures.
 
 | Target | Before | After, one core | After, forking |
 |---|---|---|---|

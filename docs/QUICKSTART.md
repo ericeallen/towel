@@ -1,5 +1,7 @@
 # Quick start
 
+[Documentation index](README.md)
+
 Towel finds repeated Python code and extracts each group of duplicates into one
 helper function, rewriting the duplicates as calls. It verifies every extraction
 and leaves the naming to you. Refactoring changes your code, so the workflow is:
@@ -72,31 +74,37 @@ and a file where the checker cannot type what it imports is left alone. If the
 checker cannot run at all, fix what stops it or rerun the same command with
 `--no-types`, which preserves existing source annotations and leaves new
 helpers unannotated. See
-[How helpers get their types](../README.md#how-helpers-get-their-types).
+[Type checking and helper annotations](TYPING.md).
 
 ## 3. Give the helpers real names (optional, LLM-assisted)
 
+Review the diff and adopt the cleaned output into its project first, using
+your normal version-control workflow. The rename checker needs the package
+in its real import context. The commands below assume `path/to/project` now
+contains the adopted result.
+
 ```bash
-towel rename-helpers path/to/cleaned --list --json > helpers.json
+towel rename-helpers path/to/project --list --json > helpers.json
 # Have a coding assistant read helpers.json and write renames.json,
 # then apply the batch (it aborts whole if any name is unsafe):
-towel rename-helpers path/to/cleaned --rename-file renames.json --preview
-towel rename-helpers path/to/cleaned --rename-file renames.json
+towel rename-helpers path/to/project --rename-file renames.json --preview
+towel rename-helpers path/to/project --rename-file renames.json
 ```
 
-See the [README](../README.md#naming-the-helpers-with-an-llm) for the full
-naming workflow.
+See the [naming guide](NAMING.md) for inventory keys, class-private names
+and the full review workflow.
 
 ## 4. Review and test
 
 ```bash
-# adopt the cleaned copy however you version-control it, then:
+# run from the project containing the reviewed result:
 pytest   # or your project's own test command
 ```
 
 ## Next
 
-- [README](../README.md) — full CLI usage, requirements, and timing
+- [Command-line guide](CLI_GUIDE.md) — options, exclusions and recovery
+- [Requirements](REQUIREMENTS.md) and [performance](PERFORMANCE.md) — resources and timing
 - [Known limitations](KNOWN_LIMITATIONS.md) — what is verified, rejected, and outside the model
 - [Python API guide](USAGE_GUIDE.md) — using `UnificationRefactorEngine` directly
 - [Architecture](ARCHITECTURE.md) — how it works

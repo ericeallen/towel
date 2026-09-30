@@ -1,5 +1,7 @@
 # Performance roadmap: what is worth doing, in what order
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 Status: measured 2026-09-17 on Towel's own source (16k lines, 28 files) and
 on arrow (10k lines); item 1 applied the same day, items 2 to 5 in the days
 after (see *Done since*, at the end). The Rust question is answered by the

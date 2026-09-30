@@ -1,5 +1,7 @@
 # Preparing a release
 
+[Documentation index](README.md)
+
 The next version is **1.792**, named for ln 6. Its
 [changelog](../CHANGELOG.md#1792) records the changes since published 1.772.
 Current functionality, known limitations and the precise scope of completed
@@ -16,6 +18,15 @@ remain in their historical
 Preparing artifacts does not authorize uploading them, changing repository
 visibility, creating remote tags, or contacting users. Publication is a
 separate maintainer decision.
+
+**Contents**
+
+- [Recorded history](#recorded-release-history)
+- [Evidence gate](#repository-owned-evidence-gate) · [Schema](#evidence-schema-1) · [Changes after freezing](#changes-after-a-validation-freeze)
+- [Required local evidence](#local-evidence-required) · [Automation](#configured-automation)
+- [Consumer and typing evidence](#consumer-and-typing-evidence) · [Dependency audit](#dependency-audit)
+- [Candidate artifacts](#candidate-artifacts) · [Publication order and links](#publication-order-and-documentation-links)
+- [Release record](#recording-the-release) · [Maintainer decisions](#maintainer-decisions-before-publication)
 
 ## Recorded release history
 
