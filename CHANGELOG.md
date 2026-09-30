@@ -21,6 +21,14 @@ ecosystem evidence behind each claim. The format follows
 
 ### Changed
 
+- The supported local release command requires completed, reviewed evidence
+  for the exact source and prebuilt distributions. Missing phases, interrupted
+  baselines, changed failure identities and stale artifacts refuse verification.
+  Validation-only artifacts remain explicitly nonpublishable.
+- Completed corrected-source validation has immutable evidence and documentary
+  regressions for actual platform coverage, resources, elapsed time and scoped
+  exceptions; see [the report](docs/proposals/next-validation-final.md).
+
 - Extraction discovery now includes match-case bodies and except-star
   handlers/finally. List-valued AST fields can unify differing expression
   values while retaining restrictions on bindings and control flow.
@@ -45,6 +53,14 @@ ecosystem evidence behind each claim. The format follows
   `Protocol`, explicit-decorator and import-time checks remain. This admits
   valid extractions previously declined solely for a metaclass, class hook,
   subscripted project base or unlisted library base.
+
+### Fixed
+
+- Generated compound annotations remain wholly quoted, including tuple returns
+  assembled late in signature construction. Precise checker types no longer add
+  attribute lookups, subscriptions or union operations while a module imports.
+- Star-import resolution treats the imported target as a module. Cyclic
+  reexports no longer invent ever-longer attribute paths in Protocol analysis.
 
 ### Performance
 

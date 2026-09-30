@@ -278,11 +278,17 @@ quotation, with precise types and all other AST nodes unchanged. This closes
 the observed runtime defect; it does not make Tornado's upstream suite green
 or establish completion of the final full corpus.
 
-Let the running corpus finish to expose any other defects, then validate one
-corrected frozen source with the full corpus, interpreter matrix,
-self-dogfooding, fuzzing, documentation and artifact checks. Retain every raw
-outcome, including known reflection failures, explicit refusals, untyped
-fallbacks and pre-existing upstream failures. Full final validation is still
-pending. Mechanical checks run as processes. Use at most one focused
-independent reviewer for semantic changes; revisit review only for changed
-code or an unresolved finding.
+The corrected frozen source `3af8c4b` now has a completed full corpus, serial
+Linux interpreter matrix, transformed native suite, fuzzing and artifact checks.
+The [completed validation report](next-validation-final.md) retains their exact
+counts, platforms, resources, elapsed times and exceptions. It also preserves
+the interrupted predecessor and the completed nonzero Towel corpus baseline;
+those do not become green upstream suites. Later documentary regressions are
+checked separately from the frozen suite counts.
+
+The repository-owned [release gate](../RELEASING.md#repository-owned-evidence-gate)
+requires exact prebuilt artifacts and reviewed evidence. The development
+artifacts still numbered 1.772 remain validation only. The controlled comparison
+with the published 1.772 wheel and final documentary/artifact reconciliation
+remain separate completion steps. Publication requires a new chosen version,
+validation of that frozen release, exact-commit CI and the owner's action.
