@@ -18,6 +18,10 @@ A historical passing result applies to its recorded commit and test environment.
   distinguish the Sphinx first-reveal improvement from Packaging's flat full
   command. Their background-load conditions supersede the historical defaults
   below for those experiments.
+- Development dependency audit: a fresh check reported four virtualenv
+  advisories against locked 21.7.9. The lock now selects 21.14.1, including the
+  maintainer's later activation-script fixes, with other dependency pins
+  unchanged. The interrupted first preparation attempt retains its own evidence.
 - Release validation: freeze the complete 1.792 source and retain its exact
   commit, artifact hashes, completed gates, corpus review and GitHub CI run in
   the external release-evidence bundle. No 1.792 CI success is claimed here.

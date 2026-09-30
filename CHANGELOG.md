@@ -62,6 +62,10 @@ release verification binds the final versioned source to its own evidence.
 
 ### Fixed
 
+- The development lock now uses virtualenv 21.14.1. Fresh dependency auditing
+  found four advisories against the previous 21.7.9 pin; the update also includes
+  the maintainer's later activation-script fixes. Runtime dependencies remain
+  unchanged.
 - Generated compound annotations remain wholly quoted, including tuple returns
   assembled late in signature construction. Precise checker types no longer add
   attribute lookups, subscriptions or union operations while a module imports.
