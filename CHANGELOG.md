@@ -64,6 +64,13 @@ ecosystem evidence behind each claim. The format follows
 
 ### Performance
 
+A completed comparison against the actual published 1.772 wheel found no
+meaningful Packaging whole-command speedup (39.98 versus 39.77 seconds; the
+candidate performed one more extraction). Sphinx's first Pyright reveal fell
+from 931.07 to 8.63 seconds, about 108 times faster, with identical requests
+and answers. This measures the reveal phase only; it establishes no full-run
+or whole-corpus speedup. See the [measurements and limitations](docs/proposals/published-1772-comparison.md).
+
 The typed timings below compare intermediate commits `35035a7` and `1b97196`;
 later changes are outside these measurements.
 

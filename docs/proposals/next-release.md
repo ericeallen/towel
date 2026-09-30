@@ -288,7 +288,10 @@ checked separately from the frozen suite counts.
 
 The repository-owned [release gate](../RELEASING.md#repository-owned-evidence-gate)
 requires exact prebuilt artifacts and reviewed evidence. The development
-artifacts still numbered 1.772 remain validation only. The controlled comparison
-with the published 1.772 wheel and final documentary/artifact reconciliation
-remain separate completion steps. Publication requires a new chosen version,
-validation of that frozen release, exact-commit CI and the owner's action.
+artifacts still numbered 1.772 remain validation only. The completed
+[comparison against the published 1.772 wheel](published-1772-comparison.md)
+shows a large first-reveal gain for Sphinx and no meaningful whole-command
+speedup for Packaging. Final documentary amendments and rebuilt artifacts use
+separate source-bound checks; they do not relabel the frozen runtime results.
+Publication requires a new chosen version, validation of that frozen release,
+exact-commit CI and the owner's action.
