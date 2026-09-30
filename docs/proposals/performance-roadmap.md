@@ -144,7 +144,7 @@ near-identical 38-line functions under `--max-pairs 200000` peaked at
 (`--max-pairs`, 20,000,000 by default) leaves out the largest groups of
 similar blocks with a warning when the projected pair count exceeds it,
 and the verdict of the instantiation check is memoized on the helper, the
-call and the block's structure. The CHANGELOG's `[Unreleased]` section
+call and the block's structure. The CHANGELOG's 1.792 section
 records each step with its measurement; the current end-to-end figures are
 in docs/KNOWN_LIMITATIONS.md.
 
@@ -202,7 +202,14 @@ with memoization enabled and disabled. Declaration results are also checked
 against CPython's symbol table. These measurements establish less repeated
 work; they do not measure the speedup of a complete typed project refactoring.
 
-## Typed Sphinx investigation after 1.772: still open
+## Initial typed Sphinx investigation after 1.772
+
+The investigation below is the September 26 checkpoint. Its first-reveal
+bottleneck was subsequently addressed by batching: the
+[published-wheel comparison](published-1772-comparison.md) records identical
+requests and answers with means of 931.071 and 8.632 seconds. That comparison
+measures the reveal phase only; whole-run and whole-corpus speedups remain
+unestablished. The older trace and proposed next steps below remain historical.
 
 A bounded diagnostic run on September 26, 2026, used Towel `088a4c7`,
 Sphinx `e44a40eb2f810558ccd9da1425421270ccb81351` (9.1.1), Python 3.12.14,

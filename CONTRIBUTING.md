@@ -243,6 +243,6 @@ If you have questions, feel free to:
 
 Thank you for contributing to Towel!
 
-For reproducible tool versions, use `uv sync --frozen --extra dev` and the commands in README.md (`just ci` runs the same set locally). CI runs the full tests and an unconditional 85% coverage gate for each supported Python version, and on Python 3.13 also Black, flake8, mypy, Bandit, `pip-audit --strict`, and a wheel and source build; a separate weekly and on-demand workflow runs the 141-project ecosystem check on a discarded runner, and Dependabot proposes grouped dependency updates weekly. `just release VERSION` prepares local distributions only; publication requires maintainer review of the current audit and policy decisions.
+For reproducible tool versions, use `uv sync --frozen --extra dev` and the commands in README.md (`just ci` runs the same set locally). CI runs the full tests and an unconditional 85% coverage gate for each supported Python version, and on Python 3.13 also Black, flake8, mypy, Bandit, `pip-audit --strict`, and a wheel and source build; a separate weekly and on-demand workflow runs the 141-project ecosystem check on a discarded runner, and Dependabot proposes grouped dependency updates weekly. `just release VERSION /path/to/release-evidence.json` verifies completed evidence for prebuilt distributions; it never builds, publishes or tags. Publication requires maintainer review of the exact release source, artifacts, CI and policy decisions.
 
 Release maintainers should follow [docs/RELEASING.md](docs/RELEASING.md).

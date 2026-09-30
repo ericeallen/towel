@@ -1,7 +1,13 @@
-# Work after 1.772
+# Work leading to 1.792
 
 The owner authorized this scope on September 27, 2026. Work stays on
-`codex/post-1772-performance`; publication remains the owner's action.
+`codex/post-1772-performance`; publication remains the owner's action. The implementation and development
+validation are complete; the owner selected 1.792 on September 30. Final
+versioned validation follows [the release procedure](../RELEASING.md).
+Sections below preserve intermediate checkpoints under their recorded dates;
+the completed [validation](next-validation-final.md) and
+[published-wheel comparison](published-1772-comparison.md) supersede their
+pending-work statements.
 
 ## Preservation contract
 
@@ -45,7 +51,7 @@ improvement with type checking enabled, not a lower proposal counter; measure
 the cost of early analysis against avoided checking. These decisions and
 their regression coverage are recorded in `docs/DECISIONS.md` (September 27).
 
-## Current measured proposal failures
+## Initial measured proposal failures (September 27)
 
 A controlled source-only run on installed packaging 26.3, Python 3.13,
 strict mypy, same-file extraction and no formatter reached a fixed point on
@@ -293,5 +299,5 @@ artifacts still numbered 1.772 remain validation only. The completed
 shows a large first-reveal gain for Sphinx and no meaningful whole-command
 speedup for Packaging. Final documentary amendments and rebuilt artifacts use
 separate source-bound checks; they do not relabel the frozen runtime results.
-Publication requires a new chosen version, validation of that frozen release,
-exact-commit CI and the owner's action.
+The owner selected 1.792. Publication requires validation of that frozen
+versioned release, exact-commit CI and the owner's action.

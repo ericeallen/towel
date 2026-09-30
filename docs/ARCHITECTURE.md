@@ -459,13 +459,18 @@ module every time, so patching or rebinding it (`mock.patch("mod.f1")`)
 changed the forwarder too (audit `r06`). Since commit `c4bf39e` every
 whole-body site is extracted like any other: both functions become calls of
 one new helper, which nothing outside can know to patch, and each existing
-function keeps depending only on itself. `reuse.py` keeps only the rule that
-declines reducing an earlier pass's helper to a forwarder while another site
-is only part of its function, and the arity check for a proposal built by
-other means that names an existing function. That left
-`reuse_existing_functions` with no effect; the engine still accepts it,
-deprecated, so existing callers keep working until a later release removes
-it.
+function retains its independent binding. `reuse.py` distinguishes those input
+functions from compatible plain module helpers generated earlier in the same
+staged run. A duplicate can call such a generated helper with its original
+signature and safe host, avoiding another forwarding helper. Equivalent helpers
+generated in separate batches can become aliases in a safe module when their
+plain positional signatures and bodies match, annotations are inert, generated
+provenance is known, and the exact earlier helper import is verified. Existing
+input names, including helper-shaped names, never gain that provenance merely
+from their spelling. General redirection of consumers, same-name collisions and
+same-module consolidation remain outside this reuse rule. The public
+`reuse_existing_functions` option remains deprecated and has no effect; it does
+not enable redirection to arbitrary input functions.
 
 ## Helper annotations
 
@@ -1355,12 +1360,15 @@ on Towel's source fell from 464 million to 246 million (September 18,
 Python 3.12, one other single-core job running), `towel dry src/towel` on
 that day's source (22,690 lines, 15 applied) took 8.4 s with a peak
 resident size of 174 MB under `--no-types --no-format`, and 11.9 s and
-894 MB with the defaults. The current figure is at `8cb8b8c`, September 24,
+894 MB with the defaults. A later historical figure is at `8cb8b8c`, September 24,
 2026 (the same machine and settings, other work loading it to a load
 average of 11 to 13): on 46,165 lines it takes 35 s under `--no-types
 --no-format` (22 applied) and 138 s with the defaults (21 applied). The tables in
 [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#performance) give the
-per-project figures.
+per-project figures. The [published-wheel comparison](proposals/published-1772-comparison.md)
+records the later first-Pyright-reveal improvement and Packaging full-command
+result with their separate timing boundaries; it establishes no complete-Sphinx
+or whole-corpus speedup.
 
 ## Diagnostics and settings
 

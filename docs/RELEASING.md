@@ -1,37 +1,29 @@
 # Preparing a release
 
-The `1.772` release is dated September 26, 2026. Its
-[changelog](../CHANGELOG.md#1772---2026-09-26) records what changed since
-`1.732`. Helpers are shared within one module unless `--cross-module` is
-given. Import names come from the program's own imports. A typed run is
-compared against the project's own check where the original's errors stood.
-Code under decorators that rewrite bodies stays where it is. The rest are the
-defects four rounds of audit found and fixed, each pinned by a test. The
-preceding `1.732.post1` release corrected PyPI documentation links without
-changing the Python implementation in `1.732`; its
-[post-release changelog](../CHANGELOG.md#1732post1---2026-09-19) records that
-fix, and the [1.732 changelog](../CHANGELOG.md#1732---2026-09-19) summarizes
-reuse of existing functions, optional formatting and typing, larger-project
-controls, and that release's audit fixes. The candidate commit and the evidence
-behind each claim are recorded in the
-[readiness report](PRODUCTION_READINESS.md).
+The next version is **1.792**, named for ln 6. Its
+[changelog](../CHANGELOG.md#1792) records the changes since published 1.772.
+Current functionality, known limitations and the precise scope of completed
+development validation are linked from the
+[readiness report](PRODUCTION_READINESS.md). The versioned release needs its
+own frozen source, prebuilt artifacts, completed evidence and exact-commit CI;
+older development artifacts still numbered 1.772 cannot be published as 1.792.
 
-The 1.772 corpus, typed and with `--cross-module`, gave 90 `PASS`,
-45 `NO_CHANGE` and six import-problem refusals among 141 projects; the
-[readiness report](PRODUCTION_READINESS.md#1772-release-validation-september-26-2026)
-gives the commits, the refusals' causes and the four projects that took the
-untyped path. Earlier corpus reports belong to their own commits. Preparing
-artifacts does not authorize uploading
-them, changing repository visibility, creating remote tags, or contacting users.
-Publication is a separate maintainer decision.
+The preceding [1.772 release](../CHANGELOG.md#1772---2026-09-26) is dated
+September 26, 2026. Its corpus gave 90 `PASS`, 45 `NO_CHANGE` and six
+import-problem refusals among 141 projects. Its corpus and CI observations
+remain in their historical
+[readiness section](PRODUCTION_READINESS.md#1772-release-validation-september-26-2026).
+Preparing artifacts does not authorize uploading them, changing repository
+visibility, creating remote tags, or contacting users. Publication is a
+separate maintainer decision.
 
 ## Recorded release history
 
 Recorded during September 2026; verify current remote state before publication:
 
-- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` (September 15, 2026), `1.618` (September 17, 2026), and `1.732` and `1.732.post1` (September 19, 2026) are published and not yanked; none may be rebuilt or replaced. Publish the next release as a new version.
+- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` (September 15, 2026), `1.618` (September 17, 2026), and `1.732` and `1.732.post1` (September 19, 2026) are published and not yanked. Version `1.772` is also published (release dated September 26; PyPI upload September 27 UTC). None may be rebuilt or replaced. Publish the next release as a new version.
 - The GitHub repository was made public on September 15, 2026, and its default branch is `main`. Earlier authenticated inspection (while private) found historical releases `v0.5.0` and `v0.5.1`, an active CI workflow, and an unprotected `main` branch. Verify the actual remote settings before relying on any of them.
-- The public PyPI description still represents the earlier release. A new distribution must carry the current status documentation, known limitations, and Python requirement.
+- PyPI embeds each uploaded distribution's README. A new distribution must carry the current version's documentation links, known limitations and Python requirement; editing GitHub afterward does not update an uploaded description.
 
 Recheck live version availability immediately before publishing. The proposed version number is not reserved.
 
@@ -175,6 +167,10 @@ interpreter/tool versions, exit statuses, and retained evidence paths.
 This table describes the current workflow configuration, not a completed run
 or a promise that the next candidate passes. Historical release results keep
 their original platforms and interpreter versions in the readiness report.
+CI runs for pull requests and pushes to `main` or `release/**`. Preparing a
+release branch permits exact-commit push CI without changing `main`. Verify
+that the completed CI run's `headSha` is the frozen release commit; a green
+run on an ancestor or a different pull-request merge is insufficient.
 
 | Job | Runner | Python | Scope |
 | --- | --- | --- | --- |
@@ -245,10 +241,14 @@ everything already in the environment is held at its version by a constraints
 file, so the test dependencies, the checkers and formatters chosen above, and
 the project itself cannot change, and a requirement naming one of them is left
 as it is. A requirement the installer cannot add beside them is refused and
-recorded, not resolved around. The checkers therefore see what the project's
-own type check sees, and Towel's import model sees the project installed from
-the tree it refactors rather than an installed copy elsewhere, which it would
-count as a second provider of the project's names.
+recorded, not resolved around. These dependencies expose the project's declared typing requirements, but do
+not reproduce every project-owned hook or CI invocation. In particular, a
+hook's Python target can differ from Towel's combined invocation; the Cheroot
+gap is recorded in the [completed development validation](proposals/next-validation-final.md).
+Reconcile targets, flags, dependencies and interpreter before attributing a
+typed refusal to the project. Towel's import model sees the editable project
+from the tree it refactors rather than an installed copy elsewhere, which it
+would count as a second provider of the project's names.
 The editable install follows the tree each test run exercises: the clone for
 the baseline, the refactored copy for Towel and the run after it, and the
 original package again for each retest of the original, so a regression in a
@@ -395,7 +395,7 @@ wheel environment; the audit command requires `pip-audit` in the audit environme
 
 ### Candidate artifacts
 
-**Before building, sweep every human-facing version reference, not just `pyproject.toml`.** `python -m build` embeds the README into the wheel and sdist as the PyPI `long_description`, and PyPI freezes that description at upload time: a published version's project page cannot be edited afterward, so a stale version string ships to PyPI and stays wrong until the next release. `just bump-version` rewrites the version in `pyproject.toml` and then refreshes `uv.lock` and the dev environment (`uv lock`, `uv sync --frozen --extra dev`); it touches no other file. After bumping, grep the tree for the outgoing version and update at least `README.md`'s `**Release status: X (beta).**` line and `SECURITY.md`'s "currently **X**" supported-version line, then rebuild so the corrected README is what gets embedded. (code-towel 1.618 shipped with the README still reading 1.414 for exactly this reason; the PyPI 1.618 page cannot be corrected.)
+**Before building, sweep every human-facing version reference, not just `pyproject.toml`.** `python -m build` embeds the README into the wheel and sdist as the PyPI `long_description`, and PyPI freezes that description at upload time: a published version's project page cannot be edited afterward, so a stale version string ships to PyPI and stays wrong until the next release. `just bump-version` rewrites the version in `pyproject.toml` and then refreshes `uv.lock` and the dev environment (`uv lock`, `uv sync --frozen --extra dev`); it touches no other file. Before freezing, search the tree for the outgoing version and update `README.md`'s `**Release status: X (beta).**` line, its version-pinned documentation links, and `SECURITY.md`'s source-target version. Preserve historical measurements and released-version records under their original identities. The README in the built artifacts must match the reviewed source. (code-towel 1.618 shipped with the README still reading 1.414 for exactly this reason; the PyPI 1.618 page cannot be corrected.)
 
 For the exact candidate commit:
 
@@ -452,12 +452,12 @@ and try to reuse a published version.
 
 ## Recording the release
 
-Once the version is chosen and the evidence is in:
+Complete these source edits before freezing and building the release:
 
-1. Convert the `[Unreleased]` heading of [CHANGELOG.md](../CHANGELOG.md) to `## [X.Y] - YYYY-MM-DD` and open a new, empty `[Unreleased]` above it.
-2. Add an entry at the top of [RELEASE_LOG.md](RELEASE_LOG.md): version, the commit or tag, a summary, and the test and ecosystem status.
-3. Update the first paragraph of this document (the latest release, its date, and what the next one carries).
-4. Tag the release commit `vX.Y` (`git tag` lists the existing ones: `v0.5.0`, `v0.5.1`, `v0.5.3`, `v0.5.4`, `v0.6.6`, `v1.414`, `v1.618`, `v1.732`, `v1.732.post1`); the tag is created locally and pushed only as part of the maintainer's publication decision.
+1. Move completed changes from `[Unreleased]` into `## [X.Y]` in [CHANGELOG.md](../CHANGELOG.md) and leave an empty `[Unreleased]` above it. Add a date only if it is already known; publication metadata can record the actual date without changing frozen artifacts.
+2. Add a preparation entry to [RELEASE_LOG.md](RELEASE_LOG.md) naming the version, summary, existing evidence and its limits. Record the final commit, artifact hashes, completed outcomes and CI run externally alongside the artifacts; do not edit a shipped file after its validation freeze.
+3. Update the current-version summary in this document and the readiness report. Do not describe a planned check or publication as completed.
+4. After exact-commit CI and the live PyPI availability check, the maintainer may tag `vX.Y` as specified above. Inspect current tags rather than relying on a historical list. Tagging and publication remain separate from preparing this source.
 
 ## Maintainer decisions before publication
 

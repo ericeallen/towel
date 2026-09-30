@@ -3,9 +3,28 @@
 This log records notable repository states and the scope of their validation.
 A historical passing result applies to its recorded commit and test environment.
 
+## 2026-09-30 (1.792 preparation)
+
+- Version: 1.792, named for ln 6; publication and tagging are not recorded here.
+- Changes: checked fixed-point preview, caller-narrowing boundaries, batched
+  Pyright reveals, safe discovery in match/except-star suites, generated-helper
+  reuse and inert compound annotations. See [the changelog](../CHANGELOG.md#1792).
+- Development validation completed at `3af8c4b`; later documentary and gate
+  amendments passed 206 focused tests and quality checks at `253b434`, including
+  the actual rebuilt sdist. [The report](proposals/next-validation-final.md)
+  preserves platforms, counts, resources and corpus exceptions. Those artifacts
+  still say 1.772 and are not release artifacts for 1.792.
+- Performance: [published-wheel measurements](proposals/published-1772-comparison.md)
+  distinguish the Sphinx first-reveal improvement from Packaging's flat full
+  command. Their background-load conditions supersede the historical defaults
+  below for those experiments.
+- Release validation: freeze the complete 1.792 source and retain its exact
+  commit, artifact hashes, completed gates, corpus review and GitHub CI run in
+  the external release-evidence bundle. No 1.792 CI success is claimed here.
+
 ## Measurement environment
 
-Every time, memory and disk figure in this document was measured on an Apple
+Every time, memory and disk figure in the historical entries below was measured on an Apple
 M5 Max with 18 cores and 128 GiB of memory, writing to an APFS internal
 volume. Unless a figure says otherwise it was taken with the machine
 otherwise idle and with Towel's CLI defaults, and a figure that names a

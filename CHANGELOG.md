@@ -9,6 +9,12 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+## [1.792]
+
+Named for ln 6, approximately 1.791759469. Changes since 1.772.
+The measurements below retain their original development-source identities;
+release verification binds the final versioned source to its own evidence.
+
 - Preview now runs the same checked, formatted fixed-point pipeline as dry in
   private output and shows its final diff and helper inventory. Use explicit
   `--quick` for a partial structural listing. Input files remain unchanged.

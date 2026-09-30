@@ -754,9 +754,9 @@ visible class design"). The rule's costs:
 
 A method helper is class-private: `__extracted_func_0`, which its class `A`
 stores as `_A__extracted_func_0` and its methods call as
-`self.__extracted_func_0()`. No subclass, in the project or outside it, can
-override it or collide with it, since a subclass's own `__extracted_func_0`
-is stored under the subclass's name. Mangling goes by name, not by class, so
+`self.__extracted_func_0()`. An ordinary differently named subclass's own
+`__extracted_func_0` is stored under its own name, preventing an accidental
+override through that spelling. Mangling goes by name, not by class, so
 a subclass named like its base (`class A(base.A)`) that defines
 `__extracted_func_0` stores it as `_A__extracted_func_0` too: Python sources
 under the project root are read for such a member, for `_A__extracted_func_0`
@@ -1006,8 +1006,12 @@ where the evidence comes from:
   that `Any`, the caller's loop is unremarkable to mypy while Pyright still
   objects. Towel wrote the type the checker revealed and accepted the answer
   the checker gave; the limit is the checker's, not the transformation's.
-- The degradation on a type error is per proposal, not per parameter: one
-  annotation the checker rejects costs the helper all of them.
+- A rejected precise signature does not automatically erase all annotations.
+  The bounded annotation ladder can generalize complete argument/result rows
+  and try targeted `Any` substitutions. Each candidate still passes the project
+  check; the ladder preserves unchanged annotations where that narrower repair
+  succeeds. A final broad fallback is a separate validated candidate, not
+  permission to ignore new checker errors.
 - Verification checks complete prospective project graphs, overlaying all
   changed files together, and compares each with the project as it stood. A newly
   imported helper therefore exists in its host while its consumers are checked.
@@ -1902,9 +1906,13 @@ formed pair:
   a call looks the other function up in its module every time, so
   `mock.patch("mod.f1")`, or any other rebinding of `mod.f1`, changed `f2`
   as well (audit `r06`). The `reuse_existing_functions` setting is
-  deprecated and changes nothing. A site that duplicates an earlier pass's helper, where
-  the other site is only part of its function, is left in place rather than
-  reduced to a call of it or chained through it.
+  deprecated and changes nothing. Compatible plain module helpers generated
+  earlier in this staged run can be reused with their original signature and
+  safe host. Equivalent generated helpers from independent batches can become
+  aliases when plain positional signatures, bodies, inert annotations and
+  import/provenance checks agree. User-input functions retain independent
+  bindings. General consumer redirection, same-name collisions and same-module
+  consolidation remain deferred.
 - A block that begins at an `elif` is never extracted, because its call
   would have to be rendered inside the preceding branch's `else`; the
   `elif`'s own body and further branches remain candidates. This gives up a
@@ -1963,10 +1971,12 @@ it tractable, all exact: they change no proposal.
 - Blocks that can never be accepted are not enumerated: one that returns on
   some path but not every path, or a lone expression statement. On pyflakes'
   2,167-line `test_other.py` that removes 32,857 of 44,826 rejected pairs.
-- Every analysis result is cached by the block's structure, not by node
-  identity, so a fixed-point iteration that re-parses a file still reuses
-  results for the blocks it did not touch. Unification results are stored as
-  positions and rehydrated onto the matching blocks.
+- Pure structural unification results are stored as positions and rehydrated
+  onto matching blocks. Site-sensitive safety checks also key or validate the
+  relevant module, source and scope facts; equal AST structure alone cannot
+  transfer a permission to another binding environment. Other immutable facts
+  use AST-lifetime memos. See [the cache boundaries](ARCHITECTURE.md)
+  for the different lifetimes and invalidation rules.
 - The clustering pass scans a file for the sites that can share a helper
   once per distinct helper template, not once per pair (every pair of N
   near-identical blocks renders the same template; 50 identical functions
@@ -1977,9 +1987,9 @@ it tractable, all exact: they change no proposal.
   7.9 s for 50 and 27 to 29 s for 100, in CPU time as in wall time, a
   factor of about 4 for twice the functions; at `5ff2458`, with one other
   single-core job running and before 1.772's per-call-site safety checks,
-  they took 4.0 s and 15.9 s), memoizes its per-candidate
-  pipeline on the template, the candidate, and the pair's helper, and
-  applies its constant-time filters before the semantic guards. The
+  they took 4.0 s and 15.9 s). Constant-time filters precede semantic
+  guards. The former per-candidate pipeline memo was removed because template
+  bindings and helper state can differ; semantic guards use the current site. The
   remaining growth is cubic: every one of the N²/2 pairs legitimately
   proposes the same N-site extraction until the first application collapses
   them. Pair evaluation therefore keeps the first proposal of each identity

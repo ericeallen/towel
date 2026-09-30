@@ -1,5 +1,36 @@
 # Production readiness
 
+## 1.792 release preparation
+
+Version **1.792** carries the [post-1.772 changes](../CHANGELOG.md#1792):
+checked fixed-point preview, caller-narrowing preservation, Pyright reveal
+batching, broader safe duplicate discovery, generated-helper reuse and inert
+precise annotations. [Design decisions](DECISIONS.md) and intent-bearing tests
+record the preservation contract.
+
+The [completed development validation](proposals/next-validation-final.md)
+identifies its exact frozen source, three Linux interpreter runs, native
+transformed-source suite, 141-project corpus and reviewed exceptions.
+The [published-wheel comparison](proposals/published-1772-comparison.md)
+establishes a large first-reveal gain for Sphinx and no meaningful complete-CLI
+gain for Packaging. It establishes no whole-corpus speedup. Those measurements
+have their own platform, load and timing boundaries; the historical default
+conditions below do not override them.
+
+That evidence belongs to development artifacts still numbered 1.772. Release
+1.792 must be built and validated at its own frozen commit, with the full raw
+results, review and exact-commit CI retained alongside its distributions.
+The [release procedure](RELEASING.md) and repository-owned verifier enforce the
+local evidence boundary. No pending run or historical success establishes
+completion of that final release validation.
+
+Cheroot's project-hook target alignment remains a known typed-integration gap;
+the development corpus's Cheroot, Trio and typing_extensions fallbacks establish
+untyped parity only. Conservative import-origin refusals and Pyparsing's listed
+traceback-reflection failures retain their explicit scope in that report.
+
+## Previous published release
+
 **1.772 is released on September 26, 2026, from `audit-1772`.** It repays
 the defects that four audit rounds found in 1.732's design. Helpers are shared
 within one module unless `--cross-module` is given. Import names come only
@@ -10,14 +41,15 @@ change the September 19 candidate carried, is part of it. The
 [changelog](../CHANGELOG.md#1772---2026-09-26) lists every change.
 
 Release evidence is valid only for the exact source it was taken from. The
-validation below names its commits; `src/towel` is identical at each of them.
+historical 1.772 validation below names its commits; the qualified runtime
+comparison in that section applies only to those historical states.
 Passing the sampled tests does not establish equivalence for arbitrary Python
 programs; review generated changes and the
 [known limitations](KNOWN_LIMITATIONS.md).
 
 ## Measurement environment
 
-Every time, memory and disk figure in this document was measured on an Apple
+Every time, memory and disk figure in the historical sections below was measured on an Apple
 M5 Max with 18 cores and 128 GiB of memory, writing to an APFS internal
 volume. Unless a figure says otherwise it was taken with the machine
 otherwise idle and with Towel's CLI defaults, and a figure that names a

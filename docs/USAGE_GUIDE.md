@@ -53,17 +53,17 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
 
-# Analyze all Python files in a directory (recursive)
-proposals = engine.analyze_directory("src/", recursive=True)
-
-# Apply all proposals
-for proposal in proposals:
-    modified_files = engine.apply_refactoring_multi_file(proposal)
-
-    for file_path, content in modified_files.items():
-        with open(file_path, 'w') as f:
-            f.write(content)
+# Reanalyze as changes are applied, writing the completed result to a copy.
+results, reason = engine.refactor_directory_to_fixed_point(
+    "src/", "src_cleaned/", max_iterations=0, progress="none"
+)
 ```
+
+A proposal belongs to the exact source snapshot analyzed. After applying one,
+reanalyze before selecting another that could touch changed files; stale source
+is refused. The fixed-point driver handles this sequencing. These API examples
+use the engine's explicitly supplied tools; the CLI also constructs the project
+checker and formatter from its defaults and options.
 
 ## Progress Modes & Termination Reason
 
@@ -495,8 +495,8 @@ proposal.replacements         # List of Replacement dataclasses: line_range, nod
                               # method_kind, implicit_param
 proposal.file_path            # Canonical location for the extracted function
 proposal.reused_function      # ReusedFunction(name, file_path, line_range) on a proposal
-                              # built by hand whose sites call an existing function;
-                              # always None from the engine, which extracts a helper
+                              # for a compatible helper generated earlier in this run;
+                              # input functions retain independent bindings
 proposal.required_imports     # Imports the host needs for the helper's annotations
 proposal.helper_type_declarations  # Fresh generic declarations, materialized with the helper
 proposal.helper_comments      # The sites' comments the helper carries (see Comments below)
@@ -728,8 +728,10 @@ class Report:
 ```
 
 A block that methods of one class share becomes a method of that class, with a
-class-private name, which the class stores as `_Report__extracted_func_0`, so
-no subclass can override it. Written in the class's body, the helper reads
+class-private name, which the class stores as `_Report__extracted_func_0`,
+avoiding accidental overrides by ordinary differently named subclasses.
+Explicit mangled-name writes and same-named subclasses require the
+[documented hygiene checks and scope limits](KNOWN_LIMITATIONS.md#method-insertion). Written in the class's body, the helper reads
 `self.__cache` as the methods did. A block shared by methods of different
 classes, siblings or a parent and its child, becomes a module-level function
 that takes the receiver as an argument instead: Towel never adds a method to a
@@ -905,9 +907,14 @@ for proposal in proposals:
 ### Selective Application
 
 ```python
-# Only apply to specific files
-for proposal in proposals:
-    if "utils" in proposal.file_path:
-        modified_files = engine.apply_refactoring_multi_file(proposal)
-        # Write files...
+from towel.changes import apply_changes
+
+proposals = engine.analyze_directory("src/", progress="none")
+selected = next(
+    (proposal for proposal in proposals if "utils" in proposal.file_path),
+    None,
+)
+if selected is not None:
+    apply_changes(engine.plan_refactoring(selected))
+# Analyze again before selecting another proposal.
 ```
