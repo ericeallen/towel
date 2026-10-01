@@ -292,11 +292,11 @@ class _References:
     once, to such a string (``MODULE = "pkg.mod"``).
     """
 
-    def __init__(self, path: Path, tree: ast.Module) -> None:
+    def __init__(self, path: Path, nodes: Sequence[ast.AST]) -> None:
         self._path = path
-        self._strings = _string_names(tree)
+        self._strings = _string_names(nodes)
         self._bound: Dict[str, Set[_ModuleRef]] = {}
-        for node in ast.walk(tree):
+        for node in nodes:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.asname:
@@ -306,7 +306,7 @@ class _References:
                         self._bind(head, {head})
             elif isinstance(node, ast.ImportFrom):
                 self._bind_import_from(node)
-        for node in ast.walk(tree):
+        for node in nodes:
             if (
                 isinstance(node, ast.Assign)
                 and len(node.targets) == 1
@@ -419,10 +419,10 @@ def _string_parts(node: ast.expr, strings: Mapping[str, str]) -> List[Optional[s
     return [None]
 
 
-def _string_names(tree: ast.Module) -> Dict[str, str]:
-    """The names ``tree`` binds exactly once, by an assignment of a string it spells statically."""
+def _string_names(nodes: Sequence[ast.AST]) -> Dict[str, str]:
+    """Names in a module walk bound exactly once to a statically spelled string."""
     bindings: Dict[str, int] = {}
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
             names = [node.id]
         elif isinstance(node, ast.arg):
@@ -437,7 +437,7 @@ def _string_names(tree: ast.Module) -> Dict[str, str]:
             bindings[name] = bindings.get(name, 0) + 1
     values = {
         target.id: node.value
-        for node in ast.walk(tree)
+        for node in nodes
         if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None
         for target in _targets(node)
         if isinstance(target, ast.Name) and bindings.get(target.id) == 1
@@ -479,9 +479,13 @@ class _WriteScanner(ast.NodeVisitor):
     def __init__(self, path: Path, tree: ast.Module, shown: str) -> None:
         self._path = path
         self._shown = shown
-        self._references = _References(path, tree)
+        # These indexes read the same immutable tree. Share its traversal only
+        # while constructing this scanner, rather than walking every file five
+        # times or retaining whole project trees in a process-wide cache.
+        nodes = tuple(ast.walk(tree))
+        self._references = _References(path, nodes)
         self._parents: Dict[ast.AST, ast.AST] = {
-            child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)
+            child: parent for parent in nodes for child in ast.iter_child_nodes(parent)
         }
         self._nesting = 0
         self.by_path: Dict[Path, List[NamespaceWrite]] = {}

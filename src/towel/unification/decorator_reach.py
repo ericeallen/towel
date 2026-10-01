@@ -451,6 +451,24 @@ class _Resolver:
         self.stamps: Set[_Stamp] = set()
         self._writes: Dict[str, ProjectWrites] = {}
         self._into: Dict[str, Tuple[NamespaceWrite, ...]] = {}
+        # A resolver reads one immutable project snapshot. Its dependency stamps
+        # accumulate for the whole question, including the first evaluation of
+        # each memo below; reuse must not outlive this resolver or cross scopes.
+        self._module_denotation_answers: BoundedCache[
+            Tuple[_Module, str, int], Optional[FrozenSet[_Denotation]]
+        ] = BoundedCache(4096)
+        self._module_target_answers: BoundedCache[
+            Tuple[_Module, str, int], Optional[FrozenSet[_Target]]
+        ] = BoundedCache(4096)
+        self._argument_target_answers: BoundedCache[
+            Tuple[_Module, str, _Slot], Optional[FrozenSet[_Target]]
+        ] = BoundedCache(4096)
+        self._flow_denotation_answers: BoundedCache[
+            Tuple[Value, _Slot, _Module, int], FrozenSet[_Denotation]
+        ] = BoundedCache(4096)
+        self._origin_rebound_answers: BoundedCache[
+            Tuple[_Origin, int], Optional[FrozenSet[_Denotation]]
+        ] = BoundedCache(4096)
 
     # -- the chain ---------------------------------------------------------------
 
@@ -520,6 +538,16 @@ class _Resolver:
         return None
 
     def _flow_denotations(
+        self, value: Value, slot: _Slot, module: _Module, depth: int = 0
+    ) -> FrozenSet[_Denotation]:
+        key = (value, slot, module, depth)
+        if key in self._flow_denotation_answers:
+            return self._flow_denotation_answers[key]
+        return self._flow_denotation_answers.put(
+            key, self._read_flow_denotations(value, slot, module, depth)
+        )
+
+    def _read_flow_denotations(
         self, value: Value, slot: _Slot, module: _Module, depth: int = 0
     ) -> FrozenSet[_Denotation]:
         found: Set[_Denotation] = set()
@@ -1053,6 +1081,16 @@ class _Resolver:
     def _module_denotations(
         self, module: _Module, dotted: str, depth: int
     ) -> Optional[FrozenSet[_Denotation]]:
+        key = (module, dotted, depth)
+        if key in self._module_denotation_answers:
+            return self._module_denotation_answers[key]
+        return self._module_denotation_answers.put(
+            key, self._read_module_denotations(module, dotted, depth)
+        )
+
+    def _read_module_denotations(
+        self, module: _Module, dotted: str, depth: int
+    ) -> Optional[FrozenSet[_Denotation]]:
         """Everything ``dotted`` may denote in ``module``'s namespace, on any path through it.
 
         Every binding the module could give the first name counts, and a
@@ -1230,6 +1268,12 @@ class _Resolver:
         return None if spelled is None else self._module_denotations(module, spelled, depth + 1)
 
     def _origin_rebound(self, origin: _Origin, depth: int) -> Optional[FrozenSet[_Denotation]]:
+        key = (origin, depth)
+        if key in self._origin_rebound_answers:
+            return self._origin_rebound_answers[key]
+        return self._origin_rebound_answers.put(key, self._read_origin_rebound(origin, depth))
+
+    def _read_origin_rebound(self, origin: _Origin, depth: int) -> Optional[FrozenSet[_Denotation]]:
         """What the project's writes may bind ``origin`` to, in any module its name passes through.
 
         ``functools.cache`` is rebound by a write of ``cache`` into
@@ -1419,6 +1463,16 @@ class _Resolver:
     def _argument_targets(
         self, module: _Module, spelled: str, slot: _Slot
     ) -> Optional[FrozenSet[_Target]]:
+        key = (module, spelled, slot)
+        if key in self._argument_target_answers:
+            return self._argument_target_answers[key]
+        return self._argument_target_answers.put(
+            key, self._read_argument_targets(module, spelled, slot)
+        )
+
+    def _read_argument_targets(
+        self, module: _Module, spelled: str, slot: _Slot
+    ) -> Optional[FrozenSet[_Target]]:
         """The project's definitions an argument spelled ``spelled`` may be, where ``slot`` reads it.
 
         Empty when it can be none of them (a builtin, an import from outside
@@ -1465,6 +1519,16 @@ class _Resolver:
         return True, frozenset({(path, f"{qualname}.{rest}" if rest else qualname)})
 
     def _module_targets(
+        self, module: _Module, dotted: str, depth: int
+    ) -> Optional[FrozenSet[_Target]]:
+        key = (module, dotted, depth)
+        if key in self._module_target_answers:
+            return self._module_target_answers[key]
+        return self._module_target_answers.put(
+            key, self._read_module_targets(module, dotted, depth)
+        )
+
+    def _read_module_targets(
         self, module: _Module, dotted: str, depth: int
     ) -> Optional[FrozenSet[_Target]]:
         """The project's definitions ``dotted`` may name in ``module``'s namespace, on any path."""
