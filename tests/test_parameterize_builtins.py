@@ -20,8 +20,9 @@ site's function binds ``len`` and the other reads the builtin, or, across
 modules, the program shows a participating module may hold the name. With
 ``parameterize_builtins`` (``towel dry --parameterize-builtins``) exactly
 those builtins become ordinary parameters, each site passing its own binding,
-evaluated where the block read it, so a patch of either module still reaches
-that module's code. It permits nothing else: a builtin every site reads alike
+evaluated where the block read it, so an ordinary rebinding of either module
+still reaches that module's code. Reflective patch APIs and namespace writes
+are not evidence for parameterization. It permits nothing else: a builtin every site reads alike
 is still read bare, and blocks that differ in which builtin they use are still
 declined.
 """
@@ -294,6 +295,25 @@ EVIDENCE: Dict[str, _Evidence] = {
     "rebound_builtins_namespace": {
         "exports_prelude": "import builtins\n__builtins__ = dict(vars(builtins), len=lambda i: 7)"
     },
+    "one_site_binds_it_locally": {
+        "exports_header": "export_size(rows, name, len=lambda value: 40)",
+    },
+    "direct_attribute_write_in_tests": {"extra": {"proj/tests/test_exports.py": """
+                from pkg import exports
+
+                def test_size():
+                    exports.len = lambda value: 100
+                    assert exports.export_size([1, 2], "ab") == 10001
+                """}},
+    "aliased_module_attribute_write": {"extra": {"proj/tests/test_exports.py": """
+                import pkg.exports as exports
+
+                exports.len = lambda value: 100
+                """}},
+}
+
+
+REFLECTIVE_OPERATIONS: Dict[str, _Evidence] = {
     "written_into_the_namespace": {"exports_prelude": 'vars()["len"] = lambda item: 7'},
     "patched_by_the_tests": {"extra": {"proj/tests/test_exports.py": """
                 from unittest import mock
@@ -309,9 +329,6 @@ EVIDENCE: Dict[str, _Evidence] = {
                 def test_size(monkeypatch):
                     monkeypatch.setattr(exports, "len", lambda value: 100, raising=False)
                 """}},
-    "one_site_binds_it_locally": {
-        "exports_header": "export_size(rows, name, len=lambda value: 40)",
-    },
 }
 
 
@@ -335,6 +352,19 @@ def test_across_modules_evidence_declines_or_passes_the_builtin(
     assert _run(after / "outside", "drive.py", after / "proj") == _run(
         before / "outside", "drive.py", before / "proj"
     )
+
+
+@pytest.mark.parametrize("flag", [False, True])
+@pytest.mark.parametrize("case", sorted(REFLECTIVE_OPERATIONS))
+def test_reflection_does_not_request_builtin_parameterization(
+    tmp_path: Path, case: str, flag: bool
+) -> None:
+    _write(tmp_path, _package(**REFLECTIVE_OPERATIONS[case]))
+    project = tmp_path / "proj"
+    applied, declined = _refactor(project / "pkg", parameterize_builtins=flag)
+    assert applied > 0
+    assert all("len" not in parameters for parameters in _parameters(project))
+    assert "builtin_may_differ_by_module" not in declined
 
 
 def test_the_flag_passes_no_builtin_every_site_reads_alike(tmp_path: Path) -> None:
@@ -372,7 +402,9 @@ def second(value, rows, name, options):
 """
 
 
-def test_the_flag_still_declines_blocks_that_differ_in_a_builtin(tmp_path: Path) -> None:
+def test_the_flag_still_declines_blocks_that_differ_in_a_builtin(
+    tmp_path: Path,
+) -> None:
     _write(tmp_path, {"m.py": DIFFERING_IN_A_BUILTIN})
     applied, declined = _refactor(tmp_path / "m.py", parameterize_builtins=True)
     assert applied == 0
@@ -493,6 +525,7 @@ def test_the_checkers_own_spelling_wins_wherever_it_can_be_written() -> None:
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
 
 TYPED_EXPORTS = """
+from builtins import len as len
 from pkg import reports  # exports already depends on reports
 
 
@@ -516,19 +549,19 @@ def report_size(rows: list[int], name: str) -> int:
 """
 
 TYPED_TEST = """
-from unittest import mock
-
 import pkg.exports
 
 
 def test_size() -> None:
-    with mock.patch("pkg.exports.len", lambda value: 100, create=True):
-        assert pkg.exports.export_size([1, 2], "ab") == 10001
+    pkg.exports.len = lambda value: 100
+    assert pkg.exports.export_size([1, 2], "ab") == 10001
 """
 
 
 @requires_mypy
-def test_under_a_strict_checker_the_builtin_parameter_is_callable(tmp_path: Path) -> None:
+def test_under_a_strict_checker_the_builtin_parameter_is_callable(
+    tmp_path: Path,
+) -> None:
     _write(
         tmp_path,
         {

@@ -20,7 +20,8 @@ generated_at_build`` and ``from pkg import generated_at_build`` were taken for
 imports of an attribute of the package, and their file borrowed a helper. A
 name the package's initializer does not bind, and no module there provides,
 is now a module the tree lacks in every spelling. An initializer that may bind
-names no statement shows leaves every name possible.
+names no statement shows through supported import mechanisms leaves every
+name possible; reflective namespace mutation is outside the contract.
 """
 
 from __future__ import annotations
@@ -94,26 +95,21 @@ def test_every_spelling_of_a_missing_submodule_is_reported(
         "generated_at_build = None\n",
         "from .a import *\n",
         "def __getattr__(name):\n    return name\n",
-        "globals()['generated_at_build'] = 1\n",
         "__path__ = __import__('pkgutil').extend_path(__path__, __name__)\n",
         "import sys\nsys.modules[__name__ + '.generated_at_build'] = sys\n",
         "try:\n    from ._fast import generated_at_build\nexcept ImportError:\n    generated_at_build = None\n",
         "if True:\n    for generated_at_build in range(1):\n        pass\n",
         "from . import a as generated_at_build\n",
-        # bs4's builder registers its tree builders on itself from a function.
-        "import sys\ndef register(name):\n    setattr(sys.modules[__name__], name, 1)\n",
     ],
     ids=[
         "bound",
         "star",
         "module-getattr",
-        "globals",
         "path",
         "registers",
         "guarded",
         "loop",
         "submodule-as",
-        "setattr-in-a-function",
     ],
 )
 def test_a_name_the_initializer_binds_or_may_bind_is_no_missing_module(
@@ -131,6 +127,31 @@ def test_a_name_the_initializer_binds_or_may_bind_is_no_missing_module(
     assert not [
         p for p in model.problems if isinstance(p, (RelativeImportMissing, UnresolvedImport))
     ]
+
+
+@pytest.mark.parametrize(
+    "initializer",
+    [
+        "globals()['generated_at_build'] = 1\n",
+        "import sys\ndef register(name):\n    setattr(sys.modules[__name__], name, 1)\n",
+    ],
+    ids=["globals", "setattr-in-a-function"],
+)
+def test_reflective_namespace_writes_do_not_supply_import_bindings(
+    tmp_path: Path, initializer: str
+) -> None:
+    """Import analysis does not accommodate names supplied only through reflection."""
+    root = _write(
+        tmp_path,
+        {
+            **_PACKAGE,
+            "zzpkg/__init__.py": initializer,
+            "zzpkg/c.py": "from . import generated_at_build\n",
+        },
+    )
+    (problem,) = build_import_model(root, installed=_standard_library_only).problems
+    assert isinstance(problem, RelativeImportMissing)
+    assert problem.missing == ".generated_at_build"
 
 
 @pytest.mark.parametrize(
