@@ -74,10 +74,7 @@ from .module_bindings import (
     global_bindings,
 )
 from .program_imports import ProgramImports, program_imports
-from .statement_facts import (
-    bindings_of,
-    imported_binding_name,
-)
+from .statement_facts import imported_binding_name
 from ..source_text import read_source
 from ..runtime_guards import module_false_guards
 
@@ -420,47 +417,14 @@ def _header_nodes(
     ]
 
 
-def _function_scope_names(function: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> FrozenSet[str]:
-    """The names a function's body resolves in its own scope, not the module's."""
-    arguments = function.args
-    names = {
-        argument.arg
-        for argument in (
-            *arguments.posonlyargs,
-            *arguments.args,
-            *arguments.kwonlyargs,
-            *((arguments.vararg,) if arguments.vararg else ()),
-            *((arguments.kwarg,) if arguments.kwarg else ()),
-        )
-    }
-    for statement in function.body:
-        names |= bindings_of(statement, into_nested_scopes=False)
-        # A declaration hands the name to another scope, which this cannot resolve.
-        names |= {
-            name
-            for node in ast.walk(statement)
-            if isinstance(node, (ast.Global, ast.Nonlocal))
-            for name in node.names
-        }
-    return frozenset(names)
-
-
-def _class_scope_names(klass: ast.ClassDef) -> FrozenSet[str]:
-    """The names a class body binds, which its own statements resolve before the module's."""
-    return frozenset(
-        name
-        for statement in klass.body
-        for name in bindings_of(statement, into_nested_scopes=False)
-    )
-
-
 def _import_statements(
     tree: ast.Module, extent: ImportExtent, guards: TypeCheckingGuards
 ) -> List[Union[ast.Import, ast.ImportFrom]]:
     """The import statements of ``tree`` that ``extent`` counts.
 
     A module-level body locally proved false (``TypeCheckingGuards``) is
-    skipped. Imported TYPE_CHECKING flags are mutable and prove nothing.
+    skipped. Its literal tests do not depend on bindings in enclosing scopes.
+    Imported TYPE_CHECKING flags are mutable and prove nothing.
     """
     if extent == "leading":
         return leading_imports(tree)
@@ -468,15 +432,8 @@ def _import_statements(
         return [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
     found: List[Union[ast.Import, ast.ImportFrom]] = []
 
-    def visit(
-        statements: Sequence[ast.stmt],
-        outer: FrozenSet[str],
-        own: FrozenSet[str],
-        order: Optional[int],
-    ) -> None:
-        """``outer`` names the enclosing functions bind, ``own`` those of a class body here.
-
-        ``order`` is the top-level statement these run in as the module is
+    def visit(statements: Sequence[ast.stmt], order: Optional[int]) -> None:
+        """``order`` is the top-level statement these run in as the module is
         imported, or None inside a function body.
         """
         for position, statement in enumerate(statements):
@@ -486,25 +443,21 @@ def _import_statements(
             elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 # A function body runs only when it is called.
                 if extent == "everywhere":
-                    visit(
-                        statement.body, outer | _function_scope_names(statement), frozenset(), None
-                    )
+                    visit(statement.body, None)
             elif isinstance(statement, ast.ClassDef):
-                visit(statement.body, outer, _class_scope_names(statement), where)
-            elif isinstance(statement, ast.If) and guards.never_true(
-                statement.test, outer | own, where
-            ):
-                visit(statement.orelse, outer, own, where)
+                visit(statement.body, where)
+            elif isinstance(statement, ast.If) and guards.never_true(statement.test, order=where):
+                visit(statement.orelse, where)
             else:
                 for field in ("body", "orelse", "finalbody"):
-                    visit(getattr(statement, field, []), outer, own, where)
+                    visit(getattr(statement, field, []), where)
                 for clause in (
                     *getattr(statement, "handlers", []),
                     *getattr(statement, "cases", []),
                 ):
-                    visit(clause.body, outer, own, where)
+                    visit(clause.body, where)
 
-    visit(tree.body, frozenset(), frozenset(), None)
+    visit(tree.body, None)
     return found
 
 
