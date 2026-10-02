@@ -213,3 +213,48 @@ def test_mixed_local_and_builtin_sites_keep_late_lookup(
     applied, _ = _refactor(after / "m.py", parameterize)
     assert bool(applied) is (parameterize or clustered or name != "len")
     assert _run(after, "check.py") == expected
+
+
+@pytest.mark.parametrize("parameterize", [False, True])
+@pytest.mark.parametrize("name", ["len", "measure"])
+@pytest.mark.parametrize(
+    "comprehension",
+    [
+        "[None for len in ()]",
+        "{len for len in ()}",
+        "{len: None for len in ()}",
+        "(len for len in ())",
+    ],
+)
+def test_comprehension_target_does_not_hide_a_clustered_module_lookup(
+    tmp_path: Path, parameterize: bool, name: str, comprehension: str
+) -> None:
+    body = (
+        "    first = len(values)\n"
+        "    callback()\n"
+        "    second = len(values)\n"
+        "    result = first * 1000 + second\n"
+        "    return result * FACTOR\n"
+    )
+    # The first pair can share an eager local argument. The third occurrence
+    # must still look in its module after callback() changes that binding.
+    source = "def first(values, callback, len=lambda value: 3):\n" + body.replace("FACTOR", "5")
+    source += "\ndef other(values, callback, len=lambda value: 4):\n" + body.replace("FACTOR", "6")
+    source += "\ndef second(values, callback):\n" f"    unused = {comprehension}\n" + body.replace(
+        "FACTOR", "7"
+    )
+    driver = (
+        "import m\ndef install():\n    m.len = lambda values: 101\n"
+        "print(m.first([1, 3], lambda: None), m.other([1, 3], lambda: None), "
+        "m.second([2, 4], install))\n"
+    )
+    if name != "len":
+        source = "def measure(values):\n    return 2\n" + source.replace("len", name)
+        driver = driver.replace("len", name)
+    before, after = tmp_path / "before", tmp_path / "after"
+    for root in (before, after):
+        _write(root, {"m.py": source, "check.py": driver})
+    assert _run(before, "check.py") == "15015 24024 14707\n"
+    applied, _ = _refactor(after / "m.py", parameterize)
+    assert applied > 0, "the two occurrences with local arguments can still share"
+    assert _run(after, "check.py") == _run(before, "check.py")

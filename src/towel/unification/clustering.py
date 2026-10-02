@@ -251,6 +251,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         # An existing eager free-variable parameter snapshots a module
         # binding before ordinary callees can rebind it between reads. Only
         # a helper with a caller lookup thunk can accept that clustered site.
+        # Comprehension targets do not shadow the enclosing function's lookup.
         free_positions = free_variable_positions(template.param_order, subst2)
         eager_free_names = {
             argument.id
@@ -261,7 +262,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             for index, argument in enumerate(node.args)
             if index in free_positions and isinstance(argument, ast.Name)
         }
-        if module_resolved_names(candidate.function, candidate.analyzer, eager_free_names):
+        if module_resolved_names(
+            candidate.function, candidate.analyzer, eager_free_names, exact=True
+        ):
             return None
         if builtins_passed(
             call_node2,
