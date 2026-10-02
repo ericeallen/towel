@@ -702,7 +702,10 @@ class ImportQuestion:
     import it cannot resolve binds. Self also reveals Unknown outside a class;
     an eligible annotation-only import is asked again in a fresh class, where
     the same checker must identify its contextual self type. A checker that
-    does not look at the import answers nothing.
+    does not look at the import answers nothing. In an unchecked function
+    mypy also answers Any for known modules; the same import is therefore
+    asked about inside a fresh checked function at that site, and only the
+    same checker's exact module type establishes that it resolves.
     """
 
     key: Tuple[str, int, int]
@@ -711,6 +714,8 @@ class ImportQuestion:
     subject: str
     self_context: Optional[Tuple[Tuple[str, int, int], str]] = None
     """A second question and its exact answer identifying a contextual Self form."""
+    module_context: Optional[Tuple[str, int, int]] = None
+    """The same module imported inside a checked function at the original import site."""
 
 
 @dataclass(frozen=True)
@@ -731,6 +736,7 @@ class _Probe:
     """(expression revealed, kind of question, what it is about)"""
     self_context: str = ""
     self_expression: str = ""
+    module_context: str = ""
 
 
 _TYPE_CONTAINERS = frozenset({"list", "dict", "set", "frozenset", "tuple", "type"})
@@ -902,6 +908,30 @@ def _probes_of(node: ast.stmt, tree: ast.Module, first: int) -> List[_Probe]:
     return probes
 
 
+def _unchecked_function_imports(tree: ast.Module) -> FrozenSet[Tuple[int, int]]:
+    """Import sites within a function whose header does not make mypy check its body.
+
+    Configuration can still check these bodies. These are only places that may
+    need a contextual question, never evidence that an import has types.
+    """
+    sites: Set[Tuple[int, int]] = set()
+    pending: List[Tuple[ast.AST, bool]] = [(tree, False)]
+    while pending:
+        node, unchecked = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = node.args
+            arguments = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+            arguments += [arg for arg in (args.vararg, args.kwarg) if arg is not None]
+            annotated = node.returns is not None or any(
+                arg.annotation is not None for arg in arguments
+            )
+            unchecked = unchecked or not annotated
+        if unchecked and isinstance(node, (ast.Import, ast.ImportFrom)):
+            sites.add((node.lineno, node.col_offset))
+        pending.extend((child, unchecked) for child in ast.iter_child_nodes(node))
+    return frozenset(sites)
+
+
 def import_probes(path: str, text: str) -> Optional[ImportProbes]:
     """Requests that reveal, for each import in ``text``, what it binds, where the import stands.
 
@@ -915,7 +945,10 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
     checker looks at the import: one the platform or Python of the check never
     reaches is asked about in the same place, and answered nothing. A module
     imported whole is also asked about the attributes the file reads from it,
-    since pyright gives a module it cannot resolve a module's type. ``None``
+    since pyright gives a module it cannot resolve a module's type. Within
+    unannotated functions a module is also imported in a fresh checked
+    function at the same site: mypy's Any for an unchecked expression alone
+    says nothing about whether its import resolves. ``None``
     when ``text`` has no import to ask about or no probe can be placed in it.
     """
     plan = probe_plan(text)
@@ -925,9 +958,10 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
     lines = text.split("\n")
     added: Dict[Tuple[int, str], List[_Probe]] = {}
     annotation_only = _annotation_only_self_paths(tree)
+    unchecked_imports = _unchecked_function_imports(tree)
     reserved = (
         {unicodedata.normalize("NFKC", word) for word in re.findall(r"\w+", text)}
-        if annotation_only
+        if annotation_only or unchecked_imports
         else set()
     )
     count = 0
@@ -960,6 +994,15 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
                 context += "_"
             reserved.add(context)
             probes[index] = replace(probes[index], self_context=context, self_expression=expression)
+        if (node.lineno, node.col_offset) in unchecked_imports:
+            for index, probe in enumerate(probes):
+                if not any(kind == "module" for _, kind, _ in probe.asked):
+                    continue
+                context = f"_towel_import_context_{count + index}"
+                while context in reserved:
+                    context += "_"
+                reserved.add(context)
+                probes[index] = replace(probe, module_context=context)
         count += len(probes)
         added.setdefault(site, []).extend(probes)
     if not added:
@@ -976,6 +1019,15 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
             if probe.self_context:
                 inserted.extend((f"{site[1]}class {probe.self_context}:", f"{site[1]}    pass"))
                 contexts[probe.self_context] = (at + len(inserted), site[1] + "    ")
+            if probe.module_context:
+                inserted.extend(
+                    (
+                        f"{site[1]}def {probe.module_context}() -> None:",
+                        f"{site[1]}    {probe.statement}",
+                        f"{site[1]}    pass",
+                    )
+                )
+                contexts[probe.module_context] = (at + len(inserted), site[1] + "    ")
         probed[at:at] = inserted
         shift += len(inserted)
         landed[site] = site[0] + shift
@@ -988,13 +1040,23 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
         requests.append(RevealRequest(path, source, landed[site], site[1], expressions))
         for index, (probe, (expression, kind, subject)) in enumerate(asked):
             context_answer = None
+            module_answer = None
             if probe.self_context and expression == probe.self_expression:
                 line, indent = contexts[probe.self_context]
                 requests.append(RevealRequest(path, source, line, indent, (expression,)))
                 context_answer = ((path, line, 0), f"type[Self@{probe.self_context}]")
+            if probe.module_context and kind == "module":
+                line, indent = contexts[probe.module_context]
+                requests.append(RevealRequest(path, source, line, indent, (expression,)))
+                module_answer = (path, line, 0)
             questions.append(
                 ImportQuestion(
-                    (path, landed[site], index), probe.line, kind, subject, context_answer
+                    (path, landed[site], index),
+                    probe.line,
+                    kind,
+                    subject,
+                    context_answer,
+                    module_answer,
                 )
             )
     return ImportProbes(tuple(requests), tuple(questions))
@@ -1019,6 +1081,13 @@ def imports_typed_as_any(
             if question.self_context is not None:
                 key, expected = question.self_context
                 if answer.get(key) == expected:
+                    blind = False
+            if question.module_context is not None:
+                # In an unchecked mypy body every expression, even (0), is Any.
+                # Resolve the same import in a nested checked function instead;
+                # a genuinely missing/untyped module is still Any there. Only
+                # this checker's exact module answer discharges its finding.
+                if answer.get(question.module_context) == "types.ModuleType":
                     blind = False
             if blind and (question.line, question.subject) not in found:
                 found[(question.line, question.subject)] = TypeDiagnostic(
