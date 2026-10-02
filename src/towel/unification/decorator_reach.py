@@ -359,7 +359,6 @@ class _PlainMemo:
 
 _REFUSALS: "WeakKeyDictionary[ast.AST, _Memo]" = WeakKeyDictionary()
 _PLAIN: "WeakKeyDictionary[ast.AST, Dict[Form, _PlainMemo]]" = WeakKeyDictionary()
-_LOADED: BoundedCache[_Stamp, Optional[_Module]] = BoundedCache(256)
 
 
 @dataclass(frozen=True)
@@ -459,6 +458,9 @@ class _Resolver:
 
     def __init__(self, cache: ImportGraphCache) -> None:
         self._cache = cache
+        # Modules belong to this question's snapshot. A global strong cache
+        # would keep obsolete trees alive after their analysis was invalidated.
+        self._loaded: BoundedCache[_Stamp, Optional[_Module]] = BoundedCache(256)
         self.stamps: Set[_Stamp] = set()
         self._writes: Dict[str, ProjectWrites] = {}
         self._into: Dict[str, Tuple[NamespaceWrite, ...]] = {}
@@ -1395,15 +1397,15 @@ class _Resolver:
         if stamp is None:
             return None
         self.stamps.add(stamp)
-        if stamp in _LOADED:
-            return _LOADED[stamp]
+        if stamp in self._loaded:
+            return self._loaded[stamp]
         try:
             source = read_source(path)
             tree = parse_analysis_source(source, path)
         except (OSError, UnicodeError, SyntaxError, ValueError):
-            return _LOADED.put(stamp, None)
+            return self._loaded.put(stamp, None)
         bindings = bindings_from_tree(source, tree)
-        return _LOADED.put(stamp, _Module(path, source, tree, bindings, _layout(tree)))
+        return self._loaded.put(stamp, _Module(path, source, tree, bindings, _layout(tree)))
 
     # -- decorators applied by hand --------------------------------------------
 

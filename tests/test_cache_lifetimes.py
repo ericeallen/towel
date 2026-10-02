@@ -84,3 +84,20 @@ def test_module_digest_is_the_parse_time_digest(tmp_path: Path) -> None:
     assert {artifact.module_digest for artifact in analysis.functions} == {expected}
     _analyze(engine, path)
     assert {engine._module_digest(artifact.node) for artifact in analysis.functions} == {expected}
+
+
+def test_reanalysis_without_candidates_releases_previous_functions(tmp_path: Path) -> None:
+    path = tmp_path / "m.py"
+    path.write_text(FIRST)
+    engine = UnificationRefactorEngine(min_lines=3)
+    _analyze(engine, path)
+    old_functions = tuple(weakref.ref(function) for function in engine._function_paths)
+    assert old_functions
+    old_tree = weakref.ref(engine.analysis_session.analyze_module(str(path)).module.tree)
+
+    path.write_text("value = 1\n")
+    _analyze(engine, path)
+    gc.collect()
+    assert old_tree() is None
+    assert all(reference() is None for reference in old_functions)
+    assert not engine._structural_ids

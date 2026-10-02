@@ -1307,6 +1307,9 @@ measure is exact and changes no proposal.
   `tests/test_analysis_sources.py` checks sharing, file isolation, invalidation,
   diagnostics and lifetime. Hand-call caches retain syntax facts and bind them
   to the requesting module on use, avoiding a reference cycle through the module.
+  Loaded-module caches belong to one resolver. A new analysis releases its
+  predecessor's function index and last unification's inputs even when no
+  candidate pairs remain.
 - **Import-edge cache.** The import-cycle check parses each reachable module
   once per analysis and caches its edges, instead of re-parsing per pair.
 - **Per-function facts.** Facts that depend only on the enclosing function,

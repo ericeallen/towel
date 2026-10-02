@@ -27,7 +27,8 @@ import gc
 from pathlib import Path
 import weakref
 
-from towel.unification.decorator_reach import _Module, _hand_calls, _layout
+from towel.unification.decorator_reach import _Module, _Resolver, _hand_calls, _layout
+from towel.unification.import_graph import ImportGraphCache
 from towel.unification.module_bindings import global_bindings
 
 _SOURCE = (
@@ -73,6 +74,23 @@ def test_hand_call_memo_does_not_keep_its_module_or_tree_alive(tmp_path: Path) -
         return weakref.ref(tree), weakref.ref(module)
 
     tree_reference, module_reference = consult()
+    gc.collect()
+    assert module_reference() is None
+    assert tree_reference() is None
+
+
+def test_loaded_modules_live_only_as_long_as_the_resolver(tmp_path: Path) -> None:
+    path = tmp_path / "subject.py"
+    path.write_text(_SOURCE)
+    resolver = _Resolver(ImportGraphCache())
+    module = resolver._load(str(path))
+    assert module is not None
+    assert resolver._load(str(path)) is module
+    module_reference, tree_reference = weakref.ref(module), weakref.ref(module.tree)
+    del module
+    gc.collect()
+    assert module_reference() is not None
+    del resolver
     gc.collect()
     assert module_reference() is None
     assert tree_reference() is None
