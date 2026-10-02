@@ -102,7 +102,17 @@ behavior. Compatible helpers generated during the current run can be shared;
 this does not make input functions interchangeable.
 
 Across modules, [host and import checks](CROSS_MODULE.md) must establish that
-each caller can reach the helper. Cross-module sharing is opt-in.
+each caller can reach the helper without advancing a module load or replacing
+an ordinary parent-package binding. Cross-module sharing is opt-in. A fresh
+shared helper appears before ordinary imports and effects, after the header,
+docstring and future directives. Signature annotations that need bindings are
+quoted so the definition needs no later bindings and a partially initialized
+host can supply it. Reusing a generated helper requires its existing definition
+to be available before operations that could reenter its module.
+
+New imports needed only for annotations use `if 0 > 1:`. This immutable false
+comparison never runs its body, while mypy and pyright still read the imported
+types. Existing mutable `TYPE_CHECKING` guards keep their original behavior.
 
 ## Arguments and evaluation
 

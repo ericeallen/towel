@@ -80,7 +80,7 @@ CASES: Dict[str, Case] = {
             "src/pkg/__init__.py": "",
             "src/other/__init__.py": "",
             "src/other/c.py": "from pkg.b import Kb\n\nCC = Kb + 1\n",
-            "src/pkg/a.py": "from other.c import CC\nKa = 10\n" + _body("a", 4, "CC"),
+            "src/pkg/a.py": "from other.c import CC\nimport pkg.b\nKa = 10\n" + _body("a", 4, "CC"),
             "src/pkg/b.py": "Kb = 10\n" + _body("b", 5, "0"),
         },
         "src/pkg",
@@ -94,7 +94,8 @@ CASES: Dict[str, Case] = {
             "src/pkg/__init__.py": "",
             "src/pkg/sub/__init__.py": "",
             "src/pkg/other.py": "from pkg.sub.b import Kb\n\nCC = Kb + 1\n",
-            "src/pkg/sub/a.py": "from pkg.other import CC\nKa = 10\n" + _body("a", 4, "CC"),
+            "src/pkg/sub/a.py": "from pkg.other import CC\nimport pkg.sub.b\nKa = 10\n"
+            + _body("a", 4, "CC"),
             "src/pkg/sub/b.py": "Kb = 10\n" + _body("b", 5, "0"),
         },
         "src/pkg/sub",
@@ -109,7 +110,8 @@ CASES: Dict[str, Case] = {
             "src/pkg/__init__.py": "",
             "src/other/__init__.py": "",
             "src/other/noisy.py": "print('NOISY IMPORTED')\nN = 1\n",
-            "src/pkg/a.py": "from other.noisy import N\nKa = 10\n" + _body("a", 4, "N"),
+            "src/pkg/a.py": "from other.noisy import N\nimport pkg.b\nKa = 10\n"
+            + _body("a", 4, "N"),
             "src/pkg/b.py": "Kb = 10\n" + _body("b", 5, "0"),
         },
         "src/pkg",
@@ -236,7 +238,9 @@ def test_a_checked_run_out_of_place_accepts_what_the_run_in_place_accepts(tmp_pa
         {
             "pyproject.toml": '[tool.mypy]\nfiles = ["pkg"]\n',
             "pkg/__init__.py": "",
-            **{f"pkg/{name}.py": f"""class {name.capitalize()}:
+            **{
+                f"pkg/{name}.py": ("import pkg.alpha\n" if name == "beta" else "")
+                + f"""class {name.capitalize()}:
     def __init__(self) -> None:
         self.tag = "{name[0]}"
 
@@ -244,7 +248,9 @@ def test_a_checked_run_out_of_place_accepts_what_the_run_in_place_accepts(tmp_pa
         body = str(self.tag).strip()
         padded = body.rjust(width, ".")
         return padded.upper()
-""" for name in ("alpha", "beta")},
+"""
+                for name in ("alpha", "beta")
+            },
             "unchecked.py": 'broken: int = "not checked by this project"\n',
         },
     )
@@ -256,6 +262,7 @@ def test_a_checked_run_out_of_place_accepts_what_the_run_in_place_accepts(tmp_pa
         "none",
         "--no-format",
         "--cross-module",
+        "--parameterize-builtins",
         "--min-lines",
         "3",
     ]

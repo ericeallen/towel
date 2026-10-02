@@ -759,8 +759,10 @@ def test_returned_values_follow_the_arguments_they_are_end_to_end(tmp_path: Path
         for parameter in helper.args.args
         if parameter.arg != "self"
     }
+    # Both values are evaluated at their original positions: Span is a module
+    # binding, and self.plain is the other site's attribute lookup.
     assert kinds == {
-        "__param_0": "_TowelT0",
+        "__param_0": "_typing.Callable[[], _TowelT0]",
         "__param_1": "_typing.Callable[[], _TowelT1]",
     }, changed
     assert (
@@ -853,7 +855,7 @@ def test_a_constraint_from_another_module_is_imported_for_the_checker_end_to_end
     """packaging L, in miniature: the helper's receiver ranges over the two modules' error classes.
 
     The helper lives in direct.py, which does not import lock.py; the class
-    that lock.py defines is imported under ``TYPE_CHECKING``, as the program's
+    that lock.py defines is imported under ``0 > 1``, as the program's
     imports show direct.py can, and so never runs. The ordinary signature
     names both classes directly, which is what the checker reveals: it used
     to drop ``pkg.lock.LockError`` for a head direct.py does not bind, write
@@ -866,14 +868,16 @@ def test_a_constraint_from_another_module_is_imported_for_the_checker_end_to_end
             "tests/test_errors.py": "from pkg.direct import DirectError\nfrom pkg.lock import LockError\n",
             "pkg/__init__.py": "",
             "pkg/direct.py": ERROR.format(name="DirectError"),
-            "pkg/lock.py": ERROR.format(name="LockError"),
+            "pkg/lock.py": "import pkg.direct\n" + ERROR.format(name="LockError"),
         },
     )
     sources = _extract_across_modules(tmp_path / "pkg")
     direct = sources[str(tmp_path / "pkg" / "direct.py")]
     # The checker's import is private, so no star-importer of direct.py sees it.
-    assert "def _extracted_func_0(self: 'DirectError | _LockError') -> str:" in direct, direct
-    guarded = direct.split("if _typing.TYPE_CHECKING:", 1)[1].splitlines()[1]
+    helper = _helper(direct)
+    assert _annotation(helper.args.args[0].annotation) == "DirectError | _LockError", direct
+    assert _annotation(helper.returns) == "str", direct
+    guarded = direct.split("if 0 > 1:", 1)[1].splitlines()[1]
     assert guarded.strip() == "from .lock import LockError as _LockError", direct
     assert "Any" not in direct, direct
 
@@ -917,7 +921,8 @@ def test_sites_that_agree_are_offered_their_common_signature_end_to_end(tmp_path
                         self.tokens.append(token)
                 """,
             "pkg/block_parser.py": parser.format(name="parse_block_quote", kind="block_quote"),
-            "pkg/spoiler.py": parser.format(name="parse_block_spoiler", kind="block_spoiler"),
+            "pkg/spoiler.py": "import pkg.block_parser\n"
+            + textwrap.dedent(parser.format(name="parse_block_spoiler", kind="block_spoiler")),
         },
     )
     sources = _extract_across_modules(tmp_path / "pkg")

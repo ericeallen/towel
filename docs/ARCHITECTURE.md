@@ -433,7 +433,7 @@ decides:
   did, made them members of every subclass of a base that was often public
   API, needed a base-name resolution that twice went wrong, and moved code
   into modules that held none of it.
-- **After the definitions its annotations name.** A module-level helper goes
+- **Same-file annotation dependencies.** A module-level helper used within one file goes
   before the module's first definition, after its imports and docstring.
   When its annotations name classes or functions of the module, it goes
   after the last of them instead, so the names are written bare rather than
@@ -443,6 +443,16 @@ decides:
   import), so no statement that could call into the module at import time
   is reordered relative to the helper (`placeable_after`). Otherwise the
   helper stays at the top and the names are quoted.
+- **Before ordinary imports when shared across files.** A new shared helper
+  follows the header, docstring and verified standard-library future imports,
+  with quoted annotations and an inert definition. This makes it available
+  when an import reenters its partially initialized host. Generated type
+  declarations retain their dependency-safe position; a helper whose body
+  needs them before that position cannot be shared. Existing functions are
+  never moved, so reuse must establish availability at their original
+  position. Wildcard imports that could overwrite the helper binding refuse
+  sharing. The borrower's helper import uses its original import boundary,
+  before replacements can turn an early definition into an alias.
 
 Generated names avoid existing identifiers at their insertion site and
 explicit attribute stores or deletions in other project sources
@@ -1037,6 +1047,17 @@ The model answers three kinds of question:
   import of a project module to the file that defines the name, for the
   typing-form and quiet-base lookups, and takes one of no project module at
   its word.
+
+Possible reachability does not establish that a module has already loaded.
+For that proof, `import_change` uses only the borrower's leading, explicit
+imports with unambiguous providers. `from pkg import a` can read a package
+attribute without loading `pkg.a`. Directly imported modules and enclosing
+packages may still be initializing, so their own import edges are not
+followed for this proof. Loading a new submodule can overwrite an ordinary
+parent-package attribute and is refused. A new top-level host must instead
+have a closed inert body: literal bindings, inert function definitions and
+verified future directives. Existing later imports are never advanced under
+that permission.
 
 The `dry` and `preview` commands, with `--cross-module`, read the model
 before the engine starts and report every problem with its remedy

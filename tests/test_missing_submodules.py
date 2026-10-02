@@ -195,9 +195,7 @@ def test_the_initializers_own_import_of_its_submodule_binds_nothing(tmp_path: Pa
     assert isinstance(problem, RelativeImportMissing) and problem.missing == ".generated_at_build"
 
 
-_TYPE_ONLY = (
-    "import zzpkg.a\nfrom typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    {statement}\n"
-)
+_TYPE_ONLY = "import zzpkg.a\n\nif 0 > 1:\n    {statement}\n"
 
 
 @pytest.mark.parametrize(

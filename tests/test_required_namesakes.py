@@ -496,10 +496,7 @@ _LACKING = {
         },
         {"zzapp/cli.py": "from zz_click import Command\n"},
         {"zzapp/cli.py": "def run():\n    import zz_click.core\n"},
-        {
-            "zzapp/cli.py": "from typing import TYPE_CHECKING\n\n"
-            "if TYPE_CHECKING:\n    from zz_click.core import Command\n"
-        },
+        {"zzapp/cli.py": "if 0 > 1:\n    from zz_click.core import Command\n"},
     ],
     ids=["namespace", "regular", "unbound-name", "in-a-function", "type-only"],
 )
@@ -612,7 +609,7 @@ def test_where_the_directory_is_what_the_program_means_the_import_that_lacks_is_
     assert expected == "local echo 2\napp\nshared 6 13\nuse(2) -> 14\n", expected
     refused = _towel(root, ".")
     assert refused.returncode == 1 and LACKING_MODULE_REMEDY in refused.stderr, refused.stderr
-    ran = _towel(root, ".", "--exclude", "tools")
+    ran = _towel(root, ".", "--exclude", "tools", "--parameterize-builtins")
     assert ran.returncode == 0, ran.stdout + ran.stderr
     assert "zzclick could be any of" not in ran.stderr
     assert "import __extracted_func" in (tmp_path / "project-out/zzapp/cli.py").read_text()

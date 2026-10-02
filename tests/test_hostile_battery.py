@@ -79,6 +79,8 @@ TRANSFORMED = {
     "r38_name_two_positions",
     "r39_cluster_alpha",
     "r40_class_hierarchy",
+    # Lazy module callee lookup remains inside the conditional branch.
+    "r41_conditional_call_param",
     "r44_cluster_nested_overlap",
     "r45_async_no_await",
     "r46_nonlocal_counter",

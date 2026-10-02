@@ -364,14 +364,15 @@ def test_cross_file_helper_keeps_only_builtin_annotations(tmp_path: Path) -> Non
     package.mkdir()
     (package / "__init__.py").write_text("")
     for name, function in (("a.py", "fa"), ("b.py", "fb")):
-        (package / name).write_text(textwrap.dedent(f"""
+        prefix = "import pkg.a\n" if name == "b.py" else ""
+        (package / name).write_text(prefix + textwrap.dedent(f"""
                 from typing import Optional
 
                 def {function}(value: int, label: Optional[str]) -> None:
                     total = value * 2
-                    text = (label or "") + str(total)
-                    print(text)
-                    print(text.upper())
+                    text = (label or "") + "{{}}".format(total)
+                    text.strip()
+                    text.upper()
                 """))
     engine = UnificationRefactorEngine(
         min_lines=2, reuse_existing_functions=False, cross_module_helpers=True

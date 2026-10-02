@@ -29,6 +29,7 @@ import unittest
 import shutil
 import tempfile
 import re
+import subprocess
 from pathlib import Path
 from typing import Dict
 
@@ -159,10 +160,15 @@ EXPECTED_UNCHANGED_EXAMPLES = frozenset(
     {"bindings_comprehensions.py", "example3_file1.py", "example3_file2.py"}
 )
 
-# Its duplicated statistics read len/sum/min/max in different modules. The
+# class_hierarchy's duplicated statistics read len/sum/min/max in different modules. The
 # default mode preserves those caller lookups by declining; the opt-in corpus
 # exercises the corresponding thunked extraction separately.
-EXPECTED_UNCHANGED_CROSSFILE_PROJECTS = frozenset({"class_hierarchy"})
+# multi_level and nested_structure import package members, which may already
+# be ordinary attributes. Those imports do not guarantee that the child
+# module has loaded; adding a helper import could overwrite the attribute.
+EXPECTED_UNCHANGED_CROSSFILE_PROJECTS = frozenset(
+    {"class_hierarchy", "multi_level", "nested_structure"}
+)
 
 
 class TestSingleFileRegression(unittest.TestCase):
@@ -489,6 +495,61 @@ class TestCrossFileRegression(unittest.TestCase):
                 + "\n  ".join(differences)
                 + "\nIf intentional: just regenerate-baseline"
             )
+
+    def test_package_member_fixtures_preserve_existing_attributes(self) -> None:
+        """The unchanged fixtures cannot acquire imports that replace ordinary attributes."""
+        programs = {
+            "multi_level": (
+                "import api\napi.checkout = 7\n"
+                "from core.services import payment\n"
+                "print(api.checkout + 1, payment.process_payment('user', 5, 'USD'))\n",
+                "8 {'status': 'success', 'user_id': 'user', 'amount': 5, 'currency': 'USD'}\n",
+            ),
+            "nested_structure": (
+                "import lib\nlib.report_generator = 7\n"
+                "from src import data_processor\n"
+                "print(lib.report_generator + 1, data_processor.calculate_statistics([1, 2]))\n",
+                "8 {'count': 2, 'sum': 3, 'mean': 1.5}\n",
+            ),
+        }
+        for name, (program, expected) in programs.items():
+            with (
+                self.subTest(project=name),
+                tempfile.TemporaryDirectory(prefix="towel-package-binding-") as directory,
+            ):
+                source = Path(directory) / "source" / name
+                out = Path(directory) / name
+                shutil.copytree(self.crossfile_examples / name, source)
+
+                def execute(root: Path) -> subprocess.CompletedProcess[str]:
+                    return subprocess.run(
+                        [
+                            sys.executable,
+                            "-I",
+                            "-B",
+                            "-c",
+                            f"import sys; sys.path.insert(0, {str(root)!r})\n" + program,
+                        ],
+                        cwd=root,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+
+                before = execute(source)
+                self.assertEqual(before.returncode, 0, before.stderr)
+                self.assertEqual(before.stdout, expected)
+                engine = UnificationRefactorEngine(
+                    max_parameters=5, min_lines=3, cross_module_helpers=True
+                )
+                results, reason = engine.refactor_directory_to_fixed_point(
+                    str(source), str(out), progress="none"
+                )
+                self.assertFalse(results)
+                self.assertEqual(reason, "fixed_point")
+                after = execute(out)
+                self.assertEqual(after.returncode, before.returncode, after.stderr)
+                self.assertEqual((after.stdout, after.stderr), (before.stdout, before.stderr))
 
 
 def main():

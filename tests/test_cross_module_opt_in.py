@@ -72,7 +72,8 @@ def _package(root: Path) -> Path:
         {
             "zzshared/__init__.py": "",
             "zzshared/first.py": _BLOCK.format(name="total_first", tag="first"),
-            "zzshared/second.py": _BLOCK.format(name="total_second", tag="second"),
+            "zzshared/second.py": "import zzshared.first\n"
+            + _BLOCK.format(name="total_second", tag="second"),
         },
     )
 

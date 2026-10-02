@@ -70,6 +70,13 @@ import ``shop`` without the module hatch, or the subpackage setuptools,
 leaves out of the wheel. Their modules left out may borrow from the ones
 that ship, never the reverse.
 
+``IMPORT_REFUSALS`` retains historical packages whose imports do not directly
+establish that a helper host has loaded. Importing a new package member can
+overwrite an ordinary parent attribute, and member-from imports do not prove
+the member is a module. ``EXPLICIT_HOST_IMPORTS`` runs copied variants with
+direct host loads so the original binding and typing defects still exercise
+extraction while historical inputs remain unchanged.
+
 A package in ``REFUSED`` holds a file written for a newer Python than any
 Towel supports, stored as ``.pynew`` (``tests.hostile_execution``): Towel
 must refuse the run before writing anything, naming that file, since what it
@@ -88,6 +95,7 @@ yet fixed: a strict expected failure whose transformed state is not pinned.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 import re
 import shutil
@@ -104,8 +112,9 @@ from tests.test_cli_integration import invoke
 CASES = Path(__file__).parent / "hostile_crossfile"
 
 # Each of these formerly read a builtin in the borrowed helper's host module.
-# Default extraction now declines; the explicit mode below must still extract
-# and preserve every ordinary runtime/scope/public-name observation.
+# Default extraction now declines. The explicit mode preserves every ordinary
+# runtime/scope/public-name observation; extraction also needs a proved host
+# load, supplied by the copied variants when IMPORT_REFUSALS applies.
 BUILTIN_CALLER_LOOKUPS = {
     "r9sb_lambda_capture_across_modules",
     "xf11_package_init_reaches_back",
@@ -122,22 +131,11 @@ BUILTIN_CALLER_LOOKUPS = {
 }
 
 TRANSFORMED = {
-    "xf3_same_named_local_function",
-    "xf4_same_named_class",
-    "xf5_dunder_file",
-    "xf6_same_alias_different_import",
-    "xf7_docstring_import",
-    "xf8_helper_name_collision",
     "xf10_reuse_existing_function",
-    "xf14_script_with_leading_statement",
     "xf15_ancestor_in_another_module",
     "xf16_consumer_outside_target_owns_helper_name",
     "xf20_builtin_shadowed_in_ancestor_module",
-    "xf24_relative_import_climbs_elsewhere",
-    "xf25_relative_import_in_the_same_package",
     "xf26_relative_import_ancestor_in_another_package",
-    "xf27_registration_decorator_in_host",
-    "xf28_registration_decorator_in_reused_module",
     # The host's new binding for its annotations is private, so no module that
     # star-imports it takes a typing name in place of its own Any or Callable:
     # a sibling (xf30), the package's __init__ (xf31), a module outside the
@@ -167,13 +165,8 @@ TRANSFORMED = {
     "xf7fz_extra_typed_binder_message_pyright",
     # The round-3 audit's families (xf7fz_<family>_<case>): a sample of the
     # cross-module cases the audit found sound, every one transformed.
-    "xf7fz_binding_x_dunder_file",
-    "xf7fz_builtins_x_shadow_in_b",
-    "xf7fz_modules_b_imports_a",
     "xf7fz_modules_init_hosts",
-    "xf7fz_modules_rel_import_in_block",
     "xf7fz_modules_script_main_guard",
-    "xf7fz_modules_three_modules_cluster",
     # Two modules pytest does not rewrite share an assert: either may host it.
     "xf7d_asserts_shared_by_modules_rewritten_alike",
     # Round-4 audit P2-02: a star import whose provider's __all__ cannot bind
@@ -181,9 +174,46 @@ TRANSFORMED = {
     "r9dc_star_import_that_cannot_bind_a_decorator",
 }
 
+# Historical packages whose existing imports do not prove the candidate host
+# loaded before the new helper import. A package member import may read an
+# existing ordinary attribute, and a new submodule load would replace it.
+# xf12 additionally encounters partially initialized ancestors; their later
+# imports cannot establish readiness. These cases still run in both builtin
+# modes, and retain runtime, scope and public-name assertions below.
+IMPORT_REFUSALS = {
+    "r9sb_lambda_capture_across_modules",
+    "xf12_cycle_through_package_init",
+    "xf14_script_with_leading_statement",
+    "xf21_builtin_shadowed_in_third_module",
+    "xf24_relative_import_climbs_elsewhere",
+    "xf25_relative_import_in_the_same_package",
+    "xf27_registration_decorator_in_host",
+    "xf28_registration_decorator_in_reused_module",
+    "xf3_same_named_local_function",
+    "xf4_same_named_class",
+    "xf5_dunder_file",
+    "xf6_same_alias_different_import",
+    "xf7_docstring_import",
+    "xf7fz_binding_x_class_level_name",
+    "xf7fz_binding_x_dunder_file",
+    "xf7fz_builtins_x_shadow_in_b",
+    "xf7fz_grammar_u0474_for_target_prebound",
+    "xf7fz_grammar_u0624_for_target_prebound",
+    "xf7fz_grammar_u1209_for_target_prebound",
+    "xf7fz_modules_b_imports_a",
+    "xf7fz_modules_rel_import_in_block",
+    "xf7fz_modules_three_modules_cluster",
+    "xf7n_host_the_wheel_leaves_out",
+    "xf7n_subpackage_the_wheel_leaves_out",
+    "xf8_helper_name_collision",
+    "xf9_same_named_base_class",
+    "xf9xi_type_only_import_of_a_missing_module",
+}
+
 # Packages the engine must leave alone, with the reason a comment in the fixture.
 REJECTED = {
     *BUILTIN_CALLER_LOOKUPS,
+    *IMPORT_REFUSALS,
     # TYPE_CHECKING is mutable: this host's guarded branches may execute.
     "xf29_type_checking_block_with_branches",
     "xf13_import_time_effects",
@@ -293,12 +323,34 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
     _check_directory_program_output(case, parameterize_builtins=False)
 
 
-def _check_directory_program_output(case: str, *, parameterize_builtins: bool) -> None:
+def _check_directory_program_output(
+    case: str,
+    *,
+    parameterize_builtins: bool,
+    explicit_imports: tuple[tuple[str, str], ...] = (),
+) -> None:
     with tempfile.TemporaryDirectory(prefix="towel-hostile-xf-") as directory:
         before = Path(directory) / "before"
         after = Path(directory) / "after"
         copy_fixture_tree(CASES / case, before)
         copy_fixture_tree(CASES / case, after)
+        for root in (before, after):
+            for relative, module in explicit_imports:
+                _add_leading_module_import(root / relative, module)
+            if explicit_imports and case in EXPLICIT_COMMON_IMPORTS:
+                # The copied grammar variant spells the byte-identical
+                # common modules' six exports. A runtime star can overwrite
+                # an early helper, a separate refusal from the binder bug.
+                for name in ("a", "b"):
+                    path = root / "pkg" / f"{name}.py"
+                    source = path.read_text()
+                    assert source.count("from .common import *") == 1
+                    path.write_text(
+                        source.replace(
+                            "from .common import *",
+                            "from .common import LOG, G, tr, Box, Ctx, bump",
+                        )
+                    )
         if case in REFUSED:
             with pytest.raises(UnparsedProgramError, match=re.escape(f"  {REFUSED[case]}: line ")):
                 refactor_package(after / "pkg", cross_module=case not in WITHOUT_CROSS_MODULE)
@@ -329,13 +381,95 @@ def _check_directory_program_output(case: str, *, parameterize_builtins: bool) -
                 results or case in REJECTED
             ), "Each fixture must exercise a real cross-file extraction"
             assert transformed == (
-                case in TRANSFORMED or (parameterize_builtins and case in BUILTIN_CALLER_LOOKUPS)
+                bool(explicit_imports)
+                or case in TRANSFORMED
+                or (
+                    parameterize_builtins
+                    and case in BUILTIN_CALLER_LOOKUPS
+                    and case not in IMPORT_REFUSALS
+                )
             ), ("rejected" if not transformed else "transformed")
 
 
 @pytest.mark.parametrize("case", sorted(BUILTIN_CALLER_LOOKUPS))
 def test_caller_lookup_mode_preserves_cross_module_program_output(case: str) -> None:
     _check_directory_program_output(case, parameterize_builtins=True)
+
+
+# Keep the original fixtures as regression evidence. These copied variants
+# explicitly load the host before the borrower's definitions, so the original
+# binding, grammar, registration and packaging fixes still exercise extraction.
+EXPLICIT_HOST_IMPORTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "r9sb_lambda_capture_across_modules": (("pkg/quotes.py", "pkg.orders"),),
+    "xf3_same_named_local_function": (("pkg/b.py", "pkg.a"),),
+    "xf4_same_named_class": (("pkg/b.py", "pkg.a"),),
+    "xf5_dunder_file": (("pkg/b.py", "pkg.a"),),
+    "xf6_same_alias_different_import": (("pkg/b.py", "pkg.a"),),
+    "xf7_docstring_import": (("pkg/b.py", "pkg.a"),),
+    "xf8_helper_name_collision": tuple((f"pkg/{name}.py", "pkg.a") for name in "bcde"),
+    "xf21_builtin_shadowed_in_third_module": (("pkg/b.py", "pkg.a"), ("pkg/c.py", "pkg.a")),
+    "xf24_relative_import_climbs_elsewhere": (("pkg/x/a.py", "pkg.b"),),
+    "xf25_relative_import_in_the_same_package": (("pkg/x/b.py", "pkg.x.a"),),
+    "xf27_registration_decorator_in_host": (("pkg/beta.py", "pkg.alpha"),),
+    "xf28_registration_decorator_in_reused_module": (("pkg/beta.py", "pkg.alpha"),),
+    "xf7fz_binding_x_class_level_name": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_binding_x_dunder_file": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_builtins_x_shadow_in_b": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_grammar_u0474_for_target_prebound": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_grammar_u0624_for_target_prebound": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_grammar_u1209_for_target_prebound": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_modules_b_imports_a": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_modules_rel_import_in_block": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_modules_three_modules_cluster": (("pkg/b.py", "pkg.a"), ("pkg/c.py", "pkg.a")),
+    "xf7n_host_the_wheel_leaves_out": (("pkg/src/shop/_devtools.py", "shop.stats"),),
+    "xf7n_subpackage_the_wheel_leaves_out": (("pkg/src/shop/devtools/dump.py", "shop.stats"),),
+    "xf9_same_named_base_class": (
+        ("pkg/one/revoke.py", "pkg.one.introspect"),
+        ("pkg/two/access.py", "pkg.one.introspect"),
+        ("pkg/two/request.py", "pkg.one.introspect"),
+    ),
+    "xf9xi_type_only_import_of_a_missing_module": (("pkg/b.py", "pkg.a"),),
+}
+
+EXPLICIT_COMMON_IMPORTS = frozenset(
+    {
+        "xf7fz_grammar_u0474_for_target_prebound",
+        "xf7fz_grammar_u0624_for_target_prebound",
+        "xf7fz_grammar_u1209_for_target_prebound",
+    }
+)
+
+
+def _add_leading_module_import(path: Path, module: str) -> None:
+    source = path.read_text()
+    tree = ast.parse(source)
+    position = tree.body[0].lineno - 1 if tree.body else 0
+    for index, statement in enumerate(tree.body):
+        if (
+            index == 0
+            and isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        ) or (
+            isinstance(statement, ast.ImportFrom)
+            and statement.level == 0
+            and statement.module == "__future__"
+        ):
+            position = statement.end_lineno or statement.lineno
+        else:
+            break
+    lines = source.splitlines(keepends=True)
+    lines.insert(position, f"import {module} as _loaded_host\n")
+    path.write_text("".join(lines))
+
+
+@pytest.mark.parametrize("case", sorted(EXPLICIT_HOST_IMPORTS))
+def test_explicit_host_load_keeps_the_original_cross_module_regression_active(case: str) -> None:
+    _check_directory_program_output(
+        case,
+        parameterize_builtins=case in BUILTIN_CALLER_LOOKUPS,
+        explicit_imports=EXPLICIT_HOST_IMPORTS[case],
+    )
 
 
 @pytest.mark.parametrize("case", sorted(REFLECTION_CASES))

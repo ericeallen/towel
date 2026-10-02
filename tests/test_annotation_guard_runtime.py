@@ -72,6 +72,13 @@ def test_typed_cli_preserves_imports_with_type_checking_true(tmp_path: Path) -> 
     if importlib.util.find_spec(checker) is None:
         pytest.skip(f"{checker} absent")
     package = _package(tmp_path)
+    # This test needs a real preexisting host load to reach annotation
+    # generation; importing only its package does not establish one.
+    borrower_path = package / "beta.py"
+    borrower_path.write_text(
+        borrower_path.read_text(encoding="utf-8").replace("import pkg\n", "import pkg.alpha\n"),
+        encoding="utf-8",
+    )
     script = "import typing\ntyping.TYPE_CHECKING = True\nfrom pkg.beta import Beta\nprint(Beta().render(6))\n"
     before = _run(tmp_path, "-c", script)
     assert (before.returncode, before.stdout) == (0, ".....B\n"), before.stderr

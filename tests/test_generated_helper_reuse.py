@@ -40,8 +40,9 @@ from tests.typed_fixtures import requires_mypy
 
 BODY = (
     "    acc = n * 2\n    acc = acc - 11\n    msg = 'value %d' % acc\n"
-    "    print(msg)\n    return acc\n"
+    "    msg = msg.strip()\n    return acc\n"
 )
+"""A whole body with no module lookup to introduce an unrelated caller thunk."""
 
 
 def _package(root: Path, count: int, *, typed: bool = False, third_float: bool = False) -> Path:
@@ -56,7 +57,7 @@ def _package(root: Path, count: int, *, typed: bool = False, third_float: bool =
         annotation = "float" if third_float and name == "c" else "int"
         signature = f"(n: {annotation}) -> {annotation}:" if typed else "(n):"
         (package / f"{name}.py").write_text(
-            ("from pkg import a\n\n" if name != "a" else "") + f"def {name}_one{signature}\n" + BODY
+            ("import pkg.a\n\n" if name != "a" else "") + f"def {name}_one{signature}\n" + BODY
         )
     return package
 

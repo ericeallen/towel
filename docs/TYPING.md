@@ -154,15 +154,16 @@ Annotation names are private and chosen to avoid bindings already spelled
 in the module. For example:
 
 ```python
-import typing as _typing
-
-if _typing.TYPE_CHECKING:
+if 0 > 1:
     from pkg.models import Item as _Item
 ```
 
 An existing import can be reused when it is the name's only binding anywhere
-in the module. Imports needed only by annotations stay under `TYPE_CHECKING`;
-where needed, its guard carries `# pragma: no cover` so coverage.py excludes it.
+in the module. New imports needed only by annotations use the immutable false
+comparison `0 > 1`, which mypy and pyright still read for types. Existing
+`TYPE_CHECKING` guards retain their runtime behavior; their mutable flags are
+not a reason to add imports that could execute. Where needed, the generated
+guard carries `# pragma: no cover` so coverage.py excludes it.
 These choices avoid adding public names to star imports or rebinding the
 program's names.
 

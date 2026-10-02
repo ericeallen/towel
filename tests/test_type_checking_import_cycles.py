@@ -264,7 +264,9 @@ def test_modules_share_a_helper_only_when_guarded_imports_are_proved_inert(
     if immutable_false:
         alpha_source = alpha_source.replace("if TYPE_CHECKING:", "if 0 > 1:")
         beta_source = beta_source.replace("if TYPE_CHECKING:", "if 0 > 1:")
-    root = _package(tmp_path, alpha_source, beta_source)
+    # The runtime import proves that alpha is loaded. The guarded reverse
+    # edge alone decides whether adding the helper import closes a cycle.
+    root = _package(tmp_path, alpha_source, "import pkg.alpha\n" + beta_source)
     original_alpha = (root / "pkg" / "alpha.py").read_text()
     original_beta = (root / "pkg" / "beta.py").read_text()
     result = _dry(root)
@@ -324,7 +326,7 @@ def test_a_type_only_import_towel_wrote_refuses_no_later_pair(tmp_path: Path) ->
         "tests/test_errors.py": "from pkg.direct import DirectError\nfrom pkg.lock import LockError\n",
         "pkg/__init__.py": "",
         "pkg/direct.py": _ERROR.format(name="DirectError"),
-        "pkg/lock.py": _ERROR.format(name="LockError"),
+        "pkg/lock.py": "import pkg.direct\n" + _ERROR.format(name="LockError"),
     }
     for name, content in files.items():
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)

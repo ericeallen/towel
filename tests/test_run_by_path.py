@@ -105,7 +105,9 @@ def _observe(
 
 
 def _refactor(root: Path) -> int:
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        min_lines=3, cross_module_helpers=True, parameterize_builtins=True
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(root / "pkg"), str(root / "pkg"), progress="none"
@@ -120,12 +122,27 @@ PYPROJECT = '[project]\nname = "pkg"\nversion = "0"\n'
     "metadata, imports_a, imports_b, transformed",
     [
         (True, "import sys", "import sys", False),
-        (True, "import sys\nfrom pkg import util", "import sys\nfrom pkg import util", True),
-        (True, "import sys\nfrom . import util", "import sys\nfrom . import util", True),
+        (
+            True,
+            "import sys\nfrom pkg import util",
+            "import sys\nfrom pkg import util\nimport pkg.tool_a",
+            True,
+        ),
+        (
+            True,
+            "import sys\nfrom . import util",
+            "import sys\nfrom . import util\nfrom .tool_a import main as _other_main",
+            True,
+        ),
         # Packaging metadata names nothing: the tools' own absolute imports of
         # their package are what the helper's import is spelled like, and a
         # run by path resolves it wherever it resolves theirs.
-        (False, "import sys\nfrom pkg import util", "import sys\nfrom pkg import util", True),
+        (
+            False,
+            "import sys\nfrom pkg import util",
+            "import sys\nfrom pkg import util\nimport pkg.tool_a",
+            True,
+        ),
     ],
     ids=[
         "imports-nothing-of-its-package",
@@ -161,7 +178,9 @@ def test_a_script_that_already_fails_by_path_may_borrow(tmp_path: Path) -> None:
             "pkg/__init__.py": "",
             "pkg/util.py": "VALUE = 1\n",
             "pkg/tool_a.py": _tool("a", "import sys\nfrom . import util"),
-            "pkg/tool_b.py": _tool("b", "import sys\nfrom . import util"),
+            "pkg/tool_b.py": _tool(
+                "b", "import sys\nfrom . import util\nfrom .tool_a import main as _other_main"
+            ),
         },
     )
     shutil.copytree(tmp_path, tmp_path.parent / "reference", dirs_exist_ok=True)

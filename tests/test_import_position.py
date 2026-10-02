@@ -16,7 +16,7 @@
 
 One position function serves every import Towel writes: a borrower's
 ``from .a import __extracted_func_0``, a typed run's ``import typing as
-_typing`` and its ``TYPE_CHECKING`` guard. The table below holds it to each
+_typing`` and an immutable false guard. The table below holds it to each
 kind of line a module can open with, and the end-to-end cases run the
 written files the way their first lines say they run.
 """
@@ -151,15 +151,18 @@ def test_r9xh_a_latin1_borrower_keeps_its_declaration(tmp_path: Path) -> None:
         "    return label\n"
     )
     for name in ("a", "b"):
+        imports = "import pkg.a\n" if name == "b" else ""
         (package / f"{name}.py").write_bytes(
-            f"# -*- coding: latin-1 -*-\n\n\n{body.format(n=name)}".encode("latin-1")
+            f"# -*- coding: latin-1 -*-\n{imports}\n\n{body.format(n=name)}".encode("latin-1")
         )
     with (package / "b.py").open("ab") as handle:
         handle.write("\n\ndef stays():\n    return '\u00c3\u00a9 stays'\n".encode("latin-1"))
     (package / "c.py").write_text("from pkg import a, b\n")
-    assert _refactor(package, cross_module_helpers=True) == 2
+    assert _refactor(package, cross_module_helpers=True, parameterize_builtins=True) == 2
     borrower = (package / "b.py").read_bytes()
-    assert borrower.startswith(b"# -*- coding: latin-1 -*-\nfrom .a import __extracted_func_0\n")
+    assert borrower.startswith(
+        b"# -*- coding: latin-1 -*-\nimport pkg.a\nfrom pkg.a import __extracted_func_0\n"
+    )
     probe = "from pkg import b; print(ascii(b.stays()))"
     ran = subprocess.run(
         [sys.executable, "-c", probe],
@@ -190,7 +193,7 @@ def test_r9xh_the_borrowers_own_patch_still_runs_before_the_host(tmp_path: Path)
         + _SUMMARY.format(n="a", N="A")
     )
     (package / "b.py").write_text(
-        "import time\ntime.sleep = lambda s: print('patched sleep', s)\n\n\n"
+        "import time\ntime.sleep = lambda s: print('patched sleep', s)\nimport shop.a\n\n\n"
         + _SUMMARY.format(n="b", N="B")
     )
     oracle = "import shop.b, shop.a; shop.a.use_sleep(); print(shop.b.summarize_b(['ab'], 2))"
@@ -206,9 +209,9 @@ def test_r9xh_the_borrowers_own_patch_still_runs_before_the_host(tmp_path: Path)
         ).stdout
 
     before = run()
-    assert _refactor(package, cross_module_helpers=True) > 0
+    assert _refactor(package, cross_module_helpers=True, parameterize_builtins=True) > 0
     lines = (package / "b.py").read_text().splitlines()
-    assert lines.index("from .a import __extracted_func_0") > lines.index(
+    assert lines.index("from shop.a import __extracted_func_0") > lines.index(
         "time.sleep = lambda s: print('patched sleep', s)"
     )
     assert run() == before == "patched sleep 0\nBN=41\n"

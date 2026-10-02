@@ -187,13 +187,18 @@ def test_cross_file_extraction_keeps_verified_annotations(
 ) -> None:
     package = _package(tmp_path)
     for name, multiplier in (("first", 2), ("second", 3)):
+        prefix = "import pkg.first\n" if name == "second" else ""
         (package / f"{name}.py").write_text(
-            f"def {name}(value: int) -> int:\n"
+            prefix + f"def {name}(value: int) -> int:\n"
             "    total = value + 1\n    print(total)\n"
             f"    return total * {multiplier}\n"
         )
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=oracle, cross_module_helpers=True
+        min_lines=2,
+        reuse_existing_functions=False,
+        type_oracle=oracle,
+        cross_module_helpers=True,
+        parameterize_builtins=True,
     )
     proposals = engine.analyze_directory(str(package), progress="none")
     assert proposals

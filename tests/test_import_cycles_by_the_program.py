@@ -63,7 +63,8 @@ _FILES: Mapping[str, str] = {
     "src/alpha/__init__.py": "",
     # The host the pair would take first: importing it runs beta.hub, which
     # reads a name the borrower defines.
-    "src/alpha/a_host.py": "import beta.hub\n\n" + _BLOCK.format(name="fa", tag="a"),
+    "src/alpha/a_host.py": "import beta.hub\nimport alpha.b_borrower\n\n"
+    + _BLOCK.format(name="fa", tag="a"),
     "src/alpha/b_borrower.py": "import beta\n\nVALUE = 7\n\n" + _BLOCK.format(name="fb", tag="b"),
     "src/beta/__init__.py": "",
     "src/beta/hub.py": "from alpha.b_borrower import VALUE\n",
@@ -132,7 +133,7 @@ def test_the_helper_goes_where_importing_it_closes_no_cycle(tmp_path: Path) -> N
     assert result.returncode == 0, result.stdout + result.stderr
     assert "def __extracted_func_0(" in (refactored / "src/alpha/b_borrower.py").read_text()
     assert (
-        "from .b_borrower import __extracted_func_0"
+        "from alpha.b_borrower import __extracted_func_0"
         in (refactored / "src/alpha/a_host.py").read_text()
     )
     for first in ("alpha.a_host", "alpha.b_borrower"):

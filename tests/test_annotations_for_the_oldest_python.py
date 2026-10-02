@@ -240,9 +240,18 @@ def test_a_project_declaring_python_39_imports_on_python_39_after_a_typed_run(
     (root / "pyproject.toml").write_text(PYPROJECT.lstrip(), encoding="utf-8")
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "a.py").write_text(A.lstrip(), encoding="utf-8")
-    (package / "b.py").write_text(B.lstrip(), encoding="utf-8")
+    (package / "b.py").write_text("import alpha.a\n" + B.lstrip(), encoding="utf-8")
     result = invoke(
-        ["dry", str(root), str(root), "--no-interactive", "--cross-module", "--progress", "none"]
+        [
+            "dry",
+            str(root),
+            str(root),
+            "--no-interactive",
+            "--cross-module",
+            "--parameterize-builtins",
+            "--progress",
+            "none",
+        ]
     )
     assert result.status == 0, result
     assert "__extracted_func_0" in (package / "a.py").read_text(encoding="utf-8")

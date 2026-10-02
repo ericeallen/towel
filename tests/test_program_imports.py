@@ -35,6 +35,7 @@ from typing import Mapping
 from towel.unification.import_graph import (
     ImportChange,
     ImportGraphCache,
+    _import_edges,
     import_change,
     would_create_import_cycle,
 )
@@ -73,7 +74,7 @@ def _vendoring(root: Path) -> Path:
             "pkg/__init__.py": "",
             "pkg/_vendor/__init__.py": "",
             "pkg/_vendor/noisy.py": 'print("loading noisy")\n',
-            "pkg/a_host.py": "from pkg._vendor import noisy\n\n"
+            "pkg/a_host.py": "import pkg.b_borrower\nfrom pkg._vendor import noisy\n\n"
             + _BLOCK.format(name="fa", offset=1),
             "pkg/b_borrower.py": _BLOCK.format(name="fb", offset=2),
             "tests/test_pkg.py": "import pkg.a_host\nimport pkg.b_borrower\n",
@@ -84,9 +85,13 @@ def _vendoring(root: Path) -> Path:
 def test_an_import_into_an_excluded_directory_is_unknown_not_empty(tmp_path: Path) -> None:
     root = _vendoring(tmp_path / "project")
     host, borrower = str(root / "pkg/a_host.py"), str(root / "pkg/b_borrower.py")
-    assert import_change(host, borrower, ImportGraphCache()) is ImportChange.RUNS_CODE
+    # Neither a quiet body nor an unread vendored dependency authorizes a
+    # new submodule load: it would also replace the parent's ordinary value.
+    assert import_change(host, borrower, ImportGraphCache()) is ImportChange.PACKAGE_BINDING
     excluded = ImportGraphCache(excluded_names=["_vendor"])
-    assert import_change(host, borrower, excluded) is ImportChange.UNKNOWN
+    assert import_change(host, borrower, excluded) is ImportChange.PACKAGE_BINDING
+    edges = _import_edges(Path(host), excluded.program_for(Path(host)), excluded, "at_import")
+    assert edges is not None and edges.unseen
     assert would_create_import_cycle(host, {borrower}, excluded)
     # The other way round nothing enters the vendored directory.
     assert import_change(borrower, host, excluded) is None

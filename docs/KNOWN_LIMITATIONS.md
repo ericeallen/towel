@@ -460,10 +460,12 @@ name the program uses: a directory link `beta -> src/alpha` beside
 or a hard link, each resolved by replacing the link with a copy (the
 round-4 audit's P1-4). Only an import that attests locates a name,
 makes it ambiguous, or finds it inside a package: one inside
-`try`/`except ImportError`, under `TYPE_CHECKING`, or in a file that
+`try`/`except ImportError`, under a runtime condition, or in a file that
 changes `sys.path`, as graphene's setup.py imports `pyutils.version` after
 appending the package to `sys.path`, does none of these, though one that
-runs still counts where it can load a file under a second name. Before it
+runs still counts where it can load a file under a second name. An imported
+`TYPE_CHECKING` flag is mutable, so its imports remain possible runtime
+dependencies; only a proved immutable false guard excludes them. Before it
 writes anything, a
 `--cross-module` run of `dry` or `preview` names every such problem with the
 remedy for its kind, and refuses the run when one leaves in doubt a
@@ -484,10 +486,15 @@ which a fresh clone lacking `_version.py` leaves as it is. Only a
 `--cross-module` run consults the model; a run without it refactors such a
 file as any other, and writes no import between modules that runs.
 
-The host is chosen so that no import cycle closes, preferring a module the
-borrowers already import; when none qualifies, one borrower gains a new
-import edge. Every import on the way is resolved as the program's import
-model resolves it, an ambiguous name to every place it could be. Towel does not know whether importing that module has
+The host is chosen so that no import cycle closes and no original module load
+is advanced past definitions. A new submodule load is also refused: Python
+binds the submodule on its parent package, replacing any ordinary value
+already there, including one set by code outside the analyzed tree. A fresh
+top-level host must contain only literal bindings and inert function
+definitions, apart from proven standard future directives, and satisfy the
+remaining import checks. Every import on the way is resolved as the program's
+import model resolves it, an ambiguous name to every place it could be. Towel
+does not know whether importing that module has
 requirements of its own: gunicorn's `workers/gtornado.py` raises at import
 time unless tornado is installed, and a helper hosted there made
 `workers/sync.py` import it, so environments without tornado could no longer
@@ -498,8 +505,8 @@ registration decorator there would register wherever the borrower is
 imported (fixtures `xf27`, `xf28`). A module whose classes derive from a
 base with a metaclass of the project's own counts as running code even when
 that metaclass only builds the class, since nothing shows it registers
-nothing; most of Pygments' lexer modules are such, which costs Pygments 12
-of its 23 cross-module helpers. Towel also refuses a host
+nothing; in earlier validation this cost Pygments 12 of its 23 cross-module
+helpers. Towel also refuses a host
 whose import would require a module the borrower does not already
 import: an unconditional import, including one inside a module-level `if`,
 of anything outside the project, the standard library and the project's
@@ -557,10 +564,18 @@ installed `zeta.a` raise `ModuleNotFoundError`. Another participating module
 is then tried as host, so a test module that imports the package under test
 takes the helper from it, and a pair between the package and a module that
 never imports it is declined. What a
-borrower "already loads" counts only the imports its top level certainly
-runs: an import in a function body, a branch or a `try` makes nothing
-present, and a borrower whose function imports the host lazily no longer
-counts as running the host's import-time code already.
+borrower "already loads" counts its enclosing packages and explicit module
+imports before its first definition, including those imports' parent packages.
+`import pkg.host` and `from pkg.host import value` establish that host;
+`from pkg import host` may read an ordinary attribute and does not. An imported
+module can still be
+initializing, so its later imports establish no further completed loads.
+Imports in a function body, a branch or a `try` make nothing certainly present.
+A fresh shared helper is defined before ordinary imports and effects, with
+quoted annotations, so a partially initialized host can supply it. An existing
+generated helper must already have an inert prefix that proves its definition
+is available. Changing a program's imports to overcome these refusals can
+change its behavior and requires a separate review.
 
 A module written to run as a program may be run by its path: `__main__.py`,
 a module whose first line is a `#!` interpreter line, and one with a main

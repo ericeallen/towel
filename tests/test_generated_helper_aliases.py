@@ -192,7 +192,9 @@ def test_cross_module_input_functions_keep_independent_bindings(tmp_path: Path, 
     (origin / "pyproject.toml").write_text("[project]\nname='test'\nversion='0'\n")
     (package / "__init__.py").write_text("")
     (package / "a.py").write_text(f"def {name}(n):\n{BODY}")
-    (package / "b.py").write_text("from pkg import a\ndef other(n):\n" + BODY)
+    # Load the real host module so this reaches the independent-binding
+    # guarantee, rather than the package-member ambiguity refusal.
+    (package / "b.py").write_text("import pkg.a\ndef other(n):\n" + BODY)
     program = (
         "from pkg import a,b\n"
         f'print(a.{name}(3),b.other(4))\na.{name}=lambda n: "patched"\nprint(b.other(5))\n'

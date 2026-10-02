@@ -202,6 +202,7 @@ def test_complete_preview_keeps_cross_module_followups_and_exclusions(
         "--no-types",
         "--no-format",
         "--cross-module",
+        "--parameterize-builtins",
         "--exclude",
         "vendor",
         "--progress",

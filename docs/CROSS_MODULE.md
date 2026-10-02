@@ -7,6 +7,7 @@ Cross-module sharing adds imports between project modules. It is opt-in: pass `-
 On this page:
 
 - [How a cross-module import is spelled](#how-a-cross-module-import-is-spelled)
+- [When a host is available](#when-a-host-is-available)
 - [Resolving import refusals](#resolving-import-refusals)
 - [Dependency metadata](#dependency-metadata)
 - [What the preflight reports](#what-the-preflight-reports)
@@ -65,6 +66,32 @@ import those show to work wherever the program runs
   `[tool.poetry]`, borrows only from a host in the same one, since it may be
   installed against the other's released version (`other_distribution`). A
   module in no distribution, such as a root test or script, is exempt.
+
+## When a host is available
+
+The new import must preserve what runs and when. Towel counts a host as
+already present from the borrower's enclosing packages and explicit module
+imports before its first definition, including those imports' parent packages.
+For example, `import pkg.host` and `from pkg.host import value` load `pkg.host`;
+`from pkg import host` may read an ordinary attribute instead. An imported
+module may still be initializing, so its own later imports do not prove that
+another host is ready.
+
+Towel does not advance an original module load past definitions. It also
+refuses a new submodule load: importing `pkg.host` can replace an ordinary
+value already bound to `pkg.host`, even when the module's body has no effects.
+A fresh top-level host must contain only literal bindings and inert function
+definitions, apart from standard future directives, and still pass the other
+import checks. These restrictions can decline otherwise similar duplicates;
+changing the program's imports to enable sharing requires its own behavioral
+review.
+
+A fresh shared helper is defined before ordinary imports and effects, after
+the module header, docstring and future directives. Annotations that need
+bindings are quoted, so defining it needs no later bindings. This lets a
+partially initialized host supply the helper. Reusing a generated helper
+requires its existing definition to be available before operations that could
+reenter the module.
 
 ## Resolving import refusals
 
@@ -128,17 +155,20 @@ top-level name found only inside a package the program also imports as one,
 as `pkg/c.py`'s `import helpers` finds only `pkg/helpers.py`. The report
 names the import that treats it as top-level. Only an import that attests
 locates a name, makes it ambiguous, or finds it inside a package: one
-inside `try`/`except ImportError`, under `TYPE_CHECKING`, or in a file
+inside `try`/`except ImportError`, under a runtime condition, or in a file
 that changes `sys.path` (a setup.py that appends its package to `sys.path`
 to read its own version) does none of these. One that runs can still load a
-file under a second name, so it still counts for that.
+file under a second name, so it still counts for that. An imported
+`TYPE_CHECKING` flag is mutable: its guarded imports may run, even though they
+do not establish an unconditional dependency.
 
 ## Missing and optional modules
 
 An import of a module the tree lacks refuses nothing, wherever it lies,
 however it is spelled: `from .gone import x`, `from . import gone` or
 `from pkg import gone`, where `pkg`'s initializer binds no `gone`. One
-under `if TYPE_CHECKING:` never runs, so it is no such import. The
+under a proved immutable false guard, such as `if 0 > 1:`, never runs and is
+excluded. `if TYPE_CHECKING:` does not provide that runtime proof. The
 run leaves the file making it exactly as it was, neither hosting nor
 borrowing a helper and getting none of its own, and says so, naming the
 file: test data such as sphinx's `need_mocks.py`, which imports a module its
@@ -153,6 +183,8 @@ for modules imported through the package, and the run says so in one line.
 
 Without `cross_module_helpers` no import between the project's modules that
 runs is ever written. A helper's annotation may still need a type from
-another module; that import is written under `if TYPE_CHECKING:`, where it
-never runs, spelled by the same rules, and where no import is known to work
-the annotation keeps the checker's full name.
+another module; that import is written under `if 0 > 1:`, an immutable false
+comparison that mypy and pyright still read for types. It is spelled by the
+same rules, and where no import is known to work the annotation keeps the
+checker's full name. Existing `TYPE_CHECKING` guards keep their runtime behavior;
+Towel does not add generated imports to them.
