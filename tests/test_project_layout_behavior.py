@@ -53,6 +53,21 @@ def test_without_a_marker_a_package_is_rooted_above_its_top(tmp_path: Path) -> N
     assert find_project_root(plain) == plain.resolve()
 
 
+@pytest.mark.parametrize("configured", [False, True])
+def test_setup_module_in_a_package_does_not_hide_its_consumers(
+    tmp_path: Path, configured: bool
+) -> None:
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "setup.py").write_text("def configure():\n    return 1\n")
+    (package / "mod.py").write_text("value = 1\n")
+    if configured:
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'project'\nversion = '0'\n")
+    assert find_project_root(package / "mod.py") == tmp_path.resolve()
+    assert find_project_root(package) == tmp_path.resolve()
+
+
 def test_a_malformed_pyproject_is_read_as_empty_and_said_so(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

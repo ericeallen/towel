@@ -88,10 +88,15 @@ def find_project_root(start_path: Path) -> Path:
 
     # Prefer a nearby directory containing packaging markers, but fall back to
     # the provided directory when none are found while walking upward.
-    markers = {"pyproject.toml", "setup.cfg", "setup.py"}
+    markers = {"pyproject.toml", "setup.cfg"}
     current = base_dir
     while True:
-        if any((current / m).exists() for m in markers):
+        # Inside a regular package, setup.py is an importable module just like
+        # any other .py file. Its name alone must not hide the actual project
+        # and the ordinary consumers beside that package from staging/scans.
+        if any((current / m).exists() for m in markers) or (
+            (current / "setup.py").exists() and not is_package_dir(current)
+        ):
             return current
         parent = current.parent
         if parent == current:
