@@ -9,6 +9,12 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Reuse definite subtype verdicts within one helper's annotation inference
+  and immutable narrowing facts across overlapping source windows. Complete
+  typed, formatted Packaging runs averaged 36.24 seconds versus 41.59 seconds
+  for published 1.772, about 13% faster, while applying one more refactoring.
+  Generated Python is unchanged from the preceding candidate. See the
+  [measurement conditions and samples](docs/PERFORMANCE.md#october-2-complete-cli-comparison).
 - The soundness requirement is to preserve the behavior of programs that do
   not use reflection or self-instrumentation, including through their callees.
   Violations within that scope must be fixed or the transformation refused.

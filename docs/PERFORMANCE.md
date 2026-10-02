@@ -7,6 +7,7 @@ Use this guide to estimate a run and understand the limits of the published meas
 On this page:
 
 - [Measurement conditions](#measurement-conditions)
+- [October 2 complete CLI comparison](#october-2-complete-cli-comparison)
 - [Planning and bounding a run](#planning-and-bounding-a-run)
 - [Historical end-to-end timings](#historical-end-to-end-timings)
 - [Why larger projects take longer](#why-larger-projects-take-longer)
@@ -22,6 +23,42 @@ whole-corpus speedup is established. The
 [comparison report](proposals/published-1772-comparison.md)
 records the precise source/artifact identities, alternating runs and ordinary
 background activity. The older timings below retain their historical scope.
+
+### October 2 complete CLI comparison
+
+After removing reflection-specific analysis and sharing repeated typing
+evidence, runtime commit `000d751` completes the controlled Packaging 26.3
+workload about 13% faster than the published 1.772 wheel with typing,
+formatting and automatic worker selection enabled:
+
+| Complete command settings | Published 1.772 | Candidate `000d751` |
+| --- | ---: | ---: |
+| Typing and formatting enabled, automatic workers | 41.59 s | 36.24 s |
+| Typing enabled, formatting disabled, automatic workers | 39.25 s | 34.75 s |
+| Typing enabled, formatting disabled, one worker | 40.23 s | 36.01 s |
+
+Each entry is the mean of two fresh-process runs in balanced order, using
+identical installed dependencies and immutable inputs. The fixture contains
+22 Python modules and strict mypy configuration targeting Python 3.10; Towel
+runs under Python 3.13.7. The candidate applies 19 refactorings across nine
+files; 1.772 applies 18 across eight. Candidate output matches the preceding
+candidate byte for byte, both with and without formatting. These measurements
+establish this workload's improvement, not a whole-corpus speedup. Spotlight
+background activity was present; validation did not overlap timing runs.
+
+The preceding candidate spent about 26 seconds waiting for 162 mypy requests.
+Inference-local reuse reduces that to 148 requests while preserving all 78
+logical subtype batches and their 375 questions and answers. Immutable
+statement summaries also avoid repeated narrowing walks across overlapping
+source windows. Every fresh subtype build still validates its evidence, and
+unknown answers are retried. All project checks and final cold validation
+remain. This differs from the cold-analysis fixture's much larger speedup;
+that fixture does not measure a complete command.
+
+The [retained measurements](../tests/release_evidence/post-1772-typed-cli/README.md)
+include every timing sample, runtime and input hashes, output identities,
+dependency versions and conditions. The earlier comparisons above are
+historical results from their named source states.
 
 ### Measurement conditions
 
