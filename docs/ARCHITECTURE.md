@@ -262,6 +262,13 @@ is not.
 
 ## The soundness invariant
 
+For a program that does not use reflection or self-instrumentation, including
+through code it calls, every accepted transformation must preserve behavior.
+All checks below serve this requirement. A change to ordinary binding, effects,
+control flow, dispatch or interfaces is a soundness defect even if a similar
+case involving reflection is excluded. Fix the transformation or refuse it;
+do not broaden the reflection exclusion to cover the counterexample.
+
 Acceptance never trusts the algorithm; it checks the result.
 `instantiation.py` takes the generated helper, substitutes each call site's
 actual arguments back into the helper body, alpha-normalizes both it and the
@@ -1075,6 +1082,11 @@ its own. A user-named function may still become a one-line specialization
 of the new helper.
 
 ## Reflection boundary
+
+The boundary specifies which programs the soundness requirement covers:
+programs that do not use reflection or self-instrumentation must retain their
+behavior. It does not make ordinary semantics optional or permit checks to
+be dropped merely because they also protect a reflective case.
 
 Directory analysis does not scan for frame/source sensitivity or issue
 reflection warnings. Moving code can change source-reader results, traceback

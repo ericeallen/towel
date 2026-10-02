@@ -124,7 +124,11 @@ for measured workloads and their conditions.
 
 ## Checks and limitations
 
-Towel checks proposed transformations within a documented Python model.
+Towel's soundness requirement is to preserve the behavior of programs that do
+not use reflection or self-instrumentation, including through code they call.
+An accepted transformation that changes such a program's behavior is a bug;
+Towel must fix the transformation or refuse it.
+
 Reflection and source, AST, bytecode, frame or namespace inspection are outside
 its preservation guarantee, as is instrumentation that uses them to transform
 functions or classes. Towel does not scan for these behaviors or refuse code to

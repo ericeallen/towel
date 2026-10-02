@@ -3,7 +3,13 @@
 [Documentation index](README.md)
 
 This document states what Towel verifies about a transformation, what it
-rejects, and what remains outside its model. Reflection and self-instrumentation
+rejects, and where its implementation has limits. Towel must preserve the
+behavior of programs that do not use reflection or self-instrumentation,
+including through code they call. A behavior change in such a program is a
+soundness defect: fix the transformation or refuse it. Documenting an
+implementation gap does not waive this requirement.
+
+Reflection and self-instrumentation
 are excluded under the [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract);
 they are not detected to refuse or warn on a program. Read this together with
 [the production readiness report](PRODUCTION_READINESS.md) and
@@ -296,12 +302,15 @@ pyparsing and trio, and the September 19 fifth-audit battery at `5ff2458`
 retained four such differences. These are observations of those tested source
 states, not current detection guarantees.
 
-Other dynamic behavior also remains outside the model:
+The following cases distinguish excluded reflective behavior from ordinary
+semantics that transformations must preserve:
 
 - **Reflection and dynamic rebinding.** Rebinding module globals or closure
-  cells through `globals()[...]`, namespace dictionaries, `setattr`, `exec`,
-  patch APIs, callbacks or another thread is not protected by a
-  reflection-specific scan. Lexical binding and ordinary evaluation-order checks remain. Under
+  cells through `globals()[...]`, namespace dictionaries, `setattr`, `exec`
+  or reflective patch APIs is outside the guarantee. Ordinary assignments,
+  including those made by callbacks or another thread, do not become reflection
+  merely because they execute dynamically. Their bindings and effects must be
+  preserved. Under
   `--cross-module`, loading a helper's host earlier can also change what that
   host imports from a module rebound elsewhere. The borrower's own earlier
   statements still precede its inserted import (*Import-time behavior*).

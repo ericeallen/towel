@@ -9,7 +9,10 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
-- Reflection and self-instrumentation are outside the preservation guarantee,
+- The soundness requirement is to preserve the behavior of programs that do
+  not use reflection or self-instrumentation, including through their callees.
+  Violations within that scope must be fixed or the transformation refused.
+  Reflection and self-instrumentation are outside the preservation guarantee,
   including source/AST/bytecode/frame/namespace observations and body or class
   transformations applied by decorators, ordinary calls or hooks. Towel no
   longer scans or refuses code to protect those behaviors. Ordinary

@@ -1375,6 +1375,14 @@ compound spelling merely to match an older textual expectation.
 
 ## 2026-10-02: Reflection and self-instrumentation are outside the preservation contract
 
+The governing principle is positive: **Towel must be sound for programs that
+do not use reflection or self-instrumentation**, including through code they
+call. Every accepted transformation of such a program must preserve its
+behavior. If the required preservation cannot be established, decline the
+transformation. A counterexample within this scope is a Towel defect to fix
+or refuse, not grounds for another exclusion from the guarantee. This is the
+soundness requirement, not a claim that testing constitutes a proof of it.
+
 The owner explicitly removed any check or guarantee protecting programs that
 perform reflection or directly instrument their own class structure. This
 supersedes the September 27 exception for supported body instrumentation and
