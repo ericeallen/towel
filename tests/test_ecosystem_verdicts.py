@@ -338,6 +338,7 @@ def test_failure_identities_preserve_spaces_and_strip_ansi(tmp_path: Path) -> No
         "FAIL: test_case (tests.Case) (value='has spaces')\n"
         "ERROR: test_setup (tests.Case)\n"
         "UNEXPECTED SUCCESS: test_expected (tests.Case)\n"
+        "Ran 3 tests in 0.001s\n"
         "FAILED (failures=1, errors=1, unexpected successes=1)\n"
     )
     assert ecosystem.failed_tests(str(log)) == {

@@ -2966,12 +2966,17 @@ def _node_id(reported: str) -> str:
 
 def _failed_test_ids(output: str) -> Set[str]:
     """Full pytest node ids and unittest failure headers, without diagnostic suffixes."""
+    outcome = _test_outcome(output)
+    # Captured subprocess diagnostics also begin with ERROR:, and a pytest
+    # test may itself run unittest. Only the completed runner's identities
+    # describe this suite; a unittest outcome requires Ran ... and OK/FAILED.
+    unittest_run = outcome is not None and outcome.summary.startswith("Ran ")
     identities: Set[str] = set()
     for line in _plain_lines(output):
         pytest_failure = FAILED_LINE.fullmatch(line)
         if pytest_failure is not None:
             identities.add(_node_id(pytest_failure[1]))
-        unittest_failure = UNITTEST_FAILED_LINE.fullmatch(line)
+        unittest_failure = UNITTEST_FAILED_LINE.fullmatch(line) if unittest_run else None
         if unittest_failure is not None:
             identities.add(f"unittest:{unittest_failure[1]}")
     return identities
