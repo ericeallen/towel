@@ -261,6 +261,14 @@ pyparsing and trio, and the September 19 fifth-audit battery at `5ff2458`
 retained four such differences. These are observations of those tested source
 states, not current detection guarantees.
 
+Boltons' `namedtuple` and `namedlist` factories use `sys._getframe(1)` to
+derive the generated class's `__module__` from their caller. Moving that read
+into a helper changes the observed frame and therefore the module name;
+pickling the generated class can then fail to find it. This is an excluded
+frame-inspection dependency, not a general exclusion of pickling. The corpus
+manifest pins the two observed pickle-test failures at the recorded Boltons
+revision.
+
 The following cases distinguish excluded reflective behavior from ordinary
 semantics that transformations must preserve:
 

@@ -52,6 +52,8 @@ name = "boltons"
 url = "https://github.com/mahmoud/boltons.git"
 rev = "961dcff3f42e73b245aef65e377fe82763b257bb"
 package = "boltons"
+expect_broken = "frame-relative: namedtuple and namedlist derive class.__module__ from sys._getframe(1), which sees the extracted helper's caller rather than the factory's caller"
+known_failures = ["tests/test_namedutils.py::test_namedlist_pickle", "tests/test_namedutils.py::test_namedtuple_pickle"]
 
 [[project]]
 name = "pyparsing"
