@@ -81,6 +81,10 @@ release verification binds the final versioned source to its own evidence.
 
 ### Fixed
 
+- Typed runs recognize imported `Self` in simple annotations, including aliases
+  and qualified spellings such as `typing.Self`. Pyright's `Unknown` answer
+  outside a class no longer makes those valid imports appear untyped; the
+  checker must identify the same import as `Self` in a class context.
 - Cross-module helpers exist before ordinary imports can reenter their host.
   Package initializers' later imports are no longer assumed complete, reused
   functions retain their definition order, and wildcard imports cannot

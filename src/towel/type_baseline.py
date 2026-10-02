@@ -96,6 +96,7 @@ import os
 from pathlib import Path
 import re
 from types import MappingProxyType
+import unicodedata
 from typing import (
     Callable,
     Collection,
@@ -698,14 +699,18 @@ class ImportQuestion:
     and ``line`` the import's own line. mypy answers a ``module`` question
     ``Any`` for a module it cannot resolve or finds no types for; pyright
     answers a ``name`` or ``attribute`` question ``Unknown`` for what an
-    import it cannot resolve binds. Neither answers that way for a module it
-    sees, and a checker that does not look at the import answers nothing.
+    import it cannot resolve binds. Self also reveals Unknown outside a class;
+    an eligible annotation-only import is asked again in a fresh class, where
+    the same checker must identify its contextual self type. A checker that
+    does not look at the import answers nothing.
     """
 
     key: Tuple[str, int, int]
     line: int
     kind: str
     subject: str
+    self_context: Optional[Tuple[Tuple[str, int, int], str]] = None
+    """A second question and its exact answer identifying a contextual Self form."""
 
 
 @dataclass(frozen=True)
@@ -724,6 +729,117 @@ class _Probe:
     line: int
     asked: Tuple[Tuple[str, str, str], ...]
     """(expression revealed, kind of question, what it is about)"""
+    self_context: str = ""
+    self_expression: str = ""
+
+
+_TYPE_CONTAINERS = frozenset({"list", "dict", "set", "frozenset", "tuple", "type"})
+
+
+def _attribute_path(node: ast.AST) -> Tuple[str, ...]:
+    parts: List[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    return (node.id, *reversed(parts)) if isinstance(node, ast.Name) else ()
+
+
+def _type_only_annotation(
+    node: ast.AST, bound_names: FrozenSet[str], self_paths: FrozenSet[Tuple[str, ...]]
+) -> bool:
+    """A deliberately small type-expression grammar, excluding metadata and value uses.
+
+    Unknown subscript constructors may be aliases of Annotated, whose metadata
+    are values. Only unshadowed builtin type constructors are recognized here.
+    Unsupported annotations retain the ordinary import probe's verdict.
+    """
+    if isinstance(node, ast.Name):
+        return True
+    if isinstance(node, ast.Constant):
+        return node.value is None or node.value is Ellipsis or isinstance(node.value, str)
+    if isinstance(node, ast.Attribute):
+        return _attribute_path(node) in self_paths
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _type_only_annotation(node.left, bound_names, self_paths) and _type_only_annotation(
+            node.right, bound_names, self_paths
+        )
+    if (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in _TYPE_CONTAINERS
+        and node.value.id not in bound_names
+    ):
+        arguments = node.slice.elts if isinstance(node.slice, ast.Tuple) else (node.slice,)
+        return all(
+            _type_only_annotation(argument, bound_names, self_paths) for argument in arguments
+        )
+    return False
+
+
+def _annotation_only_self_paths(tree: ast.Module) -> FrozenSet[Tuple[str, ...]]:
+    """Self imports with no value reads or competing bindings anywhere in the file.
+
+    This deliberately does not resolve scopes: another binding even in a nested
+    scope prevents the contextual exception. A checker must still identify the
+    imported object as Self; its module's spelling proves nothing.
+    """
+    candidates: Set[Tuple[str, ...]] = set()
+    module_candidates: Set[Tuple[str, ...]] = set()
+    attributes: Set[Tuple[str, ...]] = set()
+    bindings: Counter[str] = Counter()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "Self":
+            attributes.add(_attribute_path(node))
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            bindings[node.id] += 1
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bindings[node.name] += 1
+        elif isinstance(node, ast.arg):
+            bindings[node.arg] += 1
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.name == "*":
+                    return frozenset()
+                bindings[alias.asname or alias.name.split(".")[0]] += 1
+                if isinstance(node, ast.ImportFrom) and alias.name == "Self":
+                    candidates.add((alias.asname or alias.name,))
+                elif isinstance(node, ast.Import):
+                    path = (alias.asname,) if alias.asname else tuple(alias.name.split("."))
+                    module_candidates.add((*path, "Self"))
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            bindings.update(node.names)
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            if node.name is not None:
+                bindings[node.name] += 1
+        elif isinstance(node, ast.MatchMapping) and node.rest is not None:
+            bindings[node.rest] += 1
+        elif type(node).__name__ in ("TypeVar", "ParamSpec", "TypeVarTuple"):
+            name = getattr(node, "name", None)
+            if isinstance(name, str):
+                bindings[name] += 1
+    candidates.update(module_candidates & attributes)
+    if not candidates:
+        return frozenset()
+    bound_names = frozenset(bindings)
+    self_paths = frozenset(candidates)
+    value_reads: Set[str] = set()
+    pending: List[Tuple[ast.AST, bool]] = [(tree, False)]
+    while pending:
+        node, annotation = pending.pop()
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and not annotation:
+            value_reads.add(node.id)
+        for field_name, value in ast.iter_fields(node):
+            if isinstance(value, ast.AST):
+                in_annotation = annotation or (
+                    field_name in ("annotation", "returns")
+                    and _type_only_annotation(value, bound_names, self_paths)
+                )
+                pending.append((value, in_annotation))
+            elif isinstance(value, list):
+                pending.extend((child, annotation) for child in value if isinstance(child, ast.AST))
+    return frozenset(
+        path for path in candidates if bindings[path[0]] == 1 and path[0] not in value_reads
+    )
 
 
 def _module_attributes(tree: ast.Module, bound: str, within: Sequence[str]) -> List[str]:
@@ -808,6 +924,12 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
         return None
     lines = text.split("\n")
     added: Dict[Tuple[int, str], List[_Probe]] = {}
+    annotation_only = _annotation_only_self_paths(tree)
+    reserved = (
+        {unicodedata.normalize("NFKC", word) for word in re.findall(r"\w+", text)}
+        if annotation_only
+        else set()
+    )
     count = 0
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -820,29 +942,61 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
         if site is None:
             continue
         probes = _probes_of(node, tree, count)
+        contextual: Dict[int, str] = {}
+        if isinstance(node, ast.Import):
+            for index, alias in enumerate(node.names):
+                path_parts = (alias.asname,) if alias.asname else tuple(alias.name.split("."))
+                if (*path_parts, "Self") in annotation_only:
+                    for expression, kind, _ in probes[index].asked:
+                        if kind == "attribute" and expression.endswith(".Self"):
+                            contextual[index] = expression
+        else:
+            for alias, index in zip(node.names, range(len(probes) - len(node.names), len(probes))):
+                if alias.name == "Self" and (alias.asname or alias.name,) in annotation_only:
+                    contextual[index] = probes[index].asked[0][0]
+        for index, expression in contextual.items():
+            context = f"_towel_self_context_{count + index}"
+            while context in reserved:
+                context += "_"
+            reserved.add(context)
+            probes[index] = replace(probes[index], self_context=context, self_expression=expression)
         count += len(probes)
         added.setdefault(site, []).extend(probes)
     if not added:
         return None
     probed = plan.text.split("\n")
     landed: Dict[Tuple[int, str], int] = {}
+    contexts: Dict[str, Tuple[int, str]] = {}
     shift = 0
     for site, probes in sorted(added.items()):
         at = site[0] - 1 + shift
-        probed[at:at] = [f"{site[1]}{probe.statement}" for probe in probes]
-        shift += len(probes)
+        inserted: List[str] = []
+        for probe in probes:
+            inserted.append(f"{site[1]}{probe.statement}")
+            if probe.self_context:
+                inserted.extend((f"{site[1]}class {probe.self_context}:", f"{site[1]}    pass"))
+                contexts[probe.self_context] = (at + len(inserted), site[1] + "    ")
+        probed[at:at] = inserted
+        shift += len(inserted)
         landed[site] = site[0] + shift
     source = "\n".join(probed)
     requests: List[RevealRequest] = []
     questions: List[ImportQuestion] = []
     for site, probes in sorted(added.items()):
-        asked = [(probe.line, question) for probe in probes for question in probe.asked]
+        asked = [(probe, question) for probe in probes for question in probe.asked]
         expressions = tuple(expression for _, (expression, _, _) in asked)
         requests.append(RevealRequest(path, source, landed[site], site[1], expressions))
-        questions += [
-            ImportQuestion((path, landed[site], index), line, kind, subject)
-            for index, (line, (_, kind, subject)) in enumerate(asked)
-        ]
+        for index, (probe, (expression, kind, subject)) in enumerate(asked):
+            context_answer = None
+            if probe.self_context and expression == probe.self_expression:
+                line, indent = contexts[probe.self_context]
+                requests.append(RevealRequest(path, source, line, indent, (expression,)))
+                context_answer = ((path, line, 0), f"type[Self@{probe.self_context}]")
+            questions.append(
+                ImportQuestion(
+                    (path, landed[site], index), probe.line, kind, subject, context_answer
+                )
+            )
     return ImportProbes(tuple(requests), tuple(questions))
 
 
@@ -862,6 +1016,10 @@ def imports_typed_as_any(
             blind = (question.kind == "module" and revealed == "Any") or (
                 question.kind != "module" and revealed == "Unknown"
             )
+            if question.self_context is not None:
+                key, expected = question.self_context
+                if answer.get(key) == expected:
+                    blind = False
             if blind and (question.line, question.subject) not in found:
                 found[(question.line, question.subject)] = TypeDiagnostic(
                     where,
