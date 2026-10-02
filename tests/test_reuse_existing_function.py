@@ -280,9 +280,12 @@ def test_a_cross_file_site_imports_the_new_helper(tmp_path: Path) -> None:
     package.mkdir()
     (package / "__init__.py").write_text("")
     for name, function in (("a.py", "alpha"), ("b.py", "beta")):
+        imports = "from .a import alpha" if name == "b.py" else ""
         write_module(
             package,
             f"""
+            {imports}
+
             def {function}(value):
                 tmp = value + 1
                 total = tmp * 2

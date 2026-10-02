@@ -77,6 +77,8 @@ def test_same_file_extractions_still_happen(tmp_path: Path) -> None:
 
 def test_the_cross_module_pair_is_shared_when_asked(tmp_path: Path) -> None:
     _hatch_project(tmp_path / "proj")
+    # Sharing also requires the borrower to load the host before definitions.
+    (tmp_path / "proj" / "pkg" / "b.py").write_text("from .a import g\n\n" + CROSS_B)
     engine = UnificationRefactorEngine(
         min_lines=3, reuse_existing_functions=False, cross_module_helpers=True
     )

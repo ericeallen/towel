@@ -102,6 +102,13 @@ def test_a_cross_module_helper_names_the_other_class_and_still_type_checks(
     tmp_path: Path,
 ) -> None:
     package = _package(tmp_path)
+    # Reach annotation generation through a real host load; importing only
+    # the package does not prove its alpha child has been loaded.
+    borrower = package / "beta.py"
+    borrower.write_text(
+        borrower.read_text(encoding="utf-8").replace("import pkg\n", "import pkg.alpha\n"),
+        encoding="utf-8",
+    )
     result = subprocess.run(
         [
             sys.executable,

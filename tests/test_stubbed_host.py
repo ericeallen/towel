@@ -106,7 +106,7 @@ def test_the_typed_project_still_checks_after_the_extraction(
         "pyproject.toml": '[project]\nname = "alpha"\nversion = "0.1"\n',
         "src/alpha/__init__.py": "",
         "src/alpha/py.typed": "",
-        "src/alpha/a.py": _function("fa", "a", 1),
+        "src/alpha/a.py": "import alpha.b\n" + _function("fa", "a", 1),
         "src/alpha/b.py": _function("fb", "bb", 2),
         **{path: stub if text == "STUB" else text for path, text in stubs.items()},
     }
