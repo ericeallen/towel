@@ -35,6 +35,7 @@ import sys
 from typing import Callable, Concatenate, Iterator, Optional, ParamSpec, Tuple, TypeVar, Union, cast
 
 from .source_text import decode_source
+from .parsing_warnings import parsing_cannot_warn
 from .unification.bounded_cache import BoundedCache, memoizing
 
 
@@ -57,13 +58,6 @@ _KNOWN_WARNING_SITES = sys.implementation.name == "cpython" and (3, 11) <= sys.v
 )
 """Other parsers may warn about other syntax, so their parses are never shared."""
 
-# CPython 3.11--3.14's AST parser warns for invalid string escapes, oversized
-# octal escapes, and a numeric literal abutting a keyword. This deliberately
-# overmatches comments, raw strings, identifiers and ordinary numeric suffixes.
-# A false positive costs reuse; a false negative would hide native diagnostics.
-# See CPython's Parser/string_parser.c and tokenizer.c (3.13+: lexer/lexer.c
-# and tokenizer/helpers.c); AST-only parsing does not run code-generation warnings.
-_POSSIBLE_WARNING = re.compile(r"\\(?:[^\\'\"abfnrtv0-7x\r\n]|[4-7][0-7]{2})|[0-9]\.?[a-zA-Z_]")
 _CODING_COOKIE = re.compile(rb"coding[:=]\s*([-\w.]+)", re.ASCII)
 _WARNING_FREE_ENCODINGS = frozenset(
     {b"utf-8", b"utf8", b"utf-8-sig", b"ascii", b"latin-1", b"iso-8859-1", b"iso-latin-1"}
@@ -93,7 +87,7 @@ def _cacheable_text(source: Union[str, bytes]) -> Optional[str]:
             return None
     else:
         text = source
-    return None if _POSSIBLE_WARNING.search(text) else text
+    return text if parsing_cannot_warn(text) else None
 
 
 def parsing_is_pure(source: Union[str, bytes]) -> bool:

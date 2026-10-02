@@ -98,6 +98,10 @@ release verification binds the final versioned source to its own evidence.
 
 ### Performance
 
+- Keep sharing immutable analysis for warning-free source containing comments,
+  raw strings and valid numeric literals. A bounded lexical cache distinguishes
+  those cases from syntax that needs native parser diagnostics. Import discovery
+  also avoids collecting scope bindings that its literal guards cannot use.
 - Reuse definite subtype verdicts within one helper's annotation inference
   and immutable narrowing facts across overlapping source windows. Complete
   typed, formatted Packaging runs averaged 36.24 seconds versus 41.59 seconds
