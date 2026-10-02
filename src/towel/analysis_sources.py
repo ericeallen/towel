@@ -27,14 +27,15 @@ import ast
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+import functools
 import hashlib
 import os
 import re
 import sys
-from typing import Iterator, Optional, Tuple, Union
+from typing import Callable, Concatenate, Iterator, Optional, ParamSpec, Tuple, TypeVar, Union, cast
 
 from .source_text import decode_source
-from .unification.bounded_cache import BoundedCache
+from .unification.bounded_cache import BoundedCache, memoizing
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,51 @@ def _cacheable_text(source: Union[str, bytes]) -> Optional[str]:
     else:
         text = source
     return None if _POSSIBLE_WARNING.search(text) else text
+
+
+def parsing_is_pure(source: Union[str, bytes]) -> bool:
+    """Whether parsing this source cannot emit diagnostics under the caller's filters."""
+    return _cacheable_text(source) is not None
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def memoized_source_analysis(
+    maxsize: int,
+) -> Callable[[Callable[Concatenate[str, _P], _R]], Callable[Concatenate[str, _P], _R]]:
+    """Bound an immutable source analysis, including parser limits and native diagnostics.
+
+    The analysis must depend only on source, its other arguments, and the
+    parser configuration. Arguments must be hashable and its result read-only.
+    Warning-capable sources always execute it so a cache hit cannot swallow
+    a warning or its error.
+    """
+
+    def decorate(
+        function: Callable[Concatenate[str, _P], _R],
+    ) -> Callable[Concatenate[str, _P], _R]:
+        def with_configuration(
+            configuration: ParserConfiguration, source: str, *args: _P.args, **kwargs: _P.kwargs
+        ) -> _R:
+            return function(source, *args, **kwargs)
+
+        # lru_cache preserves the call signature; its typing stub erases ParamSpec.
+        cached = cast(
+            Callable[Concatenate[ParserConfiguration, str, _P], _R],
+            functools.lru_cache(maxsize=maxsize)(with_configuration),
+        )
+
+        @functools.wraps(function)
+        def analyzed(source: str, /, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+            if not memoizing() or not parsing_is_pure(source):
+                return function(source, *args, **kwargs)
+            return cached(parser_configuration(), source, *args, **kwargs)
+
+        return analyzed
+
+    return decorate
 
 
 def _field_value(value: object) -> str:

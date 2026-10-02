@@ -96,7 +96,6 @@ import os
 from pathlib import Path
 import re
 from types import MappingProxyType
-import warnings
 from typing import (
     Callable,
     Collection,
@@ -111,6 +110,7 @@ from typing import (
     Tuple,
 )
 
+from .analysis_sources import memoized_source_analysis
 from .reachability import probe_plan
 from .type_inference import RevealRequest, TypeDiagnostic
 
@@ -241,18 +241,16 @@ def _in_order(statements: Sequence[ast.stmt]) -> List[_Statement]:
     return found
 
 
-@functools.lru_cache(maxsize=32)
+@memoized_source_analysis(maxsize=32)
 def _parsed(text: str) -> Optional[ast.Module]:
     """``text`` parsed, or None; the change's texts compiled, so this fails only for a stranger's."""
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            return ast.parse(text)
+        return ast.parse(text)
     except (SyntaxError, ValueError):
         return None
 
 
-@functools.lru_cache(maxsize=64)
+@memoized_source_analysis(maxsize=64)
 def _block_statements(text: str, first: int, last: int) -> Tuple[_Statement, ...]:
     """The statements of ``text`` that lie within lines ``first``-``last``, in order."""
     tree = _parsed(text)
@@ -270,7 +268,7 @@ class _WrittenHelper:
     statements: Tuple[_Statement, ...]
 
 
-@functools.lru_cache(maxsize=32)
+@memoized_source_analysis(maxsize=32)
 def _written_helper(text: str, name: str) -> Optional[_WrittenHelper]:
     """The one definition of ``name`` in ``text``; None when there is not exactly one.
 

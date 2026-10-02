@@ -41,10 +41,10 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-import functools
 from types import MappingProxyType
-import warnings
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+
+from .analysis_sources import memoized_source_analysis
 
 __all__ = ["PROBE", "Place", "ProbePlan", "probe_plan"]
 
@@ -111,18 +111,30 @@ def _place(node: ast.stmt, lines: Sequence[str]) -> Place:
     return line, len(encoded[: node.col_offset].decode("utf-8", "replace"))
 
 
-@functools.lru_cache(maxsize=64)
 def probe_plan(source: str) -> Optional[ProbePlan]:
     """Where to probe each statement of ``source``; ``None`` when no probe can be placed.
 
     ``None`` for a module that does not parse, or whose probed text would not:
     a caller then knows nothing about what the checker sees there, and takes
-    it to see none of it. Pure in ``source``, so memoized.
+    it to see none of it. Preparation is memoized when parsing cannot warn;
+    compilation always runs under the caller's current diagnostic policy.
     """
+    prepared = _prepare_probe_plan(source)
+    if prepared is None:
+        return None
+    plan, probed = prepared
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")  # the analysis reports the module's own warnings
-            tree = ast.parse(source)
+        compile(probed, "<probes>", "exec", dont_inherit=True)
+    except SyntaxError:
+        return None
+    return plan
+
+
+@memoized_source_analysis(maxsize=64)
+def _prepare_probe_plan(source: str) -> Optional[Tuple[ProbePlan, str]]:
+    """The immutable plan and its compilation check, without suppressing diagnostics."""
+    try:
+        tree = ast.parse(source)
     except SyntaxError:
         return None
     lines = source.split("\n")
@@ -192,12 +204,6 @@ def probe_plan(source: str) -> Optional[ProbePlan]:
     probed = text.split("\n")
     for at, indent in sorted(set(sites.values()), reverse=True):
         probed.insert(at - 1, f"{indent}reveal_type({PROBE})")
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            compile("\n".join(probed), "<probes>", "exec", dont_inherit=True)
-    except SyntaxError:
-        return None
     spans = tuple(
         sorted({(places[id(node)], node.end_lineno or node.lineno) for node in statements})
     )
@@ -211,4 +217,4 @@ def probe_plan(source: str) -> Optional[ProbePlan]:
             for start in starts:
                 place = places[id(start)]
                 blocks.add((place, place[0], end))
-    return ProbePlan(text, MappingProxyType(sites), spans, tuple(sorted(blocks)))
+    return ProbePlan(text, MappingProxyType(sites), spans, tuple(sorted(blocks))), "\n".join(probed)

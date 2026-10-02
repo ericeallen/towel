@@ -30,7 +30,7 @@ import ast
 import builtins
 import os
 import re
-import warnings
+import sys
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -1280,8 +1280,9 @@ class ImportTimeCode:
         """``re.compile`` of a constant pattern that compiles here without a warning.
 
         Compiling a pattern runs only the regular expression compiler, but a
-        pattern it rejects raises at import and one it doubts warns, so the
-        pattern is compiled here, once, to see which it is.
+        pattern it rejects raises at import and one it doubts warns. Reject
+        syntax that can warn before compiling: ``re``'s own cache can hide
+        a warning on subsequent calls. Never change the caller's filters.
         """
         if call.keywords or not 1 <= len(call.args) <= 2:
             return False
@@ -1289,13 +1290,23 @@ class ImportTimeCode:
         flags = self._regex_flags(call.args[1], order, body) if len(call.args) == 2 else 0
         if pattern is None or flags is None:
             return False
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            try:
-                re.compile(pattern, flags)
-            except (re.error, TypeError, ValueError, OverflowError, RecursionError):
-                return False
-        return not caught
+        # CPython 3.11--3.14 warns about nested sets, possible set operations,
+        # some conditional group names, and the obsolete TEMPLATE flag.
+        # TEMPLATE's bit is 1; its public name was removed in Python 3.13.
+        # Overmatching an escaped spelling only loses a quiet classification.
+        # Unknown compilers stay unknown.
+        if (
+            sys.implementation.name != "cpython"
+            or not (3, 11) <= sys.version_info[:2] <= (3, 14)
+            or flags & (re.DEBUG | 1)
+            or any(spelling in pattern for spelling in ("[[", "--", "&&", "~~", "||", "(?("))
+        ):
+            return False
+        try:
+            re.compile(pattern, flags)
+        except (re.error, TypeError, ValueError, OverflowError, RecursionError):
+            return False
+        return True
 
     def _constant_text(
         self, node: ast.expr, order: int, body: Optional[_ClassBody]

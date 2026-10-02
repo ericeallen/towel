@@ -41,14 +41,15 @@ of the program (:func:`excluded_by`).
 from __future__ import annotations
 
 import ast
+import hashlib
 import os
 import sys
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AbstractSet, Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence
 from typing import Tuple
 
+from .analysis_sources import ParserConfiguration, parser_configuration, parsing_is_pure
 from .consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
 from .declared_python import PythonVersion, declared_newest_python, declared_requirement
 from .declared_python import python_lower_bound
@@ -114,8 +115,8 @@ class UnparsedFile:
         return f"{_shown(self.path, root)}: {self.complaint}"
 
 
-_Stamp = Tuple[str, int, int, int]
-_COMPLAINTS: BoundedCache[_Stamp, Optional[str]] = BoundedCache(1 << 15)
+_ComplaintKey = Tuple[str, bytes, ParserConfiguration]
+_COMPLAINTS: BoundedCache[_ComplaintKey, Optional[str]] = BoundedCache(1 << 15)
 """What the parser said of each file version, None when it parsed: a run asks twice."""
 
 
@@ -128,18 +129,17 @@ def parse_failure(path: Path) -> Optional[UnparsedFile]:
     encoding, runs on no Python, and is left alone as it always was.
     """
     try:
-        status = path.stat()
+        data = path.read_bytes()
     except OSError:
         return None
-    stamp = (str(path), status.st_mtime_ns, status.st_size, status.st_ino)
-    if stamp in _COMPLAINTS:
+    stamp = (str(path.absolute()), hashlib.sha256(data).digest(), parser_configuration())
+    cacheable = parsing_is_pure(data)
+    if cacheable and stamp in _COMPLAINTS:
         complaint = _COMPLAINTS[stamp]
     else:
-        try:
-            data = path.read_bytes()
-        except OSError:
-            return None
-        complaint = _COMPLAINTS.put(stamp, _complaint(data, path))
+        complaint = _complaint(data, path)
+        if cacheable:
+            _COMPLAINTS.put(stamp, complaint)
     return None if complaint is None else UnparsedFile(path, complaint)
 
 
@@ -149,10 +149,7 @@ def _complaint(data: bytes, path: Path) -> Optional[str]:
     except (UnicodeError, SyntaxError, LookupError):
         return None  # Not text in its declared encoding, or the cookie names no codec.
     try:
-        with warnings.catch_warnings():
-            # Test data is full of invalid escapes; reading it is not the place to say so.
-            warnings.simplefilter("ignore")
-            ast.parse(text, filename=str(path))
+        ast.parse(text, filename=str(path))
     except (SyntaxError, ValueError, RecursionError) as error:
         # ValueError: a null byte, before 3.12 made that a SyntaxError.
         return _described(error)

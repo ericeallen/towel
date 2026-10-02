@@ -142,7 +142,6 @@ import importlib.machinery
 import os
 import sys
 import sysconfig
-import warnings
 from dataclasses import dataclass, field, replace
 from keyword import iskeyword
 from pathlib import Path
@@ -1363,10 +1362,7 @@ _IMPLICIT_MODULE_NAMES = frozenset(
 
 def _read_module(path: Path) -> _Module:
     try:
-        with warnings.catch_warnings():
-            # Test data is full of invalid escapes; reading it is not the place to say so.
-            warnings.simplefilter("ignore")
-            tree = parse_analysis_source(path.read_bytes(), filename=str(path))
+        tree = parse_analysis_source(path.read_bytes(), filename=str(path))
     except (OSError, SyntaxError, ValueError, RecursionError):
         # Its imports are unknown, so no spelling is made to or from it. It may
         # run on a newer Python, so a dry or preview run refuses before reading
