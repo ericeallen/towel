@@ -31,11 +31,19 @@ A historical passing result applies to its recorded commit and test environment.
   lifetimes. Subtype answers are reused within one inference, and immutable
   narrowing facts are shared across overlapping source windows. Unknown
   subtype answers are retried; new checker builds retain their evidence checks.
+- Repeated source texts share immutable lexical eligibility results under a
+  source-byte budget. NetworkX diagnosis found that the earlier 32-entry cache
+  repeatedly evicted ordinary modules; cache capacity now follows their sizes,
+  with entry and per-source limits retained. This diagnosis is not a benchmark.
 - Corpus preparation exposed a false untyped-import refusal for annotation-only
   `Self`. The import probe now asks the checker in a class context, including
   for aliases and qualified spellings, and requires its exact contextual type.
   The superseded candidate's interrupted corpus remains partial evidence;
   the correction requires a new validation freeze.
+- NetworkX exposed a second import-probe error: mypy reports every expression
+  in an unchecked function as `Any`, including known standard-library modules.
+  A checked context now distinguishes those imports from genuinely unresolved
+  modules without changing the project's options or hiding missing imports.
 - The [complete CLI comparison](PERFORMANCE.md#october-2-complete-cli-comparison)
   measured the controlled typed, formatted Packaging fixture at 36.24 seconds
   versus 41.59 seconds for published 1.772, about 13% faster. Runtime commit

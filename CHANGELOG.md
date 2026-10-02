@@ -85,6 +85,9 @@ release verification binds the final versioned source to its own evidence.
   and qualified spellings such as `typing.Self`. Pyright's `Unknown` answer
   outside a class no longer makes those valid imports appear untyped; the
   checker must identify the same import as `Self` in a class context.
+- A known import inside an unchecked mypy function no longer prevents typed
+  extraction elsewhere in its file. Towel distinguishes an unchecked expression
+  from an unresolved module without changing the project's checker settings.
 - Cross-module helpers exist before ordinary imports can reenter their host.
   Package initializers' later imports are no longer assumed complete, reused
   functions retain their definition order, and wildcard imports cannot
@@ -104,8 +107,9 @@ release verification binds the final versioned source to its own evidence.
 
 - Keep sharing immutable analysis for warning-free source containing comments,
   raw strings and valid numeric literals. A bounded lexical cache distinguishes
-  those cases from syntax that needs native parser diagnostics. Import discovery
-  also avoids collecting scope bindings that its literal guards cannot use.
+  those cases from syntax that needs native parser diagnostics. Its source-byte
+  budget retains many small modules across repeated project scans. Import
+  discovery also avoids collecting scope bindings that its literal guards cannot use.
 - Reuse definite subtype verdicts within one helper's annotation inference
   and immutable narrowing facts across overlapping source windows. Complete
   typed, formatted Packaging runs averaged 36.24 seconds versus 41.59 seconds
