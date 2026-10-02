@@ -52,8 +52,10 @@ still legal, only wider, and the complaint arrives somewhere else entirely.
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence, Set
+from weakref import WeakKeyDictionary
 
 from ..canonical_ast import canonical_dump
 from ..source_text import read_source
@@ -63,6 +65,7 @@ from .function_scope import function_names
 from .import_graph import ImportGraphCache, host_has_stub, imported_alias_sites
 from .models import FunctionNode, Replacement
 from .module_bindings import dotted_name, global_bindings
+from .statement_facts import memoized_per_node
 
 _NARROWING_CALLS = frozenset({"isinstance", "issubclass", "hasattr", "callable"})
 """Builtins whose result narrows their first argument in mypy and pyright."""
@@ -176,7 +179,7 @@ def _following_block(
                 result = find(suite, (*tail, *continuation), inner, known)
                 if result is not None:
                     return result
-            written = _stored_references([statement])
+            written = _statement_narrowing_facts(statement).stored
             non_none = frozenset(
                 reference
                 for reference in non_none
@@ -233,7 +236,11 @@ def _suites(statement: ast.stmt) -> Iterator[tuple[Sequence[ast.stmt], Sequence[
 
 
 def _stored_references(nodes: Iterable[ast.AST]) -> Set[str]:
-    own = [node for root in nodes for node in _own_scope(root)]
+    """Fresh stores for generated helper trees, which construction may still change."""
+    return _stored_references_in_scope([node for root in nodes for node in _own_scope(root)])
+
+
+def _stored_references_in_scope(own: Sequence[ast.AST]) -> Set[str]:
     comprehension_locals = {
         id(target)
         for node in own
@@ -249,6 +256,46 @@ def _stored_references(nodes: Iterable[ast.AST]) -> Set[str]:
         and id(node) not in comprehension_locals
         and (name := dotted_name(node)) is not None
     }
+
+
+@dataclass(frozen=True)
+class _StatementNarrowingFacts:
+    """String-only facts of an immutable source statement, independent of its caller."""
+
+    tested: FrozenSet[str]
+    asserted: FrozenSet[str]
+    stored: FrozenSet[str]
+
+
+def _compute_statement_narrowing_facts(statement: ast.AST) -> _StatementNarrowingFacts:
+    own = tuple(_own_scope(statement))
+    tested: Set[str] = set()
+    asserted: Set[str] = set()
+    for node in own:
+        if isinstance(node, (ast.If, ast.While)):
+            tested |= _non_none_test(node.test) | _non_none_test(node.test, False)
+        elif isinstance(node, ast.Assert):
+            asserted |= _non_none_test(node.test)
+    return _StatementNarrowingFacts(
+        frozenset(tested), frozenset(asserted), frozenset(_stored_references_in_scope(own))
+    )
+
+
+_STATEMENT_NARROWING_FACTS: WeakKeyDictionary[ast.AST, _StatementNarrowingFacts] = (
+    WeakKeyDictionary()
+)
+
+
+def _statement_narrowing_facts(statement: ast.stmt) -> _StatementNarrowingFacts:
+    """Reuse source facts across overlapping windows, only for the statement's lifetime.
+
+    Parsed source trees are never mutated during analysis. The cached value has
+    no node references, so it cannot keep its weak key or the source tree alive.
+    Generated helper trees use the fresh ``_stored_references`` path instead.
+    """
+    return memoized_per_node(
+        _STATEMENT_NARROWING_FACTS, statement, _compute_statement_narrowing_facts
+    )
 
 
 _NONE_ATTRIBUTES = frozenset(dir(None))
@@ -311,7 +358,7 @@ def _reads_before_rebinding(
         if isinstance(statement, (ast.Assign, ast.AnnAssign)):
             if any(
                 reference == stored or reference.startswith(stored + ".")
-                for stored in _stored_references([statement])
+                for stored in _statement_narrowing_facts(statement).stored
             ):
                 return False
         if isinstance(statement, (ast.Return, ast.Raise)):
@@ -335,13 +382,12 @@ def caller_narrowing_leaves_with_block(function: FunctionNode, block: List[ast.s
     """
     tested: Set[str] = set()
     asserted: Set[str] = set()
+    stored: Set[str] = set()
     for statement in block:
-        for node in _own_scope(statement):
-            if isinstance(node, (ast.If, ast.While)):
-                tested |= _non_none_test(node.test) | _non_none_test(node.test, False)
-            elif isinstance(node, ast.Assert):
-                asserted |= _non_none_test(node.test)
-    stored = _stored_references(block)
+        facts = _statement_narrowing_facts(statement)
+        tested |= facts.tested
+        asserted |= facts.asserted
+        stored |= facts.stored
     if not asserted and not any("." in name for name in stored):
         return False
     context = _following_block(function, block)
