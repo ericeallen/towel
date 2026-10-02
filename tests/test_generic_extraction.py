@@ -349,7 +349,10 @@ def test_cross_file_generic_helper_respects_project_rules_and_unchanged_consumer
     first.write_text(
         "def integers(left: int, right: int) -> int:\n    result = left + right\n    return result\n"
     )
+    # Exercise the generic contract after a real host load. A separate
+    # consumer importing both modules does not establish that prerequisite.
     second.write_text(
+        "from .first import integers as integers\n\n"
         "def strings(left: str, right: str) -> str:\n    result = left + right\n    return result\n"
     )
     consumer.write_text(

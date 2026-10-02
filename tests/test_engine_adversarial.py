@@ -403,8 +403,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         the class that holds both duplicates").
         """
         with tempfile.TemporaryDirectory() as tmpdir:
-            # One package, so a module may import the helper from its neighbour;
-            # across unrelated top-level modules the pair would be declined.
+            # The borrower explicitly loads its neighbour before definitions,
+            # so sharing a helper does not add or advance that module load.
             root = Path(tmpdir) / "pkg"
             root.mkdir()
             (root / "__init__.py").write_text("", encoding="utf-8")
@@ -470,6 +470,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                             return tmp * 2
                     """,
                 "second.py": """
+                    import pkg.first
                     from .shared import Shared
 
                     class Second(Shared):
@@ -501,6 +502,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                             return tmp * 2
                     """,
                 "second.py": """
+                    import pkg.first
                     from .shared import Shared
 
                     class Second(Shared):
@@ -528,6 +530,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                             return tmp * 2
                     """,
                 "second.py": """
+                    import pkg.first
                     from .hierarchy import Intermediate
 
                     class LeafTwo(Intermediate):
@@ -1206,6 +1209,8 @@ class TestCrossFileImports(unittest.TestCase):
             )
             b.write_text(
                 textwrap.dedent("""
+                    import pkg.a
+
                     def fb(x):
                         y = x + 1
                         z = y * 2

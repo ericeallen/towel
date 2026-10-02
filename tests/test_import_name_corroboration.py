@@ -104,13 +104,13 @@ class _Layout:
 
 
 def _package_modules(prefix: str, package: str) -> Mapping[str, str]:
-    """``a.py`` and ``b.py`` sharing ``_WITHIN``, and ``a.py`` holding ``_ACROSS`` too."""
+    """``b.py`` explicitly loads ``a.py`` and shares its block; ``a.py`` also holds ``_ACROSS``."""
     return {
         f"{prefix}/__init__.py": "",
         f"{prefix}/a.py": _WITHIN.format(name="fa", tag=f"{package} a")
         + "\n"
         + _ACROSS.format(name="ga", tag=f"{package} ga"),
-        f"{prefix}/b.py": _WITHIN.format(name="fb", tag=f"{package} b"),
+        f"{prefix}/b.py": "from .a import fa\n" + _WITHIN.format(name="fb", tag=f"{package} b"),
     }
 
 
@@ -283,11 +283,10 @@ def _tests_inside_the_package() -> _Layout:
     """beautifulsoup4's shape: ``alpha/tests`` is inside the package and left out of its wheel.
 
     ``alpha/tests/test_zcore.py`` sorts before ``alpha/zcore.py``, so the
-    pair's own file is the test module. It imports another module of the
-    package, which shows it runs as part of ``alpha``, but not ``zcore``, so
-    no cycle through it stops ``zcore`` importing it: only the rule that an
-    import may enter a directory solely where its own side already imports
-    from it does. The helper goes to the module that ships.
+    pair's own file is the test module. Its explicit import of ``zcore``
+    establishes that the helper's host has loaded. The helper still belongs
+    in the module that ships, and the test module borrows it with a relative
+    import that climbs from ``alpha.tests`` to ``alpha``.
     """
     files = {
         "pyproject.toml": _HATCH
@@ -297,7 +296,7 @@ def _tests_inside_the_package() -> _Layout:
         "alpha/zcore.py": _ACROSS.format(name="ga", tag="alpha ga"),
         "alpha/other.py": "VALUE = 1\n",
         "alpha/tests/__init__.py": "",
-        "alpha/tests/test_zcore.py": _test_module("from .. import other"),
+        "alpha/tests/test_zcore.py": _test_module("from .. import other\nfrom ..zcore import ga"),
     }
     calls = (
         "from alpha.zcore import ga\n"

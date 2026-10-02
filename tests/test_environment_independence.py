@@ -32,7 +32,12 @@ import pytest
 from towel.changes import ChangePlan, RecoveryRequired, apply_changes
 from towel.source_text import source_lines
 from towel.type_inference import _same_file, is_probe_file
-from towel.unification.import_graph import ImportGraphCache, import_runs_new_code
+from towel.unification.import_graph import (
+    ImportChange,
+    ImportGraphCache,
+    _new_requirements,
+    import_change,
+)
 from towel.unification.pipeline import AnalysisSession
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.scope_analyzer import ScopeAnalyzer
@@ -255,17 +260,20 @@ def test_module_names_bound_after_the_definition_are_not_available() -> None:
 
 
 def test_a_helper_import_that_would_run_new_module_code_is_refused(tmp_path: Path) -> None:
-    package = tmp_path / "pkg"
-    package.mkdir()
-    (package / "__init__.py").write_text("")
-    (package / "host.py").write_text('print("loading host")\ndef helper():\n    return 1\n')
-    (package / "quiet.py").write_text("def helper():\n    return 1\n")
-    (package / "borrower.py").write_text("def use():\n    return 2\n")
-    (package / "importer.py").write_text("from pkg import host\ndef use():\n    return 2\n")
+    # Top-level hosts have no parent binding to replace, so their bodies
+    # distinguish the effects guard from the new submodule-load refusal.
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "p"\nversion = "0"\n')
+    (tmp_path / "host.py").write_text('print("loading host")\ndef helper():\n    return 1\n')
+    (tmp_path / "quiet.py").write_text("def helper():\n    return 1\n")
+    (tmp_path / "borrower.py").write_text("def use():\n    import quiet\n    return 2\n")
+    (tmp_path / "importer.py").write_text("import host\nimport quiet\ndef use():\n    return 2\n")
     cache = ImportGraphCache()
-    assert import_runs_new_code(str(package / "host.py"), str(package / "borrower.py"), cache)
-    assert not import_runs_new_code(str(package / "quiet.py"), str(package / "borrower.py"), cache)
-    assert not import_runs_new_code(str(package / "host.py"), str(package / "importer.py"), cache)
+    assert (
+        import_change(str(tmp_path / "host.py"), str(tmp_path / "borrower.py"), cache)
+        is ImportChange.RUNS_CODE
+    )
+    assert import_change(str(tmp_path / "quiet.py"), str(tmp_path / "borrower.py"), cache) is None
+    assert import_change(str(tmp_path / "host.py"), str(tmp_path / "importer.py"), cache) is None
 
 
 def test_a_forwarding_lambda_reads_only_its_callee() -> None:
@@ -282,7 +290,9 @@ def test_a_helper_import_that_would_require_a_new_third_party_module_is_refused(
 
     gunicorn's sync worker stopped importing where tornado was absent. The
     standard library, a declared dependency, an import the borrower already
-    makes, and one guarded by ``try`` require nothing new.
+    makes, and one guarded by ``try`` require nothing new. Test those facts
+    independently: the earlier package-binding guard now refuses every new
+    submodule load, even when it adds no dependency requirement.
     """
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "pkg"\nversion = "0"\ndependencies = ["declared-dep>=1"]\n'
@@ -302,16 +312,22 @@ def test_a_helper_import_that_would_require_a_new_third_party_module_is_refused(
     for name, text in files.items():
         (package / name).write_text(text)
     cache = ImportGraphCache()
+    program = cache.program_for(package / "borrower.py")
 
-    def refused(host: str, borrower: str = "borrower.py") -> bool:
-        return import_runs_new_code(str(package / host), str(package / borrower), cache)
+    def requirements(host: str, borrower: str = "borrower.py") -> frozenset[str]:
+        return _new_requirements({package / host}, {package / borrower}, program, cache)
 
-    assert refused("needs_tornado.py")
-    assert refused("needs_tornado_if.py")
-    assert not refused("optional.py")
-    assert not refused("stdlib.py")
-    assert not refused("declared.py")
-    assert not refused("needs_tornado.py", "has_tornado.py")
+    assert requirements("needs_tornado.py") == {"tornado"}
+    assert requirements("needs_tornado_if.py") == {"tornado"}
+    assert not requirements("optional.py")
+    assert not requirements("stdlib.py")
+    assert not requirements("declared.py")
+    assert not requirements("needs_tornado.py", "has_tornado.py")
+    for host in files.keys() - {"borrower.py", "has_tornado.py"}:
+        assert (
+            import_change(str(package / host), str(package / "borrower.py"), cache)
+            is ImportChange.PACKAGE_BINDING
+        )
 
 
 @pytest.mark.parametrize(
@@ -353,13 +369,19 @@ def test_a_dependency_poetry_or_setup_cfg_declares_is_no_new_requirement(
     for name, text in files.items():
         (package / name).write_text(text)
     cache = ImportGraphCache()
+    program = cache.program_for(package / "borrower.py")
 
-    def refused(host: str) -> bool:
-        return import_runs_new_code(str(package / host), str(package / "borrower.py"), cache)
+    def requirements(host: str) -> frozenset[str]:
+        return _new_requirements({package / host}, {package / "borrower.py"}, program, cache)
 
-    assert not refused("declared.py")
-    assert refused("extra.py")
-    assert refused("undeclared.py")
+    assert not requirements("declared.py")
+    assert requirements("extra.py") == {"extra_dep"}
+    assert requirements("undeclared.py") == {"tornado"}
+    for host in ("declared.py", "extra.py", "undeclared.py"):
+        assert (
+            import_change(str(package / host), str(package / "borrower.py"), cache)
+            is ImportChange.PACKAGE_BINDING
+        )
 
 
 def test_a_setup_cfg_that_reads_its_requirements_from_a_file_declares_none(tmp_path: Path) -> None:
@@ -372,6 +394,12 @@ def test_a_setup_cfg_that_reads_its_requirements_from_a_file_declares_none(tmp_p
     (package / "__init__.py").write_text("")
     (package / "declared.py").write_text("import declared_dep\n")
     (package / "borrower.py").write_text("def use():\n    return 2\n")
-    assert import_runs_new_code(
-        str(package / "declared.py"), str(package / "borrower.py"), ImportGraphCache()
+    cache = ImportGraphCache()
+    program = cache.program_for(package / "borrower.py")
+    assert _new_requirements(
+        {package / "declared.py"}, {package / "borrower.py"}, program, cache
+    ) == {"declared_dep"}
+    assert (
+        import_change(str(package / "declared.py"), str(package / "borrower.py"), cache)
+        is ImportChange.PACKAGE_BINDING
     )

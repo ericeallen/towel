@@ -33,11 +33,15 @@ import shutil
 import subprocess
 import sys
 import textwrap
-from typing import Dict, Sequence
+from typing import Dict, FrozenSet, Optional, Sequence
 
 import pytest
 
-from towel.unification.import_graph import ImportGraphCache, import_runs_new_code
+from towel.unification.import_graph import (
+    ImportGraphCache,
+    _new_top_level_packages,
+    import_runs_new_code,
+)
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 BLOCK = """
@@ -162,7 +166,7 @@ def test_a_test_module_that_imports_the_package_may_borrow_from_it(tmp_path: Pat
         "zeta/__init__.py": "",
         "zeta/a.py": _function("fa", "a", 1),
         "tests/__init__.py": "",
-        "tests/test_b.py": "import zeta\n\n\n" + _function("test_fb", "bb", 2),
+        "tests/test_b.py": "import zeta.a\n\n\n" + _function("test_fb", "bb", 2),
     }
     _write(tmp_path, files)
     assert _refactor(tmp_path, ".")
@@ -203,19 +207,34 @@ def test_a_borrower_gains_only_top_level_packages_it_already_imports(tmp_path: P
     )
     cache = ImportGraphCache()
 
-    def refused(host: str, borrower: str) -> bool:
-        return import_runs_new_code(str(tmp_path / host), str(tmp_path / borrower), cache)
+    def new_packages(host: str, borrower: str, *loaded: str) -> FrozenSet[Optional[str]]:
+        host_path, borrower_path = tmp_path / host, tmp_path / borrower
+        program = cache.program_for(host_path)
+        return _new_top_level_packages(
+            {host_path, *(tmp_path / path for path in loaded)},
+            {borrower_path, *program.package_initializers(borrower_path)},
+            borrower_path,
+            program,
+        )
 
-    assert not refused("zeta/b.py", "zeta/a.py")
-    assert refused("tests/helpers.py", "zeta/a.py")
-    assert not refused("zeta/b.py", "tests/test_b.py")
-    assert refused("zeta/b.py", "scripts/tool.py")
+    # Isolate package availability from the stronger rule against new
+    # submodule loads, which can replace ordinary parent-package bindings.
+    assert new_packages("zeta/b.py", "zeta/a.py") == frozenset()
+    # No program import establishes an absolute name for the unshipped tests.
+    assert new_packages("tests/helpers.py", "zeta/a.py") == frozenset({None})
+    assert new_packages("zeta/b.py", "tests/test_b.py") == frozenset()
+    assert new_packages("zeta/b.py", "scripts/tool.py") == frozenset({"zeta"})
     # A host whose import loads a package the borrower's never imports makes
     # the borrower need it too.
-    assert refused("zeta/uses_gamma.py", "tests/test_b.py")
+    assert new_packages("zeta/uses_gamma.py", "tests/test_b.py", "gamma/util.py") == frozenset(
+        {"gamma"}
+    )
     # An import inside a function runs only when it is called: importing
     # zeta.lazy loads nothing of gamma.
-    assert not refused("zeta/lazy.py", "tests/test_b.py")
+    assert new_packages("zeta/lazy.py", "tests/test_b.py") == frozenset()
+    assert import_runs_new_code(
+        str(tmp_path / "zeta/lazy.py"), str(tmp_path / "tests/test_b.py"), cache
+    )
 
 
 def test_a_borrower_that_imports_its_host_only_in_a_function_does_not_already_run_it(
@@ -228,7 +247,7 @@ def test_a_borrower_that_imports_its_host_only_in_a_function_does_not_already_ru
             "pkg/__init__.py": "",
             "pkg/host.py": 'print("loading host")\ndef helper():\n    return 1\n',
             "pkg/lazy.py": "def use():\n    from pkg import host\n    return host.helper()\n",
-            "pkg/eager.py": "from pkg import host\ndef use():\n    return 2\n",
+            "pkg/eager.py": "import pkg.host\ndef use():\n    return 2\n",
         },
     )
     cache = ImportGraphCache()
