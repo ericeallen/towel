@@ -132,7 +132,7 @@ def test_external_callee_can_change_lookup_between_reads(
         "pyproject.toml": '[project]\nname="probe"\nversion="0"\n',
         "pkg/__init__.py": "",
         "pkg/a.py": prelude + "def first(values, callback):\n" + body.replace("FACTOR", "5"),
-        "pkg/b.py": "from pkg import a\n"
+        "pkg/b.py": "import pkg.a\n"
         + prelude.replace(name, other_name)
         + "def second(values, callback):\n"
         + body.replace("FACTOR", "7").replace(name, other_name),
@@ -164,7 +164,7 @@ def test_a_single_leading_builtin_lookup_can_be_passed_eagerly(tmp_path: Path) -
         "pyproject.toml": '[project]\nname="probe"\nversion="0"\n',
         "pkg/__init__.py": "",
         "pkg/a.py": "def first(values):\n" + body.replace("FACTOR", "5"),
-        "pkg/b.py": "from pkg import a\ndef second(values):\n" + body.replace("FACTOR", "7"),
+        "pkg/b.py": "import pkg.a\ndef second(values):\n" + body.replace("FACTOR", "7"),
         "check.py": "from pkg import a, b\nprint(a.first([1, 3]), b.second([2, 4]))\n",
     }
     before, after = tmp_path / "before", tmp_path / "after"

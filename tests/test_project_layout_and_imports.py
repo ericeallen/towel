@@ -61,6 +61,8 @@ def fa(x):
         write_file(
             b_py,
             """
+from .alpha import fa
+
 def fb(x):
     s = 0
     if x:
@@ -151,7 +153,7 @@ def test_same_dir_helper_uses_relative_import_under_non_identifier_root():
         )
         write_file(
             pkg / "beta.py",
-            "def f2(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
+            "from .alpha import f1\n\ndef f2(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
             "        return -x\n    return x\n",
         )
 
@@ -200,7 +202,7 @@ def test_out_of_place_package_import_is_relative_not_output_dir_name():
         )
         write_file(
             pkg / "beta.py",
-            "def f2(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
+            "from .alpha import f1\n\ndef f2(x):\n    if x is None:\n        return 0\n    if x < 0:\n"
             "        return -x\n    return x\n",
         )
 

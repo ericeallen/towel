@@ -106,9 +106,10 @@ def test_vcs_root_does_not_control_crossfile_imports(tmp_path: Path, packaged: b
     body = "    y=x+1\n    z=y*2\n    return z\n"
     a, b = target / "a.py", target / "b.py"
     a.write_text("def first(x):\n" + body)
-    # Two top-level modules share nothing that ships them together unless
-    # one already imports the other.
-    b.write_text(("" if packaged else "import a\n") + "def second(x):\n" + body)
+    # An explicit host load establishes availability in either layout.
+    b.write_text(
+        ("from .a import first\n" if packaged else "import a\n") + "def second(x):\n" + body
+    )
     imports = (
         "from consumer.a import first; from consumer.b import second"
         if packaged

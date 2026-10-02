@@ -93,6 +93,8 @@ def test_a_cross_file_helper_still_takes_module_names(tmp_path: Path) -> None:
             return total
         """))
     (tmp_path / "pkg" / "b.py").write_text(textwrap.dedent("""
+        import pkg.a
+
         def scale(value):
             return value * 3
 

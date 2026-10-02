@@ -350,7 +350,7 @@ def _package(exports_header: str, reports_header: str) -> Dict[str, str]:
     return {
         "pyproject.toml": '[project]\nname = "pkg"\nversion = "0"\n',
         "pkg/__init__.py": "",
-        "pkg/exports.py": "from pkg import reports  # exports already depends on reports\n\n\n"
+        "pkg/exports.py": "import pkg.reports as reports  # exports already depends on reports\n\n\n"
         + _function(exports_header, "exports")
         + "\n",
         "pkg/reports.py": _function(reports_header, "reports") + "\n",
@@ -397,7 +397,7 @@ def test_across_modules_blocks_differing_in_a_builtin_hand_over_none(
         "pyproject.toml": '[project]\nname = "pkg"\nversion = "0"\n',
         "pkg/__init__.py": "",
         "pkg/exports.py": "\n\n\n".join(
-            ["from pkg import reports  # exports already depends on reports", *shared]
+            ["import pkg.reports as reports  # exports already depends on reports", *shared]
             + [ast.unparse(functions["second"])]
         )
         + "\n",

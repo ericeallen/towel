@@ -22,6 +22,8 @@ a helper for ``shop.cli``: ``import shop.cli`` then raised
 what the documentation says a platform lacks is a requirement like any
 absent package (``known_platforms``), and a module the program imports only
 under a condition hosts only for a borrower whose import already loads it.
+A fresh package-child load is now refused earlier because it can replace a
+parent attribute. Requirements are also tested independently of that rule.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ import pytest
 from towel.unification.import_graph import (
     ImportChange,
     ImportGraphCache,
+    _new_requirements,
     conditionally_imported,
     import_change,
 )
@@ -61,6 +64,14 @@ def _change(host: str, files: Dict[str, str], tmp_path: Path, **kw: str) -> Opti
         tmp_path, {"shop/h.py": host, "shop/b.py": "def use():\n    return 1\n", **files}, **kw
     )
     return import_change(str(package / "h.py"), str(package / "b.py"), ImportGraphCache())
+
+
+def _requirements(tmp_path: Path, host: str = "h.py") -> frozenset[str]:
+    """Exercise platform requirements even when a new package binding is already refused."""
+    package = (tmp_path / "shop").resolve()
+    cache = ImportGraphCache()
+    program = cache.program_for(package / host)
+    return _new_requirements({package / host}, {package / "b.py"}, program, cache)
 
 
 @pytest.mark.parametrize(
@@ -95,7 +106,8 @@ def _change(host: str, files: Dict[str, str], tmp_path: Path, **kw: str) -> Opti
 def test_a_host_requiring_what_a_platform_or_version_lacks_is_refused(
     tmp_path: Path, host: str
 ) -> None:
-    assert _change(host, {}, tmp_path) is ImportChange.NEW_REQUIREMENT
+    assert _change(host, {}, tmp_path) is ImportChange.PACKAGE_BINDING
+    assert _requirements(tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -108,10 +120,13 @@ def test_a_host_requiring_what_a_platform_or_version_lacks_is_refused(
     ids=["optional-msvcrt", "optional-startfile", "everywhere"],
 )
 def test_a_host_every_platform_imports_is_accepted(tmp_path: Path, host: str) -> None:
-    assert _change(host, {}, tmp_path) is None
+    assert _change(host, {}, tmp_path) is ImportChange.PACKAGE_BINDING
+    assert not _requirements(tmp_path)
+    # No added requirement does not prove a child module was already loaded.
+    assert _change(host, {"shop/b.py": "import shop.h\n"}, tmp_path) is None
 
 
-def test_a_borrower_that_already_requires_the_module_gains_nothing(tmp_path: Path) -> None:
+def test_a_borrower_that_already_requires_the_module_gains_no_requirement(tmp_path: Path) -> None:
     package = _tree(
         tmp_path,
         {
@@ -119,7 +134,11 @@ def test_a_borrower_that_already_requires_the_module_gains_nothing(tmp_path: Pat
             "shop/b.py": "import msvcrt\n\ndef use():\n    return 1\n",
         },
     )
-    assert import_change(str(package / "h.py"), str(package / "b.py"), ImportGraphCache()) is None
+    assert not _requirements(tmp_path)
+    assert (
+        import_change(str(package / "h.py"), str(package / "b.py"), ImportGraphCache())
+        is ImportChange.PACKAGE_BINDING
+    )
 
 
 @pytest.mark.parametrize(
@@ -137,10 +156,15 @@ def test_a_dependency_a_marker_limits_is_not_installed_everywhere(
 ) -> None:
     files = {"shop/p.py": "import plain\n"}
     assert _change("import colorama\n", files, tmp_path, project=project) is (
-        ImportChange.NEW_REQUIREMENT
+        ImportChange.PACKAGE_BINDING
     )
+    assert _requirements(tmp_path) == {"colorama"}
     package = tmp_path / "shop"
-    assert import_change(str(package / "p.py"), str(package / "b.py"), ImportGraphCache()) is None
+    assert not _requirements(tmp_path, "p.py")
+    assert (
+        import_change(str(package / "p.py"), str(package / "b.py"), ImportGraphCache())
+        is ImportChange.PACKAGE_BINDING
+    )
 
 
 def _conditional(tmp_path: Path, files: Dict[str, str]) -> set[str]:
@@ -187,11 +211,15 @@ def _conditional(tmp_path: Path, files: Dict[str, str]) -> set[str]:
         (
             {
                 "shop/__init__.py": "import sys\nif sys.platform == 'win32':\n    from . import w\n",
-                "shop/tool.py": "from . import w\n",
+                "shop/tool.py": "import shop.w\n",
             },
             set(),
         ),
-        ({"shop/x.py": "from . import y\n", "shop/y.py": "from . import x\n"}, set()),
+        (
+            {"shop/tool.py": "from . import w\n"},
+            {"shop/w.py"},
+        ),
+        ({"shop/x.py": "import shop.y\n", "shop/y.py": "import shop.x\n"}, set()),
     ],
     ids=[
         "sys.platform",
@@ -201,6 +229,7 @@ def _conditional(tmp_path: Path, files: Dict[str, str]) -> set[str]:
         "function-body",
         "gated-subpackage",
         "also-imported-unconditionally",
+        "member-import-is-not-a-guaranteed-load",
         "cycle-without-condition",
     ],
 )
@@ -213,9 +242,8 @@ def test_what_the_program_imports_only_under_a_condition(
 
 def test_a_conditionally_imported_host_is_refused(tmp_path: Path) -> None:
     files = {"shop/__init__.py": "import sys\nif sys.platform == 'win32':\n    from . import h\n"}
-    assert (
-        _change("from ctypes import wintypes\n", files, tmp_path) is ImportChange.CONDITIONAL_HOST
-    )
+    assert _change("from ctypes import wintypes\n", files, tmp_path) is ImportChange.PACKAGE_BINDING
+    assert "shop/h.py" in _conditional(tmp_path, files)
 
 
 _BODY = (

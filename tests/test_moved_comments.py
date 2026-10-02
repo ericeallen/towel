@@ -650,8 +650,14 @@ def _package(root: Path, comment: str) -> Sequence[Path]:
     paths = []
     for name in ("first", "second"):
         path = root / "zzshared" / f"{name}.py"
+        # A direct host load lets these cases reach the comment/directive
+        # rules rather than declining a newly imported package module.
+        prefix = "from .first import total_first\n\n" if name == "second" else ""
         path.write_text(
-            textwrap.dedent(block.format(name=f"total_{name}", tag=name, comment=comment)).lstrip()
+            prefix
+            + textwrap.dedent(
+                block.format(name=f"total_{name}", tag=name, comment=comment)
+            ).lstrip()
         )
         paths.append(path)
     return paths

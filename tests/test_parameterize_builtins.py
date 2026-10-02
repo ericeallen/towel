@@ -240,7 +240,7 @@ def _package(
     exports = "\n\n\n".join(
         part
         for part in (
-            "from pkg import reports  # exports already depends on reports",
+            "import pkg.reports as reports  # exports already depends on reports",
             textwrap.dedent(exports_prelude).strip(),
             _function(exports_header, "exports"),
         )
@@ -532,7 +532,7 @@ requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, rea
 
 TYPED_EXPORTS = """
 from builtins import len as len
-from pkg import reports  # exports already depends on reports
+import pkg.reports as reports  # exports already depends on reports
 
 
 def export_size(rows: list[int], name: str) -> int:
