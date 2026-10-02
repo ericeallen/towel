@@ -69,6 +69,7 @@ from typing import AbstractSet, Dict, FrozenSet, Iterable, List, Mapping, Option
 from typing import Tuple, Union
 
 from ..consumers import MAXIMUM_FILES
+from ..analysis_sources import parse_analysis_source
 from ..program_files import program_directories, refuse_unparsed_file
 from .bounded_cache import BoundedCache
 from .builtins import BUILTIN_NAMES
@@ -242,7 +243,7 @@ def _file_writes(
     if gate is not None and not gate.search(data.decode("utf-8", errors="replace")):
         return None
     try:
-        tree = ast.parse(data, filename=str(path))
+        tree = parse_analysis_source(data, filename=str(path))
     except (SyntaxError, ValueError) as error:
         refuse_unparsed_file(path, root, excluded_names, error)
         return None  # Excluded, or not text in its declared encoding: it writes nothing.

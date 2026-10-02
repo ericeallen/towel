@@ -164,6 +164,9 @@ from typing import (
 from .consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES, ScanLimitExceeded
 from .declared_requirements import Requirement, declared_requirements, normalized_name, own_names
 from .shipped_files import Artifact, left_out
+from .analysis_sources import parse_analysis_source
+from .unification.bounded_cache import BoundedCache, memoizing
+from weakref import WeakKeyDictionary
 
 __all__ = [
     "AmbiguousName",
@@ -1363,7 +1366,7 @@ def _read_module(path: Path) -> _Module:
         with warnings.catch_warnings():
             # Test data is full of invalid escapes; reading it is not the place to say so.
             warnings.simplefilter("ignore")
-            tree = ast.parse(path.read_bytes(), filename=str(path))
+            tree = parse_analysis_source(path.read_bytes(), filename=str(path))
     except (OSError, SyntaxError, ValueError, RecursionError):
         # Its imports are unknown, so no spelling is made to or from it. It may
         # run on a newer Python, so a dry or preview run refuses before reading
@@ -1382,7 +1385,21 @@ class _When:
     deferred: bool = False
 
 
+_SCANS: "WeakKeyDictionary[ast.Module, BoundedCache[Path, _Module]]" = WeakKeyDictionary()
+
+
 def _scan(tree: ast.Module, path: Path) -> _Module:
+    """Immutable import facts of one read-only tree and its file identity."""
+    if not memoizing():
+        return _scan_tree(tree, path)
+    facts = _SCANS.get(tree)
+    if facts is None:
+        facts = _SCANS[tree] = BoundedCache(8)
+    known = facts.get(path)
+    return known if known is not None else facts.put(path, _scan_tree(tree, path))
+
+
+def _scan_tree(tree: ast.Module, path: Path) -> _Module:
     """Every import in ``tree``, module level or not, and what the file does to ``sys``.
 
     Walked with an explicit stack: a deeply nested file must not exhaust the

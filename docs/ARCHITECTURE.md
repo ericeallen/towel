@@ -1293,6 +1293,20 @@ measure is exact and changes no proposal.
   read-only; `TOWEL_CHECK_AST_IMMUTABLE=1` verifies that on every reuse by
   comparing an AST digest and raising if the tree changed. A session is owned
   by one caller and is not thread-safe.
+- **Shared read-only syntax.** During one `analyze_files` call,
+  `analysis_sources.py` shares parsed trees between the pipeline, decorator
+  resolution, namespace-write scanning and import analysis. Its LRU is bounded
+  by 2,048 entries and 8 MiB of source; the byte limit bounds retained input,
+  not the full Python object graph. Readers supply current source, and keys
+  retain both file identity and source content. Equal text in different files
+  never shares AST identity. The context ends with the analysis. Binding maps
+  are immutable; import summaries depend only on a read-only tree and its path
+  and are weakly cached without retaining the tree. Warning-producing parses
+  bypass sharing to preserve warnings-as-errors behavior. The immutability
+  diagnostic checks structure and source positions, including deep expressions.
+  `tests/test_analysis_sources.py` checks sharing, file isolation, invalidation,
+  diagnostics and lifetime. Hand-call caches retain syntax facts and bind them
+  to the requesting module on use, avoiding a reference cycle through the module.
 - **Import-edge cache.** The import-cycle check parses each reachable module
   once per analysis and caches its edges, instead of re-parsing per pair.
 - **Per-function facts.** Facts that depend only on the enclosing function,
@@ -1603,6 +1617,7 @@ but the ideas and their names are from the literature.
 | The bounded LRU mapping behind every id-keyed cache | `bounded_cache.py` |
 | Engine and CLI defaults (parameters, lines, iterations) | `defaults.py` |
 | Decoding and re-encoding sources (BOM, cookie, newline) | `source_text.py` (at `src/towel/`) |
+| Read-only syntax shared between analyses during one call | `analysis_sources.py` (at `src/towel/`) |
 | The names the program's imports give its modules | `import_model.py` (at `src/towel/`); `unification/program_imports.py` asks it in a run's paths |
 | Project root, `pyproject.toml`, package chain | `project_layout.py` (at `src/towel/`); `unification/project_layout.py` re-exports it for the old import path |
 | Data model | `models.py` |

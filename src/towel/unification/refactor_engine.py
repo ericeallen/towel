@@ -103,6 +103,7 @@ from ..type_baseline import KnownErrors
 from ..type_inference import TypeOracle
 from ..source_files import python_sources
 from ..source_text import read_source
+from ..analysis_sources import sharing_analysis_sources
 from .pipeline import run_pipeline, AnalysisSession
 
 _SignedBlock = Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]
@@ -702,6 +703,23 @@ class UnificationRefactorEngine(ParallelEvaluation):
             changed_files: When given, only pairs with a function in one of
                 these files are considered (see ``incremental_global_passes``).
         """
+        with sharing_analysis_sources(check_ast_immutable=self._settings.check_ast_immutable):
+            return self._analyze_files(
+                file_paths,
+                progress=progress,
+                invalidate_paths=invalidate_paths,
+                changed_files=changed_files,
+            )
+
+    def _analyze_files(
+        self,
+        file_paths: List[str],
+        *,
+        progress: ProgressMode,
+        invalidate_paths: Optional[List[str]],
+        changed_files: Optional[FrozenSet[str]],
+    ) -> List[RefactoringProposal]:
+        """Analyze with the caller's shared, bounded source context active."""
         # Every file of the analysis must fit, or each pass re-parses them all.
         self.analysis_session.hold_at_least(
             len(file_paths), sum(_size_or_zero(path) for path in file_paths)

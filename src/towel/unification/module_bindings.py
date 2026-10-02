@@ -26,6 +26,7 @@ from __future__ import annotations
 import ast
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from .bounded_cache import BoundedCache
@@ -267,20 +268,26 @@ class _Collector:
             self._order = order
             self._statement(stmt, True, ())
         return ModuleBindings(
-            bindings={name: tuple(events) for name, events in self._bindings.items()},
+            bindings=MappingProxyType(
+                {name: tuple(events) for name, events in self._bindings.items()}
+            ),
             # A qualname two classes share identifies neither of them.
-            class_orders={
-                qualname: order
-                for qualname, order in self._class_orders.items()
-                if self._class_counts[qualname] == 1
-            },
+            class_orders=MappingProxyType(
+                {
+                    qualname: order
+                    for qualname, order in self._class_orders.items()
+                    if self._class_counts[qualname] == 1
+                }
+            ),
             rebound_by_global=frozenset(self._rebound_by_global),
             star_imports=tuple(self._star_imports),
-            class_hosts={
-                qualname: host
-                for qualname, host in self._class_hosts.items()
-                if self._class_counts[qualname] == 1
-            },
+            class_hosts=MappingProxyType(
+                {
+                    qualname: host
+                    for qualname, host in self._class_hosts.items()
+                    if self._class_counts[qualname] == 1
+                }
+            ),
         )
 
     def _bind(
@@ -455,4 +462,14 @@ def global_bindings(source: str) -> Optional[ModuleBindings]:
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
         return _MODULE_BINDINGS.put(source, None)
-    return _MODULE_BINDINGS.put(source, _Collector(source_lines(source)).collect(tree))
+    return bindings_from_tree(source, tree)
+
+
+def bindings_from_tree(source: str, tree: ast.Module) -> ModuleBindings:
+    """Immutable bindings of source already parsed into tree, without parsing it again."""
+    known = _MODULE_BINDINGS.get(source)
+    if known is not None:
+        return known
+    result = _Collector(source_lines(source)).collect(tree)
+    _MODULE_BINDINGS.put(source, result)
+    return result

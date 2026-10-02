@@ -48,6 +48,7 @@ from typing import (
 )
 
 from .bounded_cache import BoundedCache, memoizing
+from ..analysis_sources import parse_analysis_source
 from .exceptions import ProjectScanLimitError
 from .known_platforms import platform_only, stdlib_everywhere
 from ..import_model import NameStatus
@@ -632,12 +633,10 @@ def _module_level_import_bindings(
     key = (current, stat.st_mtime_ns, stat.st_size)
     if key in cache.bindings:
         return cache.bindings.get(key)
-    # A bare parse: this runs on the import-graph walk, which reaches modules
-    # outside the analysis through the graph cache alone and has no engine,
-    # so it cannot share the engine's parse memo. The bindings are remembered
-    # per (path, mtime, size) above, so each file version is parsed once.
+    # Share read-only syntax with the other analyses in the current run.
+    # Standalone queries still parse current source without retaining a tree.
     try:
-        tree = ast.parse(read_source(current))
+        tree = parse_analysis_source(read_source(current), str(current))
     except (OSError, UnicodeError, SyntaxError):
         return cache.bindings.put(key, None)
     bindings: Dict[str, Tuple[str, ...]] = {}

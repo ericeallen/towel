@@ -101,7 +101,8 @@ from .known_decorators import (
     KnownDecorator,
     known_decorator,
 )
-from .module_bindings import ModuleBindings, dotted_name, global_bindings
+from .module_bindings import ModuleBindings, bindings_from_tree, dotted_name, global_bindings
+from ..analysis_sources import parse_analysis_source
 from .namespace_writes import (
     ANY_NAME,
     NamespaceWrite,
@@ -359,9 +360,19 @@ class _PlainMemo:
 _REFUSALS: "WeakKeyDictionary[ast.AST, _Memo]" = WeakKeyDictionary()
 _PLAIN: "WeakKeyDictionary[ast.AST, Dict[Form, _PlainMemo]]" = WeakKeyDictionary()
 _LOADED: BoundedCache[_Stamp, Optional[_Module]] = BoundedCache(256)
-_HAND_CALLS: "WeakKeyDictionary[ast.Module, Tuple[Tuple[_Application, str], ...]]" = (
-    WeakKeyDictionary()
-)
+
+
+@dataclass(frozen=True)
+class _HandCall:
+    """A call's syntax, without a module reference that would retain its tree."""
+
+    call: ast.Call
+    argument: ast.expr
+    slot: _Slot
+    spelled: str
+
+
+_HAND_CALLS: "WeakKeyDictionary[ast.Module, Tuple[_HandCall, ...]]" = WeakKeyDictionary()
 # The project's hand applications, per engine (its import-graph cache) and
 # project root. Towel never writes a module-level or class-level assignment,
 # so what the index holds stays true while the engine rewrites the project.
@@ -603,6 +614,8 @@ class _Resolver:
         refusals: List[Tuple[str, ast.Call, FrozenSet[_Target]]] = []
 
         def identified(value: Value) -> Value:
+            if not value.symbols:
+                return value
             targets: Set[_Target] = set(value.targets)
             for symbol in value.symbols:
                 if symbol.imported:
@@ -633,11 +646,18 @@ class _Resolver:
             node: ast.Call, callee: Value, args: Tuple[Value, ...], keywords: Mapping[str, Value]
         ) -> Value:
             denotations = self._flow_denotations(callee, slot, module)
-            origins = {
-                item.dotted
-                for item in denotations
-                if isinstance(item, _Origin) and self._origin_rebound(item, 0) == frozenset()
-            }
+            origins = tuple(item for item in denotations if isinstance(item, _Origin))
+
+            def unchanged_origins(*names: str) -> FrozenSet[str]:
+                # An origin matters only when a transfer rule consumes it.
+                # Proving every ordinary call unrebound otherwise demands a
+                # whole-project namespace scan without changing its value.
+                return frozenset(
+                    origin.dotted
+                    for origin in origins
+                    if origin.dotted in names and self._origin_rebound(origin, 0) == frozenset()
+                )
+
             values = (*args, *keywords.values())
             kinds = frozenset(kind for value in values for kind in value.kinds)
             targets = frozenset(target for value in values for target in value.targets)
@@ -650,45 +670,51 @@ class _Resolver:
 
             first = argument(0, "target", "func", "signature_or_function")
             result = UNKNOWN
-            for origin in origins & {"typeguard.typechecked", "numba.jit", "numba.njit"}:
+            for origin in unchanged_origins("typeguard.typechecked", "numba.jit", "numba.njit"):
                 if self._is_external(module, origin.partition(".")[0]) is True:
                     if first.kinds & {ValueKind.CLASS, ValueKind.METHOD}:
                         refusals.append((origin, node, first.targets))
                     # Decorator factories preserve the callable identity for their next call.
                     result = result.join(Value(first.kinds, callee.symbols, first.targets))
             inspected = argument(0, "object")
-            if origins & {"inspect.getsource", "inspect.getsourcelines"} and inspected.kinds & {
+            if inspected.kinds & {
                 ValueKind.CLASS,
                 ValueKind.METHOD,
-            }:
+            } and unchanged_origins("inspect.getsource", "inspect.getsourcelines"):
                 result = result.join(Value.kind(ValueKind.SOURCE, inspected))
             compiled = argument(0, "source", "code")
-            if origins & {"builtins.compile", "types.FunctionType"} and compiled.kinds & {
+            if compiled.kinds & {
                 ValueKind.SOURCE,
                 ValueKind.CODE,
                 ValueKind.AST,
-            }:
-                refusals.append((sorted(origins)[0], node, compiled.targets))
+            } and unchanged_origins("builtins.compile", "types.FunctionType"):
+                # The existing diagnostic names the first stable alternative,
+                # even when another origin is what establishes compilation.
+                instrumenter = min(
+                    origin.dotted
+                    for origin in origins
+                    if self._origin_rebound(origin, 0) == frozenset()
+                )
+                refusals.append((instrumenter, node, compiled.targets))
                 result = result.join(Value.kind(ValueKind.CODE, compiled))
-            if "ast.parse" in origins and ValueKind.SOURCE in compiled.kinds:
+            if ValueKind.SOURCE in compiled.kinds and unchanged_origins("ast.parse"):
                 result = result.join(Value.kind(ValueKind.AST, compiled))
             tree = argument(0, "node")
-            if (
-                origins & {"ast.fix_missing_locations", "ast.increment_lineno"}
-                and ValueKind.AST in tree.kinds
+            if ValueKind.AST in tree.kinds and unchanged_origins(
+                "ast.fix_missing_locations", "ast.increment_lineno"
             ):
                 result = result.join(Value.kind(ValueKind.AST, tree))
             if ValueKind.TRANSFORMER in callee.kinds:
                 result = result.join(callee)
-            if "textwrap.dedent" in origins and ValueKind.SOURCE in kinds:
+            if ValueKind.SOURCE in kinds and unchanged_origins("textwrap.dedent"):
                 result = result.join(Value.kind(ValueKind.SOURCE, supplied))
-            if "builtins.vars" in origins and ValueKind.CLASS in kinds:
+            if ValueKind.CLASS in kinds and unchanged_origins("builtins.vars"):
                 result = result.join(Value.kind(ValueKind.NAMESPACE, supplied))
-            if "builtins.getattr" in origins and args and ValueKind.CLASS in args[0].kinds:
+            if args and ValueKind.CLASS in args[0].kinds and unchanged_origins("builtins.getattr"):
                 result = result.join(Value.kind(ValueKind.METHOD, supplied))
-            if origins & {"builtins.list", "builtins.tuple", "builtins.iter"} and args:
+            if args and unchanged_origins("builtins.list", "builtins.tuple", "builtins.iter"):
                 result = result.join(args[0])
-            if "builtins.super" in origins:
+            if unchanged_origins("builtins.super"):
                 result = result.join(
                     Value(
                         symbols=frozenset({Symbol("<super>")}),
@@ -740,7 +766,7 @@ class _Resolver:
                     and (
                         super_call
                         or any(symbol.name == "type" for symbol in receiver.symbols)
-                        and "builtins.type.__new__" in origins
+                        and unchanged_origins("builtins.type.__new__")
                     )
                 ):
                     result = result.join(Value.kind(ValueKind.CLASS, supplied))
@@ -1373,14 +1399,11 @@ class _Resolver:
             return _LOADED[stamp]
         try:
             source = read_source(path)
-            tree = ast.parse(source)
+            tree = parse_analysis_source(source, path)
         except (OSError, UnicodeError, SyntaxError, ValueError):
             return _LOADED.put(stamp, None)
-        bindings = global_bindings(source)
-        return _LOADED.put(
-            stamp,
-            None if bindings is None else _Module(path, source, tree, bindings, _layout(tree)),
-        )
+        bindings = bindings_from_tree(source, tree)
+        return _LOADED.put(stamp, _Module(path, source, tree, bindings, _layout(tree)))
 
     # -- decorators applied by hand --------------------------------------------
 
@@ -1735,17 +1758,30 @@ def _hand_calls(module: _Module) -> Tuple[Tuple[_Application, str], ...]:
     ``f(a)``, and ``f(x, y)`` applies ``f`` to ``x`` among other arguments.
     So ``g = typechecked(register(g))`` applies ``typechecked`` to ``g`` as
     well as ``register``: whatever ``register`` returns may be ``g`` itself.
-    Remembered per module tree.
+    Syntax is remembered per tree; the requesting module supplies each
+    application's binding context and displayed path. Keeping applications
+    in the weak-key memo would retain their module and therefore the key tree.
     """
     known = _HAND_CALLS.get(module.tree)
-    if known is not None:
-        return known
-    found: List[Tuple[_Application, str]] = []
-    scopes: List[Tuple[Sequence[ast.stmt], Optional[ast.ClassDef]]] = [(module.tree.body, None)]
-    scopes += [
-        (node.body, node) for node in ast.walk(module.tree) if isinstance(node, ast.ClassDef)
-    ]
+    if known is None:
+        known = _HAND_CALLS[module.tree] = _read_hand_calls(module.tree)
     name = os.path.basename(module.path)
+    return tuple(
+        (
+            _hand_application(
+                item.call, item.argument, module, item.slot, f"{name}:{item.call.lineno}"
+            ),
+            item.spelled,
+        )
+        for item in known
+    )
+
+
+def _read_hand_calls(tree: ast.Module) -> Tuple[_HandCall, ...]:
+    """The immutable child-node facts needed to instantiate a module's hand applications."""
+    found: List[_HandCall] = []
+    scopes: List[Tuple[Sequence[ast.stmt], Optional[ast.ClassDef]]] = [(tree.body, None)]
+    scopes += [(node.body, node) for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
     for body, owner in scopes:
         for index, statement in enumerate(body):
             for held in _statements_held(statement):
@@ -1757,12 +1793,12 @@ def _hand_calls(module: _Module) -> Tuple[Tuple[_Application, str], ...]:
                 for call in ast.walk(held.value):
                     if not isinstance(call, ast.Call):
                         continue
-                    site = f"{name}:{call.lineno}"
                     for argument in (*call.args, *(keyword.value for keyword in call.keywords)):
-                        application = _hand_application(call, argument, module, slot, site)
-                        found.extend((application, spelled) for spelled in _names_handed(argument))
-    _HAND_CALLS[module.tree] = tuple(found)
-    return _HAND_CALLS[module.tree]
+                        found.extend(
+                            _HandCall(call, argument, slot, spelled)
+                            for spelled in _names_handed(argument)
+                        )
+    return tuple(found)
 
 
 def _names_handed(argument: ast.expr) -> Iterator[str]:

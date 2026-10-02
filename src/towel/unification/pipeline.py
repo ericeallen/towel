@@ -49,6 +49,7 @@ from dataclasses import dataclass
 import os
 
 from ..canonical_ast import canonical_dump
+from ..analysis_sources import parse_analysis_source
 from .models import (
     RawModule,
     ParsedModule,
@@ -356,7 +357,7 @@ class AnalysisSession:
             return cached
         self._discard(key)
         try:
-            tree = ast.parse(source, filename=path)
+            tree = parse_analysis_source(source, filename=path)
         except SyntaxError as error:
             raise SourceFileError(str(error)) from error
         try:
