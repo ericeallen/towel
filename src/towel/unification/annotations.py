@@ -75,6 +75,7 @@ from typing import (
 )
 
 from ..canonical_ast import canonical_dump
+from .bounded_cache import memoizing
 from .revealed_types import parse_revealed
 from .semantic_safety import walk_own_scope
 from ..type_inference import RevealRequest, Subtyping, TypeOracle
@@ -339,6 +340,33 @@ def oracle_subtypes(oracle: TypeOracle, file_path: str, source: str) -> _Subtype
         return [verdict or Subtyping.UNKNOWN for verdict in verdicts]
 
     return relation
+
+
+def _inference_subtypes(oracle: TypeOracle, file_path: str, source: str) -> _Subtypes:
+    """Reuse definite verdicts only while one helper's annotations are inferred.
+
+    The inference does not write project files, so its questions share one
+    module context. A later inference must ask again: imports or checker
+    configuration may have changed even when this module's text has not.
+    Only structural strings and immutable verdicts survive a batch, never
+    its input trees. Unknown answers are retried because a failed or
+    unanswered probe supplies no reusable evidence.
+    """
+    relation = oracle_subtypes(oracle, file_path, source)
+    known: Dict[Tuple[str, str], Subtyping] = {}
+
+    def memoized(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Subtyping]:
+        if not memoizing():
+            return relation(pairs)
+        keys = [(canonical_dump(narrow), canonical_dump(wide)) for narrow, wide in pairs]
+        pending = {key: pair for key, pair in zip(keys, pairs) if key not in known}
+        answered = dict(zip(pending, relation(list(pending.values()))))
+        known.update(
+            (key, verdict) for key, verdict in answered.items() if verdict is not Subtyping.UNKNOWN
+        )
+        return [known.get(key, answered.get(key, Subtyping.UNKNOWN)) for key in keys]
+
+    return memoized
 
 
 def _met(
@@ -1154,7 +1182,7 @@ def infer_missing_annotations(
     allowed = set(_TYPING_NAMES) | (bare_ok or set())
     host_site = next((site for site in sites if site.file_path == host_file), None)
     subtypes: _Subtypes = (
-        oracle_subtypes(inferrer, host_site.file_path, host_site.source)
+        _inference_subtypes(inferrer, host_site.file_path, host_site.source)
         if host_site is not None
         else _unknown_subtypes
     )
