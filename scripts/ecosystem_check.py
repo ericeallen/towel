@@ -467,14 +467,8 @@ def _normalize_summary(line: str) -> str:
     return re.sub(r",? \d+ warnings?\b", "", without_time).strip(", ")
 
 
-def _test_outcome(output: str) -> Optional[TestOutcome]:
-    """Recognize actual tallies; arbitrary command output is not a test result.
-
-    All-skipped or expected-failure suites still have collected tests. A
-    unittest run needs both its positive count and its closing OK/FAILED;
-    include every completed run for commands that chain multiple suites.
-    """
-    lines = _plain_lines(output)
+def _pytest_outcome(lines: Sequence[str]) -> Optional[TestOutcome]:
+    """The final pytest tally, including all-skipped or expected-failure suites."""
     for line in reversed(lines):
         summary = _normalize_summary(line)
         counts: Dict[str, int] = {}
@@ -495,6 +489,11 @@ def _test_outcome(output: str) -> Optional[TestOutcome]:
                     for label in ("failed", "error", "errors", "subtests failed")
                 )
                 return TestOutcome(summary, int(failed), tests)
+    return None
+
+
+def _unittest_outcome(lines: Sequence[str]) -> Optional[TestOutcome]:
+    """Require positive counts and closing records for every chained unittest run."""
     pending: Optional[int] = None
     completed: List[str] = []
     failed = False
@@ -515,6 +514,24 @@ def _test_outcome(output: str) -> Optional[TestOutcome]:
     if completed and pending is None:
         return TestOutcome(" | ".join(completed), int(failed), collected)
     return None
+
+
+def _test_outcome(output: str) -> Optional[TestOutcome]:
+    """Recognize a completed suite with an unambiguous runner protocol.
+
+    A suite can print another runner's output. Buffered stdout and stderr can
+    even reverse their completion order, so mixed protocols cannot establish
+    the outer suite's completion. An unfinished unittest count or result also
+    prevents a nested pytest tally from certifying a completed command.
+    """
+    lines = _plain_lines(output)
+    pytest_outcome = _pytest_outcome(lines)
+    unittest_context = any(
+        UNITTEST_COUNT.fullmatch(line) or UNITTEST_RESULT.fullmatch(line) for line in lines
+    )
+    if unittest_context:
+        return _unittest_outcome(lines) if pytest_outcome is None else None
+    return pytest_outcome
 
 
 def _completed_test_run(
@@ -2966,14 +2983,16 @@ def _node_id(reported: str) -> str:
 
 def _failed_test_ids(output: str) -> Set[str]:
     """Full pytest node ids and unittest failure headers, without diagnostic suffixes."""
-    outcome = _test_outcome(output)
-    # Captured subprocess diagnostics also begin with ERROR:, and a pytest
-    # test may itself run unittest. Only the completed runner's identities
-    # describe this suite; a unittest outcome requires Ran ... and OK/FAILED.
-    unittest_run = outcome is not None and outcome.summary.startswith("Ran ")
+    lines = _plain_lines(output)
+    # Captured subprocess diagnostics also begin with ERROR:. Recognize each
+    # family's complete protocol before treating its headers as identities.
+    # Mixed protocols retain diagnostic identities, but _test_outcome refuses
+    # to certify completion rather than guessing which suite produced them.
+    pytest_run = _pytest_outcome(lines) is not None
+    unittest_run = _unittest_outcome(lines) is not None
     identities: Set[str] = set()
-    for line in _plain_lines(output):
-        pytest_failure = FAILED_LINE.fullmatch(line)
+    for line in lines:
+        pytest_failure = FAILED_LINE.fullmatch(line) if pytest_run else None
         if pytest_failure is not None:
             identities.add(_node_id(pytest_failure[1]))
         unittest_failure = UNITTEST_FAILED_LINE.fullmatch(line) if unittest_run else None

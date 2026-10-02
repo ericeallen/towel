@@ -330,24 +330,38 @@ def test_equal_red_counts_with_different_test_identities_do_not_pass(
     assert result.verdict == "BROKEN"
 
 
-def test_failure_identities_preserve_spaces_and_strip_ansi(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "output,expected",
+    [
+        (
+            "\x1b[31mFAILED tests/test_case.py::test_case[value with spaces] - assertion\x1b[0m\n"
+            "ERROR tests/test_case.py::test_setup[other value] - setup failure\n"
+            "1 failed, 1 error in 0.01s\n",
+            {
+                "tests/test_case.py::test_case[value with spaces]",
+                "tests/test_case.py::test_setup[other value]",
+            },
+        ),
+        (
+            "\x1b[31mFAIL: test_case (tests.Case) (value='has spaces')\x1b[0m\n"
+            "ERROR: test_setup (tests.Case)\n"
+            "UNEXPECTED SUCCESS: test_expected (tests.Case)\n"
+            "Ran 3 tests in 0.001s\n"
+            "FAILED (failures=1, errors=1, unexpected successes=1)\n",
+            {
+                "unittest:test_case (tests.Case) (value='has spaces')",
+                "unittest:test_setup (tests.Case)",
+                "unittest:test_expected (tests.Case)",
+            },
+        ),
+    ],
+)
+def test_failure_identities_preserve_spaces_and_strip_ansi(
+    tmp_path: Path, output: str, expected: set[str]
+) -> None:
     log = tmp_path / "failures.log"
-    log.write_text(
-        "\x1b[31mFAILED tests/test_case.py::test_case[value with spaces] - assertion\x1b[0m\n"
-        "ERROR tests/test_case.py::test_setup[other value] - setup failure\n"
-        "FAIL: test_case (tests.Case) (value='has spaces')\n"
-        "ERROR: test_setup (tests.Case)\n"
-        "UNEXPECTED SUCCESS: test_expected (tests.Case)\n"
-        "Ran 3 tests in 0.001s\n"
-        "FAILED (failures=1, errors=1, unexpected successes=1)\n"
-    )
-    assert ecosystem.failed_tests(str(log)) == {
-        "tests/test_case.py::test_case[value with spaces]",
-        "tests/test_case.py::test_setup[other value]",
-        "unittest:test_case (tests.Case) (value='has spaces')",
-        "unittest:test_setup (tests.Case)",
-        "unittest:test_expected (tests.Case)",
-    }
+    log.write_text(output)
+    assert ecosystem.failed_tests(str(log)) == expected
 
 
 def test_unittest_differences_never_use_a_pytest_retest_command(
