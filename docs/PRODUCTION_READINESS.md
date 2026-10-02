@@ -28,16 +28,31 @@ batching, broader safe duplicate discovery, generated-helper reuse and inert
 precise annotations. [Design decisions](DECISIONS.md) and intent-bearing tests
 record the preservation contract.
 
+The October 2 follow-up removes reflection-specific protections and shares
+immutable source, narrowing and subtype evidence. The current preservation
+requirement covers programs that do not use reflection or self-instrumentation,
+including through their callees. Ordinary behavior within that scope must be
+preserved or the transformation refused; reflection is not detected to refuse
+programs.
+
+The [October 2 complete CLI comparison](PERFORMANCE.md#october-2-complete-cli-comparison)
+measured the controlled typed, formatted Packaging fixture at 36.24 seconds
+versus 41.59 seconds for published 1.772, about 13% faster. It used runtime
+commit `000d751`, applied one more refactoring than 1.772 and preserved the
+preceding candidate's output bytes. Two fresh-process samples per arm establish
+this measured workload's improvement, not a whole-corpus speedup.
+
 The [completed development validation](proposals/next-validation-final.md)
 identifies its exact frozen source, three Linux interpreter runs, native
 transformed-source suite, 141-project corpus and reviewed exceptions.
-The [published-wheel comparison](proposals/published-1772-comparison.md)
-establishes a large first-reveal gain for Sphinx and no meaningful complete-CLI
-gain for Packaging. It establishes no whole-corpus speedup. Those measurements
+The earlier [published-wheel comparison](proposals/published-1772-comparison.md)
+established a large first-reveal gain for Sphinx and no meaningful complete-CLI
+gain for Packaging at its development snapshot. Those measurements
 have their own platform, load and timing boundaries; the historical default
 conditions below do not override them.
 
-That evidence belongs to development artifacts still numbered 1.772. Release
+That earlier validation belongs to development artifacts still numbered 1.772;
+it does not validate the October 2 runtime changes. Release
 1.792 must be built and validated at its own frozen commit, with the full raw
 results, review and exact-commit CI retained alongside its distributions.
 The [release procedure](RELEASING.md) and repository-owned verifier enforce the

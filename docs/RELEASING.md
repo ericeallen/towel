@@ -421,7 +421,11 @@ For the exact candidate commit:
    - Any other failure is a finding for the audit, at the owner's P1 standard. Its fixture is committed as a strict expected failure, entered in its battery's `KNOWN_DEFECTS`, until the fix lands.
    - Record the seed range, the counts the run prints, and each failure. The default of 2000 seeds is about 3,700 runs; on the 1.772 candidate they took two minutes on nine worker processes (`--jobs` defaults to half the cores), and found 27 failures, every one of a class the audit had reported.
 
-`just release VERSION` prepares local artifacts. Inspect its current recipe before use; it does not replace the full evidence above or authorize publication.
+`just release VERSION /path/to/release-evidence.json` verifies the completed
+evidence and exact prebuilt artifacts. It does not build artifacts, replace
+the full evidence above or authorize publication. Retain the credential-scan
+report alongside the bundle: the verifier checks dependency-audit evidence,
+but does not currently require a secret-scan record.
 
 ### Publication order and documentation links
 

@@ -12,12 +12,36 @@ A historical passing result applies to its recorded commit and test environment.
 
 **Contents — release checkpoints**
 
-- [1.792 preparation](#2026-09-30-1792-preparation)
+- [1.792 October 2 follow-up](#2026-10-02-1792-preparation-follow-up) · [September 30 preparation](#2026-09-30-1792-preparation)
 - [1.772 release](#2026-09-26-1772) · [1.772 candidate](#2026-09-19-1772-candidate)
 - [1.732.post1](#2026-09-19-1732post1) · [1.732 release](#2026-09-19-1732) · [Candidate checkpoints](#2026-09-19-historical-1732-candidate-checkpoints)
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-10-02 (1.792 preparation follow-up)
+
+- The preservation contract now covers programs that do not use reflection or
+  self-instrumentation, including through their callees. Reflection-specific
+  instrumentation, source-reader and namespace protections have been removed.
+  Ordinary binding, control flow, dispatch, effects and typing remain covered;
+  a violation is a defect to fix or refuse. See the
+  [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract).
+- Source analysis shares immutable parse and file facts within bounded
+  lifetimes. Subtype answers are reused within one inference, and immutable
+  narrowing facts are shared across overlapping source windows. Unknown
+  subtype answers are retried; new checker builds retain their evidence checks.
+- The [complete CLI comparison](PERFORMANCE.md#october-2-complete-cli-comparison)
+  measured the controlled typed, formatted Packaging fixture at 36.24 seconds
+  versus 41.59 seconds for published 1.772, about 13% faster. Runtime commit
+  `000d751` applied 19 extractions versus 18 and preserved the preceding
+  candidate's output. The report records two samples per arm, source and
+  artifact identities, background load and the other measured command settings.
+  This does not establish a whole-corpus speedup.
+- Earlier release-validation records remain bound to their earlier source.
+  The changed runtime requires a new frozen release audit, interpreter matrix,
+  corpus, artifact checks and exact-commit CI. Keep completed outcomes in the
+  external evidence bundle; no completion or publication is claimed here.
 
 ## 2026-09-30 (1.792 preparation)
 

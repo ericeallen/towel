@@ -20,15 +20,19 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from fnmatch import fnmatchcase
+import json
 from pathlib import Path
 import re
+from statistics import mean
 import tomllib
 from urllib.parse import unquote, urlsplit
 
 import pytest
 
+from tests.test_next_validation_documentation import _number, _rows, _table
+
 ROOT = Path(__file__).resolve().parents[1]
-PAGES = ("README.md", "SECURITY.md", "CHANGELOG.md", "CONTRIBUTING.md")
+PAGES = ("README.md", "SECURITY.md", "CHANGELOG.md", "CONTRIBUTING.md", "docs/RELEASING.md")
 
 
 def _check_current_version(documents: Mapping[str, str], version: str) -> None:
@@ -37,8 +41,9 @@ def _check_current_version(documents: Mapping[str, str], version: str) -> None:
     assert f"## [{version}]\n" in documents["CHANGELOG.md"]
     links = re.findall(r"https://github.com/ericeallen/towel/blob/([^/]+)/", documents["README.md"])
     assert links and set(links) == {f"v{version}"}
-    assert "`just release VERSION /path/to/release-evidence.json`" in documents["CONTRIBUTING.md"]
-    assert "`just release VERSION`" not in documents["CONTRIBUTING.md"]
+    for name in ("CONTRIBUTING.md", "docs/RELEASING.md"):
+        assert "`just release VERSION /path/to/release-evidence.json`" in documents[name]
+        assert "`just release VERSION`" not in documents[name]
 
 
 def test_current_release_metadata_and_readme_tags_match_the_package() -> None:
@@ -50,7 +55,7 @@ def test_current_release_metadata_and_readme_tags_match_the_package() -> None:
 def test_stale_current_version_and_release_commands_are_rejected(name: str) -> None:
     documents = {path: (ROOT / path).read_text() for path in PAGES}
     version = str(tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"])
-    if name == "CONTRIBUTING.md":
+    if name in {"CONTRIBUTING.md", "docs/RELEASING.md"}:
         documents[name] = documents[name].replace(
             "just release VERSION /path/to/release-evidence.json", "just release VERSION"
         )
@@ -58,6 +63,54 @@ def test_stale_current_version_and_release_commands_are_rejected(name: str) -> N
         documents[name] = documents[name].replace(version, "0.0")
     with pytest.raises(AssertionError):
         _check_current_version(documents, version)
+
+
+def _check_preservation_contract(text: str) -> None:
+    compact = " ".join(text.split())
+    assert "programs that do not use reflection or self-instrumentation" in compact
+    assert "including through code they call" in compact
+    assert "arbitrary callbacks" not in compact
+    assert "external side effects limit what can be established" not in compact
+
+
+@pytest.mark.parametrize("name", ["README.md", "SECURITY.md", "docs/GENERATED_CODE.md"])
+def test_current_guides_state_the_positive_preservation_contract(name: str) -> None:
+    _check_preservation_contract((ROOT / name).read_text())
+
+
+def test_a_blanket_callback_exclusion_is_not_the_preservation_contract() -> None:
+    original = (ROOT / "docs/GENERATED_CODE.md").read_text()
+    with pytest.raises(AssertionError):
+        _check_preservation_contract(original + "\nUnsupported: arbitrary callbacks.\n")
+
+
+def test_october_changes_belong_to_the_version_being_prepared() -> None:
+    """The pending release cannot promise both retired protections and their removal."""
+    version = str(tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"])
+    changes = (ROOT / "CHANGELOG.md").read_text().split(f"## [{version}]\n", 1)[1]
+    changes = changes.split("\n## ", 1)[0]
+    assert "self-instrumentation" in changes
+    assert "october-2-complete-cli-comparison" in changes
+    assert "Recognized body instrumentation is protected" not in changes
+    assert "explicit-decorator and import-time checks remain" not in changes
+
+
+def test_current_release_summaries_use_the_completed_october_measurements() -> None:
+    """Recompute the quoted means from samples; earlier comparisons remain historical."""
+    evidence = _table(
+        json.loads(
+            (ROOT / "tests/release_evidence/post-1772-typed-cli/measurements.json").read_text()
+        )
+    )
+    runs = _rows(_table(evidence["measurements"])["ordinary"])
+    seconds: dict[str, float] = {}
+    for arm in ("candidate", "published"):
+        samples = [_number(row["wall_seconds"]) for row in runs if row["arm"] == arm]
+        assert len(samples) == 2
+        seconds[arm] = mean(samples)
+    phrase = f"{seconds['candidate']:.2f} seconds versus {seconds['published']:.2f} seconds"
+    for name in ("CHANGELOG.md", "docs/PRODUCTION_READINESS.md", "docs/RELEASE_LOG.md"):
+        assert phrase in " ".join((ROOT / name).read_text().split())
 
 
 def test_readme_release_document_links_resolve_in_the_source_to_be_tagged() -> None:

@@ -9,12 +9,12 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
-- Reuse definite subtype verdicts within one helper's annotation inference
-  and immutable narrowing facts across overlapping source windows. Complete
-  typed, formatted Packaging runs averaged 36.24 seconds versus 41.59 seconds
-  for published 1.772, about 13% faster, while applying one more refactoring.
-  Generated Python is unchanged from the preceding candidate. See the
-  [measurement conditions and samples](docs/PERFORMANCE.md#october-2-complete-cli-comparison).
+## [1.792]
+
+Named for ln 6, approximately 1.791759469. Changes since 1.772.
+The measurements below retain their original development-source identities;
+release verification binds the final versioned source to its own evidence.
+
 - The soundness requirement is to preserve the behavior of programs that do
   not use reflection or self-instrumentation, including through their callees.
   Violations within that scope must be fixed or the transformation refused.
@@ -24,15 +24,8 @@ ecosystem evidence behind each claim. The format follows
   longer scans or refuses code to protect those behaviors. Ordinary
   nonreflective semantics remain covered. The October 2 decision supersedes
   the recognized-instrumentation and source-reader protections recorded in
-  the historical entries below; their validation facts retain their original
-  source and policy scope.
-
-## [1.792]
-
-Named for ln 6, approximately 1.791759469. Changes since 1.772.
-The measurements below retain their original development-source identities;
-release verification binds the final versioned source to its own evidence.
-
+  historical development and release records; their validation facts retain
+  their original source and policy scope.
 - Preview now runs the same checked, formatted fixed-point pipeline as dry in
   private output and shows its final diff and helper inventory. Use explicit
   `--quick` for a partial structural listing. Input files remain unchanged.
@@ -65,11 +58,6 @@ release verification binds the final versioned source to its own evidence.
   and private names elsewhere in a method no longer hide a safe extraction.
   Names used only in local-variable annotations no longer become runtime
   helper arguments or prevent cross-module extraction.
-- Recognized body instrumentation is protected across decorators, ordinary
-  calls and executed class hooks. Binding and argument flow distinguish
-  method recompilation from unrelated instrumentation and namespace
-  observation, and hook dispatch respects overrides and explicit delegation.
-
 - Release documentation has offline regression checks against retained 1.772
   evidence and current CI configuration. They protect platform coverage,
   test and corpus counts, typed fallbacks, measurement units and resource
@@ -79,7 +67,7 @@ release verification binds the final versioned source to its own evidence.
   class machinery. Hygienic private names protect against accidental
   overrides; namespace scans and lookup hooks observing the new helper fall
   under the documented reflection limitation. The same-class, receiver,
-  `Protocol`, explicit-decorator and import-time checks remain. This admits
+  `Protocol` and import-time checks remain. This admits
   valid extractions previously declined solely for a metaclass, class hook,
   subscripted project base or unlisted library base.
 
@@ -97,8 +85,16 @@ release verification binds the final versioned source to its own evidence.
 
 ### Performance
 
-A completed comparison against the actual published 1.772 wheel found no
-meaningful Packaging whole-command speedup (39.98 versus 39.77 seconds; the
+- Reuse definite subtype verdicts within one helper's annotation inference
+  and immutable narrowing facts across overlapping source windows. Complete
+  typed, formatted Packaging runs averaged 36.24 seconds versus 41.59 seconds
+  for published 1.772, about 13% faster, while applying one more refactoring.
+  Generated Python is unchanged from the preceding candidate. See the
+  [measurement conditions and samples](docs/PERFORMANCE.md#october-2-complete-cli-comparison).
+
+An earlier comparison at development commit `3af8c4b` against the actual
+published 1.772 wheel found no meaningful Packaging whole-command speedup
+(39.98 versus 39.77 seconds; the
 candidate performed one more extraction). Sphinx's first Pyright reveal fell
 from 931.07 to 8.63 seconds, about 108 times faster, with identical requests
 and answers. This measures the reveal phase only; it establishes no full-run
@@ -118,10 +114,13 @@ later changes are outside these measurements.
   and reported types; initial reveal time fell from 980.7 to 8.65 seconds.
   This is a phase measurement, not a full-run timing. See the
   [comparison details](docs/proposals/next-release.md#typed-performance-comparisons).
-- Instrumentation resolution indexes immutable module/class definitions once
-  per module tree. A packaging scan made 558 identity queries instead of
-  36,741, retaining the exact same application index. The index is released
-  with its AST and does not cache project-dependent decisions.
+- An earlier development snapshot indexed immutable module/class definitions
+  once per module tree for instrumentation resolution. A packaging scan made
+  558 identity queries instead of 36,741, retaining the exact same application
+  index. The index was released with its AST and did not cache
+  project-dependent decisions. That analyzer
+  was removed under the October 2 contract; this measurement describes the
+  earlier implementation only.
 - Non-None assertions and guarded attribute initialization whose refinements
   are needed by remaining caller operations stay at the call site during block discovery.
   Filtering before maximal-block pairing keeps smaller valid extractions

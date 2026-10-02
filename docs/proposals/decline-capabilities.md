@@ -97,7 +97,9 @@ This table records the round-4 behavior of 1.772. The September 26 follow-up
 removes the machinery-only refusals for subscripted project bases, `type`,
 unlisted library bases and project metaclasses. Class-private helpers still
 need the same class, a compatible receiver and a host that permits an added
-member. Explicit decorator restrictions also remain. The measurements below
+member. The October 2 contract subsequently removed reflection-specific
+decorator restrictions; ordinary receiver, Protocol and import-time semantics
+remain protected. The measurements below
 predate that change; the old base registry is now a test fixture in
 `tests/stdlib_bases.py`, not an eligibility list.
 

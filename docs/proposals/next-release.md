@@ -31,7 +31,7 @@ are not requirements of the October 2 follow-up.
 
 1. Complete and test consistent instrumentation recognition. This historical
    item was implemented under the September 27 contract and superseded on
-   October 2; its instrumentation checks are being removed. The class-host
+   October 2; its instrumentation checks have been removed. The class-host
    relaxation and Protocol alias analysis remain separate changes.
 2. Account for actual failed proposals and improve their construction. Count
    candidate declines, distinct emitted proposals, signature attempts and

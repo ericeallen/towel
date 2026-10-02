@@ -190,10 +190,12 @@ Every engine owns a bounded analysis session with content checks and isolated
 AST snapshots. An engine instance and the test import-isolation harness each
 require sequential use. See [the API guide](USAGE_GUIDE.md) for lifecycle rules.
 
-These checks operate within the [documented model](KNOWN_LIMITATIONS.md).
-Dynamic imports, opaque rebinding, arbitrary callbacks and external side
-effects limit what can be established statically. Preview the result, inspect
-the diff and run your own tests before adopting it.
+These checks must preserve the behavior of programs that do not use reflection
+or self-instrumentation, including through code they call. An accepted change
+to ordinary binding, control flow, evaluation order or effects is a defect to
+fix or refuse. The [documented model](KNOWN_LIMITATIONS.md) describes the
+checks and their conservative refusals. Preview the result, inspect the diff
+and run your own tests before adopting it.
 
 ## Decorators, instrumentation and reflection
 

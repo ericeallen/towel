@@ -1419,6 +1419,7 @@ Source-location requirements of external type and build tools remain separate:
 TypeVar, Literal and cast analysis and Babel catalog extraction still constrain
 where source may move.
 
-*Status: owner-approved scope for the October 2 performance follow-up;
-implementation and validation are recorded separately from the earlier release
-checkpoints.*
+*Status: implemented in the October 2 follow-up. The current
+[release preparation](PRODUCTION_READINESS.md#1792-release-preparation) links
+its performance evidence and distinguishes it from earlier validation
+checkpoints; final release validation remains separately required.*
