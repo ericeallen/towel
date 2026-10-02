@@ -1129,7 +1129,9 @@ speaks for.
 
 _INSTALLATIONS = frozenset({"site-packages", "dist-packages"})
 _ENVIRONMENT_MARKERS = ("pyvenv.cfg", "conda-meta")
-_NOT_PROJECT_MODULES = frozenset({"__future__", "__main__"})
+# A future directive also performs an ordinary runtime import. A project
+# module named __future__ can therefore execute code and shadow the stdlib.
+_NOT_PROJECT_MODULES = frozenset({"__main__"})
 
 
 @dataclass(frozen=True)
@@ -1975,7 +1977,14 @@ def _classify(
     ``scripts.utils``.
     """
     if not candidates:
-        return TopLevelName(name, NameStatus.EXTERNAL, ())
+        # Future directives must precede definitions, but their runtime
+        # import can reenter through a shadow. Record its provider even when
+        # the project has no candidate, so early-helper placement can prove
+        # the required prefix is the standard library's inert module.
+        outside = installed(name, root) if name == "__future__" else None
+        return TopLevelName(
+            name, NameStatus.EXTERNAL, (), None if outside is None else outside.description
+        )
     outside = installed(name, root)
     if outside is not None and outside.kind is ProviderKind.UNSHADOWABLE:
         return TopLevelName(name, NameStatus.EXTERNAL, (), outside.description)

@@ -1171,16 +1171,22 @@ def test_the_scan_stops_rather_than_model_part_of_a_tree(tmp_path, monkeypatch):
         _model(project)
 
 
-def test_future_and_main_are_never_project_modules(tmp_path):
+def test_future_is_a_runtime_import_but_main_is_the_running_program(tmp_path):
     project = _write(
         tmp_path / "project",
         {
-            "__future__.py": "",
+            "__future__.py": "annotations = 0\n",
             "__main__.py": "",
             "a.py": "from __future__ import annotations\nimport __main__\n",
         },
     )
-    assert _model(project).names == {}
+    model = _model(project)
+    assert set(model.names) == {"__future__"}
+    future = model.names["__future__"]
+    assert future.status is NameStatus.AMBIGUOUS
+    assert future.candidates == (project / "__future__.py",)
+    assert len(model.problems) == 1
+    assert isinstance(model.problems[0], AmbiguousName)
 
 
 def _sites(source: str, tmp_path: Path) -> Iterator[tuple[str, bool, bool, bool]]:

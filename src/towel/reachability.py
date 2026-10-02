@@ -173,7 +173,7 @@ def _prepare_probe_plan(source: str) -> Optional[Tuple[ProbePlan, str]]:
     futures = [
         index
         for index, node in enumerate(tree.body)
-        if isinstance(node, ast.ImportFrom) and node.module == "__future__"
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "__future__"
     ]
     first = {id(node) for node in tree.body[: futures[-1] + 1]} if futures else set()
     if tree.body and ast.get_docstring(tree, clean=False) is not None:

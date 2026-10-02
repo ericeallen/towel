@@ -444,6 +444,7 @@ def _postpones_annotations(tree: Optional[ast.AST]) -> bool:
     """Whether ``tree`` is a module written under ``from __future__ import annotations``."""
     return isinstance(tree, ast.Module) and any(
         isinstance(statement, ast.ImportFrom)
+        and statement.level == 0
         and statement.module == "__future__"
         and any(alias.name == "annotations" for alias in statement.names)
         for statement in tree.body

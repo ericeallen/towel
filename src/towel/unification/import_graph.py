@@ -32,6 +32,7 @@ import hashlib
 import os
 import re
 import sys
+import sysconfig
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -513,14 +514,17 @@ def _import_edges(
     cache: ImportGraphCache,
     extent: ImportExtent = "everywhere",
 ) -> Optional[_Edges]:
-    """What the imports of ``current``, a module in the model's paths, may execute.
+    """What the imports of ``current``, a module in the model's paths, may or must execute.
 
     The module is read where the run keeps it (``ProgramImports.in_run``),
     so an import an earlier extraction added is an edge like any other, and
     each import is resolved as the program's import model resolves it
     (``ImportModel.files_reached``): package initializers on the way
-    included, and every candidate location of an ambiguous name. None when
-    the module cannot be read.
+    included, and for possible reach every candidate location of an ambiguous name. None when
+    the module cannot be read. The guaranteed extents count only an
+    ImportFrom's explicit module: its imported members can be attributes
+    already present on that module, without loading any submodule. An
+    ambiguous absolute name guarantees no particular local location.
     """
     path = program.in_run(current)
     try:
@@ -536,8 +540,13 @@ def _import_edges(
         return cache.edges.put(key, None) if key is not None else None
     files: Set[Path] = set()
     unseen = False
+    guaranteed = extent in {"leading", "unconditionally"}
     for node in _import_statements(tree, extent, TypeCheckingGuards(tree)):
-        for level, module, names in _import_requests(node):
+        for level, module, names in _import_requests(node, guaranteed=guaranteed):
+            if guaranteed and level == 0:
+                info = program.model.names.get(module.partition(".")[0]) if module else None
+                if info is None or not info.trusted:
+                    continue
             reached = program.reached(current, level, module, names)
             if reached is None:
                 unseen = True
@@ -549,6 +558,8 @@ def _import_edges(
 
 def _import_requests(
     node: Union[ast.Import, ast.ImportFrom],
+    *,
+    guaranteed: bool = False,
 ) -> Iterator[Tuple[int, Optional[str], Tuple[str, ...]]]:
     """``(level, module, names)`` for each module one import statement imports.
 
@@ -562,7 +573,8 @@ def _import_requests(
         for alias in node.names:
             yield 0, alias.name, ()
         return
-    yield node.level, node.module, tuple(alias.name for alias in node.names if alias.name != "*")
+    names = () if guaranteed else tuple(alias.name for alias in node.names if alias.name != "*")
+    yield node.level, node.module, names
 
 
 def _module_level_import_bindings(
@@ -744,17 +756,22 @@ def _reachable_modules(
     *,
     sees_all: bool,
     before_definitions: Optional[Path] = None,
+    unfinished: FrozenSet[Path] = frozenset(),
+    transitive: bool = True,
 ) -> Optional[Set[Path]]:
     """Every project module importing ``start`` may run, ``start`` included, in the model's paths.
 
     ``extent`` says which of each module's imports count (``ImportExtent``):
-    ``"unconditionally"`` gives the modules importing ``start`` certainly
-    loads, ``"at_import"`` those it may. None when some module cannot be
+    ``"unconditionally"`` follows explicit top-level module loads,
+    ``"at_import"`` includes conditional loads. None when some module cannot be
     read, or, with ``sees_all``, when some import may run what the model did
     not read. Without it such an import is taken to run nothing, which only
     ever leaves modules out. ``before_definitions`` restricts that module
     to imports before its first definition, where a new helper import goes;
-    modules those imports load still run their complete top levels.
+    ``transitive=False`` counts only direct edges: a completed import may
+    return a partially initialized module whose later imports have not run. Modules
+    in ``unfinished`` may already be initializing: neither their completion
+    nor imports later in their bodies follow from encountering them again.
     """
     pending = list(start)
     visited: Set[Path] = set()
@@ -763,12 +780,20 @@ def _reachable_modules(
         if current in visited:
             continue
         visited.add(current)
+        if current in unfinished:
+            # The package object is present, but its remaining imports have
+            # not necessarily run. Helper placement separately establishes
+            # availability when this partially initialized package is a host.
+            continue
         edges = _import_edges(
             current, program, cache, "leading" if current == before_definitions else extent
         )
         if edges is None or (sees_all and edges.unseen):
             return None
-        pending.extend(edges.files - visited)
+        if transitive:
+            pending.extend(edges.files - visited)
+        else:
+            visited.update(edges.files)
     return visited
 
 
@@ -924,6 +949,7 @@ class ImportTimeCode:
         self._depth = depth
         self._postponed = any(
             isinstance(statement, ast.ImportFrom)
+            and statement.level == 0
             and statement.module == "__future__"
             and any(alias.name == "annotations" for alias in statement.names)
             for statement in self._tree.body
@@ -1502,12 +1528,40 @@ def _has_import_time_effects(module: Path, cache: ImportGraphCache) -> bool:
     return cache.effects.put(key, result) if key is not None else result
 
 
+def inert_function_definition(
+    function: Union[ast.FunctionDef, ast.AsyncFunctionDef], *, postponed: bool = False
+) -> bool:
+    """Whether defining this function executes no user code or binding lookup."""
+    arguments = function.args
+    annotations = [
+        argument.annotation
+        for argument in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            *filter(None, (arguments.vararg, arguments.kwarg)),
+        )
+    ] + [function.returns]
+    return not (
+        function.decorator_list
+        or arguments.defaults
+        or any(default is not None for default in arguments.kw_defaults)
+        or bool(getattr(function, "type_params", ()))
+        or not postponed
+        and any(
+            annotation is not None and not isinstance(annotation, ast.Constant)
+            for annotation in annotations
+        )
+    )
+
+
 class ImportChange(Enum):
     """What importing a helper's host would change about importing its borrower."""
 
     UNKNOWN = "the imports cannot be inspected"
     RUNS_CODE = "a module the new import loads runs code at import"
     IMPORT_ORDER = "the new helper import would advance a module load past definitions"
+    PACKAGE_BINDING = "loading the host would replace an attribute of its parent package"
     CONDITIONAL_HOST = "the program imports the host, or a package it is in, only under a condition"
     OTHER_DISTRIBUTION = "the host belongs to another distribution than the borrower"
     NEW_REQUIREMENT = "a module the new import loads requires a package that may be absent"
@@ -1517,9 +1571,92 @@ class ImportChange(Enum):
     RUN_BY_PATH = "the borrower runs as a script, where the new import would not resolve"
 
 
+def future_imports_are_standard(tree: ast.Module, path: Path, cache: ImportGraphCache) -> bool:
+    """Whether the imports an early helper must follow cannot reenter its host.
+
+    An absolute future directive is also an executable import. A shadowing
+    module can import the borrower before the helper exists, and Python does
+    not permit moving the helper ahead of that directive. Reuse the run's
+    import provenance instead of scanning the shadow's possible callees.
+    Relative imports named __future__ are ordinary imports, not directives.
+    """
+    if not any(
+        isinstance(statement, ast.ImportFrom)
+        and statement.level == 0
+        and statement.module == "__future__"
+        for statement in tree.body
+    ):
+        return True
+    future = cache.program_for(path).model.names.get("__future__")
+    if future is None or future.status is not NameStatus.EXTERNAL or future.installed is None:
+        return False
+    if future.installed in {"a built-in module", "a frozen module"}:
+        return True
+    provider = Path(future.installed)
+    return provider.is_absolute() and provider.resolve() in {
+        (Path(sysconfig.get_path(name)) / "__future__.py").resolve()
+        for name in ("stdlib", "platstdlib")
+    }
+
+
+def _closed_inert_module(module: Path, cache: ImportGraphCache) -> bool:
+    """Whether a new top-level module can finish without executing other project code.
+
+    Absence of calls is insufficient: eager name reads and arithmetic can
+    raise. Only literal bindings and inert definition headers qualify, with
+    no imports except future directives from the standard library. This
+    establishes nothing about parent-package bindings or import order;
+    callers must separately exclude new submodule loads and advanced loads.
+    """
+    try:
+        tree = parse_analysis_source(read_source(module), filename=str(module))
+    except (OSError, UnicodeError, SyntaxError, ValueError):
+        return False
+    if not future_imports_are_standard(tree, module, cache):
+        return False
+    postponed = any(
+        isinstance(statement, ast.ImportFrom)
+        and statement.level == 0
+        and statement.module == "__future__"
+        and any(alias.name == "annotations" for alias in statement.names)
+        for statement in tree.body
+    )
+    for statement in tree.body:
+        if isinstance(statement, ast.Pass) or (
+            isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)
+        ):
+            continue
+        if (
+            isinstance(statement, ast.Assign)
+            and isinstance(statement.value, ast.Constant)
+            and all(isinstance(target, ast.Name) for target in statement.targets)
+        ):
+            continue
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if inert_function_definition(statement, postponed=postponed):
+                continue
+        elif (
+            isinstance(statement, ast.ImportFrom)
+            and statement.level == 0
+            and statement.module == "__future__"
+        ):
+            continue
+        return False
+    return True
+
+
 def import_runs_new_code(host_file: str, borrower_file: str, cache: ImportGraphCache) -> bool:
     """Whether ``borrower`` importing ``host`` would change what importing the borrower does."""
     return import_change(host_file, borrower_file, cache) is not None
+
+
+def _has_parent_package(module: Path, program: ProgramImports) -> bool:
+    """Whether loading this module binds an attribute on a parent, including a namespace package."""
+    name = program.model.module_name(module)
+    if name is not None:
+        return "." in name
+    context = program.model.context_of(module)
+    return context is not None and context != module and module != context / "__init__.py"
 
 
 def import_change(
@@ -1533,10 +1670,17 @@ def import_change(
     same one: a monorepo's beta may be installed against the released
     alpha, which lacks the helper. If the
     borrower's leading imports already certainly load the host, nothing new runs.
+    Its enclosing packages and directly imported modules may still be
+    running, so encountering them does not prove their own imports completed.
     A host loaded only after definitions is not already available at the
     new helper import: advancing that load can expose an incomplete module
     or reorder effects. Such a host is refused even when its eventual load
     is unconditional.
+    A newly loaded submodule also replaces an attribute on its parent
+    package, even when its body is inert; nothing here assumes that
+    ordinary code outside the analyzed files has left that attribute free.
+    A new top-level host must have a closed inert body; even a name read or
+    arithmetic expression can fail when no original import would run it.
     Otherwise every
     module the new import may load that the borrower's does not certainly
     load already must run no code at import (``ImportTimeCode``), require
@@ -1562,6 +1706,8 @@ def import_change(
         "unconditionally",
         sees_all=False,
         before_definitions=borrower,
+        unfinished=frozenset(program.package_initializers(borrower)),
+        transitive=False,
     )
     if already is None:
         return ImportChange.UNKNOWN
@@ -1578,6 +1724,10 @@ def import_change(
             return ImportChange.UNKNOWN
         if host in eventual:
             return ImportChange.IMPORT_ORDER
+        if _has_parent_package(host, program):
+            return ImportChange.PACKAGE_BINDING
+        if not _closed_inert_module(program.in_run(host), cache):
+            return ImportChange.RUNS_CODE
         loaded = _reachable_modules(
             [host, *program.package_initializers(host)], program, cache, "at_import", sees_all=True
         )

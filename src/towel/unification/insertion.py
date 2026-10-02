@@ -14,7 +14,10 @@
 
 """Where a generated helper and its import go in a module.
 
-A module-level helper is placed before the first definition, after the
+A module helper shared with other files is inert and precedes ordinary
+imports and effects, so a partial host can supply it during import reentry.
+It follows the header, docstring and future imports. A same-file helper is
+placed before the first definition, after the
 docstring and imports, or after the last definition its annotations name
 when nothing before that point can run code at import (``ImportTimeCode``);
 a method helper goes at the end of its class body; a function-local helper
@@ -137,6 +140,39 @@ def import_line(lines: Sequence[str], tree: ast.Module, source: str) -> int:
             break
         if effectful or isinstance(statement, (ast.Import, ast.ImportFrom)):
             position = max(position, statement.end_lineno or statement.lineno)
+    return position
+
+
+def early_helper_line(lines: Sequence[str], tree: ast.Module) -> int:
+    """Before executable module statements, after its header, docstring and future imports.
+
+    A helper imported from a partially initialized module must already exist
+    when that module's imports or other effects reenter a borrower. Its
+    definition must be inert; the materializer checks that separately. A
+    protected statement sharing a line with executable code leaves no whole
+    line at which that ordering can be preserved, so that proposal is refused.
+    """
+    first = _first_line(tree.body[0]) if tree.body else len(lines) + 1
+    position = _after_header(lines[: first - 1])
+    for index, statement in enumerate(tree.body):
+        docstring = (
+            index == 0
+            and isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        )
+        future = (
+            isinstance(statement, ast.ImportFrom)
+            and statement.level == 0
+            and statement.module == "__future__"
+        )
+        if not docstring and not future:
+            if statement.lineno <= position:
+                raise RefactoringError(
+                    "A shared helper cannot precede executable code on its module header's line"
+                )
+            break
+        position = max(position, statement.end_lineno or statement.lineno)
     return position
 
 

@@ -52,8 +52,16 @@ from .block_comments import excluded_lines, weave_comments
 from .class_private import is_class_private, mangled, mangling_classes, mangling_prefix
 from .engine_state import HelperNameClaims
 from .exceptions import ProjectScanLimitError, RefactoringError, UntypeableExtraction
-from .import_graph import ImportTimeCode, TypeCheckingGuards, fails_run_by_path, runs_as_script
-from .insertion import reindent
+from .import_graph import (
+    ImportTimeCode,
+    TypeCheckingGuards,
+    _import_statements,
+    fails_run_by_path,
+    future_imports_are_standard,
+    inert_function_definition,
+    runs_as_script,
+)
+from .insertion import early_helper_line, reindent
 from .splicing import splice_block, whole_lines
 from .models import (
     AppliedChange,
@@ -238,6 +246,18 @@ class Materialization(
 
     def _materialize_once(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render one proposal into modified sources (see ``_materialize_refactoring``)."""
+        if _shared_module_helper(proposal):
+            if proposal.insert_into_class or proposal.insert_into_function:
+                raise RefactoringError("A shared helper must be available at module scope")
+            tree = self._parse_source("".join(self._source_lines(proposal.file_path)))
+            if not future_imports_are_standard(tree, Path(proposal.file_path), self.import_graph):
+                raise RefactoringError(
+                    "A future import can run before the shared helper is available"
+                )
+            if _runtime_star_imports(tree):
+                raise RefactoringError("A star import can overwrite an early shared helper")
+            if proposal.reused_function is not None:
+                self._require_early_reused_helper(proposal)
         if proposal.helper_type_declarations and (
             proposal.reused_function is not None or proposal.insert_into_function is not None
         ):
@@ -265,6 +285,37 @@ class Materialization(
         else:
             self._verify_helper_call_arity(modified_files, naming.final_name, proposal.method_kind)
         return modified_files
+
+    def _require_early_reused_helper(self, proposal: RefactoringProposal) -> None:
+        """An existing shared helper must precede operations that could request it early.
+
+        Unlike a fresh helper, the user's existing definition is not moved or
+        given new annotations. Only an already inert module prefix proves its
+        availability while its module is partially initialized.
+        """
+        reused = proposal.reused_function
+        if reused is None:
+            raise RefactoringError("An existing helper needs its source definition")
+        source = "".join(self._source_lines(proposal.file_path))
+        tree = self._parse_source(source)
+        position = early_helper_line(source.splitlines(keepends=True), tree)
+        postponed = _postpones_annotations(source)
+        for statement in tree.body:
+            if (statement.end_lineno or statement.lineno) <= position:
+                continue
+            if isinstance(statement, ast.Pass) or (
+                isinstance(statement, ast.Assign)
+                and isinstance(statement.value, ast.Constant)
+                and all(isinstance(target, ast.Name) for target in statement.targets)
+            ):
+                continue
+            if not isinstance(statement, ast.FunctionDef) or not inert_function_definition(
+                statement, postponed=postponed
+            ):
+                break
+            if statement.name == reused.name and statement.lineno == reused.line_range[0]:
+                return
+        raise RefactoringError("An existing shared helper is unavailable before reentrant imports")
 
     def _settle_helper_name(
         self, proposal: RefactoringProposal, related_paths: List[str]
@@ -426,6 +477,17 @@ class Materialization(
     ) -> str:
         """One file's new source: its call sites spliced in, then the helper or its import."""
         lines = list(self._source_lines(file_path))
+        # Host selection proved an import safe at the original module's
+        # boundary. Replacing an early helper definition with an alias must
+        # not move that boundary below the alias that needs the import.
+        import_position = (
+            self._find_import_position(lines) if file_path != proposal.file_path else None
+        )
+        if import_position is not None and any(
+            (statement.end_lineno or statement.lineno) > import_position
+            for statement in _runtime_star_imports(self._parse_source("".join(lines)))
+        ):
+            raise RefactoringError("A later star import can overwrite the borrowed helper")
         self._splice_call_sites(proposal, naming, file_path, lines, replacements)
         if proposal.reused_function is not None and file_path == proposal.file_path:
             pass  # the function the calls target is already defined here
@@ -433,7 +495,7 @@ class Materialization(
             self._insert_helper(proposal, file_path, lines)
         elif not proposal.insert_into_class:
             before = "".join(lines)
-            self._insert_helper_import(proposal, file_path, lines)
+            self._insert_helper_import(proposal, file_path, lines, position=import_position)
             self._refuse_relative_import_in_a_script(
                 before, "".join(lines), file_path, proposal.extracted_function.name
             )
@@ -576,6 +638,28 @@ class Materialization(
     def _insert_helper_at_module_level(
         self, proposal: RefactoringProposal, lines: List[str]
     ) -> None:
+        if _shared_module_helper(proposal):
+            helper = _early_module_helper(proposal.extracted_function)
+            if proposal.helper_type_declarations:
+                runtime_names = set().union(*(loaded_names(statement) for statement in helper.body))
+                if runtime_names & self._type_declaration_names(proposal):
+                    raise RefactoringError(
+                        "A shared helper's body cannot require type declarations before reentrant imports"
+                    )
+                dependencies = self._type_declaration_dependencies(proposal)
+                declared_at = self._type_declaration_position(
+                    lines, dependencies, self._find_insert_position(lines, dependencies)
+                )
+                declarations = ast.Module(
+                    body=list(proposal.helper_type_declarations), type_ignores=[]
+                )
+                declaration_lines = [line + "\n" for line in self._render(declarations).split("\n")]
+                lines[declared_at:declared_at] = _padded(lines, declared_at, declaration_lines)
+            source = "".join(lines)
+            insert_line = early_helper_line(lines, self._parse_source(source))
+            func_lines = [line + "\n" for line in self._helper_text(proposal, helper).split("\n")]
+            lines[insert_line:insert_line] = _padded(lines, insert_line, func_lines)
+            return
         node: ast.AST = proposal.extracted_function
         dependencies = self._placeable_dependencies(
             "".join(lines),
@@ -717,7 +801,12 @@ class Materialization(
             )
 
     def _insert_helper_import(
-        self, proposal: RefactoringProposal, file_path: str, lines: List[str]
+        self,
+        proposal: RefactoringProposal,
+        file_path: str,
+        lines: List[str],
+        *,
+        position: Optional[int] = None,
     ) -> None:
         """Import the module-level helper into a file whose call sites need it.
 
@@ -748,9 +837,13 @@ class Materialization(
                 f"No import of {provider} from {importer} is known to work: the program's"
                 " own imports show none"
             )
-        self._ensure_import(lines, spelling.module, proposal.extracted_function.name)
+        self._ensure_import(
+            lines, spelling.module, proposal.extracted_function.name, position=position
+        )
 
-    def _ensure_import(self, lines: List[str], module_name: str, name: str) -> None:
+    def _ensure_import(
+        self, lines: List[str], module_name: str, name: str, *, position: Optional[int] = None
+    ) -> None:
         """Add ``from module_name import name`` at the import position unless a line already says so.
 
         Only for a helper's own import into a module that calls it: the name is
@@ -760,7 +853,9 @@ class Materialization(
         """
         import_line = f"from {module_name} import {name}\n"
         if not any(import_line.strip() == ln.strip() for ln in lines):
-            lines.insert(self._find_import_position(lines), import_line)
+            lines.insert(
+                self._find_import_position(lines) if position is None else position, import_line
+            )
 
     def _bind_annotation_names(
         self, proposal: RefactoringProposal, file_path: str, lines: List[str]
@@ -933,6 +1028,53 @@ class Materialization(
                     )
 
 
+def _runtime_star_imports(tree: ast.Module) -> Tuple[ast.ImportFrom, ...]:
+    """Star imports that may bind module names when the module is imported."""
+    return tuple(
+        statement
+        for statement in _import_statements(tree, "at_import", TypeCheckingGuards(tree))
+        if isinstance(statement, ast.ImportFrom)
+        and any(alias.name == "*" for alias in statement.names)
+    )
+
+
+def _shared_module_helper(proposal: RefactoringProposal) -> bool:
+    """Whether any call site belongs to a file other than the helper's host."""
+    host = Path(proposal.file_path).resolve()
+    return any(
+        Path(replacement.file_path or proposal.file_path).resolve() != host
+        for replacement in proposal.replacements
+    )
+
+
+def _early_module_helper(helper: ast.FunctionDef) -> ast.FunctionDef:
+    """An inert copy whose definition needs no module binding to have run yet.
+
+    Module imports can return a partial module, so a helper shared with
+    another module precedes ordinary imports and effects. Quoted annotations
+    retain checker meaning without looking up bindings early. Eager defaults,
+    decorators and native generic parameter scopes need separate proofs and
+    are refused. Generated helpers normally have none of them.
+    """
+    rewritten = copy.deepcopy(helper)
+
+    def deferred(annotation: Optional[ast.expr]) -> Optional[ast.expr]:
+        if annotation is None or isinstance(annotation, ast.Constant):
+            return annotation
+        return ast.copy_location(ast.Constant(value=ast.unparse(annotation)), annotation)
+
+    arguments = rewritten.args
+    for parameter in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs):
+        parameter.annotation = deferred(parameter.annotation)
+    for variadic in (arguments.vararg, arguments.kwarg):
+        if variadic is not None:
+            variadic.annotation = deferred(variadic.annotation)
+    rewritten.returns = deferred(rewritten.returns)
+    if not inert_function_definition(rewritten):
+        raise RefactoringError("A shared helper's definition must be inert before module imports")
+    return rewritten
+
+
 def _postpones_annotations(source: str) -> bool:
     """Whether the module is written under ``from __future__ import annotations``."""
     try:
@@ -941,6 +1083,7 @@ def _postpones_annotations(source: str) -> bool:
         return False
     return any(
         isinstance(statement, ast.ImportFrom)
+        and statement.level == 0
         and statement.module == "__future__"
         and any(alias.name == "annotations" for alias in statement.names)
         for statement in body

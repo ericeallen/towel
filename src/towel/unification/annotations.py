@@ -703,6 +703,7 @@ def written_for_python(
 def _defers_annotations(module: ast.Module) -> bool:
     return any(
         isinstance(node, ast.ImportFrom)
+        and node.level == 0
         and node.module == "__future__"
         and any(alias.name == "annotations" for alias in node.names)
         for node in module.body

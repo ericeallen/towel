@@ -812,7 +812,7 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Import, ast.ImportFrom)):
             continue
-        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "__future__":
             continue
         encoded = lines[node.lineno - 1].encode("utf-8")
         place = (node.lineno, len(encoded[: node.col_offset].decode("utf-8", "replace")))

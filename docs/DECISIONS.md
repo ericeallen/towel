@@ -1402,8 +1402,9 @@ record of the contracts and implementations tested at those dates.
 
 Towel does not preserve observations of source, ASTs, bytecode, frames,
 tracebacks, namespace membership or generated helper structure. Nor does it
-preserve instrumentation that uses those observations to compile, rewrite,
-wrap or register functions or classes. Applying the transformation with
+preserve instrumentation that directly rewrites class or module dispatch,
+or uses those observations to compile, rewrite, wrap or register functions
+or classes. Applying the transformation with
 `@deco`, `f = deco(f)`, an import hook, a metaclass or an executed construction
 hook does not change this boundary. Recognized libraries receive no exception:
 typeguard and numba body transformations, inline-snapshot's call-site source
@@ -1481,3 +1482,46 @@ ordinary binding behavior without restoring reflection scans.
 
 *Status: implemented with focused rebinding and real-mypy regressions;
 final release validation remains separately required.*
+
+## 2026-10-02: A shared helper must exist during ordinary import reentry
+
+A module can be imported again while its body is still running. A leading
+import therefore establishes that the module object exists, not that every
+definition in it has executed. Likewise, importing a child does not establish
+that all later imports in its package initializer have run. An ordinary call
+to `importlib.import_module`, including a call in an external dependency, can
+expose either situation without reflection or self-instrumentation.
+
+New module-level helpers shared across files are defined after the preserved
+header, docstring and future imports, before ordinary imports or executable
+statements. Their annotations are inert strings. Type declarations retain
+their dependency-safe position; a shared helper that needs those names while
+executing declines sharing. Reusing an existing function cannot move that
+function: its availability must instead follow from its existing position.
+Same-file placement retains its existing dependency rules. Wildcard imports
+that could overwrite a generated helper binding also decline sharing.
+
+Package initializers count as present when examining a child's leading
+imports. Neither those initializers nor directly imported modules are
+necessarily finished, so their own imports do not count as completed.
+Imports that may reach a submodule do not prove that it has loaded: `from pkg import a`
+can read an ordinary value of `pkg.a` without importing `pkg.a`. Loading a
+submodule for the first time can replace that value even when the submodule
+contains only inert definitions. Sharing declines when it would add that
+package binding or advance a later import. This uses import facts, without
+scanning assignments or callees to predict future namespace changes. Later
+passes retain the first-definition import boundary, including when that
+definition is a generated helper.
+
+A newly loaded top-level module, which has no parent-package binding, must
+contain only literal bindings and inert definitions, with no ordinary
+imports. Absence of user-code calls is insufficient: a name read or constant
+arithmetic can still raise an exception. This permission does not advance
+an import already written later in the borrower.
+
+Absolute future imports require standard-library provenance because they
+must precede the helper and still execute at runtime. Relative imports from
+a module called `__future__` receive ordinary import and annotation treatment.
+
+*Status: implemented with focused ordinary-import regressions; final release
+gates remain separately required.*

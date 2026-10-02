@@ -81,6 +81,11 @@ release verification binds the final versioned source to its own evidence.
 
 ### Fixed
 
+- Cross-module helpers exist before ordinary imports can reenter their host.
+  Package initializers' later imports are no longer assumed complete, reused
+  functions retain their definition order, and wildcard imports cannot
+  overwrite generated helper bindings. Relative `__future__` imports retain
+  ordinary runtime annotation semantics.
 - The development lock now uses virtualenv 21.14.1. Fresh dependency auditing
   found four advisories against the previous 21.7.9 pin; the update also includes
   the maintainer's later activation-script fixes. Runtime dependencies remain

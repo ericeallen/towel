@@ -755,7 +755,7 @@ def _normalize_import_groups(statements: list[ast.stmt]) -> list[ast.stmt]:
                 bindings.setdefault(name, []).append(ast.Import(names=[alias]))
         elif (
             isinstance(statement, ast.ImportFrom)
-            and statement.module != "__future__"
+            and (statement.level != 0 or statement.module != "__future__")
             and all(alias.name != "*" for alias in statement.names)
         ):
             for alias in statement.names:
