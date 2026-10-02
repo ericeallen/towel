@@ -627,33 +627,18 @@ in a base class or a mixin is left to your review.
 
 ### Decorated code
 
-Code is moved out of a function, and a call placed in it, only when every
-decorator that can reach it is known to leave the body alone: the function's
-own decorators, and those of every function and class enclosing it, including
-a decorator applied by hand in an assignment at module or class level
-(`fast = numba.njit(kernel)`, `f = typechecked(f)`). A decorator that compiles
-or instruments the body it decorates, such as typeguard's `@typechecked` or
-numba's `@njit`, would lose the moved code, so the pair is declined and
-counted under the decorator it names:
+Ordinary nonreflective decorator behavior remains subject to Towel's usual
+correctness checks. Reflection and instrumentation that read or transform a
+function's source, AST, bytecode or class structure are outside the guarantee,
+whether applied through `@`, an ordinary call, an import hook or a class hook.
+Towel does not scan for these behaviors or refuse extraction to protect them.
 
-```text
-Declined (DEBUG_PROPOSAL_REJECTIONS=1 traces each candidate pair):
-  4 candidate pair(s) declined: decorator_may_transform_body[numba.njit] 4
-```
-
-The known decorators are the standard library's and a few common libraries'
-that were read in their source (`property`, `functools.lru_cache`,
-`contextlib.contextmanager`, `dataclasses.dataclass`, `unittest.mock.patch`,
-`pytest.fixture`, `pytest.mark.*`, `click.command`, and others), and the
-project's own decorators that only return the function, register it, or wrap
-it in a function calling it with its own arguments. An unlisted base,
-metaclass, `__init_subclass__` or lookup hook alone does not prevent
-extraction: observing the new helper through class machinery is covered by
-the reflection limitation. Explicit decorators still obey the rule above.
-With `cross_module_helpers=True`, an `assert` joins two modules only when
-pytest rewrites both alike (`assert_rewriting_differs`). [Known
-limitations](KNOWN_LIMITATIONS.md#decorators-that-compile-or-instrument-a-body)
-lists them and what the check does not see.
+For example, moving a body into a helper can change what typeguard checks or
+numba compiles; moving an assertion can change pytest's rewritten failure
+report; moving an inline-snapshot call can change the source it reads. These
+are unsupported observations, not detected refusal categories. Review such
+changes using your project's tests and requirements. See the
+[reflection and instrumentation limitations](KNOWN_LIMITATIONS.md#decorators-that-compile-or-instrument-a-body).
 
 ## Tips
 
@@ -713,7 +698,7 @@ simple_proposals = [p for p in proposals if p.parameters_count <= 2]
 - Check `min_lines` - code blocks might be too small
 - Check `max_parameters` - duplicates might differ in too many ways
 - Differing constants become parameters by default; with `parameterize_constants=False` they must match
-- Check `engine.declined_pairs` for `decorator_may_transform_body[...]`: a decorator Towel does not know to leave the body alone, on the functions or an enclosing function or class, keeps their code where it is
+- Check `engine.declined_pairs` for the binding, control-flow or placement constraint that prevented extraction
 
 ### "Too many proposals"
 

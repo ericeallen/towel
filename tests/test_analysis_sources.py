@@ -31,7 +31,6 @@ from towel.analysis_sources import AnalysisSources, parse_analysis_source, shari
 from towel import import_model
 from towel.source_text import decode_source
 from towel.unification.bounded_cache import memoization_disabled
-from towel.unification.decorator_reach import _Resolver
 from towel.unification.import_graph import ImportGraphCache, _module_level_import_bindings
 from towel.unification.module_bindings import bindings_from_tree
 from towel.unification.namespace_writes import _file_writes
@@ -40,22 +39,21 @@ from towel.unification.namespace_writes import _file_writes
 def test_readers_share_one_parse_and_leave_its_tree_unchanged(tmp_path: Path) -> None:
     """Different safety analyses previously parsed the same file independently."""
     path = tmp_path / "subject.py"
-    source = "import math\nclass Subject: pass\nalias = Subject\n"
+    source = "import math\nmath.len = 1\nclass Subject: pass\nalias = Subject\n"
     path.write_text(source)
     with sharing_analysis_sources(check_ast_immutable=True):
         with patch.object(ast, "parse", wraps=ast.parse) as parses:
-            resolver = _Resolver(ImportGraphCache())
-            loaded = resolver._load(str(path))
-            assert loaded is not None
-            before = ast.dump(loaded.tree, include_attributes=True)
+            tree = parse_analysis_source(source, str(path))
+            before = ast.dump(tree, include_attributes=True)
             imports = import_model._read_module(path)
-            writes = _file_writes(path, tmp_path, None)
+            writes = _file_writes(path, tmp_path)
             bindings = _module_level_import_bindings(path, ImportGraphCache())
             assert imports.sites is not None and imports.sites[0].module == "math"
-            assert writes is not None and not writes.by_name and not writes.by_path
+            assert writes is not None and not writes.by_path
+            assert tuple(write.name for write in writes.by_name["math"]) == ("len",)
             assert bindings == {"math": ("math",)}
-            assert parse_analysis_source(source, str(path)) is loaded.tree
-            assert ast.dump(loaded.tree, include_attributes=True) == before
+            assert parse_analysis_source(source, str(path)) is tree
+            assert ast.dump(tree, include_attributes=True) == before
             assert parses.call_count == 1
 
 

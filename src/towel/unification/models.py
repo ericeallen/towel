@@ -288,7 +288,6 @@ the bound receiver of a method helper."""
 class RejectReason(StrEnum):
     """Why a candidate pair was declined; the vocabulary of the rejection trace."""
 
-    ASSERT_REWRITING_DIFFERS = "assert_rewriting_differs"
     BARE_NAME_DIFFERS_BY_MODULE = "bare_name_differs_by_module"
     BUILTIN_ARGUMENT = "builtin_argument"
     BUILTIN_MAY_DIFFER_BY_MODULE = "builtin_may_differ_by_module"
@@ -297,8 +296,6 @@ class RejectReason(StrEnum):
     CONDITIONALLY_IMPORTED_HOST = "conditionally_imported_host"
     CREATED_OBJECT_ESCAPES = "created_object_escapes"
     CROSS_MODULE_GLOBAL_DECLARATION = "cross_module_global_declaration"
-    # Counted with the decorator it names: decorator_may_transform_body[numba.njit].
-    DECORATOR_MAY_TRANSFORM_BODY = "decorator_may_transform_body"
     EXISTING_HELPER_BECOMES_FORWARDER = "existing_helper_becomes_forwarder"
     FRAME_READ_IN_FUNCTION = "frame_read_in_function"
     FRAME_SENSITIVE_BLOCK = "frame_sensitive_block"
@@ -331,8 +328,6 @@ class RejectReason(StrEnum):
     RETURN_VERSUS_VARIABLES = "return_versus_variables"
     RUN_BY_PATH_IMPORT = "run_by_path_import"
     SCOPE_DECLARATIONS_DIFFER = "scope_declarations_differ"
-    # Counted with the callee it names: source_reading_callee[inline_snapshot.snapshot].
-    SOURCE_READING_CALLEE = "source_reading_callee"
     SUPER_IN_CALL = "super_in_call"
     TRIVIAL_FORWARDING_HELPER = "trivial_forwarding_helper"
     TRIVIAL_RETURN_BLOCKS = "trivial_return_blocks"

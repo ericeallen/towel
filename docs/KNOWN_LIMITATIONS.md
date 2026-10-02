@@ -3,7 +3,9 @@
 [Documentation index](README.md)
 
 This document states what Towel verifies about a transformation, what it
-rejects, and what remains outside its model. Read it together with
+rejects, and what remains outside its model. Reflection and self-instrumentation
+are excluded under the [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract);
+they are not detected to refuse or warn on a program. Read this together with
 [the production readiness report](PRODUCTION_READINESS.md) and
 [the adversarial review](ADVERSARIAL_REVIEW.md).
 
@@ -99,20 +101,13 @@ describe belong to that version.
   statement could observe; a factory outside that list is not detected. A
   returned name must be definitely bound where the block ends or have
   entered as a parameter.
-- **Frame and control flow.** Blocks containing `yield`, `await`, `async`
-  loops, context managers or comprehensions, `locals()`, `globals()`,
-  `eval`, `exec`, zero-argument `vars()` or `dir()`, `super()` reached
-  through another name (`s = super; s()`, `builtins.super()`),
-  `break`/`continue` targeting an outer loop, comprehension assignment
-  expressions, `warnings.warn` in any spelling with or without
-  `stacklevel`, any call with a `stacklevel=` keyword, or direct frame or
-  stack inspection are rejected; aliases of these bound by import or
-  assignment are resolved. A block is also rejected when its enclosing
-  function reads its own frame (`locals()`, `dir()`, `eval`,
-  `sys._getframe()`, ...) anywhere outside the block. Zero-argument
-  `super()` itself moves only into a method helper of the class that holds
-  the block (see *Method insertion*). A block that calls inline-snapshot is
-  rejected as well; see *Observable differences that remain*.
+- **Control flow and class context.** Blocks containing `yield`, `await`,
+  async loops, context managers or comprehensions, `break`/`continue` targeting
+  an outer loop, or comprehension assignment expressions are rejected where
+  the helper cannot preserve their control flow or scope. Zero-argument
+  `super()`, including aliases, needs the original class cell and receiver;
+  it moves only when the method-helper checks establish that context (see
+  *Method insertion*). These checks do not protect frame or source inspection.
 - **Names the call site may not resolve.** A free variable is passed eagerly
   only when the call site resolves it on every path: a local bound on every
   path before the block, a module name bound on every path before the
@@ -155,32 +150,20 @@ describe belong to that version.
   statement of the module's own scope binds the name, a function of it
   declares it `global`, a star import of it may bind it (a project module's
   literal `__all__` or else its public top-level names say what; a module
-  outside the project may bind anything), it rebinds `__builtins__`, it
-  writes its own namespace at run time (`globals()[...] = ...`, `vars()` or
-  `locals()` so used at its top level, `globals().update(...)`, `globals()`
-  handed to other code, `setattr(sys.modules[__name__], ...)`, `exec`,
-  `eval`), or the project's own code or tests patch the name into it:
-  `mock.patch("pkg.mod.len")` in any spelling, with or without
-  `create=True`, `patch.object`, `patch.multiple`, `patch.dict` of its
-  `__dict__`, pytest's `monkeypatch.setattr` in either form or
-  `monkeypatch.setitem` of its `__dict__`, `setattr(mod, "len", ...)`, or
-  `mod.len = ...` (`tests/test_builtins_across_modules.py`, fixtures
-  `xf17`-`xf19` and `xf22`; `xf21` shares what the other two modules can).
-  A module is matched by every dotted name its path gives it below the
-  project root, which include the names the program's imports use, and by
-  the file a relative import names. A target is read through literals,
-  f-strings, `+` and names bound once to a string, and one whose module part
-  is computed at run time (`"pkg." + name + ".len"`) counts for every
-  module. The names checked are the ones CPython's symbol table says the
-  rendered helper reads from its module, so reads inside its lambdas and
-  comprehensions count. Not seen: code outside the project that patches a
-  builtin into one of its modules (with `create=True`, or through `mock`,
-  which creates a builtin's name without being asked); a target computed
-  whole, as by a wrapper that passes its argument to `patch`; and a module
-  object reached other than by an import, `importlib.import_module`,
-  `getattr` with a spelled name or `sys.modules`, such as a fixture's
-  return value. A cross-module helper then reads that builtin in its host's
-  namespace, and the patch reaches only the code the host itself runs. Nor
+  outside the project may bind anything), it rebinds `__builtins__`, or the
+  project's own code or tests assign or delete an imported module's attribute
+  directly (`mod.len = ...`, `del mod.len`). Relative and absolute imports,
+  simple module aliases and `importlib.import_module` with a statically
+  spelled module name supply module identity. A module is matched by its
+  possible dotted import names below the project root and by the file a
+  relative import names.
+
+  Reflective changes through `globals`, `locals`, `vars`, `exec`, `eval`,
+  namespace dictionaries, `sys.modules`, `getattr`, `setattr`, `mock.patch`
+  or monkeypatch APIs are outside the guarantee and are not evidence for this
+  check. Neither is code outside the project scanned. The names checked are
+  those CPython's symbol table says the rendered helper reads from its module,
+  including reads inside lambdas and comprehensions. Nor
   does this check read a star import as it may run: it takes a provider's
   literal `__all__` as final, and counts only the provider's own writes.
   A provider imported part way through an import cycle, before it binds
@@ -190,9 +173,7 @@ describe belong to that version.
   `len`, imports `pkg/b.py`, whose `from .common import *` runs then, and
   only afterwards binds `__all__ = ["scale"]`; under `--cross-module` the
   shared helper reads the builtin where `b` read `common.len`, and the
-  program's output changes from `6 110` to `6 6`. The decorator check reads
-  star imports as they may run (*Decorators that compile or instrument a
-  body* below). A module `__getattr__` changes no bare lookup and is not
+  program's output changes from `6 110` to `6 6`. A module `__getattr__` changes no bare lookup and is not
   consulted. In any
   pair, same-module or not, no generated call hands its helper a builtin:
   an argument, or what a lambda argument returns, that is a name its site
@@ -287,124 +268,50 @@ frames, names, or source.
 
 ## Observable differences that remain
 
-Some behavior is outside any static model: a program that reads its own call
-stack, the active traceback, or its own source can observe that a helper adds
-a frame or shifts line numbers, even though the value the program computes is
-unchanged. Towel handles this in four layers, and it is worth being explicit
-about where each one stops.
+Reflection can observe that extraction changes a program's source, AST,
+bytecode, frames or namespace. Towel does not preserve those observations and
+does not scan for them, issue reflection warnings or decline code to protect
+them. This exclusion applies to direct operations and callees, whether reached
+by their original names, aliases, decorators, ordinary calls or hooks.
 
-- **Rejected outright.** A block that *itself* contains generator or async
-  suspension, `locals()`/`globals()`/`vars()`/`dir()` with no arguments, a
-  `super()` reached through another name,
-  `eval`/`exec`, direct frame or stack inspection (`sys._getframe`,
-  `inspect.stack`, and the like), or `warnings.warn` is never extracted:
-  with a `stacklevel`, because the helper's frame shifts the attribution,
-  and without one, because the warnings registry deduplicates per call
-  site and two sites that warn would become one. This is exact for
-  constructs written in the block or its enclosing function, directly or
-  through an alias the module binds. A call to a function or method of the
-  same module whose own body reads a frame relative to its caller
-  (`sys._getframe(n)`, `inspect.stack()`, a `stacklevel=`), directly or
-  through other such functions of the module, counts as a frame read too:
-  typing_extensions' `_caller`, which finds a `TypeAliasType`'s defining
-  module that way, would otherwise see the helper (fixture r146). The
-  functions are matched by name, which over-approximates and only declines.
-- **inline-snapshot, recognized by name.** A callee that reads its caller's
-  frame or source is reflection, and Towel does not model it (see *Not
-  detected* below). It makes one exception: inline-snapshot, because it is
-  popular and its snapshot tests are exactly what Towel extracts.
-  `snapshot()` keys each snapshot by its call's position and reads the
-  literal there, so two tests doing `snapshot("<item 1>")` and
-  `snapshot("<item 2>")`, merged into one helper doing
-  `snapshot(__param_1)`, raise `UsageError` (rich-click's suite lost 68 of
-  151 tests this way). A block that refers to `snapshot`, `external` or
-  `snapshot_arg` is declined (`source_reading_callee`), whether or not an
-  argument would be parameterized, and the code around the call is still
-  shared. `outsource`, `Is` and inline-snapshot's other names read no frame;
-  `external_file` reads only its caller's file. The list, with the source
-  each entry was read in, is `src/towel/unification/known_source_readers.py`.
-  Names are resolved by binding, anywhere in the module: an import alias,
-  `from inline_snapshot import snapshot as snap`, a module attribute, a
-  star import, a plain assignment, a parameter default; a local that
-  shadows one is taken for it, which only declines. `snapshot_arg()` reads
-  the call of the function it is called from, so a function of the module
-  that calls it, or calls such a function, or a class whose `__init__` or
-  `__new__` does, is matched too, by name, bare or as an attribute.
-- **Warned before the run.** Directory mode scans every module first and prints
-  a stderr warning naming the files that inspect frames or tracebacks,
-  attribute warnings by `stacklevel`, or read source through
-  `inspect.getsource`. This catches frame sensitivity that a call chain
-  through another module hides from the block-level guard, such as pluggy's
-  argument validation, where the extracted block calls a function that warns
-  with `stacklevel`. The warning
-  tells you which diffs to review or `--exclude`; it is a pointer, not a proof
-  of breakage.
-- **Not detected, and therefore silent.** Four kinds of frame, line, or
-  source sensitivity are outside both the guard and the warning, and are
-  documented `BROKEN_KNOWN` cases in the ecosystem check rather than things
-  Towel can flag: a module that reads a *sibling's* source as text through a
-  plain `open` of a `__file__`-relative path and copies regions of it (lark's
-  standalone parser generator); a *caller or test* that asserts on the exact
-  frames or text of a traceback the refactored code raises normally (glom and
-  rich assert on rendered tracebacks, and pyparsing's `ParseException.explain`
-  counts the frames of the traceback it was raised through); a test that asserts the exact line
-  number a warning is issued from inside its own module, which a helper
-  inserted above it shifts (trio's `test_deprecate`); and a *callee* that
-  reads its caller's frame or source, which is reflection. The block-level
-  guard cannot see through a call, and Towel recognizes no such callee but
-  inline-snapshot's (above): `inspect.stack()` or `sys._getframe(1)` inside a
-  function of another module the block calls; a library that reads the text
-  of its call, as icecream's `ic()`, devtools' `debug()`, varname's
-  `nameof()` and sorcery's spells do, or the name its result is assigned
-  to, as `varname()` does; one that stamps what it builds with its caller's
-  module, as `namedtuple`, the functional `Enum` API and `TypeVar` do,
-  which only a helper in another module changes; an inline-snapshot reader
-  reached through a value (a parameter, a container, `getattr`) or
-  re-exported by another module of the project; the shape of a traceback
-  that now includes the helper's frame; and logging's `%(funcName)s`, which
-  names the function whose frame issued the record and so names the helper
-  (the four differences the fifth audit's battery still shows at `5ff2458`,
-  September 19, 2026, are all of this kind). None of these
-  can be distinguished statically from safe code that does the same thing
-  (a linter also opens `.py` files; every library raises exceptions; every
-  module has line numbers; every logging call may carry any format), so
-  Towel does not warn on them to avoid a flood of false positives. Review
-  the diff and run the tests, as with any refactoring.
+Examples include:
 
-The remaining entries are other kinds of dynamic behavior that no scan
-addresses:
+- `locals()`, `globals()`, `vars()`, `dir()`, `eval` and `exec` whose behavior
+  depends on the original frame or namespace;
+- frame and traceback inspection, logging of function names, and warning
+  attribution or deduplication tied to source positions;
+- reading a function's source, AST or bytecode, reading a sibling's `.py` file,
+  or testing exact line numbers and traceback text;
+- inline-snapshot's call-site source reading and other source-sensitive
+  libraries, such as icecream, devtools, varname and sorcery;
+- body compilation, AST rewriting and reflective class transformations,
+  including typeguard, numba and pytest assertion rewriting.
 
-- **Reflection and dynamic rebinding.** Code that rebinds module globals or
-  closure cells through `globals()[...]`, `setattr(module, ...)`, `exec`, or
-  from another thread between two reads inside a block is outside the model.
-  Calls to the reflection builtins, direct or through an alias the module
-  binds by import or assignment, are rejected; rebinding through
-  `globals()[...]`, `setattr`, another thread, or a callee is not detected.
-  Nor is rebinding that a new import could reorder: under `--cross-module`
-  a borrower's import of its helper loads the host earlier than the program
-  did, so a host that binds at import what the program rebinds elsewhere,
-  `from time import sleep` where another module or a test sets `time.sleep
-  = patch` or monkeypatches it before importing the host, binds the value
-  it finds then. Towel only places the import after every statement of the
-  borrower's own that runs before its first definition (*Import-time
-  behavior*), so the borrower's own patch still comes first.
-- **Metaclasses and descriptors.** Method extraction into a class assumes the
-  usual descriptor protocol. Only a method whose decorators are all known to
-  leave its body alone is refactored at all (*Decorators that compile or
-  instrument a body*); one decorated with any of them but the recognized
-  receiver-preserving decorators receives a module-level helper with the
-  receiver passed explicitly. A class decorator is trusted to leave a
-  helper in place only when it is one of `dataclasses.dataclass`,
-  `functools.total_ordering`, `typing.final`, `typing_extensions.final` and
-  `enum.unique`, reached through the module's own absolute imports; a class
-  carrying any other decorator takes no helper. A metaclass,
-  `__init_subclass__` or lookup hook can observe the new private helper,
-  register it or redirect its lookup. Those observations fall under the
-  reflection limitation below. Their presence, or a base that Towel has not
-  inspected, does not alone prevent extraction. Recognized body-transforming
-  instrumentation is protected across decorators, ordinary calls and hooks;
-  this boundary does not exempt those transformations. `__slots__` interactions with added methods are not modeled beyond
-  compilation.
+The old inline-snapshot exception was motivated by a measured rich-click
+failure: 68 of 151 tests failed when calls with different source literals were
+merged into a helper. That historical result remains evidence of source
+sensitivity; it no longer implies a dedicated refusal. Earlier ecosystem
+checks recorded source/frame-sensitive cases involving lark, glom, rich,
+pyparsing and trio, and the September 19 fifth-audit battery at `5ff2458`
+retained four such differences. These are observations of those tested source
+states, not current detection guarantees.
+
+Other dynamic behavior also remains outside the model:
+
+- **Reflection and dynamic rebinding.** Rebinding module globals or closure
+  cells through `globals()[...]`, namespace dictionaries, `setattr`, `exec`,
+  patch APIs, callbacks or another thread is not protected by a
+  reflection-specific scan. Lexical binding and ordinary evaluation-order checks remain. Under
+  `--cross-module`, loading a helper's host earlier can also change what that
+  host imports from a module rebound elsewhere. The borrower's own earlier
+  statements still precede its inserted import (*Import-time behavior*).
+- **Metaclasses and descriptors.** Method extraction assumes the usual
+  descriptor protocol. Receiver compatibility remains a placement constraint.
+  A metaclass, class decorator, `__init_subclass__` or lookup hook can inspect,
+  register, wrap or redirect the new private helper; those reflective changes
+  are outside the guarantee. Body instrumentation receives no special
+  protection. `__slots__` interactions with added methods are not modeled
+  beyond compilation.
 - **Import-time behavior.** Helpers are inserted before the first definition
   in a module, after imports, except that a helper whose annotations name
   classes or functions of the module goes after the last of them, so the
@@ -463,35 +370,19 @@ addresses:
 
 ### Reflection over a namespace, and stack depth
 
-A program that asks what a namespace holds can see a helper appear there.
-This is reflection, and the owner ruled it a documented limitation rather
-than a defect to fix (DECISIONS, 2026-09-25). Towel does not detect:
+A program that enumerates a namespace can see an added helper. A metaclass,
+class decorator, descriptor, `__init_subclass__`, package initializer or lookup
+hook can then register, wrap, instrument or redirect that helper. Private names
+prevent accidental overrides but do not conceal helpers from reflection.
+Towel neither detects these behaviors to refuse extraction nor guarantees
+that their results remain unchanged.
 
-- arbitrary namespace observation through `vars(C)`, `dir(C)` or `C.__dict__`.
-  Adding a class-private helper changes what such a scan observes. Recognized
-  body transformations, including typeguard's `typechecked(C)`, are protected
-  separately as described below;
-- a descriptor whose `__set_name__` wraps its owner's functions, which then
-  wraps the helper, or instruments methods that code has moved out of;
-- a metaclass or `__init_subclass__` that scans the namespace a helper joins,
-  or a `__getattribute__` that logs or redirects the new helper's lookup.
-  Class-private names prevent accidental overrides, but do not conceal the
-  helper from reflection. Towel does not reject a class merely for having
-  one of these hooks;
-- a package `__init__` that wraps every function of a submodule, including
-  a new module-level helper;
-- a star import without `__all__`, `hasattr`, `dir()` or a module
-  `__getattr__` meeting a submodule that a new `--cross-module` import has
-  bound on its package;
-- a callee that reads its caller's frame or source, other than
-  inline-snapshot, which Towel recognizes by name (above);
-- a callee that rebinds a name between two reads in the block, including a
-  builtin passed under `--parameterize-builtins`, which is read at the call.
-
-The boundary is intentional support, not a distinction based on syntax or
-whether an operation uses reflection. `f = deco(f)` and a stacked
-`f = outer(inner(f))` are judged like the decorators they apply. Supported
-body instrumentation is also recognized in ordinary calls and class hooks.
+The same exclusion covers source/AST/bytecode inspection, direct frame reads,
+source-sensitive callees and import hooks that transform module bodies. There
+is no exception for recognized libraries or for explicit `@` syntax: `@deco`,
+`f = deco(f)`, stacked calls and class hooks share the same boundary. The
+[October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+supersedes September 27's selected-instrumentation protection.
 
 Each helper call adds a stack frame. Recursive functions are refactored like
 any other, so a deeply recursive function uses more stack after extraction
@@ -773,15 +664,17 @@ override through that spelling. Mangling goes by name, not by class, so
 a subclass named like its base (`class A(base.A)`) that defines
 `__extracted_func_0` stores it as `_A__extracted_func_0` too: Python sources
 under the project root are read for such a member, for `_A__extracted_func_0`
-spelled out, and for attribute stores, `setattr` and namespace writes of the
-stored name, before a number is chosen, and one outside that root is not
-seen. A class named only with underscores (`class __`) mangles nothing, and
-gets the module-level helper. A module-level helper's name must likewise be
-one no source under the root writes into a namespace (an attribute store
-`lib._extracted_func_0 = ...`, `setattr`, a subscript store); a class member
-of that name can no longer displace it and claims nothing. The root is the
-nearest directory with packaging metadata above the input (or the directory
-above its packages), read with the consumer scan's exclusions.
+spelled out, and for explicit attribute stores or deletions of the stored
+name before a number is chosen. Sources outside that root are not seen.
+A class named only with underscores (`class __`) mangles nothing and gets a
+module-level helper. A module-level helper avoids identifiers at its insertion
+site and names that other project sources explicitly store or delete as
+attributes (`lib._extracted_func_0 = ...`); an unrelated class member does not
+claim a module helper's name. Names supplied reflectively through `setattr`,
+namespace subscripts or `type(..., namespace)` are not reserved and have no
+preservation guarantee. The root is the nearest directory with packaging
+metadata above the input (or the directory above its packages), read with the
+consumer scan's exclusions.
 
 A helper shared by methods that never read an attribute of their receiver, or
 by static methods, is a module-level function. Such a method works when it is
@@ -807,13 +700,13 @@ for a class method. `def m(self: HasV)` declares that any object with the
 protocol's attributes may be passed, as `Box.m(other)`, and
 `self.__extracted_func_0()` would raise `AttributeError` on it, so such a
 method gets the module-level helper that takes the receiver as an argument.
-The class's declared contract and explicit decorators must permit adding a
-private helper: not a
+The class's declared contract must permit adding a private helper: not a
 `Protocol` (a method there is one more member every structural implementer
-lacks, so a runtime-checkable `isinstance` turns false), not written with its
-body on the header's line (`class Base: pass` takes no further statement), and
-not decorated beyond the known namespace-preserving decorators. A base that
-could be `Protocol` on any path through its module, or is spelled
+lacks, so a runtime-checkable `isinstance` turns false), and not written with
+its body on the header's line (`class Base: pass` takes no further statement).
+An unknown class decorator does not itself veto adding a helper. Decorator
+classification still informs ordinary Protocol resolution and import-time
+effects. A base that could be `Protocol` on any path through its module, or is spelled
 `Protocol`, counts as one. Direct-base aliases are followed through project
 imports, assignments and conditional expressions. A concrete class that
 implements a protocol is still eligible; an unresolved computed base, such
@@ -827,9 +720,8 @@ overriding the helper; it does not bypass a hook that observes every lookup.
 A `__getattr__` that serves unknown names still runs only when normal lookup
 fails, so an existing `_extracted_func_0` supplied from data remains separate
 from the new mangled name (fixture `r158`).
-Local classes, nested classes, duplicated class names, decorators known to
-leave the body alone but not to preserve the receiver (`mock.patch`,
-`pytest.mark.*`), functions nested inside methods, and class-body functions with no parameter or
+Local classes, nested classes, duplicated class names, decorators not known
+to preserve the receiver (`mock.patch`, `pytest.mark.*`), functions nested inside methods, and class-body functions with no parameter or
 a first parameter other than `self` get a module-level helper that takes the
 receiver explicitly. Additional call sites gathered from the same file join a
 method helper only when they are methods of the same class with the same
@@ -1302,241 +1194,62 @@ where the evidence comes from:
 
 ## Decorators that compile or instrument a body
 
-Some decorators do more than wrap the function they decorate. typeguard's
-`@typechecked` recompiles it from its source with a check after every
-annotated assignment, and numba's `@njit` compiles it in nopython mode. Code
-moved out of such a function into a plain helper is no longer checked or
-compiled: the check stops raising, or the kernel calling a Python helper
-stops compiling. So Towel extracts a block, or places a call site, only where
-every decorator that can reach the code is known to leave the body alone, and
-places a helper inside a function or class only under the same condition.
-The decorators that can reach a function's code are its own, those of every
-function enclosing it, and those of every class enclosing it (typeguard
-instruments every method of a decorated class). Anything else is declined
-under `decorator_may_transform_body[...]`, which names the decorator
-(fixtures `r7d_*`).
+Reflection and body/class instrumentation are outside the preservation
+guarantee. For example, typeguard can recompile a function's source with
+checks, and numba can compile its body. Moving part of that body into a plain
+helper can change what is checked or compiled. The same applies to project
+code rewriting an AST, source readers such as inline-snapshot, and import
+hooks that rewrite modules. Towel does not resolve an instrumenter's reach,
+maintain a body-transformer allowlist or refuse extraction to preserve it.
 
-A decorator is known when it is one of these:
+This boundary applies equally to explicit decorators, calls such as
+`fast = njit(kernel)`, stacked calls, metaclasses and construction hooks. It
+does not exclude ordinary nonreflective calls, effects or receiver behavior
+from the normal correctness checks, and does not mean that all decorated code
+is refused.
 
-- An entry of `KNOWN_DECORATORS` in `src/towel/unification/decorator_reach.py`,
-  each recording its canonical name and the library version whose source was
-  read to verify it: the builtins `property` (and its `setter`, `getter`,
-  `deleter`), `staticmethod` and `classmethod`; `functools.wraps`, `cache`,
-  `lru_cache`, `cached_property`, `singledispatch`, `singledispatchmethod`,
-  `partialmethod` and, on classes, `total_ordering`; `contextlib.contextmanager`
-  and `asynccontextmanager`; `abc.abstractmethod`; `typing` and
-  `typing_extensions` `overload`, `override`, `final`, `no_type_check`,
-  `runtime_checkable`, `dataclass_transform` and `deprecated` (with
-  `warnings.deprecated`); `dataclasses.dataclass` and `enum.unique` on classes;
-  `unittest.mock.patch` and its `object`, `dict` and `multiple`,
-  `unittest.skip`, `skipIf`, `skipUnless` and `expectedFailure`;
-  `pytest.fixture` and every `pytest.mark.*`; and click's `command` and `group`
-  (without a `cls` argument), `option`, `argument`, `confirmation_option`,
-  `password_option`, `version_option`, `help_option`, `pass_context` and
-  `pass_obj`.
-- A function of the project that Towel can show is a plain wrapper: it returns
-  the function unchanged, perhaps after storing it in a module-level `dict`,
-  `list` or `set` display (a registry) or setting a non-dunder attribute on it,
-  or it returns a wrapper that only calls the function with the wrapper's own
-  arguments, with or without `functools.wraps`. A factory of such a decorator
-  (`@retry(3)`) counts too. It must not read the function's `__code__`,
-  `__globals__`, `__closure__` or any attribute but `__name__`, `__qualname__`,
-  `__module__` and `__doc__`, nor hand it to any callable but `wraps`,
-  `update_wrapper` and a registry's own container methods; a decorator doing
-  anything the analysis cannot show harmless is declined, however harmless it
-  is.
+Pytest's assertion rewriting is also unsupported: an `assert` may move to a
+module that pytest rewrites differently, changing its diagnostic message.
+Towel does not read pytest's rewrite configuration to prevent this. Earlier
+reviews recorded differences involving `testpaths`, early imports and package
+initializers under the former partial model; those historical findings are
+superseded as preservation requirements, not reclassified as successful tests.
 
-Names are resolved by binding, never by spelling. `from functools import wraps
-as w` makes `@w(f)` `functools.wraps`; a `property` the module or class binds
-itself is not the builtin; `@pytest.mark.parametrize(...)` and
-`@click.option(...)` resolve through the callee of the call, and
-`needs_db = pytest.mark.skipif(...)` makes `@needs_db` that call's decorator. A
-module-level name counts only when every binding the module could give it is
-known, so a compatibility import (`try: from typing import override` ...
-`except ImportError: from typing_extensions import override`) counts and a name
-rebound anywhere in the module to something unknown does not. So does every
-binding the rest of the program could give it, at whatever module the name
-passes through: `enable_checks.py` setting `app.checks.checked =
-typeguard.typechecked` before `app.core` imports the no-op `checked` declines
-the code under it. Every write the builtins' question counts (above) counts
-here for a decorator's name, from anywhere in the project, tests included:
-an attribute store, `setattr` with that name or a computed one, a store into
-the module's `__dict__`, the module's own `globals()` before or after the
-definition, `mock.patch` and `monkeypatch.setattr`. An attribute store at
-the top level of its module, `mod.name = value`, adds its `value` as one more
-possibility, read there, so `functools.cache =
-functools.lru_cache(maxsize=None)` keeps `@functools.cache` known; any other
-write makes the name unknown. `importlib.reload` needs no rule of its own: it
-runs the module's own statements again, whose every binding the name is
-already held to, and a rebinding it could bring into effect is itself one of
-the writes above. A library's name counts the writes into its
-module by name (`functools.cache = ...`, `builtins.property = ...`). A star
-import makes unknown only the names it may bind (fixtures `r9dc_*`): from a
-module of the project with a literal `__all__`, the names it lists together
-with the module's public names, since an import cycle may run the star import
-before the module binds `__all__`, and it then exports what it has bound so
-far; from one without, its public names, the names a function of it declares
-`global`, and what its own star imports bind; either way with every name the
-project writes into it. From the standard library, from outside the project,
-from a module not found, through a cycle of star imports, or from a module
-whose `__all__` is built at run time, any name. A decorator
-named through a local of an enclosing function, a method of an object
-(`@app.route("/x")`, `@cli.command()`, `@f.register`), a class, or any other
-expression is declined.
+Coverage configuration is not a placement constraint. Under `--cross-module`,
+code can move between files measured differently by coverage.py's `source`,
+`include` and `omit` settings. One historical round-4 probe moved a block from
+an omitted file into a measured module and increased that module's missed
+lines from 4 to 5. This remains a possible tooling difference.
 
-A decorator applied by hand counts as one written with `@`: every call in the
-value of an assignment at module or class level, in any module of the
-project, applies its callee to each definition an argument of it names, or
-that a call made in the argument is handed, at any depth, and is judged as
-that decorator would be. So `parse_a = typechecked(register(parse_a))` and
-`cmd = click.command(cls=Checked)(click.argument("v")(show_a))` apply every
-callable of the chain to the function (fixture
-`r9dc_stacked_decoration_by_hand`). `fast = numba.njit(kernel)` and
-`fast = njit(cache=True)(kernel)` decline `kernel`, `f = typechecked(f)`
-declines `f`, `method = wrap(method)` in a class body declines `method`, and
-`C = typechecked(C)` declines every method of `C`, however the argument is
-spelled (`kernels.slow`, an alias, a name imported from another module). A
-call given the function among other arguments (`x = property(get, set)`,
-`T = TypeVar("T", bound=Model)`) is covered only where the entry's reading
-covers it. A name that cannot be followed to its definition (through a star
-import, a name bound by a loop) is taken to be every definition of its name.
-So `ORDER = sorted(items, key=rank)` at module level declines `rank`.
+External type/build tools are a separate boundary: source constructs such as
+TypeVar, Literal and cast, and Babel catalog-extraction calls, retain their
+position requirements. Those checks protect declared typing and build
+contracts rather than self-inspection by the refactored program.
 
-Class machinery observing the new helper is outside the reflection contract.
-An enclosing class is therefore not rejected solely for a project metaclass,
-`__init_subclass__`, lookup hook, or an unlisted library base. This removes the
-1.772 machinery allowlist and its `class_machinery_may_transform_methods`
-declines. Decorators explicitly applied to the original code still obey the
-rule above. Supported instrumenters also receive that protection when
-applied in an expression, return, comprehension or function body, or in an
-executed `__init_subclass__`, metaclass `__new__` or metaclass `__init__`.
-The analysis follows imported and local aliases, the particular arguments
-passed through project wrappers, and class methods drawn from a namespace.
-It recognizes typeguard, numba, and project source/AST recompilation flows.
-An overridden hook is followed only through actual delegation; reassigning
-an alias ends its connection to the original class. Instrumenting an
-unrelated function does not refuse this class. The regression suites
-`test_instrumentation_forms.py` and `test_instrumentation_flow_regressions.py`
-protect these distinctions; the hostile source-compiler fixture checks runtime
-assignment tracing. The method-host constraints remain: same class, private
-name, compatible receiver, and no new `Protocol` requirement.
-
-A `TestCase` subclass can take a class-private method helper,
-`_Case__extracted_func_0`. unittest's loader collects only names starting with
-its `testMethodPrefix`, `test`, and pytest collects a `TestCase`'s tests through
-that same loader, so neither collects it (fixture
-`r7d_method_helper_in_a_testcase`); a loader whose prefix starts with an
-underscore would.
-
-Under `--cross-module`, a block holding an `assert` is shared between two
-modules only when pytest rewrites both alike (`assert_rewriting_differs`). A
-rewritten assert that fails reports the values it compared; a plain one
-reports only its message. Following pytest 9.1.1's own rules, a module is
-rewritten when it is a `conftest.py`, matches `python_files` (`test_*.py`
-and `*_test.py` by default), is a file `testpaths` names, or is named, or
-lies in a package named, by a `-p` of `addopts`, a `pytest_plugins` or a
-`register_assert_rewrite` at the top of the root's `conftest.py`; never under
-`--assert=plain` and never with `PYTEST_DONT_REWRITE` in its docstring. The
-configuration is the first pytest reads from the project's root upward
-(`pytest.toml`, `pytest.ini`, `pyproject.toml`, `tox.ini`, `setup.cfg`).
-Where the project cannot say, the pair is declined: a pytest configuration
-below the root, `-o`, `-c` or `--rootdir` in `addopts`, a `pytest11` entry
-point of the project itself (its packages are rewritten once it is
-installed), a `pytest_plugins` or `register_assert_rewrite` anywhere else
-(for the modules it names), or a value that is not a literal. What the
-invocation adds (`PYTEST_ADDOPTS`, `PYTEST_PLUGINS`, a module path given on
-the command line) is taken to be absent (fixtures `xf7d_*`).
-
-Three of pytest's rules are not modeled, and a file they concern is taken
-to be rewritten or not by the rules above. pytest keeps only the
-`testpaths` entries no earlier one holds (`normalize_collection_arguments`
-in `_pytest/main.py`, unless `--keep-duplicates`), so `testpaths =
-["tests/helpers.py", "tests"]` does not make `tests/helpers.py` an initial
-path, and pytest does not rewrite it, while Towel takes it to be rewritten
-(round 4, P1-11). pytest consults its initial paths only once the session
-is set, so a file a `conftest.py` imports while pytest configures itself is
-not rewritten as one. And its early bail-out passes over a package's
-`__init__.py` that `python_files` matches unless the package's own name
-matches too. In each case an `assert` may move, under `--cross-module`,
-between a module pytest rewrites and one it does not. What changes is the
-failure report: a failing assert loses, or gains, pytest's account of the
-values it compared. Whether a test passes or fails does not change.
-
-What this does not see:
-
-- **Arbitrary dynamic instrumentation.** General callback protocols, functions
-  reached through arbitrary containers (`njit(KERNELS["slow"])`), dynamically
-  assembled source and unrecognized code transformers are not generally
-  resolved. The supported value flow is bounded through project wrappers;
-  it is not execution of arbitrary metaprograms. Unknown explicit decorators
-  still decline conservatively. Reading or logging source alone does not
-  establish body instrumentation.
-- **Import hooks.** A hook that rewrites a whole module (typeguard's
-  `install_import_hook`) is neither a decorator nor class machinery. A helper
-  in the same module is rewritten with it; one shared across modules with
-  `--cross-module` is rewritten only if its host is, and only pytest's
-  assertion rewriting is modeled.
-- **Shadowed library names.** A module of the project named like a
-  third-party library in the list is read as the project's own code, but one
-  named like a standard-library module (`functools.py` at an import root) is
-  taken to be the standard library, as everywhere else in Towel. A class
-  whose metaclass's `__prepare__` fills the class namespace in advance could
-  bind a decorator's name before its body runs; that is not modeled.
-- **Module objects replaced, and writes the scan does not read.** A write
-  into a decorator's module is seen in the forms the builtins' question lists
-  above; not seen are a module replaced whole (`sys.modules["app.checks"] =
-  fake`, or `app.checks = fake` on the package where a relative import
-  reaches the submodule), an attribute store as the target of a `for`, a
-  `with` or a comprehension, a module object reached other than by an import,
-  `importlib.import_module`, `getattr` with a spelled name or `sys.modules`,
-  and what code outside the project does. A star import nested in a provider
-  is read from the project's file even where that file is named like a
-  standard-library module. Any call whose first argument spells a dotted name
-  (`logging.getLogger("app.checks")`) counts as a write of its last part, as
-  it does for the builtins, and may decline code that is safe.
+The [September 27 decision](DECISIONS.md#2026-09-27-supported-body-instrumentation-is-protected-regardless-of-syntax)
+records the earlier supported-instrumentation implementation and validation.
+The [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+removed that exception.
 
 ## Conservative rejections
 
-Towel prefers to leave code unchanged rather than transform it under
-uncertainty. Every declined pair is traced under one of the reasons of
+Within its preservation contract, Towel leaves code unchanged when the
+required checks cannot establish a valid transformation. Every declined pair is traced under one of the reasons of
 `RejectReason` (`src/towel/unification/models.py`), listed here in the order
 the pair decision raises them, grouped by stage; a `dry` run that applied
 nothing prints how many pairs its last analysis declined for each (a pair
 that only repeated another's proposal is not counted), and every run counts
 the proposals it built and did not apply, by reason:
 
-- Decorators. `decorator_may_transform_body[...]`, counted with the decorator
-  it names (`decorator_may_transform_body[typeguard.typechecked]`): a decorator,
-  written with `@` or applied by a call a module or class body assigns, that
-  can reach the code of a block, of a call site, or of the helper's host is
-  not known to leave the body alone.
-  `assert_rewriting_differs`: under `--cross-module`, a block holding an
-  `assert` would join modules pytest does not rewrite alike. See *Decorators
-  that compile or instrument a body* above. Which files coverage.py
-  measures is not read: under `--cross-module`, code can move between files
-  that coverage measures differently, as the project's `[run]` `omit`,
-  `include`, `source` or `source_pkgs`, or its `[report]` `omit` and
-  `include`, decide. Code of a file coverage.py omits then becomes measured
-  in the helper's module, or measured code leaves the report and what
-  counts toward `fail_under` (round 4: a block of a module the
-  `.coveragerc` omits, moved into one it measures, raised that module's
-  missed lines from 4 to 5). Reading it would decline pairs between a
-  project's tests and the package its `source` names, a cost measured on
-  attrs and h2.
-- Frame use. `frame_sensitive_block`: the block contains a suspension,
-  a namespace read, a frame or stack read, a warning, a loop transfer
-  out of the block, a comprehension assignment expression, or a `super()`
-  reached through another name (the list under *Frame and control flow*
-  above), or zero-argument `super()` in a method that rebinds its receiver or
-  binds `__class__`. `source_reading_callee[...]`, counted with the callee
-  it names (`source_reading_callee[inline_snapshot.snapshot]`): the block
-  refers to an inline-snapshot callee that reads the source or position of
-  its call (*Observable differences that remain* above).
-  `frame_read_in_function`: the enclosing function reads
-  its own frame (`locals()`, `dir()`, `eval`, `sys._getframe()`, ...)
-  somewhere outside the block, or calls `super()` through another name there
-  while the block holds a load of `super` or `__class__`, which may be what
-  gives the function its class cell.
+- Control flow and class context. `frame_sensitive_block` retains its
+  historical diagnostic name for suspension, loop transfers out of the block,
+  comprehension assignment expressions and unsupported `super()` context.
+  Zero-argument or aliased `super()` requires the original class cell and
+  receiver. `frame_read_in_function` remains for an aliased `super()` outside
+  the block when moving the block would remove the function's class cell.
+  These historical diagnostic names do not imply a reflection scan.
+  Reflection, warning attribution, body instrumentation and source readers
+  are not refusal categories.
 - Bindings crossing the block boundary. `nested_binding_escapes`: a block
   nested inside a loop or branch binds a name the rest of the function
   reads. `closure_crosses_block_boundary`: a nested function or lambda
@@ -1544,18 +1257,18 @@ the proposals it built and did not apply, by reason:
   block reads a name the caller rebinds after it. `moves_scope_declaration`:
   a `global`/`nonlocal` declaration in the block names something the
   caller still uses.
-- Objects created by moved code. `created_object_escapes`: a function,
-  lambda, generator or class the block creates could be observed other than
-  by calling it. Created inside a helper it would carry the helper's
-  `__qualname__` (`f1.<locals>.<lambda>` would become
-  `__extracted_func_0.<locals>.<lambda>`), which reaches output through
-  `repr`, logging and registries, and a unified lambda would carry the
-  template's parameter names. Such an object may still be called in the
-  block with arguments it accepts, be the `key=` of `sorted`, `min` or `max`,
-  or be the function of a `map` or `filter` consumed in the block; anything
-  else, and any class defined in the block, is declined. Lambdas passed to
-  methods, to `functools.reduce`, or joined by a non-literal separator are
-  declined by this rule although many are harmless.
+- Objects created by moved code. `created_object_escapes`: a callable or
+  iterator created in the block may outlive it. A moved closure captures the
+  helper's bindings, so later caller rebinding can change the original result
+  while leaving the helper's captured value unchanged. Unification can also
+  rename lambda parameters and change an escaping callable's keyword
+  interface. Both affect ordinary calls, independently of reflection.
+  A created callable may be called within the block with accepted arguments,
+  serve as `key=` for `sorted`, `min` or `max`, or be the function of `map` or
+  `filter` consumed there. Other uses decline conservatively. Classes,
+  coroutine functions and decorated definitions can expose closures or defer
+  execution and are not analyzed more precisely here. Metadata such as
+  `__qualname__`, repr and logging observations is outside the guarantee.
   `thunk_of_possibly_unbound_local`: a lambda the helper call would carry
   reads a local of the calling function that may be unbound there. The
   original raises `UnboundLocalError` at that read; a thunk can only raise
@@ -1629,8 +1342,7 @@ the proposals it built and did not apply, by reason:
   so no one set of declarations in the helper serves both.
   `module_data_lookup`: the helper would receive module data
   (a module-level assignment) as an argument, snapshotting it. `rebound_external_binding`: the helper would receive a
-  name another function rebinds through `global` or `nonlocal`, or a name
-  the module's reflection makes unreliable. The names both sites resolve
+  name another function rebinds through `global` or `nonlocal`. The names both sites resolve
   at module scope are read bare by a same-module helper and are exempt
   from both, so these two decline cross-file pairs and pairs where only
   one site resolves the name at module scope.

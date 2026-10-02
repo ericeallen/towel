@@ -14,19 +14,25 @@ pending-work statements.
 
 ## Preservation contract
 
-Recognized body-transforming instrumentation receives the same protection
-whether applied by a decorator, an ordinary call, or a class hook. This is
-explicit support for selected metaprogramming, not a claim that decorators
-cannot use reflection. Observations of new helper names, lookups, frames and
-source layout remain excluded. The mere presence of a metaclass or lookup
-hook is not grounds for refusing extraction. Existing interfaces, including
-Protocol requirements, remain protected. Arbitrary dynamic instrumentation
-is not generally resolved.
+The [October 2 decision](../DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+supersedes the September 27 supported-instrumentation exception used during
+this development work. Reflection, source/AST/bytecode/frame/namespace reading,
+and instrumentation based on those observations are outside the preservation
+guarantee. This applies equally to decorators, ordinary calls and hooks.
+Towel does not detect or refuse these programs to protect their reflective
+behavior. Ordinary nonreflective semantics and existing interfaces, including
+Protocol requirements, remain protected.
+
+The implementation sequence and measurements below retain the historical
+contract under which they were completed. Their instrumentation protections
+are not requirements of the October 2 follow-up.
 
 ## Implementation sequence
 
-1. Complete and test consistent instrumentation recognition. The existing
-   class-host relaxation and Protocol alias analysis are already committed.
+1. Complete and test consistent instrumentation recognition. This historical
+   item was implemented under the September 27 contract and superseded on
+   October 2; its instrumentation checks are being removed. The class-host
+   relaxation and Protocol alias analysis remain separate changes.
 2. Account for actual failed proposals and improve their construction. Count
    candidate declines, distinct emitted proposals, signature attempts and
    final outcomes separately. The objective is to construct valid typed
@@ -138,6 +144,10 @@ coverage, interpreter-matrix or release-corpus completion is claimed.
 
 ## Instrumentation checkpoint
 
+*Historical September 27 checkpoint; the protection described here was
+superseded on October 2. These results are evidence for that earlier source,
+not a guarantee of the current implementation.*
+
 The forward flow recognizes typeguard and numba applications and project
 source/AST recompilation through ordinary calls and executed construction
 hooks. It follows local callee and argument aliases, namespace iteration,
@@ -220,6 +230,9 @@ later still receives the existing escape refusal.
 ## Validation before release
 
 ### Instrumentation indexing measurement
+
+*Historical measurement of the subsequently retired instrumentation scan.
+The counts remain valid for the recorded source and workload.*
 
 The production packaging scan repeated 36,741 lexical identity questions
 over 558 distinct definitions. A module-tree index removes the repeated

@@ -6,7 +6,7 @@ Towel finds repeated Python code by unifying statement blocks, extracts each
 family of duplicates into one helper function, and rewrites the duplicates as
 calls. It is a source-to-source transformation tool. Its design goal is not to
 transform as much as possible; it is to transform only where a syntactic,
-local argument shows the result is preserved, and to reject everything else.
+local argument shows the result is preserved within the documented contract.
 The checks below are all syntactic and lexical: they do not establish general
 behavioral equivalence for programs that observe their own frames, names, or
 source, so the intended use is preview, review the diff, and run the project's
@@ -21,7 +21,7 @@ Start with the pipeline for the overall flow, or use the module map to find the 
 - [Helper placement](#helper-placement) · [Reuse](#reusing-an-existing-function) · [Annotations](#helper-annotations)
 - [Formatting](#generated-code-formatting) · [Comments](#comments-of-moved-code)
 - [Cross-file behavior](#cross-file-behavior) · [Clustering](#the-clustering-pass)
-- [Frame and source scan](#pre-run-frame--and-source-sensitivity-scan)
+- [Reflection boundary](#reflection-boundary)
 - [Fixed-point loop](#the-fixed-point-loop) · [Incremental global passes](#incremental-global-passes-and-why-they-are-exact)
 - [Performance](#performance-architecture) · [Measurement environment](#measurement-environment)
 - [Diagnostics and settings](#diagnostics-and-settings) · [Application and recovery](#application-and-recovery)
@@ -330,32 +330,11 @@ and says why.
 `semantic_safety.py` rejects a block, before verification, when moving it into
 a helper could change behavior even if the shapes match:
 
-- **Frames and suspension.** `yield`, `await`, `async for`/`with`, an async
-  comprehension, `locals()`, `globals()`, no-argument `vars()`/`dir()`,
-  `super()` reached through another name (`s = super; s()`,
-  `builtins.super()`), `eval`/`exec`, direct frame or stack inspection, and
-  `warnings.warn` (with a `stacklevel`, or without one, since the helper's
-  frame would then be the one attributed) — a helper adds a frame these
-  would observe. The frame-reading builtins and `eval`/`exec` decline the
-  block when they appear anywhere in the enclosing function, not only
-  inside the block: a `locals()` after the block sees the names the block
-  bound, which a helper would bind in its own frame; a `sys._getframe()` or
-  `inspect.currentframe()` outside the block is a handle to those locals
-  and declines the same way (`frame_read_outside_block`). A name that
-  reaches one of these through a binding is resolved through the module's
-  bindings, so the alias is caught as the builtin would be: aliases include
-  imports (`import builtins as bi`, `from warnings import warn as w`) and
-  assignments (`e = eval`, `warn = warnings.warn`, `gf = sys._getframe`),
-  followed to a fixed point over the module, so an alias of an alias is
-  one; any call with a `stacklevel=` keyword counts as a warning. A
-  `break` or `continue` whose loop lies outside the block would leave the
-  helper instead of the loop.
-- **inline-snapshot.** `source_readers.py` declines a block that refers to a
-  callee of `known_source_readers.py`, which lists the inline-snapshot
-  entry points that read the source or position of their call
-  (`snapshot()`, `external()`, `snapshot_arg()`), however the module binds
-  the name (`source_reading_callee`). Every other callee that reads its
-  caller's frame is reflection, outside the model.
+- **Control flow and suspension.** `yield`, `await`, `async for`/`with` and
+  async comprehensions require delegation that the current helper form does
+  not provide. A `break` or `continue` whose loop lies outside the block would
+  leave the helper instead of that loop. These ordinary control-flow guards
+  remain independent of the reflection boundary.
 - **The class cell.** Zero-argument `super()` reads the `__class__` cell of
   the function calling it and that frame's first argument, so code using it
   needs its class body (`needs_class_body`). The guard stage marks the pair;
@@ -378,10 +357,11 @@ a helper could change behavior even if the shapes match:
 - **Import cycles.** A cross-file helper whose new import would close a static
   import cycle (see *Cross-file*).
 
-Only constructs written in the block or its enclosing function, directly or
-through an alias the bindings resolve, are caught here; frame use reached
-through a callee is handled by the pre-run scan (below), and reflection
-reached through a callee or a dynamic lookup is outside the model.
+Source, AST, bytecode, frame and namespace inspection are outside the
+preservation contract. The guard stage performs no reflection scan and does
+not refuse or warn on those behaviors. This includes source-reading callees,
+warning attribution and reflective body/class instrumentation. See the
+[October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract).
 
 ## Helper placement
 
@@ -398,21 +378,20 @@ decides:
   `self.__extracted_func_0()`, protecting it from accidental overrides by
   ordinary subclass methods; `class_private.py` holds CPython's
   mangling rule, which allocation, the project scan and renaming share. The
-  class's declared contract and explicit decorators must permit adding a
-  private helper: not a `Protocol`, no
-  decorator beyond the known namespace-preserving ones, a body below its
-  header, a name that mangles (not only underscores), and receivers
-  annotated, if at all, as the class (`ModuleBindings.refuses_helper`).
+  class's declared contract must permit adding a private helper: not a
+  `Protocol`, a body below its header, a name that mangles (not only
+  underscores), and receivers annotated, if at all, as the class
+  (`ModuleBindings.refuses_helper`). An unknown class decorator does not
+  itself veto adding the helper.
   Namespace scans and lookup hooks observing the added private helper are
   reflection, outside the preservation contract. The engine therefore does
   not walk the ancestry to approve class machinery or require a base-class
-  allowlist. `decorator_reach.py` does follow resolved class hooks to locate
-  supported body instrumentation. `instrumentation_flow.py` tracks the
-  specific values passed through aliases, wrappers and namespace iteration,
-  killing facts on rebinding; hook dispatch respects overrides and delegation.
-  Source/AST compilation of a method receives the same protection as an
-  explicit instrumenting decorator. Namespace observation alone does not.
-  A `Protocol` cannot gain a required member.
+  allowlist. Reflective body instrumentation is also outside the guarantee,
+  whether reached through decorators, ordinary calls or class hooks; there
+  is no project-wide instrumenter flow or body-transformer allowlist.
+  A `Protocol` cannot gain a required member. Decorator classifications still
+  serve ordinary Protocol resolution and import-time effect analysis; they
+  are not a body-instrumentation preservation check.
   `protocol_bases.py` follows direct-base aliases through project imports
   and conditional expressions. It stops at class definitions, since a
   concrete implementation of a protocol may host a helper. An unresolved
@@ -458,14 +437,15 @@ decides:
   is reordered relative to the helper (`placeable_after`). Otherwise the
   helper stays at the top and the names are quoted.
 
-A generated name is also kept clear of what the project's other sources
-already define where the helper would live (`HelperNameClaims`): for a
-module-level helper, a name some file writes into a namespace (an attribute
-store, `setattr`, a subscript store); for a method helper, the stored name
-`_A__extracted_func_0` as any class member, attribute store or namespace
-write, which is what an explicit spelling of it, or `__extracted_func_0` in
-another class named `A`, would define. The project is read once per engine
-from the nearest directory with packaging metadata above the input.
+Generated names avoid existing identifiers at their insertion site and
+explicit attribute stores or deletions in other project sources
+(`HelperNameClaims`). For a method helper, the scan also reserves class-member
+identifiers in their mangled form: `_A__extracted_func_0` spelled explicitly,
+or `__extracted_func_0` defined in another class named `A`, can collide.
+Reflective names supplied through `setattr`, namespace subscripts or a
+`type(...)` namespace dictionary are outside the guarantee and are not
+reserved. The project is read once per engine from the nearest directory with
+packaging metadata above the input.
 
 ## Reusing an existing function
 
@@ -1094,18 +1074,15 @@ that helper would keep only the new call, one more layer with no logic of
 its own. A user-named function may still become a one-line specialization
 of the new helper.
 
-## Pre-run frame- and source-sensitivity scan
+## Reflection boundary
 
-Because a callee's frame use is invisible to the block-level guard, directory
-mode scans every module before refactoring and prints a stderr diagnostic
-naming files that inspect call frames or tracebacks, attribute warnings by
-`stacklevel`, or read source through `inspect.getsource`
-(`frame_sensitivity_markers` in `semantic_safety.py`). It is a warning to
-review those diffs or `--exclude` them, not a refusal; it deliberately does not
-flag patterns indistinguishable from safe code, such as reading a sibling's
-`.py` source through a plain `open`. See
-[KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for what it does and does not
-catch.
+Directory analysis does not scan for frame/source sensitivity or issue
+reflection warnings. Moving code can change source-reader results, traceback
+shape, warning attribution and instrumentation, including inline-snapshot,
+pytest assertion rewriting and body compilers. These behaviors are outside
+the guarantee, not additional refusal categories. Source-position constraints
+imposed by external type and build tools remain in `static_positions.py` and
+`typing_forms.py`; they protect type declarations and catalog extraction.
 
 ## The fixed-point loop
 
@@ -1294,8 +1271,8 @@ measure is exact and changes no proposal.
   comparing an AST digest and raising if the tree changed. A session is owned
   by one caller and is not thread-safe.
 - **Shared read-only syntax.** During one `analyze_files` call,
-  `analysis_sources.py` shares parsed trees between the pipeline, decorator
-  resolution, namespace-write scanning and import analysis. Its LRU is bounded
+  `analysis_sources.py` shares parsed trees between the pipeline,
+  namespace-write scanning and import analysis. Its LRU is bounded
   by 2,048 entries and 8 MiB of source; the byte limit bounds retained input,
   not the full Python object graph. Readers supply current source, and keys
   retain both file identity and source content. Equal text in different files
@@ -1305,9 +1282,7 @@ measure is exact and changes no proposal.
   bypass sharing to preserve warnings-as-errors behavior. The immutability
   diagnostic checks structure and source positions, including deep expressions.
   `tests/test_analysis_sources.py` checks sharing, file isolation, invalidation,
-  diagnostics and lifetime. Hand-call caches retain syntax facts and bind them
-  to the requesting module on use, avoiding a reference cycle through the module.
-  Loaded-module caches belong to one resolver. A new analysis releases its
+  diagnostics and lifetime. A new analysis releases its
   predecessor's function index and last unification's inputs even when no
   candidate pairs remain.
 - **Import-edge cache.** The import-cycle check parses each reachable module
@@ -1327,7 +1302,7 @@ measure is exact and changes no proposal.
   statement's subtree is computed once per statement in a weak memo
   (`statement_facts.py`: `memoized_per_node`, the signature counts,
   `contains_return`, the node-type histogram, mentioned names; the
-  frame-sensitivity, bound-name and deleted-name guards in
+  control-flow, bound-name and deleted-name guards in
   `semantic_safety.py`; walrus targets in `parameterization.py`; the
   substitution's structural key) and folded over the block: counts add,
   booleans disjoin, sets union, digests concatenate. The bound-variable
@@ -1589,20 +1564,19 @@ but the ideas and their names are from the literature.
 | Writing a call in place of exactly its block's text | `splicing.py` |
 | Clustering further call sites | `clustering.py` |
 | Fork-based parallel evaluation | `parallel.py` |
-| Fixed-point drivers and the frame-sensitivity warning | `fixed_point.py` |
+| Fixed-point drivers | `fixed_point.py` |
 | Overlap filtering | `overlap.py` |
 | Parse/analyze cache, pair-processor protocol | `pipeline.py` |
 | Loggers and settings | `diagnostics.py` (at `src/towel/`) |
 | Anti-unification | `unifier.py` over `unifier_state.py`, with `constant_consistency.py`, `parameterization.py`, `hof_promotion.py`; `substitution.py`, `binding_context.py` |
 | What a tool reads where it stands, and what a block's callees denote among the typing forms | `static_positions.py`, `typing_forms.py` |
-| The inline-snapshot callees that read their call site, and what a block's names denote among them | `known_source_readers.py`, `source_readers.py` |
 | Pair pre-filter | `block_signature.py` |
 | Per-statement facts and the weak per-node memo | `statement_facts.py` |
 | Verification | `instantiation.py` |
 | Scope and bindings | `scope_analyzer.py`, `binding_detector.py`, `assignment_analyzer.py`, `function_scope.py` |
 | Visitor bases (Template Method) and shared visitors | `visitors.py` |
 | Liveness and orphans | `definite_assignment.py`, `orphan_detector.py` |
-| Safety guards and the pre-scan | `semantic_safety.py` |
+| Control-flow, binding and lifetime safety guards | `semantic_safety.py` |
 | Import-graph resolution and the cycle guard | `import_graph.py` |
 | Helper and call-site rendering | `extractor.py`, `thunk_inlining.py` |
 | The comments of moved blocks, and where they go in the helper | `block_comments.py` |
@@ -1637,11 +1611,8 @@ but the ideas and their names are from the literature.
 | Reading a type checker's spelling of a type as the annotation it means | `revealed_types.py` |
 | The errors a project's type check already reports, and what a later check adds | `type_baseline.py` (at `src/towel/`) |
 | Where to ask the type checker whether it looks at a statement at all | `reachability.py` (at `src/towel/`) |
-| Whether explicit decorators that can reach a function's body are known to leave it alone | `decorator_reach.py` |
 | Whether a direct base resolves to `Protocol`, including project aliases and reexports | `protocol_bases.py` |
-| The decorators read in their source and found to leave bodies alone | `known_decorators.py` |
-| Whether pytest rewrites a module's `assert` statements, as the project configures it | `assert_rewriting.py` |
-| Where a program may write into a module's namespace (builtins patched, decorators rebound) | `namespace_writes.py` |
+| Module namespace writes relevant to ordinary binding analysis | `namespace_writes.py` |
 | What a module's top level binds, statement by statement | `module_bindings.py` |
 | The names each Python scope binds, and which scope a name resolves in | `lexical_scopes.py` |
 | The standard library some platform or supported Python lacks, per its documentation | `known_platforms.py` |

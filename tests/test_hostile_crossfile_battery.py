@@ -41,10 +41,10 @@ binding it; and ``xf7fz_late_toplevel_module_in_package``, whose ``pkg/c.py``
 imports a module of ``pkg`` as a top-level name, so runs as a top-level
 module itself.
 
-The ``r9dc_`` packages are the round-4 audit's decorator cases: a plain
-wrapper rebound by another module before its importer runs, declined; and
-star imports, one whose provider's ``__all__`` cannot bind the decorators,
-extracted, and two that do bind an instrumenting ``staticmethod``, declined.
+The ``r9dc_`` packages are the round-4 audit's decorator cases. Ordinary
+wrappers and star imports remain in the equivalence battery; body-recompiling
+decorators are in ``REFLECTION_CASES`` and require extraction and valid syntax
+without promising runtime preservation.
 
 ``r9sr_inline_snapshot`` holds the fourth audit's reproducer: two tests that
 differ in the literal each passes to ``snapshot()``. A stub of inline-snapshot
@@ -176,9 +176,6 @@ TRANSFORMED = {
     # Round-4 audit P2-02: a star import whose provider's __all__ cannot bind
     # staticmethod or property left both unknown.
     "r9dc_star_import_that_cannot_bind_a_decorator",
-    # Round-4 audit: each inline-snapshot call keeps its place, and the code
-    # before it is still shared.
-    "r9sr_inline_snapshot",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
@@ -202,20 +199,17 @@ REJECTED = {
     # import; towel dry refuses the run outright
     # (test_cli_refuses_a_top_level_module_inside_the_package).
     "xf7fz_late_toplevel_module_in_package",
-    # A test module's assert would move to a module pytest does not rewrite,
-    # and the AssertionError pytest reports would lose its explanation.
-    "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite",
     # Round-4 audit P1-04 across modules: each block holds its function's only
     # binding of total, read on the early return (moves_only_binding).
     "xf9bd_only_binding_across_modules",
-    # Round-4 audit P1-07: a plain wrapper that a setup module rebinds to an
-    # instrumenting decorator before its importer runs.
-    "r9dc_decorator_rebound_by_another_module",
-    # Star imports that do bind an instrumenting staticmethod: one from a
-    # provider with no __all__, one from a provider part way through an
-    # import cycle, before it binds the __all__ that leaves it out.
-    "r9dc_star_import_binds_an_instrumenting_decorator",
-    "r9dc_star_import_of_a_module_part_way_through_a_cycle",
+}
+
+REFLECTION_CASES: Dict[str, str] = {
+    "r9dc_decorator_rebound_by_another_module": "a rebound decorator recompiles function bodies",
+    "r9dc_star_import_binds_an_instrumenting_decorator": "an imported decorator recompiles bodies",
+    "r9dc_star_import_of_a_module_part_way_through_a_cycle": "an import cycle exposes a recompiler",
+    "r9sr_inline_snapshot": "snapshot calls inspect their caller's source position",
+    "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite": "pytest rewrites only one module",
 }
 
 REFUSED: Dict[str, str] = {
@@ -281,7 +275,12 @@ def _modules(root: Path) -> list[str]:
 @pytest.mark.parametrize(
     "case",
     with_known_defects(
-        sorted(path.name for path in CASES.iterdir() if path.is_dir()), KNOWN_DEFECTS
+        sorted(
+            path.name
+            for path in CASES.iterdir()
+            if path.is_dir() and path.name not in REFLECTION_CASES
+        ),
+        KNOWN_DEFECTS,
     ),
 )
 def test_directory_refactoring_preserves_program_output(case: str) -> None:
@@ -321,6 +320,22 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
             assert transformed == (case in TRANSFORMED), (
                 "rejected" if not transformed else "transformed"
             )
+
+
+@pytest.mark.parametrize("case", sorted(REFLECTION_CASES))
+def test_instrumentation_does_not_veto_directory_extraction(tmp_path: Path, case: str) -> None:
+    root = tmp_path / "project"
+    copy_fixture_tree(CASES / case, root)
+    scopes = ScopeWatch()
+    results = refactor_package(
+        root / "pkg",
+        cross_module=case not in WITHOUT_CROSS_MODULE,
+        file_finisher=scopes,
+    )
+    assert sum(applied for applied, _ in results.values()) > 0, REFLECTION_CASES[case]
+    assert scopes.found == []
+    for path in (root / "pkg").rglob("*.py"):
+        compile(path.read_bytes(), str(path), "exec")
 
 
 def test_cli_refuses_a_top_level_module_inside_the_package(tmp_path: Path) -> None:

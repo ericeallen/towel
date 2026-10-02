@@ -2,6 +2,11 @@
 
 [Documentation index](README.md)
 
+The [October 2 preservation decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+removes reflection and self-instrumentation guarantees. Validation and repair
+records below retain the source, contract and results of their dated runs;
+they are not evidence of those retired protections in the current code.
+
 Start with the current release preparation. The later sections retain the evidence for earlier releases and candidates.
 
 **Contents**

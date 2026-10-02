@@ -813,7 +813,7 @@ class BlockAnalysis(EngineState):
 
         The answer reads the scopes enclosing the function and the module's
         hazards: the same nested function under an enclosing function that
-        rebinds the name it reads, or in a module that reflects, has another.
+        rebinds the name it reads has another answer.
         """
         return self._per_block(
             "rebound_external_names",

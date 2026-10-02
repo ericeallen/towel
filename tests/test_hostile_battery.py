@@ -30,8 +30,8 @@ lands the fixture passes, pytest reports the XPASS as a failure, and the
 fixture moves from ``KNOWN_DEFECTS`` to ``TRANSFORMED`` or stays out of both.
 
 ``REFLECTION_CASES`` instead records examples outside the equivalence contract.
-Their separate test demonstrates that adding private helpers remains permitted
-and that implicit hooks inspecting namespaces or source can observe the change.
+Their separate test requires extraction and valid generated syntax, without
+asserting runtime preservation for reflection or body instrumentation.
 """
 
 from __future__ import annotations
@@ -61,7 +61,6 @@ TRANSFORMED = {
     "p09_static_helper_metaclass_hides_attribute",
     "p13_protocol_default_methods",
     "p14_protocol_common_ancestor",
-    "p17_decorated_base_rebuilds_namespace",
     "r101_same_named_method_forces_module_helper",
     "h04_closure_freevar",
     "h05_cond_return_plus_retvar",
@@ -89,7 +88,6 @@ TRANSFORMED = {
     "h10_short_circuit",
     "r66_conditional_callee",
     "r60_local_import",
-    "r146_module_function_reads_caller_frame",
     "r144_class_cell_in_a_method_helper",
     "r142_module_data_rebound_by_callback",
     "r143_module_name_shadowed_by_a_local_elsewhere",
@@ -102,7 +100,6 @@ TRANSFORMED = {
     "r81_conditionally_bound_free_variable",
     "r82_local_classes_same_name",
     "r83_tab_indented_class",
-    "r84_warn_stacklevel",
     "r87_nested_function_in_method",
     "r88_elif_branch",
     "r90_cluster_across_classes",
@@ -345,17 +342,11 @@ TRANSFORMED = {
     "r7fz_thunks_lambda_default_first",
     "r7fz_thunks_match_guard",
     "r7fz_thunks_short_circuit_and",
-    # A decorator the project defines that only wraps or registers the
-    # function leaves its body alone; the r7d_instrumenting_* fixtures, whose
-    # decorators recompile the body, are declined.
+    # Ordinary wrappers and registries retain their call behavior.
     "r7d_plain_wrapper_decorator",
-    # The same applied by hand, with a known factory and a property built from
-    # its accessors; r7d_instrumenting_call_applied_by_hand, whose recompiler is
-    # applied by a call, is declined. Implicit metaclass source inspection is
-    # covered separately by REFLECTION_CASES.
+    # The same applied by hand, with a factory and a property built from its
+    # accessors. Body recompilation is covered separately by REFLECTION_CASES.
     "r7d_plain_wrapper_applied_by_hand",
-    # r9dc_stacked_decoration_by_hand, whose recompiler is applied by hand around
-    # a plain decorator and through a factory, is declined (round-4 audit P1-06).
     # A TestCase, read to be built by type, takes the class-private helper, which
     # neither unittest nor pytest collects as a test.
     "r7d_method_helper_in_a_testcase",
@@ -386,16 +377,12 @@ TRANSFORMED = {
 # ends before, a statement that stays on a line carrying a directive.
 # r7fz_grammar_u0217_read_before_bind, a P1-7 case, is declined since its fix:
 # its block reads v6 before binding it (incomplete_lifetime_block1).
-# p09, p13, p14 and p17 transform again without the implicit-machinery guard.
+# p09, p13 and p14 transform without the implicit-machinery guard.
 # Static helpers and helpers extracted from a Protocol remain at module level;
 # an ancestor's decorator does not decorate the subclass's own methods.
-# p15_class_decorator_rebuilds_namespace and p16_class_decorator_wraps_every_function
-# left the set when a class decorator not known to leave its methods alone began
-# to decline blocks in them: the one rebuilds the class from its namespace, the
-# other wraps every method, and either might as well have recompiled them.
 # r153_class_definition_reads left the set when a class defined in the block
-# began to decline it: every instance and the class itself show the helper in
-# their qualified names. Its reads are still what free_variables reports.
+# began to decline it. Escaping classes remain conservative because their
+# methods can close over bindings outside the block.
 # r85_conditionally_bound_parameter left the set when a thunk of a local that
 # may be unbound at the call began to be declined: the thunk would raise
 # NameError where the block raised UnboundLocalError. Its own read never
@@ -409,8 +396,29 @@ KNOWN_DEFECTS: Dict[str, str] = {}
 ``tests/audit_defects.py``. None is open: every round-3 P1 fixture passes."""
 
 REFLECTION_CASES: Dict[str, str] = {
+    "p15_class_decorator_rebuilds_namespace": "a decorator drops helpers from a rebuilt namespace",
+    "p16_class_decorator_wraps_every_function": "a decorator wraps scanned class members",
+    "p17_decorated_base_rebuilds_namespace": "a decorator rebuilds an ancestor's namespace",
+    "r84_warn_stacklevel": "warning locations depend on the call stack",
+    "r106_dir_reads_the_frame": "dir() observes the local namespace",
+    "r123_direct_eval_after_block": "eval() reads the local namespace",
+    "r124_eval_alias_reads_preblock_name": "an eval alias reads the local namespace",
+    "r125_locals_dir_after_block": "locals() and dir() observe moved bindings",
+    "r126_locals_in_nested_scope": "nested functions inspect local namespaces",
+    "r127_eval_alias_partial_block": "an eval alias observes moved bindings",
+    "r128_warn_stacklevel_via_alias": "warning aliases observe the call stack",
+    "r129_warning_registry_dedup": "warning deduplication depends on source locations",
+    "r145_getframe_assigned_alias": "an aliased frame reader observes moved bindings",
+    "r146_module_function_reads_caller_frame": "a function inspects its caller's frame",
+    "r159_frame_handle_before_a_nested_block": "a retained frame observes moved bindings",
+    "r7d_instrumenting_call_applied_by_hand": "a call recompiles function bodies",
+    "r7d_instrumenting_class_decorator": "a class decorator recompiles methods",
+    "r7d_instrumenting_enclosing_function": "a decorator recompiles enclosing function bodies",
+    "r7d_instrumenting_function_decorator": "a decorator recompiles function bodies",
+    "r7d_metaclass_recompiles_methods": "a metaclass recompiles method bodies",
     "r7fz_classhost_init_subclass_wraps": "a subclass hook wraps names found by scanning vars(cls)",
     "r7fz_classhost_metaclass_registry": "a metaclass publishes the scanned class namespace",
+    "r9dc_stacked_decoration_by_hand": "stacked calls recompile function bodies",
 }
 
 
@@ -455,16 +463,12 @@ def test_refactoring_preserves_program_output(case: str) -> None:
 
 
 @pytest.mark.parametrize("case", sorted(REFLECTION_CASES))
-def test_implicit_reflection_can_observe_extraction(tmp_path: Path, case: str) -> None:
+def test_reflection_does_not_veto_extraction(tmp_path: Path, case: str) -> None:
     fixture = fixture_named(CASES, case)
     parsed_or_skipped(fixture)
     script = tmp_path / "m.py"
     shutil.copy(fixture, script)
-    before = _run(script)
     scopes = ScopeWatch()
-    assert refactor_script(script, file_finisher=scopes) > 0
+    assert refactor_script(script, file_finisher=scopes) > 0, REFLECTION_CASES[case]
     compile(script.read_text(), str(script), "exec")
     assert scopes.found == []
-    after = _run(script)
-    assert before[0] == after[0] == 0
-    assert before[1] != after[1], REFLECTION_CASES[case]

@@ -190,9 +190,7 @@ class ModuleBindings:
     def refuses_helper(self, qualname: str) -> Optional[str]:
         """Why the module-level class ``qualname`` cannot take a helper into its body, if it cannot.
 
-        A body on the header's line takes no statement after it. A decorator
-        not known to preserve the namespace may drop the helper, wrap it, or
-        bind the class's name to something else entirely. And a helper placed
+        A body on the header's line takes no statement after it. A helper placed
         in a ``Protocol`` becomes one of its members, which every structural
         implementer lacks: an ``isinstance`` check against a runtime-checkable
         protocol turns false, and the checker stops accepting implementers
@@ -206,8 +204,6 @@ class ModuleBindings:
             return "unknown class"
         if host.body_on_header_line:
             return "body on the header line"
-        if not self.keeps_namespace(qualname):
-            return "decorator"
         for base in host.bases:
             if base is None:
                 continue

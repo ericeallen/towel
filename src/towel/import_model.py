@@ -1299,7 +1299,7 @@ class _Listings:
         import fails as ``from .generated_at_build import VERSION`` does. A
         namespace directory binds nothing but its modules. An initializer
         that may bind names no statement shows (a star import, a module
-        ``__getattr__``, ``globals()``, a change to ``__path__`` or to
+        ``__getattr__``, a change to ``__path__`` or to
         ``sys.modules``), or that is not Python source, leaves every name
         possible. ``directory`` not being a directory leaves every name so too.
         """
@@ -1439,10 +1439,6 @@ def _scan_tree(tree: ast.Module, path: Path) -> _Module:
     return _Module(tuple(ordered), changes_sys_path, registers_modules, _module_bindings(tree))
 
 
-_OPAQUE_NAMESPACE_CALLS = frozenset({"globals", "vars", "locals", "setattr", "exec", "eval"})
-"""Names through which a module can bind names no statement shows, from anywhere in it."""
-
-
 def _module_bindings(tree: ast.Module) -> Optional[FrozenSet[str]]:
     """The names ``tree``'s module level binds, or ``None`` when it may bind names no statement shows.
 
@@ -1451,17 +1447,10 @@ def _module_bindings(tree: ast.Module) -> Optional[FrozenSet[str]]:
     lets an import pass unreported, so every store counts, guarded or not. A
     ``from . import x`` binds no attribute of its own: it names the
     submodule, which either exists or fails to import; ``as y`` binds ``y``.
-    A module-level ``__getattr__``, a star import, a change to ``__path__``,
-    or any use anywhere in the file of ``globals``, ``vars``, ``locals``,
-    ``setattr``, ``exec`` or ``eval``, as bs4's ``register_treebuilders_from``
-    uses ``setattr`` on its own module, leaves every name possible.
+    A module-level ``__getattr__``, a star import or a change to ``__path__``
+    leaves every name possible. Reflective namespace mutation is outside
+    the preservation contract.
     """
-    if any(
-        (isinstance(node, ast.Name) and node.id in _OPAQUE_NAMESPACE_CALLS)
-        or (isinstance(node, ast.Attribute) and node.attr == "__dict__")
-        for node in ast.walk(tree)
-    ):
-        return None
     bound: Set[str] = set()
     pending: List[ast.AST] = list(tree.body)
     while pending:

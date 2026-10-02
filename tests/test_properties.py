@@ -50,8 +50,6 @@ expected answer is obvious, then checks the engine against it:
 * **Closures over rebound binders.** With ``fn = lambda: ...`` and
   ``def fn(): ...`` in the grammar and a binder rebound after the block, the
   engine either declines the block or both sites still agree.
-* **Frame reads.** With argument-free ``dir()``, ``locals()`` and ``vars()``
-  among the leaves, no proposal covers a statement that contains one.
 * **Unbound names on untaken branches.** A name nothing binds, read only
   under ``if limit < 0`` (false for every equivalence case), is never hoisted
   into an eager argument: the sites still agree.
@@ -134,13 +132,6 @@ class Call:
 
 
 @dataclass(frozen=True)
-class FrameRead:
-    """Argument-free ``dir()``, ``locals()`` or ``vars()``: reads the frame it runs in."""
-
-    callee: str
-
-
-@dataclass(frozen=True)
 class Unbound:
     """A name nothing binds: reading it raises ``NameError``."""
 
@@ -154,7 +145,7 @@ class Lambda:
     body: "Expr"
 
 
-Expr = Union[Const, Free, Slot, LoopVar, Binary, Call, FrameRead, Unbound, Lambda]
+Expr = Union[Const, Free, Slot, LoopVar, Binary, Call, Unbound, Lambda]
 
 
 @dataclass(frozen=True)
@@ -214,7 +205,6 @@ Stmt = Union[Assign, ExprStmt, If, NeverIf, For, LambdaDef, NestedDef, Rebind]
 FREE_NAMES = ("src", "limit")
 CALLABLES = ("f", "g", "h", "print")
 OPERATORS = ("+", "-", "*")
-FRAME_READERS = ("dir", "locals", "vars")
 UNBOUND_NAMES = ("zeta", "eta")
 """Names nothing in a generated module binds; they are not in ``PARAMETERS``."""
 CLOSURE_NAME = "fn"
@@ -231,8 +221,6 @@ class Grammar:
 
     closures: bool = False
     """``fn = lambda: ...`` and ``def fn(): ...`` among the block's statements."""
-    frame_reads: bool = False
-    """``dir()``, ``locals()`` and ``vars()`` among the expression leaves."""
     unbound: bool = False
     """``Unbound`` leaves, admitted only inside a ``NeverIf`` body."""
 
@@ -251,8 +239,6 @@ def expressions(
         leaves.append(st.builds(Slot, st.integers(0, bound - 1)))
     if in_loop:
         leaves.append(st.just(LoopVar()))
-    if grammar.frame_reads:
-        leaves.append(st.builds(FrameRead, st.sampled_from(FRAME_READERS)))
     if grammar.unbound:
         leaves.append(st.builds(Unbound, st.sampled_from(UNBOUND_NAMES)))
 
@@ -366,8 +352,6 @@ def render_expression(expression: Expr, naming: Naming) -> str:
         left = render_expression(expression.left, naming)
         right = render_expression(expression.right, naming)
         return f"({left} {expression.operator} {right})"
-    if isinstance(expression, FrameRead):
-        return f"{expression.callee}()"
     if isinstance(expression, Unbound):
         return expression.name
     if isinstance(expression, Lambda):
@@ -1091,66 +1075,7 @@ def test_closures_over_rebound_binders_are_declined_or_kept_equivalent(
 
 
 # ---------------------------------------------------------------------------
-# (h) Frame reads: a block containing dir(), locals() or vars() is declined
-#
-# Each reads the frame it runs in, so inside a helper it reads the helper's
-# locals. No proposal may cover a statement that contains one.
-
-
-@st.composite
-def frame_reading_pairs(draw: st.DrawFn) -> Tuple[Tuple[Stmt, ...], Tuple[Stmt, ...]]:
-    """Two leaf-variant blocks that share at least one frame-reading leaf."""
-    block = draw(blocks(min_size=3, max_size=5, grammar=Grammar(frame_reads=True)))
-    if not contains_call(block):
-        block = block + (ExprStmt(Call("f", (Free("src"),))),)
-    if not any(isinstance(node, FrameRead) for node in block_nodes(block)):
-        reader = FrameRead(draw(st.sampled_from(FRAME_READERS)))
-        block = block + (ExprStmt(Call("print", (reader,))),)
-    index = draw(st.integers(0, count_block_leaves(block) - 1))
-    return (
-        replace_block_leaf(block, index, HOLE_LEAVES[0]),
-        replace_block_leaf(block, index, HOLE_LEAVES[1]),
-    )
-
-
-def frame_reading_lines(source: str) -> FrozenSet[int]:
-    """One-based lines of every argument-free ``dir()``, ``locals()`` or ``vars()`` call."""
-    return frozenset(
-        node.lineno
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id in FRAME_READERS
-        and not node.args
-        and not node.keywords
-    )
-
-
-@ENGINE_BOUNDED
-@given(frame_reading_pairs())
-def test_blocks_that_read_their_frame_are_declined(
-    pair: Tuple[Tuple[Stmt, ...], Tuple[Stmt, ...]],
-) -> None:
-    source = render_module(*pair)
-    readers = frame_reading_lines(source)
-    assert readers, source
-    with tempfile.TemporaryDirectory(prefix="towel-property-") as directory:
-        path = Path(directory) / "sites.py"
-        path.write_text(source)
-        proposals = _engine().analyze_files([str(path)], progress="none")
-    for proposal in proposals:
-        for replacement in proposal.replacements:
-            start, end = replacement.line_range
-            covered = {line for line in readers if start <= line <= end}
-            assert not covered, (
-                f"{proposal.description} covers a frame read on line(s) {sorted(covered)}:\n"
-                f"{source}"
-            )
-    event("proposals=%d" % len(proposals))
-
-
-# ---------------------------------------------------------------------------
-# (i) An unbound name read only on a branch the sites never take
+# (h) An unbound name read only on a branch the sites never take
 #
 # ``zeta`` and ``eta`` are bound nowhere. The original block reads one only
 # under ``if limit < 0``, which the equivalence cases make false, so it never

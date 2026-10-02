@@ -769,6 +769,50 @@ def test_an_import_its_package_does_not_hold_is_a_problem(tmp_path):
     assert model.importers_of_missing_modules == {model.root / "tests/test_a.py"}
 
 
+@pytest.mark.parametrize(
+    "observation",
+    [
+        "globals()",
+        "vars()",
+        "locals()",
+        "setattr(obj, 'name', 1)",
+        "exec('pass')",
+        "eval('1')",
+        "obj.__dict__",
+    ],
+)
+def test_reflective_spellings_do_not_hide_missing_imports(tmp_path, observation: str) -> None:
+    project = _write(
+        tmp_path / "project",
+        {
+            "pyproject.toml": _setuptools_project(name="alpha"),
+            "alpha/__init__.py": f"def observe(obj):\n    return {observation}\n",
+            "alpha/a.py": "",
+            "tests/test_a.py": "import alpha.a\nfrom alpha import absent\n",
+        },
+    )
+    (problem,) = _model(project).problems
+    assert isinstance(problem, UnresolvedImport)
+    assert problem.missing == "alpha.absent"
+
+
+@pytest.mark.parametrize(
+    "initializer",
+    ["def __getattr__(name):\n    return 1\n", "from math import *\n"],
+)
+def test_ordinary_dynamic_import_bindings_remain_unknown(tmp_path, initializer: str) -> None:
+    project = _write(
+        tmp_path / "project",
+        {
+            "pyproject.toml": _setuptools_project(name="alpha"),
+            "alpha/__init__.py": initializer,
+            "alpha/a.py": "",
+            "tests/test_a.py": "import alpha.a\nfrom alpha import absent\n",
+        },
+    )
+    assert _model(project).problems == ()
+
+
 def test_the_file_making_an_unresolved_import_is_neither_provider_nor_borrower(tmp_path):
     project = _write(
         tmp_path / "project",

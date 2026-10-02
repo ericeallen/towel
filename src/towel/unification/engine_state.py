@@ -83,7 +83,7 @@ class BlockSite(NamedTuple):
     the function's other statements, where in them the block stands (what
     is bound before and after it, whether it is nested in a loop), the
     scopes enclosing the function, and the module's hazards (``global`` and
-    ``nonlocal`` rebinding, reflection) and aliases. The module's source
+    ``nonlocal`` rebinding) and aliases. The module's source
     fixes its tree, and so all of these; the positions pick out the function
     and the block's statements in that tree. Two blocks of the same code in
     other places are other sites, however alike their structure.
@@ -167,9 +167,8 @@ class HelperNameClaims:
 
     Each is the name as Python stores it, so ``def __extracted_func_0`` in
     ``class A`` is ``_A__extracted_func_0``. ``namespace`` holds what an
-    attribute store, ``setattr`` or a namespace subscript writes, any of
-    which could replace a module-level helper; ``members`` holds those and
-    every class member, and a ``type(...)`` namespace's keys, which could
+    explicit attribute store writes, which could replace a module-level
+    helper; ``members`` holds those and every class member, which could
     override or shadow a method helper stored under the same name.
     """
 
@@ -216,7 +215,7 @@ class EngineState:
     _pair_rejection: Optional[RejectReason]
     """The reason the pair being decided was last declined for, or None."""
     _pair_rejection_subject: Optional[str]
-    """What that reason names, counted with it (``decorator_may_transform_body[numba.njit]``)."""
+    """What that reason names, counted with it (``builtin_may_differ_by_module[len]``)."""
     _pair_rejections: Dict[str, int]
     """How many candidate pairs the latest analysis declined, by reason."""
     _pair_identity: Optional[Hashable]

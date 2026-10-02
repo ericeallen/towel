@@ -9,6 +9,15 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Reflection and self-instrumentation are outside the preservation guarantee,
+  including source/AST/bytecode/frame/namespace observations and body or class
+  transformations applied by decorators, ordinary calls or hooks. Towel no
+  longer scans or refuses code to protect those behaviors. Ordinary
+  nonreflective semantics remain covered. The October 2 decision supersedes
+  the recognized-instrumentation and source-reader protections recorded in
+  the historical entries below; their validation facts retain their original
+  source and policy scope.
+
 ## [1.792]
 
 Named for ln 6, approximately 1.791759469. Changes since 1.772.

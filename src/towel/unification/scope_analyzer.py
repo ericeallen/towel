@@ -14,7 +14,7 @@
 
 """Lexical scopes of a module: each binding's scope, each name node's
 resolution, and the external-binding hazards (``global``/``nonlocal``
-rebinding, namespace reflection) later guards consult.
+rebinding) later guards consult.
 """
 
 import ast
@@ -76,7 +76,6 @@ class ExternalBindingHazards:
 
     rebound: FrozenSet[Tuple[int, str]]
     unresolved_nonlocal: bool
-    reflective: bool
 
 
 @dataclass
@@ -498,14 +497,14 @@ class ScopeAnalyzer(ScopeVisitor):
         self._bound_anywhere = bindings_of(tree, into_nested_scopes=True)
         self.current_scope = self.root_scope
         self.visit(tree)
-        self._external_binding_hazards = self._summarize_external_binding_hazards(tree)
+        self._external_binding_hazards = self._summarize_external_binding_hazards()
         return self.root_scope
 
     @property
     def external_binding_hazards(self) -> Optional[ExternalBindingHazards]:
         return self._external_binding_hazards
 
-    def _summarize_external_binding_hazards(self, tree: ast.AST) -> ExternalBindingHazards:
+    def _summarize_external_binding_hazards(self) -> ExternalBindingHazards:
         root = self.root_scope
         scopes = {root.scope_id: root}
         scopes.update((item.scope_id, item) for item in self.node_scopes.values())
@@ -522,21 +521,7 @@ class ScopeAnalyzer(ScopeVisitor):
                 else:
                     rebound.add((binding.scope_id, name))
 
-        # Include top-level statements, not just declarations retained as bindings.
-        reflective = False
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
-                continue
-            if node.func.id in {"globals", "locals", "exec", "eval"}:
-                reflective = True
-            elif node.func.id in {"getattr", "setattr", "delattr"} and node.args:
-                target = node.args[0]
-                target_binding = (
-                    self.identifier_bindings.get(target) if isinstance(target, ast.Name) else None
-                )
-                if target_binding is None or isinstance(target_binding.node, ast.Import):
-                    reflective = True
-        return ExternalBindingHazards(frozenset(rebound), unresolved, reflective)
+        return ExternalBindingHazards(frozenset(rebound), unresolved)
 
     def _create_scope(self, parent: Optional[Scope]) -> Scope:
         """Create a new scope."""

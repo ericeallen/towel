@@ -2,7 +2,13 @@
 
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
-Status: proposal, 2026-09-24, from the owner; for a release after 1.772.
+Status: retired October 2, 2026. The owner removed reflection and body
+instrumentation from the preservation guarantee, including protections based
+on decorator allowlists. A trust override is therefore unnecessary. See the
+[October 2 decision](../DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract).
+
+The September 24 proposal below is retained as historical design context; it
+does not describe the current contract or available options.
 
 ## The problem
 

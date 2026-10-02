@@ -23,7 +23,8 @@ to create it, stopped reaching ``exports`` (the audit's reproducer printed
 keep the lookup, but no helper takes a builtin as a parameter; a pair is
 declined instead wherever the program shows a participating module may hold
 the name: a binding of its own, a star import that reaches it, a write into
-its namespace at run time, or a patch in the project's own code or tests.
+a module attribute directly in the project's own code or tests.
+Reflective patch APIs and namespace writes carry no preservation guarantee.
 Module names are still passed, so a patch of one is still honoured.
 """
 
@@ -138,10 +139,9 @@ def _assert_declined(tmp_path: Path, files: Mapping[str, str], reason: str) -> N
 
 
 REPRODUCER_CHECK = """
-from unittest import mock
 import pkg.exports
-with mock.patch("pkg.exports.len", lambda value: 100, create=True):
-    print("exports with its len patched:", pkg.exports.export_size([1, 2], "ab"))
+pkg.exports.len = lambda value: 100
+print("exports with its len rebound:", pkg.exports.export_size([1, 2], "ab"))
 """
 
 
@@ -175,35 +175,20 @@ def test_without_evidence_the_helper_reads_the_builtin_bare(tmp_path: Path) -> N
 
 
 # Evidence in a participating module, and the reason the pair is declined for.
-# A site's module that reaches its namespace dynamically, or declares a name
-# ``global``, is declined before placement asks: the block's external reads
-# may be rebound between the call and the read (``rebound_external_binding``).
+# An ordinary global declaration is declined before placement asks because
+# the block's external reads may be rebound between the call and the read.
+# Reflective namespace access is excluded from this evidence.
 IN_MODULE = {
     "defined_in_the_borrower": ("def len(item):\n    return 7", "", "builtin_may_differ_by_module"),
     "defined_in_the_host": ("", "def len(item):\n    return 7", "builtin_may_differ_by_module"),
     "a_class_of_its_name": ("class len:\n    pass", "", "builtin_may_differ_by_module"),
     "imported_under_its_name": ("from builtins import len", "", "builtin_may_differ_by_module"),
-    # Module data a callback may rebind is declined before placement asks.
     "assigned_at_the_top_level": ("len = lambda item: 7", "", "module_data_lookup"),
     "declared_global_in_a_function": (
         "def reset():\n    global len\n    len = lambda item: 7",
         "",
         "rebound_external_binding",
     ),
-    "globals_subscript": ('globals()["len"] = lambda item: 7', "", "rebound_external_binding"),
-    "vars_subscript": ('vars()["len"] = lambda item: 7', "", "builtin_may_differ_by_module"),
-    "globals_update": ("globals().update(len=lambda item: 7)", "", "rebound_external_binding"),
-    "globals_handed_on": (
-        "def install(namespace):\n    namespace['len'] = lambda item: 7\n\n\ninstall(globals())",
-        "",
-        "rebound_external_binding",
-    ),
-    "setattr_of_its_own_module": (
-        'import sys\nsetattr(sys.modules[__name__], "len", lambda item: 7)',
-        "",
-        "rebound_external_binding",
-    ),
-    "exec_of_code": ('exec("len = lambda item: 7")', "", "rebound_external_binding"),
     "star_import_outside_the_project": (
         "from os.path import *",
         "",
@@ -223,9 +208,25 @@ def test_evidence_in_a_participating_module_declines_the_pair(tmp_path: Path, ca
     _assert_declined(tmp_path, _project(exports_prelude, reports_prelude), reason)
 
 
-# What a module's own code may write into its namespace, found by the evidence
-# scan whatever guard declines the pair first.
+# Ordinary bindings supply evidence; reflective namespace operations do not.
 WRITES_ITS_OWN_NAMESPACE = {
+    "declared_global": "def reset():\n    global len\n    len = f",
+    "defined": "def len(item):\n    return 7",
+    "star_import_outside_the_project": "from os.path import *",
+    "rebound_builtins": "__builtins__ = {}",
+    "direct_imported_attribute": "import pkg.mod as module\nmodule.len = f",
+}
+
+REFLECTIVE_NAMESPACE_OPERATIONS = {
+    "globals_read": 'x = globals()["len"]',
+    "globals_get": 'x = globals().get("len")',
+    "membership": 'found = "len" in globals()',
+    "sorted_names": "names = sorted(globals())",
+    "loop": "for name in globals():\n    print(name)",
+    "vars_in_a_function": 'def f():\n    vars()["len"] = f',
+    "locals_in_a_function": 'def f():\n    locals()["len"] = f',
+    "exec_in_a_fresh_namespace": 'exec("len = f", {})',
+    "another_name": 'globals()["width"] = f',
     "globals_subscript": 'globals()["len"] = f',
     "globals_update": "globals().update(len=f)",
     "globals_setdefault": 'globals().setdefault("len", f)',
@@ -237,22 +238,14 @@ WRITES_ITS_OWN_NAMESPACE = {
     "own_module_attribute": "import sys\nsys.modules[__name__].len = f",
     "exec": 'exec("len = f")',
     "exec_in_its_namespace": "exec(code, globals())",
-    "declared_global": "def reset():\n    global len\n    len = f",
-    "defined": "def len(item):\n    return 7",
-    "star_import_outside_the_project": "from os.path import *",
-    "rebound_builtins": "__builtins__ = {}",
-}
-
-READS_ITS_OWN_NAMESPACE = {
-    "globals_read": 'x = globals()["len"]',
-    "globals_get": 'x = globals().get("len")',
-    "membership": 'found = "len" in globals()',
-    "sorted_names": "names = sorted(globals())",
-    "loop": "for name in globals():\n    print(name)",
-    "vars_in_a_function": 'def f():\n    vars()["len"] = f',
-    "locals_in_a_function": 'def f():\n    locals()["len"] = f',
-    "exec_in_a_fresh_namespace": 'exec("len = f", {})',
-    "another_name": 'globals()["width"] = f',
+    "module_dict_subscript": 'import pkg.mod\npkg.mod.__dict__["len"] = f',
+    "module_dict_update": "import pkg.mod\npkg.mod.__dict__.update(len=f)",
+    "module_vars_update": "import pkg.mod\nvars(pkg.mod).update(len=f)",
+    "dict_monkeypatch": 'import pkg.mod\nmonkeypatch.setitem(pkg.mod.__dict__, "len", f)',
+    "sys_modules_attribute": 'import sys\nsys.modules["pkg.mod"].len = f',
+    "getattr_attribute": 'import pkg.mod\ngetattr(pkg, "mod").len = f',
+    "eval": "eval(code)",
+    "namespace_clear": "globals().clear()",
 }
 
 
@@ -268,9 +261,9 @@ def test_a_module_writing_its_namespace_may_hold_the_builtin(tmp_path: Path, cas
     assert _evidence(tmp_path, WRITES_ITS_OWN_NAMESPACE[case]) is not None
 
 
-@pytest.mark.parametrize("case", sorted(READS_ITS_OWN_NAMESPACE))
-def test_a_module_reading_its_namespace_holds_no_builtin(tmp_path: Path, case: str) -> None:
-    assert _evidence(tmp_path, READS_ITS_OWN_NAMESPACE[case]) is None
+@pytest.mark.parametrize("case", sorted(REFLECTIVE_NAMESPACE_OPERATIONS))
+def test_reflection_does_not_supply_builtin_rebinding_evidence(tmp_path: Path, case: str) -> None:
+    assert _evidence(tmp_path, REFLECTIVE_NAMESPACE_OPERATIONS[case]) is None
 
 
 def test_a_star_import_is_followed_into_the_project(tmp_path: Path) -> None:
@@ -296,6 +289,41 @@ def test_a_star_import_is_followed_into_the_project(tmp_path: Path) -> None:
 
 
 PATCHES = {
+    "attribute_assignment": """
+        from pkg import exports
+
+        exports.len = lambda value: 100
+        """,
+    "annotated_attribute_assignment": """
+        from typing import Callable
+        from pkg import exports
+
+        exports.len: Callable[[object], int] = lambda value: 100
+        """,
+    "unpacked_into_the_attribute": """
+        from pkg import exports
+
+        exports.len, spare = (lambda value: 100), None
+        """,
+    "tuple_last_attribute": (
+        "import importlib\nmodule = importlib.import_module('pkg.exports')\n"
+        "(other, module.len) = (None, replacement)"
+    ),
+    "list_last_attribute": "import pkg.exports\n[other, pkg.exports.len] = [None, replacement]",
+    "parenthesized_attribute": "import pkg.exports\n(pkg.exports.len) = replacement",
+    "continued_attribute": "import pkg.exports\npkg.exports.\\\nlen = replacement",
+    "deleted_attribute": "import pkg.exports\ndel pkg.exports.len",
+    "augmented_attribute": "import pkg.exports\npkg.exports.len += extra",
+    "import_module_attribute": "from importlib import import_module\n"
+    'module = import_module("pkg.exports")\n'
+    "module.len = replacement",
+    "aliased_module_attribute": "import pkg.exports as original\n"
+    "alias = original\n"
+    "alias.len = replacement",
+}
+
+
+REFLECTIVE_PATCHES = {
     "mock_patch_creating_the_name": """
         from unittest import mock
         import pkg.exports
@@ -396,22 +424,6 @@ PATCHES = {
 
         setattr(exports, "len", lambda value: 100)
         """,
-    "attribute_assignment": """
-        from pkg import exports
-
-        exports.len = lambda value: 100
-        """,
-    "annotated_attribute_assignment": """
-        from typing import Callable
-        from pkg import exports
-
-        exports.len: Callable[[object], int] = lambda value: 100
-        """,
-    "unpacked_into_the_attribute": """
-        from pkg import exports
-
-        exports.len, spare = (lambda value: 100), None
-        """,
     "target_spelled_from_a_constant": """
         from unittest import mock
         import pkg.exports
@@ -468,7 +480,9 @@ PATCHES = {
 
 
 @pytest.mark.parametrize("case", sorted(PATCHES))
-def test_a_patch_in_the_projects_tests_declines_the_pair(tmp_path: Path, case: str) -> None:
+def test_direct_attribute_binding_in_project_tests_declines_the_pair(
+    tmp_path: Path, case: str
+) -> None:
     files = _project(extra={"tests/test_exports.py": PATCHES[case]})
     _assert_declined(tmp_path, files, "builtin_may_differ_by_module")
 
@@ -480,8 +494,8 @@ def test_a_relative_import_in_a_test_package_is_followed(tmp_path: Path) -> None
             "pkg/tests/test_exports.py": """
                 from .. import exports
 
-                def test_size(monkeypatch):
-                    monkeypatch.setattr(exports, "len", lambda value: 100, raising=False)
+                def test_size():
+                    exports.len = lambda value: 100
                 """,
         }
     )
@@ -506,7 +520,7 @@ NOT_EVIDENCE = {
 
 
 @pytest.mark.parametrize("case", sorted(NOT_EVIDENCE))
-def test_a_patch_elsewhere_leaves_the_pair_alone(tmp_path: Path, case: str) -> None:
+def test_unrelated_or_reflective_writes_leave_the_pair_alone(tmp_path: Path, case: str) -> None:
     project = tmp_path / "proj"
     _write(project, _project(extra={"tests/test_other.py": NOT_EVIDENCE[case]}))
     applied, _ = _refactor(project)
@@ -522,12 +536,12 @@ MODULE_NAME_BLOCK = """
 """
 
 MODULE_NAME_CHECK = """
-from unittest import mock
 import pkg.exports, pkg.reports
 
-for module in ("exports", "reports"):
-    with mock.patch("pkg." + module + ".join", lambda *parts: "J"):
-        print(module, pkg.exports.export_size("r", "n"), pkg.reports.report_size("r", "n"))
+pkg.exports.join = lambda *parts: "J"
+print("exports", pkg.exports.export_size("r", "n"), pkg.reports.report_size("r", "n"))
+pkg.reports.join = lambda *parts: "K"
+print("reports", pkg.exports.export_size("r", "n"), pkg.reports.report_size("r", "n"))
 """
 
 
@@ -568,11 +582,10 @@ def second(rows, name):
 """
 
 SAME_MODULE_CHECK = """
-from unittest import mock
 import m
 
-with mock.patch("m.len", lambda value: 100):
-    print(m.first([1, 2], "ab"), m.second([1, 2], "ab"))
+m.len = lambda value: 100
+print(m.first([1, 2], "ab"), m.second([1, 2], "ab"))
 """
 
 
@@ -586,3 +599,64 @@ def test_a_same_module_helper_is_unchanged_by_a_patch_of_its_module(tmp_path: Pa
     helpers = [f for name, f in module_functions(final).items() if name.startswith("__extracted")]
     assert [argument.arg for argument in helpers[0].args.args] == ["name", "rows"]
     assert _run(after, "check.py") == _run(before, "check.py")
+
+
+@pytest.mark.parametrize("case", sorted(REFLECTIVE_PATCHES))
+def test_reflective_patching_does_not_refuse_extraction(tmp_path: Path, case: str) -> None:
+    project = tmp_path / "proj"
+    _write(project, _project(extra={"tests/test_exports.py": REFLECTIVE_PATCHES[case]}))
+    applied, declined = _refactor(project)
+    assert applied > 0
+    assert "builtin_may_differ_by_module" not in declined
+
+
+REFLECTIVE_PRELUDES = {
+    "globals_subscript": 'globals()["len"] = lambda item: 7',
+    "vars_subscript": 'vars()["len"] = lambda item: 7',
+    "globals_update": "globals().update(len=lambda item: 7)",
+    "globals_handed_on": "def install(namespace):\n"
+    "    namespace['len'] = lambda item: 7\n"
+    "\n"
+    "\n"
+    "install(globals())",
+    "setattr_of_its_own_module": "import sys\n"
+    'setattr(sys.modules[__name__], "len", lambda item: 7)',
+    "exec_of_code": 'exec("len = lambda item: 7")',
+}
+
+
+@pytest.mark.parametrize("case", sorted(REFLECTIVE_PRELUDES))
+def test_reflection_in_a_participating_module_does_not_refuse_extraction(
+    tmp_path: Path, case: str
+) -> None:
+    project = tmp_path / "proj"
+    _write(project, _project(REFLECTIVE_PRELUDES[case]))
+    applied, declined = _refactor(project)
+    assert applied > 0
+    assert "builtin_may_differ_by_module" not in declined
+
+
+def test_reflection_operations_do_not_trigger_the_namespace_parser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from towel.unification import namespace_writes
+
+    _write(
+        tmp_path,
+        {
+            "reflection.py": "import pkg.mod\n"
+            "globals().update(len=f)\n"
+            "exec(code)\n"
+            "mock.patch(target, f)\n"
+            "setattr(pkg.mod, 'len', f)\n"
+            "pkg.mod.__dict__['len'] = f\n",
+        },
+    )
+
+    def unexpected_parse(source: object, *, filename: str) -> ast.Module:
+        raise AssertionError(f"reflection-only input reached parser: {filename}")
+
+    monkeypatch.setattr(namespace_writes, "parse_analysis_source", unexpected_parse)
+    writes = namespace_writes.scan_project_writes(tmp_path)
+    assert writes.complete
+    assert not writes.by_path and not writes.by_name

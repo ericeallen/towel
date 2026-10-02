@@ -125,8 +125,11 @@ for measured workloads and their conditions.
 ## Checks and limitations
 
 Towel checks proposed transformations within a documented Python model.
-Dynamic reflection, source or stack inspection, and other observations outside
-that model can distinguish the result. Review the
+Reflection and source, AST, bytecode, frame or namespace inspection are outside
+its preservation guarantee, as is instrumentation that uses them to transform
+functions or classes. Towel does not scan for these behaviors or refuse code to
+protect them; decorators, ordinary calls and hooks have the same boundary.
+Review the
 [known limitations](https://github.com/ericeallen/towel/blob/v1.792/docs/KNOWN_LIMITATIONS.md)
 and run your tests before adopting changes.
 

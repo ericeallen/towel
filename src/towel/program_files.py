@@ -15,29 +15,25 @@
 """The files of the program that Towel reads whole, and the refusal when one does not parse here.
 
 Some of Towel's checks read the whole program, not only the code being
-refactored, for what could make a change unsafe: a decorator applied by hand
-(``decorator_reach``), a builtin patched into a module (``namespace_writes``),
-a module whose asserts pytest rewrites (``assert_rewriting``). Each reads the
+refactored, for ordinary binding and import dependencies. Each reads the
 files :func:`program_files` yields, so each leaves out the same directories.
 
-A file one of them cannot parse was once skipped as a file that cannot run.
-It can run, on a newer Python. A project that requires 3.12 may hold a PEP 701
-f-string, which 3.11 rejects. Towel on 3.11 then missed the hand-applied
-decorator beside it, and a function it moved code out of computed something
-else. So a run refuses before anything is written when a file of the program
-does not parse on the interpreter Towel runs on
-(:func:`refuse_unparsed_program`). The refusal names each file and the
-parser's complaint, and gives two remedies: run Towel on a Python that parses
-it, or, if it is not meant to run, such as deliberately invalid test data,
-``--exclude`` it, by its own name or its directory's. Each scan refuses in
-the same words if it meets such a file itself (:func:`refuse_unparsed_file`).
+A file one of them cannot parse may run on a newer Python. Skipping it can
+hide ordinary module assignments and imports. A run therefore refuses before
+anything is written when a file of the program does not parse on the
+interpreter Towel runs on (:func:`refuse_unparsed_program`). The refusal names
+each file and the parser's complaint, and gives two remedies: run Towel on a
+Python that parses it, or, if it is not meant to run, such as deliberately
+invalid test data, ``--exclude`` it, by its own name or its directory's. Each
+scan refuses in the same words if it meets such a file itself
+(:func:`refuse_unparsed_file`).
 Only the parse depends on the Python version: a file that does not decode in
 its declared encoding runs on no Python, and is left alone, as one that
 cannot be read is.
 
 ``--exclude`` means "do not refactor these", and a file it names is still
 read by every scan, as evidence: a test suite excluded to keep it unchanged
-still declines a change its ``mock.patch`` would notice. Only a file that is
+still contributes evidence about ordinary module assignments. Only a file that is
 both excluded and does not parse here is taken at the user's word as no part
 of the program (:func:`excluded_by`).
 """

@@ -172,12 +172,15 @@ def test_module_rename_may_use_unreferenced_builtin_spelling(tmp_path: Path) -> 
         ("namespace = globals\n", "namespace()"),
     ],
 )
-def test_aliased_global_reflection_prevents_rename(
+def test_aliased_global_reflection_is_outside_the_rename_contract(
     tmp_path: Path, prefix: str, lookup: str
 ) -> None:
     _project(tmp_path, {"main.py": prefix + HELPER + f'print({lookup}["__extracted_func_0"](3))\n'})
-    with pytest.raises(ValueError, match="Dynamic"):
-        plan_renames(tmp_path, [("__extracted_func_0", "fresh", None)])
+    plan, _ = plan_renames(tmp_path, [("__extracted_func_0", "fresh", None)])
+    apply_changes(plan)
+    updated = (tmp_path / "main.py").read_text()
+    assert "def fresh(" in updated
+    assert f'{lookup}["__extracted_func_0"]' in updated
 
 
 @pytest.mark.parametrize(
@@ -188,7 +191,7 @@ def test_aliased_global_reflection_prevents_rename(
         ("lookup, unused = getattr, None\n", "lookup"),
     ],
 )
-def test_aliased_method_reflection_prevents_rename(
+def test_aliased_method_reflection_is_outside_the_rename_contract(
     tmp_path: Path, prefix: str, lookup: str
 ) -> None:
     _project(
@@ -199,8 +202,11 @@ def test_aliased_method_reflection_prevents_rename(
             + f'print({lookup}(A(), "_extracted_func_0")())\n'
         },
     )
-    with pytest.raises(ValueError, match="referenced by name"):
-        plan_renames(tmp_path, [("_extracted_func_0", "fresh", None)])
+    plan, _ = plan_renames(tmp_path, [("_extracted_func_0", "fresh", None)])
+    apply_changes(plan)
+    updated = (tmp_path / "main.py").read_text()
+    assert "def fresh(self):" in updated
+    assert f'{lookup}(A(), "_extracted_func_0")' in updated
 
 
 @pytest.mark.parametrize("new", ["__len__", "__iter__", "__getattr__"])
@@ -219,7 +225,7 @@ def test_method_rename_cannot_introduce_protocol_behavior(tmp_path: Path, new: s
         ("from builtins import locals as namespace\n", "namespace()"),
     ],
 )
-def test_parameter_rename_refuses_local_namespace_observation(
+def test_parameter_reflection_is_outside_the_rename_contract(
     tmp_path: Path, prefix: str, lookup: str
 ) -> None:
     _project(
@@ -229,8 +235,27 @@ def test_parameter_rename_refuses_local_namespace_observation(
             + f'def __extracted_func_0(__param_0):\n    return {lookup}["__param_0"]\n'
         },
     )
-    with pytest.raises(ValueError, match="Dynamic"):
+    plan, _ = plan_renames(tmp_path, [("__extracted_func_0.__param_0", "value", None)])
+    apply_changes(plan)
+    updated = (tmp_path / "main.py").read_text()
+    assert "def __extracted_func_0(value):" in updated
+    assert f'{lookup}["__param_0"]' in updated
+
+
+def test_wrapper_keyword_interface_still_prevents_parameter_rename(tmp_path: Path) -> None:
+    """A decorator may return a callable whose keyword interface is independent of its input."""
+    source = (
+        "def decorate(function):\n"
+        "    def wrapper(__param_0):\n"
+        "        return function(__param_0)\n"
+        "    return wrapper\n\n"
+        "@decorate\n" + HELPER + "print(__extracted_func_0(__param_0=3))\n"
+    )
+    _project(tmp_path, {"main.py": source})
+    assert _run(tmp_path) == "4\n"
+    with pytest.raises(ValueError, match="Decorated callable"):
         plan_renames(tmp_path, [("__extracted_func_0.__param_0", "value", None)])
+    assert (tmp_path / "main.py").read_text() == source
 
 
 def test_method_rename_cannot_remove_protocol_behavior(tmp_path: Path) -> None:

@@ -7,9 +7,9 @@ was made, what it rules out, and why. An entry is not rewritten when it is
 superseded; a later entry says so. Where an entry's consequences are still
 being implemented, its status line says which.
 
-The owner's standing rule frames all of them: a transformation that changes
-what a program does is unsound, however rarely it triggers, and "rarely" is
-not a defence. Declining is acceptable only where no sound transformation
+The owner's standing rule frames all of them: within the preservation
+contract, a transformation that changes what a program does is unsound,
+however rarely it triggers, and "rarely" is not a defence. Declining is acceptable only where no sound transformation
 exists; a decline that exists only because Towel lost information of its own
 is a defect to fix, not a limitation to document.
 
@@ -19,7 +19,7 @@ is a defect to fix, not a limitation to document.
 - [Same-class helpers](#2026-09-22-a-method-helper-lives-in-the-class-that-holds-both-duplicates) · [Class design](#2026-09-22-towel-does-not-change-externally-visible-class-design)
 - [Import names](#2026-09-22-import-names-come-from-the-program) · [Cross-module opt-in](#2026-09-23-cross-module-extraction-is-opt-in) · [Import refusals](#2026-09-24-an-import-problem-refuses-only-when-it-leaves-a-name-in-doubt)
 - [Typed baselines](#2026-09-23-a-typed-run-compares-against-its-baseline) · [Error accounting](#2026-09-24-an-error-is-accounted-for-by-the-originals-error-where-it-stood)
-- [Reflection boundary](#2026-09-26-class-private-extraction-follows-the-reflection-boundary) · [Body instrumentation](#2026-09-27-supported-body-instrumentation-is-protected-regardless-of-syntax)
+- [Current reflection and instrumentation boundary](#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract) · [Earlier class-private boundary](#2026-09-26-class-private-extraction-follows-the-reflection-boundary) · [Superseded instrumentation exception](#2026-09-27-supported-body-instrumentation-is-protected-regardless-of-syntax)
 - [Caller-side refinements](#2026-09-27-keep-caller-side-refinements-at-the-call-site) · [Typed performance](#2026-09-27-construction-changes-must-speed-up-typed-extraction)
 - [Unreadable input](#2026-09-25-a-file-that-does-not-parse-refuses-the-run) · [Scope constraints](#2026-09-27-recover-valid-blocks-without-moving-unrelated-scope-constraints)
 - [Complete preview and helper inputs](#complete-preview-and-generated-helper-inputs-september-27-2026) · [Annotation evaluation](#generated-annotations-must-not-add-evaluation-september-27-2026)
@@ -758,6 +758,9 @@ every commit, and each audit spends its time on new ground.
 
 ## 2026-09-24: Code under a decorator moves only if the decorator leaves bodies alone
 
+*Historical decision: the October 2 decision below retires this allowlist and
+the reflection/instrumentation protections it supplied.*
+
 Round 3 found Towel moving code out of functions whose decorator rewrites
 the body. typeguard's `@typechecked` recompiles a function from its source
 with checks added, so the moved code lost its checks, and a call that had
@@ -1044,6 +1047,10 @@ call along its chain, `f = outer(inner(f))` included.
 
 ## 2026-09-26: Class-private extraction follows the reflection boundary
 
+*The October 2 decision below supersedes this entry's remaining exception for
+explicit body-transforming decorators; ordinary method/interface constraints
+remain in force.*
+
 A method helper stays private to the one class containing its call sites.
 Its hygienic, mangled name protects it from accidental overrides; inspecting
 ancestors cannot establish that property for arbitrary future subclasses.
@@ -1079,6 +1086,10 @@ memoizing repeated pure analysis with immutable results and bounded lifetime.
 *Status: implemented on the post-1.772 branch.*
 
 ## 2026-09-27: Supported body instrumentation is protected regardless of syntax
+
+*Historical decision: superseded by the October 2 decision below. The
+implementation and regression results recorded here describe this earlier
+contract, not the current guarantee.*
 
 The owner approved one preservation rule for recognized body-transforming
 instrumentation: when Towel establishes that an instrumenter reaches the
@@ -1360,3 +1371,46 @@ They also preserve checker precision and source-AST immutability. String
 annotations are a deliberate safety property here, not a reason to weaken
 the type assertions, refuse an otherwise valid extraction, or restore bare
 compound spelling merely to match an older textual expectation.
+
+
+## 2026-10-02: Reflection and self-instrumentation are outside the preservation contract
+
+The owner explicitly removed any check or guarantee protecting programs that
+perform reflection or directly instrument their own class structure. This
+supersedes the September 27 exception for supported body instrumentation and
+the earlier special protections for source readers, frame inspection and body
+transformers. The earlier decisions and their validation results remain a
+record of the contracts and implementations tested at those dates.
+
+Towel does not preserve observations of source, ASTs, bytecode, frames,
+tracebacks, namespace membership or generated helper structure. Nor does it
+preserve instrumentation that uses those observations to compile, rewrite,
+wrap or register functions or classes. Applying the transformation with
+`@deco`, `f = deco(f)`, an import hook, a metaclass or an executed construction
+hook does not change this boundary. Recognized libraries receive no exception:
+typeguard and numba body transformations, inline-snapshot's call-site source
+reading and pytest's assertion rewriting are examples of excluded behavior.
+
+This is an exclusion from the guarantee, not a requirement to detect reflection
+and refuse the program. Remove the project-wide instrumentation flow, body
+transformer allowlists, source-reader exceptions and reflection-only guards
+and warnings, including namespace-dictionary and patch-API scans. Ordinary
+lexical bindings and direct imported-module attribute assignments remain
+subject to binding checks. A program using these features may receive extractions whose
+reflective behavior differs; callers must decide whether those changes suit
+their program.
+
+Ordinary calls, decorators and hooks remain subject to the normal correctness
+rules for behavior that does not depend on reflection or instrumentation.
+Preserve ordinary evaluation order and effects, lexical binding, control flow,
+receiver behavior, existing interfaces and Protocol requirements. The presence
+of a decorator or hook alone is neither a promise of reflective compatibility
+nor a reason to refuse extraction. Checks needed for those ordinary semantics
+must be justified on that basis, rather than as a disguised reflection scan.
+Source-location requirements of external type and build tools remain separate:
+TypeVar, Literal and cast analysis and Babel catalog extraction still constrain
+where source may move.
+
+*Status: owner-approved scope for the October 2 performance follow-up;
+implementation and validation are recorded separately from the earlier release
+checkpoints.*

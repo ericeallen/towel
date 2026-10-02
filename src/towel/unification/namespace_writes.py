@@ -12,51 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Where a program may bind a builtin's name in one of its own modules.
+"""Ordinary bindings that can change a builtin lookup in a borrowed helper.
 
-A bare name in a function is looked up in the function's module, then in the
-builtins. A helper one module borrows from another reads a builtin in the
-host's namespace where the block it replaced read the borrower's, so the two
-are the same lookup only while neither module holds the name. No helper takes
-a builtin as a parameter, since a call such as ``helper(rows, len)`` would
-surprise every reader; a pair whose moved code reads a builtin one of its
-modules may hold is declined instead. This module gathers the evidence that a
-module may hold one:
+A helper reads bare builtins in its host module. Cross-module extraction must
+therefore retain evidence that a participating module binds that name: lexical
+bindings, ``global`` declarations, star imports, ``__builtins__`` rebinding,
+and direct attribute assignment or deletion on an imported module.
 
-- its own scope binds the name, however conditionally, by a ``def``,
-  ``class``, import or assignment; a function declares it ``global``; one of
-  its star imports reaches it; or it rebinds ``__builtins__``, where every
-  builtin lookup of its functions then goes;
-- code writes into its namespace at run time: ``globals()[...] = ...``, or
-  ``vars()`` and ``locals()`` so used at its top level; a method that writes
-  that dictionary (``globals().update(...)``); ``globals()`` handed to other
-  code; ``setattr(sys.modules[__name__], ...)``; ``exec`` or ``eval`` of code
-  whose names land there;
-- the project's own code, its tests included, patches the name into it:
-  ``mock.patch("pkg.mod.open", ...)`` however ``patch`` is reached, with or
-  without ``create=True``; ``patch.object(mod, "open", ...)``,
-  ``patch.multiple`` and ``patch.dict`` of ``mod.__dict__``; pytest's
-  ``monkeypatch.setattr`` in either form and ``monkeypatch.setitem`` of
-  ``mod.__dict__``; ``setattr(mod, "open", ...)``; and ``mod.open = ...``.
-
-Code refers to a module by a dotted name (a patch target, an absolute import,
-``importlib.import_module``, ``sys.modules[...]``) or by its file (a relative
-import, ``sys.modules[__name__]``). A dotted name reaches a module when it is
-one of the names the module's path gives it below the project root
-(``src.pkg.mod``, ``pkg.mod``, ``mod``), and these include every name the
-program's own imports can give it. A name is read through literals,
-f-strings, ``+`` and names bound once to such a string (``MODULE =
-"pkg.mod"``); a patch target whose module part is computed at run time,
-``"pkg." + name + ".open"``, counts for every module, since it may name any.
-A target computed whole, and a module object reached other than by an
-import, ``importlib.import_module``, ``getattr`` with a spelled name or
-``sys.modules`` (a fixture's return value), are not followed, and what code
-outside the project does is not seen at all.
-
-The decorator analysis (``decorator_reach``) asks the same scan about a
-decorator's name, any name, so it reads every file; each write records the
-file making it, and an attribute store at that file's top level the value it
-assigns.
+Module references follow absolute and relative imports, simple aliases and
+``importlib.import_module`` with a statically spelled module name. Reflection
+through namespace dictionaries, ``sys.modules``, ``getattr``, patch APIs or
+``setattr`` is outside the preservation contract and is not scanned.
 """
 
 from __future__ import annotations
@@ -68,18 +34,15 @@ from pathlib import Path
 from typing import AbstractSet, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
 from typing import Tuple, Union
 
-from ..consumers import MAXIMUM_FILES
 from ..analysis_sources import parse_analysis_source
+from ..consumers import MAXIMUM_FILES
 from ..program_files import program_directories, refuse_unparsed_file
 from .bounded_cache import BoundedCache
 from .builtins import BUILTIN_NAMES
 from .module_bindings import global_bindings
 
 ANY_NAME = "*"
-"""The name of a write that may bind any name: ``setattr(mod, name, value)``, ``exec(code)``."""
-
-ANY_MODULE = "*"
-"""The dotted name of a write into a module computed at run time: ``patch(prefix + ".open")``."""
+"""The unknown name reported when the project is too large to scan whole."""
 
 
 @dataclass(frozen=True)
@@ -90,11 +53,6 @@ class NamespaceWrite:
     """The name written, or :data:`ANY_NAME`."""
     site: str
     """Where, as ``path:line`` below the project root."""
-    writer: Optional[Path] = None
-    """The file making the write, resolved."""
-    value: Optional[ast.expr] = None
-    """What an attribute store in the top-level scope of ``writer`` assigns, the
-    ``value`` of ``mod.name = value``, read there; None for any other write."""
 
 
 _ModuleRef = Union[Path, str]
@@ -103,7 +61,7 @@ _ModuleRef = Union[Path, str]
 
 @dataclass(frozen=True)
 class ProjectWrites:
-    """Every write into a module's namespace that the project's own files make."""
+    """Direct module-attribute writes found in the project's own files."""
 
     root: Path
     by_path: Mapping[Path, Tuple[NamespaceWrite, ...]]
@@ -116,23 +74,8 @@ class ProjectWrites:
         if not self.complete:
             return (NamespaceWrite(ANY_NAME, f"{self.root} is too large to read whole"),)
         found = list(self.by_path.get(module, ()))
-        for name in (*module_names(module, self.root), ANY_MODULE):
+        for name in module_names(module, self.root):
             found.extend(self.by_name.get(name, ()))
-        return tuple(found)
-
-    def into_named(self, dotted: str) -> Tuple[NamespaceWrite, ...]:
-        """The writes that may land in the namespace of the module named ``dotted``, wherever it is.
-
-        For a module outside the project, such as ``functools``: the writes
-        naming it, those into a module computed at run time, and those into
-        any file of the project its path names ``dotted``.
-        """
-        if not self.complete:
-            return (NamespaceWrite(ANY_NAME, f"{self.root} is too large to read whole"),)
-        found = [*self.by_name.get(dotted, ()), *self.by_name.get(ANY_MODULE, ())]
-        for path, writes in self.by_path.items():
-            if dotted in module_names(path, self.root):
-                found.extend(writes)
         return tuple(found)
 
 
@@ -158,35 +101,29 @@ def module_names(module: Path, root: Path) -> FrozenSet[str]:
 
 # -- the project scan ---------------------------------------------------------
 
-# A file that names none of these cannot write into a module's namespace by
-# any form the scan recognizes, so it is not parsed. An attribute store counts
-# only where the attribute is a builtin's name, followed by an assignment, an
-# augmented one, an annotation, or the comma of an unpacking target.
+# A direct store or deletion must mention a builtin attribute. Read-only
+# mentions also pass this conservative gate: punctuation cannot distinguish
+# every valid multiline, parenthesized or unpacking assignment target.
 _MAY_WRITE = re.compile(
-    r"patch|setattr|delattr|setitem|delitem|__dict__|\bvars\b|\bglobals\b|\blocals\b"
-    r"|\bexec\b|\beval\b|\bmodules\b|import_module"
-    r"|\.\s*(?:"
+    r"\.[\s\\]*(?:"
     + "|".join(sorted((re.escape(name) for name in BUILTIN_NAMES if name.isidentifier())))
-    + r")\s*(?:(?:[-+*/%@&|^]|//|\*\*|<<|>>)?=(?!=)|[:,])"
-    + r"|\bdel\b"
+    + r")\b"
 )
 
 
 def scan_project_writes(
-    root: Path, excluded_names: AbstractSet[str] = frozenset(), *, every_file: bool = False
+    root: Path, excluded_names: AbstractSet[str] = frozenset()
 ) -> ProjectWrites:
     """The writes into module namespaces that the Python files under ``root`` make.
 
     It reads the program's files (``program_directories``), those the run
-    excludes included, since a test suite left unchanged still patches what
-    it patches; stubs never run and are not read. A file that does not parse
+    excludes included, since unchanged files can still assign module
+    attributes; stubs never run and are not read. A file that does not parse
     here refuses the run unless ``excluded_names`` names it
     (:func:`_file_writes`). Past the consumer scan's limit the project cannot
     be read whole, and the answer says so rather than claim no write exists.
-    A file is read only when its text names a form of write the builtins'
-    question counts, an attribute store of a builtin's name among them;
-    ``every_file`` reads every file, for a question about any name, such as
-    a decorator's (``decorator_reach``).
+    A file is parsed only when its text mentions a builtin attribute; the
+    AST scanner then distinguishes stores and deletions from read-only uses.
     """
     project = root.resolve()
     by_path: Dict[Path, List[NamespaceWrite]] = {}
@@ -200,9 +137,7 @@ def scan_project_writes(
             if count > MAXIMUM_FILES:
                 return ProjectWrites(project, {}, {}, complete=False)
             path = Path(parent, name)
-            scanned = _file_writes(
-                path, project, None if every_file else _MAY_WRITE, excluded_names
-            )
+            scanned = _file_writes(path, project, excluded_names)
             if scanned is None:
                 continue
             for target, writes in scanned.by_path.items():
@@ -226,13 +161,12 @@ class _FileWrites:
 def _file_writes(
     path: Path,
     root: Path,
-    gate: Optional[re.Pattern[str]],
     excluded_names: AbstractSet[str] = frozenset(),
 ) -> Optional[_FileWrites]:
     """What ``path`` writes into module namespaces; None when it cannot be read or writes nothing.
 
-    A file whose text ``gate`` does not match is not parsed; None parses every
-    file. One that is parsed and does not parse here may run on a newer Python
+    A file whose text has no possible ordinary write is not parsed. One
+    that is parsed and does not parse here may run on a newer Python
     and write there, so it refuses the run, unless the run excludes it; one
     that does not decode runs nowhere, and writes nothing.
     """
@@ -240,7 +174,7 @@ def _file_writes(
         data = path.read_bytes()
     except OSError:
         return None
-    if gate is not None and not gate.search(data.decode("utf-8", errors="replace")):
+    if not _MAY_WRITE.search(data.decode("utf-8", errors="replace")):
         return None
     try:
         tree = parse_analysis_source(data, filename=str(path))
@@ -265,30 +199,14 @@ def _shown(path: Path, root: Path) -> str:
 
 # -- what one file writes -----------------------------------------------------
 
-# Methods of a namespace dictionary that only read it.
-_READING_METHODS = frozenset(
-    {"get", "keys", "values", "items", "copy", "__contains__", "__getitem__", "__len__", "__iter__"}
-)
-# Methods of a namespace dictionary that write it.
-_WRITING_METHODS = frozenset(
-    {"update", "setdefault", "__setitem__", "__ior__", "pop", "popitem", "clear", "__delitem__"}
-)
-# Builtins that only read a dictionary handed to them.
-_READING_CALLEES = frozenset(
-    {"len", "list", "tuple", "set", "frozenset", "sorted", "iter", "reversed", "dict", "repr"}
-    | {"str", "print", "id", "type", "isinstance", "bool", "any", "all", "next", "sum"}
-)
-# Callees that take a dotted target to patch: ``mock.patch``, ``monkeypatch.setattr``.
-_PATCHING_CALLEES = frozenset({"patch", "setattr", "delattr"})
-
 
 class _References:
     """Which expressions of one file denote a module, and which spell a string, found statically.
 
     Every import binds, whatever scope it is in, and so does a plain
-    assignment of a module reference (``mod = importlib.import_module(...)``,
-    ``me = sys.modules[__name__]``): a name bound to a module anywhere may be
-    one wherever it is read, which can only add evidence. A string is read
+    assignment of a module reference (``mod = importlib.import_module(...)``):
+    a name bound to a module anywhere may be one wherever it is read, which
+    can only add evidence. A string is read
     through literals, f-strings and ``+``, and through a name the file binds
     once, to such a string (``MODULE = "pkg.mod"``).
     """
@@ -339,16 +257,6 @@ class _References:
         parts = _string_parts(node, self._strings)
         return None if None in parts else "".join(part or "" for part in parts)
 
-    def tail(self, node: ast.expr) -> str:
-        """The known end of the string ``node`` spells, after its last part computed at run time."""
-        parts = _string_parts(node, self._strings)
-        known: List[str] = []
-        for part in reversed(parts):
-            if part is None:
-                break
-            known.append(part)
-        return "".join(reversed(known))
-
     def of(self, node: ast.expr) -> FrozenSet[_ModuleRef]:
         """The modules ``node`` may denote; empty when it denotes none that is known."""
         if isinstance(node, ast.Name):
@@ -357,47 +265,16 @@ class _References:
             return frozenset(
                 reached for ref in self.of(node.value) for reached in _attribute(ref, node.attr)
             )
-        if isinstance(node, ast.Subscript) and "sys.modules" in self.of(node.value):
-            return self._named(node.slice)
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "getattr"
-            and len(node.args) >= 2
-        ):
-            attribute = self.text(node.args[1])
-            if attribute is None or not attribute.isidentifier():
-                return frozenset()
-            return frozenset(
-                reached for ref in self.of(node.args[0]) for reached in _attribute(ref, attribute)
-            )
         if isinstance(node, ast.Call) and node.args:
             callee = self.of(node.func)
             if "importlib.import_module" in callee:
                 return self._named(node.args[0])
-            if (
-                isinstance(node.func, ast.Attribute)
-                and node.func.attr == "get"
-                and "sys.modules" in self.of(node.func.value)
-            ):
-                return self._named(node.args[0])
         return frozenset()
 
     def _named(self, node: ast.expr) -> FrozenSet[_ModuleRef]:
-        """The module a ``sys.modules`` key or an ``import_module`` argument names."""
+        """The module a statically spelled ``import_module`` argument names."""
         text = self.text(node)
-        if text is not None:
-            return frozenset({text})
-        if isinstance(node, ast.Name) and node.id == "__name__":
-            return frozenset({self._path})
-        if (
-            isinstance(node, ast.Attribute)
-            and node.attr == "name"
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "__spec__"
-        ):
-            return frozenset({self._path})
-        return frozenset()
+        return frozenset({text}) if text is not None else frozenset()
 
 
 def _string_parts(node: ast.expr, strings: Mapping[str, str]) -> List[Optional[str]]:
@@ -478,219 +355,55 @@ class _WriteScanner(ast.NodeVisitor):
     """Collects the writes one file makes into module namespaces, its own included."""
 
     def __init__(self, path: Path, tree: ast.Module, shown: str) -> None:
-        self._path = path
         self._shown = shown
-        # These indexes read the same immutable tree. Share its traversal only
-        # while constructing this scanner, rather than walking every file five
-        # times or retaining whole project trees in a process-wide cache.
-        nodes = tuple(ast.walk(tree))
-        self._references = _References(path, nodes)
-        self._parents: Dict[ast.AST, ast.AST] = {
-            child: parent for parent in nodes for child in ast.iter_child_nodes(parent)
-        }
-        self._nesting = 0
+        self._references = _References(path, tuple(ast.walk(tree)))
         self.by_path: Dict[Path, List[NamespaceWrite]] = {}
         self.by_name: Dict[str, List[NamespaceWrite]] = {}
-
-    # -- scopes: ``vars()`` and ``locals()`` are the module's only at its top level
-
-    def _nested(self, node: ast.AST) -> None:
-        self._nesting += 1
-        self.generic_visit(node)
-        self._nesting -= 1
-
-    visit_FunctionDef = visit_AsyncFunctionDef = visit_Lambda = visit_ClassDef = _nested
 
     # -- stores -------------------------------------------------------------
 
     def visit_Assign(self, node: ast.Assign) -> None:
         for target in node.targets:
-            self._store(target, node.value)
+            self._store(target)
         self.generic_visit(node)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
-        self._store(node.target, None)
+        self._store(node.target)
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         if node.value is not None:
-            self._store(node.target, node.value)
+            self._store(node.target)
         self.generic_visit(node)
 
     def visit_Delete(self, node: ast.Delete) -> None:
         for target in node.targets:
-            self._store(target, None)
+            self._store(target)
         self.generic_visit(node)
 
-    def _store(self, target: ast.expr, value: Optional[ast.expr]) -> None:
-        """``mod.open = ...`` and ``mod.__dict__["open"] = ...``, inside unpacking too.
-
-        ``value`` is what the store assigns, kept only for an attribute store
-        of its own in the file's top-level scope, where it can be read.
-        """
+    def _store(self, target: ast.expr) -> None:
+        """Direct module attribute stores and deletes, including unpacking."""
         if isinstance(target, (ast.Tuple, ast.List)):
             for element in target.elts:
-                self._store(element, None)
+                self._store(element)
         elif isinstance(target, ast.Starred):
-            self._store(target.value, None)
+            self._store(target.value)
         elif isinstance(target, ast.Attribute):
-            kept = value if self._nesting == 0 else None
-            self._record(self._references.of(target.value), [target.attr], target, kept)
-        elif isinstance(target, ast.Subscript):
-            self._record(self._namespaces(target.value), [_name_of(target.slice)], target)
-
-    # -- calls --------------------------------------------------------------
-
-    def visit_Call(self, node: ast.Call) -> None:
-        callee = _callee(node.func)
-        first = node.args[0] if node.args else None
-        text = self._references.text(first) if first is not None else None
-        if text is not None:
-            self._dotted_target(node, callee, text)
-        elif first is not None:
-            if callee in _PATCHING_CALLEES:
-                # A target whose module part is computed (``"pkg." + name + ".open"``)
-                # may name any module; the attribute it spells is written there.
-                tail = self._references.tail(first)
-                attribute = tail.rpartition(".")[2]
-                if "." in tail and attribute.isidentifier():
-                    self._record({ANY_MODULE}, [attribute], node)
-            modules = self._references.of(first)
-            if callee in {"object", "setattr", "delattr"}:
-                second = node.args[1] if len(node.args) > 1 else None
-                self._record(modules, [_name_of(second)], node)
-            elif callee == "multiple":
-                self._record(modules, _keyword_names(node.keywords), node)
-            if callee in {"setitem", "delitem", "dict"}:
-                self._record(
-                    self._namespaces(first), _dictionary_names(node.args[1:], node.keywords), node
-                )
-        if isinstance(node.func, ast.Attribute) and node.func.attr in _WRITING_METHODS:
-            self._record(self._namespaces(node.func.value), _method_names(node), node)
-        if callee in {"exec", "eval"} and isinstance(node.func, ast.Name):
-            # The code runs in the namespace given, else in the caller's
-            # globals, which a ``global`` statement in it writes.
-            namespaces = (
-                self._namespaces(node.args[1]) if len(node.args) > 1 else frozenset({self._path})
-            )
-            self._record(namespaces, [ANY_NAME], node)
-        if self._own_namespace(node) and self._handed_on(node):
-            self._record({self._path}, [ANY_NAME], node)
-        self.generic_visit(node)
-
-    def _dotted_target(self, node: ast.Call, callee: Optional[str], target: str) -> None:
-        """A string naming a module attribute: ``patch("pkg.mod.open")``, ``setattr("pkg.mod.open", v)``."""
-        if callee == "multiple":
-            self._record({target}, _keyword_names(node.keywords), node)
-        module, _, attribute = target.rpartition(".")
-        if not module:
-            return
-        if attribute == "__dict__":
-            self._record({module}, _dictionary_names(node.args[1:], node.keywords), node)
-        elif attribute.isidentifier():
-            self._record({module}, [attribute], node)
-
-    def _own_namespace(self, node: ast.expr) -> bool:
-        """Whether ``node`` is this module's namespace: ``globals()``, or ``vars()``/``locals()`` at its top."""
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
-            return False
-        if node.args or node.keywords:
-            return False
-        return node.func.id == "globals" or (
-            node.func.id in {"vars", "locals"} and self._nesting == 0
-        )
-
-    def _namespaces(self, node: ast.expr) -> FrozenSet[_ModuleRef]:
-        """The modules whose namespace dictionary ``node`` is."""
-        if self._own_namespace(node):
-            return frozenset({self._path})
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "vars"
-            and len(node.args) == 1
-        ):
-            return self._references.of(node.args[0])
-        if isinstance(node, ast.Attribute) and node.attr == "__dict__":
-            return self._references.of(node.value)
-        return frozenset()
-
-    def _handed_on(self, namespace: ast.Call) -> bool:
-        """Whether this module's namespace dictionary reaches code that may write it.
-
-        Subscripting it, testing membership, calling a method of it, looping
-        over it or giving it to a builtin that only reads are not; a store or
-        a writing method is recorded where it happens. Anything else, an
-        assignment, an argument, a return, passes the dictionary on.
-        """
-        parent = self._parents.get(namespace)
-        if isinstance(parent, (ast.Subscript, ast.Compare)):
-            return False
-        if isinstance(parent, ast.Attribute):
-            return parent.attr not in _READING_METHODS | _WRITING_METHODS
-        if isinstance(parent, (ast.For, ast.AsyncFor, ast.comprehension)):
-            return parent.iter is not namespace
-        if isinstance(parent, ast.Call) and namespace in parent.args:
-            return _callee(parent.func) not in _READING_CALLEES
-        return True
+            self._record(self._references.of(target.value), [target.attr], target)
 
     def _record(
         self,
         modules: Iterable[_ModuleRef],
         names: Sequence[str],
         node: ast.AST,
-        value: Optional[ast.expr] = None,
     ) -> None:
         site = f"{self._shown}:{getattr(node, 'lineno', 0)}"
-        writes = [NamespaceWrite(name, site, self._path, value) for name in names]
+        writes = [NamespaceWrite(name, site) for name in names]
         for module in modules:
             if isinstance(module, Path):
                 self.by_path.setdefault(module, []).extend(writes)
             else:
                 self.by_name.setdefault(module, []).extend(writes)
-
-
-def _callee(func: ast.expr) -> Optional[str]:
-    """The last identifier of a callee: ``patch`` of ``mock.patch``, ``object`` of ``patch.object``."""
-    if isinstance(func, ast.Attribute):
-        return func.attr
-    if isinstance(func, ast.Name):
-        return func.id
-    return None
-
-
-def _name_of(node: Optional[ast.expr]) -> str:
-    """The name a key or attribute argument spells, or :data:`ANY_NAME`."""
-    if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.isidentifier():
-        return node.value
-    return ANY_NAME
-
-
-def _keyword_names(keywords: Sequence[ast.keyword]) -> List[str]:
-    return [keyword.arg or ANY_NAME for keyword in keywords]
-
-
-def _dictionary_names(arguments: Sequence[ast.expr], keywords: Sequence[ast.keyword]) -> List[str]:
-    """The keys a ``setitem``, ``patch.dict`` or ``update`` puts: a key, a literal's keys, keywords."""
-    names = _keyword_names(keywords)
-    if not arguments:
-        return names
-    first = arguments[0]
-    if isinstance(first, ast.Dict):
-        names.extend(_name_of(key) if key is not None else ANY_NAME for key in first.keys)
-    else:
-        names.append(_name_of(first))
-    return names
-
-
-def _method_names(call: ast.Call) -> List[str]:
-    """The keys a namespace dictionary's writing method may put or remove."""
-    assert isinstance(call.func, ast.Attribute)
-    if call.func.attr in {"update", "__ior__"}:
-        return _dictionary_names(call.args, call.keywords)
-    if call.func.attr in {"popitem", "clear"}:
-        return [ANY_NAME]
-    return [_name_of(call.args[0] if call.args else None)]
 
 
 # -- what a module's own statements bind --------------------------------------
@@ -823,21 +536,14 @@ def _exports(
     module: Path,
     root: Path,
     reading: FrozenSet[Path],
-    at_run_time: Optional[ProjectWrites] = None,
 ) -> Optional[FrozenSet[str]]:
     """The names ``from module import *`` binds; None when any name may be among them.
 
     A literal ``__all__`` says; without one, every name of the module's own
     scope not starting with an underscore, every name a function declares
     ``global``, and what its own star imports bind. A module that does not
-    parse, builds ``__all__``, writes its namespace at run time, or takes
-    part in a star-import cycle may bind anything.
-
-    ``at_run_time`` asks what the import may bind whenever it runs, with the
-    project's writes: every name they write into the module counts as its
-    own, and a literal ``__all__`` adds to the module's names rather than
-    replacing them, since a module imported part way through an import cycle
-    may not have bound it yet, and then exports what it has bound so far.
+    parse, builds ``__all__`` dynamically or takes part in a star-import
+    cycle may bind anything. Reflective writes are not included.
     """
     source = _read(module)
     tree = _parsed(source) if source is not None else None
@@ -845,20 +551,18 @@ def _exports(
     if tree is None or table is None or module in reading:
         return None
     declared = _declared_all(tree)
-    if declared is None or (declared is not _NO_ALL and at_run_time is None):
+    if declared is not _NO_ALL:
         return declared
     scanner = _WriteScanner(module, tree, str(module))
     scanner.visit(tree)
-    writes = [*scanner.by_path.get(module, ()), *(at_run_time.into(module) if at_run_time else ())]
-    written = {write.name for write in writes}
-    if ANY_NAME in written:
-        return None
+    written = {write.name for write in scanner.by_path.get(module, ())}
+    written.update(
+        write.name for name in module_names(module, root) for write in scanner.by_name.get(name, ())
+    )
     names = {name for name in table.bindings if not name.startswith("_")}
     names |= table.rebound_by_global | written
-    if declared is not _NO_ALL:
-        names |= declared
     for statement in star_imports(tree):
-        reached = star_bindings(module, statement, root, reading | {module}, at_run_time)
+        reached = star_bindings(module, statement, root, reading | {module})
         if reached is None:
             return None
         names |= reached
@@ -870,21 +574,19 @@ def star_bindings(
     statement: ast.ImportFrom,
     root: Path,
     reading: FrozenSet[Path] = frozenset(),
-    at_run_time: Optional[ProjectWrites] = None,
 ) -> Optional[FrozenSet[str]]:
     """The names a star import binds in ``importer``; None when it may bind any name.
 
     A source outside the project, or one not found, may bind anything.
     ``reading`` holds the modules whose exports are being read, so a star
-    import reaching one of them closes a cycle; ``at_run_time`` is
-    :func:`_exports`'s.
+    import reaching one of them closes a cycle.
     """
     sources = _star_sources(importer, statement, root)
     if not sources:
         return None
     names: Set[str] = set()
     for source in sources:
-        exported = _exports(source, root, reading, at_run_time)
+        exported = _exports(source, root, reading)
         if exported is None:
             return None
         names |= exported

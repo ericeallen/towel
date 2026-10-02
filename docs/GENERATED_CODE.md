@@ -179,12 +179,12 @@ into the helper. The result must reproduce the original block up to renamed
 binders. Separate checks cover name binding, control flow and evaluation order.
 The original Python operators are preserved.
 
-Generator and suspension operations, frame-sensitive calls such as `locals()`,
-static local import cycles and cross-module global declarations are
+Generator and suspension operations, static local import cycles and
+cross-module global declarations are
 conservatively rejected. Nested blocks that bind names needed outside the
 block are rejected where full control-flow liveness is not supported.
-Detected namespace rebinding, frame inspection and comprehension assignment
-expressions also rule out affected candidates.
+Lexical binding conflicts and comprehension assignment expressions also rule
+out affected candidates.
 
 Every engine owns a bounded analysis session with content checks and isolated
 AST snapshots. An engine instance and the test import-isolation harness each
@@ -197,24 +197,19 @@ the diff and run your own tests before adopting it.
 
 ## Decorators, instrumentation and reflection
 
-Moving code out of a function can bypass a decorator that compiles or
-instruments its body. Towel protects recognized body-transforming
-instrumentation whether it is applied with `@`, an ordinary call such as
-`fast = njit(kernel)`, stacked calls, or a recognized class hook.
+Moving code into a helper changes the source and structure seen by reflection
+and instrumentation. Towel offers no preservation guarantee for source, AST,
+bytecode, frame or namespace inspection, or for instrumentation that compiles,
+rewrites or wraps functions and classes using that information. This applies
+uniformly to explicit decorators, ordinary calls, import hooks and class hooks.
 
-Extraction requires decorators on the function and enclosing functions or
-classes to be known to leave the body alone. Known cases include selected
-standard-library, pytest and Click decorators, and project decorators whose
-source shows that they only wrap or register the function. Unknown cases are
-declined under the decorator's name. Cross-module rebinding can prevent a
-binding from being treated as known.
+There is no body-instrumentation allowlist or special refusal protecting these
+behaviors. Code under typeguard or numba, inline-snapshot calls and assertions
+subject to pytest rewriting may move. The resulting instrumentation, source
+observations or diagnostic text may differ. Ordinary nonreflective decorator
+behavior, receiver semantics and effects remain within the usual checks.
 
-A metaclass or lookup hook alone does not forbid class-private extraction.
-Observations of an added helper, class-namespace scans, lookup logging and
-stack depth fall under the explicit reflection limitation. This boundary does
-not allow recognized body instrumentation to be bypassed.
-
-Source-sensitive calls, such as inline-snapshot's `snapshot()`, stay where
-they stand. An `assert` moves across modules only when pytest rewrites both
-modules alike. The [reflection and instrumentation reference](KNOWN_LIMITATIONS.md#reflection-over-a-namespace-and-stack-depth)
-explains these distinctions.
+A private helper avoids accidental overrides; it does not hide a new name from
+namespace scans or preserve lookup logging or stack depth. See the
+[reflection and instrumentation reference](KNOWN_LIMITATIONS.md#reflection-over-a-namespace-and-stack-depth)
+and the [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract).

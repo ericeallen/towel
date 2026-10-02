@@ -19,8 +19,7 @@ directory loop analyzes the whole project, applies the best proposal,
 re-analyzes the files it rewrote for localized follow-ups, and when that
 queue drains re-pairs changed files and previously declined proposals.
 An unchanged project with only declined proposals is a fixed point.
-The run stops there or when the iteration bound is reached. Before a run, modules that
-inspect their own frames are named in a warning. Progress follows the
+The run stops there or when the iteration bound is reached. Progress follows the
 progress mode: ``tqdm`` (a bar when tqdm is installed; without it a warning
 once per process, an inline bar on stderr for the pairing loop and none for
 the apply phase), ``auto`` (the tqdm bar, or an inline bar on stderr for
@@ -80,7 +79,6 @@ from .progress import (
     render_inline_bar,
     wants_bar,
 )
-from .semantic_safety import frame_sensitivity_markers
 from towel.changes import ChangePlan, StaleSource, apply_changes
 from ..consumers import MAXIMUM_FILES
 from ..diagnostics import LOG, OVERLAP, REJECTIONS, TYPES, UNIFIER, VALIDATION, debugging
@@ -94,7 +92,7 @@ from ..filesystem import (
 )
 from ..program_files import refuse_unparsed_program
 from ..project_layout import find_project_root
-from ..source_text import UnencodableText, decode_source, encode_like, read_source
+from ..source_text import UnencodableText, decode_source, encode_like
 from ..type_inference import relocate_oracle
 
 from .annotation_wiring import UNTYPED_REMEDY
@@ -344,7 +342,6 @@ class FixedPointDrivers(Materialization):
         analysis_progress: ProgressMode,
     ) -> Tuple[str, int, List[str]]:
         """The single-file loop over ``file_path``, which holds ``current_bytes``."""
-        self._warn_about_frame_sensitive_files(file_path)
         num_applied = 0
         descriptions = []
         rejected = _RejectedProposals()
@@ -502,52 +499,6 @@ class FixedPointDrivers(Materialization):
         if debugging(REJECTIONS):
             REJECTIONS.debug("RENDER FAILED: %s :: %r", proposal.description, error)
 
-    _FRAME_SENSITIVE_DESCRIPTION = {
-        "frame": "inspect call frames",
-        "traceback": "read exception tracebacks",
-        "stacklevel-warning": "attribute warnings to a caller's frame",
-        "source": "read Python source text",
-    }
-
-    def _warn_about_frame_sensitive_files(self, directory: str) -> None:
-        """Warn that some modules observe frames, tracebacks, or their own source.
-
-        Extraction adds a helper frame and shifts line numbers, so a program
-        that reads any of these can observe the change even when the result it
-        computes is unchanged (pluggy attributes a warning through the new
-        frame, lark's standalone tool copies marked source regions, glom and
-        rich assert on rendered tracebacks). The scan names files to review;
-        it is not a proof of breakage, and a callee that inspects frames
-        internally is invisible to it. Emitted on stderr like any diagnostic.
-        """
-        flagged: List[Tuple[str, FrozenSet[str]]] = []
-        for path in self._find_python_files(directory):
-            try:
-                markers = frame_sensitivity_markers(read_source(path))
-            except (OSError, UnicodeError, SyntaxError):
-                # An unreadable file is reported by the analysis that follows.
-                continue
-            if markers:
-                flagged.append((path, markers))
-        if not flagged:
-            return
-        kinds = sorted({m for _path, markers in flagged for m in markers})
-        described = ", ".join(self._FRAME_SENSITIVE_DESCRIPTION.get(k, k) for k in kinds)
-        directory_root = Path(directory)
-        lines = [
-            f"warning: {len(flagged)} module(s) in this project {described}; a "
-            "transformation that adds a helper frame or shifts line numbers may "
-            "change their observable behavior even when it preserves the "
-            "program's result. Review these files' diffs or pass --exclude:"
-        ]
-        for path, markers in sorted(flagged):
-            try:
-                shown = str(Path(path).relative_to(directory_root))
-            except ValueError:
-                shown = path
-            lines.append(f"    {shown} ({', '.join(sorted(markers))})")
-        LOG.warning("\n".join(lines))
-
     def refactor_directory_to_fixed_point(
         self,
         input_dir: str,
@@ -622,7 +573,6 @@ class FixedPointDrivers(Materialization):
         self, directory: Path, reporter: "_ApplyProgress", max_iterations: int
     ) -> Tuple[Dict[str, Tuple[int, List[str]]], TerminationReason]:
         """The directory loop over ``directory``, then the cold confirmation of what it did."""
-        self._warn_about_frame_sensitive_files(str(directory))
 
         run = _DirectoryRun()
         termination_reason: TerminationReason = "fixed_point"

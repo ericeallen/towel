@@ -52,14 +52,6 @@ from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, Froz
 from ..canonical_ast import canonical_dump
 from ..diagnostics import VALIDATION, debugging
 from ..source_text import read_source
-from .assert_rewriting import rewritten_alike
-from .decorator_reach import (
-    Definition,
-    DecoratorRefusal,
-    ModuleSource,
-    class_named,
-    decorator_refusal,
-)
 from .definite_assignment import definitely_bound_after
 from .function_scope import code_names, function_names
 from .statement_facts import bindings_of, loaded_names
@@ -140,7 +132,6 @@ from .import_graph import (
     relative_imports_resolve_alike,
     would_create_import_cycle,
 )
-from .source_readers import calls_source_reader, source_reader_in
 from .splicing import BlockColumns
 from .thunk_inlining import inline_leading_thunks
 from .typing_forms import ModuleText
@@ -704,42 +695,9 @@ class PairEvaluation(
 
     # -- 1 ---------------------------------------------------------------------
 
-    def _decorator_refusal(
-        self,
-        definition: Definition,
-        file_path: str,
-        source: str,
-        analyzer: Optional[ScopeAnalyzer],
-    ) -> Optional[DecoratorRefusal]:
-        """A decorator reaching ``definition`` not known to leave its body alone (``decorator_reach``)."""
-        tree = _analyzed_module(analyzer)
-        if tree is None:
-            return DecoratorRefusal("(no module to resolve it in)", definition.name)
-        return decorator_refusal(
-            definition, ModuleSource(file_path, source, tree), self.import_graph
-        )
-
-    def _reject_decorated(self, pair: CodeBlockPair, refusal: DecoratorRefusal) -> None:
-        self._debug_reject(
-            RejectReason.DECORATOR_MAY_TRANSFORM_BODY,
-            pair,
-            detail=refusal.detail,
-            subject=refusal.decorator,
-        )
-
     def _guard_pair(self, pair: CodeBlockPair, functions: FunctionIndex) -> Optional[_PairSetup]:
         """Reject a pair whose blocks cannot move at all; otherwise resolve their context."""
         ctx = self._resolve_pair_context(pair, functions)
-        # A decorator that compiles or instruments a body would lose the moved
-        # code, or see a call where it saw the code (docs/KNOWN_LIMITATIONS.md).
-        for function, file_path, source, analyzer in (
-            (ctx.func1, pair.file_path, pair.source1, ctx.scope_analyzer),
-            (ctx.func2, pair.file_path2, pair.source2, ctx.scope_analyzer2),
-        ):
-            refusal = self._decorator_refusal(function, file_path, source, analyzer)
-            if refusal is not None:
-                self._reject_decorated(pair, refusal)
-                return None
         blocks = (
             (pair.block1_nodes, ctx.func1, ctx.scope_analyzer, ctx.site1),
             (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, ctx.site2),
@@ -753,15 +711,6 @@ class PairEvaluation(
                 site=site,
             ):
                 self._debug_reject(RejectReason.FRAME_SENSITIVE_BLOCK, pair)
-                return None
-            # A callee that reads the source or position of its call reads the
-            # helper's once the call moves (docs/KNOWN_LIMITATIONS.md).
-            if self._block_rejected(calls_source_reader, nodes, function, analyzer, site=site):
-                self._debug_reject(
-                    RejectReason.SOURCE_READING_CALLEE,
-                    pair,
-                    subject=source_reader_in(analyzer, nodes),
-                )
                 return None
             if self._block_rejected(
                 frame_read_outside_block,
@@ -1576,12 +1525,6 @@ class PairEvaluation(
         """Where the helper lives: a unique enclosing function, a class, or a module that closes no cycle."""
         ctx = setup.ctx
         home = self._helper_home(pair, setup, scope, functions, class_infos)
-        host_refusal = self._host_refusal(pair, home, scope)
-        if host_refusal is not None:
-            # A helper inside a function or class whose decorator instruments
-            # bodies would be instrumented where the code it replaced was not.
-            self._reject_decorated(pair, host_refusal)
-            return None
         if setup.needs_class_body and home.insert_into_class is None:
             # Zero-argument ``super()`` means what it meant only in a helper
             # compiled in the class body that holds both blocks; a module or
@@ -1633,27 +1576,6 @@ class PairEvaluation(
                         return None
         # The cross-module check may move the helper to another file.
         return _Placement(dataclasses.replace(home, file_path=canonical_file), replacements)
-
-    def _host_refusal(
-        self, pair: CodeBlockPair, home: "HelperHome", scope: _HelperScope
-    ) -> Optional[DecoratorRefusal]:
-        """A decorator reaching the function or class the helper goes into, not known to leave it alone.
-
-        A helper placed at module level is reached by none. Hosts are
-        chosen in the pair's first module.
-        """
-        host: Optional[Definition] = None
-        if home.insert_into_function is not None:
-            host = scope.dce_node
-        elif home.insert_into_class is not None:
-            tree = _analyzed_module(pair.scope_analyzer1)
-            host = None if tree is None else class_named(tree, home.insert_into_class)
-        else:
-            return None
-        if host is None:
-            name = home.insert_into_function or home.insert_into_class or "?"
-            return DecoratorRefusal("(host not found)", name)
-        return self._decorator_refusal(host, pair.file_path, pair.source1, pair.scope_analyzer1)
 
     def _helper_home(
         self,
@@ -1714,18 +1636,6 @@ class PairEvaluation(
             return canonical_file
         if any(functions.declares_global(path) for path in participating):
             self._debug_reject(RejectReason.CROSS_MODULE_GLOBAL_DECLARATION, pair)
-            return None
-        # A failing assert pytest rewrote says more than one it did not
-        # (``assert_rewriting``), so the helper's module must be rewritten
-        # exactly as every site's is.
-        if any(
-            isinstance(node, ast.Assert)
-            for statement in pair.block1_nodes
-            for node in ast.walk(statement)
-        ) and not rewritten_alike(
-            sorted(participating), self.import_graph.project_root, self.import_graph.excluded_names
-        ):
-            self._debug_reject(RejectReason.ASSERT_REWRITING_DIFFERS, pair)
             return None
         # The helper runs the template's imports in whichever module hosts
         # it, and every participating module is a candidate host, so each

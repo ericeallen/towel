@@ -307,7 +307,8 @@ def observable_renamings(block: Sequence[ast.stmt], renamed: AbstractSet[str]) -
     """The binders among ``renamed`` whose spelling the running block could observe.
 
     The helper runs a site's block with the template's spelling of the names
-    the block binds. A local's name reaches the program in exactly these ways:
+    the block binds. Within the supported contract, a local's spelling matters
+    in these ways:
 
     - ``UnboundLocalError`` names it when a read, an augmented assignment or
       a ``del`` finds it unbound, and ``NameError`` names it when a closure
@@ -317,14 +318,9 @@ def observable_renamings(block: Sequence[ast.stmt], renamed: AbstractSet[str]) -
       scope that may run while it is unbound, is observable.
     - A ``global`` or ``nonlocal`` declaration makes the name another
       scope's variable, not a spelling: renaming it writes a different one.
-    - A frame (``locals()``, ``vars()``, ``dir()``, ``sys._getframe()``,
-      ``eval``) lists its locals by name; such blocks, and functions that
-      read their frame outside the block, are declined before this is asked
-      (``requires_original_frame``, ``frame_read_outside_block``).
-    - A ``def`` or ``class`` stores its name in the object it creates, and a
-      lambda's parameter names are its signature; a block whose created
-      objects can be seen other than by calling them where they stand is
-      declined before this is asked (``created_object_escapes``).
+    - A callable's parameter names are its keyword-call interface. Moving
+      a created callable can also change the cells its closure captures;
+      ``created_object_escapes`` checks those obligations separately.
 
     When every read of every renamed binder is definitely bound, and none is
     declared, the renaming is unobservable. Whether a read is definitely

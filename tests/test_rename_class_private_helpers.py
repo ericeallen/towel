@@ -20,8 +20,8 @@ A method helper is ``__extracted_func_0`` in its class's body, stored as
 class's body. The new name must be class-private too, since the privacy is
 what keeps every subclass from overriding it. An explicit spelling of the
 stored name anywhere else, the same private name in another class the
-compiler would mangle alike, or a lookup by a computed name in the class's
-body refuses the whole batch, and nothing is written.
+compiler would mangle alike refuses the whole batch, and nothing is written.
+Reflective name lookup is outside the rename contract.
 """
 
 from __future__ import annotations
@@ -199,13 +199,8 @@ def test_a_new_name_that_is_not_class_private_refuses_the_batch(tmp_path: Path, 
             "        return self.__extracted_func_0(len, 1)\n",
             "referenced as _Box__extracted_func_0",
         ),
-        (
-            "from pkg.a import Box\n\n\ndef reach(box):\n"
-            "    return getattr(box, '_Box__extracted_func_0')\n",
-            "in a string",
-        ),
     ],
-    ids=["explicit-mangled-spelling", "same-named-subclass", "string-spelling"],
+    ids=["explicit-mangled-spelling", "same-named-subclass"],
 )
 def test_a_reference_outside_the_class_body_refuses_the_batch(
     tmp_path: Path, consumer: str, message: str
@@ -217,17 +212,28 @@ def test_a_reference_outside_the_class_body_refuses_the_batch(
     assert _snapshot(root) == before
 
 
-def test_a_lookup_by_computed_name_in_the_class_refuses_the_batch(tmp_path: Path) -> None:
+def test_a_lookup_by_computed_name_is_outside_the_rename_contract(tmp_path: Path) -> None:
     source = BOX.replace(
         "        def doubled(self):",
         "        def lookup(self, name):\n            return getattr(self, name)\n\n"
         "        def doubled(self):",
     )
     root = _project(tmp_path, {"pkg/a.py": source})
-    before = _snapshot(root)
-    with pytest.raises(ValueError, match="Dynamic attribute lookup"):
-        _rename(root, {"pkg/a.py:Box.__extracted_func_0": "__scaled_width"})
-    assert _snapshot(root) == before
+    _rename(root, {"pkg/a.py:Box.__extracted_func_0": "__scaled_width"})
+    updated = (root / "pkg/a.py").read_text()
+    assert "def __scaled_width(" in updated
+    assert "return getattr(self, name)" in updated
+
+
+@pytest.mark.parametrize("stored_name", ["_Box__extracted_func_0", "_Box__scaled_width"])
+def test_string_lookups_do_not_protect_class_private_names(
+    tmp_path: Path, stored_name: str
+) -> None:
+    consumer = f"def reach(box):\n    return getattr(box, {stored_name!r})\n"
+    root = _project(tmp_path, {"pkg/a.py": BOX, "pkg/b.py": consumer})
+    _rename(root, {"pkg/a.py:Box.__extracted_func_0": "__scaled_width"})
+    assert "def __scaled_width(" in (root / "pkg/a.py").read_text()
+    assert (root / "pkg/b.py").read_text() == consumer
 
 
 def test_a_lookup_by_computed_name_elsewhere_cannot_reach_the_stored_name(tmp_path: Path) -> None:

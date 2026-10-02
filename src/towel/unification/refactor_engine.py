@@ -890,7 +890,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         A pair declined only because another pair already proposed the same
         refactoring loses nothing, so it is not counted. A pair declined
         without a traced reason is counted as ``other``, and a reason naming
-        something is counted with it: ``decorator_may_transform_body[numba.njit]``.
+        something is counted with it: ``builtin_may_differ_by_module[len]``.
         Pairs are judged here in their own order; forked evaluation judges
         them out of it (``_pair_verdict``) and settles them in it.
         """

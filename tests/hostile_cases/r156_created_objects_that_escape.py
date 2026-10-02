@@ -12,13 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# A function, lambda or generator made by moved code is made by the helper:
-# its __qualname__ names the helper, and a lambda built from a unified
-# template has the template's parameter names. Wherever such an object
-# outlives the block, or is looked at other than by calling it, the block
-# must stay.
+# Escaped callables retain their closure values and keyword-call interfaces.
+# Their reflective names, signatures and source locations are not observed.
 import collections
-import inspect
 def make_first(k):
     print("make", 1)
     g = lambda: k + 1
@@ -92,14 +88,14 @@ def inner_second(k, flag):
         result = None
     return result
 if __name__ == "__main__":
-    print(make_first(1).__qualname__, make_second(1).__qualname__)
-    print(inspect.signature(scale_first(2)), inspect.signature(scale_second(2)))
+    print(make_first(1)(), make_second(1)())
     for call in (lambda: scale_first(2)(value=1), lambda: scale_second(2)(other=1)):
         try:
             print(call())
         except TypeError as error:
             print("TypeError", error)
-    print([(f.__qualname__, str(inspect.signature(f)), f()) for f in bind_first([1, 2]) + bind_second([3])])
-    print(lazy_first([1]).__qualname__, lazy_second([2]).__qualname__)
-    print(counter_first(["a", "a"]).default_factory.__qualname__, dict(counter_second(["b"])))
-    print(inner_first(1, True).__qualname__, inner_second(2, True)(5))
+    print([f() for f in bind_first([1, 2]) + bind_second([3])])
+    print([f(j=7) for f in bind_first([1, 2])], [f(i=8) for f in bind_second([3])])
+    print(list(lazy_first([1])), list(lazy_second([2])))
+    print(counter_first(["a", "a"]).default_factory(), dict(counter_second(["b"])))
+    print(inner_first(1, True)(4), inner_second(2, True)(5))

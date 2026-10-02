@@ -958,15 +958,13 @@ _HELPER_SHAPED = re.compile(r"(?<!\w)\w*extracted_func(?:_\d+)?(?!\w)")
 def _claimed_helper_names(root: Path) -> HelperNameClaims:
     """The helper-shaped names that sources under ``root`` define where a helper could be.
 
-    A module-level helper is reached as an attribute of its module, so another
-    file takes its place only by assigning that attribute: an attribute store,
-    or the name as a string given to ``setattr`` or stored by subscript into a
-    namespace. A method helper is class-private and reached as ``_A__name``,
-    so another file takes its place only by defining a member stored under
-    that name, in a class body, by an attribute store, a ``setattr``, a
-    subscript into a namespace, or a ``type(...)`` namespace; a subclass's
-    ``_extracted_func_0``, which once had to be kept clear of, can no longer
-    reach it. A mere call or mention takes nothing. A file that does not parse
+    A module-level helper is reached as an attribute of its module, so an
+    attribute store or deletion claims its name. A method helper is
+    class-private and reached as ``_A__name``, so a class-body binding or
+    attribute store under that name claims it; a subclass's
+    ``_extracted_func_0`` cannot reach it. Reflective namespace and class
+    mutation is outside the contract. A mere call or mention takes nothing.
+    A file that does not parse
     cannot be told apart, so every helper-shaped word in it counts, spelled
     as it stands and under every class's name. Past the consumer scan's limit
     the project cannot be read whole, and the run stops, as a typed run's
@@ -1020,15 +1018,6 @@ def _claims_in(text: str) -> HelperNameClaims:
         elif isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
             owner = owners.get(node)
             namespace.add(mangled(node.attr, owner.name if owner is not None else None))
-        elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store):
-            namespace.update(_string_constants([node.slice]))  # namespace["name"] = ...
-        elif isinstance(node, ast.Call):
-            callee = node.func
-            called = callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", "")
-            if called in {"setattr", "__setattr__"} and len(node.args) >= 2:
-                namespace.update(_string_constants([node.args[1]]))
-            elif called == "type" and len(node.args) == 3 and isinstance(node.args[2], ast.Dict):
-                members.update(_string_constants([k for k in node.args[2].keys if k]))
     shaped = {name for name in namespace | members if _HELPER_SHAPED.fullmatch(name)}
     return HelperNameClaims(
         frozenset(shaped & namespace), frozenset(shaped & (members | namespace))
@@ -1056,14 +1045,6 @@ def _member_names(node: ast.ClassDef) -> Set[str]:
             defined.add(mangled(member.id, node.name))
         pending.extend(ast.iter_child_nodes(member))
     return defined
-
-
-def _string_constants(nodes: List[ast.expr]) -> Set[str]:
-    return {
-        node.value
-        for node in nodes
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    }
 
 
 def _guard_body_start(lines: List[str]) -> Optional[Tuple[int, str]]:

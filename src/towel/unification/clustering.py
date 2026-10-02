@@ -50,7 +50,6 @@ from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import bindings_of, statement_shape
 from .substitution import Substitution
-from .decorator_reach import ModuleSource, decorator_refusal
 from .semantic_safety import (
     available_argument_names,
     builtins_passed,
@@ -70,7 +69,6 @@ from .semantic_safety import (
     needs_class_body,
     unbinds_external_name,
 )
-from .source_readers import calls_source_reader
 from .splicing import BlockColumns
 from .thunk_inlining import inline_leading_thunks
 from .typing_forms import ModuleText
@@ -408,17 +406,13 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             # a block elsewhere in the file cannot call it (prompt_toolkit).
             if dce_node is not None and not encloses(dce_node, fn):
                 continue
-            # A call site is code in its function, which a decorator reaching
-            # the function may compile or instrument (``decorator_reach``).
             analyzed = entry.scope_analyzer.analyzed_tree
-            if not isinstance(analyzed, ast.Module) or decorator_refusal(
-                fn, ModuleSource(entry.file_path, entry.source, analyzed), self.import_graph
-            ):
-                continue
             # Where the candidate sits decides, once the helper's home is
             # known, whether it can share a method call.
             candidate_class = self._method_class(fn, entry.class_name, entry.scope_analyzer)
-            candidate_info = self._get_method_context(fn, candidate_class, analyzed)
+            candidate_info = self._get_method_context(
+                fn, candidate_class, analyzed if isinstance(analyzed, ast.Module) else None
+            )
             context = ClusterContext(candidate_class, candidate_info)
             for cand_range, cand_nodes, cand_sig in self._signed_blocks(fn):
                 # The size gate and signature filter are constant-time and
@@ -470,16 +464,14 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
     ) -> Optional["_ClusterCandidate"]:
         """The candidate block as a cluster candidate, or None when a semantic guard declines it.
 
-        The same guards the pair stages apply to a block: frame sensitivity,
-        a callee that reads the source or position of its call, escaping
-        nested bindings, rebinding of snapshotted names, scopes crossing the
+        The same guards the pair stages apply to a block: required execution
+        context, escaping nested bindings, rebinding of snapshotted names, scopes crossing the
         boundary, moved scope declarations, reassignment of a name the block
         did not bind, and unbinding of a name bound before it.
         """
         fn, fpath, analyzer = entry.node, entry.file_path, entry.scope_analyzer
         for frame_guard in (
             block_requires_original_frame,
-            calls_source_reader,
             frame_read_outside_block,
             created_object_escapes,
         ):

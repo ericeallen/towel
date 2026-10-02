@@ -24,7 +24,7 @@ it names. Current user-facing behavior is in the guides linked from the index.
 | --- | --- |
 | [Project's own type-check invocation](project-own-check.md) | Unscheduled proposal extending the existing differential baseline. |
 | [Shared helper module](shared-helper-module.md) | Unscheduled design for sharing across otherwise unrelated directories. |
-| [Trusted decorators](trusted-decorators.md) | Proposal for a later release; not an available configuration option. |
+| [Trusted decorators](trusted-decorators.md) | Retired October 2 with the body-instrumentation guarantee; not an available configuration option. |
 | [Template Method](template-method.md) | Idea constrained by the decision that Towel does not change externally visible class design. |
 | [Reuse an input function](reuse-existing-function.md) | Earlier implementation withdrawn because rebinding could change other callers. This differs from sharing helpers generated during one run. |
 
