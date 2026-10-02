@@ -716,6 +716,15 @@ two generic candidates. Unsupported or conflicting domains are declined rather
 than replaced with invented bounds. The helper body and calls decide whether
 these candidate relationships are valid through the project's checkers.
 
+Within one helper's annotation inference, repeated subtype questions share
+definite checker verdicts. The keys are immutable structural spellings, and
+the values are `Subtyping` enums; neither retains an input AST. Each batch
+deduplicates its unanswered pairs and restores the requested answer order.
+Unknown answers are retried, and every fresh checker build retains the
+untyped-type and reachability probes. The memo ends with the inference call:
+later calls must observe changes to imports and checker configuration even
+when the host module's text is unchanged.
+
 Generic inference applies to new module-level helpers and instance and class
 helper methods. An instance or class method keeps parameters bound by its
 host class while freshening independent method parameters. The receiver is identified before
@@ -1323,6 +1332,12 @@ measure is exact and changes no proposal.
   pairs with. `tests/test_statement_facts.py`,
   `tests/test_binding_context_memo.py` and `tests/test_substitution_keys.py`
   compare each fold with the whole-block walk on Towel's own source.
+  Narrowing guards likewise compose frozen sets of tested, asserted and
+  stored references. Their weak-keyed values contain strings only and cannot
+  retain source trees. Context-dependent continuation decisions still run
+  for each block. Generated helper trees can change during construction,
+  so their store analysis remains fresh. These summaries and inference-local
+  subtype verdicts honor the cache-disabled verification context.
 - **Statement-sequence buckets.** `block_signature.py` buckets candidate
   blocks on their whole statement-type sequence, which the unifier requires
   equal, so pairs with different shapes are never formed; each block's
