@@ -102,7 +102,12 @@ from ..type_baseline import KnownErrors
 from ..type_inference import TypeOracle
 from ..source_files import python_sources
 from ..source_text import read_source
-from ..analysis_sources import ParserConfiguration, parser_configuration, sharing_analysis_sources
+from ..analysis_sources import (
+    ParserConfiguration,
+    parser_configuration,
+    parsing_is_pure,
+    sharing_analysis_sources,
+)
 from .pipeline import run_pipeline, AnalysisSession
 
 _SignedBlock = Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]
@@ -763,6 +768,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
 
     def _parse_source(self, source: str) -> ast.Module:
         """``ast.parse(source)``, remembered for the last few sources; callers never mutate the tree."""
+        if not parsing_is_pure(source):
+            return ast.parse(source)
         key = source, parser_configuration()
         tree = self._parse_cache.get(key)
         if tree is None:

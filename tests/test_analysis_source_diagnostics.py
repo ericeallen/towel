@@ -189,3 +189,53 @@ def test_changed_recursion_limit_rechecks_analysis_depth(tmp_path: Path) -> None
             session.analyze_module(str(path))
     finally:
         sys.setrecursionlimit(original)
+
+
+@pytest.mark.parametrize("reader", ["bindings", "engine", "session"])
+def test_front_caches_follow_native_warning_policy(reader: str, tmp_path: Path) -> None:
+    # A distinct source prevents a previous binding-cache entry from deciding
+    # whether the first warning-as-error failure poisons later successful parses.
+    source = f"# {tmp_path}\nvalue = '\\q'\n"
+    path = tmp_path / "warning.py"
+    path.write_text(source)
+    engine, session = UnificationRefactorEngine(), AnalysisSession()
+    action: Callable[[], object] = {
+        "bindings": lambda: global_bindings(source),
+        "engine": lambda: engine._parse_source(source),
+        "session": lambda: session.analyze_module(str(path)),
+    }[reader]
+    policies: tuple[Literal["error", "ignore", "always"], ...] = (
+        "error",
+        "ignore",
+        "always",
+        "always",
+        "error",
+        "ignore",
+    )
+    with warnings.catch_warnings(record=True) as emitted:
+        for policy in policies:
+            warnings.simplefilter(policy)
+            emitted.clear()
+            if policy == "error":
+                if reader == "bindings":
+                    assert action() is None
+                else:
+                    error = SyntaxError if reader == "engine" else SourceFileError
+                    with pytest.raises(error, match="invalid escape"):
+                        action()
+            else:
+                assert action() is not None
+            assert len(emitted) == (1 if policy == "always" else 0)
+            assert not session.reusable(str(path))
+            assert session.entry_count == 0
+
+
+def test_warning_free_front_caches_still_reuse_their_results(tmp_path: Path) -> None:
+    source = "quiet_front_cache_value = 1\n"
+    path = tmp_path / "quiet.py"
+    path.write_text(source)
+    engine, session = UnificationRefactorEngine(), AnalysisSession()
+    assert global_bindings(source) is global_bindings(source)
+    assert engine._parse_source(source) is engine._parse_source(source)
+    assert session.analyze_module(str(path)) is session.analyze_module(str(path))
+    assert session.reusable(str(path))

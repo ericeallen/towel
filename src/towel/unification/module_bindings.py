@@ -32,7 +32,7 @@ from typing import Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence,
 from .bounded_cache import BoundedCache
 from .statement_facts import imported_binding_name
 from .visitors import body_shares_header_line
-from ..analysis_sources import ParserConfiguration, parser_configuration
+from ..analysis_sources import ParserConfiguration, parser_configuration, parsing_is_pure
 from ..source_text import source_lines
 
 
@@ -456,12 +456,13 @@ def import_origin(stmt: Union[ast.Import, ast.ImportFrom], alias: ast.alias) -> 
 def global_bindings(source: str) -> Optional[ModuleBindings]:
     """What ``source`` binds at its top level, or None when it will not parse."""
     key = source, parser_configuration()
-    if key in _MODULE_BINDINGS:
+    cacheable = parsing_is_pure(source)
+    if cacheable and key in _MODULE_BINDINGS:
         return _MODULE_BINDINGS[key]
     try:
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
-        return _MODULE_BINDINGS.put(key, None)
+        return _MODULE_BINDINGS.put(key, None) if cacheable else None
     return bindings_from_tree(source, tree)
 
 

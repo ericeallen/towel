@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import hashlib
 import os
 import re
 import sys
@@ -49,7 +50,12 @@ from typing import (
 )
 
 from .bounded_cache import BoundedCache, memoizing
-from ..analysis_sources import parse_analysis_source
+from ..analysis_sources import (
+    ParserConfiguration,
+    parse_analysis_source,
+    parser_configuration,
+    parsing_is_pure,
+)
 from .exceptions import ProjectScanLimitError
 from .known_platforms import platform_only, stdlib_everywhere
 from ..import_model import NameStatus
@@ -84,15 +90,34 @@ class _Edges:
     """Some import enters a directory the model did not read (``ProgramImports.reached``)."""
 
 
+_SourceKey = Tuple[Path, bytes, ParserConfiguration]
+
+
+def _current_source(path: Path) -> Tuple[str, Optional[_SourceKey]]:
+    """Current text and its diagnostic-free parse key, from the same file read.
+
+    File metadata does not identify content: a same-size replacement can keep
+    its timestamp. Decoding runs on every request, and warning-capable syntax
+    has no key so parsing observes the caller's current diagnostic policy.
+    """
+    source = read_source(path)
+    key = (
+        (path.absolute(), hashlib.sha256(source.encode("utf-8")).digest(), parser_configuration())
+        if parsing_is_pure(source)
+        else None
+    )
+    return source, key
+
+
 class ImportGraphCache:
     """What one run has learned about the project's import graph.
 
     A cross-file pair asks whether hosting a helper would close an import
     cycle, and answering re-reads every reachable module unless the edges are
-    remembered (Sphinx: 243 modules per pair). Edges and import bindings are
-    keyed by path, modification time, and size, so a rewritten file is
-    re-read. Every table is bounded, and the engine owns one instance per
-    run; a caller with no engine makes its own.
+    remembered (Sphinx: 243 modules per pair). Parser-derived facts are
+    keyed by absolute path, current source digest, and parser configuration;
+    warning-capable syntax is always reparsed. Every table is bounded, and the
+    engine owns one instance per run; a caller with no engine makes its own.
 
     What an import names comes from the program's imports
     (:meth:`program_for`): the model of the project a path belongs to, read
@@ -109,19 +134,17 @@ class ImportGraphCache:
         self._declared: Dict[Path, FrozenSet[str]] = {}
         # The project root of each resolved path asked about (``project_root``).
         self._roots: Dict[Path, Path] = {}
-        self.edges: BoundedCache[Tuple[Path, int, int, str], Optional[_Edges]] = BoundedCache(limit)
-        self.bindings: BoundedCache[Tuple[Path, int, int], Optional[Dict[str, Tuple[str, ...]]]] = (
+        self.edges: BoundedCache[Tuple[_SourceKey, str], Optional[_Edges]] = BoundedCache(limit)
+        self.bindings: BoundedCache[_SourceKey, Optional[Dict[str, Tuple[str, ...]]]] = (
             BoundedCache(limit)
         )
         # Whether a module runs code at import, keyed like the edges.
-        self.effects: BoundedCache[Tuple[Path, int, int], bool] = BoundedCache(limit)
+        self.effects: BoundedCache[_SourceKey, bool] = BoundedCache(limit)
         # Whether subclassing a module's class runs only Python's class
         # machinery, keyed like the edges plus the class's name.
-        self.quiet_classes: BoundedCache[Tuple[Path, int, int, str], bool] = BoundedCache(limit)
+        self.quiet_classes: BoundedCache[Tuple[_SourceKey, str], bool] = BoundedCache(limit)
         # The top-level names a module imports unconditionally, keyed like the edges.
-        self.required_imports: BoundedCache[Tuple[Path, int, int], FrozenSet[str]] = BoundedCache(
-            limit
-        )
+        self.required_imports: BoundedCache[_SourceKey, FrozenSet[str]] = BoundedCache(limit)
         # Resolving a path walks the filesystem; the class-hierarchy lookup
         # resolves every class's file per base-class reference.
         self.resolved_paths: BoundedCache[str, Path] = BoundedCache(limit)
@@ -501,17 +524,16 @@ def _import_edges(
     """
     path = program.in_run(current)
     try:
-        stat = path.stat()
-    except OSError:
+        source, version = _current_source(path)
+    except (OSError, UnicodeError, SyntaxError):
         return None
-    key = (path, stat.st_mtime_ns, stat.st_size, extent)
-    if key in cache.edges:
+    key = (version, extent) if version is not None else None
+    if key is not None and key in cache.edges:
         return cache.edges.get(key)
     try:
-        source = read_source(path)
         tree = ast.parse(source)
-    except (OSError, UnicodeError, SyntaxError):
-        return cache.edges.put(key, None)
+    except SyntaxError:
+        return cache.edges.put(key, None) if key is not None else None
     files: Set[Path] = set()
     unseen = False
     for node in _import_statements(tree, extent, TypeCheckingGuards(tree)):
@@ -521,7 +543,8 @@ def _import_edges(
                 unseen = True
             else:
                 files.update(reached)
-    return cache.edges.put(key, _Edges(frozenset(files), unseen))
+    result = _Edges(frozenset(files), unseen)
+    return cache.edges.put(key, result) if key is not None else result
 
 
 def _import_requests(
@@ -554,18 +577,17 @@ def _module_level_import_bindings(
     when the module cannot be parsed.
     """
     try:
-        stat = current.stat()
-    except OSError:
+        source, key = _current_source(current)
+    except (OSError, UnicodeError, SyntaxError):
         return None
-    key = (current, stat.st_mtime_ns, stat.st_size)
-    if key in cache.bindings:
+    if key is not None and key in cache.bindings:
         return cache.bindings.get(key)
     # Share read-only syntax with the other analyses in the current run.
     # Standalone queries still parse current source without retaining a tree.
     try:
-        tree = parse_analysis_source(read_source(current), str(current))
-    except (OSError, UnicodeError, SyntaxError):
-        return cache.bindings.put(key, None)
+        tree = parse_analysis_source(source, str(current))
+    except SyntaxError:
+        return cache.bindings.put(key, None) if key is not None else None
     bindings: Dict[str, Tuple[str, ...]] = {}
     for node in tree.body:
         if isinstance(node, ast.Import):
@@ -585,7 +607,7 @@ def _module_level_import_bindings(
                 bound = imported_binding_name(alias)
                 if bound is not None:
                     bindings[bound] = (*prefix, *module, alias.name)
-    return cache.bindings.put(key, bindings)
+    return cache.bindings.put(key, bindings) if key is not None else bindings
 
 
 def _module_definition_file(base: Path, parts: Tuple[str, ...]) -> Optional[Path]:
@@ -1340,20 +1362,19 @@ class ImportTimeCode:
         if "." in qualname:
             return False
         try:
-            stat = module.stat()
-        except OSError:
+            source, version = _current_source(module)
+        except (OSError, UnicodeError, SyntaxError):
             return False
-        key = (module, stat.st_mtime_ns, stat.st_size, qualname)
-        known = self._cache.quiet_classes.get(key)
+        key = (version, qualname) if version is not None else None
+        known = self._cache.quiet_classes.get(key) if key is not None else None
         if known is not None:
             return known
         try:
-            other = ImportTimeCode(
-                read_source(module), path=module, cache=self._cache, depth=self._depth + 1
-            )
-        except (OSError, UnicodeError, SyntaxError, ValueError):
-            return self._cache.quiet_classes.put(key, False)
-        return self._cache.quiet_classes.put(key, other._quiet_named_class(qualname))
+            other = ImportTimeCode(source, path=module, cache=self._cache, depth=self._depth + 1)
+        except (SyntaxError, ValueError):
+            return self._cache.quiet_classes.put(key, False) if key is not None else False
+        result = other._quiet_named_class(qualname)
+        return self._cache.quiet_classes.put(key, result) if key is not None else result
 
     def _quiet_named_class(self, name: str) -> bool:
         """Whether the class the module binds to ``name`` once it has run is quiet to subclass."""
@@ -1467,18 +1488,18 @@ def _statement_binds(statement: ast.stmt) -> FrozenSet[str]:
 def _has_import_time_effects(module: Path, cache: ImportGraphCache) -> bool:
     """Whether importing ``module`` can run code beyond Python's own (``ImportTimeCode``)."""
     try:
-        stat = module.stat()
-    except OSError:
+        source, key = _current_source(module)
+    except (OSError, UnicodeError, SyntaxError):
         return True
-    key = (module, stat.st_mtime_ns, stat.st_size)
-    known = cache.effects.get(key)
+    known = cache.effects.get(key) if key is not None else None
     if known is not None:
         return known
     try:
-        code = ImportTimeCode(read_source(module), path=module, cache=cache)
-    except (OSError, UnicodeError, SyntaxError, ValueError):
-        return cache.effects.put(key, True)
-    return cache.effects.put(key, any(code.statements()))
+        code = ImportTimeCode(source, path=module, cache=cache)
+    except (SyntaxError, ValueError):
+        return cache.effects.put(key, True) if key is not None else True
+    result = any(code.statements())
+    return cache.effects.put(key, result) if key is not None else result
 
 
 class ImportChange(Enum):
@@ -1916,18 +1937,16 @@ def _required_names(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:
     through. An import in a function runs only when it is called.
     """
     try:
-        stat = module.stat()
-    except OSError:
+        source, key = _current_source(module)
+    except (OSError, UnicodeError, SyntaxError):
         return frozenset()
-    key = (module, stat.st_mtime_ns, stat.st_size)
-    known = cache.required_imports.get(key)
+    known = cache.required_imports.get(key) if key is not None else None
     if known is not None:
         return known
     try:
-        source = read_source(module)
         tree = ast.parse(source)
-    except (OSError, UnicodeError, SyntaxError):
-        return cache.required_imports.put(key, frozenset())
+    except SyntaxError:
+        return cache.required_imports.put(key, frozenset()) if key is not None else frozenset()
     guards = TypeCheckingGuards(tree)
     names: Set[str] = set()
     pending: List[Tuple[ast.stmt, int]] = [(node, order) for order, node in enumerate(tree.body)]
@@ -1954,7 +1973,8 @@ def _required_names(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:
                 (inner, order)
                 for inner in (*ran, *handled, *statement.orelse, *statement.finalbody)
             )
-    return cache.required_imports.put(key, frozenset(names))
+    result = frozenset(names)
+    return cache.required_imports.put(key, result) if key is not None else result
 
 
 def would_create_import_cycle(

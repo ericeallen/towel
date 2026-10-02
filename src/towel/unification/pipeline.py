@@ -49,7 +49,7 @@ from dataclasses import dataclass
 import os
 
 from ..canonical_ast import canonical_dump
-from ..analysis_sources import parse_analysis_source, parser_configuration
+from ..analysis_sources import parse_analysis_source, parser_configuration, parsing_is_pure
 from .models import (
     RawModule,
     ParsedModule,
@@ -330,7 +330,8 @@ class AnalysisSession:
         if cached is None:
             return False
         try:
-            return read_source(path) == cached.module.source
+            source = read_source(path)
+            return parsing_is_pure(source) and source == cached.module.source
         except (OSError, UnicodeError, SyntaxError):
             return False
 
@@ -359,7 +360,8 @@ class AnalysisSession:
         except (OSError, UnicodeError, SyntaxError) as error:
             self._discard(key)
             raise SourceFileError(str(error)) from error
-        cached = self._entries.get(key)
+        cacheable = parsing_is_pure(source)
+        cached = self._entries.get(key) if cacheable else None
         if cached is not None and cached.module.source == source:
             self._entries.move_to_end(key)
             if self._check_immutable and self._digest(cached) != self._digests[key]:
@@ -384,7 +386,7 @@ class AnalysisSession:
                 "it nests too deeply for Towel to analyze (maximum recursion depth exceeded)"
             ) from error
         source_bytes = len(source.encode("utf-8"))
-        if self._max_entries and source_bytes <= self._max_source_bytes:
+        if cacheable and self._max_entries and source_bytes <= self._max_source_bytes:
             while self._entries and (
                 len(self._entries) >= self._max_entries
                 or self._source_bytes + source_bytes > self._max_source_bytes
