@@ -159,6 +159,11 @@ EXPECTED_UNCHANGED_EXAMPLES = frozenset(
     {"bindings_comprehensions.py", "example3_file1.py", "example3_file2.py"}
 )
 
+# Its duplicated statistics read len/sum/min/max in different modules. The
+# default mode preserves those caller lookups by declining; the opt-in corpus
+# exercises the corresponding thunked extraction separately.
+EXPECTED_UNCHANGED_CROSSFILE_PROJECTS = frozenset({"class_hierarchy"})
+
 
 class TestSingleFileRegression(unittest.TestCase):
     """
@@ -454,7 +459,15 @@ class TestCrossFileRegression(unittest.TestCase):
                     str(source), str(out), progress="none"
                 )
                 self.assertEqual(reason, "fixed_point", project_dir.name)
-                self.assertTrue(results, f"{project_dir.name}: nothing was refactored")
+                unchanged = project_dir.name in EXPECTED_UNCHANGED_CROSSFILE_PROJECTS
+                self.assertEqual(bool(results), not unchanged, project_dir.name)
+                if unchanged:
+                    for original in source.rglob("*.py"):
+                        self.assertEqual(
+                            original.read_bytes(),
+                            (out / original.relative_to(source)).read_bytes(),
+                            str(original),
+                        )
                 current = {
                     p.relative_to(out): normalize_generated_names(p.read_text())
                     for p in sorted(out.rglob("*.py"))

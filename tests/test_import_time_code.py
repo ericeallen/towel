@@ -144,9 +144,9 @@ def _runs(source: str) -> Tuple[bool, ...]:
             if TYPE_CHECKING:
                 if sys.version_info >= (3, 11):
                     from typing import Self
-                print("never")
+                print("may run")
             """,
-            (False, False, False),
+            (False, False, True),
         ),
         (
             """
@@ -164,9 +164,9 @@ def _runs(source: str) -> Tuple[bool, ...]:
             TYPE_CHECKING = False
 
             if TYPE_CHECKING:
-                print("never")
+                print("can run after a concurrent rebind")
             """,
-            (False, False),
+            (False, True),
         ),
         (
             """

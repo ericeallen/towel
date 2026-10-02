@@ -27,7 +27,14 @@ class TestCrossfileObservationalEquivalence(unittest.TestCase):
         from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
         from towel.unification.refactor_engine import UnificationRefactorEngine
 
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=4, cross_module_helpers=True)
+        # These examples share builtin reads across modules. Exercise their
+        # caller-lookup construction; default refusal is pinned separately.
+        engine = UnificationRefactorEngine(
+            max_parameters=5,
+            min_lines=4,
+            cross_module_helpers=True,
+            parameterize_builtins=True,
+        )
         tester = CrossFileEquivalenceTester(engine)
         results = tester.test_all_projects("test_examples_crossfile", verbose=False)
 

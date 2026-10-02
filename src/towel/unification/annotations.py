@@ -75,6 +75,7 @@ from typing import (
 )
 
 from ..canonical_ast import canonical_dump
+from ..runtime_guards import module_false_guards
 from .bounded_cache import memoizing
 from .revealed_types import parse_revealed
 from .semantic_safety import walk_own_scope
@@ -847,12 +848,15 @@ def _reduce_dotted_names(expression: ast.expr, host: Optional[ast.Module]) -> as
 def _type_only_bound_names(module: ast.Module) -> Set[str]:
     """What the imports under the module's own ``if TYPE_CHECKING:`` bind, for the checker alone."""
     bound: Set[str] = set()
+    false_guards = module_false_guards(module)
     for node in module.body:
         if not isinstance(node, ast.If):
             continue
         test = node.test
-        guarded = (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
-            isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+        guarded = (
+            (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING")
+            or (isinstance(test, ast.Compare) and test in false_guards)
+            or (isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING")
         )
         if guarded:
             for statement in node.body:
@@ -1466,7 +1470,10 @@ def _constructed_class(revealed: str) -> Optional[str]:
 def builtin_object_revealed(expression: str, revealed: str) -> str:
     """``revealed`` loosened so an annotation can say it, where ``expression`` is spelled as a builtin.
 
-    Only ``parameterize_builtins`` passes a builtin to a helper, and a
+    A deferred builtin lookup keeps this callable result inside its
+    zero-argument Callable; ``lambda: len`` returns a callable returning int,
+    rather than losing both layers to Any. Only ``parameterize_builtins``
+    passes a builtin to a helper, and a
     builtin's signature is written in terms the helper's module seldom can
     name: typeshed's protocols (``def (typing.Sized) -> int`` for ``len``)
     or an ``Overload(...)`` of several (``print``, ``str``). The helper calls
@@ -1480,6 +1487,15 @@ def builtin_object_revealed(expression: str, revealed: str) -> str:
     own spelling is used wherever it can be written, so a local of the site
     that is spelled as a builtin loses no precision to it.
     """
+    if expression.startswith("lambda:") and revealed.startswith("def () -> "):
+        try:
+            thunk = ast.parse(expression, mode="eval").body
+        except SyntaxError:
+            return revealed
+        if isinstance(thunk, ast.Lambda) and isinstance(thunk.body, ast.Name):
+            prefix = "def () -> "
+            result = builtin_object_revealed(thunk.body.id, revealed[len(prefix) :])
+            return prefix + result
     if expression not in _BUILTIN_NAMES:
         return revealed
     text = revealed.strip()

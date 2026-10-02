@@ -74,7 +74,6 @@ from .structural_memo import StoredSubstitution
 from .unifier import Unifier
 from .progress import DEFAULT_PROGRESS, ProgressMode
 from .import_graph import ImportGraphCache
-from .namespace_writes import ProjectWrites
 
 
 class BlockSite(NamedTuple):
@@ -202,8 +201,6 @@ class EngineState:
     """Next helper number per file, so generated names are unique across a run."""
     _project_helper_names: Dict[str, HelperNameClaims]
     """The helper-shaped names each project root's sources already define, by root."""
-    _namespace_writes: Dict[str, ProjectWrites]
-    """The writes into module namespaces each project root's sources make, by root."""
     _coverage_exclusions: Dict[str, CoverageExclusion]
     """What each project root's coverage.py excludes lines by, read once per engine."""
     _origins_in_run: Dict[Tuple[str, Optional[Tuple[Path, Path]]], Path]

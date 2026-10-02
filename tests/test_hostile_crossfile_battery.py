@@ -20,8 +20,9 @@ function, a class, an import alias, ``__file__``, or a builtin that only one
 module rebinds (by definition, star import, a local of its function, or its
 ``__builtins__``), including one only the ancestor class's module rebinds.
 A module name must reach the helper from its caller rather than resolve in
-the helper's own module. A builtin cannot: no helper takes one as a
-parameter, so a pair whose modules may disagree about it is declined.
+the helper's own module. By default a helper takes no builtin parameter,
+so cross-module builtin reads decline. ``BUILTIN_CALLER_LOOKUPS`` also runs
+with the explicit parameterization mode to verify caller lookup thunks.
 
 As in ``test_hostile_battery``, ``TRANSFORMED`` pins which packages the
 current engine rewrites, so a lost cross-file extraction fails as loudly as
@@ -102,6 +103,24 @@ from tests.test_cli_integration import invoke
 
 CASES = Path(__file__).parent / "hostile_crossfile"
 
+# Each of these formerly read a builtin in the borrowed helper's host module.
+# Default extraction now declines; the explicit mode below must still extract
+# and preserve every ordinary runtime/scope/public-name observation.
+BUILTIN_CALLER_LOOKUPS = {
+    "r9sb_lambda_capture_across_modules",
+    "xf11_package_init_reaches_back",
+    "xf12_cycle_through_package_init",
+    "xf21_builtin_shadowed_in_third_module",
+    "xf7fz_binding_x_class_level_name",
+    "xf7fz_grammar_u0474_for_target_prebound",
+    "xf7fz_grammar_u0624_for_target_prebound",
+    "xf7fz_grammar_u1209_for_target_prebound",
+    "xf7n_host_the_wheel_leaves_out",
+    "xf7n_subpackage_the_wheel_leaves_out",
+    "xf9_same_named_base_class",
+    "xf9xi_type_only_import_of_a_missing_module",
+}
+
 TRANSFORMED = {
     "xf3_same_named_local_function",
     "xf4_same_named_class",
@@ -109,21 +128,16 @@ TRANSFORMED = {
     "xf6_same_alias_different_import",
     "xf7_docstring_import",
     "xf8_helper_name_collision",
-    "xf9_same_named_base_class",
     "xf10_reuse_existing_function",
-    "xf11_package_init_reaches_back",
-    "xf12_cycle_through_package_init",
     "xf14_script_with_leading_statement",
     "xf15_ancestor_in_another_module",
     "xf16_consumer_outside_target_owns_helper_name",
     "xf20_builtin_shadowed_in_ancestor_module",
-    "xf21_builtin_shadowed_in_third_module",
     "xf24_relative_import_climbs_elsewhere",
     "xf25_relative_import_in_the_same_package",
     "xf26_relative_import_ancestor_in_another_package",
     "xf27_registration_decorator_in_host",
     "xf28_registration_decorator_in_reused_module",
-    "xf29_type_checking_block_with_branches",
     # The host's new binding for its annotations is private, so no module that
     # star-imports it takes a typing name in place of its own Any or Callable:
     # a sibling (xf30), the package's __init__ (xf31), a module outside the
@@ -135,8 +149,6 @@ TRANSFORMED = {
     # its code (round-3 audit, P1-1).
     "xf7c_rebinding_enclosing_function_beside_a_twin_in_another_module",
     "xf7t_import_order_is_registration_order",
-    "xf7n_host_the_wheel_leaves_out",
-    "xf7n_subpackage_the_wheel_leaves_out",
     # The round-3 audit's P1 cases, typed and across modules, each now
     # extracted soundly by the fix of its defect (and, typed, accepted by
     # the strict checker its pyproject.toml configures).
@@ -153,12 +165,8 @@ TRANSFORMED = {
     "xf7fz_typeguard2_import_alias_flag_both",
     "xf7fz_extra_typed_binder_message_mypy",
     "xf7fz_extra_typed_binder_message_pyright",
-    "xf7fz_grammar_u0474_for_target_prebound",
-    "xf7fz_grammar_u0624_for_target_prebound",
-    "xf7fz_grammar_u1209_for_target_prebound",
     # The round-3 audit's families (xf7fz_<family>_<case>): a sample of the
     # cross-module cases the audit found sound, every one transformed.
-    "xf7fz_binding_x_class_level_name",
     "xf7fz_binding_x_dunder_file",
     "xf7fz_builtins_x_shadow_in_b",
     "xf7fz_modules_b_imports_a",
@@ -168,11 +176,6 @@ TRANSFORMED = {
     "xf7fz_modules_three_modules_cluster",
     # Two modules pytest does not rewrite share an assert: either may host it.
     "xf7d_asserts_shared_by_modules_rewritten_alike",
-    # A type-only import of a module the tree lacks never runs, so its file
-    # still shares helpers (round-4 audit, p2_typechecking_missing).
-    "xf9xi_type_only_import_of_a_missing_module",
-    # Round-4 P1-03 across modules: the lambda keeps its own parameter.
-    "r9sb_lambda_capture_across_modules",
     # Round-4 audit P2-02: a star import whose provider's __all__ cannot bind
     # staticmethod or property left both unknown.
     "r9dc_star_import_that_cannot_bind_a_decorator",
@@ -180,6 +183,9 @@ TRANSFORMED = {
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
 REJECTED = {
+    *BUILTIN_CALLER_LOOKUPS,
+    # TYPE_CHECKING is mutable: this host's guarded branches may execute.
+    "xf29_type_checking_block_with_branches",
     "xf13_import_time_effects",
     "xf17_builtin_shadowed_in_borrower",
     "xf18_builtin_shadowed_by_star_import",
@@ -284,6 +290,10 @@ def _modules(root: Path) -> list[str]:
     ),
 )
 def test_directory_refactoring_preserves_program_output(case: str) -> None:
+    _check_directory_program_output(case, parameterize_builtins=False)
+
+
+def _check_directory_program_output(case: str, *, parameterize_builtins: bool) -> None:
     with tempfile.TemporaryDirectory(prefix="towel-hostile-xf-") as directory:
         before = Path(directory) / "before"
         after = Path(directory) / "after"
@@ -301,6 +311,7 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
             cross_module=case not in WITHOUT_CROSS_MODULE,
             typed=case in TYPED,
             file_finisher=scopes,
+            parameterize_builtins=parameterize_builtins,
         )
         transformed = _python_files(after) != _python_files(before)
         assert transformed == (sum(applied for applied, _ in results.values()) > 0)
@@ -317,9 +328,14 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
             assert (
                 results or case in REJECTED
             ), "Each fixture must exercise a real cross-file extraction"
-            assert transformed == (case in TRANSFORMED), (
-                "rejected" if not transformed else "transformed"
-            )
+            assert transformed == (
+                case in TRANSFORMED or (parameterize_builtins and case in BUILTIN_CALLER_LOOKUPS)
+            ), ("rejected" if not transformed else "transformed")
+
+
+@pytest.mark.parametrize("case", sorted(BUILTIN_CALLER_LOOKUPS))
+def test_caller_lookup_mode_preserves_cross_module_program_output(case: str) -> None:
+    _check_directory_program_output(case, parameterize_builtins=True)
 
 
 @pytest.mark.parametrize("case", sorted(REFLECTION_CASES))
@@ -331,6 +347,7 @@ def test_instrumentation_does_not_veto_directory_extraction(tmp_path: Path, case
         root / "pkg",
         cross_module=case not in WITHOUT_CROSS_MODULE,
         file_finisher=scopes,
+        parameterize_builtins=True,
     )
     assert sum(applied for applied, _ in results.values()) > 0, REFLECTION_CASES[case]
     assert scopes.found == []

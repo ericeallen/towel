@@ -110,8 +110,8 @@ towel dry path/to/project path/to/cleaned --no-interactive --no-types --no-forma
 - `--max-pairs` caps the candidate pairs considered in one analysis; groups
   omitted to meet the cap are reported.
 - `TOWEL_WORKERS=1` keeps analysis on one worker; `TOWEL_WORKERS=N` caps it at N.
-- `--parameterize-builtins` allows differing builtin bindings to be passed as
-  arguments instead of declining those pairs. See [generated-code rules](GENERATED_CODE.md#arguments-and-evaluation).
+- `--parameterize-builtins` permits caller-side builtin lookup thunks across
+  modules instead of the default refusal of cross-module bare builtin reads. See [generated-code rules](GENERATED_CODE.md#arguments-and-evaluation).
 
 Formatting follows the project configuration when the relevant tools are
 installed. The [generated-code guide](GENERATED_CODE.md#comments-and-formatting)

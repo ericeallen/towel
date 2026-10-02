@@ -832,16 +832,12 @@ class Materialization(
     ) -> None:
         """Write ``plan``'s imports into ``lines``: ``typing``'s alias, then the type-only imports.
 
-        The type-only imports are wanted by annotations and never at run time,
-        so importing them under ``TYPE_CHECKING`` keeps the module's runtime
-        imports as they were and cannot close an import cycle -- which matters
-        here, because the extraction has often just made that module import
-        this one. An existing module-level guard is extended rather than a
-        second one written. It is recognised as every other question about
-        what a module runs recognises one, by binding (``TypeCheckingGuards``),
-        whatever follows its colon, and the import takes the indentation of
-        the guard's own body. A new guard is confirmed to be one by the same
-        test before it is kept (:meth:`_guard_header` spells it).
+        The literal integer comparison 0 > 1 is always false,
+        so changing typing.TYPE_CHECKING cannot execute these imports or close
+        a cycle. Only a guard with the same immutable runtime proof is extended.
+        Existing imported-flag guards keep their original bodies and behavior.
+        The import takes the guard's indentation, and a new guard is checked
+        against the same AST proof used by import and effect analysis.
         """
         if plan.typing_import is not None:
             lines.insert(self._find_import_position(lines), plan.typing_import + "\n")
@@ -862,7 +858,7 @@ class Materialization(
         ]
         source = "".join(lines)
         tree = self._parse_source(source)
-        guards = TypeCheckingGuards.of(source, tree)
+        guards = TypeCheckingGuards(tree)
         if not any(
             isinstance(statement, ast.If)
             and statement.lineno == at + 2
@@ -880,7 +876,7 @@ class Materialization(
         The guarded body never runs, so the project's coverage counts it as
         missed unless it is excluded. coverage.py's own defaults exclude ``if
         TYPE_CHECKING:`` and ``if typing.TYPE_CHECKING:``, not a guard through
-        a private alias of ``typing``, which the defaults' ``# pragma: no
+        the literal integer comparison, which the defaults' ``# pragma: no
         cover`` excludes instead; a project whose exclusions already match
         the guard gets no mark.
         """
@@ -1048,12 +1044,13 @@ def _member_names(node: ast.ClassDef) -> Set[str]:
 
 
 def _guard_body_start(lines: List[str]) -> Optional[Tuple[int, str]]:
-    """Where a line joins the body of the module's first ``TYPE_CHECKING`` guard, and its indent.
+    """Where a line joins a locally proved false comparison guard, and its indent.
 
     Only a guard at module level: one inside a function or class would take
     the import out of the scope the annotation reads it in. A guard is one
-    ``TypeCheckingGuards`` resolves as never true where it runs, so a name the
-    module rebinds is not one, and an import joined to it would run. A guard
+    ``TypeCheckingGuards`` resolves as never true where it runs; a test that
+    reads through an imported flag is not one. Literal False is not joined:
+    pyright hides its imports from annotations. A guard
     whose body shares its header's line has no line to join, nor has a module
     that does not parse or whose lines do not match its statements; each of
     those gets a guard of its own.
@@ -1063,9 +1060,13 @@ def _guard_body_start(lines: List[str]) -> Optional[Tuple[int, str]]:
         tree = ast.parse(source)
     except SyntaxError:
         return None
-    guards = TypeCheckingGuards.of(source, tree)
+    guards = TypeCheckingGuards(tree)
     for order, statement in enumerate(tree.body):
-        if not isinstance(statement, ast.If) or not guards.never_true(statement.test, order=order):
+        if (
+            not isinstance(statement, ast.If)
+            or not isinstance(statement.test, ast.Compare)
+            or not guards.never_true(statement.test, order=order)
+        ):
             continue
         first = statement.body[0]
         index = first.lineno - 1

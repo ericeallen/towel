@@ -463,10 +463,10 @@ def _refactored(root: Path, target: str, excluded: Tuple[str, ...], cross_module
     return sum(applied for applied, _ in results.values())
 
 
-def test_an_excluded_test_suite_still_contributes_ordinary_binding_evidence(
+def test_cross_module_builtins_decline_with_or_without_excluded_writes(
     tmp_path: Path,
 ) -> None:
-    """``--exclude tests`` keeps the tests unchanged; their explicit ``pkg.b.len`` assignment still counts."""
+    """Ordinary external writes need not be visible for cross-module lookups to differ."""
     files = {
         "pyproject.toml": '[project]\nname = "pkg"\nversion = "0"\n',
         "pkg/__init__.py": "",
@@ -474,11 +474,11 @@ def test_an_excluded_test_suite_still_contributes_ordinary_binding_evidence(
         "pkg/b.py": DESCRIBE.format(name="b"),
     }
     patched = _write(tmp_path / "patched", {**files, "tests/test_b.py": PATCHES_LEN})
-    assert _refactored(patched, "pkg", ("tests",), cross_module=True) > 0
+    assert _refactored(patched, "pkg", ("tests",), cross_module=True) == 0
     assert "count = len(items)" in (patched / "pkg" / "b.py").read_text(), "len stays in pkg.b"
     control = _write(tmp_path / "control", files)
-    assert _refactored(control, "pkg", ("tests",), cross_module=True) > 0
-    assert "len(items)" not in (control / "pkg" / "b.py").read_text(), "the control moves it"
+    assert _refactored(control, "pkg", ("tests",), cross_module=True) == 0
+    assert "len(items)" in (control / "pkg" / "b.py").read_text(), "the control keeps its lookup"
 
 
 def test_an_excluded_instrumenter_does_not_veto_extraction(

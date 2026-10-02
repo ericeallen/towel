@@ -35,6 +35,7 @@ from typing import Set
 
 from tests.typed_fixtures import CountingMypy, requires_mypy
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.runtime_guards import module_false_guards
 
 
 def _project(tmp_path: Path, ops: str) -> Path:
@@ -64,7 +65,7 @@ def _type_only_imports(module: ast.Module) -> Set[str]:
     return {
         alias.asname or alias.name
         for node in module.body
-        if isinstance(node, ast.If) and ast.unparse(node.test) == "TYPE_CHECKING"
+        if isinstance(node, ast.If) and node.test in module_false_guards(module)
         for statement in node.body
         if isinstance(statement, ast.ImportFrom)
         for alias in statement.names

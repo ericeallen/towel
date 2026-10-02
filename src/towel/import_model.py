@@ -164,6 +164,7 @@ from .consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES, ScanLimitExceeded
 from .declared_requirements import Requirement, declared_requirements, normalized_name, own_names
 from .shipped_files import Artifact, left_out
 from .analysis_sources import parse_analysis_source
+from .runtime_guards import module_false_guards
 from .unification.bounded_cache import BoundedCache, memoizing
 from weakref import WeakKeyDictionary
 
@@ -230,9 +231,10 @@ class ImportSite:
     """One import as written: ``level`` dots, then ``module``, naming ``names`` from it.
 
     ``import a.b`` is ``(0, "a.b", ())``; each alias of ``import a, b`` is a
-    site of its own. The flags say when the statement runs: never, under
-    ``TYPE_CHECKING`` (``runtime`` is false); expecting it may fail, inside
-    ``try``/``except ImportError`` or ``suppress(ImportError)`` (``guarded``);
+    site of its own. The flags say when the statement runs: never, under a
+    locally proved false guard (``runtime`` is false); conditionally or
+    expecting it may fail, inside ``try``/``except ImportError`` or
+    ``suppress(ImportError)`` (``guarded``);
     or only when an enclosing function is called (``deferred``).
     """
 
@@ -1403,6 +1405,7 @@ def _scan_tree(tree: ast.Module, path: Path) -> _Module:
     """
     sites: List[ImportSite] = []
     changes_sys_path = registers_modules = False
+    false_guards = module_false_guards(tree)
     pending: List[Tuple[ast.AST, _When]] = [(tree, _When())]
     while pending:
         node, when = pending.pop()
@@ -1430,7 +1433,7 @@ def _scan_tree(tree: ast.Module, path: Path) -> _Module:
         else:
             changes_sys_path = changes_sys_path or _changes_list(node, "path")
             registers_modules = registers_modules or _registers_modules(node)
-            pending.extend(_children(node, when))
+            pending.extend(_children(node, when, false_guards))
     ordered = sorted(sites, key=lambda site: (site.line, site.level, site.module or ""))
     return _Module(tuple(ordered), changes_sys_path, registers_modules, _module_bindings(tree))
 
@@ -1490,20 +1493,24 @@ def _module_bindings(tree: ast.Module) -> Optional[FrozenSet[str]]:
     return frozenset(bound)
 
 
-def _children(node: ast.AST, when: _When) -> Iterator[Tuple[ast.AST, _When]]:
+def _children(
+    node: ast.AST, when: _When, false_guards: FrozenSet[ast.expr]
+) -> Iterator[Tuple[ast.AST, _When]]:
     """``node``'s children, each with when it runs relative to the module's import."""
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         deferred = replace(when, deferred=True)
         yield from ((child, deferred) for child in ast.iter_child_nodes(node))
         return
     if isinstance(node, ast.If):
-        positive = _type_checking(node.test)
-        if positive is not None:
-            checker = replace(when, runtime=False)
-            yield node.test, when
-            yield from ((statement, checker if positive else when) for statement in node.body)
-            yield from ((statement, when if positive else checker) for statement in node.orelse)
-            return
+        yield node.test, when
+        if node.test in false_guards:
+            unreachable = replace(when, runtime=False)
+            yield from ((statement, unreachable) for statement in node.body)
+            yield from ((statement, when) for statement in node.orelse)
+        else:
+            conditional = replace(when, guarded=True)
+            yield from ((statement, conditional) for statement in (*node.body, *node.orelse))
+        return
     if isinstance(node, (ast.Try, ast.TryStar)):
         tried = replace(when, guarded=True) if _handles_import_errors(node.handlers) else when
         yield from ((statement, tried) for statement in node.body)
@@ -1517,24 +1524,6 @@ def _children(node: ast.AST, when: _When) -> Iterator[Tuple[ast.AST, _When]]:
         yield from ((statement, replace(when, guarded=True)) for statement in node.body)
         return
     yield from ((child, when) for child in ast.iter_child_nodes(node))
-
-
-def _type_checking(test: ast.expr) -> Optional[bool]:
-    """True for ``TYPE_CHECKING``, False for ``not TYPE_CHECKING``, None for any other test.
-
-    ``TYPE_CHECKING and anything`` is true only for a checker, so its body
-    never runs either; ``or`` can run.
-    """
-    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
-        return True if any(_type_checking(value) is True for value in test.values) else None
-    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-        inner = _type_checking(test.operand)
-        return None if inner is None else not inner
-    if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
-        return True
-    if isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING":
-        return True
-    return None
 
 
 _IMPORT_ERROR_CATCHERS = frozenset(

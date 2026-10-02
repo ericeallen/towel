@@ -371,6 +371,9 @@ only with the flag on is for the owner to decide when it arises.
 
 ## 2026-09-23: A helper never takes a builtin as a parameter
 
+*The cross-module builtin policy below is superseded by the October 2
+caller-side lookup decision. This entry records the earlier implementation.*
+
 A builtin that moved code reads resolves in the namespace of the module the
 code runs in. A cross-module helper therefore reads `len` in its host, while
 the original read it in the borrower. The difference shows only where the
@@ -407,6 +410,9 @@ day the owner made this the default rather than a prohibition; see "A name
 is its binding, not its spelling" below.*
 
 ## 2026-09-23: A name is its binding, not its spelling
+
+*The cross-module builtin policy below is superseded by the October 2
+caller-side lookup decision. This entry records the earlier implementation.*
 
 Extraction moves code between environments, so every free variable of a
 pair is a question of what it is bound to at each site and whether the
@@ -568,6 +574,10 @@ closing.
 *Status: proposal; not scheduled.*
 
 ## 2026-09-24: A type-only import is not an import edge
+
+*The runtime assumption and TYPE_CHECKING mutation exclusion below are superseded
+by the October 2 immutable annotation guard decision. The original evidence
+remains historical.*
 
 The amendment that lets Towel write imports under `if TYPE_CHECKING:`
 rests on their never running. Towel's cycle guard nonetheless counted them
@@ -1423,3 +1433,51 @@ where source may move.
 [release preparation](PRODUCTION_READINESS.md#1792-release-preparation) links
 its performance evidence and distinguishes it from earlier validation
 checkpoints; final release validation remains separately required.*
+
+
+## 2026-10-02: Annotation imports need an immutable false guard
+
+This supersedes September 24's assumption that imported `TYPE_CHECKING` flags
+never run and its exclusion of programs that assign `typing.TYPE_CHECKING`.
+That assignment is ordinary Python. A new helper import can create a cycle
+when a generated annotation import reads the changed flag.
+
+Generated checker-only imports now use `if 0 > 1:`. Both operands are exact
+integer literals: no mutable name, user operator or concurrent assignment can
+change the result. Strict mypy and Pyright both accept the imported type and
+reject a wrong argument using it. A literal `if False` hides the type from
+Pyright; `if 1 == 0` adds strict comparison diagnostics. No checker warnings
+are suppressed to obtain the chosen form.
+
+Existing imported-flag guards keep their original behavior and are never
+extended. A name they already import may still be reused in an annotation,
+which adds no executable import. Runtime import and effect analyses skip only
+proved immutable false guards. Uncertain conditional imports remain possible
+runtime edges without attesting that their dependencies are unconditional.
+
+*Status: implemented; focused runtime and real-checker regressions cover the
+mutation counterexample and useful extraction. Final release gates remain
+separately required.*
+
+## 2026-10-02: Cross-module callables retain caller-side lookups
+
+The absence of a project-local assignment does not prove that two modules
+resolve a builtin identically. Ordinary code outside the scanned project, a
+callback or another thread can rebind a module attribute. This supersedes the
+September 23 policy that let cross-module helpers read bare builtins when no
+such assignment was found.
+
+By default, cross-module bare builtin reads decline, except for `__debug__`.
+`--parameterize-builtins` explicitly permits caller-side lookup thunks such
+as `lambda: len` and `lambda: print`. Repeated uses retain repeated lookups;
+only the existing first-effect, single-use proof permits eager evaluation.
+Same-module names stay bare. Other module-resolved callables receive lookup
+thunks without this builtin-specific flag. A new clustered caller cannot join
+an eager parameter when its binding requires deferred module lookup.
+
+Typed thunks preserve their callable result types: for example,
+`Callable[[], Callable[..., int]]` for `lambda: len`. These changes preserve
+ordinary binding behavior without restoring reflection scans.
+
+*Status: implemented with focused rebinding and real-mypy regressions;
+final release validation remains separately required.*

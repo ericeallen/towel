@@ -222,16 +222,15 @@ def test_a_runtime_import_of_anything_but_typing_is_refused(tmp_path: Path) -> N
 # -- TYPE_CHECKING and the imports under it -----------------------------------------------
 
 
-def test_a_type_only_import_is_private_and_its_guard_reads_a_private_typing(
+def test_a_type_only_import_is_private_and_its_guard_has_no_mutable_binding(
     tmp_path: Path,
 ) -> None:
     before = "import os\n\n\ndef f() -> None:\n    return None\n"
     after = _inserted(tmp_path, before, "a: 'Thing'", checking=(("pkg.other", "Thing"),))
-    assert _new_names(before, after) == {HELPER, "_Thing", "_typing"}
-    _assert_private_and_free([HELPER, "_Thing", "_typing"], before)
+    assert _new_names(before, after) == {HELPER, "_Thing"}
+    _assert_private_and_free([HELPER, "_Thing"], before)
     assert (
-        "if _typing.TYPE_CHECKING:  # pragma: no cover\n"
-        "    from pkg.other import Thing as _Thing\n" in after
+        "if 0 > 1:  # pragma: no cover\n" "    from pkg.other import Thing as _Thing\n" in after
     ), after
     assert f"def {HELPER}(a: '_Thing'):" in after, after
     assert _public(after) == _public(before)  # pkg.other does not exist: the guard never runs
@@ -249,7 +248,7 @@ def test_a_type_only_import_is_private_and_its_guard_reads_a_private_typing(
 def test_the_modules_own_type_checking_is_not_rebound(tmp_path: Path, binding: str) -> None:
     before = f"{binding}\n\nif TYPE_CHECKING:\n    MODE = 'debug'\nelse:\n    MODE = 'normal'\n"
     after = _inserted(tmp_path, before, "a: 'Thing'", checking=(("pkg.other", "Thing"),))
-    assert _new_names(before, after) == {HELPER, "_Thing", "_typing"}
+    assert _new_names(before, after) == {HELPER, "_Thing"}
     assert _public(after) == _public(before) and _public(after)["MODE"] == "str 'debug'"
 
 
@@ -257,15 +256,15 @@ def test_a_relatively_imported_type_checking_is_not_taken_for_typings(tmp_path: 
     """``from .compat import TYPE_CHECKING`` may be anything; it cannot be run here, only read."""
     before = "from .compat import TYPE_CHECKING\n\n\ndef f() -> None:\n    return None\n"
     after = _inserted(tmp_path, before, "a: 'Thing'", checking=(("pkg.other", "Thing"),))
-    assert _new_names(before, after) == {HELPER, "_Thing", "_typing"}
-    assert "if _typing.TYPE_CHECKING:" in after, after
+    assert _new_names(before, after) == {HELPER, "_Thing"}
+    assert "if 0 > 1:" in after, after
 
 
-def test_typings_own_type_checking_bound_once_is_the_guard(tmp_path: Path) -> None:
+def test_typings_mutable_flag_is_not_reused_for_a_new_guard(tmp_path: Path) -> None:
     before = "from typing import TYPE_CHECKING\n\n\ndef f() -> None:\n    return None\n"
     after = _inserted(tmp_path, before, "a: 'Thing'", checking=(("pkg.other", "Thing"),))
     assert _new_names(before, after) == {HELPER, "_Thing"}
-    assert "if TYPE_CHECKING:\n    from pkg.other import Thing as _Thing\n" in after, after
+    assert "if 0 > 1:" in after, after
 
 
 def test_a_name_the_checker_already_reads_from_the_guard_is_reused(tmp_path: Path) -> None:
@@ -283,7 +282,7 @@ def test_a_type_only_name_the_module_binds_otherwise_gets_its_own_alias(tmp_path
     """For the checker the guard's import would replace the star-imported Thing too.
 
     A star import could rebind ``TYPE_CHECKING`` as well, so the module's guard
-    is not one to join, and the new guard reads a private ``typing``.
+    is not one to join, and the new guard reads an immutable integer comparison.
     """
     before = textwrap.dedent("""
         from typing import TYPE_CHECKING
@@ -293,7 +292,7 @@ def test_a_type_only_name_the_module_binds_otherwise_gets_its_own_alias(tmp_path
             from pkg.other import Thing
         """)
     after = _inserted(tmp_path, before, "a: 'Thing'", checking=(("pkg.other", "Thing"),))
-    assert _new_names(before, after) == {HELPER, "_Thing", "_typing"}
+    assert _new_names(before, after) == {HELPER, "_Thing"}
     assert "    from pkg.other import Thing as _Thing\n" in after, after
 
 
@@ -301,7 +300,7 @@ def test_the_guard_writer_returns_the_private_name_it_bound() -> None:
     lines = ["import os\n"]
     bound = UnificationRefactorEngine()._ensure_type_checking_import(lines, "pkg.other", "Thing")
     assert bound == "_Thing"
-    assert _new_names("import os\n", "".join(lines)) == {"_Thing", "_typing"}
+    assert _new_names("import os\n", "".join(lines)) == {"_Thing"}
 
 
 # -- the helper's import into a module that calls it, and type declarations --------------

@@ -17,7 +17,7 @@
 A checker answers with a whole path. Written into a module that never imports
 that submodule it is not a name at all, however plainly its head is bound: the
 package object carries no such attribute. The import is stated under
-``TYPE_CHECKING``, because the name is wanted only by an annotation and an
+an immutable false guard, because the name is wanted only by an annotation and an
 ordinary import would often close a cycle -- the extraction has just made the
 other module import this one.
 """
@@ -112,6 +112,7 @@ def test_a_cross_module_helper_names_the_other_class_and_still_type_checks(
             str(package),
             "--no-interactive",
             "--cross-module",
+            "--parameterize-builtins",
             "--progress",
             "none",
             "--min-lines",
@@ -127,15 +128,14 @@ def test_a_cross_module_helper_names_the_other_class_and_still_type_checks(
 
     host = (package / "alpha.py").read_text(encoding="utf-8")
     # Both names the guard needs are private, so no star-importer of alpha sees either.
-    assert "import typing as _typing\n" in host
-    assert "if _typing.TYPE_CHECKING:" in host
+    assert "if 0 > 1:" in host
     assert "from pkg.beta import Beta as _Beta" in host
     helper = next(
         node
         for node in ast.walk(ast.parse(host))
         if isinstance(node, ast.FunctionDef) and "extracted" in node.name
     )
-    receiver = helper.args.args[0].annotation
+    receiver = next(argument.annotation for argument in helper.args.args if argument.arg == "self")
     assert receiver is not None and "Beta" in ast.unparse(receiver)
 
     checked = subprocess.run(
@@ -150,7 +150,7 @@ def test_a_cross_module_helper_names_the_other_class_and_still_type_checks(
 
 @requires_mypy
 def test_the_guarded_import_does_not_run(tmp_path: Path) -> None:
-    """A cycle would be fatal at import time; under TYPE_CHECKING nothing executes."""
+    """A cycle would be fatal at import time; the generated immutable guard executes nothing."""
     package = _package(tmp_path)
     subprocess.run(
         [
@@ -184,18 +184,15 @@ def test_the_guarded_import_does_not_run(tmp_path: Path) -> None:
 
 
 def _runtime_imports(source: str) -> set[str]:
-    """The imports a module runs at its top level: every one not under ``TYPE_CHECKING``."""
+    """The imports a module runs at its top level: every one not under an immutable false guard."""
     tree = ast.parse(source)
+    from towel.runtime_guards import module_false_guards
+
+    false_guards = module_false_guards(tree)
     guarded = {
         id(node)
         for statement in tree.body
-        if isinstance(statement, ast.If)
-        and (
-            isinstance(statement.test, ast.Name)
-            and statement.test.id == "TYPE_CHECKING"
-            or isinstance(statement.test, ast.Attribute)
-            and statement.test.attr == "TYPE_CHECKING"
-        )
+        if isinstance(statement, ast.If) and statement.test in false_guards
         for node in ast.walk(statement)
     }
     return {
@@ -291,8 +288,7 @@ def test_a_guarded_name_is_quoted_where_the_module_evaluates_its_annotations(
 
     host = (package / "host.py").read_text(encoding="utf-8")
     assert (
-        "if _typing.TYPE_CHECKING:  # pragma: no cover\n    from pkg.other import Thing as _Thing\n"
-        in host
+        "if 0 > 1:  # pragma: no cover\n    from pkg.other import Thing as _Thing\n" in host
     ), host
     assert _runtime_imports(host) == before | {"import typing as _typing"}
     helper = next(
@@ -342,18 +338,16 @@ def test_the_import_joins_a_guard_at_module_level_and_not_one_inside_a_function(
     assert engine._ensure_type_checking_import(nested, "pkg.other", "Thing") == "_Thing"
     written = "".join(nested)
     assert "        from pkg.other import Thing" not in written, written
-    # The module's own TYPE_CHECKING is its only binding of the name, so the guard reads it.
-    assert "if TYPE_CHECKING:\n    from pkg.other import Thing as _Thing\n" in written, written
+    assert "if 0 > 1:" in written, written
 
     at_top = [
-        "from typing import TYPE_CHECKING\n",
         "\n",
-        "if TYPE_CHECKING:\n",
+        "if 0 > 1:\n",
         "    from pkg.first import One\n",
     ]
     engine._ensure_type_checking_import(at_top, "pkg.other", "Thing")
     joined = "".join(at_top)
-    assert joined.count("if TYPE_CHECKING:") == 1, joined
+    assert joined.count("if 0 > 1:") == 1, joined
     assert "    from pkg.other import Thing as _Thing\n" in joined
 
 
@@ -370,14 +364,12 @@ def _joined_and_run(lines: List[str]) -> str:
 
 @pytest.mark.parametrize(
     "header",
-    ["if TYPE_CHECKING:  # pragma: no cover\n", "if TYPE_CHECKING:  # noqa: SIM102\n"],
+    ["if 0 > 1:  # pragma: no cover\n", "if 0 > 1:  # noqa: SIM102\n"],
 )
 def test_a_guard_whose_line_carries_a_comment_is_joined_not_repeated(header: str) -> None:
-    """packaging's guard reads ``if TYPE_CHECKING:  # pragma: no cover``; a second guard was written."""
-    written = _joined_and_run(
-        ["from typing import TYPE_CHECKING\n", "\n", header, "    import collections\n"]
-    )
-    assert written.count("if TYPE_CHECKING") == 1, written
+    """A comment on a generated guard does not prevent later imports joining it."""
+    written = _joined_and_run(["\n", header, "    import collections\n"])
+    assert written.count("if 0 > 1") == 1, written
     assert (
         header + "    from pkg.other import Thing as _Thing\n    import collections\n" in written
     ), written
@@ -388,21 +380,19 @@ def test_the_import_takes_the_indentation_of_the_guards_body(indent: str) -> Non
     """A four-space line before a two-space body is an IndentationError."""
     written = _joined_and_run(
         [
-            "from typing import TYPE_CHECKING\n",
-            "if TYPE_CHECKING:\n",
+            "if 0 > 1:\n",
             f"{indent}import collections\n",
             f"{indent}import os\n",
         ]
     )
-    assert f"if TYPE_CHECKING:\n{indent}from pkg.other import Thing as _Thing\n" in written, written
-    assert written.count("if TYPE_CHECKING") == 1, written
+    assert f"if 0 > 1:\n{indent}from pkg.other import Thing as _Thing\n" in written, written
+    assert written.count("if 0 > 1") == 1, written
 
 
-def test_a_guard_through_the_typing_module_needs_no_import_of_the_name() -> None:
+def test_a_guard_through_the_mutable_typing_module_is_not_extended() -> None:
     written = _joined_and_run(["import typing\n", "if typing.TYPE_CHECKING:\n", "    import os\n"])
-    assert (
-        "if typing.TYPE_CHECKING:\n    from pkg.other import Thing as _Thing\n" in written
-    ), written
+    assert "if typing.TYPE_CHECKING:\n    import os\n" in written, written
+    assert "if 0 > 1:" in written, written
     assert "from typing import TYPE_CHECKING" not in written, written
 
 
@@ -423,5 +413,5 @@ def test_a_guard_whose_body_shares_its_line_gets_a_guard_beside_it() -> None:
     written = _joined_and_run(
         ["from typing import TYPE_CHECKING\n", "if TYPE_CHECKING: import os\n", "x = 1\n"]
     )
-    assert "if TYPE_CHECKING:\n    from pkg.other import Thing as _Thing\n" in written, written
+    assert "if 0 > 1:" in written, written
     assert "if TYPE_CHECKING: import os\n" in written, written

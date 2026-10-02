@@ -3,11 +3,7 @@ Report generation module.
 """
 
 
-def __extracted_func_0(values):
-    if not values:
-        return {'count': 0, 'sum': 0, 'mean': 0}
-    total = sum(values)
-    count = len(values)
+def __extracted_func_0(count, total):
     mean = total / count
     return {'count': count, 'sum': total, 'mean': mean}
 
@@ -15,7 +11,12 @@ def __extracted_func_0(values):
 def calculate_report_stats(values):
     """Calculate statistics for report."""
     # Statistics calculation (DUPLICATE across subdirectories!)
-    return __extracted_func_0(values)
+    if not values:
+        return {'count': 0, 'sum': 0, 'mean': 0}
+
+    total = sum(values)
+    count = len(values)
+    return __extracted_func_0(count, total)
 
 
 def generate_report(measurements):

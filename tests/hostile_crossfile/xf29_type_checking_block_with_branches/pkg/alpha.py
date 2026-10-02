@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Nothing under TYPE_CHECKING runs, however it branches, so importing this
-# module still runs nothing but its definitions.
+# TYPE_CHECKING is mutable. These imports and the print may execute, so
+# another module cannot acquire a new eager import of this host safely.
 import sys
 from typing import TYPE_CHECKING
 

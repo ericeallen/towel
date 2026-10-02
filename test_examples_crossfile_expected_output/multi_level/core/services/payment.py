@@ -9,6 +9,12 @@ from api.checkout import __extracted_func_0
 def validate_payment_amount(amount, currency):
     """Validate payment amount."""
     # Validation logic (DUPLICATE across multiple levels!)
+    if amount <= 0:
+        return False
+    if not currency:
+        return False
+    if len(currency) != 3:
+        return False
     return __extracted_func_0(amount, currency)
 
 

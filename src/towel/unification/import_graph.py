@@ -65,7 +65,6 @@ from .module_bindings import (
     ModuleBindings,
     dotted_name,
     global_bindings,
-    import_origin,
 )
 from .program_imports import ProgramImports, program_imports
 from .statement_facts import (
@@ -73,6 +72,7 @@ from .statement_facts import (
     imported_binding_name,
 )
 from ..source_text import read_source
+from ..runtime_guards import module_false_guards
 
 
 @dataclass(frozen=True)
@@ -314,115 +314,31 @@ def relative_imports_resolve_alike(files: Iterable[str], levels: Iterable[int]) 
 ImportExtent = Literal["everywhere", "at_import", "unconditionally", "leading"]
 
 
-_TYPE_CHECKING = frozenset({"typing.TYPE_CHECKING", "typing_extensions.TYPE_CHECKING"})
-
-
 class TypeCheckingGuards:
-    """Which ``if`` tests of one module are ``TYPE_CHECKING``, false wherever the module runs.
+    """Module-level guards whose bodies are locally proved never to execute.
 
-    A body under ``if TYPE_CHECKING:`` is for a checker, which reads it, and
-    never runs: Towel writes imports there on exactly that premise, and every
-    question about what a module runs, imports or requires answers it the same
-    way, through this one test. A test is such a guard when its name, resolved
-    by the module's own bindings, is ``typing.TYPE_CHECKING`` or
-    ``typing_extensions.TYPE_CHECKING`` however it is imported or aliased, or
-    the module's own ``TYPE_CHECKING = False``. It is resolved where the
-    statement holding the test runs when that is known, and otherwise only
-    when every binding the module ever gives the name is one of those, which
-    also covers ``try: from typing import TYPE_CHECKING`` with an ``except``
-    that binds ``False``. Anything else runs: a name a function or class scope
-    binds for itself (a local ``TYPE_CHECKING = True``), a name a function
-    declares ``global``, a module with a star import, an expression other
-    than the name (``not TYPE_CHECKING``), and an unresolvable one. Only the
-    guarded body is skipped; its ``else`` runs.
+    Imported TYPE_CHECKING flags are ordinary mutable bindings. Only a
+    literal False test or the immutable integer comparison 0 > 1 is a
+    runtime proof; see ``module_false_guards``.
     """
 
-    def __init__(self, tree: ast.Module, bindings: Optional[ModuleBindings]) -> None:
+    def __init__(self, tree: ast.Module) -> None:
         self._tree = tree
-        self._bindings = bindings
-
-    @classmethod
-    def of(cls, source: str, tree: ast.Module) -> "TypeCheckingGuards":
-        """The guards of the module ``tree`` parsed from ``source``."""
-        return cls(tree, global_bindings(source))
+        self._tests = module_false_guards(tree)
 
     def never_true(
         self, test: ast.expr, shadowed: FrozenSet[str] = frozenset(), order: Optional[int] = None
     ) -> bool:
-        """Whether ``test`` is a guard, where the names ``shadowed`` are the enclosing scopes' own.
-
-        ``order`` is the index of the top-level statement the test runs in,
-        when it runs as the module is imported; None for a test in a
-        function body, which runs when the module's bindings are all made.
-        """
-        dotted = dotted_name(test)
-        if dotted is None or self._bindings is None or dotted.split(".")[0] in shadowed:
+        """Whether this exact module-level test is false at its statement's position."""
+        if order is None or not 0 <= order < len(self._tree.body):
             return False
-        if order is not None and self._in_effect(dotted, order):
-            return True
-        return self._always_guard(dotted, 0)
-
-    def _in_effect(self, dotted: str, order: int) -> bool:
-        """Whether ``dotted`` is a guard by the binding certainly in effect at ``order``."""
-        assert self._bindings is not None
-        if self._bindings.resolve(dotted, order) in _TYPE_CHECKING:
-            return True
-        if "." in dotted:
-            return False
-        binding = self._bindings.in_effect(dotted, order)
-        if binding is None or len(self._bindings.bindings.get(dotted, ())) != 1:
-            return False
-        return _binds_false(self._tree.body[binding.order], dotted)
-
-    def _always_guard(self, dotted: str, depth: int) -> bool:
-        """Whether every binding the module's own scope ever gives ``dotted``'s head makes it one."""
-        assert self._bindings is not None
-        head, _, rest = dotted.partition(".")
-        bindings = self._bindings
-        if (
-            depth > 8
-            or bindings.star_imports
-            or head in bindings.rebound_by_global
-            or not bindings.bindings.get(head)
-        ):
-            return False
-        sources = list(_module_scope_bindings(self._tree, head))
-        if not sources:
-            return False
-        for statement, alias in sources:
-            if alias is not None and isinstance(statement, (ast.Import, ast.ImportFrom)):
-                origin = import_origin(statement, alias)
-                if origin is None or (f"{origin}.{rest}" if rest else origin) not in _TYPE_CHECKING:
-                    return False
-            elif not rest and _binds_false(statement, head):
-                continue
-            elif (
-                isinstance(statement, ast.Assign)
-                and all(isinstance(target, ast.Name) for target in statement.targets)
-                and (aliased := dotted_name(statement.value)) is not None
-            ):
-                if not self._always_guard(f"{aliased}.{rest}" if rest else aliased, depth + 1):
-                    return False
-            else:
-                return False
-        return True
-
-
-def _binds_false(statement: ast.AST, name: str) -> bool:
-    """``name = False`` or ``name: bool = False``, and nothing else."""
-    if isinstance(statement, ast.Assign):
-        targets, value = statement.targets, statement.value
-    elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
-        targets, value = [statement.target], statement.value
-    else:
-        return False
-    return (
-        len(targets) == 1
-        and isinstance(targets[0], ast.Name)
-        and targets[0].id == name
-        and isinstance(value, ast.Constant)
-        and value.value is False
-    )
+        statement = self._tree.body[order]
+        return (
+            test in self._tests
+            and isinstance(statement, ast.If)
+            and statement.test is test
+            and not (isinstance(test, ast.Name) and test.id in shadowed)
+        )
 
 
 def _module_scope_bindings(
@@ -519,8 +435,8 @@ def _import_statements(
 ) -> List[Union[ast.Import, ast.ImportFrom]]:
     """The import statements of ``tree`` that ``extent`` counts.
 
-    None under a ``TYPE_CHECKING`` guard (``TypeCheckingGuards``) counts:
-    such an import never runs, in any body.
+    A module-level body locally proved false (``TypeCheckingGuards``) is
+    skipped. Imported TYPE_CHECKING flags are mutable and prove nothing.
     """
     if extent == "leading":
         return leading_imports(tree)
@@ -598,7 +514,7 @@ def _import_edges(
         return cache.edges.put(key, None)
     files: Set[Path] = set()
     unseen = False
-    for node in _import_statements(tree, extent, TypeCheckingGuards.of(source, tree)):
+    for node in _import_statements(tree, extent, TypeCheckingGuards(tree)):
         for level, module, names in _import_requests(node):
             reached = program.reached(current, level, module, names)
             if reached is None:
@@ -965,7 +881,7 @@ class ImportTimeCode:
     whose decorators keep it, whose metaclass is ``type`` or ``ABCMeta``,
     which defines no ``__init_subclass__``, and whose own bases are quiet; one
     imported from another module is followed there when ``path`` and
-    ``cache`` locate it. A body guarded by a resolved ``TYPE_CHECKING`` never
+    ``cache`` locate it. A body guarded by a locally proved False test never
     runs, nor one guarded by ``__name__ == "__main__"`` when the module is
     imported rather than run.
     """
@@ -980,7 +896,7 @@ class ImportTimeCode:
     ) -> None:
         self._tree = ast.parse(source)
         self._bindings = global_bindings(source)
-        self._guards = TypeCheckingGuards(self._tree, self._bindings)
+        self._guards = TypeCheckingGuards(self._tree)
         self._path = path
         self._cache = cache
         self._depth = depth
@@ -1675,7 +1591,7 @@ def conditionally_imported(program: ProgramImports, cache: ImportGraphCache) -> 
     is not a statement of its module's top level is conditional: one under
     an ``if`` (a ``sys.platform``, ``os.name`` or ``platform.system()`` test,
     or any other), in a ``try`` (``except ImportError`` included), a loop or
-    a ``with``, or in a function body. One under ``TYPE_CHECKING`` never runs
+    a ``with``, or in a function body. One under a locally proved False guard never runs
     and is no import at all.
 
     A module is conditional when some import of it is, and every other
@@ -1993,7 +1909,7 @@ def _required_names(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:
     ``import a.b`` requires ``a`` and ``a.b``, and ``from a import b``
     requires ``a`` and ``a.b``, a submodule or an attribute. Either branch of an ``if`` may
     be the one that runs, and an import there is required there; under
-    ``TYPE_CHECKING`` only the ``else`` ever runs. An import in a ``try``
+    a locally proved False guard only the ``else`` ever runs. An import in a ``try``
     whose handlers catch ``ImportError`` requires nothing, since the module
     goes on without it, but one in the handler, the ``else`` or the
     ``finally`` does, and so does one in a ``try`` that lets the error
@@ -2012,7 +1928,7 @@ def _required_names(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:
         tree = ast.parse(source)
     except (OSError, UnicodeError, SyntaxError):
         return cache.required_imports.put(key, frozenset())
-    guards = TypeCheckingGuards.of(source, tree)
+    guards = TypeCheckingGuards(tree)
     names: Set[str] = set()
     pending: List[Tuple[ast.stmt, int]] = [(node, order) for order, node in enumerate(tree.body)]
     while pending:

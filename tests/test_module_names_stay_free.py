@@ -103,13 +103,15 @@ def test_a_cross_file_helper_still_takes_module_names(tmp_path: Path) -> None:
             print("second", total)
             return total - 1
         """))
-    engine = UnificationRefactorEngine(min_lines=3, settings=SERIAL, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        min_lines=3, settings=SERIAL, cross_module_helpers=True, parameterize_builtins=True
+    )
     results, _ = engine.refactor_directory_to_fixed_point(
         str(tmp_path / "pkg"), str(tmp_path / "out"), progress="none"
     )
     assert sum(count for count, _ in results.values()) > 0
     rewritten = (tmp_path / "out" / "a.py").read_text() + (tmp_path / "out" / "b.py").read_text()
-    assert "scale" in _helper_signature(rewritten)
+    assert "lambda: scale" in rewritten
 
 
 def test_module_resolution_stops_at_the_function_and_its_enclosing_functions() -> None:

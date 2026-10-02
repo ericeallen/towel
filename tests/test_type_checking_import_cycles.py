@@ -12,16 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""An import under ``if TYPE_CHECKING:`` never runs, so it closes no import cycle.
+"""Only immutable false guards remove runtime import edges.
 
-Towel writes imports there on exactly that premise, for names only a checker
-reads. The cycle guard followed them as edges anyway, so two modules that
-name each other's classes for the checker, the usual reason for the idiom,
-could share no helper in either direction, and a type-only import Towel had
-just written refused every later pair between the same two modules. The guard
-now skips a guarded body, in any scope, and still follows its ``else``, a
-test that is not the name (``not TYPE_CHECKING``), and a ``TYPE_CHECKING``
-that resolves to anything else.
+Conventional TYPE_CHECKING imports remain possible runtime branches because
+ordinary assignment can change the flag. Generated 0 > 1 guards stay inert,
+allow useful typed sharing, and do not block later extraction between the
+same modules. Conventional source fixtures remain covered separately.
 """
 
 from __future__ import annotations
@@ -101,10 +97,10 @@ def _closes_a_cycle(root: Path, host: str, borrower: str) -> bool:
     )
 
 
-def test_a_cycle_only_through_type_checking_imports_is_none(tmp_path: Path) -> None:
+def test_mutable_type_checking_imports_remain_possible_cycle_edges(tmp_path: Path) -> None:
     root = _package(tmp_path, _guarded("alpha", "beta"), _guarded("beta", "alpha"))
-    assert not _closes_a_cycle(root, "alpha", "beta")
-    assert not _closes_a_cycle(root, "beta", "alpha")
+    assert _closes_a_cycle(root, "alpha", "beta")
+    assert _closes_a_cycle(root, "beta", "alpha")
 
 
 @pytest.mark.parametrize(
@@ -138,6 +134,7 @@ def test_a_cycle_through_an_import_that_may_run_is_still_one(tmp_path: Path, alp
         "import typing_extensions as te\n\nif te.TYPE_CHECKING:\n    from .beta import Beta\n",
         "from typing import TYPE_CHECKING as CHECKING\n\nif CHECKING:\n    from .beta import Beta\n",
         "TYPE_CHECKING = False\n\nif TYPE_CHECKING:\n    from .beta import Beta\n",
+        "if 0 > 1:\n    from .beta import Beta\n",
         "try:\n    from typing import TYPE_CHECKING\nexcept ImportError:\n    TYPE_CHECKING = False\n"
         "\nif TYPE_CHECKING:\n    from .beta import Beta\n",
         "from typing import TYPE_CHECKING\n\n\nclass Holder:\n    if TYPE_CHECKING:\n"
@@ -145,14 +142,23 @@ def test_a_cycle_through_an_import_that_may_run_is_still_one(tmp_path: Path, alp
         "from typing import TYPE_CHECKING\n\n\ndef late() -> None:\n    if TYPE_CHECKING:\n"
         "        from .beta import Beta\n",
     ],
-    ids=["module", "aliased-module", "aliased-name", "own-false", "try", "class", "function"],
+    ids=[
+        "module",
+        "aliased-module",
+        "aliased-name",
+        "own-false",
+        "constant-false",
+        "try",
+        "class",
+        "function",
+    ],
 )
-def test_every_spelling_of_the_guard_hides_its_body(tmp_path: Path, alpha: str) -> None:
+def test_only_an_immutable_false_guard_hides_its_body(tmp_path: Path, alpha: str) -> None:
     root = _package(tmp_path, alpha, _guarded("beta", "alpha"))
-    assert not _closes_a_cycle(root, "alpha", "beta")
+    assert _closes_a_cycle(root, "alpha", "beta") is not alpha.startswith("if 0 > 1:")
 
 
-def test_every_extent_skips_the_guarded_body_and_keeps_its_else() -> None:
+def test_every_extent_keeps_both_branches_of_mutable_flags() -> None:
     source = textwrap.dedent("""\
         from typing import TYPE_CHECKING
 
@@ -173,7 +179,7 @@ def test_every_extent_skips_the_guarded_body_and_keeps_its_else() -> None:
             import called
         """)
     tree = ast.parse(source)
-    guards = TypeCheckingGuards.of(source, tree)
+    guards = TypeCheckingGuards(tree)
 
     def imported(extent: str) -> set[str]:
         return {
@@ -182,18 +188,26 @@ def test_every_extent_skips_the_guarded_body_and_keeps_its_else() -> None:
             for alias in node.names
         } - {"TYPE_CHECKING"}
 
-    assert imported("everywhere") == {"running", "called"}
-    assert imported("at_import") == {"running"}
+    assert imported("everywhere") == {
+        "checked",
+        "running",
+        "checked_in_class",
+        "checked_in_function",
+        "called",
+    }
+    assert imported("at_import") == {"checked", "running", "checked_in_class"}
 
 
 def test_a_requirement_in_the_guards_else_is_required(tmp_path: Path) -> None:
-    """What a module requires at import: the ``else`` of the guard runs, its body does not."""
+    """Either branch of a mutable imported flag can require an import."""
     module = tmp_path / "module.py"
     module.write_text(
         "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    import checked\n"
         "else:\n    import tornado\n"
     )
-    assert _required_imports(module, ImportGraphCache()) == frozenset({"typing", "tornado"})
+    assert _required_imports(module, ImportGraphCache()) == frozenset(
+        {"typing", "checked", "tornado"}
+    )
 
 
 def _dry(root: Path, *, types: bool = False) -> subprocess.CompletedProcess[str]:
@@ -209,6 +223,7 @@ def _dry(root: Path, *, types: bool = False) -> subprocess.CompletedProcess[str]
             *(() if types else ("--no-types",)),
             "--no-format",
             "--cross-module",
+            "--parameterize-builtins",
             "--progress",
             "none",
         ],
@@ -241,14 +256,26 @@ def imports_in_every_order(root: Path, modules: list[str], call: str) -> None:
         assert completed.returncode == 0, (first, completed.stderr)
 
 
-def test_modules_that_name_each_other_for_the_checker_share_a_helper(tmp_path: Path) -> None:
-    root = _package(tmp_path, _guarded("alpha", "beta"), _guarded("beta", "alpha"))
+@pytest.mark.parametrize("immutable_false", [False, True])
+def test_modules_share_a_helper_only_when_guarded_imports_are_proved_inert(
+    tmp_path: Path, immutable_false: bool
+) -> None:
+    alpha_source, beta_source = _guarded("alpha", "beta"), _guarded("beta", "alpha")
+    if immutable_false:
+        alpha_source = alpha_source.replace("if TYPE_CHECKING:", "if 0 > 1:")
+        beta_source = beta_source.replace("if TYPE_CHECKING:", "if 0 > 1:")
+    root = _package(tmp_path, alpha_source, beta_source)
+    original_alpha = (root / "pkg" / "alpha.py").read_text()
+    original_beta = (root / "pkg" / "beta.py").read_text()
     result = _dry(root)
     assert result.returncode == 0, result.stdout + result.stderr
     alpha = (root / "pkg" / "alpha.py").read_text()
     beta = (root / "pkg" / "beta.py").read_text()
-    assert "__extracted_func" in alpha and "__extracted_func" in beta, alpha + beta
-    assert ("from .alpha import" in beta) != ("from .beta import __extracted" in alpha)
+    if immutable_false:
+        assert "__extracted_func" in alpha and "__extracted_func" in beta, alpha + beta
+        assert ("from .alpha import" in beta) != ("from .beta import __extracted" in alpha)
+    else:
+        assert (alpha, beta) == (original_alpha, original_beta)
     imports_in_every_order(
         root,
         ["pkg.alpha", "pkg.beta"],
@@ -306,8 +333,7 @@ def test_a_type_only_import_towel_wrote_refuses_no_later_pair(tmp_path: Path) ->
     assert first.returncode == 0, first.stdout + first.stderr
     direct = (tmp_path / "pkg" / "direct.py").read_text()
     assert (
-        "if _typing.TYPE_CHECKING:  # pragma: no cover\n    from .lock import LockError as _LockError"
-        in direct
+        "if 0 > 1:  # pragma: no cover\n    from .lock import LockError as _LockError" in direct
     ), direct
     for module in ("direct", "lock"):
         with (tmp_path / "pkg" / f"{module}.py").open("a") as handle:

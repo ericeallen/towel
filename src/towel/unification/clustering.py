@@ -248,9 +248,21 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             site=candidate.site,
         ):
             return None
-        # A clustered block reading a builtin cannot join a helper whose sites
-        # pass their own local of that name: its call would hand over the
-        # builtin, which only ``parameterize_builtins`` permits.
+        # An existing eager free-variable parameter snapshots a module
+        # binding before ordinary callees can rebind it between reads. Only
+        # a helper with a caller lookup thunk can accept that clustered site.
+        free_positions = free_variable_positions(template.param_order, subst2)
+        eager_free_names = {
+            argument.id
+            for node in ast.walk(call_node2)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == template.func_def.name
+            for index, argument in enumerate(node.args)
+            if index in free_positions and isinstance(argument, ast.Name)
+        }
+        if module_resolved_names(candidate.function, candidate.analyzer, eager_free_names):
+            return None
         if builtins_passed(
             call_node2,
             template.func_def.name,

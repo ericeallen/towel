@@ -323,10 +323,10 @@ def _add_parameterize_builtins_flag(parser: argparse.ArgumentParser) -> None:
         dest="parameterize_builtins",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Where a builtin the duplicated code reads may differ between its sites (one "
-        "function binds len, the other reads the builtin; or, with --cross-module, a module "
-        "may hold the name), pass it to the helper as a parameter instead of declining the "
-        "pair. --no-parameterize-builtins, the default, gives no helper a builtin parameter.",
+        help="Preserve each caller's builtin binding through a lookup thunk when sharing "
+        "code across modules or between different bindings. By default, cross-module "
+        "bare builtin reads are declined (except __debug__). Same-module reads stay bare. "
+        "Only a proved single use at the first effect permits eager evaluation.",
     )
 
 

@@ -133,88 +133,47 @@ describe belong to that version.
   an `except ... as` clause) is unbound for whatever may follow it: the rest
   of its list, the next iteration of a loop that holds it, and the handlers,
   `else` and `finally` of a `try` that holds it.
-- **Module names stay module names.** A free name that both sites resolve at
-  module scope (or nowhere: a builtin, or a name the module never binds) is
-  not passed to a same-module helper at all; the helper reads it bare, where
-  the block did, so a helper defined below its callers, a class, an import,
-  or module data a callback rebinds between two reads all behave as before.
-  A clustered occurrence whose same-spelled name is a local of its function
-  or of an enclosing one does not join such a helper. Across files the
-  other module's same-named binding may differ, so the name stays a
-  parameter there, and module data that a callback may rebind still
-  declines the pair (`module_data_lookup`, `rebound_external_binding`).
-  A same-file pair's helper, a method or a function, always lives in the
-  pair's own module, so these names are always read there (oauthlib's
-  `BearerToken`, fixture `xf15`, broke when a helper was hoisted into a base
-  class defined in another module). By default a builtin is never a
-  parameter, since a call such as `helper(rows, len)` would surprise every
-  reader, so a helper that a site in another module calls, which only a
-  `--cross-module` run writes, reads its builtins bare in its host's
-  namespace. That is the lookup each site made only while no
-  participating module holds the name, and the pair is declined
-  (`builtin_may_differ_by_module`) wherever the program shows one may: a
-  statement of the module's own scope binds the name, a function of it
-  declares it `global`, a star import of it may bind it (a project module's
-  literal `__all__` or else its public top-level names say what; a module
-  outside the project may bind anything), it rebinds `__builtins__`, or the
-  project's own code or tests assign or delete an imported module's attribute
-  directly (`mod.len = ...`, `del mod.len`). Relative and absolute imports,
-  simple module aliases and `importlib.import_module` with a statically
-  spelled module name supply module identity. A module is matched by its
-  possible dotted import names below the project root and by the file a
-  relative import names.
+- **Module names stay module names.** A same-module helper reads module
+  names where the original block did, so ordinary reassignment by a callback
+  or another thread remains visible at each read. A same-file helper stays
+  in that module, even when its callers inherit from a class elsewhere.
+  Across modules, callable module bindings are passed as lookup thunks, such
+  as `lambda: callback`, and the helper performs each original lookup at its
+  use. The existing proof may inline a thunk only for one use at the first
+  effect. Module-data cases that cannot preserve lookup timing still decline
+  (`module_data_lookup`, `rebound_external_binding`). A clustered occurrence
+  does not join an existing eager parameter when its own binding requires a
+  module lookup.
 
-  Reflective changes through `globals`, `locals`, `vars`, `exec`, `eval`,
-  namespace dictionaries, `sys.modules`, `getattr`, `setattr`, `mock.patch`
-  or monkeypatch APIs are outside the guarantee and are not evidence for this
-  check. Neither is code outside the project scanned. The names checked are
-  those CPython's symbol table says the rendered helper reads from its module,
-  including reads inside lambdas and comprehensions. Nor
-  does this check read a star import as it may run: it takes a provider's
-  literal `__all__` as final, and counts only the provider's own writes.
-  A provider imported part way through an import cycle, before it binds
-  `__all__`, exports every public name bound so far, and a write of the name
-  into the provider from another module reaches every star importer. The
-  round-4 probe `builtin-cycle-probe` shows the first: `pkg/common.py` binds
-  `len`, imports `pkg/b.py`, whose `from .common import *` runs then, and
-  only afterwards binds `__all__ = ["scale"]`; under `--cross-module` the
-  shared helper reads the builtin where `b` read `common.len`, and the
-  program's output changes from `6 110` to `6 6`. A module `__getattr__` changes no bare lookup and is not
-  consulted. In any
-  pair, same-module or not, no generated call hands its helper a builtin:
-  an argument, or what a lambda argument returns, that is a name its site
-  reads from the builtins, bare or in a literal tuple, list, set or dict,
-  declines the pair (`builtin_argument`), and a clustered block whose call
-  would hand one over keeps its code. So a pair is declined where one
-  site's function binds a builtin's name and the other reads the builtin,
-  and where the blocks differ in a builtin that Towel's own list of
-  builtins leaves out (`lambda: __import__`, `lambda: __debug__`) or in a
-  container of builtins against a plain name (`(int, str)`). Where both
-  functions bind the name, each passes its own local. A lambda that calls a
-  builtin (`lambda: len(rows)`) passes what the builtin computed, and an
-  attribute of one (`str.upper`) is not the builtin
-  (`tests/test_no_builtin_arguments.py`). With `--parameterize-builtins`
-  (`parameterize_builtins=True`), each of those declines that concerns a
-  builtin the sites may disagree about, one site's function binding the
-  name or a module that may hold it, passes the builtin as an ordinary
-  parameter instead, each site giving its own: eagerly, or as a thunk where
-  the site may not have bound it, as for any free variable. The rules for a
-  name rebound between the call and the read still apply, so a module whose
-  function declares the name `global` or writes its namespace at run time
-  (`rebound_external_binding`), or that assigns it at its top level
-  (`module_data_lookup`), is declined as before. A builtin every site reads
-  alike stays bare, and blocks that differ in which builtin they use
-  (`lambda: __import__`, `(int, str)`) are declined all the same. Such
-  a parameter is annotated from what the checker reveals of the builtin,
-  loosened to what the helper's body needs where the host could not spell
-  the signature: a class every constructor of which makes it is
-  `type[str]`, a callable whose overloads all return one type or whose
-  parameters name typeshed's protocols is `Callable[..., int]`, a signature
-  over builtins alone stays exact (`Callable[[object], str]`). A builtin
-  whose overloads return different types (`open`, `sorted`, `min`) or a
-  generic one (`abs`) has no such annotation and gets `Any`, which a strict
-  checker may then refuse where the helper returns what it computes
-  (`tests/test_parameterize_builtins.py`).
+  By default a cross-module helper may not read a bare builtin from its
+  host on another module's behalf (`builtin_may_differ_by_module`). The
+  exception is `__debug__`, which Python fixes for the interpreter. An
+  absence of assignments in the project does not establish that different
+  modules keep equal bindings: ordinary code outside the scanned project
+  can assign `mod.len`, and a partially initialized star import can expose a
+  different binding. The September audit's builtin-cycle counterexample
+  therefore receives no cross-module extraction under the default policy.
+  Same-module builtin reads remain bare and preserve their original lookup.
+
+  `--parameterize-builtins` (`parameterize_builtins=True`) explicitly permits
+  each caller's binding to reach a shared helper. Module-resolved names use
+  lookup thunks such as `lambda: len` and `lambda: print`, preserving repeated
+  reads and intervening ordinary assignments. Only the existing first-effect,
+  single-use proof permits eager evaluation. Local bindings retain their
+  ordinary parameter behavior. The option does not permit blocks that differ
+  in which builtin they use; the builtin-argument and other binding checks
+  still apply (`tests/test_no_builtin_arguments.py`).
+
+  Typed lookup thunks retain their callable result type. For example,
+  `lambda: len` is `Callable[[], Callable[..., int]]`, `lambda: print` is
+  `Callable[[], Callable[..., None]]`, and `lambda: str` is
+  `Callable[[], type[str]]`. The checker determines these types; the fallback
+  only loosens an otherwise unspellable builtin signature to what its body
+  needs. Signatures with incompatible overload results or unsupported generic
+  parameters can still require `Any`, subject to the normal project check
+  (`tests/test_parameterize_builtins.py`). Reflective namespace manipulation
+  remains outside the preservation contract and is not detected to refuse
+  extraction.
 - **Relative imports stay in their package.** A relative import in a block
   resolves in the package of the module that runs it, so a helper holding
   `from .sub import VAL` imports its host's `sub` for every caller. A block
@@ -341,7 +300,7 @@ semantics that transformations must preserve:
   `re.compile` of a constant pattern that compiles here without a warning;
   `typing.overload` records a registry and `logging.getLogger` a logger a
   later `dictConfig` would disable, so both count as code. Nothing under a
-  `TYPE_CHECKING` resolved through the imports runs, however it branches,
+  literal `False` or the immutable integer comparison `0 > 1` runs,
   and a condition comparing `sys.version_info`, `sys.platform` or `os.name`
   with constants runs nothing. When a name the
   annotations need is defined only after such code, the helper goes before
@@ -358,10 +317,10 @@ semantics that transformations must preserve:
   the file's own is refused, and its proposal dropped. Static local import cycles are rejected
   (including cycles through a package's `__init__`, which `from . import
   name` runs), dynamic ones are not detected. An import under a
-  `TYPE_CHECKING` guard, resolved as above, never runs and closes no cycle;
-  one in the guard's `else`, under `if not TYPE_CHECKING:`, or under a name
-  a scope binds for itself does. A program that sets `typing.TYPE_CHECKING`
-  true before importing is outside this model.
+  provably false constant guard closes no cycle. Imported `TYPE_CHECKING`
+  flags and locally assigned Boolean names are mutable, so both branches
+  remain possible runtime edges. Setting `typing.TYPE_CHECKING = True` is
+  ordinary assignment and is covered by the preservation requirement.
 - **Concurrency of application.** A run refactors a private copy of the
   project and writes back only when it has succeeded, as one batch; a file
   edited during the run refuses the batch, nothing written. Files are replaced
@@ -404,7 +363,7 @@ Sharing a helper across modules is opt-in (`--cross-module`,
 paired, pairs across modules are neither formed nor counted against the pair
 budget, and no import between the project's modules that runs is ever
 written. The one import of a project module the default writes is the
-type-only one a helper's annotation needs, under `if TYPE_CHECKING:`, which
+type-only one a helper's annotation needs, under `if 0 > 1:`, which
 never runs; it is spelled by the rules below, and where none applies the
 annotation keeps the checker's full name.
 
@@ -516,7 +475,8 @@ doubt and refuses nothing, and does not make a stray `src/__init__.py` a
 package the program uses, from the
 root, on a package or on a subpackage; the file making it is left exactly as
 it was, with no helper hosted, borrowed or extracted within it; one under
-`if TYPE_CHECKING:` never runs and leaves its file free. The cost is
+an immutable false guard never runs and leaves its file free; an uncertain
+conditional import does not establish an unconditional dependency. The cost is
 that file's own duplicates, and, when it is a package's `__init__.py`, every
 helper a module outside that package would borrow from a module inside it:
 chardet's `detect` and `detect_all` share a block in its `__init__.py`,
@@ -788,14 +748,17 @@ where the evidence comes from:
 
 - Every name bound for an annotation is private and spelled nowhere in its
   module (`import typing as _typing`, `from pkg.models import Item as
-  _Item`, `if _typing.TYPE_CHECKING:`), so nothing the program already binds
+  _Item`), so nothing the program already binds
   changes meaning and no module that star-imports the helper's module takes
   a new public name. The one assumption is the one the helpers' own names
   rest on: a star import brings a private name only from a provider whose
   `__all__` lists it. A binding the module already has is used instead only
   when it is the name's single binding anywhere in the module; the module's
-  own `TYPE_CHECKING`, a flag of its own under that name, is never mistaken
-  for `typing`'s. A new guard carries `# pragma: no cover` where the
+  existing annotation imports can be reused without changing their guards.
+  New type-only imports use `if 0 > 1:`, an immutable false comparison that
+  both mypy and pyright read for types. Existing `TYPE_CHECKING` guards are
+  never extended with new imports. A new guard carries `# pragma: no cover`
+  where the
   project's coverage.py exclusions match only with it, as coverage.py's
   defaults do. A project whose exclusions match neither form, such as one
   whose `exclude_lines` lists `if TYPE_CHECKING:` and not the pragma, counts
@@ -881,7 +844,7 @@ where the evidence comes from:
   whose sites are in other modules, an annotation may name only builtins
   and the `typing` names Towel imports itself (`Any`, `Callable`), since a
   site's imports are not the host's. A class the module cannot reach is
-  imported under `TYPE_CHECKING` and named by a private alias; only where no module of
+  imported under an immutable false guard and named by a private alias; only where no module of
   the project owns it, or its short name is already taken, is the type left
   unwritten and the parameter completed with `Any`. Any subscripted
   annotation that would not evaluate at definition time (`memoryview[int]`
@@ -1596,8 +1559,7 @@ the proposals it built and did not apply, by reason:
   `bare_name_differs_by_module`: after the pair was decided again with them
   as parameters, the helper still reads bare a name that a site in another
   module could resolve differently. `builtin_may_differ_by_module`: the
-  helper would read bare a builtin that a participating module may hold in
-  its namespace (*Module names stay module names*).
+  helper would read bare a builtin in a different module's namespace (*Module names stay module names*).
 - The proposal. `duplicate_proposal`: the helper, home and sites repeat an
   earlier pair's, found through another pair of the same family.
   `existing_helper_becomes_forwarder`: a site is the whole body of a helper

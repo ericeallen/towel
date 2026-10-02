@@ -38,6 +38,14 @@ release verification binds the final versioned source to its own evidence.
 
 ### Changed
 
+- Generated annotation imports use the immutable guard `if 0 > 1:`. They stay
+  inert when ordinary code changes `typing.TYPE_CHECKING`; existing guards
+  retain their behavior. Both mypy and Pyright still validate the imported types.
+- Cross-module bare builtin reads now decline by default, except `__debug__`.
+  `--parameterize-builtins` preserves caller-side lookup timing with thunks;
+  their inferred annotations retain the callable result type. Other callable
+  module bindings also retain their original lookup timing.
+
 - The README is a short introduction, with a documentation index and separate
   guides for CLI use, typing, generated code, naming, cross-module extraction,
   resources and performance. Long references have contents lists. Navigation

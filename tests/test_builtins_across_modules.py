@@ -12,20 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A builtin that a borrowed helper reads is the same lookup from every module, or the pair is declined.
+"""Cross-module builtin lookups stay at their caller or the pair is declined.
 
-A bare name in a function is looked up in its module, then in the builtins.
-A helper hosted in ``reports`` that ``exports`` borrows reads ``len`` in
-``reports``, where the block it replaced read ``exports``: a test patching
-``pkg.exports.len``, which ``mock`` does for a builtin without being asked
-to create it, stopped reaching ``exports`` (the audit's reproducer printed
-10001 before refactoring and 5 after). Passing ``len`` from each caller would
-keep the lookup, but no helper takes a builtin as a parameter; a pair is
-declined instead wherever the program shows a participating module may hold
-the name: a binding of its own, a star import that reaches it, a write into
-a module attribute directly in the project's own code or tests.
-Reflective patch APIs and namespace writes carry no preservation guarantee.
-Module names are still passed, so a patch of one is still honoured.
+Ordinary external code can rebind a module attribute without exposing that
+write to Towel. Default cross-module extraction therefore declines builtin
+reads; the explicit opt-in preserves each lookup with a caller-side thunk.
+Reflective operations add no checks or preservation guarantee.
 """
 
 from __future__ import annotations
@@ -89,10 +81,14 @@ def _python_files(root: Path) -> Dict[str, bytes]:
     return {str(path.relative_to(root)): path.read_bytes() for path in sorted(root.rglob("*.py"))}
 
 
-def _refactor(project: Path) -> Tuple[int, Mapping[str, int]]:
+def _refactor(
+    project: Path, *, parameterize_builtins: bool = False
+) -> Tuple[int, Mapping[str, int]]:
     """Refactor ``project/pkg`` in place; how many refactorings applied, and why pairs were declined."""
     # Every pair here spans modules, which is opt-in (docs/DECISIONS.md).
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        min_lines=3, cross_module_helpers=True, parameterize_builtins=parameterize_builtins
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(project / "pkg"), str(project / "pkg"), progress="none"
@@ -157,21 +153,8 @@ def test_the_reproducer_is_declined_and_keeps_its_behaviour(tmp_path: Path) -> N
     assert "10001" in _run(after, "check.py")
 
 
-def test_without_evidence_the_helper_reads_the_builtin_bare(tmp_path: Path) -> None:
-    files = _project()
-    project = tmp_path / "proj"
-    _write(project, files)
-    _write(tmp_path / "original", files)
-    applied, _ = _refactor(project)
-    assert applied > 0
-    helper = _helper(project / "pkg")
-    assert [argument.arg for argument in helper.args.args] == ["name", "rows"]
-    assert not {argument.arg for argument in helper.args.args} & BUILTIN_NAMES
-    driver = "import pkg.exports, pkg.reports\nprint(pkg.exports.export_size([1, 2], 'ab'))\n"
-    (tmp_path / "drive.py").write_text(driver + "print(pkg.reports.report_size([1], 'abc'))\n")
-    assert _run(tmp_path, "drive.py", pythonpath="proj") == _run(
-        tmp_path, "drive.py", pythonpath="original"
-    )
+def test_no_visible_write_does_not_make_modules_share_a_builtin_lookup(tmp_path: Path) -> None:
+    _assert_declined(tmp_path, _project(), "builtin_may_differ_by_module")
 
 
 # Evidence in a participating module, and the reason the pair is declined for.
@@ -283,9 +266,9 @@ def test_a_star_import_is_followed_into_the_project(tmp_path: Path) -> None:
     )
     project = tmp_path / "elsewhere" / "proj"
     _write(project, elsewhere)
-    applied, _ = _refactor(project)
-    assert applied > 0
-    assert "len" not in {argument.arg for argument in _helper(project / "pkg").args.args}
+    applied, declined = _refactor(project)
+    assert applied == 0
+    assert "builtin_may_differ_by_module" in declined
 
 
 PATCHES = {
@@ -503,6 +486,10 @@ def test_a_relative_import_in_a_test_package_is_followed(tmp_path: Path) -> None
 
 
 NOT_EVIDENCE = {
+    "ordinary_other_module": "import pkg.other\npkg.other.len = replacement\n",
+    "ordinary_other_attribute": "def install(module):\n    module.width = replacement\n",
+    "ordinary_attribute_read": "def read(module):\n    return module.len\n",
+    "ordinary_unassigned_annotation": "def annotate(module):\n    module.len: object\n",
     "another_module": 'from unittest import mock\nmock.patch("pkg.other.len", create=True)\n',
     "another_name": 'from unittest import mock\nmock.patch("pkg.exports.width", create=True)\n',
     "the_builtins_module": 'from unittest import mock\nmock.patch("builtins.len", len)\n',
@@ -523,7 +510,7 @@ NOT_EVIDENCE = {
 def test_unrelated_or_reflective_writes_leave_the_pair_alone(tmp_path: Path, case: str) -> None:
     project = tmp_path / "proj"
     _write(project, _project(extra={"tests/test_other.py": NOT_EVIDENCE[case]}))
-    applied, _ = _refactor(project)
+    applied, _ = _refactor(project, parameterize_builtins=True)
     assert applied > 0
     assert not {argument.arg for argument in _helper(project / "pkg").args.args} & BUILTIN_NAMES
 
@@ -560,7 +547,11 @@ def test_a_module_name_is_still_passed_so_patching_it_reaches_each_caller(
     _write(after, files)
     applied, _ = _refactor(after)
     assert applied > 0
-    assert "join" in {argument.arg for argument in _helper(after / "pkg").args.args}
+    assert any(
+        isinstance(node, ast.Lambda) and isinstance(node.body, ast.Name) and node.body.id == "join"
+        for path in (after / "pkg").glob("*.py")
+        for node in ast.walk(ast.parse(path.read_text()))
+    )
     assert _run(after, "check.py") == _run(before, "check.py")
 
 
@@ -605,7 +596,7 @@ def test_a_same_module_helper_is_unchanged_by_a_patch_of_its_module(tmp_path: Pa
 def test_reflective_patching_does_not_refuse_extraction(tmp_path: Path, case: str) -> None:
     project = tmp_path / "proj"
     _write(project, _project(extra={"tests/test_exports.py": REFLECTIVE_PATCHES[case]}))
-    applied, declined = _refactor(project)
+    applied, declined = _refactor(project, parameterize_builtins=True)
     assert applied > 0
     assert "builtin_may_differ_by_module" not in declined
 
@@ -631,7 +622,7 @@ def test_reflection_in_a_participating_module_does_not_refuse_extraction(
 ) -> None:
     project = tmp_path / "proj"
     _write(project, _project(REFLECTIVE_PRELUDES[case]))
-    applied, declined = _refactor(project)
+    applied, declined = _refactor(project, parameterize_builtins=True)
     assert applied > 0
     assert "builtin_may_differ_by_module" not in declined
 

@@ -439,7 +439,7 @@ decides:
   after the last of them instead, so the names are written bare rather than
   as quoted forward references; this is done only when every statement
   before that point is a definition, import, assignment, or docstring, or
-  an `if` or `try` made only of those (a `TYPE_CHECKING` guard, an optional
+  an `if` or `try` made only of those (an immutable false guard, an optional
   import), so no statement that could call into the module at import time
   is reordered relative to the helper (`placeable_after`). Otherwise the
   helper stays at the top and the names are quoted.
@@ -1013,12 +1013,15 @@ The model answers three kinds of question:
   `unproven_import`; `materialize.py` writes the spelling and refuses a
   proposal built by other means that has none. `annotation_wiring.py` spells
   the type-only import a helper's annotation needs by `split_qualified` and
-  `spelling` in either mode, under `TYPE_CHECKING`, where it never runs.
+  `spelling` in either mode, under `if 0 > 1`, where it never runs while
+  both supported checkers still read its types.
 - **What an import executes** (`ImportModel.files_reached`, through
   `ProgramImports.reached`): the project files an import statement may run,
   package initializers on the way included and every candidate of an
-  ambiguous name. An import under a `TYPE_CHECKING` guard is no edge
-  (`TypeCheckingGuards`, the effects analysis's own test). The cycle guard
+  ambiguous name. Only an immutable false guard hides a runtime edge
+  (`TypeCheckingGuards`, sharing `runtime_guards` with the import model).
+  Imported `TYPE_CHECKING` flags remain mutable runtime conditions;
+  conditional imports do not attest unconditional availability. The cycle guard
   (`would_create_import_cycle`) walks these
   edges from the host and the initializers of its packages, reading each
   file where the run keeps it so that an import an earlier extraction added

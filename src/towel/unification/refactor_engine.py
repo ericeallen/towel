@@ -80,7 +80,6 @@ from .defaults import DEFAULT_MAX_CANDIDATE_PAIRS, DEFAULT_MAX_PARAMETERS, DEFAU
 from .function_index import FunctionIndex
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
 from .import_graph import ImportGraphCache
-from .namespace_writes import ProjectWrites
 from .block_signature import (
     BlockBucketKey,
     BlockSignature,
@@ -542,9 +541,6 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._helper_name_counters: Dict[str, int] = {}
         # Helper-shaped names anywhere in each project, scanned once per engine.
         self._project_helper_names: Dict[str, HelperNameClaims] = {}
-        # Writes into module namespaces anywhere in each project, scanned once
-        # per engine: patches of a builtin that decline a cross-module pair.
-        self._namespace_writes: Dict[str, ProjectWrites] = {}
         # What each project's coverage.py excludes, read once per engine.
         self._coverage_exclusions: Dict[str, CoverageExclusion] = {}
         self._origins_in_run: Dict[Tuple[str, Optional[Tuple[Path, Path]]], Path] = {}

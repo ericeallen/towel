@@ -123,12 +123,13 @@ the helper can read it directly. It need not receive a module-level class,
 import or later-defined function as a parameter. Cross-file helpers still
 parameterize such names.
 
-By default, Towel declines pairs whose builtin bindings may differ between
-sites, such as a local `len` at one site and the builtin at another, or a
-module builtin that a test patches. `--parameterize-builtins` instead passes
-each site's binding as an argument. A builtin resolved identically at every
-site is still read directly. The option does not permit blocks that differ
-in which builtin they use.
+By default, a cross-file helper cannot read bare builtins from its host on
+another caller's behalf, apart from the interpreter constant `__debug__`.
+`--parameterize-builtins` explicitly permits caller-side lookup thunks such as
+`lambda: len`; each original use then reads the caller's current binding.
+Only the existing first-effect, single-use proof permits an eager argument.
+Same-module builtin reads stay bare. The option does not permit blocks that
+differ in which builtin they use.
 
 ## Why some arguments are wrapped in lambda
 

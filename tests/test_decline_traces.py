@@ -154,10 +154,6 @@ ACCOUNTED = {
         "returns None, which _host_namespace_reads passes on and the pair declines as"
         " bare_name_differs_by_module"
     ),
-    ("pair_evaluation.py", "_builtin_evidence", "(OSError, UnicodeError, ValueError)"): (
-        "the unreadable file becomes the evidence that declines the pair as"
-        " builtin_may_differ_by_module"
-    ),
 }
 """Handlers that trace nothing themselves, and the traced decline that accounts for each."""
 

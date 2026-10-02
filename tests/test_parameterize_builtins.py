@@ -12,19 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``parameterize_builtins`` passes a builtin that may differ between sites instead of declining.
+"""``parameterize_builtins`` preserves caller lookups instead of declining.
 
-By default no helper takes a builtin as a parameter, and a pair is declined
-wherever a builtin its moved code reads may differ between its sites: one
-site's function binds ``len`` and the other reads the builtin, or, across
-modules, the program shows a participating module may hold the name. With
-``parameterize_builtins`` (``towel dry --parameterize-builtins``) exactly
-those builtins become ordinary parameters, each site passing its own binding,
-evaluated where the block read it, so an ordinary rebinding of either module
-still reaches that module's code. Reflective patch APIs and namespace writes
-are not evidence for parameterization. It permits nothing else: a builtin every site reads alike
-is still read bare, and blocks that differ in which builtin they use are still
-declined.
+By default cross-module builtin reads and mixed local/builtin sites decline.
+With the explicit opt-in, every original module lookup occurs at its original
+position via a caller-side thunk. A single leading lookup may be inlined when
+doing so preserves evaluation order. Same-module bare builtin reads stay bare.
+Reflection adds no checks, and blocks that differ in which builtin they use
+still decline.
 """
 
 from __future__ import annotations
@@ -214,7 +209,7 @@ def test_a_site_reading_the_builtin_shares_with_one_binding_its_name_only_with_t
     applied, declined = _refactor(after / "m.py", parameterize_builtins=flag)
     if flag:
         assert applied == 1
-        assert _parameters(after) == [["__param_0", "len", "name", "rows"]]
+        assert _parameters(after) == [["__param_0", "__param_1", "name", "rows"]]
     else:
         assert applied == 0
         assert "builtin_argument" in declined
@@ -222,14 +217,14 @@ def test_a_site_reading_the_builtin_shares_with_one_binding_its_name_only_with_t
 
 
 @pytest.mark.parametrize("flag", [False, True])
-def test_a_clustered_site_reading_the_builtin_joins_only_with_the_flag(
+def test_a_clustered_builtin_site_requires_a_helper_that_preserves_lookup(
     tmp_path: Path, flag: bool
 ) -> None:
     before, after = tmp_path / "before", tmp_path / "after"
     for root in (before, after):
         _write(root, {"m.py": CLUSTERED + "\n", "drive.py": SAME_MODULE_DRIVER})
     applied, _ = _refactor(after / "m.py", parameterize_builtins=flag)
-    assert applied == 1
+    assert applied == (2 if flag else 1)
     calls = _calls((after / "m.py").read_text())
     assert (calls["first"], calls["second"], calls["third"]) == (1, 1, 1 if flag else 0)
     assert _run(after, "drive.py") == _run(before, "drive.py")
@@ -344,7 +339,13 @@ def test_across_modules_evidence_declines_or_passes_the_builtin(
     applied, declined = _refactor(after / "proj" / "pkg", parameterize_builtins=flag)
     if flag:
         assert applied > 0
-        assert any("len" in parameters for parameters in _parameters(after / "proj"))
+        assert any(
+            isinstance(node, ast.Lambda)
+            and isinstance(node.body, ast.Name)
+            and node.body.id == "len"
+            for path in (after / "proj").rglob("*.py")
+            for node in ast.walk(ast.parse(path.read_text()))
+        )
     else:
         assert applied == 0
         assert {"builtin_may_differ_by_module", "builtin_argument"} & set(declined)
@@ -362,17 +363,22 @@ def test_reflection_does_not_request_builtin_parameterization(
     _write(tmp_path, _package(**REFLECTIVE_OPERATIONS[case]))
     project = tmp_path / "proj"
     applied, declined = _refactor(project / "pkg", parameterize_builtins=flag)
-    assert applied > 0
+    assert bool(applied) is flag
     assert all("len" not in parameters for parameters in _parameters(project))
-    assert "builtin_may_differ_by_module" not in declined
+    if flag:
+        assert "builtin_may_differ_by_module" not in declined
+    else:
+        assert "builtin_may_differ_by_module" in declined
 
 
-def test_the_flag_passes_no_builtin_every_site_reads_alike(tmp_path: Path) -> None:
+def test_the_flag_preserves_cross_module_lookups_and_same_module_bare_reads(tmp_path: Path) -> None:
     files = _package()
     _write(tmp_path, files)
     applied, _ = _refactor(tmp_path / "proj" / "pkg", parameterize_builtins=True)
     assert applied > 0
-    assert _parameters(tmp_path / "proj") == [["__param_0", "name", "rows"]]
+    assert _parameters(tmp_path / "proj") == [
+        ["__param_0", "__param_1", "__param_2", "name", "rows"]
+    ]
     same_module = tmp_path / "same" / "m.py"
     _write(
         tmp_path / "same",
@@ -445,7 +451,7 @@ def test_the_flag_reaches_the_engine_from_the_command_line(tmp_path: Path) -> No
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
     assert completed.returncode == 0, completed.stderr
-    assert _parameters(tmp_path) == [["__param_0", "len", "name", "rows"]]
+    assert _parameters(tmp_path) == [["__param_0", "__param_1", "name", "rows"]]
 
 
 # What the checker reveals for a builtin, and the annotation Towel writes.
@@ -604,4 +610,60 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(
         for argument in helper.args.args
         if argument.annotation is not None
     }
-    assert annotations["len"] == "_typing.Callable[..., int]"
+    reports = ast.parse((tmp_path / "pkg/reports.py").read_text())
+    call = next(
+        node
+        for node in ast.walk(reports)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper.name
+    )
+    lookups = {
+        argument.body.id: annotations[parameter.arg]
+        for parameter, argument in zip(helper.args.args, call.args)
+        if isinstance(argument, ast.Lambda) and isinstance(argument.body, ast.Name)
+    }
+    assert lookups == {
+        "len": "_typing.Callable[[], _typing.Callable[..., int]]",
+        "print": "_typing.Callable[[], _typing.Callable[..., None]]",
+        "str": "_typing.Callable[[], type[str]]",
+    }
+
+
+@pytest.mark.parametrize(
+    "expression, revealed, expected",
+    [
+        (
+            "lambda: len",
+            "def () -> def (typing.Sized) -> int",
+            "'Callable[[], Callable[..., int]]'",
+        ),
+        (
+            "lambda: print",
+            "def () -> Overload(def (*values: object, file: _typeshed.SupportsWrite[str]), "
+            "def (*values: object, flush: bool))",
+            "'Callable[[], Callable[..., None]]'",
+        ),
+        ("lambda: str", "def () -> def (object) -> str", "'Callable[[], type[str]]'"),
+        (
+            "lambda: repr",
+            "def () -> def (object) -> str",
+            "'Callable[[], Callable[[object], str]]'",
+        ),
+    ],
+)
+def test_deferred_builtin_lookups_retain_the_callable_result_type(
+    expression: str, revealed: str, expected: str
+) -> None:
+    annotation = annotation_from_revealed(
+        builtin_object_revealed(expression, revealed), None, False, {"Any", "Callable"}
+    )
+    assert annotation is not None and ast.unparse(annotation) == expected
+
+
+@pytest.mark.parametrize(
+    "expression", ["lambda value: len", "lambda: module.len", "lambda: measure"]
+)
+def test_builtin_thunk_fallback_does_not_widen_unrelated_expressions(expression: str) -> None:
+    revealed = "def () -> def (typing.Sized) -> int"
+    assert builtin_object_revealed(expression, revealed) == revealed
