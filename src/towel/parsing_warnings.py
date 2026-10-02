@@ -20,13 +20,15 @@ changes warning filters: its only retained result is an immutable boolean.
 
 from __future__ import annotations
 
-import functools
+from dataclasses import dataclass
 import io
+import os
 import re
 import sys
+import threading
 import tokenize
 
-from .unification.bounded_cache import memoizing
+from .unification.bounded_cache import BoundedCache, memoizing
 
 _POSSIBLE_WARNING = re.compile(r"\\(?:[^\\'\"abfnrtv0-7x\r\n]|[4-7][0-7]{2})|[0-9]\.?[a-zA-Z_]")
 # The C tokenizer itself warns for these f/t-string escapes, including its
@@ -38,7 +40,8 @@ _STRING_START = re.compile("(?i)^([rubft]*)(\"\"\"|'''|\"|')")
 # replacement-expression boundary, including hexadecimal and imaginary ones.
 _LEGACY_NUMERIC_KEYWORD = re.compile(r"[0-9a-fA-FjJ]\.?(?:and|else|for|if|in|is|not|or)")
 _MAX_SOURCE_CHARACTERS = 128 * 1024
-_CACHE_ENTRIES = 32
+_CACHE_ENTRIES = 2048
+_CACHE_SOURCE_BYTES = 16 * 1024 * 1024
 
 
 def _safe_escapes(text: str, *, is_bytes: bool = False) -> bool:
@@ -128,18 +131,71 @@ def _tokens_cannot_warn(source: str) -> bool:
     return not formatted_raw
 
 
-@functools.lru_cache(maxsize=_CACHE_ENTRIES)
+@dataclass(frozen=True)
+class _Eligibility:
+    cannot_warn: bool
+    source_bytes: int
+
+
+class _LexicalCache:
+    """Immutable answers with bounded source storage and synchronized bookkeeping."""
+
+    def __init__(
+        self,
+        *,
+        max_entries: int = _CACHE_ENTRIES,
+        max_source_bytes: int = _CACHE_SOURCE_BYTES,
+    ) -> None:
+        self.pid = os.getpid()
+        self.lock = threading.Lock()
+        self._max_source_bytes = max_source_bytes
+        self.entries: BoundedCache[str, _Eligibility] = BoundedCache(
+            max_entries,
+            weight=lambda answer: answer.source_bytes,
+            weight_limit=max_source_bytes,
+        )
+
+    def cannot_warn(self, source: str) -> bool:
+        with self.lock:
+            known = self.entries.get(source)
+        if known is not None:
+            return known.cannot_warn
+        # Tokenization is pure and can be repeated by simultaneous misses;
+        # only shared table/weight bookkeeping needs serialization.
+        # CPython may later cache a separate UTF-8 representation when the
+        # native parser reads a non-ASCII string. Reserve its maximum size
+        # now, including the terminator; ASCII shares its existing buffer.
+        source_bytes = sys.getsizeof(source) + (0 if source.isascii() else 4 * len(source) + 1)
+        answer = _Eligibility(_tokens_cannot_warn(source), source_bytes)
+        if answer.source_bytes <= self._max_source_bytes:
+            with self.lock:
+                self.entries.put(source, answer)
+        return answer.cannot_warn
+
+
+_CACHE = _LexicalCache()
+
+
 def _cached_tokens_cannot_warn(source: str) -> bool:
-    return _tokens_cannot_warn(source)
+    global _CACHE
+    cache = _CACHE
+    if cache.pid != os.getpid():
+        # A fork may inherit a lock held by a different parent thread. Start
+        # fresh before acquiring it, without installing process-wide hooks.
+        cache = _CACHE = _LexicalCache()
+    return cache.cannot_warn(source)
 
 
 def parsing_cannot_warn(source: str) -> bool:
-    """Prove lexical warning freedom, keeping at most 16 MiB of source payload.
+    """Prove lexical warning freedom, retaining at most 16 MiB of source strings.
 
     Only the known CPython versions may call this predicate. Eligibility is
-    independent of parser limits and warning policy. The entry and character
-    caps bound retained strings even at four bytes per Unicode character;
-    larger sources are classified without retention. No AST is held here.
+    independent of parser limits and warning policy. Counted string storage
+    (plus a conservative UTF-8 reserve for non-ASCII text), rather than a
+    worst-case size per entry, lets an ordinary source corpus remain cached.
+    Entry and character caps also bound bookkeeping and each
+    admitted source; larger sources are classified without retention. No AST
+    is held here. The bounded cache is process-local and resets after fork.
     """
     if _POSSIBLE_WARNING.search(source) is None:
         return True

@@ -156,7 +156,7 @@ def test_template_literals_and_expressions_keep_separate_escape_rules() -> None:
 def test_boolean_cache_reuses_exact_text_and_honors_no_memo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    parsing_warnings._cached_tokens_cannot_warn.cache_clear()
+    monkeypatch.setattr(parsing_warnings, "_CACHE", parsing_warnings._LexicalCache())
     original = parsing_warnings._tokens_cannot_warn
     seen: list[str] = []
 
@@ -177,13 +177,13 @@ def test_boolean_cache_reuses_exact_text_and_honors_no_memo(
     assert seen[-1] == "value = '\\d'"
 
 
-def test_retained_source_has_both_entry_and_size_limits() -> None:
-    cache = parsing_warnings._cached_tokens_cannot_warn
-    cache.cache_clear()
-    for index in range(parsing_warnings._CACHE_ENTRIES + 1):
+def test_retained_source_has_both_entry_and_size_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    cache = parsing_warnings._LexicalCache(max_entries=2)
+    monkeypatch.setattr(parsing_warnings, "_CACHE", cache)
+    for index in range(3):
         assert parsing_is_pure(f"value{index} = r'\\d'")
-    assert cache.cache_info().currsize == parsing_warnings._CACHE_ENTRIES
-    before = cache.cache_info()
+    assert len(cache.entries) == 2
+    before = tuple(cache.entries)
     source = "# " + "x" * parsing_warnings._MAX_SOURCE_CHARACTERS + "\nvalue = r'\\d'"
     assert parsing_is_pure(source)
-    assert cache.cache_info() == before
+    assert tuple(cache.entries) == before
