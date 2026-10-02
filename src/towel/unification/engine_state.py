@@ -48,6 +48,7 @@ from typing import (
 )
 from weakref import WeakKeyDictionary
 
+from ..analysis_sources import ParserConfiguration
 from ..coverage_config import CoverageExclusion, coverage_exclusion
 from ..diagnostics import LOG, Settings
 from ..type_baseline import CheckedChange, KnownErrors
@@ -320,7 +321,7 @@ class EngineState:
     _per_block_cache: BoundedCache[PerBlockKey, object]
     # The last few parsed sources of the apply path, which parses each modified
     # file several times per proposal.
-    _parse_cache: BoundedCache[str, ast.Module]
+    _parse_cache: BoundedCache[Tuple[str, ParserConfiguration], ast.Module]
 
     def _get_indent(self, line: str) -> str:
         """The indentation of a line; provided by InsertionPoints."""

@@ -32,6 +32,7 @@ from typing import Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence,
 from .bounded_cache import BoundedCache
 from .statement_facts import imported_binding_name
 from .visitors import body_shares_header_line
+from ..analysis_sources import ParserConfiguration, parser_configuration
 from ..source_text import source_lines
 
 
@@ -223,7 +224,9 @@ _SUITE_FIELDS = frozenset({"body", "orelse", "finalbody", "handlers", "cases"})
 # rewritten module never answers from the version it replaced. Placement asks
 # the same few modules once per candidate helper home, and each answer is a
 # pure function of the text it was built from.
-_MODULE_BINDINGS: BoundedCache[str, Optional[ModuleBindings]] = BoundedCache(128)
+_MODULE_BINDINGS: BoundedCache[Tuple[str, ParserConfiguration], Optional[ModuleBindings]] = (
+    BoundedCache(128)
+)
 
 
 def _child_nodes(value: object) -> Iterator[ast.AST]:
@@ -452,20 +455,22 @@ def import_origin(stmt: Union[ast.Import, ast.ImportFrom], alias: ast.alias) -> 
 
 def global_bindings(source: str) -> Optional[ModuleBindings]:
     """What ``source`` binds at its top level, or None when it will not parse."""
-    if source in _MODULE_BINDINGS:
-        return _MODULE_BINDINGS[source]
+    key = source, parser_configuration()
+    if key in _MODULE_BINDINGS:
+        return _MODULE_BINDINGS[key]
     try:
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
-        return _MODULE_BINDINGS.put(source, None)
+        return _MODULE_BINDINGS.put(key, None)
     return bindings_from_tree(source, tree)
 
 
 def bindings_from_tree(source: str, tree: ast.Module) -> ModuleBindings:
     """Immutable bindings of source already parsed into tree, without parsing it again."""
-    known = _MODULE_BINDINGS.get(source)
+    key = source, parser_configuration()
+    known = _MODULE_BINDINGS.get(key)
     if known is not None:
         return known
     result = _Collector(source_lines(source)).collect(tree)
-    _MODULE_BINDINGS.put(source, result)
+    _MODULE_BINDINGS.put(key, result)
     return result

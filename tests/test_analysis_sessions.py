@@ -99,6 +99,17 @@ def test_lru_eviction_and_source_budget(tmp_path):
     assert session.entry_count == session.source_bytes == 0
 
 
+def test_clearing_diagnostic_sessions_releases_digest_bookkeeping(tmp_path: Path) -> None:
+    session = AnalysisSession(check_ast_immutable=True)
+    for index in range(8):
+        path = write_module(tmp_path, f"module{index}.py")
+        session.analyze_module(path)
+        assert len(session._digests) == 1
+        session.clear()
+        assert not session._digests
+        assert session.entry_count == session.source_bytes == 0
+
+
 def test_relative_path_resolution_is_per_call_and_preserves_spelling(tmp_path, monkeypatch):
     first = tmp_path / "first"
     second = tmp_path / "second"

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import os
 import re
 import warnings
 from dataclasses import dataclass
@@ -131,9 +132,10 @@ class ImportGraphCache:
 
     def resolve(self, path: str) -> Path:
         """``Path(path).resolve()``, once per spelling for the life of the cache."""
-        resolved = self.resolved_paths.get(path)
+        absolute = os.path.abspath(path)
+        resolved = self.resolved_paths.get(absolute)
         if resolved is None:
-            resolved = self.resolved_paths.put(path, Path(path).resolve())
+            resolved = self.resolved_paths.put(absolute, Path(path).resolve())
         return resolved
 
     def begin_run(
@@ -156,7 +158,14 @@ class ImportGraphCache:
         self._roots = {}
         self._conditional = {}
         self._distributions = {}
-        for table in (self.edges, self.effects, self.quiet_classes):
+        for table in (
+            self.edges,
+            self.bindings,
+            self.effects,
+            self.quiet_classes,
+            self.required_imports,
+            self.resolved_paths,
+        ):
             table.clear()
 
     def project_root(self, resolved: Path) -> Path:

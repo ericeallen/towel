@@ -103,7 +103,7 @@ from ..type_baseline import KnownErrors
 from ..type_inference import TypeOracle
 from ..source_files import python_sources
 from ..source_text import read_source
-from ..analysis_sources import sharing_analysis_sources
+from ..analysis_sources import ParserConfiguration, parser_configuration, sharing_analysis_sources
 from .pipeline import run_pipeline, AnalysisSession
 
 _SignedBlock = Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]
@@ -526,7 +526,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._per_block_cache: BoundedCache[PerBlockKey, object] = BoundedCache(
             self.STRUCTURAL_CACHE_LIMIT
         )
-        self._parse_cache: BoundedCache[str, ast.Module] = BoundedCache(64)
+        self._parse_cache: BoundedCache[Tuple[str, ParserConfiguration], ast.Module] = BoundedCache(
+            64
+        )
         # Every cache entry is registered under the absolute path(s) of the
         # file(s) it describes, so a file that changes between fixed-point
         # iterations evicts exactly its own entries and unchanged files keep
@@ -765,9 +767,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
 
     def _parse_source(self, source: str) -> ast.Module:
         """``ast.parse(source)``, remembered for the last few sources; callers never mutate the tree."""
-        tree = self._parse_cache.get(source)
+        key = source, parser_configuration()
+        tree = self._parse_cache.get(key)
         if tree is None:
-            tree = self._parse_cache.put(source, ast.parse(source))
+            tree = self._parse_cache.put(key, ast.parse(source))
         return tree
 
     def _sid(self, nodes: Sequence[ast.AST]) -> str:

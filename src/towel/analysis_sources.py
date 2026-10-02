@@ -29,11 +29,70 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 import hashlib
 import os
+import re
+import sys
 from typing import Iterator, Optional, Tuple, Union
-import warnings
 
 from .source_text import decode_source
 from .unification.bounded_cache import BoundedCache
+
+
+@dataclass(frozen=True)
+class ParserConfiguration:
+    """Mutable interpreter limits affecting source parsing and analysis."""
+
+    integer_digits: int
+    recursion_limit: int
+
+
+def parser_configuration() -> ParserConfiguration:
+    """The interpreter's current parsing limits, for syntax and analysis cache keys."""
+    return ParserConfiguration(sys.get_int_max_str_digits(), sys.getrecursionlimit())
+
+
+_KNOWN_WARNING_SITES = sys.implementation.name == "cpython" and (3, 11) <= sys.version_info[:2] <= (
+    3,
+    14,
+)
+"""Other parsers may warn about other syntax, so their parses are never shared."""
+
+# CPython 3.11--3.14's AST parser warns for invalid string escapes, oversized
+# octal escapes, and a numeric literal abutting a keyword. This deliberately
+# overmatches comments, raw strings, identifiers and ordinary numeric suffixes.
+# A false positive costs reuse; a false negative would hide native diagnostics.
+# See CPython's Parser/string_parser.c and tokenizer.c (3.13+: lexer/lexer.c
+# and tokenizer/helpers.c); AST-only parsing does not run code-generation warnings.
+_POSSIBLE_WARNING = re.compile(r"\\(?:[^\\'\"abfnrtv0-7x\r\n]|[4-7][0-7]{2})|[0-9]\.?[a-zA-Z_]")
+_CODING_COOKIE = re.compile(rb"coding[:=]\s*([-\w.]+)", re.ASCII)
+_WARNING_FREE_ENCODINGS = frozenset(
+    {b"utf-8", b"utf8", b"utf-8-sig", b"ascii", b"latin-1", b"iso-8859-1", b"iso-latin-1"}
+)
+
+
+def _cacheable_text(source: Union[str, bytes]) -> Optional[str]:
+    """Text whose parse cannot warn, without changing process-global warning state.
+
+    The native parser handles every uncertain source once under the caller's
+    own filters. In particular, do not decode arbitrary codecs to form a key:
+    decoding itself may warn, or call a user-registered codec.
+    """
+    if not _KNOWN_WARNING_SITES:
+        return None
+    if isinstance(source, bytes):
+        for line in source.split(b"\n", 2)[:2]:
+            cookie = _CODING_COOKIE.search(line)
+            if (
+                cookie is not None
+                and cookie[1].lower().replace(b"_", b"-") not in _WARNING_FREE_ENCODINGS
+            ):
+                return None
+        try:
+            text = decode_source(source)
+        except (SyntaxError, UnicodeError, LookupError):
+            return None
+    else:
+        text = source
+    return None if _POSSIBLE_WARNING.search(text) else text
 
 
 def _field_value(value: object) -> str:
@@ -84,48 +143,24 @@ class AnalysisSources:
             raise ValueError("Analysis cache limits must be nonnegative")
         self._max_source_bytes = max_source_bytes
         self._check_immutable = check_ast_immutable
-        self._parsed: BoundedCache[Tuple[str, str, str], _Parsed] = BoundedCache(
-            max_entries, weight=lambda value: value.source_bytes, weight_limit=max_source_bytes
+        self._parsed: BoundedCache[Tuple[str, str, str, ParserConfiguration], _Parsed] = (
+            BoundedCache(
+                max_entries, weight=lambda value: value.source_bytes, weight_limit=max_source_bytes
+            )
         )
 
     def parse(self, source: Union[str, bytes], filename: str) -> ast.Module:
         """Parse current source, preserving file identities and diagnostic filenames."""
-        if isinstance(source, bytes):
-            try:
-                with warnings.catch_warnings(record=True) as decoding_warnings:
-                    warnings.simplefilter("always")
-                    text = decode_source(source)
-            except (SyntaxError, UnicodeError, LookupError):
-                # Let Python diagnose invalid encoded source exactly as a bare
-                # ast.parse(bytes) would; failed parses are never cached.
-                return ast.parse(source, filename=filename)
-            if decoding_warnings:
-                # Decoding for the cache key must neither add diagnostics nor
-                # change whether the original parser raises under these filters.
-                return ast.parse(source, filename=filename)
-        else:
-            text = source
-        key = (os.path.abspath(filename), filename, text)
+        text = _cacheable_text(source)
+        if text is None:
+            return ast.parse(source, filename=filename)
+        key = (os.path.abspath(filename), filename, text, parser_configuration())
         known = self._parsed.get(key)
         if known is not None:
             if self._check_immutable and _fingerprint(known.tree) != known.fingerprint:
                 raise RuntimeError(f"Analysis mutated the cached AST of {filename}")
             return known.tree
-        # Warning-producing parses are not pure: warnings-as-errors can even
-        # turn an invalid escape into SyntaxError. Only retain warning-free
-        # syntax. Replay other parses under the caller's original filters.
-        try:
-            with warnings.catch_warnings(record=True) as emitted:
-                warnings.simplefilter("always")
-                tree = ast.parse(source, filename=filename)
-        except SyntaxError:
-            if not emitted:
-                raise
-            # A preceding warning can be the original error under the caller's
-            # filters, or must still be emitted before the later syntax error.
-            return ast.parse(source, filename=filename)
-        if emitted:
-            return ast.parse(source, filename=filename)
+        tree = ast.parse(source, filename=filename)
         size = len(text.encode("utf-8", errors="surrogatepass"))
         if size <= self._max_source_bytes:
             self._parsed.put(

@@ -49,7 +49,7 @@ from dataclasses import dataclass
 import os
 
 from ..canonical_ast import canonical_dump
-from ..analysis_sources import parse_analysis_source
+from ..analysis_sources import parse_analysis_source, parser_configuration
 from .models import (
     RawModule,
     ParsedModule,
@@ -275,6 +275,7 @@ class AnalysisSession:
             else check_ast_immutable
         )
         self._digests: Dict[Tuple[str, str], str] = {}
+        self._parser_configuration = parser_configuration()
 
     @property
     def entry_count(self) -> int:
@@ -307,7 +308,14 @@ class AnalysisSession:
 
     def clear(self) -> None:
         self._entries.clear()
+        self._digests.clear()
         self._source_bytes = 0
+
+    def _refresh_parser_configuration(self) -> None:
+        configuration = parser_configuration()
+        if configuration != self._parser_configuration:
+            self.clear()
+            self._parser_configuration = configuration
 
     def _discard(self, key: Tuple[str, str]) -> None:
         previous = self._entries.pop(key, None)
@@ -317,6 +325,7 @@ class AnalysisSession:
 
     def reusable(self, path: str) -> bool:
         """Whether the next ``analyze_module(path)`` will return the cached graph."""
+        self._refresh_parser_configuration()
         cached = self._entries.get((os.path.abspath(path), path))
         if cached is None:
             return False
@@ -343,6 +352,7 @@ class AnalysisSession:
         Analysis failures also propagate, because they indicate engine defects,
         not a conservative rejection of a source file.
         """
+        self._refresh_parser_configuration()
         key = (os.path.abspath(path), path)
         try:
             source = read_source(path)
