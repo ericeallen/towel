@@ -60,7 +60,8 @@ def _project(
         "pyproject.toml": '[project]\nname = "pkg"\nversion = "0"\n',
         "pkg/__init__.py": "",
         "pkg/exports.py": _module(
-            "from pkg import reports  # exports already depends on reports\n" + exports_prelude,
+            "import pkg.reports as reports  # exports already depends on reports\n"
+            + exports_prelude,
             'def export_size(rows, name):\n    print("exports", name)\n    ',
         ),
         "pkg/reports.py": _module(
