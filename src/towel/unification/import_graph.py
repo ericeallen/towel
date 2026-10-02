@@ -311,7 +311,7 @@ def relative_imports_resolve_alike(files: Iterable[str], levels: Iterable[int]) 
 # which must not miss an edge), the ones its top level can run as it is
 # imported (in any branch, but not in a function body), or only those its top
 # level runs on every path (statements of the module body itself).
-ImportExtent = Literal["everywhere", "at_import", "unconditionally"]
+ImportExtent = Literal["everywhere", "at_import", "unconditionally", "leading"]
 
 
 _TYPE_CHECKING = frozenset({"typing.TYPE_CHECKING", "typing_extensions.TYPE_CHECKING"})
@@ -522,6 +522,8 @@ def _import_statements(
     None under a ``TYPE_CHECKING`` guard (``TypeCheckingGuards``) counts:
     such an import never runs, in any body.
     """
+    if extent == "leading":
+        return leading_imports(tree)
     if extent == "unconditionally":
         return [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
     found: List[Union[ast.Import, ast.ImportFrom]] = []
@@ -803,6 +805,7 @@ def _reachable_modules(
     extent: ImportExtent,
     *,
     sees_all: bool,
+    before_definitions: Optional[Path] = None,
 ) -> Optional[Set[Path]]:
     """Every project module importing ``start`` may run, ``start`` included, in the model's paths.
 
@@ -811,7 +814,9 @@ def _reachable_modules(
     loads, ``"at_import"`` those it may. None when some module cannot be
     read, or, with ``sees_all``, when some import may run what the model did
     not read. Without it such an import is taken to run nothing, which only
-    ever leaves modules out.
+    ever leaves modules out. ``before_definitions`` restricts that module
+    to imports before its first definition, where a new helper import goes;
+    modules those imports load still run their complete top levels.
     """
     pending = list(start)
     visited: Set[Path] = set()
@@ -820,7 +825,9 @@ def _reachable_modules(
         if current in visited:
             continue
         visited.add(current)
-        edges = _import_edges(current, program, cache, extent)
+        edges = _import_edges(
+            current, program, cache, "leading" if current == before_definitions else extent
+        )
         if edges is None or (sees_all and edges.unseen):
             return None
         pending.extend(edges.files - visited)
@@ -1552,6 +1559,7 @@ class ImportChange(Enum):
 
     UNKNOWN = "the imports cannot be inspected"
     RUNS_CODE = "a module the new import loads runs code at import"
+    IMPORT_ORDER = "the new helper import would advance a module load past definitions"
     CONDITIONAL_HOST = "the program imports the host, or a package it is in, only under a condition"
     OTHER_DISTRIBUTION = "the host belongs to another distribution than the borrower"
     NEW_REQUIREMENT = "a module the new import loads requires a package that may be absent"
@@ -1576,7 +1584,11 @@ def import_change(
     borrower that belongs to a distribution borrows only from a host in the
     same one: a monorepo's beta may be installed against the released
     alpha, which lacks the helper. If the
-    borrower's import already certainly loads the host, nothing new runs.
+    borrower's leading imports already certainly load the host, nothing new runs.
+    A host loaded only after definitions is not already available at the
+    new helper import: advancing that load can expose an incomplete module
+    or reorder effects. Such a host is refused even when its eventual load
+    is unconditional.
     Otherwise every
     module the new import may load that the borrower's does not certainly
     load already must run no code at import (``ImportTimeCode``), require
@@ -1601,11 +1613,23 @@ def import_change(
         cache,
         "unconditionally",
         sees_all=False,
+        before_definitions=borrower,
     )
     if already is None:
         return ImportChange.UNKNOWN
     added: Set[Path] = set()
     if host not in already:
+        eventual = _reachable_modules(
+            [borrower, *program.package_initializers(borrower)],
+            program,
+            cache,
+            "unconditionally",
+            sees_all=False,
+        )
+        if eventual is None:
+            return ImportChange.UNKNOWN
+        if host in eventual:
+            return ImportChange.IMPORT_ORDER
         loaded = _reachable_modules(
             [host, *program.package_initializers(host)], program, cache, "at_import", sees_all=True
         )
