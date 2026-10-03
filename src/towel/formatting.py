@@ -184,6 +184,47 @@ def checked(formatter: SnippetFormatter) -> SnippetFormatter:
     return format_snippet
 
 
+def format_at_indentation(formatter: SnippetFormatter, source: str, prefix: str) -> str:
+    """Format a snippet at its destination depth, returning column-zero text.
+
+    A call formatted at column zero can exceed the project's width after
+    insertion into a function or method. Inert surrounding suites let the
+    formatter see that depth without formatting any existing source. Like
+    the materializer's reindentation, each tab represents a four-space level.
+    The suites are only formatter input, never generated program statements.
+    """
+    depth = (len(prefix.expandtabs(4)) + 3) // 4
+    if not depth:
+        return formatter(source)
+    indentation = "    " * depth
+    wrapped = "\n".join(
+        [
+            *("    " * level + "if True:" for level in range(depth)),
+            *(indentation + line for line in source.split("\n")),
+        ]
+    )
+    formatted = formatter(wrapped)
+    tree = ast.parse(formatted)
+    body = tree.body
+    for _ in range(depth):
+        if len(body) != 1 or not isinstance(body[0], ast.If):
+            raise FormattingChangedCode("formatting changed the snippet's enclosing suites")
+        suite = body[0]
+        body = suite.body
+    lines = formatted.split("\n")[suite.lineno :]
+    # Formatter indentation may use tabs or a configured width of its own.
+    first = next(line for line in lines if line.strip())
+    margin = first[: len(first) - len(first.lstrip())]
+    unwrapped = "\n".join(
+        line[len(margin) :] if line.startswith(margin) else line for line in lines
+    )
+    if canonical_dump(ast.parse(unwrapped)) != canonical_dump(ast.parse(source)):
+        raise FormattingChangedCode(
+            "formatting changed the generated code's meaning:\n" + unwrapped
+        )
+    return unwrapped.rstrip("\n")
+
+
 def black_formatter(settings: BlackSettings) -> SnippetFormatter:
     """A checked formatter that runs Black with ``settings``.
 

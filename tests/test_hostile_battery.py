@@ -50,6 +50,9 @@ from tests.hostile_refactoring import refactor_script, with_known_defects
 CASES = Path(__file__).parent / "hostile_cases"
 
 TRANSFORMED = {
+    # The consumer-formatting regression also retains its original results
+    # and scopes under the ordinary hostile battery.
+    "r1792_formatting_destination_indentation",
     # September 27: mixed expression list children can be passed as thunks;
     # nxt() and nxt() * 10 are still called once per iteration, in order.
     "h03_loop_reeval",

@@ -41,9 +41,11 @@ from towel.formatting import (
     SnippetFormatter,
     black_formatter,
     checked,
+    format_at_indentation,
     ruff_formatter,
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.splicing import BlockColumns, splice_block
 
 DUPLICATED_STRINGS = textwrap.dedent("""
     def first(name, a_rather_long_parameter_name, another_long_parameter_name):
@@ -340,6 +342,101 @@ def test_black_is_the_formatter_without_ruff_configuration(tmp_path: Path) -> No
     choice = formatter_for_project(tmp_path / "m.py")
     formatter, note = choice.tool, choice.note
     assert formatter is not None and note == "Black"
+
+
+@pytest.mark.parametrize("tool", ["black", "ruff"])
+@pytest.mark.parametrize("prefix", ["    ", "        ", "\t\t"])
+def test_r1792_snippets_respect_destination_indentation(
+    tmp_path: Path, tool: str, prefix: str
+) -> None:
+    """Inflect's generated calls must already satisfy its formatter after insertion."""
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff]\n[tool.ruff.format]\npreview = true\n")
+    formatter = (
+        ruff_formatter(tmp_path / "module.py")
+        if tool == "ruff"
+        else black_formatter(BlackSettings())
+    )
+    source = (
+        "return _extracted_func_0(lambda: self._plnoun(word, count), post, pre, self, text, word)"
+    )
+    formatted = format_at_indentation(formatter, source, prefix)
+    assert ast.dump(ast.parse(formatted)) == ast.dump(ast.parse(source))
+    depth = len(prefix.expandtabs(4)) // 4
+    context = "\n".join(
+        [
+            *("    " * level + "if True:" for level in range(depth)),
+            *("    " * depth + line for line in formatted.splitlines()),
+        ]
+    )
+    assert formatter(context) == context
+
+
+@pytest.mark.parametrize("tool", ["black", "ruff"])
+def test_r1792_engine_output_stays_formatted_after_insertion(tmp_path: Path, tool: str) -> None:
+    """A formatter-clean input must retain useful extraction and pass the same formatter."""
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff]\nline-length = 75\n")
+    path = tmp_path / "module.py"
+    formatter = (
+        ruff_formatter(path) if tool == "ruff" else black_formatter(BlackSettings(line_length=75))
+    )
+    fixture = Path(__file__).parent / "hostile_cases/r1792_formatting_destination_indentation.py"
+    original = formatter(fixture.read_text()) + "\n"
+    path.write_text(original)
+    result = _refactor(path, snippet_formatter=formatter)
+    assert formatter(result) == result.rstrip("\n")
+    assert _evaluate(result) == _evaluate(original)
+    assert result != original
+
+
+def test_r1792_contextual_formatting_still_refuses_semantic_changes() -> None:
+    formatter = checked(lambda source: source.replace("+", "-"))
+    with pytest.raises(FormattingChangedCode):
+        format_at_indentation(formatter, "return first + second", "        ")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'return """first\n    second\nlast"""',
+        'def helper():\n    return """first\n\tsecond\nlast"""',
+    ],
+)
+def test_r1792_context_unwrapping_preserves_multiline_literal_contents(source: str) -> None:
+    formatter = black_formatter(BlackSettings())
+    formatted = format_at_indentation(formatter, source, "        ")
+    assert ast.dump(ast.parse(formatted)) == ast.dump(ast.parse(source))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def first():\n    marker = 1; value = 2; done = 3\n",
+        "def first(flag):\n    if flag: marker = 1; value = 2; done = 3\n",
+        "def first(flag):\n\tif flag: marker = 1; value = 2; done = 3\n",
+    ],
+)
+def test_r1792_formatted_call_splices_preserve_inline_suites_and_semicolons(source: str) -> None:
+    formatter = black_formatter(BlackSettings(line_length=60))
+    tree = ast.parse(source)
+    (target,) = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "value"
+    ]
+    lines = source.splitlines(keepends=True)
+    line = lines[target.lineno - 1]
+    prefix = line[: len(line) - len(line.lstrip())]
+    code = "value = generated_helper(first_argument, second_argument, third_argument)"
+    formatted = format_at_indentation(formatter, code, prefix)
+    splice = splice_block([line], BlockColumns.of([target]), formatted)
+    lines[target.lineno - 1 : target.lineno] = splice.lines
+    for node in ast.walk(tree):
+        for _, field in ast.iter_fields(node):
+            if isinstance(field, list) and target in field:
+                field[field.index(target)] = ast.parse(code).body[0]
+    assert ast.dump(ast.parse("".join(lines))) == ast.dump(tree)
 
 
 def test_isort_sorts_the_inserted_import_when_configured(tmp_path: Path) -> None:

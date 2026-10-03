@@ -75,6 +75,7 @@ from ..coverage_config import CoverageExclusion
 from ..project_layout import find_project_root
 from towel.changes import StaleSource, ChangePlan
 from ..source_text import read_source
+from ..formatting import format_at_indentation
 
 from .reuse import ExistingFunctionReuse
 from .annotation_ladder import Hearing, Rejection, Verified
@@ -157,14 +158,14 @@ class Materialization(
         finally:
             self._helper_name_counters = counters
 
-    def _render(self, node: ast.AST) -> str:
+    def _render(self, node: ast.AST, prefix: str = "") -> str:
         """The source text inserted for a generated node, formatted when a formatter is set."""
         source = ast.unparse(node)
         if self.snippet_formatter is None:
             return source
-        return self.snippet_formatter(source)
+        return format_at_indentation(self.snippet_formatter, source, prefix)
 
-    def _helper_text(self, proposal: RefactoringProposal, node: ast.AST) -> str:
+    def _helper_text(self, proposal: RefactoringProposal, node: ast.AST, prefix: str = "") -> str:
         """The helper's text: ``node`` rendered with the comments its sites' blocks carried.
 
         ``node`` is the helper, or a module ending with it. The comments are
@@ -174,11 +175,11 @@ class Materialization(
         directive stands beside the code it was written for.
         """
         if not proposal.helper_comments.carried:
-            return self._render(node)
+            return self._render(node, prefix)
         woven = weave_comments(node, proposal.extracted_function, proposal.helper_comments)
         if self.snippet_formatter is None:
             return woven.text
-        formatted = self.snippet_formatter(woven.text)
+        formatted = format_at_indentation(self.snippet_formatter, woven.text, prefix)
         return formatted if woven.keeps_directives(formatted) else woven.text
 
     def _materialize_refactoring(self, proposal: RefactoringProposal) -> Dict[str, str]:
@@ -528,8 +529,10 @@ class Materialization(
             start_line, end_line = repl.line_range
             if not 1 <= start_line <= end_line <= len(lines):
                 raise ValueError(f"Invalid replacement range {start_line}-{end_line}: {file_path}")
-            replacement_code = self._render(self._call_site(proposal, naming, repl))
             block_lines = lines[start_line - 1 : end_line]
+            first = block_lines[0]
+            indentation = first[: len(first) - len(first.lstrip())]
+            replacement_code = self._render(self._call_site(proposal, naming, repl), indentation)
             spliced = splice_block(
                 block_lines, repl.columns or whole_lines(block_lines), replacement_code
             )
@@ -586,16 +589,18 @@ class Materialization(
         fn_insert_info = self._find_function_insert_position_before_body_statements(
             "".join(lines), proposal.insert_into_function
         )
+        inner_indent = fn_insert_info[1] + "    " if fn_insert_info is not None else ""
         fn_lines = [
             line + "\n"
-            for line in self._helper_text(proposal, proposal.extracted_function).split("\n")
+            for line in self._helper_text(
+                proposal, proposal.extracted_function, inner_indent
+            ).split("\n")
         ]
         if fn_insert_info is None:
             insert_line = self._find_insert_position(lines)
             lines[insert_line:insert_line] = fn_lines + ["\n", "\n"]
             return
-        insert_at, indent = fn_insert_info
-        inner_indent = indent + "    "
+        insert_at, _ = fn_insert_info
         indented = [inner_indent + line if line.strip() else line for line in fn_lines]
         lines[insert_at:insert_at] = _padded(lines, insert_at, indented)
 
@@ -609,10 +614,6 @@ class Materialization(
             proposal.method_kind or "instance",
             proposal.method_param_name,
         )
-        method_lines = [
-            line + "\n"
-            for line in self._helper_text(proposal, proposal.extracted_function).split("\n")
-        ]
         insert_info = self._find_class_insert_position("".join(lines), proposal.insert_into_class)
         if insert_info is None:
             raise RefactoringError(
@@ -620,6 +621,12 @@ class Materialization(
                 f"class in {file_path}; cannot insert a method"
             )
         insert_line_zero_based, method_indent = insert_info
+        method_lines = [
+            line + "\n"
+            for line in self._helper_text(
+                proposal, proposal.extracted_function, method_indent
+            ).split("\n")
+        ]
         indented = [
             reindent(line, method_indent) if line.strip() else line for line in method_lines
         ]
