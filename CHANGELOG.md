@@ -81,6 +81,11 @@ release verification binds the final versioned source to its own evidence.
 
 ### Fixed
 
+- Corpus setup considers a project's versioned typing requirements before
+  defaulting to Towel's checker requirements. Existing project, lock-file and
+  hook selections retain their precedence; alternative typing environments
+  remain separate. Cached environments record and verify the selected context
+  so a stale checker cannot silently survive a configuration change.
 - Typed runs recognize imported `Self` in simple annotations, including aliases
   and qualified spellings such as `typing.Self`. Pyright's `Unknown` answer
   outside a class no longer makes those valid imports appear untyped; the

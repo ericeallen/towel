@@ -35,7 +35,10 @@ tree under test, the tools of Towel's two extras (mypy and pyright; Black, isort
 and ruff), each left as the project's own requirements installed it or installed
 at the version the project pins -- in its lock file, else as the revision of its
 pre-commit hook, else in a requirements file -- unless that version fails the
-extra's requirement, and the candidate: one wheel, built from ``--towel-src`` or
+extra's requirement. Otherwise a checker uses the first applicable version-bearing
+typing context declared by the project, constrained by the candidate's extra.
+Distinct typing contexts remain alternatives, and their provenance is recorded.
+The candidate is one wheel, built from ``--towel-src`` or
 named by ``--towel-wheel``, verified to be that source, and verified again in
 every environment it is installed into. Towel still picks the formatter from
 the project's configuration. Beside them go the requirements the project
@@ -44,7 +47,8 @@ typing, what its tox environments and nox sessions that run mypy or pyright
 install, its pre-commit mypy and pyright hooks' additional dependencies, and
 requirements files named for typing -- at its lock file's pins, adding to the
 environment without changing anything in it. The type checkers therefore see
-what the project's own type check sees, and Towel's import model sees the
+the declared dependencies that can be installed beside the selected tools; the
+record identifies incompatible or alternative requirements. Towel's import model sees the
 project installed from the tree it refactors, not an installed copy elsewhere.
 The editable install follows the tree each test run exercises -- the clone for
 the baseline, the refactored copy for Towel and the run after it, the original
@@ -105,6 +109,7 @@ import hashlib
 import json
 import functools
 import os
+import platform
 import tempfile
 import signal
 import threading
@@ -151,13 +156,15 @@ RequirementsFile = NewType("RequirementsFile", str)
 """A requirements file of the project's, by its path in the tree: ``requirements/lint.txt``."""
 PinSource = Union[LockFile, PreCommitConfig, RequirementsFile]
 """A file of the project's that pins the version of one of Towel's tools."""
-ToolSource = Union[Literal["project", "towel[types]", "towel[format]"], PinSource]
+TypingContext = NewType("TypingContext", str)
+"""A selected typing environment, prefixed by ``typing context: `` in provenance."""
+ToolSource = Union[Literal["project", "towel[types]", "towel[format]"], PinSource, TypingContext]
 LOCK_FILES: Tuple[LockFile, ...] = ("uv.lock", "poetry.lock", "pdm.lock")
 """The lock files whose pins describe a project's own environment, in the order they are read."""
 PRE_COMMIT_CONFIG: PreCommitConfig = ".pre-commit-config.yaml"
 TOWEL_PACKAGE = "towel"
 """The import package the candidate wheel provides."""
-ENVIRONMENT_LAYOUT = 6
+ENVIRONMENT_LAYOUT = 7
 """What a project environment holds; raised when that changes, so an older one is rebuilt."""
 CROSS_MODULE_FLAG = "--cross-module"
 """The option that turns on extraction across modules, where the Towel under test has it."""
@@ -1175,7 +1182,8 @@ def tool_pins(python: Path, tree: Path, names: Sequence[str]) -> Dict[str, Tuple
     is the project's environment written down; then the revision of the tool's
     pre-commit hook (see ``pre_commit_pins``), the version the project's own checks
     run it at; then an exact pin in a requirements file (see ``requirement_pins``).
-    A tool none of them pins is left out, for the candidate's extra to supply.
+    A tool none of them pins is left out, for a typing context or the candidate's
+    extra to supply (see ``_install_tools``).
     """
     pins: Dict[str, Tuple[PinSource, str]] = {}
     lock, locked = lock_pins(tree, names)
@@ -1197,6 +1205,72 @@ class Choice:
 
     source: ToolSource
     overridden: str = ""
+    requirements: Tuple[str, ...] = ()
+    """The selected context and candidate extra, which the installed version must satisfy."""
+    version: str = ""
+    """The verified version, retained so reuse cannot silently change tool selection."""
+
+
+def _typing_tool_choices(python: Path, tree: Path, names: Sequence[str]) -> Dict[str, Choice]:
+    """The first applicable version-bearing typing context for each otherwise unselected tool.
+
+    Contexts follow ``typing_declarations`` order. Requirements reached through a
+    context's groups, extras and includes belong to it; independent environments
+    are alternatives, not constraints on each other.
+    """
+    declarations = [
+        declaration
+        for declaration in typing_declarations(tree, None)
+        if (match := _REQUIREMENT_NAME.match(declaration.requirement)) is not None
+        and _canonical(match[1]) in names
+    ]
+    if not declarations:
+        return {}
+    parsed = _parsed_declarations(python, declarations)
+    contexts: Dict[str, str] = {}
+    for declaration, requirement in zip(declarations, parsed):
+        if requirement is not None and requirement.applies and requirement.specifier:
+            contexts.setdefault(requirement.name, declaration.context)
+    return {
+        name: Choice(
+            TypingContext(f"typing context: {context}"),
+            requirements=tuple(
+                declaration.requirement
+                for declaration, requirement in zip(declarations, parsed)
+                if requirement is not None
+                and requirement.applies
+                and requirement.name == name
+                and declaration.context == context
+            ),
+        )
+        for name, context in contexts.items()
+    }
+
+
+def _choice_versions(
+    python: Path, choices: Mapping[str, Choice], versions: Mapping[str, Optional[str]]
+) -> Dict[str, Choice]:
+    """Verify every installed tool against its selected requirements before recording success."""
+    judged = [
+        (name, requirement, versions.get(name))
+        for name, choice in choices.items()
+        for requirement in choice.requirements
+    ]
+    for name, choice in choices.items():
+        if not choice.requirements or not versions.get(name):
+            raise EnvironmentFailure(f"{name} has no verified tool selection in {python}")
+    satisfies = _ask_packaging(
+        python, requirements=[(requirement, version or "") for _, requirement, version in judged]
+    ).satisfies
+    for (name, requirement, version), fits in zip(judged, satisfies):
+        if not fits:
+            raise EnvironmentFailure(
+                f"{name} {version} fails {requirement}, selected by {choices[name].source}"
+            )
+    return {
+        name: dataclasses.replace(choice, version=versions[name] or "")
+        for name, choice in choices.items()
+    }
 
 
 def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) -> Dict[str, Choice]:
@@ -1204,8 +1278,10 @@ def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) ->
 
     A tool the project's own requirements installed stays, and one the project pins
     (see ``tool_pins``) is installed at that version, so the project is checked and
-    formatted by the tools its own checks use. One the project leaves to Towel comes
-    from the candidate's extra at the version that resolves today, and so does one
+    formatted by that selected context's tools. An otherwise unselected checker
+    uses its first version-bearing typing context, resolved together with the
+    candidate's extra; conflicting requirements fail the build. One the project
+    leaves to Towel comes from the extra at the version that resolves today, and so does one
     whose chosen version fails the extra's requirement: ``pip install
     "code-towel[format,types]"`` would replace that version too, and the record says
     which it replaced.
@@ -1225,6 +1301,15 @@ def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) ->
             offered[name] = ("project", installed)
         elif name in pinned:
             offered[name] = pinned[name]
+    contexts = _typing_tool_choices(
+        python,
+        tree,
+        [
+            requirement_name(r)
+            for r in candidate.types_requirements
+            if requirement_name(r) not in offered
+        ],
+    )
     judged = [(name, requirement) for name, requirement, _ in requested if name in offered]
     satisfied = (
         _ask_packaging(
@@ -1239,16 +1324,32 @@ def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) ->
     for name, requirement, extra in requested:
         if name in acceptable:
             source, version = offered[name]
-            choices[name] = Choice(source)
+            choices[name] = Choice(source, requirements=(requirement, f"{name}=={version}"))
             if source != "project":
                 installs.append(f"{name}=={version}")
             continue
+        if name in contexts:
+            choice = contexts[name]
+            choices[name] = dataclasses.replace(
+                choice, requirements=(requirement, *choice.requirements)
+            )
+            installs.extend(choices[name].requirements)
+            continue
         overruled = offered.get(name)
-        choices[name] = Choice(extra, f"{overruled[0]} {overruled[1]}" if overruled else "")
+        choices[name] = Choice(
+            extra,
+            f"{overruled[0]} {overruled[1]}" if overruled else "",
+            requirements=(requirement,),
+        )
         installs.append(requirement)
     if installs:
+        with log.open("a", encoding="utf-8") as handle:
+            for name, choice in choices.items():
+                handle.write(
+                    f"# {name}: {choice.source}; requires {', '.join(choice.requirements)}\n"
+                )
         _install(python, log, *installs)
-    return choices
+    return _choice_versions(python, choices, probe_environment(python, names).versions)
 
 
 _TOOL_SOURCES: Mapping[str, ToolSource] = {
@@ -1266,6 +1367,11 @@ def _recorded_source(recorded: str) -> Optional[ToolSource]:
     """The source a provenance record names: one of ``_TOOL_SOURCES``, or a requirements file."""
     if recorded in _TOOL_SOURCES:
         return _TOOL_SOURCES[recorded]
+    if recorded.startswith("typing context: "):
+        context = recorded.removeprefix("typing context: ")
+        if context and not any(char in context for char in "\r\n"):
+            return TypingContext(recorded)
+        return None
     path = PurePosixPath(recorded)
     if path.is_absolute() or ".." in path.parts or path.suffix not in (".txt", ".in"):
         return None
@@ -1286,9 +1392,17 @@ def _read_provenance(path: Path) -> Optional[Dict[str, Choice]]:
             return None
         source = _recorded_source(str(entry.get("source")))
         overridden = entry.get("overridden", "")
-        if source is None or not isinstance(overridden, str):
+        requirements = entry.get("requirements", [])
+        version = entry.get("version", "")
+        if (
+            source is None
+            or not isinstance(overridden, str)
+            or not isinstance(requirements, list)
+            or not all(isinstance(item, str) for item in requirements)
+            or not isinstance(version, str)
+        ):
             return None
-        choices[str(name)] = Choice(source, overridden)
+        choices[str(name)] = Choice(source, overridden, tuple(requirements), version)
     return choices
 
 
@@ -1332,6 +1446,39 @@ class Declaration:
 
     requirement: str
     source: str
+    context: str
+    """The containing typing environment, before group/include provenance is appended."""
+    prerequisites: Tuple[str, ...] = ()
+    """Requirements reaching the project's extras, whose markers must also hold."""
+
+
+def _parsed_declarations(
+    python: Path, declarations: Sequence[Declaration]
+) -> Tuple[Optional[ParsedRequirement], ...]:
+    """Read requirements with the markers of every extra expansion that reached them."""
+    texts = tuple(
+        dict.fromkeys(
+            text
+            for declaration in declarations
+            for text in (declaration.requirement, *declaration.prerequisites)
+        )
+    )
+    parsed = dict(zip(texts, _ask_packaging(python, parse=texts).parsed))
+    result: List[Optional[ParsedRequirement]] = []
+    for declaration in declarations:
+        requirement = parsed[declaration.requirement]
+        prerequisites = [parsed[text] for text in declaration.prerequisites]
+        if requirement is None or any(item is None for item in prerequisites):
+            result.append(None)
+        else:
+            result.append(
+                dataclasses.replace(
+                    requirement,
+                    applies=requirement.applies
+                    and all(item is not None and item.applies for item in prerequisites),
+                )
+            )
+    return tuple(result)
 
 
 def _named_for_typing(name: str) -> bool:
@@ -1410,24 +1557,33 @@ class _Declarer:
         """Everything one source declares, its groups, extras and files resolved."""
         found: List[Declaration] = []
         for requirement in requirements:
-            found += self._expanded(requirement, source, frozenset())
+            found += self._expanded(requirement, source, source, frozenset())
         for group in groups:
             for requirement in self.group(group):
-                found += self._expanded(requirement, f"{source}, group {group}", frozenset())
+                found += self._expanded(
+                    requirement, f"{source}, group {group}", source, frozenset()
+                )
         for extra in extras:
             for requirement in self.optional_dependencies(extra):
                 found += self._expanded(
-                    requirement, f"{source}, through {self.name}[{extra}]", frozenset()
+                    requirement, f"{source}, through {self.name}[{extra}]", source, frozenset()
                 )
         for path in files:
             label = f"{source}, {path.relative_to(self.tree).as_posix()}"
             for requirement in _requirements_file(path, self.tree, frozenset()):
-                found += self._expanded(requirement, label, frozenset())
+                found += self._expanded(requirement, label, source, frozenset())
         return found
 
-    def _expanded(self, requirement: str, source: str, seen: FrozenSet[str]) -> List[Declaration]:
+    def _expanded(
+        self,
+        requirement: str,
+        source: str,
+        context: str,
+        seen: FrozenSet[str],
+        prerequisites: Tuple[str, ...] = (),
+    ) -> List[Declaration]:
         """The requirement, and, when it names the project with extras, what they hold."""
-        found = [Declaration(requirement, source)]
+        found = [Declaration(requirement, source, context, prerequisites)]
         match = _LEADING_NAME.match(requirement)
         if self.name is None or match is None or _canonical(match[1]) != self.name:
             return found
@@ -1437,7 +1593,9 @@ class _Declarer:
                     found += self._expanded(
                         inner,
                         f"{source}, through {self.name}[{extra}]",
+                        context,
                         seen | {_canonical(extra)},
+                        (*prerequisites, requirement),
                     )
         return found
 
@@ -2017,7 +2175,13 @@ def _reported(output: str, sign: str) -> List[str]:
 
 
 def _install_typing(
-    python: Path, tree: Path, distribution: Optional[str], tools: Sequence[str], log: Path
+    python: Path,
+    tree: Path,
+    distribution: Optional[str],
+    tools: Sequence[str],
+    log: Path,
+    *,
+    choices: Optional[Mapping[str, Choice]] = None,
 ) -> TypingDependencies:
     """Install what the project declares its own type check needs, adding only.
 
@@ -2032,9 +2196,7 @@ def _install_typing(
     declarations = typing_declarations(tree, distribution)
     if not declarations:
         return TypingDependencies()
-    parsed = _ask_packaging(
-        python, parse=[declaration.requirement for declaration in declarations]
-    ).parsed
+    parsed = _parsed_declarations(python, declarations)
     project = distribution or _canonical(
         str(_table(_read_toml(tree / "pyproject.toml").get("project")).get("name", ""))
     )
@@ -2063,6 +2225,11 @@ def _install_typing(
                 else "already installed at"
             )
             record = dataclasses.replace(record, skipped=f"{held} {requirement.name} {installed}")
+            if choices is not None and requirement.name in choices:
+                record = dataclasses.replace(
+                    record,
+                    skipped=f"{record.skipped}, selected by {choices[requirement.name].source}",
+                )
         else:
             pinned = (
                 applicable_version(python, lock, requirement.name, pins[requirement.name])
@@ -2155,6 +2322,49 @@ class ProjectEnvironment:
     record: Environment
 
 
+def _selection_inputs(tree: Path) -> str:
+    """A digest of the actual static configuration used to select tools and typing dependencies."""
+    filenames = (
+        *LOCK_FILES,
+        PRE_COMMIT_CONFIG,
+        "pyproject.toml",
+        "tox.ini",
+        "tox.toml",
+        "noxfile.py",
+        "setup.cfg",
+        "setup.py",
+    )
+    inputs = {
+        "files": {
+            name: hashlib.sha256((tree / name).read_bytes()).hexdigest()
+            for name in filenames
+            if (tree / name).is_file()
+        },
+        # Includes can live outside a conventional requirements directory. Their
+        # resolved requirements affect pins even when they are not typing inputs.
+        "requirements": {
+            path.relative_to(tree).as_posix(): _requirements_file(path, tree, frozenset())
+            for path in _requirements_files(tree)
+        },
+        "typing": [dataclasses.asdict(item) for item in typing_declarations(tree, None)],
+    }
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+
+
+def _reusable_choices(python: Path, choices: Mapping[str, Choice]) -> bool:
+    """A reused environment must still hold the versions and constraints selected at its build."""
+    if any(not choice.version or not choice.requirements for choice in choices.values()):
+        return False
+    versions = probe_environment(python, list(choices)).versions
+    if any(versions.get(name) != choice.version for name, choice in choices.items()):
+        return False
+    try:
+        _choice_versions(python, choices, versions)
+    except EnvironmentFailure:
+        return False
+    return True
+
+
 def environment(
     project: Project, work: Path, source: Path, candidate: Candidate, log: Path
 ) -> ProjectEnvironment:
@@ -2164,7 +2374,8 @@ def environment(
     the checkers and formatters of Towel's extras (see ``_install_tools``), what the
     project declares its own type check needs (see ``_install_typing``), and the
     candidate, installed with ``--no-deps`` and then verified. It is built once and
-    reused while the manifest entry and the extras are unchanged. The candidate
+    reused while the manifest, configuration, interpreter and selected tools are
+    unchanged. The candidate
     is reinstalled on every use, and a reused environment is pointed back at
     ``source``: the last run left the project installed from its refactored copy.
     """
@@ -2180,6 +2391,9 @@ def environment(
             f"install={project.install}",
             *requirements,
             f"layout={ENVIRONMENT_LAYOUT}",
+            f"revision={project.rev}",
+            f"interpreter={sys.executable} {sys.version} {sys.platform} {platform.platform()}",
+            f"selection={_selection_inputs(source)}",
         ]
     )
     provenance = _read_provenance(provenance_file)
@@ -2191,6 +2405,7 @@ def environment(
         and provenance is not None
         and set(provenance) == {requirement_name(requirement) for requirement in requirements}
         and typing is not None
+        and _reusable_choices(python, provenance)
     )
     if not reusable and env_dir.exists():
         # The manifest or the layout changed, or an earlier build never finished.
@@ -2214,7 +2429,9 @@ def environment(
             encoding="utf-8",
         )
         # After Towel's tools, so what the project declares cannot displace them.
-        typing = _install_typing(python, source, distribution, list(provenance), log)
+        typing = _install_typing(
+            python, source, distribution, list(provenance), log, choices=provenance
+        )
         typing_file.write_text(json.dumps(dataclasses.asdict(typing)), encoding="utf-8")
         # Written last: an environment without it is one whose build never finished.
         fingerprint.write_text(wanted)
@@ -2232,6 +2449,9 @@ def environment(
         str(candidate.wheel),
     )
     probe = _verified(python, candidate, list(provenance))
+    verified_choices = _choice_versions(python, provenance, probe.versions)
+    if verified_choices != provenance:
+        raise EnvironmentFailure(f"a selected tool changed while installing into {env_dir}")
     tools: Dict[str, Tool] = {}
     for name, choice in provenance.items():
         version = probe.versions.get(name)

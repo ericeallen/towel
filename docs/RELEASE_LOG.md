@@ -44,6 +44,15 @@ A historical passing result applies to its recorded commit and test environment.
   in an unchecked function as `Any`, including known standard-library modules.
   A checked context now distinguishes those imports from genuinely unresolved
   modules without changing the project's options or hiding missing imports.
+- Corpus setup selected the default checker before reading versioned typing
+  environments. This missed Lark and h11's mypy pins and wsproto and
+  hyperframe's version ranges. The harness now considers those contexts before
+  falling back to Towel's requirements and verifies cached tool selections.
+  Existing project, lock-file, hook and requirement-file selections keep their
+  precedence; distinct checking contexts are not combined. Webargs's current
+  release workflow selects its pre-commit checker, so its older tox pin does
+  not replace that selection. The interrupted corpus remains partial evidence;
+  this harness correction requires a fresh frozen release run.
 - The [complete CLI comparison](PERFORMANCE.md#october-2-complete-cli-comparison)
   measured the controlled typed, formatted Packaging fixture at 36.24 seconds
   versus 41.59 seconds for published 1.772, about 13% faster. Runtime commit
