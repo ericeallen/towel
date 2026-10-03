@@ -29,7 +29,8 @@ unchecked) exactly where the checker looks.
 :func:`probe_plan` says where each statement's probe goes. A probe is a line of
 its own, so a statement that shares its line with a compound statement's
 header (``if x: return``) is first moved to a line of its own in the text the
-checker is given; a ``;`` sibling shares the probe of the statement it follows,
+checker is given; ``;`` siblings also move to separate lines so a statement
+that does not return cannot make its successor look reachable,
 a decorated definition is probed before its first decorator, and a statement
 directly in a class body shares its class's probe, since a ``TypedDict`` body
 may hold nothing else. The plan also
@@ -111,6 +112,28 @@ def _place(node: ast.stmt, lines: Sequence[str]) -> Place:
     return line, len(encoded[: node.col_offset].decode("utf-8", "replace"))
 
 
+def _case_header_indent(case: ast.match_case, lines: Sequence[str]) -> Optional[str]:
+    """Find a case header without tokenizing literals a second time.
+
+    ``match_case`` has no position, but its pattern does. Before that pattern's
+    first token stand only the keyword, grouping parentheses, continuations,
+    comments and whitespace. Neither literal contents nor guards occur there.
+    A closing pattern parenthesis may have unrelated indentation, so work back
+    from the pattern's start to the actual keyword instead.
+    """
+    pattern = case.pattern
+    for number in range(pattern.lineno, 0, -1):
+        line = lines[number - 1]
+        if number == pattern.lineno:
+            line = line.encode("utf-8")[: pattern.col_offset].decode("utf-8")
+        prefix = line.lstrip(" \t")
+        if prefix.startswith("case") and (
+            len(prefix) == 4 or not ("case" + prefix[4]).isidentifier()
+        ):
+            return _indent_of(line)
+    return None
+
+
 def probe_plan(source: str) -> Optional[ProbePlan]:
     """Where to probe each statement of ``source``; ``None`` when no probe can be placed.
 
@@ -147,26 +170,50 @@ def _prepare_probe_plan(source: str) -> Optional[Tuple[ProbePlan, str]]:
                 parents[id(child)] = node
     # A body on its header's line (``if x: return``) begins after a colon;
     # everything from there on moves to a line of its own.
-    splits: Dict[int, Tuple[int, str]] = {}
+    splits: Dict[int, Dict[int, str]] = {}
     for node in statements:
         line, column = places[id(node)]
         if not lines[line - 1][:column].rstrip().endswith(":"):
             continue
-        if line in splits and splits[line][0] <= column:
-            continue
         parent = parents.get(id(node))
-        header = _indent_of(lines[_first_line(parent) - 1]) if isinstance(parent, ast.stmt) else ""
-        splits[line] = (column, header + ("\t" if "\t" in header else "    "))
+        if isinstance(parent, ast.match_case):
+            case_header = _case_header_indent(parent, lines)
+            if case_header is None:
+                return None
+            header = case_header
+        else:
+            header = (
+                _indent_of(lines[_first_line(parent) - 1]) if isinstance(parent, ast.stmt) else ""
+            )
+        splits.setdefault(line, {})[column] = header + ("\t" if "\t" in header else "    ")
+    # A semicolon can follow a statement spanning several physical lines.
+    # Inserting before its last line could put a probe inside a string or
+    # argument list. Give each sibling its own line and probe: the preceding
+    # statement may raise or call a function that never returns.
+    for node in ast.walk(tree):
+        for block in _statement_lists(node):
+            for before, after in zip(block, block[1:]):
+                if before.end_lineno != after.lineno:
+                    continue
+                before_line, before_column = places[id(before)]
+                prior_splits = splits.get(before_line, {})
+                prior = max((at for at in prior_splits if at <= before_column), default=None)
+                indent = (
+                    prior_splits[prior] if prior is not None else _indent_of(lines[before_line - 1])
+                )
+                line, column = places[id(after)]
+                splits.setdefault(line, {})[column] = indent
     moved: List[str] = []
     position: Dict[int, int] = {}
+    split_positions: Dict[Place, Tuple[int, str]] = {}
     for number, text in enumerate(lines, 1):
         position[number] = len(moved) + 1
-        if number in splits:
-            column, indent = splits[number]
-            moved.append(text[:column].rstrip())
-            moved.append(indent + text[column:])
-        else:
-            moved.append(text)
+        segment_start, prefix = 0, ""
+        for column, indent in sorted(splits.get(number, {}).items()):
+            moved.append(prefix + text[segment_start:column].rstrip().removesuffix(";").rstrip())
+            split_positions[(number, column)] = (len(moved) + 1, indent)
+            segment_start, prefix = column, indent
+        moved.append(prefix + text[segment_start:])
     # Nothing may stand before a module's ``from __future__`` imports, or its
     # docstring; they are the first thing the module runs, so the checker
     # looks at them wherever it looks at the module at all.
@@ -183,10 +230,9 @@ def _prepare_probe_plan(source: str) -> Optional[Tuple[ProbePlan, str]]:
         line, column = places[id(node)]
         if id(node) in first:
             continue
-        if line in splits and column >= splits[line][0]:
-            sites[(line, column)] = (position[line] + 1, splits[line][1])
+        if (line, column) in split_positions:
+            sites[(line, column)] = split_positions[(line, column)]
         elif not lines[line - 1][column:].startswith("elif"):
-            # A ``;`` sibling shares the probe of the line's first statement.
             sites[(line, column)] = (position[line], _indent_of(lines[line - 1]))
     # A statement directly in a class body runs whenever the class statement
     # does, so the class's probe answers for it: a probe is no statement a

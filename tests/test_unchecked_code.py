@@ -299,17 +299,19 @@ def test_a_one_line_body_is_probed_on_a_line_of_its_own() -> None:
         "else: w = 4\n"
     )
     assert plan is not None
-    assert plan.text.split("\n")[1:7] == [
+    assert plan.text.split("\n")[1:8] == [
         'if sys.platform == "win32":',
-        "    x = 1; y = 2",
+        "    x = 1",
+        "    y = 2",
         'elif sys.platform == "darwin":',
         "    z = 3",
         "else:",
         "    w = 4",
     ]
-    assert plan.sites[(2, 28)] == plan.sites[(2, 35)] == (3, "    "), "a ; sibling shares one"
+    assert plan.sites[(2, 28)] == (3, "    ")
+    assert plan.sites[(2, 35)] == (4, "    "), "each ; sibling has its own reachability question"
     assert (3, 0) not in plan.sites, "nothing can stand before an elif"
-    assert plan.sites[(3, 31)] == (5, "    ") and plan.sites[(4, 6)] == (7, "    ")
+    assert plan.sites[(3, 31)] == (6, "    ") and plan.sites[(4, 6)] == (8, "    ")
 
 
 def test_a_decorated_definition_is_probed_before_its_first_decorator() -> None:
