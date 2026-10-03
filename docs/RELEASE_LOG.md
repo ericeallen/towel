@@ -68,6 +68,12 @@ A historical passing result applies to its recorded commit and test environment.
   job contexts are preserved; unsupported shell or YAML forms are skipped.
   Workflow inputs also participate in environment reuse checks. The correction
   requires a new corpus run with the selected checker.
+- Starlette's CI selects a default dependency group containing mypy and PyYAML
+  stubs. The harness omitted that group, leaving a typed file unverifiable.
+  Explicit uv default groups now contribute typing dependencies when their
+  expanded requirements name a supported checker. Existing context precedence,
+  included groups, extras, markers and lock pins are preserved. This dependency
+  correction also requires a fresh corpus run.
 - The [complete CLI comparison](PERFORMANCE.md#october-2-complete-cli-comparison)
   measured the controlled typed, formatted Packaging fixture at 36.24 seconds
   versus 41.59 seconds for published 1.772, about 13% faster. Runtime commit

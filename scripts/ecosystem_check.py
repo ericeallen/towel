@@ -45,8 +45,8 @@ the project's configuration. Beside them go the requirements the project
 declares for its own type check -- dependency groups and extras named for
 typing, what its tox environments and nox sessions that run mypy or pyright
 install, its pre-commit mypy and pyright hooks' additional dependencies, and
-requirements files named for typing, and literal workflow checker installs -- at
-its lock file's pins, adding to the
+requirements files named for typing, explicit uv default groups containing a
+checker, and literal workflow checker installs -- at its lock file's pins, adding to the
 environment without changing anything in it. The type checkers therefore see
 the declared dependencies that can be installed beside the selected tools; the
 record identifies incompatible or alternative requirements. Towel's import model sees the
@@ -1681,6 +1681,31 @@ def _group_declarations(declarer: _Declarer) -> List[Declaration]:
     ]
 
 
+def _uv_default_group_declarations(declarer: _Declarer) -> List[Declaration]:
+    """Explicit uv default groups that include a checker declare its supporting dependencies.
+
+    A development group is a typing context because its expanded requirements
+    name a checker, not because it is called ``dev``. Other default groups do not
+    become typing inputs. Only an explicit list is read; implicit defaults and
+    unsupported selectors are left alone.
+    """
+    defaults = _table(_table(declarer.pyproject.get("tool")).get("uv")).get("default-groups")
+    if not isinstance(defaults, list) or not all(isinstance(name, str) for name in defaults):
+        return []
+    found: List[Declaration] = []
+    for name in dict.fromkeys(defaults):
+        declarations = declarer.declared(
+            f"pyproject.toml [tool.uv] default-groups {name}", groups=(name,)
+        )
+        if any(
+            (match := _LEADING_NAME.match(item.requirement)) is not None
+            and _canonical(match[1]) in ("mypy", "pyright")
+            for item in declarations
+        ):
+            found += declarations
+    return found
+
+
 def _extra_declarations(declarer: _Declarer) -> List[Declaration]:
     extras = _table(_table(declarer.pyproject.get("project")).get("optional-dependencies"))
     return [
@@ -2328,8 +2353,9 @@ def typing_declarations(tree: Path, project: Optional[str]) -> List[Declaration]
 
     PEP 735 dependency groups and extras named for typing, the environments of tox
     and the sessions of nox that run mypy or pyright, pre-commit's mypy and pyright
-    hooks, requirements files named for typing, and literal workflow checker
-    installs, in that order. Workflow jobs remain separate contexts.
+    hooks, requirements files named for typing, explicit uv default groups that
+    contain a checker, and literal workflow checker installs, in that order.
+    Workflow jobs remain separate contexts.
     """
     pyproject = _read_toml(tree / "pyproject.toml")
     if project is None:
@@ -2343,6 +2369,7 @@ def typing_declarations(tree: Path, project: Optional[str]) -> List[Declaration]
         *_nox_declarations(declarer),
         *_pre_commit_declarations(declarer),
         *_requirement_file_declarations(declarer),
+        *_uv_default_group_declarations(declarer),
         *_workflow_declarations(declarer),
     ]
 

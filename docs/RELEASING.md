@@ -259,7 +259,11 @@ names say typing, types, mypy, pyright, lint or check; the `deps`,
 `tox.toml`, `[tool.tox]`) whose commands run mypy or pyright, with their factor
 conditions applied; what nox sessions that run them install; the
 `additional_dependencies` of `.pre-commit-config.yaml`'s mypy and pyright
-hooks; and requirements files named for typing. Each is installed at the
+hooks; and requirements files named for typing. An explicit list in
+`[tool.uv].default-groups` also contributes a group when its expanded
+requirements name mypy or pyright. Included groups, extras and version markers
+keep their existing declaration semantics; an unrelated default group supplies
+no typing dependencies. Each is installed at the
 version the project's lock file pins where it pins one. The install only adds:
 everything already in the environment is held at its version by a constraints
 file, so the test dependencies, the checkers and formatters chosen above, and
