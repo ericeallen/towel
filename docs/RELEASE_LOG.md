@@ -12,12 +12,29 @@ A historical passing result applies to its recorded commit and test environment.
 
 **Contents — release checkpoints**
 
+- [1.792 October 3 remediation](#2026-10-03-1792-discovery-remediation)
 - [1.792 October 2 follow-up](#2026-10-02-1792-preparation-follow-up) · [September 30 preparation](#2026-09-30-1792-preparation)
 - [1.772 release](#2026-09-26-1772) · [1.772 candidate](#2026-09-19-1772-candidate)
 - [1.732.post1](#2026-09-19-1732post1) · [1.732 release](#2026-09-19-1732) · [Candidate checkpoints](#2026-09-19-historical-1732-candidate-checkpoints)
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-10-03 (1.792 discovery remediation)
+
+- Inflect exposed generated calls formatted without their destination
+  indentation. Generated snippets now receive that depth during formatting,
+  and their unwrapped AST is checked before insertion.
+- Cheroot's own mypy check passed while Towel's reachability batch pulled in
+  excluded tests whose dependencies used syntax newer than the configured
+  target. Verification probes now follow each checker's configured file scope.
+- The typing_extensions unittest command now discovers from `src`, matching
+  upstream module identity. Its stack-reflection differences and Beautiful
+  Soup's warning-filename differences are listed explicitly in the pinned
+  corpus manifest under the October 2 preservation contract.
+- The completed predecessor discovery is retained with its failed verdicts.
+  These fixes require fresh frozen-source release gates; this checkpoint does
+  not declare 1.792 ready or published.
 
 ## 2026-10-02 (1.792 preparation follow-up)
 

@@ -969,6 +969,11 @@ a file-wide one (`flake8: noqa`, `mypy:`) must stay in its module
 (`directive_outlives_block`). A clustered site whose directives differ is
 left out of the cluster.
 
+Generated calls and helpers are formatted at their destination indentation.
+Temporary enclosing suites give the snippet formatter that depth; they are
+removed before insertion, and the unwrapped snippet must retain its original
+AST. Existing consumer source is not reformatted by this step.
+
 Materialization writes the comments into the unparsed helper before the
 formatter runs (`weave_comments`): at the end of the line holding their code,
 inside the brackets they stood in, or on lines of their own before or after

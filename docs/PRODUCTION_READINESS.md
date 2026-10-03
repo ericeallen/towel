@@ -59,10 +59,13 @@ The [release procedure](RELEASING.md) and repository-owned verifier enforce the
 local evidence boundary. No pending run or historical success establishes
 completion of that final release validation.
 
-Cheroot's project-hook target alignment remains a known typed-integration gap;
-the development corpus's Cheroot, Trio and typing_extensions fallbacks establish
-untyped parity only. Conservative import-origin refusals and Pyparsing's listed
-traceback-reflection failures retain their explicit scope in that report.
+The October 3 remediation filters verification probes to each checker's
+configured file scope. Cheroot's own check and one typed extraction passed in
+the same development environment after that correction; fresh complete corpus
+validation remains required. The earlier development corpus's Cheroot, Trio
+and typing_extensions fallbacks establish untyped parity only. Conservative
+import-origin refusals and listed frame/traceback-reflection differences retain
+their explicit scope in the pinned corpus manifest and review.
 
 ## Previous published release
 

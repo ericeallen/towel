@@ -891,6 +891,8 @@ url = "https://git.launchpad.net/beautifulsoup"
 rev = "c772c5e6b335c1dbd8ee59a01ea6b75b272cd737"
 package = "bs4"
 deps = ["soupsieve", "lxml", "html5lib", "typing_extensions"]
+expect_broken = "frame-relative: warnings.warn stacklevel attributes deprecation and markup warnings to an extracted helper caller; tests inspect the warning source filename"
+known_failures = ["bs4/tests/test_filter.py::TestSoupStrainer::test_constructor_string_deprecated_text_argument", "bs4/tests/test_filter.py::TestSoupStrainer::test_search_tag_deprecated", "bs4/tests/test_filter.py::TestSoupStrainer::test_search_deprecated", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[markup.html]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[markup.htm]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[markup.HTML]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[markup.txt]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[markup.xhtml]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[markup.xml]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[/home/user/file.txt]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[c:\\\\user\\\\file.html\\\\\\\\server\\\\share\\\\path\\\\file.XhTml]", "bs4/tests/test_soup.py::TestWarnings::test_url_warning_with_bytes_url", "bs4/tests/test_soup.py::TestWarnings::test_url_warning_with_unicode_url"]
 
 [[project]]
 name = "mkdocs"
@@ -1063,7 +1065,9 @@ url = "https://github.com/python/typing_extensions.git"
 rev = "3ae9b7553a5c560dc09b484078d98ece2985eecd"
 package = "src/typing_extensions.py"
 pythonpath = "src"
-test = ["{python}", "-m", "unittest", "-q", "src/test_typing_extensions.py"]
+test = ["{python}", "-m", "unittest", "discover", "-q", "-s", "src"]
+expect_broken = "frame-relative: typing_extensions caller and generic-origin checks inspect the stack; extraction changes inferred module ownership and generic-default checks"
+known_failures = ["unittest:test_pickle (test_typing_extensions.TypeAliasTypeTests.test_pickle) (proto=0)", "unittest:test_pickle (test_typing_extensions.TypeAliasTypeTests.test_pickle) (proto=1)", "unittest:test_pickle (test_typing_extensions.TypeAliasTypeTests.test_pickle) (proto=2)", "unittest:test_pickle (test_typing_extensions.TypeAliasTypeTests.test_pickle) (proto=3)", "unittest:test_pickle (test_typing_extensions.TypeAliasTypeTests.test_pickle) (proto=4)", "unittest:test_pickle (test_typing_extensions.TypeAliasTypeTests.test_pickle) (proto=5)", "unittest:test_no_default_after_non_default (test_typing_extensions.TypeVarLikeDefaultsTests.test_no_default_after_non_default)", "unittest:test_no_default_after_typevar_tuple (test_typing_extensions.TypeVarLikeDefaultsTests.test_no_default_after_typevar_tuple)"]
 
 [[project]]
 name = "cheroot"

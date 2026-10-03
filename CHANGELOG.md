@@ -81,6 +81,11 @@ release verification binds the final versioned source to its own evidence.
 
 ### Fixed
 
+- Generated calls and helpers are formatted at their destination indentation,
+  so inserting them into methods does not exceed the configured line width.
+- Reachability and import-type probes follow each checker's configured file
+  scope before building probes. Excluded consumer tests no longer make a clean
+  project check fail through imports outside that scope.
 - Corpus log-formatting controls now apply only to Towel. Consumer tests can
   enable color themselves without a harness override changing their behavior.
 - Corpus pytest commands retain the cache fixture and clear cached state before

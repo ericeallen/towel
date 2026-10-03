@@ -40,6 +40,8 @@ describe belong to that version.
 
 | Counterexample | Repair and executable evidence |
 |---|---|
+| An extracted call fits the formatter width at column zero but exceeds it after insertion into a method | Format generated snippets at their destination depth and check their unwrapped AST; `r1792_formatting_destination_indentation.py` and `test_generated_code_formatting.py` cover Ruff, Black and execution. |
+| A clean configured mypy check fails when reachability probes explicitly target excluded tests and their imports | Filter probe requests per checker before constructing the batch; `test_mypy_judged_as_configured.py` keeps covered extraction and the clean check while excluded imports contain syntax unavailable at the configured target. |
 | Moving `self.__value` into another lexical class loses Python's private-name mangling | Reject private-name extraction across lexical classes; preserve same-class extraction. Read-only private properties prevent tests from accidentally accommodating the wrong attribute. |
 | `[xs for xs in xs]` resolves its first iterable in the containing scope | Correct comprehension evaluation order and scope isolation; execute list/set/dict/generator cases. |
 | Assignment expressions in comprehensions leak bindings to their containing scope | Reject these candidates until their flow is represented; ordinary comprehensions remain useful. |
