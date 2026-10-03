@@ -131,6 +131,7 @@ BUILTIN_CALLER_LOOKUPS = {
 }
 
 TRANSFORMED = {
+    "xf1792_typed_shared_helper_comments",
     "xf1792_excluded_probe_import",
     "xf10_reuse_existing_function",
     "xf15_ancestor_in_another_module",
@@ -260,6 +261,7 @@ REFUSED: Dict[str, str] = {
 
 TYPED = frozenset(
     {
+        "xf1792_typed_shared_helper_comments",
         "xf1792_excluded_probe_import",
         # The round-3 audit's typed cases: refactored with the strict checker
         # the fixture's pyproject.toml configures, as towel dry does by default.
@@ -282,8 +284,11 @@ TYPED = frozenset(
 )
 """Packages run with the checker their ``pyproject.toml`` configures."""
 
-WITHOUT_CROSS_MODULE = TYPED | {"xf9up_newer_syntax_hides_hand_decoration", "r9sr_inline_snapshot"}
-"""Packages run without ``--cross-module``: every typed one so far, as the audit ran them, the
+WITHOUT_CROSS_MODULE = (TYPED - {"xf1792_typed_shared_helper_comments"}) | {
+    "xf9up_newer_syntax_hides_hand_decoration",
+    "r9sr_inline_snapshot",
+}
+"""Packages run without ``--cross-module``: the earlier typed fixtures, as the audit ran them, the
 default-mode refusal, and the inline-snapshot fixture, whose defect the audit found without it."""
 
 KNOWN_DEFECTS: Dict[str, str] = {}

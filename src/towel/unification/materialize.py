@@ -176,7 +176,8 @@ class Materialization(
         """
         if not proposal.helper_comments.carried:
             return self._render(node, prefix)
-        woven = weave_comments(node, proposal.extracted_function, proposal.helper_comments)
+        helper = node.body[-1] if isinstance(node, ast.Module) else node
+        woven = weave_comments(node, helper, proposal.helper_comments)
         if self.snippet_formatter is None:
             return woven.text
         formatted = format_at_indentation(self.snippet_formatter, woven.text, prefix)

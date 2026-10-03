@@ -43,6 +43,16 @@ import pytest
 import towel
 from towel.diagnostics import Settings
 from towel.formatting import BlackSettings, SnippetFormatter, black_formatter, checked
+from towel.canonical_ast import canonical_dump
+from towel.unification.block_comments import (
+    Anchor,
+    HelperComment,
+    HelperComments,
+    NodePath,
+    Placement,
+)
+from towel.unification.materialize import _early_module_helper
+from towel.unification.models import RefactoringProposal
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 SERIAL = Settings.from_environ({"TOWEL_WORKERS": "1"})
@@ -671,6 +681,68 @@ def test_a_helper_shared_across_modules_carries_the_comments(tmp_path: Path) -> 
     host = written[proposal.file_path]
     assert _line_holding(_helper_source(host), "total += value * 2").endswith("  # noqa: E501")
     assert sum(text.count("# noqa: E501") for text in written.values()) == 1
+
+
+@pytest.mark.parametrize("with_declarations", [False, True])
+def test_adapted_helper_comments_preserve_the_actual_rendered_tree(
+    with_declarations: bool,
+) -> None:
+    helper = ast.parse("def shared(value: bool) -> bool:\n    return not value\n").body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    comments = HelperComments(
+        comments=(HelperComment("# noqa: E501", Anchor(NodePath(0, "Return"), Placement.TRAILING)),)
+    )
+    proposal = RefactoringProposal(
+        "unused.py", helper, [], "Share a typed block", 1, helper_comments=comments
+    )
+    original = ast.dump(helper, include_attributes=True)
+    adapted = _early_module_helper(helper)
+    node: ast.AST = adapted
+    if with_declarations:
+        node = ast.Module(body=[ast.parse("marker = 1").body[0], adapted], type_ignores=[])
+    before = ast.dump(node, include_attributes=True)
+    rendered = _engine()._helper_text(proposal, node)
+    expected = node if isinstance(node, ast.Module) else ast.Module(body=[adapted], type_ignores=[])
+    assert canonical_dump(ast.parse(rendered)) == canonical_dump(expected)
+    assert _line_holding(rendered, "return not value").endswith("# noqa: E501")
+    assert ast.dump(node, include_attributes=True) == before
+    assert ast.dump(helper, include_attributes=True) == original
+
+
+@requires_mypy
+def test_typed_shared_helper_with_comments_is_applicable_without_mutating_proposal(
+    tmp_path: Path,
+) -> None:
+    from towel.type_inference import CheckSuccess, MypyInferrer
+
+    root = tmp_path.resolve() / "project"
+    paths = _package(root, "  # noqa: E501")
+    (root / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
+    for path in paths:
+        path.write_text(path.read_text().replace("(values):", "(values: list[int]) -> int:"))
+    originals = {str(path): path.read_text() for path in paths}
+    oracle = MypyInferrer()
+    try:
+        engine = _engine(
+            cross_module_helpers=True, type_oracle=oracle, reuse_existing_functions=False
+        )
+        proposals = engine.analyze_files([str(path) for path in paths], progress="none")
+        assert proposals, engine.declined_pairs
+        proposal = proposals[0]
+        original_helper = ast.dump(proposal.extracted_function, include_attributes=True)
+        written = engine.apply_refactoring_multi_file(proposal)
+        assert len(written) == 2
+        assert engine.apply_refactoring_multi_file(proposal) == written
+        assert ast.dump(proposal.extracted_function, include_attributes=True) == original_helper
+        host = _helper_source(written[proposal.file_path])
+        assert _line_holding(host, "total += value * 2").endswith("# noqa: E501")
+        helper = ast.parse(host).body[0]
+        assert isinstance(helper, ast.FunctionDef)
+        assert any(isinstance(arg.annotation, ast.Constant) for arg in helper.args.args)
+        assert oracle.check_project(written) == CheckSuccess()
+        assert {str(path): path.read_text() for path in paths} == originals
+    finally:
+        oracle.close()
 
 
 def test_a_file_directive_does_not_move_to_another_module(tmp_path: Path) -> None:
