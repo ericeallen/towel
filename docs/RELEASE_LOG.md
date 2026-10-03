@@ -61,6 +61,13 @@ A historical passing result applies to its recorded commit and test environment.
   release workflow selects its pre-commit checker, so its older tox pin does
   not replace that selection. The interrupted corpus remains partial evidence;
   this harness correction requires a fresh frozen release run.
+- Wrapt's CI installs mypy 1.20.1 before its tests, but the harness missed that
+  workflow pin and used 2.3.1, causing an unchanged diagnostic-message test to
+  fail. Literal checker installs in unconditional workflow steps are now read
+  after the existing declaration sources. Python version markers and separate
+  job contexts are preserved; unsupported shell or YAML forms are skipped.
+  Workflow inputs also participate in environment reuse checks. The correction
+  requires a new corpus run with the selected checker.
 - The [complete CLI comparison](PERFORMANCE.md#october-2-complete-cli-comparison)
   measured the controlled typed, formatted Packaging fixture at 36.24 seconds
   versus 41.59 seconds for published 1.772, about 13% faster. Runtime commit

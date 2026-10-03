@@ -230,7 +230,12 @@ tag its `# frozen:` comment names; then an exact pin, for this interpreter, in a
 requirements file, those named for typing read first (httpx's
 `requirements.txt` has `mypy==1.17.1`). An otherwise unselected checker then
 uses its first applicable version-bearing typing declaration context, such as
-a tox environment or a dependency group. The applicable requirements for that
+a tox environment or a dependency group. Literal checker installs in GitHub
+Actions workflows are considered after those other declaration sources, with
+each job treated as a separate context. This limited reader preserves Python
+version markers and skips conditional or computed installs it cannot establish
+statically; it does not execute shell or interpret workflow expressions or YAML
+merges. The applicable requirements for that
 checker within that context are resolved together with the wheel's mandatory
 extra requirement. Distinct contexts remain alternatives: they are not
 intersected and do not replace an earlier selection. If the selected context
