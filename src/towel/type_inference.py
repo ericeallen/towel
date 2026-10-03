@@ -1902,7 +1902,7 @@ def checks_in_turn(
 
 
 def reveal_by_each(
-    oracle: TypeOracle, requests: Sequence[RevealRequest]
+    oracle: TypeOracle, requests: Sequence[RevealRequest], *, reported_only: bool = False
 ) -> Tuple[Mapping[RevealKey, str], ...]:
     """What each checker behind ``oracle`` reveals for ``requests``, one answer per checker.
 
@@ -1910,11 +1910,22 @@ def reveal_by_each(
     ``reveal`` asks. Whether a checker looks at a line at all is a question for
     every checker that verifies: mypy and pyright each take their own platform
     and Python version, and code one of them skips it verifies nothing about.
+    ``reported_only`` limits verification probes to each checker's own
+    reporting scope. Naming an excluded file as a probe target would make mypy
+    follow imports the project's check never reads, which can fail the whole
+    batch before any covered module is answered.
     """
     if isinstance(oracle, CombinedOracle):
-        return tuple(answer for one in oracle.checkers for answer in reveal_by_each(one, requests))
+        return tuple(
+            answer
+            for one in oracle.checkers
+            for answer in reveal_by_each(one, requests, reported_only=reported_only)
+        )
     if isinstance(oracle, _RelocatedOracle):
-        return oracle.reveal_by_each(requests)
+        return oracle.reveal_by_each(requests, reported_only=reported_only)
+    if reported_only:
+        covered = reports_by_each(oracle, [request.file_path for request in requests])[0]
+        requests = [request for request in requests if request.file_path in covered]
     return (oracle.reveal(requests),)
 
 
@@ -2032,10 +2043,12 @@ class _RelocatedOracle:
         return self._outputs(self._oracle.reveal(self._originals(requests)), requests)
 
     def reveal_by_each(
-        self, requests: Sequence[RevealRequest]
+        self, requests: Sequence[RevealRequest], *, reported_only: bool = False
     ) -> Tuple[Mapping[RevealKey, str], ...]:
         """Each checker's revelations, at the copy's paths; see :func:`reveal_by_each`."""
-        answers = reveal_by_each(self._oracle, self._originals(requests))
+        answers = reveal_by_each(
+            self._oracle, self._originals(requests), reported_only=reported_only
+        )
         return tuple(self._outputs(answer, requests) for answer in answers)
 
     def begin_checked_run(self, analyzed: Sequence[str]) -> None:

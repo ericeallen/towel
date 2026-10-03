@@ -1808,7 +1808,7 @@ class HelperAnnotationWiring(EngineState):
         requests = [request for probe in probes.values() if probe for request in probe.requests]
         if oracle is None or not requests:
             return {path: tuple(errors) for path, errors in found.items()}
-        answers = reveal_by_each(oracle, requests)
+        answers = reveal_by_each(oracle, requests, reported_only=True)
         for path, probe in probes.items():
             if probe is None:
                 continue
@@ -1891,7 +1891,13 @@ class HelperAnnotationWiring(EngineState):
             reported = reported[:1]  # the one that infers comes first
         if requests:
             answers = (
-                reveal_by_each(oracle, requests) if every_checker else (oracle.reveal(requests),)
+                reveal_by_each(oracle, requests, reported_only=True)
+                if every_checker
+                else (
+                    oracle.reveal(
+                        [request for request in requests if request.file_path in reported[0]]
+                    ),
+                )
             )
         for answer in answers:
             failed = unanswered_files(answer) if isinstance(answer, Mapping) else {}

@@ -62,12 +62,15 @@ from towel.type_inference import (  # noqa: E402
     CheckFailure,
     CheckResult,
     CheckSuccess,
+    CombinedOracle,
     MypyInferrer,
     Revealed,
     RevealKey,
     RevealRequest,
     Subtyping,
     _BuildMessages,
+    relocate_oracle,
+    reveal_by_each,
     unanswered_files,
 )
 from towel.unification.exceptions import CheckerUnavailableError, RefactoringError  # noqa: E402
@@ -489,6 +492,83 @@ PAIR = "".join(
     f"    answer = doubled - {offset}\n    return answer\n\n\n"
     for name, offset in (("first", 3), ("second", 4))
 )
+
+
+def test_verification_probes_do_not_promote_excluded_files_to_mypy_targets(
+    tmp_path: Path,
+) -> None:
+    """Cheroot's own check was clean, but probing excluded tests imported newer pytest syntax."""
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": '[tool.mypy]\npython_version = "3.9"\nfiles = ["pkg"]\n'
+            'exclude = "pkg/ignored.py"\n',
+            "pkg/__init__.py": "",
+            "pkg/core.py": PAIR,
+            "pkg/ignored.py": "import newer_dependency\n",
+            "newer_dependency.py": "match 1:\n    case 1:\n        value = 1\n",
+        },
+    )
+    own = subprocess.run(
+        [sys.executable, "-m", "mypy", "--cache-dir", str(tmp_path / "own-cache")],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert own.returncode == 0, own.stdout + own.stderr
+    oracle = MypyInferrer()
+    try:
+        engine = UnificationRefactorEngine(
+            min_lines=3,
+            reuse_existing_functions=False,
+            annotate_helpers=False,
+            type_oracle=oracle,
+        )
+        engine.refactor_directory_to_fixed_point(
+            str(tmp_path / "pkg"), str(tmp_path / "pkg"), progress="none"
+        )
+        assert (tmp_path / "pkg/core.py").read_text() != PAIR
+        assert (tmp_path / "pkg/ignored.py").read_text() == "import newer_dependency\n"
+        checked = oracle.check_project(
+            {str(tmp_path / "pkg/core.py"): (tmp_path / "pkg/core.py").read_text()}
+        )
+        assert isinstance(checked, CheckSuccess) and not checked.errors
+    finally:
+        oracle.close()
+
+
+@pytest.mark.parametrize("relocated", [False, True])
+def test_verification_probe_scope_is_per_checker_and_follows_relocated_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relocated: bool
+) -> None:
+    """One checker's excluded module can still be another checker's verification target."""
+    original = tmp_path / "source"
+    output = tmp_path / "output"
+    original.mkdir()
+    output.mkdir()
+    names = ("first.py", "second.py")
+    primary, secondary = MypyInferrer(), MypyInferrer()
+    asked: list[list[str]] = []
+
+    def reveal(requests: Sequence[RevealRequest]) -> Mapping[RevealKey, str]:
+        asked.append([request.file_path for request in requests])
+        return answer_probes(requests)
+
+    for oracle, covered in ((primary, names[0]), (secondary, names[1])):
+        oracle._reporting = {str(original / name): name == covered for name in names}
+        monkeypatch.setattr(oracle, "reveal", reveal)
+    combined = CombinedOracle(primary, [secondary])
+    checker = relocate_oracle(combined, original, output) if relocated else combined
+    directory = output if relocated else original
+    requests = [RevealRequest(str(directory / name), "", 1, "", (PROBE,)) for name in names]
+    try:
+        answers = reveal_by_each(checker, requests, reported_only=True)
+        assert asked == [[str(original / name)] for name in names]
+        assert [set(answer) for answer in answers] == [
+            {(str(directory / name), 1, 0)} for name in names
+        ]
+    finally:
+        checker.close()
 
 
 class _ProbesFail:
