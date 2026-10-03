@@ -83,7 +83,7 @@ Put the exact comment `# towel: no-extract` immediately after the final colon
 of a function's signature:
 
 ```python
-# This factory depends on its caller's frame.
+# build_record observes this factory's frame.
 def make_record(fields):  # towel: no-extract
     return build_record(fields)
 
@@ -107,8 +107,9 @@ an inline function body are not this directive.
 
 This protects the marked definition, not its module or every frame in its
 call chain. Its absolute line position can change. Mark the functions whose
-frames must remain intact, even when reflection happens in a callee; use
-`--exclude filename.py` when the entire file must remain unchanged. See the
+frames must remain intact, even when reflection happens in a callee. When
+refactoring a directory, use `--exclude filename.py` when that file’s entire
+source must remain unchanged. See the
 [reflection boundary](KNOWN_LIMITATIONS.md#observable-differences-that-remain).
 
 ### Analyze a complete readable project
