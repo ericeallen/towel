@@ -131,6 +131,7 @@ BUILTIN_CALLER_LOOKUPS = {
 }
 
 TRANSFORMED = {
+    "xf1792_excluded_probe_import",
     "xf10_reuse_existing_function",
     "xf15_ancestor_in_another_module",
     "xf16_consumer_outside_target_owns_helper_name",
@@ -259,6 +260,7 @@ REFUSED: Dict[str, str] = {
 
 TYPED = frozenset(
     {
+        "xf1792_excluded_probe_import",
         # The round-3 audit's typed cases: refactored with the strict checker
         # the fixture's pyproject.toml configures, as towel dry does by default.
         "xf7fz_misc_typed_for_prebound_mypy",

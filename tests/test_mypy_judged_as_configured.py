@@ -40,6 +40,7 @@ from dataclasses import dataclass
 import json
 import logging
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -498,17 +499,10 @@ def test_verification_probes_do_not_promote_excluded_files_to_mypy_targets(
     tmp_path: Path,
 ) -> None:
     """Cheroot's own check was clean, but probing excluded tests imported newer pytest syntax."""
-    _write(
-        tmp_path,
-        {
-            "pyproject.toml": '[tool.mypy]\npython_version = "3.9"\nfiles = ["pkg"]\n'
-            'exclude = "pkg/ignored.py"\n',
-            "pkg/__init__.py": "",
-            "pkg/core.py": PAIR,
-            "pkg/ignored.py": "import newer_dependency\n",
-            "newer_dependency.py": "match 1:\n    case 1:\n        value = 1\n",
-        },
-    )
+    fixture = Path(__file__).with_name("hostile_crossfile") / "xf1792_excluded_probe_import"
+    shutil.copytree(fixture, tmp_path, dirs_exist_ok=True)
+    original = (tmp_path / "pkg/core.py").read_text()
+    ignored = (tmp_path / "pkg/ignored.py").read_text()
     own = subprocess.run(
         [sys.executable, "-m", "mypy", "--cache-dir", str(tmp_path / "own-cache")],
         cwd=tmp_path,
@@ -527,8 +521,8 @@ def test_verification_probes_do_not_promote_excluded_files_to_mypy_targets(
         engine.refactor_directory_to_fixed_point(
             str(tmp_path / "pkg"), str(tmp_path / "pkg"), progress="none"
         )
-        assert (tmp_path / "pkg/core.py").read_text() != PAIR
-        assert (tmp_path / "pkg/ignored.py").read_text() == "import newer_dependency\n"
+        assert (tmp_path / "pkg/core.py").read_text() != original
+        assert (tmp_path / "pkg/ignored.py").read_text() == ignored
         checked = oracle.check_project(
             {str(tmp_path / "pkg/core.py"): (tmp_path / "pkg/core.py").read_text()}
         )
