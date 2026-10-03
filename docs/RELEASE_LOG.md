@@ -22,6 +22,11 @@ A historical passing result applies to its recorded commit and test environment.
 
 ## 2026-10-03 (1.792 discovery remediation)
 
+- Packaging exposed a false rendering refusal for typed shared helpers carrying
+  comments: annotations were safely quoted before rendering, but the roundtrip
+  check compared them with the unadapted proposal. Comment rendering now checks
+  the actual adapted helper, retaining the complete AST and directive checks.
+  Typed cross-module regressions require a real extraction and unchanged output.
 - Inflect exposed generated calls formatted without their destination
   indentation. Generated snippets now receive that depth during formatting,
   and their unwrapped AST is checked before insertion.

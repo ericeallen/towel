@@ -81,6 +81,9 @@ release verification binds the final versioned source to its own evidence.
 
 ### Fixed
 
+- Shared helpers carrying comments are checked against their adapted helper
+  tree, so safely quoted cross-module annotations no longer cause a false
+  rendering refusal. AST and tool-directive preservation checks remain intact.
 - Generated calls and helpers are formatted at their destination indentation,
   so inserting them into methods does not exceed the configured line width.
 - Reachability and import-type probes follow each checker's configured file
