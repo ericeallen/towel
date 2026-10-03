@@ -35,11 +35,18 @@ A historical passing result applies to its recorded commit and test environment.
   source-byte budget. NetworkX diagnosis found that the earlier 32-entry cache
   repeatedly evicted ordinary modules; cache capacity now follows their sizes,
   with entry and per-source limits retained. This diagnosis is not a benchmark.
-- Corpus preparation exposed a false untyped-import refusal for annotation-only
-  `Self`. The import probe now asks the checker in a class context, including
+- Corpus preparation exposed a false untyped-import refusal for `Self`.
+  The import probe now asks the checker in a class context, including
   for aliases and qualified spellings, and requires its exact contextual type.
   The superseded candidate's interrupted corpus remains partial evidence;
   the correction requires a new validation freeze.
+- Werkzeug exposed a module-attribute question taken from a shadowing function
+  parameter and valid qualified `Self` uses rejected by an annotation grammar.
+  Attribute questions now use shared lexical-scope rules. `Self` import identity
+  is established by the checker's exact contextual type, removing the annotation
+  grammar; the existing checker comparison still rejects new type errors.
+  Contextual questions share the existing batch. These corrections require
+  fresh validation with the affected files eligible for refactoring.
 - NetworkX exposed a second import-probe error: mypy reports every expression
   in an unchecked function as `Any`, including known standard-library modules.
   A checked context now distinguishes those imports from genuinely unresolved

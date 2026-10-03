@@ -1041,7 +1041,12 @@ where the evidence comes from:
   module and names under names of its own, where the import stands, and
   reveals them. mypy answers `Any` for a module it cannot resolve or finds no
   types for, and pyright `Unknown` for a name or attribute such an import
-  binds (pyright gives the module itself a module's type). A fresh parent-module
+  binds (pyright gives the module itself a module's type). For a queried `Self`
+  import or module attribute, the same checker is also asked in a fresh class
+  at the import site. Only its exact contextual self type establishes the
+  import's identity; custom classes, instances and type variables named `Self`
+  do not provide that evidence. The ordinary checker comparison still rejects
+  new type errors in value and annotation uses. A fresh parent-module
   alias can hide a submodule that Pyright sees through the program's original
   binding. When the parent and submodule are imported in one module-level
   import block, every read follows that block, and there are no competing

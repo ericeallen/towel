@@ -73,9 +73,11 @@ def _unknown_answers(probes: ImportProbes) -> Dict[RevealKey, str]:
         "values = [Self for Self in others]",
     ],
 )
-def test_value_reads_or_competing_bindings_keep_the_ordinary_probe(use: str) -> None:
+def test_value_reads_or_competing_bindings_still_require_import_identity(use: str) -> None:
     probes = _probes("from typing import Self\n" + use + "\n")
-    assert all(q.self_context is None for q in probes.questions)
+    # The import is a typing form only if the checker identifies it. Its later
+    # uses and rebindings are ordinary program expressions, not import evidence.
+    assert any(q.line == 1 and q.self_context is not None for q in probes.questions)
     assert imports_typed_as_any(probes, [_unknown_answers(probes)], "/project/example.py")
 
 
@@ -143,10 +145,10 @@ def test_context_name_avoids_normalized_unicode_identifiers() -> None:
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="type parameter syntax requires Python 3.12")
 @pytest.mark.parametrize("parameter", ["Self", "*Self", "**Self"])
-def test_type_parameter_bindings_prevent_the_contextual_exception(parameter: str) -> None:
+def test_type_parameter_bindings_do_not_identify_the_import(parameter: str) -> None:
     source = f"from typing import Self\nclass C[{parameter}]: pass\n"
     probes = _probes(source)
-    assert all(q.self_context is None for q in probes.questions)
+    assert any(q.self_context is not None for q in probes.questions)
     assert imports_typed_as_any(probes, [_unknown_answers(probes)], "/project/example.py")
 
 
@@ -307,9 +309,9 @@ def test_qualified_proof_belongs_only_to_the_self_attribute(statement: str, boun
         "value: types.Self.attribute",
     ],
 )
-def test_qualified_value_uses_and_writes_keep_the_ordinary_probe(use: str) -> None:
+def test_qualified_value_uses_and_writes_still_require_import_identity(use: str) -> None:
     probes = _probes("import typing as types\nclass C:\n    value: types.Self\n" + use + "\n")
-    assert all(q.self_context is None for q in probes.questions)
+    assert any(q.self_context is not None for q in probes.questions)
     assert imports_typed_as_any(probes, [_unknown_answers(probes)], "/project/example.py")
 
 

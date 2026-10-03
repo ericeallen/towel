@@ -114,6 +114,8 @@ from typing import (
 from .analysis_sources import memoized_source_analysis
 from .reachability import ProbePlan, probe_plan
 from .type_inference import RevealKey, RevealRequest, TypeDiagnostic
+from .unification.lexical_scopes import NESTED_SCOPES, ScopeNames, nested_scope_names
+from .unification.visitors import ScopeVisitor, annotation_expressions, evaluated_before_definition
 
 __all__ = [
     "IMPORT_PROBE_PREFIX",
@@ -708,8 +710,9 @@ class ImportQuestion:
     ``Any`` for a module it cannot resolve or finds no types for; pyright
     answers a ``name`` or ``attribute`` question ``Unknown`` for what an
     import it cannot resolve binds. Self also reveals Unknown outside a class;
-    an eligible annotation-only import is asked again in a fresh class, where
-    the same checker must identify its contextual self type. A checker that
+    the same import is asked again in a fresh class, where the same checker
+    must identify its contextual self type. This establishes import identity;
+    ordinary checks still validate its uses, including values and metadata. A checker that
     does not look at the import answers nothing. In an unchecked function
     mypy also answers Any for known modules; the same import is therefore
     asked about inside a fresh checked function at that site, and only the
@@ -769,9 +772,6 @@ class _Probe:
     """The alias questions with a proven site for querying the original binding."""
 
 
-_TYPE_CONTAINERS = frozenset({"list", "dict", "set", "frozenset", "tuple", "type"})
-
-
 def _attribute_path(node: ast.AST) -> Tuple[str, ...]:
     parts: List[str] = []
     while isinstance(node, ast.Attribute):
@@ -780,105 +780,97 @@ def _attribute_path(node: ast.AST) -> Tuple[str, ...]:
     return (node.id, *reversed(parts)) if isinstance(node, ast.Name) else ()
 
 
-def _type_only_annotation(
-    node: ast.AST, bound_names: FrozenSet[str], self_paths: FrozenSet[Tuple[str, ...]]
-) -> bool:
-    """A deliberately small type-expression grammar, excluding metadata and value uses.
+@dataclass(frozen=True)
+class _AttributeBindings:
+    reads: Mapping[ast.Name, FrozenSet[ast.AST]]
+    imports: Mapping[Tuple[ast.Import, str], FrozenSet[ast.AST]]
 
-    Unknown subscript constructors may be aliases of Annotated, whose metadata
-    are values. Only unshadowed builtin type constructors are recognized here.
-    Unsupported annotations retain the ordinary import probe's verdict.
+
+class _AttributeScopes(ScopeVisitor):
+    """Lexical owners of attribute roots, using the shared scope traversal.
+
+    Class-body reads may precede their local assignment, so both the class
+    and its enclosing binding remain possible. Functions, lambdas and
+    comprehensions have static locals and skip enclosing class namespaces.
     """
-    if isinstance(node, ast.Name):
-        return True
-    if isinstance(node, ast.Constant):
-        return node.value is None or node.value is Ellipsis or isinstance(node.value, str)
-    if isinstance(node, ast.Attribute):
-        return _attribute_path(node) in self_paths
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-        return _type_only_annotation(node.left, bound_names, self_paths) and _type_only_annotation(
-            node.right, bound_names, self_paths
-        )
+
+    def __init__(self, tree: ast.Module) -> None:
+        self.root = tree
+        self.scopes: List[Tuple[ast.AST, ScopeNames]] = []
+        self.reads: Dict[ast.Name, FrozenSet[ast.AST]] = {}
+        self.imports: Dict[Tuple[ast.Import, str], FrozenSet[ast.AST]] = {}
+
+    def _owners(self, name: str, *, read: bool) -> FrozenSet[ast.AST]:
+        possible: Set[ast.AST] = set()
+        for index in range(len(self.scopes) - 1, -1, -1):
+            node, names = self.scopes[index]
+            if names.is_class and index != len(self.scopes) - 1:
+                continue
+            if name in names.declared_global:
+                return frozenset((*possible, self.root))
+            if name in names.local:
+                possible.add(node)
+                if not names.is_class or not read:
+                    return frozenset(possible)
+        return frozenset((*possible, self.root))
+
+    def _enter_scope(self, node: ast.AST) -> None:
+        assert isinstance(node, NESTED_SCOPES)
+        self.scopes.append((node, nested_scope_names(node)))
+
+    def _leave_scope(self, node: ast.AST) -> None:
+        self.scopes.pop()
+
+    def _visit_definition_head(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda
+    ) -> None:
+        expressions = evaluated_before_definition(node)
+        if isinstance(node, ast.ClassDef):
+            expressions += [*node.bases, *(item.value for item in node.keywords)]
+        elif not isinstance(node, ast.Lambda):
+            expressions += annotation_expressions(node)
+        for expression in expressions:
+            self.visit(expression)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            name = alias.asname or alias.name.split(".")[0]
+            self.imports[node, name] = self._owners(name, read=False)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        inner: ast.expr = node
+        while isinstance(inner, ast.Attribute):
+            inner = inner.value
+        if isinstance(inner, ast.Name):
+            self.reads[inner] = self._owners(inner.id, read=True)
+        self.generic_visit(node)
+
+
+def _attribute_bindings(tree: ast.Module) -> Optional[_AttributeBindings]:
+    """Immutable facts once per source, only when module attributes need them.
+
+    PEP695 annotation scopes are outside this small analysis; keep the
+    previous conservative questions for those sources instead of guessing.
+    """
+    nodes = tuple(ast.walk(tree))
     if (
-        isinstance(node, ast.Subscript)
-        and isinstance(node.value, ast.Name)
-        and node.value.id in _TYPE_CONTAINERS
-        and node.value.id not in bound_names
+        not any(isinstance(node, ast.Import) for node in nodes)
+        or not any(isinstance(node, ast.Attribute) for node in nodes)
+        or any(getattr(node, "type_params", ()) for node in nodes)
     ):
-        arguments = node.slice.elts if isinstance(node.slice, ast.Tuple) else (node.slice,)
-        return all(
-            _type_only_annotation(argument, bound_names, self_paths) for argument in arguments
-        )
-    return False
+        return None
+    visitor = _AttributeScopes(tree)
+    visitor.visit(tree)
+    return _AttributeBindings(MappingProxyType(visitor.reads), MappingProxyType(visitor.imports))
 
 
-def _annotation_only_self_paths(tree: ast.Module) -> FrozenSet[Tuple[str, ...]]:
-    """Self imports with no value reads or competing bindings anywhere in the file.
-
-    This deliberately does not resolve scopes: another binding even in a nested
-    scope prevents the contextual exception. A checker must still identify the
-    imported object as Self; its module's spelling proves nothing.
-    """
-    candidates: Set[Tuple[str, ...]] = set()
-    module_candidates: Set[Tuple[str, ...]] = set()
-    attributes: Set[Tuple[str, ...]] = set()
-    bindings: Counter[str] = Counter()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and node.attr == "Self":
-            attributes.add(_attribute_path(node))
-        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
-            bindings[node.id] += 1
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            bindings[node.name] += 1
-        elif isinstance(node, ast.arg):
-            bindings[node.arg] += 1
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                if alias.name == "*":
-                    return frozenset()
-                bindings[alias.asname or alias.name.split(".")[0]] += 1
-                if isinstance(node, ast.ImportFrom) and alias.name == "Self":
-                    candidates.add((alias.asname or alias.name,))
-                elif isinstance(node, ast.Import):
-                    path = (alias.asname,) if alias.asname else tuple(alias.name.split("."))
-                    module_candidates.add((*path, "Self"))
-        elif isinstance(node, (ast.Global, ast.Nonlocal)):
-            bindings.update(node.names)
-        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
-            if node.name is not None:
-                bindings[node.name] += 1
-        elif isinstance(node, ast.MatchMapping) and node.rest is not None:
-            bindings[node.rest] += 1
-        elif type(node).__name__ in ("TypeVar", "ParamSpec", "TypeVarTuple"):
-            name = getattr(node, "name", None)
-            if isinstance(name, str):
-                bindings[name] += 1
-    candidates.update(module_candidates & attributes)
-    if not candidates:
-        return frozenset()
-    bound_names = frozenset(bindings)
-    self_paths = frozenset(candidates)
-    value_reads: Set[str] = set()
-    pending: List[Tuple[ast.AST, bool]] = [(tree, False)]
-    while pending:
-        node, annotation = pending.pop()
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and not annotation:
-            value_reads.add(node.id)
-        for field_name, value in ast.iter_fields(node):
-            if isinstance(value, ast.AST):
-                in_annotation = annotation or (
-                    field_name in ("annotation", "returns")
-                    and _type_only_annotation(value, bound_names, self_paths)
-                )
-                pending.append((value, in_annotation))
-            elif isinstance(value, list):
-                pending.extend((child, annotation) for child in value if isinstance(child, ast.AST))
-    return frozenset(
-        path for path in candidates if bindings[path[0]] == 1 and path[0] not in value_reads
-    )
-
-
-def _module_attributes(tree: ast.Module, bound: str, within: Sequence[str]) -> List[str]:
+def _module_attributes(
+    tree: ast.Module,
+    imported: ast.Import,
+    bound: str,
+    within: Sequence[str],
+    bindings: Optional[_AttributeBindings],
+) -> List[str]:
     """The attributes read from a module bound to ``bound``, past ``within``: a few, in order."""
     found: Dict[str, None] = {}
     for node in ast.walk(tree):
@@ -889,6 +881,11 @@ def _module_attributes(tree: ast.Module, bound: str, within: Sequence[str]) -> L
             inner = inner.value
         path = chain[::-1]
         if isinstance(inner, ast.Name) and inner.id == bound and len(path) > len(within):
+            if bindings is not None and not (
+                bindings.reads.get(inner, frozenset({tree}))
+                & bindings.imports.get((imported, bound), frozenset({tree}))
+            ):
+                continue
             if path[: len(within)] == list(within):
                 found.setdefault(path[len(within)], None)
                 if len(found) == _ATTRIBUTES_PROBED:
@@ -1013,7 +1010,9 @@ def _module_visibility_sites(
     return MappingProxyType(visible)
 
 
-def _probes_of(node: ast.stmt, tree: ast.Module, first: int) -> List[_Probe]:
+def _probes_of(
+    node: ast.stmt, tree: ast.Module, first: int, bindings: Optional[_AttributeBindings]
+) -> List[_Probe]:
     """What the probed text adds for the import statement ``node``, its aliases numbered from ``first``."""
     probes: List[_Probe] = []
     number = first
@@ -1026,7 +1025,7 @@ def _probes_of(node: ast.stmt, tree: ast.Module, first: int) -> List[_Probe]:
             asked = [(name, "module", f'module "{alias.name}"')]
             asked += [
                 (f"{name}.{attribute}", "attribute", f'"{attribute}" of module "{alias.name}"')
-                for attribute in _module_attributes(tree, bound, within)
+                for attribute in _module_attributes(tree, node, bound, within, bindings)
             ]
             probes.append(_Probe(f"import {alias.name} as {name}", node.lineno, tuple(asked)))
         return probes
@@ -1111,14 +1110,10 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
         return None
     lines = text.split("\n")
     added: Dict[Tuple[int, str], List[_Probe]] = {}
-    annotation_only = _annotation_only_self_paths(tree)
     unchecked_imports = _unchecked_function_imports(tree)
     attribute_reads = _module_visibility_sites(tree, plan)
-    reserved = (
-        {unicodedata.normalize("NFKC", word) for word in re.findall(r"\w+", text)}
-        if annotation_only or unchecked_imports
-        else set()
-    )
+    attribute_bindings = _attribute_bindings(tree)
+    reserved: Optional[Set[str]] = None
     count = 0
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -1130,7 +1125,7 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
         site = plan.sites.get(place)
         if site is None:
             continue
-        probes = _probes_of(node, tree, count)
+        probes = _probes_of(node, tree, count, attribute_bindings)
         contextual: Dict[int, str] = {}
         if isinstance(node, ast.Import):
             for index, alias in enumerate(node.names):
@@ -1143,21 +1138,24 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
                         if visibility is not None:
                             reads.append(_AttributeFallback(expression, visibility))
                 probes[index] = replace(probes[index], attribute_reads=tuple(reads))
-                if (*path_parts, "Self") in annotation_only:
-                    for expression, kind, _ in probes[index].asked:
-                        if kind == "attribute" and expression.endswith(".Self"):
-                            contextual[index] = expression
+                for expression, kind, _ in probes[index].asked:
+                    if kind == "attribute" and expression.endswith(".Self"):
+                        contextual[index] = expression
         else:
             for alias, index in zip(node.names, range(len(probes) - len(node.names), len(probes))):
-                if alias.name == "Self" and (alias.asname or alias.name,) in annotation_only:
+                if alias.name == "Self":
                     contextual[index] = probes[index].asked[0][0]
+        if (contextual or (node.lineno, node.col_offset) in unchecked_imports) and reserved is None:
+            reserved = {unicodedata.normalize("NFKC", word) for word in re.findall(r"\w+", text)}
         for index, expression in contextual.items():
+            assert reserved is not None
             context = f"_towel_self_context_{count + index}"
             while context in reserved:
                 context += "_"
             reserved.add(context)
             probes[index] = replace(probes[index], self_context=context, self_expression=expression)
         if (node.lineno, node.col_offset) in unchecked_imports:
+            assert reserved is not None
             for index, probe in enumerate(probes):
                 if not any(kind == "module" for _, kind, _ in probe.asked):
                     continue
