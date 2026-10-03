@@ -299,6 +299,8 @@ class EngineState:
     # Every function of the current analysis, keyed by its node, to the file
     # it was parsed from.
     _function_paths: WeakKeyDictionary[FunctionNode, str]
+    _extraction_exclusions: WeakKeyDictionary[FunctionNode, Tuple[Tuple[int, int], ...]]
+    """Explicit marked definition spans in each function's original module."""
     # Memoization caches keyed by the identity of AST nodes parsed for this
     # engine run; the weak ones vanish with their trees.
     _assignment_cache: WeakKeyDictionary[ast.AST, Dict[int, bool]]

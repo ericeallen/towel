@@ -77,6 +77,11 @@ from towel.changes import StaleSource, ChangePlan
 from ..source_text import read_source
 from ..formatting import format_at_indentation
 
+from .extraction_policy import (
+    overlaps_protected,
+    protected_definitions,
+    require_protected_definitions_unchanged,
+)
 from .reuse import ExistingFunctionReuse
 from .annotation_ladder import Hearing, Rejection, Verified
 from .annotation_wiring import HelperAnnotationWiring
@@ -248,6 +253,15 @@ class Materialization(
 
     def _materialize_once(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render one proposal into modified sources (see ``_materialize_refactoring``)."""
+        if proposal.reused_function is not None:
+            reused = proposal.reused_function
+            source = "".join(self._source_lines(reused.file_path))
+            definitions = protected_definitions(source, self._parse_source(source))
+            protected = tuple(definition.line_range for definition in definitions)
+            if overlaps_protected(reused.line_range, protected) or any(
+                definition.ancestry == (reused.name,) for definition in definitions
+            ):
+                raise RefactoringError("Cannot reuse a function marked # towel: no-extract")
         if _shared_module_helper(proposal):
             if proposal.insert_into_class or proposal.insert_into_function:
                 raise RefactoringError("A shared helper must be available at module scope")
@@ -479,6 +493,19 @@ class Materialization(
     ) -> str:
         """One file's new source: its call sites spliced in, then the helper or its import."""
         lines = list(self._source_lines(file_path))
+        original = "".join(lines)
+        protected = (
+            tuple(
+                definition.line_range
+                for definition in protected_definitions(original, self._parse_source(original))
+            )
+            if "# towel: no-extract" in original
+            else ()
+        )
+        if any(
+            overlaps_protected(replacement.line_range, protected) for replacement in replacements
+        ):
+            raise RefactoringError("Cannot replace code in a function marked # towel: no-extract")
         # Host selection proved an import safe at the original module's
         # boundary. Replacing an early helper definition with an alias must
         # not move that boundary below the alias that needs the import.
@@ -504,6 +531,7 @@ class Materialization(
         assembled = "".join(lines)
         if self.file_finisher is not None:
             assembled = self.file_finisher(file_path, assembled)
+        require_protected_definitions_unchanged(original, assembled)
         return assembled
 
     def _splice_call_sites(

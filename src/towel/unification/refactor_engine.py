@@ -77,6 +77,7 @@ from .engine_state import (
     UnifyKey,
 )
 from .defaults import DEFAULT_MAX_CANDIDATE_PAIRS, DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
+from .extraction_policy import protected_definitions
 from .function_index import FunctionIndex
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
 from .import_graph import ImportGraphCache
@@ -539,6 +540,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # theirs across iterations.
         self._cache_entries_by_path: Dict[str, List[Tuple[MutableMapping[Any, Any], Any]]] = {}
         self._function_paths: WeakKeyDictionary[FunctionNode, str] = WeakKeyDictionary()
+        self._extraction_exclusions: WeakKeyDictionary[
+            FunctionNode, Tuple[Tuple[int, int], ...]
+        ] = WeakKeyDictionary()
         self._function_index_cache: Optional[Tuple[Sequence[FunctionArtifact], FunctionIndex]] = (
             None
         )
@@ -841,6 +845,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
             if os.path.abspath(function_path) == absolute:
                 del self._function_paths[function]
                 self._function_sources.pop(function, None)
+                self._extraction_exclusions.pop(function, None)
 
     def _function_index(self, all_functions: Sequence[FunctionArtifact]) -> FunctionIndex:
         """The index of ``all_functions``, built once and shared by every pair of the analysis.
@@ -855,9 +860,26 @@ class UnificationRefactorEngine(ParallelEvaluation):
         return cached[1]
 
     def _record_function_paths(self, all_functions: Sequence[FunctionArtifact]) -> None:
+        exclusions: Dict[str, Tuple[Tuple[int, int], ...]] = {}
         for entry in all_functions:
+            if entry.file_path not in exclusions:
+                exclusions[entry.file_path] = (
+                    tuple(
+                        definition.line_range
+                        for definition in protected_definitions(
+                            entry.source,
+                            entry.scope_analyzer.analyzed_tree or self._parse_source(entry.source),
+                        )
+                    )
+                    if "# towel: no-extract" in entry.source
+                    else ()
+                )
             self._function_paths[entry.node] = entry.file_path
             self._function_sources[entry.node] = entry.module_digest
+            if exclusions[entry.file_path]:
+                self._extraction_exclusions[entry.node] = exclusions[entry.file_path]
+            else:
+                self._extraction_exclusions.pop(entry.node, None)
 
     def process_block_pairs(
         self,

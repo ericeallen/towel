@@ -53,6 +53,7 @@ from .assignment_analyzer import (
     _collect_block_binding_stats,
     analyze_assignments,
 )
+from .extraction_policy import overlaps_protected
 from .block_signature import BlockSignature, extract_block_signature
 from .extractor import has_complete_return_coverage, is_value_producing
 from .function_scope import code_names, function_names, identifiers, scope_moving_names
@@ -373,6 +374,15 @@ class BlockAnalysis(EngineState):
             List of (line_range, statements) tuples
         """
 
+        function_span = (function.lineno, function.end_lineno or function.lineno)
+        protected = tuple(
+            span
+            for span in self._extraction_exclusions.get(function, ())
+            if overlaps_protected(function_span, (span,))
+        )
+        if any(start <= function_span[0] and function_span[1] <= end for start, end in protected):
+            return []
+
         def extract_from_body(
             body: List[ast.stmt], parent: Optional[ast.stmt] = None
         ) -> List[Tuple[Tuple[int, int], List[ast.stmt]]]:
@@ -407,7 +417,7 @@ class BlockAnalysis(EngineState):
                         continue
 
                     span = self._block_line_span(block)
-                    if span is None:
+                    if span is None or (protected and overlaps_protected(span, protected)):
                         continue
                     start_line, end_line = span
                     line_count = end_line - start_line + 1
