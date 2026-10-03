@@ -103,10 +103,12 @@ release verification binds the final versioned source to its own evidence.
   receive type questions. An immutable read inventory is shared across imports.
   A write to an unrelated attribute no longer disables evidence for an imported
   submodule; writes overlapping its path and module rebinding remain restrictive.
-- Reachability probes preserve the indentation of one-line `match` case bodies,
-  including cases with multiline patterns or guards. Semicolon-separated
-  statements receive separate probes so an early exit cannot make an
-  unreachable sibling appear checked; probes also stay outside multiline strings.
+- Reachability probes preserve the indentation of one-line `match` case and
+  exception handlers, including cases with multiline patterns or guards.
+  Inline `except` and `except*` bodies use their handler's enclosing indentation.
+  Semicolon-separated statements receive separate probes so an early exit cannot
+  make an unreachable sibling appear checked; probes also stay outside multiline
+  strings.
 - Typed runs recognize imported `Self`, including aliases
   and qualified spellings such as `typing.Self`. Pyright's `Unknown` answer
   outside a class no longer makes those valid imports appear untyped; the

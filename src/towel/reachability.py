@@ -181,6 +181,8 @@ def _prepare_probe_plan(source: str) -> Optional[Tuple[ProbePlan, str]]:
             if case_header is None:
                 return None
             header = case_header
+        elif isinstance(parent, ast.ExceptHandler):
+            header = _indent_of(lines[parent.lineno - 1])
         else:
             header = (
                 _indent_of(lines[_first_line(parent) - 1]) if isinstance(parent, ast.stmt) else ""

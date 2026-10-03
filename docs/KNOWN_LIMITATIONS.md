@@ -998,11 +998,12 @@ where the evidence comes from:
   own platform and version, so pyright set to check for Windows can skip what
   mypy looks at, and only the question put to every checker settles a change.
   A body that shares its header's line (`if x: return`, including one-line
-  `case` bodies) is probed on a line of its own in the text the checker is
-  given. Semicolon-separated statements have separate probe sites, so an early
-  exit does not make the following statement appear looked at. A module in which
-  no probe can be placed is taken to be looked at nowhere. A probe build that fails is not
-  silence: before the run it refuses the run, and for a change it leaves the
+  `case`, `except` and `except*` bodies) is probed on a line of its own in the
+  text the checker is given. Semicolon-separated statements have separate probe
+  sites, so an early exit does not make the following statement appear looked at.
+  A module in which no probe can be placed is taken to be looked at nowhere.
+  A probe build that fails is not silence: before the run it refuses the run, and
+  for a change it leaves the
   change not judged. The body of a function without
   annotations, which mypy does not check unless configured to, counts as
   looked at, since mypy answers there (with `Any`): the project's own mypy

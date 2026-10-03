@@ -82,6 +82,12 @@ A historical passing result applies to its recorded commit and test environment.
   string must not contain the next probe, and a preceding early exit must not
   make a later statement appear checked. These corrections affect only the
   checker's private source and require fresh validation.
+- Checking probe construction on the remaining corpus projects found the same
+  missing parent location for an inline exception handler in Pyrsistent.
+  `ExceptHandler` has its own header location but is not an `ast.stmt`; using
+  the missing-parent fallback lost the surrounding indentation and prevented a
+  probe plan for the whole file. Inline `except` and `except*` bodies now use
+  that handler location. This correction also requires fresh validation.
 - Corpus setup selected the default checker before reading versioned typing
   environments. This missed Lark and h11's mypy pins and wsproto and
   hyperframe's version ranges. The harness now considers those contexts before
