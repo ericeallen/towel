@@ -594,9 +594,6 @@ def base_env(pythonpath: str, python_bin: Path) -> Dict[str, str]:
         "PYTHONHASHSEED": "0",
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
-        "TERM": "dumb",
-        "NO_COLOR": "1",
-        "PY_COLORS": "0",
     }
     return env
 
@@ -2929,6 +2926,9 @@ def check_project(
     # project's dependencies and its import model sees the project's installation.
     towel = python.parent / "towel"
     towel_env = {name: value for name, value in env.items() if name != "PYTHONPATH"}
+    # Keep Towel's logs plain without overriding the consumer's colour behavior.
+    # For example, NO_COLOR takes precedence over Sphinx tests' FORCE_COLOR.
+    towel_env.update(TERM="dumb", NO_COLOR="1", PY_COLORS="0")
     # Each refactor may fork workers for a large analysis; with several
     # projects in flight the caller caps that through TOWEL_WORKERS.
     if "TOWEL_WORKERS" in os.environ:

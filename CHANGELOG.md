@@ -81,6 +81,8 @@ release verification binds the final versioned source to its own evidence.
 
 ### Fixed
 
+- Corpus log-formatting controls now apply only to Towel. Consumer tests can
+  enable color themselves without a harness override changing their behavior.
 - Corpus setup considers a project's versioned typing requirements before
   defaulting to Towel's checker requirements. Existing project, lock-file and
   hook selections retain their precedence; alternative typing environments

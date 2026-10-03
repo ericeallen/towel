@@ -288,6 +288,11 @@ project is installed except where its manifest entry says why not: wrapt,
 whose compiled extension replaces the Python wrappers in every test, and
 html5lib, whose `setup.py` cannot be built in isolation.
 
+Consumer suites use an isolated environment without harness-imposed color or
+terminal settings. Plain-output controls apply only to Towel commands. Raw
+consumer logs are retained; result parsing removes ANSI formatting without
+changing the behavior the tests exercise.
+
 Run the corpus with the default type policy, which is what a user gets. Each
 result records the interpreter, the candidate's version, each checker's and
 formatter's version and who chose it (`project`; the file whose pin it is, a

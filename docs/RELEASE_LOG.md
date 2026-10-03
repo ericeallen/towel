@@ -104,6 +104,12 @@ A historical passing result applies to its recorded commit and test environment.
   expanded requirements name a supported checker. Existing context precedence,
   included groups, extras, markers and lock pins are preserved. This dependency
   correction also requires a fresh corpus run.
+- Sphinx exposed a test-environment error: the harness's `NO_COLOR` setting
+  overrode the test's `FORCE_COLOR`, changing progress output. The pinned test
+  fails with that environment and passes without the harness's color controls.
+  `NO_COLOR`, `PY_COLORS` and `TERM` overrides now apply only to Towel commands;
+  consumer output retains its behavior and ANSI-aware result parsing. This
+  bounded reproduction does not replace the fresh corpus run.
 - The [complete CLI comparison](PERFORMANCE.md#october-2-complete-cli-comparison)
   measured the controlled typed, formatted Packaging fixture at 36.24 seconds
   versus 41.59 seconds for published 1.772, about 13% faster. Runtime commit
