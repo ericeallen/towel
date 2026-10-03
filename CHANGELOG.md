@@ -90,7 +90,13 @@ release verification binds the final versioned source to its own evidence.
   included among the declared contexts.
 - Typed import probes distinguish a shadowing parameter from an imported module
   and query a companion submodule through its original binding. This avoids
-  false refusals seen in Cachetools and Werkzeug.
+  false refusals seen in Cachetools and Werkzeug. Unrelated local bindings no
+  longer disable that evidence, and an alias replaced within one module import
+  block is not queried for attributes read from its replacement afterward.
+- Reachability probes preserve the indentation of one-line `match` case bodies,
+  including cases with multiline patterns or guards. Semicolon-separated
+  statements receive separate probes so an early exit cannot make an
+  unreachable sibling appear checked; probes also stay outside multiline strings.
 - Typed runs recognize imported `Self`, including aliases
   and qualified spellings such as `typing.Self`. Pyright's `Unknown` answer
   outside a class no longer makes those valid imports appear untyped; the

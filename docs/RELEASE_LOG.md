@@ -54,11 +54,23 @@ A historical passing result applies to its recorded commit and test environment.
 - Cachetools exposed a false refusal from a fresh parent-module alias:
   Pyright could resolve the program's `collections.abc` binding, but not the
   generated alias's `.abc`. For a common module-level import block with no
-  competing bindings and all reads after the block, an additional question
+  competing module bindings or writes and all reads of that binding after the
+  block, an additional question
   checks the original binding in the same checker exchange. That checker must
   identify the exact module; missing imports and unsupported contexts retain
-  their existing checks. The
-  correction requires a fresh validation freeze after corpus discovery.
+  their existing checks. Unrelated local bindings no longer invalidate this
+  evidence. An alias replaced later in the same block also no longer receives
+  attribute questions from its replacement's later reads. These rules share
+  immutable lexical and import-block facts once per source. The corrections
+  require a fresh validation freeze after corpus discovery.
+- A valid one-line `match` case could produce an invalidly indented probe because
+  its `match_case` node has no statement line number. The splitter now locates
+  the header from the pattern's source position, including multiline patterns
+  and guards, without adding tokenizer diagnostics.
+  Semicolon siblings also receive separate probe sites: a preceding multiline
+  string must not contain the next probe, and a preceding early exit must not
+  make a later statement appear checked. These corrections affect only the
+  checker's private source and require fresh validation.
 - Corpus setup selected the default checker before reading versioned typing
   environments. This missed Lark and h11's mypy pins and wsproto and
   hyperframe's version ranges. The harness now considers those contexts before
