@@ -344,3 +344,63 @@ def test_form_feed_indentation_resets_before_trailing_body_comments() -> None:
     (definition,) = protected_definitions(source, ast.parse(source))
     assert definition.line_range == (1, 3)
     assert definition.text.endswith("\f    # retained\n")
+
+
+def test_introduced_generated_helper_can_be_reused_only_until_explicitly_protected(
+    tmp_path: Path,
+) -> None:
+    """A marker removes a real provider without disabling the useful caller extraction."""
+    origin, stage = tmp_path / "original", tmp_path / "stage"
+    for directory in (origin, stage):
+        directory.mkdir()
+        (directory / "pyproject.toml").write_text("[project]\nname = 'probe'\nversion = '0'\n")
+    callers = _function("alpha") + _function("beta")
+    (origin / "module.py").write_text(callers)
+    path = stage / "module.py"
+    path.write_text(_function("__extracted_func_0") + callers)
+
+    control = UnificationRefactorEngine(min_lines=3, annotate_helpers=False)
+    control._output_origin = (origin, stage)
+    control.import_graph.begin_run(origin, stage)
+    proposals = control.analyze_file(str(path))
+    reused = next(
+        proposal
+        for proposal in proposals
+        if proposal.reused_function is not None
+        and proposal.reused_function.name == "__extracted_func_0"
+    )
+    unmarked_output = control.apply_refactoring(str(path), reused)
+    assert (
+        len([node for node in ast.parse(unmarked_output).body if isinstance(node, ast.FunctionDef)])
+        == 3
+    )
+
+    unmarked_namespace: dict[str, object] = {}
+    exec(unmarked_output, unmarked_namespace)
+    unmarked_namespace["__extracted_func_0"] = lambda _values: "patched"
+    for name in ("alpha", "beta"):
+        caller = unmarked_namespace[name]
+        assert callable(caller)
+        assert caller([1, 3]) == "patched"
+
+    source = _function("__extracted_func_0", "  # towel: no-extract") + callers
+    path.write_text(source)
+    protected = UnificationRefactorEngine(min_lines=3, annotate_helpers=False)
+    protected._output_origin = (origin, stage)
+    protected.import_graph.begin_run(origin, stage)
+    proposals = protected.analyze_file(str(path))
+    assert proposals and all(proposal.reused_function is None for proposal in proposals)
+    marked_output = protected.apply_refactoring(str(path), proposals[0])
+    assert _protected(marked_output) == _protected(source)
+    assert (
+        len([node for node in ast.parse(marked_output).body if isinstance(node, ast.FunctionDef)])
+        == 4
+    )
+    namespace: dict[str, object] = {}
+    exec(marked_output, namespace)
+    namespace["__extracted_func_0"] = lambda _values: "patched"
+    for name in ("alpha", "beta"):
+        caller = namespace[name]
+        assert callable(caller)
+        assert caller([1, 3]) == 15
+    assert path.read_text() == source
