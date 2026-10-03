@@ -484,15 +484,15 @@ def test_recognition_matches_real_local_runner_output(
     [
         (
             ["python", "-m", "pytest", "-q", "tests"],
-            ["python", "-m", "pytest", "-q", "tests", "--verbosity=0", "-ra"],
+            ["python", "-m", "pytest", "-q", "tests", "--cache-clear", "--verbosity=0", "-ra"],
         ),
         (
             ["/env/bin/pytest", "-q", "tests"],
-            ["/env/bin/pytest", "-q", "tests", "--verbosity=0", "-ra"],
+            ["/env/bin/pytest", "-q", "tests", "--cache-clear", "--verbosity=0", "-ra"],
         ),
         (
             ["python3.13", "-m", "pytest", "-rs"],
-            ["python3.13", "-m", "pytest", "-rs", "--verbosity=0", "-ra"],
+            ["python3.13", "-m", "pytest", "-rs", "--cache-clear", "--verbosity=0", "-ra"],
         ),
         (
             ["python", "-m", "pytest", "-k", "selected", "-o", "addopts=", "--", "tests"],
@@ -504,6 +504,7 @@ def test_recognition_matches_real_local_runner_output(
                 "selected",
                 "-o",
                 "addopts=",
+                "--cache-clear",
                 "--verbosity=0",
                 "-ra",
                 "--",
@@ -751,6 +752,7 @@ def test_retests_apply_the_contract_and_persist_independently_checkable_statuses
         "pytest",
         "-q",
         "test_case.py::test_error",
+        "--cache-clear",
         "--verbosity=0",
         "-ra",
     ]

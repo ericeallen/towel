@@ -292,6 +292,12 @@ Consumer suites use an isolated environment without harness-imposed color or
 terminal settings. Plain-output controls apply only to Towel commands. Raw
 consumer logs are retained; result parsing removes ANSI formatting without
 changing the behavior the tests exercise.
+Recognized pytest invocations request a cleared cache, including isolated and
+full retries, while retaining the cache fixture and configured cache directory.
+Explicit cache-plugin disables in custom commands remain honored. Baseline
+cache values must not conceal a regression in the transformed program.
+A narrowed retry is refused when replacing selectors would change pytest's
+ordered plugin arguments; the original full-suite outcome remains authoritative.
 
 Run the corpus with the default type policy, which is what a user gets. Each
 result records the interpreter, the candidate's version, each checker's and

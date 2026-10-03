@@ -143,7 +143,7 @@ from typing import (
 )
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_TEST = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+DEFAULT_TEST = ("{python}", "-m", "pytest", "-q")
 SUMMARY_PATTERNS = (
     re.compile(r"^=+ .*(passed|failed|error|skipped|no tests ran).* =+$"),
     re.compile(r"^\d+ (passed|failed|error).*$"),
@@ -2803,21 +2803,47 @@ def _pytest_arguments_start(command: Sequence[str]) -> Optional[int]:
     return None
 
 
-def _prepare_test_command(command: Sequence[str]) -> List[str]:
-    """Request pytest tallies and identities after project reporting defaults.
+def _pytest_plugins(arguments: Sequence[str]) -> Tuple[str, ...]:
+    """Plugin arguments in pytest's pre-parser order, including after ``--``."""
+    remaining = iter(arguments)
+    plugins: List[str] = []
+    for argument in remaining:
+        if argument == "-p":
+            plugin = next(remaining, None)
+            if plugin is None:
+                break
+        elif argument.startswith("-p"):
+            plugin = argument[2:]
+        else:
+            continue
+        plugins.append(plugin.strip())
+    return tuple(plugins)
 
-    Keep selections and configuration intact. A literal ``--`` ends option
-    parsing, so insert the reporting option immediately before it. Other
-    runners are left alone and still need recognizable outcomes to qualify.
+
+def _prepare_test_command(command: Sequence[str]) -> List[str]:
+    """Request complete pytest reporting and fresh consumer cache state.
+
+    Keep the cache fixture and the project's cache directory available, but
+    clear managed values/directories before every baseline, after and retry.
+    Explicit plugin disables stay disabled. Pytest's plugin pre-parser also
+    reads arguments after ``--``, though new flags belong before it. Other
+    runners remain unchanged and still need recognizable outcomes.
     """
     prepared = list(command)
     start = _pytest_arguments_start(command)
     if start is None:
         return prepared
     end = prepared.index("--", start) if "--" in prepared[start:] else len(prepared)
+    disabled = False
+    for plugin in _pytest_plugins(prepared[start:]):
+        if plugin in {"cacheprovider", "no:cacheprovider"}:
+            disabled = plugin == "no:cacheprovider"
+    reset = [] if disabled or "--cache-clear" in prepared[start:end] else ["--cache-clear"]
     reporting = ["--verbosity=0", "-ra"]
-    if prepared[max(start, end - len(reporting)) : end] != reporting:
-        prepared[end:end] = reporting
+    if prepared[max(start, end - len(reporting)) : end] == reporting:
+        prepared[end - len(reporting) : end - len(reporting)] = reset
+    else:
+        prepared[end:end] = [*reset, *reporting]
     return prepared
 
 
@@ -3128,6 +3154,7 @@ _OPTIONS_WITH_VALUES = {
     "--durations-min",
 }
 _OPTIONS_WITHOUT_VALUES = {
+    "--cache-clear",
     "--verbose",
     "--quiet",
     "--disable-warnings",
@@ -3182,7 +3209,12 @@ def _retest_command(test: Sequence[str], test_ids: Sequence[str]) -> Optional[Li
         command.pop()
     if separator or any(identity.startswith("-") for identity in test_ids):
         command.append("--")
-    return _prepare_test_command([*command, *test_ids])
+    narrowed = [*command, *test_ids]
+    # Positional selectors can also act as plugin arguments in pytest's
+    # pre-parser. Narrowing must not change the consumer's plugin context.
+    if _pytest_plugins(test[start:]) != _pytest_plugins(narrowed[start:]):
+        return None
+    return _prepare_test_command(narrowed)
 
 
 def _retest_agrees(

@@ -83,6 +83,9 @@ release verification binds the final versioned source to its own evidence.
 
 - Corpus log-formatting controls now apply only to Towel. Consumer tests can
   enable color themselves without a harness override changing their behavior.
+- Corpus pytest commands retain the cache fixture and clear cached state before
+  each test phase and retry. This avoids missing-fixture errors and prevents
+  baseline cache values from hiding changes in the transformed program.
 - Corpus setup considers a project's versioned typing requirements before
   defaulting to Towel's checker requirements. Existing project, lock-file and
   hook selections retain their precedence; alternative typing environments

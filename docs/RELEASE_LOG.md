@@ -110,6 +110,16 @@ A historical passing result applies to its recorded commit and test environment.
   `NO_COLOR`, `PY_COLORS` and `TERM` overrides now apply only to Towel commands;
   consumer output retains its behavior and ANSI-aware result parsing. This
   bounded reproduction does not replace the fresh corpus run.
+- Pytest's own suite exposed a missing `cache` fixture because the harness
+  disabled its provider. The default command and 29 manifest commands copied
+  from it now retain that plugin. Recognized pytest invocations request
+  `--cache-clear`, including isolated and full retries; explicit plugin disables
+  in custom commands remain honored. A narrowed retry is refused when replacing
+  selectors would change the ordered plugin arguments. The pinned failing test
+  passes with this change. Synthetic controls also show why enabling the plugin was
+  insufficient: copied baseline cache values could hide a changed result.
+  The configured cache directory is preserved. Final corpus validation remains
+  pending under the corrected harness and manifest.
 - The [complete CLI comparison](PERFORMANCE.md#october-2-complete-cli-comparison)
   measured the controlled typed, formatted Packaging fixture at 36.24 seconds
   versus 41.59 seconds for published 1.772, about 13% faster. Runtime commit

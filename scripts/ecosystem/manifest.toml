@@ -85,7 +85,7 @@ rev = "3201e702ed7eae506f793fad0aec204f387aeb4c"
 package = "src/humanize"
 pythonpath = "src"
 deps = ["freezegun", "pytest-benchmark"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--benchmark-disable"]
+test = ["{python}", "-m", "pytest", "-q", "--benchmark-disable"]
 
 [[project]]
 name = "attrs"
@@ -181,7 +181,7 @@ url = "https://github.com/PyCQA/pycodestyle.git"
 rev = "d6c38543a95c3adec7958fc659f4081972a3f1d1"
 exclude = ["data"]
 package = "pycodestyle.py"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "pathspec"
@@ -282,7 +282,7 @@ url = "https://github.com/oauthlib/oauthlib.git"
 rev = "40b0ab56da3682c2484a4b78bbff309f8025d950"
 package = "oauthlib"
 deps = ["pytest-cov", "pytest-subtests", "pyjwt", "cryptography", "blinker"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "parso"
@@ -291,7 +291,7 @@ rev = "7f5b142b54b2a04bcb4df358175d079e046c5bf7"
 exclude = ["normalizer_issue_files"]
 package = "parso"
 deps = ["docopt"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test"]
+test = ["{python}", "-m", "pytest", "-q", "test"]
 
 [[project]]
 name = "platformdirs"
@@ -323,7 +323,7 @@ deps = ["freezegun", "hypothesis", "six", "pytest-cov", "pytest<9"]
 # either way, and its collection error stopped the whole suite -- including the
 # several hundred tests that do run and do give evidence.
 test = [
-    "{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--ignore=tests/property",
+    "{python}", "-m", "pytest", "-q", "--ignore=tests/property",
 ]
 
 [[project]]
@@ -332,7 +332,7 @@ url = "https://github.com/micheles/decorator.git"
 rev = "2322c7bfdbbafc4fd3f7f37b9860001ff82bf66f"
 pythonpath = "src"
 package = "src/decorator"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/test.py"]
+test = ["{python}", "-m", "pytest", "-q", "tests/test.py"]
 
 [[project]]
 name = "schema"
@@ -433,7 +433,7 @@ url = "https://github.com/lark-parser/lark.git"
 rev = "9a4fb9c7458e8155636773a3cded0016d52516da"
 package = "lark"
 deps = ["regex", "interegular", "atomicwrites"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "tests"]
 expect_broken = "source-observing: lark.tools.standalone copies marked regions of named source files into one artifact, so a helper moved to another file is absent from it"
 known_failures = ["tests/__main__.py::TestStandalone::"]
 
@@ -477,7 +477,7 @@ rev = "99ab2acccff15f757260a1e1fbb0d2a47fc01041"
 package = "src/_pytest"
 pythonpath = "src"
 deps = ["attrs", "hypothesis", "mock", "pygments", "requests", "setuptools", "xmlschema", "argcomplete"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "testing"]
+test = ["{python}", "-m", "pytest", "-q", "testing"]
 
 [[project]]
 name = "sphinx"
@@ -520,7 +520,7 @@ url = "https://github.com/Textualize/rich.git"
 rev = "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
 package = "rich"
 deps = ["pygments", "markdown-it-py", "attrs"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "tests"]
 expect_broken = "frame-relative: test_traceback.py::test_handler asserts a rendered traceback whose frames and widths the helper changes"
 known_failures = ["tests/test_traceback.py::test_handler"]
 
@@ -530,7 +530,7 @@ url = "https://github.com/fastapi/typer.git"
 rev = "a80f6e5ecd74f32b983cca336a2f3cba98d9853a"
 package = "typer"
 deps = ["shellingham", "rich", "annotated-doc", "pytest-xdist"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "structlog"
@@ -554,7 +554,7 @@ url = "https://github.com/PyCQA/isort.git"
 rev = "131f4adcd5582bfc53928ab0d740eceb8b506b6c"
 package = "isort"
 deps = ["colorama", "hypothesis", "hypothesmith", "mypy-extensions", "black"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/unit"]
+test = ["{python}", "-m", "pytest", "-q", "tests/unit"]
 
 [[project]]
 name = "pyjwt"
@@ -576,21 +576,21 @@ rev = "2224255c4acc594d734cef0bbc83360452a67983"
 package = "arrow"
 deps = ["python-dateutil", "tzdata", "dateparser", "pytest-mock", "pytz", "simplejson", "pytest-cov"]
 # tox.ini adds coverage options with a 99% floor; the floor is not a test result.
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts=", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "-o", "addopts=", "tests"]
 
 [[project]]
 name = "six"
 url = "https://github.com/benjaminp/six.git"
 rev = "c8e394065cd541a16c040515dc0afb85cf22a7c3"
 package = "six.py"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test_six.py"]
+test = ["{python}", "-m", "pytest", "-q", "test_six.py"]
 
 [[project]]
 name = "tornado"
 url = "https://github.com/tornadoweb/tornado.git"
 rev = "85b6917d05a84a6d26b7488b2b56d0b52c107a0f"
 package = "tornado"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tornado/test"]
+test = ["{python}", "-m", "pytest", "-q", "tornado/test"]
 
 [[project]]
 name = "trio"
@@ -599,7 +599,7 @@ rev = "59d94d7ae0dc8af4c9736425c278b04ecd8b1a47"
 package = "src/trio"
 pythonpath = "src"
 deps = ["attrs", "sortedcontainers", "idna", "outcome", "sniffio", "trustme", "pytest-trio", "exceptiongroup", "astor", "pyopenssl", "pyyaml", "jedi", "isort"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "src/trio/_tests"]
+test = ["{python}", "-m", "pytest", "-q", "src/trio/_tests"]
 expect_broken = "line-relative: test_deprecate.py asserts the exact line number a warning is issued from inside the test module, which a helper inserted above it shifts"
 known_failures = ["test_module_with_deprecations"]
 
@@ -608,7 +608,7 @@ name = "h11"
 url = "https://github.com/python-hyper/h11.git"
 rev = "62c5068c971579d61fa1b55373390e12f25fd856"
 package = "h11"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "h11/tests"]
+test = ["{python}", "-m", "pytest", "-q", "h11/tests"]
 
 [[project]]
 name = "jmespath"
@@ -651,7 +651,7 @@ name = "sniffio"
 url = "https://github.com/python-trio/sniffio.git"
 rev = "6996e05d9b9debe32f42f709c8041e744f850478"
 package = "sniffio"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "sniffio/_tests"]
+test = ["{python}", "-m", "pytest", "-q", "sniffio/_tests"]
 
 [[project]]
 name = "outcome"
@@ -667,7 +667,7 @@ url = "https://github.com/sqlalchemy/mako.git"
 rev = "411b4ac6cf054e61a8fb44c236990fda1e41ade4"
 package = "mako"
 deps = ["markupsafe"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test"]
+test = ["{python}", "-m", "pytest", "-q", "test"]
 
 [[project]]
 name = "html5lib"
@@ -685,7 +685,7 @@ url = "https://github.com/mozilla/bleach.git"
 rev = "f0355a7af00500482c5292c6c83290c6a178068d"
 package = "bleach"
 deps = ["six", "webencodings", "html5lib"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "feedparser"
@@ -693,7 +693,7 @@ url = "https://github.com/kurtmckee/feedparser.git"
 rev = "a22c5521cbb109871f1a2318948581901bd47e26"
 package = "feedparser"
 deps = ["feedparser-sgmllib", "responses"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "cerberus"
@@ -717,7 +717,7 @@ rev = "2a6cd4fb41bc6754eac57b43fc6dbd43b08ae368"
 package = "src/prettytable"
 pythonpath = "src"
 deps = ["wcwidth", "pytest-lazy-fixtures"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "parsimonious"
@@ -738,7 +738,7 @@ url = "https://github.com/tobgu/pyrsistent.git"
 rev = "0c0b7aec8cd25b1d2d8ba07b10acdefd0f38f2c7"
 package = "pyrsistent"
 deps = ["hypothesis", "typing-extensions"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "jsonpatch"
@@ -746,7 +746,7 @@ url = "https://github.com/stefankoegl/python-json-patch.git"
 rev = "d8e1a6e244728c04229d601bc9a384d9b034c603"
 package = "jsonpatch.py"
 deps = ["jsonpointer"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests.py"]
+test = ["{python}", "-m", "pytest", "-q", "tests.py"]
 
 # --- Added 2026-09-17: broader coverage -------------------------------------
 
@@ -774,7 +774,7 @@ name = "pycparser"
 url = "https://github.com/eliben/pycparser.git"
 rev = "f93324c195dd1c0d73cfe93cdf8e8a5aede377df"
 package = "pycparser"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "invoke"
@@ -795,7 +795,7 @@ name = "bottle"
 url = "https://github.com/bottlepy/bottle.git"
 rev = "90bd4aa7439419186a85446f2aa05c23e3ba7103"
 package = "bottle.py"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "test"]
+test = ["{python}", "-m", "pytest", "-q", "test"]
 
 [[project]]
 name = "waitress"
@@ -914,7 +914,7 @@ name = "pyasn1"
 url = "https://github.com/pyasn1/pyasn1.git"
 rev = "8003397013f6c0e0eabbd2605770477acbc2dc44"
 package = "pyasn1"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "ecdsa"
@@ -959,7 +959,7 @@ name = "texttable"
 url = "https://github.com/foutaise/texttable.git"
 rev = "b4c00a68626a58944e9bf4d48b1e8d758efa6edb"
 package = "texttable.py"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests.py"]
+test = ["{python}", "-m", "pytest", "-q", "tests.py"]
 
 [[project]]
 name = "docopt-ng"
@@ -994,7 +994,7 @@ name = "jsonpointer"
 url = "https://github.com/stefankoegl/python-json-pointer.git"
 rev = "5998f951dcc5ace60f67f35afe6778c445401a07"
 package = "jsonpointer.py"
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests.py"]
+test = ["{python}", "-m", "pytest", "-q", "tests.py"]
 
 [[project]]
 name = "rfc3986"
@@ -1048,7 +1048,7 @@ rev = "f43816490c6f76f336ad6e457d3cab9f386894af"
 package = "src/simpy"
 pythonpath = "src"
 deps = ["pytest-benchmark"]
-test = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts=", "tests"]
+test = ["{python}", "-m", "pytest", "-q", "-o", "addopts=", "tests"]
 
 [[project]]
 name = "termcolor"
