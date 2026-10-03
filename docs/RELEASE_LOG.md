@@ -44,6 +44,14 @@ A historical passing result applies to its recorded commit and test environment.
   in an unchecked function as `Any`, including known standard-library modules.
   A checked context now distinguishes those imports from genuinely unresolved
   modules without changing the project's options or hiding missing imports.
+- Cachetools exposed a false refusal from a fresh parent-module alias:
+  Pyright could resolve the program's `collections.abc` binding, but not the
+  generated alias's `.abc`. For a common module-level import block with no
+  competing bindings and all reads after the block, an additional question
+  checks the original binding in the same checker exchange. That checker must
+  identify the exact module; missing imports and unsupported contexts retain
+  their existing checks. The
+  correction requires a fresh validation freeze after corpus discovery.
 - Corpus setup selected the default checker before reading versioned typing
   environments. This missed Lark and h11's mypy pins and wsproto and
   hyperframe's version ranges. The harness now considers those contexts before

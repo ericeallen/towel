@@ -1041,7 +1041,14 @@ where the evidence comes from:
   module and names under names of its own, where the import stands, and
   reveals them. mypy answers `Any` for a module it cannot resolve or finds no
   types for, and pyright `Unknown` for a name or attribute such an import
-  binds (pyright gives the module itself a module's type). With the report
+  binds (pyright gives the module itself a module's type). A fresh parent-module
+  alias can hide a submodule that Pyright sees through the program's original
+  binding. When the parent and submodule are imported in one module-level
+  import block, every read follows that block, and there are no competing
+  bindings, Towel also asks about the original binding just after the block.
+  Only the same checker's exact named module overrides the alias's `Unknown`;
+  unsupported contexts keep the ordinary check. This question shares the existing checker
+  exchange. With the report
   silenced, uvicorn's `websockets` module missing where Towel ran, a change
   had left a `type: ignore` unused in the project's own check. A name a typed
   module declares as `Any` is the same wherever the check runs, and is not

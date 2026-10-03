@@ -112,8 +112,8 @@ from typing import (
 )
 
 from .analysis_sources import memoized_source_analysis
-from .reachability import probe_plan
-from .type_inference import RevealRequest, TypeDiagnostic
+from .reachability import ProbePlan, probe_plan
+from .type_inference import RevealKey, RevealRequest, TypeDiagnostic
 
 __all__ = [
     "IMPORT_PROBE_PREFIX",
@@ -692,6 +692,14 @@ _ATTRIBUTES_PROBED = 3
 
 
 @dataclass(frozen=True)
+class AttributeContext:
+    """The exact named submodule required through the program's original binding."""
+
+    key: RevealKey
+    expected: str
+
+
+@dataclass(frozen=True)
 class ImportQuestion:
     """One question about what an import binds, and what its answer means.
 
@@ -706,6 +714,10 @@ class ImportQuestion:
     mypy also answers Any for known modules; the same import is therefore
     asked about inside a fresh checked function at that site, and only the
     same checker's exact module type establishes that it resolves.
+    A fresh parent-module alias may also hide a submodule visible through the
+    program's binding. The same checker must identify its exact named module
+    after a common module-level import block, with stable bindings and all
+    actual reads after that block, to discharge that synthetic Unknown.
     """
 
     key: Tuple[str, int, int]
@@ -716,6 +728,8 @@ class ImportQuestion:
     """A second question and its exact answer identifying a contextual Self form."""
     module_context: Optional[Tuple[str, int, int]] = None
     """The same module imported inside a checked function at the original import site."""
+    attribute_context: Optional[AttributeContext] = None
+    """The original binding after its import block, and its required named module type."""
 
 
 @dataclass(frozen=True)
@@ -724,6 +738,20 @@ class ImportProbes:
 
     requests: Tuple[RevealRequest, ...]
     questions: Tuple[ImportQuestion, ...]
+
+
+@dataclass(frozen=True)
+class _ModuleVisibility:
+    line: int
+    indent: str
+    expression: str
+    expected: str
+
+
+@dataclass(frozen=True)
+class _AttributeFallback:
+    expression: str
+    visibility: _ModuleVisibility
 
 
 @dataclass(frozen=True)
@@ -737,6 +765,8 @@ class _Probe:
     self_context: str = ""
     self_expression: str = ""
     module_context: str = ""
+    attribute_reads: Tuple[_AttributeFallback, ...] = ()
+    """The alias questions with a proven site for querying the original binding."""
 
 
 _TYPE_CONTAINERS = frozenset({"list", "dict", "set", "frozenset", "tuple", "type"})
@@ -866,6 +896,123 @@ def _module_attributes(tree: ast.Module, bound: str, within: Sequence[str]) -> L
     return list(found)
 
 
+def _stable_module_bindings(tree: ast.Module) -> FrozenSet[str]:
+    """Module bindings without competing assignments, even in nested scopes.
+
+    Dotted imports without aliases bind their common parent: ``import pkg``
+    and ``import pkg.child`` agree. A different import, parameter, assignment,
+    attribute write or declaration prevents using a read as evidence about
+    the original import. This deliberately does not infer scope equivalence.
+    """
+    modules: Dict[str, Set[str]] = {}
+    competing: Set[str] = set()
+    module_level = frozenset(tree.body)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split(".")[0]
+                modules.setdefault(bound, set()).add(alias.name if alias.asname else bound)
+                if node not in module_level:
+                    competing.add(bound)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "*":
+                    return frozenset()
+                competing.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            competing.add(node.id)
+        elif isinstance(node, ast.Attribute) and not isinstance(node.ctx, ast.Load):
+            path = _attribute_path(node)
+            if path:
+                competing.add(path[0])
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            competing.add(node.name)
+        elif isinstance(node, ast.arg):
+            competing.add(node.arg)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            competing.update(node.names)
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            if node.name is not None:
+                competing.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest is not None:
+            competing.add(node.rest)
+        elif type(node).__name__ in ("TypeVar", "ParamSpec", "TypeVarTuple"):
+            name = getattr(node, "name", None)
+            if isinstance(name, str):
+                competing.add(name)
+    return frozenset(name for name, choices in modules.items() if len(choices) == 1) - competing
+
+
+def _module_visibility_sites(
+    tree: ast.Module, plan: ProbePlan
+) -> Mapping[Tuple[str, ...], _ModuleVisibility]:
+    """Sites after a common import block that establish the original binding.
+
+    A companion must be an unaliased, module-level import in the same block.
+    Every binding of the parent must be in that block, with no assignments,
+    nested imports or other shadows, and every attribute read must follow it
+    textually. A probe at the first exact post-block statement then asks about
+    the actual binding, not a fresh alias or a branch-local substitute.
+    """
+    if not any(
+        "." in alias.name and alias.asname is None
+        for node in tree.body
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    ):
+        return MappingProxyType({})
+    stable = _stable_module_bindings(tree)
+    if not stable:
+        return MappingProxyType({})
+    reads: Dict[Tuple[str, ...], Dict[str, int]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+            path = _attribute_path(node)
+            if path and path[0] in stable:
+                attributes = reads.setdefault(path[:-1], {})
+                attributes[path[-1]] = min(attributes.get(path[-1], node.lineno), node.lineno)
+    bound_at: Dict[str, Set[ast.stmt]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound_at.setdefault(alias.asname or alias.name.split(".")[0], set()).add(node)
+    visible: Dict[Tuple[str, ...], _ModuleVisibility] = {}
+    block: List[ast.stmt] = []
+    for following in tree.body:
+        if isinstance(following, (ast.Import, ast.ImportFrom)):
+            block.append(following)
+            continue
+        if not block:
+            continue
+        end = max(node.end_lineno or node.lineno for node in block)
+        site = plan.sites.get((following.lineno, following.col_offset))
+        if following.lineno > end and site is not None and not site[1]:
+            companions = {
+                alias.name
+                for node in block
+                if isinstance(node, ast.Import)
+                for alias in node.names
+                if alias.asname is None
+            }
+            imports = frozenset(block)
+            for node in block:
+                if not isinstance(node, ast.Import):
+                    continue
+                for alias in node.names:
+                    prefix = (alias.asname,) if alias.asname else tuple(alias.name.split("."))
+                    if prefix[0] not in stable or not bound_at[prefix[0]] <= imports:
+                        continue
+                    for attribute, first_read in reads.get(prefix, {}).items():
+                        module = f"{alias.name}.{attribute}"
+                        if first_read > end and module in companions:
+                            path = (*prefix, attribute)
+                            visible[path] = _ModuleVisibility(
+                                site[0], site[1], ".".join(path), f'Module("{module}")'
+                            )
+        block = []
+    return MappingProxyType(visible)
+
+
 def _probes_of(node: ast.stmt, tree: ast.Module, first: int) -> List[_Probe]:
     """What the probed text adds for the import statement ``node``, its aliases numbered from ``first``."""
     probes: List[_Probe] = []
@@ -950,6 +1097,13 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
     function at the same site: mypy's Any for an unchecked expression alone
     says nothing about whether its import resolves. ``None``
     when ``text`` has no import to ask about or no probe can be placed in it.
+
+    A companion submodule import can make an attribute visible only through
+    the original binding, not a fresh alias. The actual binding is then asked
+    about in the same batch after a common module-level import block, where
+    the original binding must resolve to the precise submodule. Competing
+    bindings, earlier reads, an unsafe site, an unknown answer or checker
+    disagreement keep the original refusal.
     """
     plan = probe_plan(text)
     tree = _parsed(text)
@@ -959,6 +1113,7 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
     added: Dict[Tuple[int, str], List[_Probe]] = {}
     annotation_only = _annotation_only_self_paths(tree)
     unchecked_imports = _unchecked_function_imports(tree)
+    attribute_reads = _module_visibility_sites(tree, plan)
     reserved = (
         {unicodedata.normalize("NFKC", word) for word in re.findall(r"\w+", text)}
         if annotation_only or unchecked_imports
@@ -980,6 +1135,14 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
         if isinstance(node, ast.Import):
             for index, alias in enumerate(node.names):
                 path_parts = (alias.asname,) if alias.asname else tuple(alias.name.split("."))
+                reads = []
+                for expression, kind, _ in probes[index].asked:
+                    if kind == "attribute":
+                        attribute = expression.rsplit(".", 1)[1]
+                        visibility = attribute_reads.get((*path_parts, attribute))
+                        if visibility is not None:
+                            reads.append(_AttributeFallback(expression, visibility))
+                probes[index] = replace(probes[index], attribute_reads=tuple(reads))
                 if (*path_parts, "Self") in annotation_only:
                     for expression, kind, _ in probes[index].asked:
                         if kind == "attribute" and expression.endswith(".Self"):
@@ -1010,6 +1173,7 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
     probed = plan.text.split("\n")
     landed: Dict[Tuple[int, str], int] = {}
     contexts: Dict[str, Tuple[int, str]] = {}
+    insertions: List[Tuple[int, int]] = []
     shift = 0
     for site, probes in sorted(added.items()):
         at = site[0] - 1 + shift
@@ -1029,11 +1193,13 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
                 )
                 contexts[probe.module_context] = (at + len(inserted), site[1] + "    ")
         probed[at:at] = inserted
+        insertions.append((site[0], len(inserted)))
         shift += len(inserted)
         landed[site] = site[0] + shift
     source = "\n".join(probed)
     requests: List[RevealRequest] = []
     questions: List[ImportQuestion] = []
+    actual_reads: List[Tuple[int, _AttributeFallback]] = []
     for site, probes in sorted(added.items()):
         asked = [(probe, question) for probe in probes for question in probe.asked]
         expressions = tuple(expression for _, (expression, _, _) in asked)
@@ -1049,6 +1215,9 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
                 line, indent = contexts[probe.module_context]
                 requests.append(RevealRequest(path, source, line, indent, (expression,)))
                 module_answer = (path, line, 0)
+            for fallback in probe.attribute_reads:
+                if expression == fallback.expression:
+                    actual_reads.append((len(questions), fallback))
             questions.append(
                 ImportQuestion(
                     (path, landed[site], index),
@@ -1059,6 +1228,29 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
                     module_answer,
                 )
             )
+    # Add actual-binding evidence to the same exchange. Identical statement
+    # sites share one request, so every reveal retains a unique answer key.
+    request_sites = {
+        (request.line, request.indent): index for index, request in enumerate(requests)
+    }
+    for question_index, fallback in actual_reads:
+        visibility = fallback.visibility
+        moved_line = visibility.line + sum(
+            count for at, count in insertions if at <= visibility.line
+        )
+        site = (moved_line, visibility.indent)
+        if site not in request_sites:
+            request_sites[site] = len(requests)
+            requests.append(RevealRequest(path, source, moved_line, visibility.indent, ()))
+        request_index = request_sites[site]
+        request = requests[request_index]
+        if visibility.expression not in request.expressions:
+            request = replace(request, expressions=(*request.expressions, visibility.expression))
+            requests[request_index] = request
+        key = (path, moved_line, request.expressions.index(visibility.expression))
+        questions[question_index] = replace(
+            questions[question_index], attribute_context=AttributeContext(key, visibility.expected)
+        )
     return ImportProbes(tuple(requests), tuple(questions))
 
 
@@ -1088,6 +1280,10 @@ def imports_typed_as_any(
                 # a genuinely missing/untyped module is still Any there. Only
                 # this checker's exact module answer discharges its finding.
                 if answer.get(question.module_context) == "types.ModuleType":
+                    blind = False
+            if question.attribute_context is not None:
+                context = question.attribute_context
+                if answer.get(context.key) == context.expected:
                     blind = False
             if blind and (question.line, question.subject) not in found:
                 found[(question.line, question.subject)] = TypeDiagnostic(
