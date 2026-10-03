@@ -228,9 +228,17 @@ written down; then the `rev` of the tool's hook in `.pre-commit-config.yaml`
 which is the version the project's own checks run, with a commit read as the
 tag its `# frozen:` comment names; then an exact pin, for this interpreter, in a
 requirements file, those named for typing read first (httpx's
-`requirements.txt` has `mypy==1.17.1`). Only the rest come from the wheel's
-extras, at the versions that resolve that day. A version
-the project chose that fails the extra's requirement is replaced by the extra's,
+`requirements.txt` has `mypy==1.17.1`). An otherwise unselected checker then
+uses its first applicable version-bearing typing declaration context, such as
+a tox environment or a dependency group. The applicable requirements for that
+checker within that context are resolved together with the wheel's mandatory
+extra requirement. Distinct contexts remain alternatives: they are not
+intersected and do not replace an earlier selection. If the selected context
+cannot satisfy the extra, environment setup fails. Only checkers without such
+a context, and formatters without an earlier selection, come directly from the
+wheel's extras at the versions that resolve that day. For the earlier project,
+lock, hook and requirement-file selections, a version that fails the extra's
+requirement is replaced by the extra's,
 as installing the extra replaces it, and the result names the pin it overrode:
 rich's `poetry.lock` pins Black 22.12.0, below `black>=26.3.1`. Which formatter
 formats a project is still Towel's choice from the project's configuration,
@@ -250,9 +258,12 @@ hooks; and requirements files named for typing. Each is installed at the
 version the project's lock file pins where it pins one. The install only adds:
 everything already in the environment is held at its version by a constraints
 file, so the test dependencies, the checkers and formatters chosen above, and
-the project itself cannot change, and a requirement naming one of them is left
-as it is. A requirement the installer cannot add beside them is refused and
-recorded, not resolved around. These dependencies expose the project's declared typing requirements, but do
+the project itself cannot change. A declaration naming a selected checker or
+formatter leaves that tool in place, and the report names its selected version
+and source; it does not combine alternative checking contexts. Other already
+installed dependencies are also left in place. A requirement the installer
+cannot add beside them is refused and recorded, not resolved around.
+These dependencies expose the project's declared typing requirements, but do
 not reproduce every project-owned hook or CI invocation. In particular, a
 hook's Python target can differ from Towel's combined invocation; the Cheroot
 gap is recorded in the [completed development validation](proposals/next-validation-final.md).
@@ -271,8 +282,9 @@ html5lib, whose `setup.py` cannot be built in isolation.
 Run the corpus with the default type policy, which is what a user gets. Each
 result records the interpreter, the candidate's version, each checker's and
 formatter's version and who chose it (`project`; the file whose pin it is, a
-lock file, `.pre-commit-config.yaml` or a requirements file by its path; or the
-extra, `towel[types]` or `towel[format]`, with any pin it overrode), every typing
+lock file, `.pre-commit-config.yaml` or a requirements file by its path; a
+selected typing declaration, recorded as `typing context: ...`; or the extra,
+`towel[types]` or `towel[format]`, with any pin it overrode), every typing
 requirement the project declares with where it declares it and what became of
 it (installed as, pinned by, or why not), the distributions the installer
 added for them, the tree the project was installed from, and whether its
