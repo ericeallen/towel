@@ -93,6 +93,9 @@ release verification binds the final versioned source to its own evidence.
   false refusals seen in Cachetools and Werkzeug. Unrelated local bindings no
   longer disable that evidence, and an alias replaced within one module import
   block is not queried for attributes read from its replacement afterward.
+  Attribute assignments and deletions no longer ask for a previous value that
+  the program never reads; augmented assignments and intermediate reads still
+  receive type questions. An immutable read inventory is shared across imports.
 - Reachability probes preserve the indentation of one-line `match` case bodies,
   including cases with multiline patterns or guards. Semicolon-separated
   statements receive separate probes so an early exit cannot make an

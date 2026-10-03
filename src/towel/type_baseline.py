@@ -943,13 +943,12 @@ class _AttributeScopes(ScopeVisitor):
         self.generic_visit(node)
 
 
-def _attribute_bindings(tree: ast.Module) -> Optional[_AttributeBindings]:
+def _attribute_bindings(tree: ast.Module, nodes: Sequence[ast.AST]) -> Optional[_AttributeBindings]:
     """Immutable facts once per source, only when module attributes need them.
 
     PEP695 annotation scopes are outside this small analysis; keep the
     previous conservative questions for those sources instead of guessing.
     """
-    nodes = tuple(ast.walk(tree))
     if (
         not any(isinstance(node, ast.Import) for node in nodes)
         or not any(isinstance(node, ast.Attribute) for node in nodes)
@@ -975,6 +974,25 @@ def _attribute_bindings(tree: ast.Module) -> Optional[_AttributeBindings]:
     )
 
 
+def _attribute_reads(nodes: Sequence[ast.AST]) -> Tuple[ast.Attribute, ...]:
+    """Attributes whose existing values are read, in the source inventory's order.
+
+    An augmented assignment reads its target even though the AST marks it
+    Store. Other targets do not read that attribute; any intermediate loads
+    needed to reach them already have their own Load nodes.
+    """
+    augmented = {
+        node.target
+        for node in nodes
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Attribute)
+    }
+    return tuple(
+        node
+        for node in nodes
+        if isinstance(node, ast.Attribute) and (isinstance(node.ctx, ast.Load) or node in augmented)
+    )
+
+
 def _module_attributes(
     tree: ast.Module,
     imported: ast.Import,
@@ -982,13 +1000,12 @@ def _module_attributes(
     bound: str,
     within: Sequence[str],
     bindings: Optional[_AttributeBindings],
+    reads: Sequence[ast.Attribute],
 ) -> List[str]:
     """The attributes read from a module bound to ``bound``, past ``within``: a few, in order."""
     found: Dict[str, None] = {}
     superseded_after = bindings.superseded.get(alias) if bindings is not None else None
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Attribute):
-            continue
+    for node in reads:
         chain: List[str] = []
         inner: ast.expr = node
         while isinstance(inner, ast.Attribute):
@@ -1073,7 +1090,10 @@ def _stable_module_bindings(
 
 
 def _module_visibility_sites(
-    tree: ast.Module, plan: ProbePlan, bindings: Optional[_AttributeBindings]
+    tree: ast.Module,
+    plan: ProbePlan,
+    bindings: Optional[_AttributeBindings],
+    attribute_reads: Sequence[ast.Attribute],
 ) -> Mapping[Tuple[str, ...], _ModuleVisibility]:
     """Sites after a common import block that establish the original binding.
 
@@ -1095,11 +1115,11 @@ def _module_visibility_sites(
     if not stable:
         return MappingProxyType({})
     reads: Dict[Tuple[str, ...], Dict[str, int]] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
-            path = _attribute_path(node)
+    for attribute_read in attribute_reads:
+        if isinstance(attribute_read.ctx, ast.Load):
+            path = _attribute_path(attribute_read)
             if path and path[0] in stable:
-                root: ast.AST = node
+                root: ast.AST = attribute_read
                 while isinstance(root, ast.Attribute):
                     root = root.value
                 if (
@@ -1109,7 +1129,9 @@ def _module_visibility_sites(
                 ):
                     continue
                 attributes = reads.setdefault(path[:-1], {})
-                attributes[path[-1]] = min(attributes.get(path[-1], node.lineno), node.lineno)
+                attributes[path[-1]] = min(
+                    attributes.get(path[-1], attribute_read.lineno), attribute_read.lineno
+                )
     bound_at: Dict[str, Set[ast.stmt]] = {}
     for node in tree.body:
         if isinstance(node, ast.Import):
@@ -1150,7 +1172,11 @@ def _module_visibility_sites(
 
 
 def _probes_of(
-    node: ast.stmt, tree: ast.Module, first: int, bindings: Optional[_AttributeBindings]
+    node: ast.stmt,
+    tree: ast.Module,
+    first: int,
+    bindings: Optional[_AttributeBindings],
+    attribute_reads: Sequence[ast.Attribute],
 ) -> List[_Probe]:
     """What the probed text adds for the import statement ``node``, its aliases numbered from ``first``."""
     probes: List[_Probe] = []
@@ -1164,7 +1190,9 @@ def _probes_of(
             asked = [(name, "module", f'module "{alias.name}"')]
             asked += [
                 (f"{name}.{attribute}", "attribute", f'"{attribute}" of module "{alias.name}"')
-                for attribute in _module_attributes(tree, node, alias, bound, within, bindings)
+                for attribute in _module_attributes(
+                    tree, node, alias, bound, within, bindings, attribute_reads
+                )
             ]
             probes.append(_Probe(f"import {alias.name} as {name}", node.lineno, tuple(asked)))
         return probes
@@ -1250,11 +1278,13 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
     lines = text.split("\n")
     added: Dict[Tuple[int, str], List[_Probe]] = {}
     unchecked_imports = _unchecked_function_imports(tree)
-    attribute_bindings = _attribute_bindings(tree)
-    attribute_reads = _module_visibility_sites(tree, plan, attribute_bindings)
+    nodes = tuple(ast.walk(tree))
+    attribute_bindings = _attribute_bindings(tree, nodes)
+    attribute_reads = _attribute_reads(nodes)
+    visible_attributes = _module_visibility_sites(tree, plan, attribute_bindings, attribute_reads)
     reserved: Optional[Set[str]] = None
     count = 0
-    for node in ast.walk(tree):
+    for node in nodes:
         if not isinstance(node, (ast.Import, ast.ImportFrom)):
             continue
         if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "__future__":
@@ -1264,7 +1294,7 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
         site = plan.sites.get(place)
         if site is None:
             continue
-        probes = _probes_of(node, tree, count, attribute_bindings)
+        probes = _probes_of(node, tree, count, attribute_bindings, attribute_reads)
         contextual: Dict[int, str] = {}
         if isinstance(node, ast.Import):
             for index, alias in enumerate(node.names):
@@ -1273,7 +1303,7 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
                 for expression, kind, _ in probes[index].asked:
                     if kind == "attribute":
                         attribute = expression.rsplit(".", 1)[1]
-                        visibility = attribute_reads.get((*path_parts, attribute))
+                        visibility = visible_attributes.get((*path_parts, attribute))
                         if visibility is not None:
                             reads.append(_AttributeFallback(expression, visibility))
                 probes[index] = replace(probes[index], attribute_reads=tuple(reads))

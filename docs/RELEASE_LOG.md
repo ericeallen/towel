@@ -63,6 +63,12 @@ A historical passing result applies to its recorded commit and test environment.
   attribute questions from its replacement's later reads. These rules share
   immutable lexical and import-block facts once per source. The corrections
   require a fresh validation freeze after corpus discovery.
+- Sphinx exposed an attribute question for `doctest.compile` used only as an
+  assignment target. Import questions now distinguish writes from reads:
+  augmented assignments still read their targets, and nested targets still
+  read the objects needed to reach them. The immutable attribute-read inventory
+  is computed once per source and reused across imports. Focused checker
+  regressions cover this correction; final validation is still pending.
 - A valid one-line `match` case could produce an invalidly indented probe because
   its `match_case` node has no statement line number. The splitter now locates
   the header from the pattern's source position, including multiline patterns
