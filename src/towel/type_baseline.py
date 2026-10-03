@@ -115,6 +115,7 @@ from .analysis_sources import memoized_source_analysis
 from .reachability import ProbePlan, probe_plan
 from .type_inference import RevealKey, RevealRequest, TypeDiagnostic
 from .unification.lexical_scopes import NESTED_SCOPES, ScopeNames, nested_scope_names
+from .unification.statement_facts import bindings_of
 from .unification.visitors import ScopeVisitor, annotation_expressions, evaluated_before_definition
 
 __all__ = [
@@ -781,9 +782,77 @@ def _attribute_path(node: ast.AST) -> Tuple[str, ...]:
 
 
 @dataclass(frozen=True)
+class _ModuleImportBlock:
+    statements: Tuple[ast.Import | ast.ImportFrom, ...]
+    following: Optional[ast.stmt]
+    end: int
+
+
+def _module_import_blocks(tree: ast.Module) -> Tuple[_ModuleImportBlock, ...]:
+    blocks: List[_ModuleImportBlock] = []
+    pending: List[ast.Import | ast.ImportFrom] = []
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            pending.append(node)
+        elif pending:
+            blocks.append(
+                _ModuleImportBlock(
+                    tuple(pending), node, pending[-1].end_lineno or pending[-1].lineno
+                )
+            )
+            pending = []
+    if pending:
+        blocks.append(
+            _ModuleImportBlock(tuple(pending), None, pending[-1].end_lineno or pending[-1].lineno)
+        )
+    return tuple(blocks)
+
+
+@dataclass(frozen=True)
 class _AttributeBindings:
     reads: Mapping[ast.Name, FrozenSet[ast.AST]]
     imports: Mapping[Tuple[ast.Import, str], FrozenSet[ast.AST]]
+    module_imports: Tuple[Tuple[ast.Import, ast.alias], ...]
+    module_writes: FrozenSet[str]
+    wildcard: bool
+    blocks: Tuple[_ModuleImportBlock, ...]
+    superseded: Mapping[ast.alias, int]
+
+
+def _superseded_imports(
+    imports: Sequence[Tuple[ast.Import, ast.alias]],
+    writes: FrozenSet[str],
+    blocks: Sequence[_ModuleImportBlock],
+) -> Mapping[ast.alias, int]:
+    """Aliases replaced within their sole, unconditional module import block.
+
+    Only later textual reads may be omitted. An earlier closure can run during
+    an import; conditional imports and any ordinary write keep both questions.
+    Repeated unaliased parent/submodule imports bind the same parent object.
+    """
+    sites: Dict[str, Set[ast.Import]] = {}
+    for imported, alias in imports:
+        sites.setdefault(alias.asname or alias.name.split(".")[0], set()).add(imported)
+    superseded: Dict[ast.alias, int] = {}
+    for block in blocks:
+        members = frozenset(block.statements)
+        current: Dict[str, Tuple[str, List[ast.alias]]] = {}
+        for node in block.statements:
+            if not isinstance(node, ast.Import):
+                continue
+            for alias in node.names:
+                bound = alias.asname or alias.name.split(".")[0]
+                if bound in writes or not sites[bound] <= members:
+                    continue
+                target = alias.name if alias.asname else bound
+                previous = current.get(bound)
+                if previous is not None and previous[0] == target:
+                    previous[1].append(alias)
+                else:
+                    if previous is not None:
+                        superseded.update((old, block.end) for old in previous[1])
+                    current[bound] = (target, [alias])
+    return MappingProxyType(superseded)
 
 
 class _AttributeScopes(ScopeVisitor):
@@ -799,6 +868,9 @@ class _AttributeScopes(ScopeVisitor):
         self.scopes: List[Tuple[ast.AST, ScopeNames]] = []
         self.reads: Dict[ast.Name, FrozenSet[ast.AST]] = {}
         self.imports: Dict[Tuple[ast.Import, str], FrozenSet[ast.AST]] = {}
+        self.module_imports: List[Tuple[ast.Import, ast.alias]] = []
+        self.module_writes: Set[str] = set()
+        self.wildcard = False
 
     def _owners(self, name: str, *, read: bool) -> FrozenSet[ast.AST]:
         possible: Set[ast.AST] = set()
@@ -835,14 +907,39 @@ class _AttributeScopes(ScopeVisitor):
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
             name = alias.asname or alias.name.split(".")[0]
-            self.imports[node, name] = self._owners(name, read=False)
+            owners = self._owners(name, read=False)
+            self.imports[node, name] = owners
+            if self.root in owners:
+                self.module_imports.append((node, alias))
+
+    def _bind_target(self, target: ast.AST) -> None:
+        self.visit(target)
+
+    def visit_Module(self, node: ast.Module) -> None:
+        self._visit_statements(node.body)
+
+    def _visit_statements(self, statements: Sequence[ast.stmt]) -> None:
+        for statement in statements:
+            if not isinstance(statement, ast.Import):
+                self.module_writes.update(
+                    name
+                    for name in bindings_of(statement, into_nested_scopes=False)
+                    if self.root in self._owners(name, read=False)
+                )
+            self.visit(statement)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self.wildcard |= any(alias.name == "*" for alias in node.names)
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         inner: ast.expr = node
         while isinstance(inner, ast.Attribute):
             inner = inner.value
         if isinstance(inner, ast.Name):
-            self.reads[inner] = self._owners(inner.id, read=True)
+            owners = self._owners(inner.id, read=True)
+            self.reads[inner] = owners
+            if not isinstance(node.ctx, ast.Load) and self.root in owners:
+                self.module_writes.add(inner.id)
         self.generic_visit(node)
 
 
@@ -861,26 +958,46 @@ def _attribute_bindings(tree: ast.Module) -> Optional[_AttributeBindings]:
         return None
     visitor = _AttributeScopes(tree)
     visitor.visit(tree)
-    return _AttributeBindings(MappingProxyType(visitor.reads), MappingProxyType(visitor.imports))
+    blocks = _module_import_blocks(tree)
+    writes = frozenset(visitor.module_writes)
+    return _AttributeBindings(
+        MappingProxyType(visitor.reads),
+        MappingProxyType(visitor.imports),
+        tuple(visitor.module_imports),
+        writes,
+        visitor.wildcard,
+        blocks,
+        (
+            MappingProxyType({})
+            if visitor.wildcard
+            else _superseded_imports(visitor.module_imports, writes, blocks)
+        ),
+    )
 
 
 def _module_attributes(
     tree: ast.Module,
     imported: ast.Import,
+    alias: ast.alias,
     bound: str,
     within: Sequence[str],
     bindings: Optional[_AttributeBindings],
 ) -> List[str]:
     """The attributes read from a module bound to ``bound``, past ``within``: a few, in order."""
     found: Dict[str, None] = {}
+    superseded_after = bindings.superseded.get(alias) if bindings is not None else None
     for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute):
+            continue
         chain: List[str] = []
-        inner: ast.expr = node if isinstance(node, ast.Attribute) else ast.Constant(None)
+        inner: ast.expr = node
         while isinstance(inner, ast.Attribute):
             chain.append(inner.attr)
             inner = inner.value
         path = chain[::-1]
         if isinstance(inner, ast.Name) and inner.id == bound and len(path) > len(within):
+            if superseded_after is not None and node.lineno > superseded_after:
+                continue
             if bindings is not None and not (
                 bindings.reads.get(inner, frozenset({tree}))
                 & bindings.imports.get((imported, bound), frozenset({tree}))
@@ -893,17 +1010,32 @@ def _module_attributes(
     return list(found)
 
 
-def _stable_module_bindings(tree: ast.Module) -> FrozenSet[str]:
-    """Module bindings without competing assignments, even in nested scopes.
+def _stable_module_bindings(
+    tree: ast.Module, bindings: Optional[_AttributeBindings]
+) -> FrozenSet[str]:
+    """Module bindings without competing assignments to that lexical namespace.
 
     Dotted imports without aliases bind their common parent: ``import pkg``
-    and ``import pkg.child`` agree. A different import, parameter, assignment,
-    attribute write or declaration prevents using a read as evidence about
-    the original import. This deliberately does not infer scope equivalence.
+    and ``import pkg.child`` agree. Unrelated locals do not alter the module
+    binding; writes through global declarations do. Unsupported annotation
+    scopes retain the previous conservative whole-source scan.
     """
     modules: Dict[str, Set[str]] = {}
     competing: Set[str] = set()
     module_level = frozenset(tree.body)
+    if bindings is not None:
+        if bindings.wildcard:
+            return frozenset()
+        for imported, alias in bindings.module_imports:
+            bound = alias.asname or alias.name.split(".")[0]
+            modules.setdefault(bound, set()).add(alias.name if alias.asname else bound)
+            if imported not in module_level:
+                competing.add(bound)
+        return (
+            frozenset(name for name, choices in modules.items() if len(choices) == 1)
+            - bindings.module_writes
+            - competing
+        )
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -941,14 +1073,15 @@ def _stable_module_bindings(tree: ast.Module) -> FrozenSet[str]:
 
 
 def _module_visibility_sites(
-    tree: ast.Module, plan: ProbePlan
+    tree: ast.Module, plan: ProbePlan, bindings: Optional[_AttributeBindings]
 ) -> Mapping[Tuple[str, ...], _ModuleVisibility]:
     """Sites after a common import block that establish the original binding.
 
     A companion must be an unaliased, module-level import in the same block.
     Every binding of the parent must be in that block, with no assignments,
-    nested imports or other shadows, and every attribute read must follow it
-    textually. A probe at the first exact post-block statement then asks about
+    nested global imports or other module writes, and every read of that
+    lexical binding must follow it textually. A probe at the first exact
+    post-block statement then asks about
     the actual binding, not a fresh alias or a branch-local substitute.
     """
     if not any(
@@ -958,7 +1091,7 @@ def _module_visibility_sites(
         for alias in node.names
     ):
         return MappingProxyType({})
-    stable = _stable_module_bindings(tree)
+    stable = _stable_module_bindings(tree, bindings)
     if not stable:
         return MappingProxyType({})
     reads: Dict[Tuple[str, ...], Dict[str, int]] = {}
@@ -966,6 +1099,15 @@ def _module_visibility_sites(
         if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
             path = _attribute_path(node)
             if path and path[0] in stable:
+                root: ast.AST = node
+                while isinstance(root, ast.Attribute):
+                    root = root.value
+                if (
+                    bindings is not None
+                    and isinstance(root, ast.Name)
+                    and tree not in bindings.reads.get(root, frozenset({tree}))
+                ):
+                    continue
                 attributes = reads.setdefault(path[:-1], {})
                 attributes[path[-1]] = min(attributes.get(path[-1], node.lineno), node.lineno)
     bound_at: Dict[str, Set[ast.stmt]] = {}
@@ -974,25 +1116,23 @@ def _module_visibility_sites(
             for alias in node.names:
                 bound_at.setdefault(alias.asname or alias.name.split(".")[0], set()).add(node)
     visible: Dict[Tuple[str, ...], _ModuleVisibility] = {}
-    block: List[ast.stmt] = []
-    for following in tree.body:
-        if isinstance(following, (ast.Import, ast.ImportFrom)):
-            block.append(following)
+    blocks = bindings.blocks if bindings is not None else _module_import_blocks(tree)
+    for block in blocks:
+        following = block.following
+        if following is None:
             continue
-        if not block:
-            continue
-        end = max(node.end_lineno or node.lineno for node in block)
+        end = block.end
         site = plan.sites.get((following.lineno, following.col_offset))
         if following.lineno > end and site is not None and not site[1]:
             companions = {
                 alias.name
-                for node in block
+                for node in block.statements
                 if isinstance(node, ast.Import)
                 for alias in node.names
                 if alias.asname is None
             }
-            imports = frozenset(block)
-            for node in block:
+            imports = frozenset(block.statements)
+            for node in block.statements:
                 if not isinstance(node, ast.Import):
                     continue
                 for alias in node.names:
@@ -1006,7 +1146,6 @@ def _module_visibility_sites(
                             visible[path] = _ModuleVisibility(
                                 site[0], site[1], ".".join(path), f'Module("{module}")'
                             )
-        block = []
     return MappingProxyType(visible)
 
 
@@ -1025,7 +1164,7 @@ def _probes_of(
             asked = [(name, "module", f'module "{alias.name}"')]
             asked += [
                 (f"{name}.{attribute}", "attribute", f'"{attribute}" of module "{alias.name}"')
-                for attribute in _module_attributes(tree, node, bound, within, bindings)
+                for attribute in _module_attributes(tree, node, alias, bound, within, bindings)
             ]
             probes.append(_Probe(f"import {alias.name} as {name}", node.lineno, tuple(asked)))
         return probes
@@ -1111,8 +1250,8 @@ def import_probes(path: str, text: str) -> Optional[ImportProbes]:
     lines = text.split("\n")
     added: Dict[Tuple[int, str], List[_Probe]] = {}
     unchecked_imports = _unchecked_function_imports(tree)
-    attribute_reads = _module_visibility_sites(tree, plan)
     attribute_bindings = _attribute_bindings(tree)
+    attribute_reads = _module_visibility_sites(tree, plan, attribute_bindings)
     reserved: Optional[Set[str]] = None
     count = 0
     for node in ast.walk(tree):

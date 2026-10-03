@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 from pathlib import Path
 
@@ -62,7 +63,8 @@ def test_post_import_site_uses_the_original_binding_for_later_reads(body: str) -
     request = next(r for r in probes.requests if r.file_path == path and r.line == line)
     assert request.expressions[index] == "collections.abc"
     assert not request.indent
-    assert request.source.splitlines()[line - 1].split(":")[0] == body.splitlines()[0].split(":")[0]
+    statement = next(node for node in ast.parse(request.source).body if node.lineno == line)
+    assert ast.dump(statement) == ast.dump(ast.parse(body).body[0])
 
 
 @pytest.mark.parametrize(
@@ -94,14 +96,10 @@ def test_uncertain_import_order_or_binding_keeps_the_original_probe(source: str)
         "del collections.abc",
         "import math as collections",
         "import collections",
-        "def f():\n    import collections",
-        "def f():\n    import collections.abc",
         "from elsewhere import collections",
         "from elsewhere import *",
-        "def f(collections): pass",
         "def collections(): pass",
         "class collections: pass",
-        "def f():\n    global collections",
         "try: pass\nexcept Exception as collections: pass",
         "match other:\n    case collections:\n        pass",
     ],
@@ -109,6 +107,21 @@ def test_uncertain_import_order_or_binding_keeps_the_original_probe(source: str)
 def test_competing_bindings_do_not_supply_evidence_for_the_import(binding: str) -> None:
     _, question = _abc_question(IMPORTS + "value = collections.abc\n" + binding + "\n")
     assert question.attribute_context is None
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "def f():\n    import collections",
+        "def f():\n    import collections.abc",
+        "def f(collections): pass",
+        "def f():\n    global collections",
+    ],
+)
+def test_unrelated_locals_and_declarations_do_not_write_the_module_binding(binding: str) -> None:
+    _, question = _abc_question(IMPORTS + "value = collections.abc\n" + binding + "\n")
+    assert question.attribute_context is not None
+    assert question.attribute_context.expected == 'Module("collections.abc")'
 
 
 def test_original_binding_needs_exact_evidence_from_the_same_checker() -> None:
