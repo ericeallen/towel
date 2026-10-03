@@ -1052,8 +1052,9 @@ where the evidence comes from:
   alias can hide a submodule that Pyright sees through the program's original
   binding. When the parent and submodule are imported in one module-level
   import block, every read of that binding follows the block, and there are no
-  competing module bindings or writes, Towel also asks about the original
-  binding just after the block. Unrelated local names do not interfere. An alias
+  competing module bindings or writes to the queried path, its ancestors or
+  descendants, Towel also asks about the original binding just after the block.
+  Unrelated attribute writes and local names do not interfere. An alias
   replaced within that block is not asked about attributes read from its
   replacement afterward; uncertain binding or read order remains conservative.
   Only the same checker's exact named module overrides the alias's `Unknown`;

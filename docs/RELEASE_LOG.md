@@ -54,8 +54,8 @@ A historical passing result applies to its recorded commit and test environment.
 - Cachetools exposed a false refusal from a fresh parent-module alias:
   Pyright could resolve the program's `collections.abc` binding, but not the
   generated alias's `.abc`. For a common module-level import block with no
-  competing module bindings or writes and all reads of that binding after the
-  block, an additional question
+  competing module bindings or overlapping attribute writes and all reads of
+  that binding after the block, an additional question
   checks the original binding in the same checker exchange. That checker must
   identify the exact module; missing imports and unsupported contexts retain
   their existing checks. Unrelated local bindings no longer invalidate this
@@ -69,6 +69,11 @@ A historical passing result applies to its recorded commit and test environment.
   read the objects needed to reach them. The immutable attribute-read inventory
   is computed once per source and reused across imports. Focused checker
   regressions cover this correction; final validation is still pending.
+  A native checker control also exposed a false refusal when assigning
+  `collections.namedtuple` disabled evidence for the separate `collections.abc`
+  import. Write paths now distinguish unrelated attributes; root rebinding and
+  writes to the queried path, its ancestors or descendants retain their checks.
+  The full Sphinx comparison remains separate validation.
 - A valid one-line `match` case could produce an invalidly indented probe because
   its `match_case` node has no statement line number. The splitter now locates
   the header from the pattern's source position, including multiline patterns

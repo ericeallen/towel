@@ -814,6 +814,7 @@ class _AttributeBindings:
     imports: Mapping[Tuple[ast.Import, str], FrozenSet[ast.AST]]
     module_imports: Tuple[Tuple[ast.Import, ast.alias], ...]
     module_writes: FrozenSet[str]
+    attribute_writes: FrozenSet[Tuple[str, ...]]
     wildcard: bool
     blocks: Tuple[_ModuleImportBlock, ...]
     superseded: Mapping[ast.alias, int]
@@ -870,6 +871,7 @@ class _AttributeScopes(ScopeVisitor):
         self.imports: Dict[Tuple[ast.Import, str], FrozenSet[ast.AST]] = {}
         self.module_imports: List[Tuple[ast.Import, ast.alias]] = []
         self.module_writes: Set[str] = set()
+        self.attribute_writes: Set[Tuple[str, ...]] = set()
         self.wildcard = False
 
     def _owners(self, name: str, *, read: bool) -> FrozenSet[ast.AST]:
@@ -939,7 +941,7 @@ class _AttributeScopes(ScopeVisitor):
             owners = self._owners(inner.id, read=True)
             self.reads[inner] = owners
             if not isinstance(node.ctx, ast.Load) and self.root in owners:
-                self.module_writes.add(inner.id)
+                self.attribute_writes.add(_attribute_path(node))
         self.generic_visit(node)
 
 
@@ -959,17 +961,21 @@ def _attribute_bindings(tree: ast.Module, nodes: Sequence[ast.AST]) -> Optional[
     visitor.visit(tree)
     blocks = _module_import_blocks(tree)
     writes = frozenset(visitor.module_writes)
+    attribute_writes = frozenset(visitor.attribute_writes)
     return _AttributeBindings(
         MappingProxyType(visitor.reads),
         MappingProxyType(visitor.imports),
         tuple(visitor.module_imports),
         writes,
+        attribute_writes,
         visitor.wildcard,
         blocks,
         (
             MappingProxyType({})
             if visitor.wildcard
-            else _superseded_imports(visitor.module_imports, writes, blocks)
+            else _superseded_imports(
+                visitor.module_imports, writes | {path[0] for path in attribute_writes}, blocks
+            )
         ),
     )
 
@@ -1034,7 +1040,8 @@ def _stable_module_bindings(
 
     Dotted imports without aliases bind their common parent: ``import pkg``
     and ``import pkg.child`` agree. Unrelated locals do not alter the module
-    binding; writes through global declarations do. Unsupported annotation
+    binding; writes through global declarations do. Attribute writes are
+    checked against each proposed submodule path separately. Unsupported annotation
     scopes retain the previous conservative whole-source scan.
     """
     modules: Dict[str, Set[str]] = {}
@@ -1089,6 +1096,11 @@ def _stable_module_bindings(
     return frozenset(name for name, choices in modules.items() if len(choices) == 1) - competing
 
 
+def _overlapping_attribute_write(path: Tuple[str, ...], writes: FrozenSet[Tuple[str, ...]]) -> bool:
+    """Whether a write touches this path, an ancestor, or a descendant."""
+    return any(path[: len(write)] == write or write[: len(path)] == path for write in writes)
+
+
 def _module_visibility_sites(
     tree: ast.Module,
     plan: ProbePlan,
@@ -1098,8 +1110,8 @@ def _module_visibility_sites(
     """Sites after a common import block that establish the original binding.
 
     A companion must be an unaliased, module-level import in the same block.
-    Every binding of the parent must be in that block, with no assignments,
-    nested global imports or other module writes, and every read of that
+    Every binding of the parent must be in that block, with no root rebinding,
+    nested global imports or writes overlapping the queried path. Every read of that
     lexical binding must follow it textually. A probe at the first exact
     post-block statement then asks about
     the actual binding, not a fresh alias or a branch-local substitute.
@@ -1138,6 +1150,7 @@ def _module_visibility_sites(
             for alias in node.names:
                 bound_at.setdefault(alias.asname or alias.name.split(".")[0], set()).add(node)
     visible: Dict[Tuple[str, ...], _ModuleVisibility] = {}
+    writes = bindings.attribute_writes if bindings is not None else frozenset()
     blocks = bindings.blocks if bindings is not None else _module_import_blocks(tree)
     for block in blocks:
         following = block.following
@@ -1163,8 +1176,12 @@ def _module_visibility_sites(
                         continue
                     for attribute, first_read in reads.get(prefix, {}).items():
                         module = f"{alias.name}.{attribute}"
-                        if first_read > end and module in companions:
-                            path = (*prefix, attribute)
+                        path = (*prefix, attribute)
+                        if (
+                            first_read > end
+                            and module in companions
+                            and not _overlapping_attribute_write(path, writes)
+                        ):
                             visible[path] = _ModuleVisibility(
                                 site[0], site[1], ".".join(path), f'Module("{module}")'
                             )

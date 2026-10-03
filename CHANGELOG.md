@@ -96,6 +96,8 @@ release verification binds the final versioned source to its own evidence.
   Attribute assignments and deletions no longer ask for a previous value that
   the program never reads; augmented assignments and intermediate reads still
   receive type questions. An immutable read inventory is shared across imports.
+  A write to an unrelated attribute no longer disables evidence for an imported
+  submodule; writes overlapping its path and module rebinding remain restrictive.
 - Reachability probes preserve the indentation of one-line `match` case bodies,
   including cases with multiline patterns or guards. Semicolon-separated
   statements receive separate probes so an early exit cannot make an
