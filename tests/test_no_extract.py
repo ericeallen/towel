@@ -121,6 +121,66 @@ def test_tab_indented_trailing_comments_are_protected() -> None:
     assert definition.text.endswith("\t\t# retained\n")
 
 
+@pytest.mark.parametrize(
+    "decorator",
+    [
+        "@(\n    decorate\n)\n",
+        "@(\n    # @ is only a comment here\n    decorate\n)\n",
+        "@\\\n    decorate\n",
+        "@(\n    decorate @ decorate\n)\n",
+    ],
+)
+def test_protected_decorators_start_at_the_lexical_opener(decorator: str) -> None:
+    source = decorator + _function("protected", "  # towel: no-extract")
+    tree = ast.parse(source)
+    (definition,) = protected_definitions(source, tree)
+    assert definition.line_range[0] == 1
+    assert definition.text == source.rstrip("\n") + "\n"
+    rewritten = source.replace("@", "@  ", 1)
+    assert ast.dump(ast.parse(rewritten), include_attributes=False) == ast.dump(
+        tree, include_attributes=False
+    )
+    with pytest.raises(RefactoringError, match="no-extract"):
+        require_protected_definitions_unchanged(source, rewritten)
+
+
+def test_a_parenthesized_decorator_survives_neighbors_and_rejects_finisher_changes(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "def decorate(function):\n    return function\n\n@(\n    decorate\n)\n"
+        + _function("protected", "  # towel: no-extract")
+        + _function("alpha")
+        + _function("beta")
+    )
+    path = _write(tmp_path, source)
+    engine = UnificationRefactorEngine(min_lines=3)
+    proposal = engine.analyze_file(str(path))[0]
+    original = copy.deepcopy(proposal)
+    output = engine.apply_refactoring_multi_file(proposal)[str(path)]
+    assert _protected(output) == _protected(source)
+    assert any(
+        isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func_")
+        for node in ast.parse(output).body
+    )
+    for node in ast.parse(output).body:
+        if isinstance(node, ast.FunctionDef) and node.name in {"alpha", "beta"}:
+            assert any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id.startswith("__extracted_func_")
+                for call in ast.walk(node)
+            )
+    engine.file_finisher = lambda _path, text: text.replace("@(\n", "@  (\n", 1)
+    with pytest.raises(RefactoringError, match="no-extract"):
+        engine.apply_refactoring_multi_file(proposal)
+    assert _protected(output)[0][1].startswith("@(\n")
+    assert path.read_text() == source
+    assert ast.dump(proposal.extracted_function, include_attributes=True) == ast.dump(
+        original.extracted_function, include_attributes=True
+    )
+
+
 def test_pairing_and_clustering_keep_marked_code_but_extract_all_unmarked_twins(
     tmp_path: Path,
 ) -> None:
