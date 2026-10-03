@@ -396,6 +396,22 @@ proposal.source_digests       # The file digests the proposal was computed from;
                               # a stale proposal raises ChangeConflict("Stale proposal")
 ```
 
+### Protect a function from refactoring
+
+The API honors the same source directive as the CLI:
+
+```python
+def frame_sensitive(value):  # towel: no-extract
+    return inspect_caller(value)
+```
+
+The exact comment belongs immediately after the signature's final colon,
+including on the closing line of a multiline signature. The protected
+definition and nested bodies stay intact across discovery, clustering,
+reuse, helper insertion and later passes. Other code remains eligible.
+See [Protect a function](CLI_GUIDE.md#protect-a-function) for syntax and limits;
+this is user-directed protection, not automatic reflection detection.
+
 ### Comments
 
 The helper carries the comments of the blocks it replaces, beside the code

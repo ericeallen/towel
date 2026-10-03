@@ -22,6 +22,13 @@ A historical passing result applies to its recorded commit and test environment.
 
 ## 2026-10-03 (1.792 discovery remediation)
 
+- Release preparation now includes an explicit function opt-out:
+  `# towel: no-extract` immediately after the signature's final colon protects
+  that definition and nested bodies. Unmarked code remains eligible; whole-file
+  exclusions remain available. This supplies user control under the existing
+  reflection boundary. Focused checks pass; the release remains held pending
+  independent consumer validation and fresh gates for the new candidate. Earlier
+  gates do not approve it.
 - Packaging exposed a false rendering refusal for typed shared helpers carrying
   comments: annotations were safely quoted before rendering, but the roundtrip
   check compared them with the unadapted proposal. Comment rendering now checks

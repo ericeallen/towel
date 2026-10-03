@@ -73,17 +73,50 @@ Directory analysis automatically skips hidden directories, `__pycache__`,
 those markers is analyzed normally.
 
 An exclusion leaves that source unchanged. The import model reads nothing
-inside an excluded directory. Whole-program safety checks may still read
-excluded files, so a test's `mock.patch` of a builtin can still rule out a
-change it would observe. Excluded files that do not parse are treated as
-outside the program.
+inside an excluded directory. Excluding a file from extraction does not
+remove it from the project's configured type or build checks. Excluded files
+that do not parse are treated as outside the program.
+
+### Protect a function
+
+Put the exact comment `# towel: no-extract` immediately after the final colon
+of a function's signature:
+
+```python
+# This factory depends on its caller's frame.
+def make_record(fields):  # towel: no-extract
+    return build_record(fields)
+
+def make_other_record(
+    fields,
+    defaults,
+):  # towel: no-extract
+    return build_record(fields, defaults)
+```
+
+Towel leaves the protected definition and its body intact, including nested
+functions and methods. It does not extract that code, rewrite it to reuse a
+helper, insert a helper inside it, or reuse the protected function as a helper.
+Unmarked code in the same file remains eligible for refactoring. This applies
+to `def` and `async def`, to methods, to the API and CLI, and on every pass.
+
+The marker must be a comment after the signature colon on that same line.
+Put an explanation on a separate line: preceding comments, comments on a
+parameter line, extra text after the directive, strings, and comments after
+an inline function body are not this directive.
+
+This protects the marked definition, not its module or every frame in its
+call chain. Its absolute line position can change. Mark the functions whose
+frames must remain intact, even when reflection happens in a callee; use
+`--exclude filename.py` when the entire file must remain unchanged. See the
+[reflection boundary](KNOWN_LIMITATIONS.md#observable-differences-that-remain).
 
 ### Analyze a complete readable project
 
-Towel checks the surrounding project for operations that can affect an
-extraction: manual decorator applications, patched builtins, pytest assertion
-rewriting, imports and import-time effects. Even when the target is one
-package, staging includes the surrounding project.
+Towel stages the surrounding project so imports, bindings and type checks
+are judged in the program's context. Even when the target is one package,
+staging includes the surrounding project. This does not detect reflection or
+self-instrumentation; protect sensitive definitions explicitly.
 
 If any relevant file does not parse on the Python running Towel, every CLI
 mode refuses before writing. The diagnostic names the file and parse error.

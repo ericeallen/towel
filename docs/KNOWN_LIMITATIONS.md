@@ -239,6 +239,14 @@ does not scan for them, issue reflection warnings or decline code to protect
 them. This exclusion applies to direct operations and callees, whether reached
 by their original names, aliases, decorators, ordinary calls or hooks.
 
+Users can explicitly protect a function with `# towel: no-extract` immediately
+after its signature's final colon. Its definition and nested bodies stay
+intact; unmarked code remains eligible. This does not freeze its absolute line
+position, its module or class namespace, or unmarked callers and callees.
+Protect the frames that matter: a callee reading its caller's frame may require
+marking that caller. Use a whole-file `--exclude` when broader source or
+namespace preservation is needed. See [Protect a function](CLI_GUIDE.md#protect-a-function).
+
 Examples include:
 
 - `locals()`, `globals()`, `vars()`, `dir()`, `eval` and `exec` whose behavior

@@ -61,6 +61,20 @@ from the helper. Towel skips trivial extractions that would add indirection
 without sharing real logic. After reviewing the result, use the
 [naming workflow](NAMING.md) to replace placeholders.
 
+## Protect a definition
+
+An exact `# towel: no-extract` comment immediately after a function signature's
+final colon makes that definition opaque to refactoring:
+
+```python
+def frame_sensitive(value):  # towel: no-extract
+    return inspect_caller(value)
+```
+
+Its definition and body, including nested bodies, stay intact. Other functions
+remain eligible. The [scope guide](CLI_GUIDE.md#protect-a-function) explains
+multiline signatures, methods, caller frames and whole-file exclusions.
+
 ## Comments and formatting
 
 Comments attached to moved code travel with it, including `# type: ignore`

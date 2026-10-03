@@ -20,6 +20,7 @@ is a defect to fix, not a limitation to document.
 - [Import names](#2026-09-22-import-names-come-from-the-program) · [Cross-module opt-in](#2026-09-23-cross-module-extraction-is-opt-in) · [Import refusals](#2026-09-24-an-import-problem-refuses-only-when-it-leaves-a-name-in-doubt)
 - [Typed baselines](#2026-09-23-a-typed-run-compares-against-its-baseline) · [Error accounting](#2026-09-24-an-error-is-accounted-for-by-the-originals-error-where-it-stood)
 - [Current reflection and instrumentation boundary](#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract) · [Earlier class-private boundary](#2026-09-26-class-private-extraction-follows-the-reflection-boundary) · [Superseded instrumentation exception](#2026-09-27-supported-body-instrumentation-is-protected-regardless-of-syntax)
+- [Scoped opt-out](#2026-10-03-users-can-protect-a-function-explicitly)
 - [Caller-side refinements](#2026-09-27-keep-caller-side-refinements-at-the-call-site) · [Typed performance](#2026-09-27-construction-changes-must-speed-up-typed-extraction)
 - [Unreadable input](#2026-09-25-a-file-that-does-not-parse-refuses-the-run) · [Scope constraints](#2026-09-27-recover-valid-blocks-without-moving-unrelated-scope-constraints)
 - [Complete preview and helper inputs](#complete-preview-and-generated-helper-inputs-september-27-2026) · [Annotation evaluation](#generated-annotations-must-not-add-evaluation-september-27-2026)
@@ -1435,6 +1436,34 @@ where source may move.
 its performance evidence and distinguishes it from earlier validation
 checkpoints; final release validation remains separately required.*
 
+
+## 2026-10-03: Users can protect a function explicitly
+
+The owner holds the 1.792 release until users have a scoped escape hatch for
+reflection-sensitive code. The October 2 preservation contract remains:
+reflection and self-instrumentation are not automatically detected or
+protected. This adds explicit user control.
+
+An exact `# towel: no-extract` comment immediately after the final signature
+colon protects a `def` or `async def`, including a method. The complete
+definition and nested bodies remain intact. No extraction, clustered
+replacement, helper reuse or insertion may bypass that protection, and
+later passes must retain it. The protected function is not a helper provider.
+Its source remains available for ordinary binding and type analysis.
+
+Unmarked code remains eligible. A function marker does not freeze the whole
+module or class namespace, absolute line positions, or unmarked callers and
+callees. Users must protect whichever frames their code observes; a warning
+or factory callee can depend on its caller's frame. Existing file/directory
+exclusions provide the broader escape hatch.
+
+Only the exact post-colon comment is a directive. Strings, parameter-line or
+preceding comments, inline-suite trailing comments and explanatory suffixes
+do not silently change the analysis scope. The [scope guide](CLI_GUIDE.md#protect-a-function)
+shows the syntax.
+
+*Status: implemented with focused checks. Independent consumer validation and
+the fresh release gates are required before the release hold can be lifted.*
 
 ## 2026-10-02: Annotation imports need an immutable false guard
 
