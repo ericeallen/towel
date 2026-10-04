@@ -486,8 +486,27 @@ def test_a_relatively_imported_class_gets_a_type_variable_end_to_end(tmp_path: P
     finally:
         oracle.close()
     helper = _helper(changed)
-    kinds = [_annotation(parameter.annotation) for parameter in helper.args.args]
+    kinds = [
+        _annotation(parameter.annotation)
+        for parameter in helper.args.posonlyargs + helper.args.args
+    ]
     assert kinds == ["list[_TowelT0] | None", "list[_TowelT0]"], changed
+    assert [parameter.arg for parameter in helper.args.posonlyargs] == ["__param_0", "__param_1"]
+    assert not helper.args.args
+    calls = [
+        node
+        for node in ast.walk(ast.parse(changed))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper.name
+    ]
+    assert [tuple(ast.unparse(argument) for argument in call.args) for call in calls] == [
+        ("upper_parts", "lower_parts"),
+        ("tail_parts", "fragments"),
+    ]
+    assert all(
+        not call.keywords and len(call.args) == len(helper.args.posonlyargs) for call in calls
+    )
     assert _annotation(helper.returns) == "list[_TowelT0] | None"
     assert path.read_text() == original
 
@@ -539,10 +558,31 @@ def test_the_callable_a_signature_writes_is_imported_end_to_end(tmp_path: Path) 
     helper = _helper(changed)
     kinds = [
         _annotation(parameter.annotation)
-        for parameter in helper.args.args
+        for parameter in helper.args.posonlyargs + helper.args.args
         if parameter.annotation is not None
     ]
     assert "_typing.Callable[[], dict[str, tuple[_TowelT0, ...]]]" in kinds, changed
+    assert [parameter.arg for parameter in helper.args.posonlyargs] == ["self", "__param_0"]
+    assert helper.args.posonlyargs[0].annotation is None
+    assert [parameter.arg for parameter in helper.args.args] == ["found", "group"]
+    calls = [
+        node
+        for node in ast.walk(ast.parse(changed))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == helper.name
+    ]
+    assert [tuple(ast.unparse(argument) for argument in call.args) for call in calls] == [
+        ("lambda: self._versions", "found", "group"),
+        ("lambda: self._names", "found", "group"),
+    ]
+    assert all(
+        isinstance(call.func, ast.Attribute)
+        and ast.unparse(call.func.value) == "self"
+        and not call.keywords
+        and len(call.args) + 1 == len(helper.args.posonlyargs + helper.args.args)
+        for call in calls
+    )
     assert _annotation(helper.returns) == "tuple[_TowelT0, ...]"
 
 
@@ -596,7 +636,10 @@ def test_an_unread_receiver_is_omitted_without_losing_type_correlations(tmp_path
     finally:
         oracle.close()
     helper = _helper(changed)
-    kinds = {parameter.arg: _annotation(parameter.annotation) for parameter in helper.args.args}
+    kinds = {
+        parameter.arg: _annotation(parameter.annotation)
+        for parameter in helper.args.posonlyargs + helper.args.args
+    }
     assert "self" not in kinds and "Any" not in changed, changed
     assert "_towel_typevar('_TowelT0', 'int', 'str')" in changed, changed
     probe = """
@@ -696,7 +739,10 @@ def test_a_thunk_returning_a_class_shares_its_variable_with_the_list_end_to_end(
     )
     changed = _extract_first(tmp_path / "elements.py")
     helper = _helper(changed)
-    kinds = [_annotation(parameter.annotation) for parameter in helper.args.args]
+    kinds = [
+        _annotation(parameter.annotation)
+        for parameter in helper.args.posonlyargs + helper.args.args
+    ]
     assert kinds[:2] == [
         "_typing.Callable[[], type[_TowelT0]]",
         "_typing.Callable[[], list[_TowelT0]]",
@@ -756,7 +802,7 @@ def test_returned_values_follow_the_arguments_they_are_end_to_end(tmp_path: Path
     helper = _helper(changed)
     kinds = {
         parameter.arg: _annotation(parameter.annotation)
-        for parameter in helper.args.args
+        for parameter in helper.args.posonlyargs + helper.args.args
         if parameter.arg != "self"
     }
     # Both values are evaluated at their original positions: Span is a module
@@ -875,7 +921,10 @@ def test_a_constraint_from_another_module_is_imported_for_the_checker_end_to_end
     direct = sources[str(tmp_path / "pkg" / "direct.py")]
     # The checker's import is private, so no star-importer of direct.py sees it.
     helper = _helper(direct)
-    assert _annotation(helper.args.args[0].annotation) == "DirectError | _LockError", direct
+    assert (
+        _annotation((helper.args.posonlyargs + helper.args.args)[0].annotation)
+        == "DirectError | _LockError"
+    ), direct
     assert _annotation(helper.returns) == "str", direct
     guarded = direct.split("if 0 > 1:", 1)[1].splitlines()[1]
     assert guarded.strip() == "from .lock import LockError as _LockError", direct
@@ -928,6 +977,9 @@ def test_sites_that_agree_are_offered_their_common_signature_end_to_end(tmp_path
     sources = _extract_across_modules(tmp_path / "pkg")
     host = next(text for text in sources.values() if "def __extracted_func" in text)
     helper = _helper(host)
-    kinds = {parameter.arg: _annotation(parameter.annotation) for parameter in helper.args.args}
+    kinds = {
+        parameter.arg: _annotation(parameter.annotation)
+        for parameter in helper.args.posonlyargs + helper.args.args
+    }
     assert kinds["state"] == "BlockState" and "Any" not in host, host
     assert _annotation(helper.returns) == "int"

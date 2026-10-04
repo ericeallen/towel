@@ -119,7 +119,10 @@ def _helpers(root: Path) -> List[ast.FunctionDef]:
 
 
 def _parameters(root: Path) -> List[List[str]]:
-    return [[argument.arg for argument in helper.args.args] for helper in _helpers(root)]
+    return [
+        [argument.arg for argument in helper.args.posonlyargs + helper.args.args]
+        for helper in _helpers(root)
+    ]
 
 
 def _calls(source: str) -> Dict[str, int]:
@@ -601,13 +604,17 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(
     )
     assert completed.returncode == 0, completed.stderr
     (helper,) = _helpers(tmp_path / "pkg")
+    parameters = helper.args.posonlyargs + helper.args.args
+    assert helper.args.posonlyargs
+    assert all(parameter.arg.startswith("__param_") for parameter in helper.args.posonlyargs)
+    assert not any(parameter.arg.startswith("__param_") for parameter in helper.args.args)
     annotations = {
         argument.arg: (
             argument.annotation.value
             if isinstance(argument.annotation, ast.Constant)
             else ast.unparse(argument.annotation)
         )
-        for argument in helper.args.args
+        for argument in parameters
         if argument.annotation is not None
     }
     reports = ast.parse((tmp_path / "pkg/reports.py").read_text())
@@ -618,9 +625,10 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(
         and isinstance(node.func, ast.Name)
         and node.func.id == helper.name
     )
+    assert not call.keywords and len(call.args) == len(parameters)
     lookups = {
         argument.body.id: annotations[parameter.arg]
-        for parameter, argument in zip(helper.args.args, call.args)
+        for parameter, argument in zip(parameters, call.args, strict=True)
         if isinstance(argument, ast.Lambda) and isinstance(argument.body, ast.Name)
     }
     assert lookups == {

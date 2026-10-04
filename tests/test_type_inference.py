@@ -170,8 +170,58 @@ def test_dry_infers_by_default_and_not_with_no_types(tmp_path: Path) -> None:
     common = ["--no-interactive", "--progress", "none", "--no-format"]
     assert invoke(["dry", str(source_dir), str(typed), *common]).status == 0
     assert invoke(["dry", str(source_dir), str(bare), *common, "--no-types"]).status == 0
-    assert "(items: list[int]) -> int:" in (typed / "m.py").read_text()
-    assert "(__param_0, items):" in (bare / "m.py").read_text()
+    typed_tree = ast.parse((typed / "m.py").read_text())
+    typed_helper = next(
+        node
+        for node in ast.walk(typed_tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "__extracted_func_0"
+    )
+    assert [parameter.arg for parameter in typed_helper.args.posonlyargs] == ["__param_0"]
+    assert (
+        typed_helper.args.vararg,
+        typed_helper.args.kwarg,
+        typed_helper.args.kwonlyargs,
+        typed_helper.args.defaults,
+    ) == (None, None, [], [])
+    multiplier_type = typed_helper.args.posonlyargs[0].annotation
+    assert multiplier_type is not None and ast.unparse(multiplier_type) == "int"
+    assert [parameter.arg for parameter in typed_helper.args.args] == ["items"]
+    items_type = typed_helper.args.args[0].annotation
+    assert isinstance(items_type, ast.Constant) and items_type.value == "list[int]"
+    assert typed_helper.returns is not None and ast.unparse(typed_helper.returns) == "int"
+    bare_tree = ast.parse((bare / "m.py").read_text())
+    bare_helper = next(
+        node
+        for node in ast.walk(bare_tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "__extracted_func_0"
+    )
+    parameters = bare_helper.args.posonlyargs + bare_helper.args.args
+    assert (
+        bare_helper.args.vararg,
+        bare_helper.args.kwarg,
+        bare_helper.args.kwonlyargs,
+        bare_helper.args.defaults,
+    ) == (None, None, [], [])
+    assert [parameter.arg for parameter in bare_helper.args.posonlyargs] == ["__param_0"]
+    assert [parameter.arg for parameter in bare_helper.args.args] == ["items"]
+    assert all(parameter.annotation is None for parameter in parameters)
+    assert bare_helper.returns is None
+    for tree, helper in ((typed_tree, typed_helper), (bare_tree, bare_helper)):
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == helper.name
+        ]
+        assert [tuple(ast.unparse(argument) for argument in call.args) for call in calls] == [
+            ("2", "items"),
+            ("3", "items"),
+        ]
+        assert all(
+            not call.keywords and len(call.args) == len(helper.args.posonlyargs + helper.args.args)
+            for call in calls
+        )
 
 
 def test_non_identifier_package_names_never_reach_an_annotation() -> None:

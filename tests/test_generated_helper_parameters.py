@@ -50,7 +50,7 @@ def test_parameter_pruning_respects_runtime_scope_and_binding(body: str, needed:
         is_value_producing=True,
     )
     assert ("value" in order) is needed
-    assert [arg.arg for arg in helper.args.args] == list(order)
+    assert [arg.arg for arg in helper.args.posonlyargs + helper.args.args] == list(order)
 
 
 def test_parent_attribute_difference_does_not_spend_a_child_parameter() -> None:
@@ -77,7 +77,28 @@ def test_free_name_captured_only_in_substituted_expression_is_not_passed(body: s
     )
     assert "env" not in order
     assert "value" in order, "The thunk is only the callee; its argument remains in the helper"
-    assert [arg.arg for arg in helper.args.args] == list(order)
+    assert [arg.arg for arg in helper.args.posonlyargs + helper.args.args] == list(order)
+    assert [arg.arg for arg in helper.args.posonlyargs] == ["__param_0"]
+    assert [arg.arg for arg in helper.args.args] == ["value"]
+    for index, callee in enumerate(
+        (body.removeprefix("return ").removesuffix("(value)"), "env.third")
+    ):
+        statement = HygienicExtractor().generate_call(
+            function_name=helper.name,
+            block_idx=index,
+            substitution=substitution,
+            param_order=order,
+            free_variables={"env", "value"},
+            is_value_producing=True,
+        )
+        assert isinstance(statement, ast.Return) and isinstance(statement.value, ast.Call)
+        call = statement.value
+        assert not call.keywords
+        assert [ast.unparse(argument) for argument in call.args] == [
+            f"lambda *args, **kwargs: {callee}(*args, **kwargs)",
+            "value",
+        ]
+        assert len(call.args) == len(helper.args.posonlyargs + helper.args.args)
 
 
 def test_unused_thunk_inputs_disappear_without_changing_effects(tmp_path: Path) -> None:
@@ -115,4 +136,6 @@ print(first(Config(), 2), second(Config(), 4))
             for node in ast.walk(statement)
             if isinstance(node, ast.Name)
         }
-        assert all(arg.arg in referenced for arg in helper.args.args), ast.unparse(helper)
+        assert all(
+            arg.arg in referenced for arg in helper.args.posonlyargs + helper.args.args
+        ), ast.unparse(helper)

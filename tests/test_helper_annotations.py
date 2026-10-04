@@ -197,10 +197,32 @@ def test_literals_take_their_builtin_type_and_bool_is_not_int(tmp_path: Path) ->
             print(items[:limit], flag)
         """,
     )
+    helper = _helper(result)
+    parameters = helper.args.posonlyargs + helper.args.args
     assert (
-        _signature(result)
-        == "def __extracted_func_0(__param_0: int, __param_1: bool, items: list) -> None:"
-    )
+        helper.args.vararg,
+        helper.args.kwarg,
+        helper.args.kwonlyargs,
+        helper.args.defaults,
+    ) == (None, None, [], [])
+    assert [parameter.arg for parameter in helper.args.posonlyargs] == ["__param_0", "__param_1"]
+    assert [parameter.arg for parameter in helper.args.args] == ["items"]
+    assert [
+        ast.unparse(parameter.annotation) for parameter in parameters if parameter.annotation
+    ] == ["int", "bool", "list"]
+    assert helper.returns is not None and ast.unparse(helper.returns) == "None"
+    calls = [
+        node
+        for node in ast.walk(ast.parse(result))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper.name
+    ]
+    assert [tuple(ast.unparse(argument) for argument in call.args) for call in calls] == [
+        ("10", "True", "items"),
+        ("20", "False", "items"),
+    ]
+    assert all(not call.keywords and len(call.args) == len(parameters) for call in calls)
 
 
 def test_declared_return_type_is_used_when_every_site_returns_the_call(tmp_path: Path) -> None:
