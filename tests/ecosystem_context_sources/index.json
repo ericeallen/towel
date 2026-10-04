@@ -1,0 +1,283 @@
+{
+  "provenance": "Exact pinned upstream source bytes retained in Q static input capture; representative source contracts, not current runtime CI outcomes.",
+  "projects": [
+    {
+      "name": "markdown-it-py",
+      "pin": "a5950caef3434ed83045b43311aefcf7e0578aa3",
+      "declared_pin": "a5950caef3434ed83045b43311aefcf7e0578aa3",
+      "selectors": [
+        {
+          "kind": "extra",
+          "name": "testing"
+        },
+        {
+          "kind": "extra",
+          "name": "linkify"
+        }
+      ],
+      "files": [
+        "pyproject.toml",
+        ".pre-commit-config.yaml"
+      ],
+      "pin_sources": {
+        "ruff": [
+          ".pre-commit-config.yaml",
+          "0.16.6"
+        ],
+        "mypy": [
+          ".pre-commit-config.yaml",
+          "2.3.1"
+        ]
+      }
+    },
+    {
+      "name": "starlette",
+      "pin": "03f12b7fcf0a3e21a8da648ca0900c79472e9efe",
+      "declared_pin": "03f12b7fcf0a3e21a8da648ca0900c79472e9efe",
+      "selectors": [
+        {
+          "kind": "group",
+          "name": "dev"
+        },
+        {
+          "kind": "group",
+          "name": "docs"
+        }
+      ],
+      "files": [
+        "pyproject.toml",
+        "uv.lock"
+      ],
+      "pin_sources": {
+        "mypy": [
+          "uv.lock",
+          "2.3.1"
+        ],
+        "ruff": [
+          "uv.lock",
+          "0.16.5"
+        ]
+      }
+    },
+    {
+      "name": "jinja2",
+      "pin": "5ef70112a1ff19c05324ff889dd30405b1002044",
+      "declared_pin": "5ef70112a1ff19c05324ff889dd30405b1002044",
+      "selectors": [
+        {
+          "kind": "group",
+          "name": "dev"
+        },
+        {
+          "kind": "group",
+          "name": "pre-commit"
+        },
+        {
+          "kind": "group",
+          "name": "tests"
+        },
+        {
+          "kind": "group",
+          "name": "typing"
+        }
+      ],
+      "files": [
+        "pyproject.toml",
+        "uv.lock",
+        ".pre-commit-config.yaml"
+      ],
+      "pin_sources": {
+        "mypy": [
+          "uv.lock",
+          "1.15.0"
+        ],
+        "pyright": [
+          "uv.lock",
+          "1.1.401"
+        ],
+        "ruff": [
+          "uv.lock",
+          "0.11.11"
+        ]
+      }
+    },
+    {
+      "name": "rich",
+      "pin": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+      "declared_pin": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f",
+      "selectors": [
+        {
+          "kind": "poetry-legacy",
+          "name": "dev-dependencies"
+        }
+      ],
+      "files": [
+        "pyproject.toml",
+        "poetry.lock",
+        ".pre-commit-config.yaml"
+      ],
+      "pin_sources": {
+        "mypy": [
+          "poetry.lock",
+          "1.14.1"
+        ],
+        "black": [
+          "poetry.lock",
+          "22.12.0"
+        ],
+        "isort": [
+          ".pre-commit-config.yaml",
+          "5.12.0"
+        ]
+      }
+    },
+    {
+      "name": "networkx",
+      "pin": "8977f1cfbae61ed7f33a33d19a40fd2c3f16c05c",
+      "declared_pin": "8977f1cfbae61ed7f33a33d19a40fd2c3f16c05c",
+      "selectors": [
+        {
+          "kind": "extra",
+          "name": "default"
+        },
+        {
+          "kind": "extra",
+          "name": "test"
+        }
+      ],
+      "files": [
+        "pyproject.toml",
+        ".pre-commit-config.yaml"
+      ],
+      "pin_sources": {
+        "ruff": [
+          ".pre-commit-config.yaml",
+          "0.15.0"
+        ]
+      }
+    },
+    {
+      "name": "tenacity",
+      "pin": "3e58094d3bc414975aad9eadf343a32bdb3b89b3",
+      "declared_pin": "3e58094d3bc414975aad9eadf343a32bdb3b89b3",
+      "selectors": [
+        {
+          "kind": "group",
+          "name": "dev"
+        }
+      ],
+      "files": [
+        "pyproject.toml"
+      ],
+      "pin_sources": {}
+    },
+    {
+      "name": "bottle",
+      "pin": "90bd4aa7439419186a85446f2aa05c23e3ba7103",
+      "declared_pin": "90bd4aa7439419186a85446f2aa05c23e3ba7103",
+      "selectors": [
+        {
+          "kind": "extra",
+          "name": "dev"
+        }
+      ],
+      "files": [
+        "pyproject.toml"
+      ],
+      "pin_sources": {}
+    },
+    {
+      "name": "soupsieve",
+      "pin": "4caaf89344dc9a9baaedb7f0ab04d45526e61293",
+      "declared_pin": "4caaf89344dc9a9baaedb7f0ab04d45526e61293",
+      "selectors": [
+        {
+          "kind": "hatch-env",
+          "name": "dev"
+        }
+      ],
+      "files": [
+        "pyproject.toml"
+      ],
+      "pin_sources": {}
+    },
+    {
+      "name": "httpx",
+      "pin": "b5addb64f0161ff6bfe94c124ef76f6a1fba5254",
+      "declared_pin": "b5addb64f0161ff6bfe94c124ef76f6a1fba5254",
+      "selectors": [
+        {
+          "kind": "extra",
+          "name": "brotli"
+        },
+        {
+          "kind": "extra",
+          "name": "cli"
+        },
+        {
+          "kind": "extra",
+          "name": "http2"
+        },
+        {
+          "kind": "extra",
+          "name": "socks"
+        },
+        {
+          "kind": "extra",
+          "name": "zstd"
+        }
+      ],
+      "files": [
+        "pyproject.toml"
+      ],
+      "pin_sources": {
+        "mypy": [
+          "requirements.txt",
+          "1.17.1"
+        ],
+        "ruff": [
+          "requirements.txt",
+          "0.12.11"
+        ]
+      }
+    },
+    {
+      "name": "towel-main",
+      "pin": "088a4c7c7992aa1ff59d90cc88e083ccf157b82d",
+      "declared_pin": "HEAD",
+      "selectors": [
+        {
+          "kind": "extra",
+          "name": "dev"
+        }
+      ],
+      "files": [
+        "pyproject.toml",
+        "uv.lock",
+        ".pre-commit-config.yaml"
+      ],
+      "pin_sources": {
+        "mypy": [
+          "uv.lock",
+          "2.3.1"
+        ],
+        "pyright": [
+          "uv.lock",
+          "1.1.414"
+        ],
+        "black": [
+          "uv.lock",
+          "26.5.1"
+        ],
+        "isort": [
+          "uv.lock",
+          "9.0.1"
+        ],
+        "ruff": [
+          "uv.lock",
+          "0.16.8"
+        ]
+      }
+    }
+  ]
+}

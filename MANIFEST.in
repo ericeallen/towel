@@ -1,6 +1,7 @@
 include LICENSE README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md justfile .flake8 .pre-commit-config.yaml uv.lock
 recursive-include src *.py
 recursive-include tests *.py *.pynew *.md *.toml *.ini *.yml *.yaml
+recursive-include tests/ecosystem_context_sources *
 recursive-include tests/release_evidence *.txt *.json *.gz
 include .github/workflows/ci.yml .github/workflows/ecosystem.yml
 recursive-include test_examples *.py *.md

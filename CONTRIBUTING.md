@@ -224,6 +224,34 @@ check (`scripts/ecosystem_check.py`) on all 141 manifest entries. It tests each
 project before and after refactoring a copy. Revisions are pinned except for
 the deliberate check of Towel's current `main`, whose resolved commit is recorded.
 
+The manifest's test requirements must cover the pinned project's selected
+suite, including CI-selected optional libraries and pytest plugins. For example,
+Tabulate's test workflow installs its NumPy, pandas and wide-character support;
+MarkdownIt's test workflow selects its `testing` and `linkify` extras. An
+all-skipped optional test family or an unknown pytest configuration option does
+not establish that this context is complete. Keep upstream constraints and
+record actual installed versions; an unpinned dependency is not an upstream pin.
+The harness does not automatically install every testing, development or docs
+group. Preserve all dependencies in an explicitly selected broad development
+extra or default group, even when they include documentation and orchestration
+tools. Name the chosen context: installing outer uv defaults alongside an inner
+tox test group is a broader corpus environment, not the original single CI
+testenv. Independent contexts with incompatible constraints remain separate.
+One selected context does not claim coverage of the whole CI matrix.
+
+Peewee uses its documented local/default SQLite profile and `runtests.py`.
+Optional features can skip when their modules are absent; CPython may still
+build its default extensions from shipped C sources. Its broader CI service,
+client, extension and conditional Git dependency setup is a separate context.
+Record the actual installed extension and driver state when reviewing its run.
+
+New weak tool requirements must preserve a compatible selected lock, hook or
+requirements-file version. The manifest records those original choices; after
+installation, the environment report calls them project-installed tools.
+A tool incompatible with Towel's extras is replaced as those extras require,
+and the report records the override. That final version is an explicit
+variation from the upstream formatter/checker environment.
+
 Weekly CI explicitly uses `--no-types`: the manifest supplies runtime test
 dependencies, not every project's complete typing environment. Omit the flag
 to retain Towel's default typing policy; the harness never disables checking

@@ -37,92 +37,205 @@
 
 [[project]]
 name = "tabulate"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/astanin/python-tabulate.git"
 rev = "268615a5c27dc40e5c22454c07b44d5c50410da0"
 package = "tabulate"
+deps = [
+    "numpy",
+    "pandas",
+    "pytest",
+    "pytest-cov",
+    "wcwidth>=0.6.0",
+]
 
 [[project]]
 name = "toolz"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/pytoolz/toolz.git"
 rev = "568c2b8393973cd172a466546c9d95779c452438"
 package = "toolz"
+deps = [
+    "pytest",
+]
 
 [[project]]
 name = "boltons"
+# Test context: Selected group:dev.
 url = "https://github.com/mahmoud/boltons.git"
 rev = "961dcff3f42e73b245aef65e377fe82763b257bb"
 package = "boltons"
+deps = [
+    "pytest<8,>=7; python_version < \"3.8\"",
+    "pytest>=8; python_version >= \"3.8\"",
+]
 expect_broken = "frame-relative: namedtuple and namedlist derive class.__module__ from sys._getframe(1), which sees the extracted helper's caller rather than the factory's caller"
 known_failures = ["tests/test_namedutils.py::test_namedlist_pickle", "tests/test_namedutils.py::test_namedtuple_pickle"]
 
 [[project]]
 name = "pyparsing"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/pyparsing/pyparsing.git"
 rev = "efd56db4e59f36b1673ce0eb0823e3afaa9d1201"
 package = "pyparsing"
-deps = ["railroad-diagrams", "jinja2"]
+deps = [
+    "jinja2",
+    "matplotlib; implementation_name != \"pypy\" and python_version < \"3.15\"",
+    "pytest",
+    "railroad-diagrams",
+]
 expect_broken = "frame-relative: ParseException.explain(depth=1) counts traceback frames, and a raise moved into a helper adds one"
 known_failures = ["::testMiscellaneousExceptionBits"]
 
 [[project]]
 name = "markdown-it-py"
+# Test context: Selected extra:testing, extra:linkify.
 url = "https://github.com/executablebooks/markdown-it-py.git"
 rev = "a5950caef3434ed83045b43311aefcf7e0578aa3"
 package = "markdown_it"
-deps = ["pytest-regressions", "mdurl", "linkify-it-py", "psutil", "pytest-benchmark"]
+deps = [
+    "coverage",
+    "flit_core<5,>=3.4",
+    "linkify-it-py<3,>=1",
+    "mdurl",
+    "psutil",
+    "pytest",
+    "pytest-benchmark",
+    "pytest-cov",
+    "pytest-regressions",
+    "pytest-timeout",
+    "requests",
+]
 
 [[project]]
 name = "more-itertools"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/more-itertools/more-itertools.git"
 rev = "9ed3dbb0ae527230cd156d91d0af305478558fba"
 package = "more_itertools"
+deps = [
+    "Sphinx",
+    "coverage",
+    "flit<5,>=4.0.2",
+    "flit_core<5,>=4.0.2",
+    "furo>=2025.07.19",
+    "mypy",
+    "ruff",
+    "setuptools",
+    "twine",
+    "wheel",
+]
 test = ["{python}", "-m", "unittest"]
 
 [[project]]
 name = "humanize"
+# Test context: Selected extra:tests.
 url = "https://github.com/python-humanize/humanize.git"
 rev = "3201e702ed7eae506f793fad0aec204f387aeb4c"
 package = "src/humanize"
 pythonpath = "src"
-deps = ["freezegun", "pytest-benchmark"]
+deps = [
+    "freezegun",
+    "pytest-benchmark",
+    "pytest-codspeed",
+    "pytest-cov",
+    "pytest>=9",
+]
 test = ["{python}", "-m", "pytest", "-q", "--benchmark-disable"]
 
 [[project]]
 name = "attrs"
+# Test context: Selected group:tests.
 url = "https://github.com/python-attrs/attrs.git"
 rev = "8f767776326faaed11e6c2974798787f6e19b343"
 package = "src/attr"
 pythonpath = "src"
-deps = ["hypothesis", "pytest-xdist"]
+deps = [
+    "cloudpickle; platform_python_implementation == \"CPython\"",
+    "hypothesis",
+    "pympler",
+    "pytest-xdist[psutil]",
+    "pytest>9",
+]
 
 [[project]]
 name = "jinja2"
+# Test context: Declared outer/default tool context plus ordinary inner test requirements.
+# Original selected tool pins: mypy 1.15.0 (uv.lock), pyright 1.1.401 (uv.lock), ruff 0.11.11 (uv.lock).
 url = "https://github.com/pallets/jinja.git"
 rev = "5ef70112a1ff19c05324ff889dd30405b1002044"
 package = "src/jinja2"
 pythonpath = "src"
-deps = ["markupsafe", "trio"]
+deps = [
+    "markupsafe",
+    "mypy",
+    "mypy==1.15.0",
+    "pre-commit",
+    "pre-commit-uv",
+    "pyright",
+    "pyright==1.1.401",
+    "pytest",
+    "pytest-timeout",
+    "ruff",
+    "ruff==0.11.11",
+    "tox",
+    "tox-uv",
+    "trio",
+]
 
 [[project]]
 name = "click"
+# Test context: Declared outer/default tool context plus ordinary inner test requirements.
+# Original selected tool pins: ruff 0.15.9 (uv.lock).
 url = "https://github.com/pallets/click.git"
 rev = "6aabf099bfdd4c1e75fe8d0e0d4241372b988ab1"
 package = "src/click"
+deps = [
+    "pytest",
+    "ruff",
+    "ruff==0.15.9",
+    "tox",
+    "tox-uv",
+]
 pythonpath = "src"
 
 [[project]]
 name = "marshmallow"
+# Test context: Declared outer/default tool context plus ordinary inner test requirements.
+# Original selected tool pins: mypy 2.3.1 (uv.lock).
 url = "https://github.com/marshmallow-code/marshmallow.git"
 rev = "c54aa7292a09259e186fa8c20559c5df8aeb27f3"
 package = "src/marshmallow"
 pythonpath = "src"
-deps = ["pytz", "simplejson"]
+deps = [
+    "mypy==2.3.1",
+    "mypy>=1.14.1",
+    "pre-commit<5.0,>=3.5",
+    "pytest",
+    "pytz",
+    "simplejson",
+    "tox",
+    "tox-uv",
+    "types-simplejson",
+]
 
 [[project]]
 name = "sqlparse"
+# Test context: Selected group:dev.
+# Original selected tool pins: ruff 0.15.13 (uv.lock).
 url = "https://github.com/andialbrecht/sqlparse.git"
 rev = "60cdc649726bf1bc4f1b336050560b336da715ec"
 package = "sqlparse"
+deps = [
+    "build",
+    "coverage",
+    "furo",
+    "hatch>=1.18.0",
+    "pytest",
+    "ruff",
+    "ruff==0.15.13",
+    "sphinx",
+]
 
 [[project]]
 name = "tomli"
@@ -133,54 +246,101 @@ pythonpath = "src"
 
 [[project]]
 name = "packaging"
+# Test context: Selected group:test.
 url = "https://github.com/pypa/packaging.git"
 rev = "10590c194edb33c82f84a127883d6097c56b7840"
 package = "src/packaging"
 pythonpath = "src"
-deps = ["pretend", "hypothesis", "tomli_w", "pip"]
+deps = [
+    "coverage[toml]>=7.2.0",
+    "hypothesis>=6.0.0",
+    "pip>=21.1",
+    "pretend",
+    "pytest>=6.2.0",
+    "tomli; python_version < \"3.11\"",
+    "tomli_w",
+]
 
 [[project]]
 name = "pluggy"
+# Test context: Selected group:testing.
 url = "https://github.com/pytest-dev/pluggy.git"
 rev = "0744fd993b0392a609375dbbbc8346bbd8a1b198"
 package = "src/pluggy"
+deps = [
+    "coverage",
+    "pytest",
+    "pytest-benchmark",
+]
 pythonpath = "src"
 expect_broken = "frame-relative: _verify_all_args_are_provided warns with stacklevel through the extracted helper"
 known_failures = ["testing/test_details.py::test_not_all_arguments_warning_points_at_the_caller"]
 
 [[project]]
 name = "cachetools"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/tkem/cachetools.git"
 rev = "4500e3d04288738d25acbb4973eb3c3e1bf41db9"
 package = "src/cachetools"
+deps = [
+    "pytest",
+    "pytest-cov",
+]
 pythonpath = "src"
 
 [[project]]
 name = "sortedcontainers"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/grantjenks/python-sortedcontainers.git"
 rev = "3ac358631f58c1347f1d6d2d92784117db0f38ed"
 package = "src/sortedcontainers"
+deps = [
+    "pytest",
+    "pytest-cov",
+]
 pythonpath = "src"
 
 [[project]]
 name = "bidict"
+# Test context: Selected group:test.
 url = "https://github.com/jab/bidict.git"
 rev = "61e98274c4b3f041344a2a818315ab2b57c0c358"
 package = "bidict"
-deps = ["hypothesis", "pytest-xdist"]
+deps = [
+    "coverage",
+    "hypothesis",
+    "pytest",
+    "pytest-benchmark",
+    "pytest-sphinx",
+    "pytest-xdist",
+    "sortedcollections",
+    "sortedcontainers",
+    "ty>=0.0.72",
+    "typing_extensions",
+]
 
 [[project]]
 name = "pyflakes"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/PyCQA/pyflakes.git"
 rev = "52cb7296b4bb52c0a0e8b51c7729a55fa0d0a808"
 package = "pyflakes"
+deps = [
+    "flake8==6.1.0",
+]
 
 [[project]]
 name = "pycodestyle"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/PyCQA/pycodestyle.git"
 rev = "d6c38543a95c3adec7958fc659f4081972a3f1d1"
 exclude = ["data"]
 package = "pycodestyle.py"
+deps = [
+    "covdefaults",
+    "coverage",
+    "pytest",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
@@ -191,54 +351,143 @@ package = "pathspec"
 
 [[project]]
 name = "wcwidth"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/jquast/wcwidth.git"
 rev = "17986f51ddea489b1c83bff85169e4521a8fb080"
 package = "wcwidth"
-deps = ["pytest-cov"]
+deps = [
+    "cffi==1.17.1",
+    "coverage==7.10.7",
+    "exceptiongroup==1.3.1",
+    "importlib-metadata==8.7.0",
+    "iniconfig==2.1.0",
+    "markdown-it-py==3.0.0",
+    "mdurl==0.1.2",
+    "packaging==25.0",
+    "pluggy==1.6.0",
+    "pycparser==2.23",
+    "pygments==2.19.2",
+    "pytest-codspeed==5.0.3",
+    "pytest-cov==7.1.0",
+    "pytest==8.4.2",
+    "rich==15.0.0",
+    "tomli==2.2.1",
+    "typing-extensions==4.15.0",
+    "zipp==3.23.0",
+]
 
 [[project]]
 name = "idna"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/kjd/idna.git"
 rev = "cd1739200f3bf07871372bcb31c271de136eaccf"
 package = "idna"
-deps = ["hypothesis"]
+deps = [
+    "attrs==26.1.0",
+    "coverage==7.10.7",
+    "exceptiongroup==1.3.1",
+    "hypothesis==6.141.1",
+    "iniconfig==2.1.0",
+    "packaging==26.2",
+    "pluggy==1.5.0",
+    "pytest==8.3.5",
+    "sortedcontainers==2.4.0",
+    "tomli==2.4.1",
+    "typing-extensions==4.13.2",
+]
 
 [[project]]
 name = "funcy"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/Suor/funcy.git"
 rev = "5419a8f8790c03ef713ab6cc23e679ad1c5ab3e4"
 package = "funcy"
-deps = ["whatever"]
+deps = [
+    "more-itertools==4.0.0; python_version == \"3.5\"",
+    "pytest==3.9.3; python_version <= \"3.5\"",
+    "pytest==6.2.5; python_version == \"3.6\"",
+    "pytest==7.4.3; python_version >= \"3.7\"",
+    "typing; python_version == \"3.4\"",
+    "whatever==0.7",
+]
 
 [[project]]
 name = "glom"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/mahmoud/glom.git"
 rev = "fd70d3051a6a1bcb5152ec2d8e2cdc8e852f95e6"
 package = "glom"
-deps = ["attrs", "face", "boltons", "pyyaml"]
+deps = [
+    "attrs==24.2.0",
+    "boltons==24.1.0",
+    "cachetools==5.5.0",
+    "chardet==5.2.0",
+    "colorama==0.4.6",
+    "coverage==7.2.7",
+    "distlib==0.3.9",
+    "exceptiongroup==1.2.2",
+    "face==24.0.0",
+    "filelock==3.12.2",
+    "importlib-metadata==6.7.0",
+    "iniconfig==2.0.0",
+    "packaging==24.0",
+    "platformdirs==4.0.0",
+    "pluggy==1.2.0",
+    "pyproject-api==1.5.3",
+    "pytest==7.4.4",
+    "pyyaml==6.0.1",
+    "tomli==2.0.1",
+    "tox==4.8.0",
+    "typing-extensions==4.7.1",
+    "virtualenv==20.26.6",
+    "zipp==3.15.0",
+]
 expect_broken = "frame-relative: test_error.py asserts literal traceback frames, and the helper adds one"
 known_failures = ["glom/test/test_error.py::"]
 
 [[project]]
 name = "natsort"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/SethMMorton/natsort.git"
 rev = "e2328c20b62253bea75227b62763ea83874171dc"
 package = "natsort"
-deps = ["hypothesis", "pytest-mock"]
+deps = [
+    "coverage",
+    "hypothesis",
+    "pytest",
+    "pytest-cov",
+    "pytest-mock",
+]
 
 [[project]]
 name = "tenacity"
+# Test context: Selected group:dev.
 url = "https://github.com/jd/tenacity.git"
 rev = "3e58094d3bc414975aad9eadf343a32bdb3b89b3"
 package = "tenacity"
-deps = ["typeguard", "tornado"]
+deps = [
+    "mypy==2.3.1",
+    "poethepoet",
+    "pytest",
+    "reno",
+    "ruff==0.16.5",
+    "sphinx",
+    "tornado>=6.0",
+    "trio",
+    "typeguard",
+]
 
 [[project]]
 name = "python-slugify"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/un33k/python-slugify.git"
 rev = "fee5aa338d3bd7a9e36c269e33b496a7848edc44"
 package = "slugify"
-deps = ["text-unidecode"]
+deps = [
+    "coverage[toml]>=7",
+    "pytest>=8",
+    "text-unidecode",
+]
 
 [[project]]
 name = "colorama"
@@ -248,74 +497,142 @@ package = "colorama"
 
 [[project]]
 name = "itsdangerous"
+# Test context: Selected group:tests.
 url = "https://github.com/pallets/itsdangerous.git"
 rev = "672971d66a2ef9f85151e53283113f33d642dabd"
 package = "src/itsdangerous"
 pythonpath = "src"
-deps = ["freezegun"]
+deps = [
+    "freezegun",
+    "pytest",
+]
 
 [[project]]
 name = "pygments"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/pygments/pygments.git"
 rev = "38f426a6b1cd4ffc6429f5808031b7c62ea57b1f"
 exclude = ["examplefiles"]
 package = "pygments"
-deps = ["wcag-contrast-ratio"]
+deps = [
+    "pytest-cov",
+    "pytest-randomly",
+    "pytest~=8.2",
+    "wcag-contrast-ratio",
+]
 
 [[project]]
 name = "voluptuous"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/alecthomas/voluptuous.git"
 rev = "44593ce7c330faf9418252c4b5448f4736144a7f"
 package = "voluptuous"
+deps = [
+    "coverage>=3.0",
+    "pytest",
+    "pytest-cov",
+]
 
 [[project]]
 name = "tomlkit"
+# Test context: Selected poetry-group:dev.
 url = "https://github.com/python-poetry/tomlkit.git"
 rev = "4b38becd75405e0f38ef3e47e9839eb407591c8a"
 package = "tomlkit"
-deps = ["pyyaml"]
+deps = [
+    "PyYAML<7.0.0,>=6.0",
+    "Sphinx<5.0.0,>=4.3.2",
+    "furo<2023.0.0,>=2022.9.29",
+    "mypy==1.19.1",
+    "pre-commit<3.0.0,>=2.20.0",
+    "pytest-cov<5.0.0,>=4.0.0",
+    "pytest<8.0.0,>=7.2.0",
+]
 prepare = "git submodule update --init --quiet"
 
 [[project]]
 name = "oauthlib"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/oauthlib/oauthlib.git"
 rev = "40b0ab56da3682c2484a4b78bbff309f8025d950"
 package = "oauthlib"
-deps = ["pytest-cov", "pytest-subtests", "pyjwt", "cryptography", "blinker"]
+deps = [
+    "blinker==1.4",
+    "cryptography>=3.0.0",
+    "pyjwt<3,>=2.0.0",
+    "pytest-cov>=2.6",
+    "pytest-subtests",
+    "pytest>=4.0",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "parso"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/davidhalter/parso.git"
 rev = "7f5b142b54b2a04bcb4df358175d079e046c5bf7"
 exclude = ["normalizer_issue_files"]
 package = "parso"
-deps = ["docopt"]
+deps = [
+    "docopt",
+    "pytest",
+]
 test = ["{python}", "-m", "pytest", "-q", "test"]
 
 [[project]]
 name = "platformdirs"
+# Test context: Selected group:test.
 url = "https://github.com/tox-dev/platformdirs.git"
 rev = "c5ef1edbb41eb7ad8aea2e75627ae474e796484c"
 package = "src/platformdirs"
 pythonpath = "src"
-deps = ["appdirs", "pytest-mock"]
+deps = [
+    "appdirs==1.4.4",
+    "covdefaults>=2.3",
+    "diff-cover>=10.2",
+    "pytest-cov>=7",
+    "pytest-mock>=3.15.1",
+    "pytest>=9.0.2",
+]
 
 [[project]]
 name = "filelock"
+# Test context: Selected group:test.
 url = "https://github.com/tox-dev/filelock.git"
 rev = "4efd93e0482e8095a0b6949fb337206e7f67495d"
 package = "src/filelock"
 pythonpath = "src"
-deps = ["pytest-timeout", "pytest-mock", "virtualenv", "pytest-asyncio"]
+deps = [
+    "covdefaults>=2.3",
+    "diff-cover>=10.2",
+    "exceptiongroup>=1.2; python_version < \"3.11\"",
+    "pytest-asyncio>=1.3",
+    "pytest-cov>=7.1",
+    "pytest-mock>=3.15.1",
+    "pytest-randomly>=3.16",
+    "pytest-timeout>=2.4",
+    "pytest>=9.0.3",
+    "virtualenv>=21.2",
+]
 
 [[project]]
 name = "python-dateutil"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/dateutil/dateutil.git"
 rev = "48bd1af97e71baf8e96fce5b663d589caac8f147"
 package = "src/dateutil"
 pythonpath = "src"
-deps = ["freezegun", "hypothesis", "six", "pytest-cov", "pytest<9"]
+deps = [
+    "attrs!=21.1.0",
+    "build>=0.3.0; python_version >= \"3.6\"",
+    "coverage",
+    "freezegun; python_version != \"3.3\"",
+    "hypothesis>=3.30",
+    "mock; python_version < \"3.0\"",
+    "pytest-cov>=2.0.0",
+    "pytest>=3.0; python_version != \"3.3\"",
+    "six",
+]
 # tests/property imports the IANA tz database that `updatezinfo.py` downloads
 # and builds, which this corpus does not run: it needs the network at corpus
 # time and runs before a project's dependencies are installed. Without it the
@@ -328,23 +645,38 @@ test = [
 
 [[project]]
 name = "decorator"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/micheles/decorator.git"
 rev = "2322c7bfdbbafc4fd3f7f37b9860001ff82bf66f"
 pythonpath = "src"
 package = "src/decorator"
+deps = [
+    "codespell",
+    "flake8",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests/test.py"]
 
 [[project]]
 name = "schema"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/keleshev/schema.git"
 rev = "310a1239b62f500284ce3bd91b7dabf70467f23e"
 package = "schema"
+deps = [
+    "mock",
+    "mypy",
+    "pytest",
+]
 
 [[project]]
 name = "wrapt"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/GrahamDumpleton/wrapt.git"
 rev = "f1586a5e48e79024e45bf9139b6a4293798aee1b"
 package = "src/wrapt"
+deps = [
+    "pytest",
+]
 pythonpath = "src"
 # Installing compiles `wrapt._wrappers`, which every test then runs in place of
 # the Python wrappers; they run only with WRAPT_DISABLE_EXTENSIONS set.
@@ -354,85 +686,222 @@ install = false
 
 [[project]]
 name = "flask"
+# Test context: Selected group:tests.
 url = "https://github.com/pallets/flask.git"
 rev = "d73fa1cdcbd8b1465c151db8924ba58b1dd14e35"
 package = "src/flask"
 pythonpath = "src"
-deps = ["asgiref", "python-dotenv"]
+deps = [
+    "asgiref",
+    "pytest",
+    "python-dotenv",
+]
 
 [[project]]
 name = "werkzeug"
+# Test context: Selected group:tests.
 url = "https://github.com/pallets/werkzeug.git"
 rev = "6a604e005d95af8129ee314863be8ad6b240dead"
 package = "src/werkzeug"
 pythonpath = "src"
-deps = ["cryptography", "ephemeral-port-reserve", "pytest-timeout", "watchdog"]
+deps = [
+    "cffi",
+    "cryptography",
+    "ephemeral-port-reserve",
+    "pytest",
+    "pytest-timeout",
+    "watchdog",
+]
 
 [[project]]
 name = "httpx"
+# Test context: Selected extra:brotli, extra:cli, extra:http2, extra:socks, extra:zstd.
 url = "https://github.com/encode/httpx.git"
 rev = "b5addb64f0161ff6bfe94c124ef76f6a1fba5254"
 package = "httpx"
-deps = ["chardet", "trio", "trustme", "uvicorn", "cryptography", "h2", "socksio", "zstandard", "brotli", "click", "pygments", "rich"]
+deps = [
+    "brotli; platform_python_implementation == \"CPython\"",
+    "brotlicffi; platform_python_implementation != \"CPython\"",
+    "build==1.3.0",
+    "chardet==5.2.0",
+    "click==8.*",
+    "coverage[toml]==7.10.6",
+    "cryptography==45.0.7",
+    "h2<5,>=3",
+    "mkautodoc==0.2.0",
+    "mkdocs-material==9.6.18",
+    "mkdocs==1.6.1",
+    "mypy==1.17.1",
+    "pygments==2.*",
+    "pytest==8.4.1",
+    "rich<15,>=10",
+    "ruff==0.12.11",
+    "socksio==1.*",
+    "trio-typing==0.10.0",
+    "trio==0.31.0",
+    "trustme==1.2.1",
+    "twine==6.1.0",
+    "uvicorn==0.35.0",
+    "zstandard>=0.18.0",
+]
 
 [[project]]
 name = "starlette"
+# Test context: Selected group:dev, group:docs.
+# Original selected tool pins: mypy 2.3.1 (uv.lock), ruff 0.16.5 (uv.lock).
 url = "https://github.com/encode/starlette.git"
 rev = "03f12b7fcf0a3e21a8da648ca0900c79472e9efe"
 package = "starlette"
-deps = ["httpx", "httpx2[zstd]", "trio", "blockbuster", "itsdangerous", "jinja2", "python-multipart", "pyyaml", "opentelemetry-api", "opentelemetry-sdk", "importlib-metadata"]
+deps = [
+    "blockbuster>=1.5.23",
+    "coverage>=7.8.2",
+    "httpx2>=2.0.0",
+    "httpx2[zstd]>=2.0.0",
+    "httpx<0.29.0,>=0.27.0",
+    "importlib-metadata>=9.0.1",
+    "itsdangerous",
+    "jinja2",
+    "mkdocstrings-python>=2.0.1",
+    "mkdocstrings>=1.0.2",
+    "mypy==2.3.1",
+    "mypy>=2.3.1",
+    "opentelemetry-api",
+    "opentelemetry-sdk>=1.44.0",
+    "pytest-codspeed>=4.1.1",
+    "pytest>=9.1.1",
+    "python-multipart>=0.0.18",
+    "pyyaml",
+    "ruff==0.16.5",
+    "ruff>=0.16.5",
+    "trio>=0.34.0",
+    "twine>=7.0.0",
+    "types-PyYAML>=6.0.12.20250516",
+    "zensical>=0.0.19",
+]
 
 [[project]]
 name = "anyio"
+# Test context: Selected group:test, extra:trio.
 url = "https://github.com/agronholm/anyio.git"
 rev = "9e2b5924e54ce5fa6aacc0640846c1a360a45178"
 package = "src/anyio"
 pythonpath = "src"
-deps = ["blockbuster", "hypothesis", "psutil", "pytest-mock", "pytest-timeout", "trustme", "truststore", "uvloop", "trio", "coverage"]
+deps = [
+    "blockbuster>=1.5.23; python_version < \"3.15\"",
+    "coverage[toml]>=7",
+    "hypothesis>=4.18.2",
+    "psutil>=5.9",
+    "pytest-mock>=3.14",
+    "pytest-timeout>=2.4.0",
+    "pytest>=9.0",
+    "trio>=0.32.0",
+    "trustme>=1.0.0",
+    "truststore>=0.9.1",
+    "uvloop>=0.22.1; platform_python_implementation == \"CPython\" and platform_system != \"Windows\" and python_version < \"3.15\"",
+    "winloop>=0.2.3; platform_python_implementation == \"CPython\" and platform_system == \"Windows\"",
+]
 
 [[project]]
 name = "jsonschema"
+# Test context: Selected group:test.
 url = "https://github.com/python-jsonschema/jsonschema.git"
 rev = "15f8613be518d9e5f563efa643213d1962d3c5b7"
 package = "jsonschema"
-deps = ["virtue", "jsonpath-ng"]
+deps = [
+    "jsonpath-ng",
+    "virtue",
+]
 
 [[project]]
 name = "virtualenv"
+# Test context: Selected group:test.
 url = "https://github.com/pypa/virtualenv.git"
 rev = "e13bb213aa649baab1c0bf70374421bac0083853"
 package = "src/virtualenv"
 pythonpath = "src"
-deps = ["covdefaults", "coverage", "coverage-enable-subprocess", "flaky", "packaging", "pytest-env", "pytest-mock", "pytest-timeout", "pytest-xdist", "setuptools", "time-machine"]
+deps = [
+    "covdefaults>=2.3",
+    "coverage-enable-subprocess>=1",
+    "coverage>=7.2.7",
+    "flaky>=3.7",
+    "packaging>=23.1",
+    "pytest-env>=0.8.2",
+    "pytest-freezer>=0.4.8; platform_python_implementation == \"PyPy\" or platform_python_implementation == \"GraalVM\" or platform_python_implementation == \"RustPython\" or (platform_python_implementation == \"CPython\" and sys_platform == \"win32\" and python_version >= \"3.13\")",
+    "pytest-mock>=3.11.1",
+    "pytest-randomly>=3.12",
+    "pytest-timeout>=2.1",
+    "pytest-xdist>=3.5",
+    "pytest>=7.4",
+    "setuptools>=68",
+    "time-machine>=2.10; platform_python_implementation == \"CPython\"",
+]
 
 [[project]]
 name = "nox"
+# Test context: Selected group:test, extra:tox-to-nox, extra:pbs.
 url = "https://github.com/wntrblm/nox.git"
 rev = "fe279740b775a632f1b567b45c7d131c00a4f174"
 package = "nox"
-deps = ["pytest-xdist", "coverage"]
+deps = [
+    "coverage[toml]>=7.10.3",
+    "jinja2",
+    "pbs-installer[all]>=2025.1.6",
+    "pytest-xdist>=3",
+    "pytest>=7.4; python_version >= \"3.12\"",
+    "pytest>=7; python_version < \"3.12\"",
+    "tox>=4",
+]
 
 [[project]]
 name = "markdown"
+# Test context: Selected extra:testing.
 url = "https://github.com/Python-Markdown/markdown.git"
 rev = "819fff96b0f146a75cfe39628c9502cc9a007047"
 package = "markdown"
-deps = ["pyyaml"]
+deps = [
+    "coverage",
+    "pytidylib",
+    "pyyaml",
+]
 test = ["{python}", "-m", "unittest", "discover", "tests"]
 
 [[project]]
 name = "tqdm"
+# Test context: ordinary CPython embedded tox core/base requirements.
+# Upstream nbval GitHEAD is preserved as this reviewed exact offline source snapshot.
 url = "https://github.com/tqdm/tqdm.git"
 rev = "9cf5a12b1f955468a17f0ba3c59092b23e4258ac"
 package = "tqdm"
-deps = ["pytest-timeout", "pytest-asyncio", "nbval", "ipywidgets"]
+deps = [
+    "codecov",
+    "coverage",
+    "coveralls",
+    "cython",
+    "dask[delayed]",
+    "ipywidgets",
+    "matplotlib",
+    "nbval @ git+https://github.com/casperdcl/nbval@46a32ae85b5aeec9cb6aa5cda52dd5c10b26c930",
+    "numpy",
+    "pandas",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-timeout",
+    "rich",
+]
 
 [[project]]
 name = "lark"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/lark-parser/lark.git"
 rev = "9a4fb9c7458e8155636773a3cded0016d52516da"
 package = "lark"
-deps = ["regex", "interegular", "atomicwrites"]
+deps = [
+    "Js2Py==0.68",
+    "atomicwrites",
+    "interegular<0.4.0,>=0.3.1",
+    "regex",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests"]
 expect_broken = "source-observing: lark.tools.standalone copies marked regions of named source files into one artifact, so a helper moved to another file is absent from it"
 known_failures = ["tests/__main__.py::TestStandalone::"]
@@ -442,323 +911,872 @@ name = "peewee"
 url = "https://github.com/coleifer/peewee.git"
 rev = "2866df242d07ee78f715130ad6b9d4c0287e0a71"
 package = "peewee.py"
+# Documented local/default SQLite profile; CPython may build shipped-C extensions.
+# Broader CI clients/services and conditional Git cysqlite are outside this profile.
 test = ["{python}", "runtests.py"]
 # This pinned unittest runner exits 2 for completed suites containing errors.
 failure_exit_codes = [1, 2]
 
 [[project]]
 name = "python-prompt-toolkit"
+# Test context: Selected group:build, group:dev.
+# Original selected tool pins: ruff 0.15.6 (.pre-commit-config.yaml).
 url = "https://github.com/prompt-toolkit/python-prompt-toolkit.git"
 rev = "583b3412c792a5cc9f01adde603679f3824a88f3"
 package = "src/prompt_toolkit"
 pythonpath = "src"
-deps = ["pytest-mock", "asyncssh"]
+deps = [
+    "asyncssh",
+    "build>=1",
+    "codecov>=2.1",
+    "coverage>=7.11",
+    "ipython>=8.23",
+    "mypy>=1.13",
+    "prek>=0.3.5",
+    "pytest",
+    "pytest-cov>=5",
+    "pytest-mock>=3.14.1",
+    "pytest>=8.1.1",
+    "ruff==0.15.6",
+    "ruff>=0.14.10",
+    "setuptools>=68",
+    "typos",
+]
 
 [[project]]
 name = "astroid"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
+# Original selected tool pins: ruff 0.16.7 (.pre-commit-config.yaml), black 26.5.1 (.pre-commit-config.yaml), mypy 2.3.1 (.pre-commit-config.yaml).
 url = "https://github.com/pylint-dev/astroid.git"
 rev = "6011e6c31e5ccf486303c51a1423e7b37081debd"
 package = "astroid"
-deps = ["typing-extensions"]
+deps = [
+    "PyQt6",
+    "attrs",
+    "black",
+    "black==26.5.1",
+    "contributors-txt>=1.1.0",
+    "coverage~=7.16",
+    "mypy; platform_python_implementation != \"PyPy\"",
+    "mypy==2.3.1",
+    "numpy<2,>=1.17.0; python_version < \"3.12\"",
+    "pre-commit",
+    "pylint>=4.0.8",
+    "pytest",
+    "pytest-cov~=7.1",
+    "python-dateutil",
+    "regex",
+    "ruff",
+    "ruff==0.16.7",
+    "setuptools<82",
+    "six",
+    "tbump~=6.11",
+    "towncrier>=26.9.0",
+    "typing_extensions>=4.4.0",
+    "urllib3<2,>1",
+]
 
 [[project]]
 name = "networkx"
+# Test context: Selected extra:default, extra:test.
 url = "https://github.com/networkx/networkx.git"
 rev = "8977f1cfbae61ed7f33a33d19a40fd2c3f16c05c"
 package = "networkx"
-deps = ["numpy", "scipy", "pandas", "matplotlib"]
+deps = [
+    "matplotlib>=3.9",
+    "numpy>=2",
+    "pandas>=2.3.0",
+    "pytest-cov>=4.0",
+    "pytest-xdist>=3.0",
+    "pytest>=7.2",
+    "scipy>=1.13",
+]
 timeout = 7200
 exclude = ["tests"]
 
 [[project]]
 name = "pytest"
+# Test context: Selected extra:dev.
 url = "https://github.com/pytest-dev/pytest.git"
 rev = "99ab2acccff15f757260a1e1fbb0d2a47fc01041"
 package = "src/_pytest"
 pythonpath = "src"
-deps = ["attrs", "hypothesis", "mock", "pygments", "requests", "setuptools", "xmlschema", "argcomplete"]
+deps = [
+    "argcomplete",
+    "asynctest; python_version < \"3.11\"",
+    "attrs>=23.1",
+    "coverage>=7.5",
+    "hypothesis>=6.75",
+    "mock",
+    "numpy>=1.26",
+    "pexpect>=4.9",
+    "pygments",
+    "pytest-xdist>=3.5",
+    "pyyaml",
+    "requests",
+    "setuptools",
+    "xmlschema",
+]
 test = ["{python}", "-m", "pytest", "-q", "testing"]
 
 [[project]]
 name = "sphinx"
+# Test context: Selected group:test.
 url = "https://github.com/sphinx-doc/sphinx.git"
 rev = "e44a40eb2f810558ccd9da1425421270ccb81351"
 package = "sphinx"
-deps = ["pytest-xdist", "defusedxml", "typing_extensions", "cython", "setuptools"]
+deps = [
+    "cython>=3.0",
+    "defusedxml>=0.7.1",
+    "pytest-xdist[psutil]>=3.4",
+    "pytest>=9.0",
+    "setuptools>=70.0",
+    "typing_extensions>=4.9",
+]
 timeout = 10800
 
 [[project]]
 name = "black"
+# Test context: Selected group:cov-tests.
 url = "https://github.com/psf/black.git"
 rev = "acd6198877ced2d8126b9b3958bb17f4a65ef0d1"
 exclude = ["data"]
 package = "src/black"
 pythonpath = "src"
-deps = ["pytest-xdist", "aiohttp", "tokenize-rt"]
+deps = [
+    "aiohttp",
+    "coverage>=5.3",
+    "pytest-cov>=4.1.0",
+    "pytest-xdist>=3.0.2",
+    "pytest>=7",
+    "tokenize-rt",
+]
 
 [[project]]
 name = "django-utils"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
+# Original selected tool pins: black 26.5.1 (.pre-commit-config.yaml).
 url = "https://github.com/django/django.git"
 rev = "8cbdd4a814397f81adf0129288f32b615bd1f94f"
 exclude = ["tagged"]
 package = "django/utils"
-deps = ["asgiref", "sqlparse", "tzdata", "Pillow", "PyYAML", "jinja2", "tblib"]
+deps = [
+    "Pillow>=10.1.0",
+    "PyYAML>=6.0.2",
+    "aiosmtpd>=1.4.5",
+    "argon2-cffi>=23.1.0",
+    "asgiref>=3.12.1",
+    "bcrypt>=4.1.1",
+    "black==26.5.1",
+    "black>=26.5.1",
+    "colorama>=0.4.6; sys_platform == \"win32\"",
+    "docutils>=0.22",
+    "geoip2>=4.8.0",
+    "jinja2>=2.11.0",
+    "numpy>=1.26.0",
+    "playwright>=1.62.0",
+    "pylibmc; sys_platform != \"win32\"",
+    "pymemcache>=3.4.0",
+    "pywatchman; sys_platform != \"win32\"",
+    "redis>=5.1.0",
+    "sqlparse>=0.5.0",
+    "tblib>=3.0.0",
+    "tzdata",
+]
 test = ["{python}", "tests/runtests.py", "--parallel", "1", "utils_tests"]
 
 [[project]]
 name = "django-forms"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
+# Original selected tool pins: black 26.5.1 (.pre-commit-config.yaml).
 url = "https://github.com/django/django.git"
 rev = "8cbdd4a814397f81adf0129288f32b615bd1f94f"
 exclude = ["tagged"]
 package = "django/forms"
-deps = ["asgiref", "sqlparse", "tzdata", "Pillow", "PyYAML", "jinja2", "tblib"]
+deps = [
+    "Pillow>=10.1.0",
+    "PyYAML>=6.0.2",
+    "aiosmtpd>=1.4.5",
+    "argon2-cffi>=23.1.0",
+    "asgiref>=3.12.1",
+    "bcrypt>=4.1.1",
+    "black==26.5.1",
+    "black>=26.5.1",
+    "colorama>=0.4.6; sys_platform == \"win32\"",
+    "docutils>=0.22",
+    "geoip2>=4.8.0",
+    "jinja2>=2.11.0",
+    "numpy>=1.26.0",
+    "playwright>=1.62.0",
+    "pylibmc; sys_platform != \"win32\"",
+    "pymemcache>=3.4.0",
+    "pywatchman; sys_platform != \"win32\"",
+    "redis>=5.1.0",
+    "sqlparse>=0.5.0",
+    "tblib>=3.0.0",
+    "tzdata",
+]
 test = ["{python}", "tests/runtests.py", "--parallel", "1", "forms_tests"]
 
 [[project]]
 name = "rich"
+# Test context: Selected poetry-legacy:dev-dependencies.
+# Original selected tool pins: mypy 1.14.1 (poetry.lock), black 22.12.0 (poetry.lock).
 url = "https://github.com/Textualize/rich.git"
 rev = "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
 package = "rich"
-deps = ["pygments", "markdown-it-py", "attrs"]
+deps = [
+    "attrs<22.0.0,>=21.4.0",
+    "black<23.0.0,>=22.6",
+    "black==22.12.0",
+    "markdown-it-py",
+    "mypy<2.0.0,>=1.11",
+    "mypy==1.14.1",
+    "poetry",
+    "pre-commit<3.0.0,>=2.17.0",
+    "pygments",
+    "pytest-cov<4.0.0,>=3.0.0",
+    "pytest<8.0.0,>=7.0.0",
+    "typing-extensions<5.0,>=4.0.0",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests"]
 expect_broken = "frame-relative: test_traceback.py::test_handler asserts a rendered traceback whose frames and widths the helper changes"
 known_failures = ["tests/test_traceback.py::test_handler"]
 
 [[project]]
 name = "typer"
+# Test context: Selected group:tests.
+# Original selected tool pins: mypy 2.3.1 (uv.lock), ruff 0.16.4 (uv.lock).
 url = "https://github.com/fastapi/typer.git"
 rev = "a80f6e5ecd74f32b983cca336a2f3cba98d9853a"
 package = "typer"
-deps = ["shellingham", "rich", "annotated-doc", "pytest-xdist"]
+deps = [
+    "annotated-doc",
+    "coverage[toml]>=7.13",
+    "mypy==2.3.1",
+    "mypy>=1.19.1",
+    "pytest-cov>=7.0.0",
+    "pytest-sugar>=1.0.0",
+    "pytest-xdist>=3.6.1",
+    "pytest>=9.0.0",
+    "rich>=12.3.0",
+    "ruff==0.16.4",
+    "ruff>=0.15.0",
+    "shellingham>=1.3.0",
+    "ty>=0.0.25",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "structlog"
+# Test context: Selected group:tests.
 url = "https://github.com/hynek/structlog.git"
 rev = "73393f34b40c15688b3fdd0982889b225f11b59b"
 package = "src/structlog"
 pythonpath = "src"
-deps = ["pytest-asyncio", "simplejson", "time-machine", "typing-extensions"]
+deps = [
+    "pytest-asyncio>=0.17",
+    "pytest-randomly",
+    "pytest>=6.0",
+    "simplejson",
+    "time-machine>=2.14.1",
+    "typing-extensions",
+]
 
 [[project]]
 name = "cattrs"
+# Test context: Selected group:test.
 url = "https://github.com/python-attrs/cattrs.git"
 rev = "5bf7c972939248b8e48c9f750fbfd982e5c5b1f9"
 package = "src/cattrs"
 pythonpath = "src"
-deps = ["attrs", "typing-extensions", "hypothesis", "pytest-benchmark", "immutables", "ujson", "orjson", "msgpack", "pyyaml", "tomlkit", "cbor2", "msgspec", "pymongo"]
+deps = [
+    "attrs",
+    "cbor2",
+    "coverage>=7.9.2",
+    "hypothesis>=6.135.26",
+    "immutables>=0.21",
+    "msgpack",
+    "msgspec",
+    "mypy; python_version == \"3.14\" and implementation_name == \"cpython\"",
+    "orjson",
+    "pymongo",
+    "pytest-benchmark>=5.1.0",
+    "pytest-typing; python_version == \"3.14\" and implementation_name == \"cpython\"",
+    "pytest-xdist>=3.8.0",
+    "pytest>=8.4.1",
+    "pyyaml",
+    "tomlkit",
+    "typing-extensions",
+    "ujson",
+]
 
 [[project]]
 name = "isort"
+# Test context: Selected group:dev.
+# Original selected tool pins: mypy 2.3.1 (uv.lock), black 26.3.1 (uv.lock), ruff 0.13.3 (uv.lock).
 url = "https://github.com/PyCQA/isort.git"
 rev = "131f4adcd5582bfc53928ab0d740eceb8b506b6c"
 package = "isort"
-deps = ["colorama", "hypothesis", "hypothesmith", "mypy-extensions", "black"]
+deps = [
+    "bandit>=1.8.6",
+    "black==26.3.1",
+    "black>=25.9.0",
+    "colorama>=0.4.6",
+    "coverage[toml]>=7.10.7",
+    "example-isort-sorting-plugin>=0.1.0",
+    "example-shared-isort-profile>=0.1.0",
+    "flake8-bugbear>=24.12.12",
+    "flake8-pyproject>=1.2.3",
+    "flake8>=7.3.0",
+    "hatch>=1.14.0",
+    "hypothesis>=6.140.3",
+    "hypothesmith>=0.3.3",
+    "libcst>=1.9.0",
+    "mypy-extensions",
+    "mypy==2.3.1",
+    "mypy>=2.3.1",
+    "pep8-naming>=0.15.1",
+    "pytest-benchmark>=5.1.0",
+    "pytest>=8.4.2",
+    "ruff==0.13.3",
+    "ruff>=0.13.3",
+    "stdlibs>=2026.2.26",
+    "tox-uv>=1.28.0",
+    "tox>=4.30.3",
+    "types-colorama>=0.4.2",
+    "uv>=0.8.23",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests/unit"]
 
 [[project]]
 name = "pyjwt"
+# Test context: Selected group:tests.
 url = "https://github.com/jpadilla/pyjwt.git"
 rev = "b9f6a9d79c4368f294c2e01e873ba339c034d497"
 package = "jwt"
-deps = ["cryptography"]
+deps = [
+    "coverage[toml]==7.10.7",
+    "cryptography",
+    "pytest<9.0.0,>=8.4.2",
+]
 
 [[project]]
 name = "xmltodict"
+# Test context: Selected extra:test.
 url = "https://github.com/martinblech/xmltodict.git"
 rev = "6e29fba282e68631034dd2722a413b4e35276584"
 package = "xmltodict.py"
+deps = [
+    "pytest",
+    "pytest-cov",
+]
 
 [[project]]
 name = "arrow"
+# Test context: Selected extra:test.
 url = "https://github.com/arrow-py/arrow.git"
 rev = "2224255c4acc594d734cef0bbc83360452a67983"
 package = "arrow"
-deps = ["python-dateutil", "tzdata", "dateparser", "pytest-mock", "pytz", "simplejson", "pytest-cov"]
+deps = [
+    "backports.zoneinfo==0.2.1; python_version < \"3.9\"",
+    "dateparser==1.*",
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+    "pytest-mock",
+    "python-dateutil>=2.7.0",
+    "pytz==2025.2",
+    "simplejson==3.*",
+    "types-python-dateutil>=2.8.10",
+    "tzdata; python_version >= \"3.9\"",
+]
 # tox.ini adds coverage options with a 99% floor; the floor is not a test result.
 test = ["{python}", "-m", "pytest", "-q", "-o", "addopts=", "tests"]
 
 [[project]]
 name = "six"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/benjaminp/six.git"
 rev = "c8e394065cd541a16c040515dc0afb85cf22a7c3"
 package = "six.py"
+deps = [
+    "pytest",
+]
 test = ["{python}", "-m", "pytest", "-q", "test_six.py"]
 
 [[project]]
 name = "tornado"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/tornadoweb/tornado.git"
 rev = "85b6917d05a84a6d26b7488b2b56d0b52c107a0f"
 package = "tornado"
+deps = [
+]
 test = ["{python}", "-m", "pytest", "-q", "tornado/test"]
 
 [[project]]
 name = "trio"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/python-trio/trio.git"
 rev = "59d94d7ae0dc8af4c9736425c278b04ecd8b1a47"
 package = "src/trio"
 pythonpath = "src"
-deps = ["attrs", "sortedcontainers", "idna", "outcome", "sniffio", "trustme", "pytest-trio", "exceptiongroup", "astor", "pyopenssl", "pyyaml", "jedi", "isort"]
+deps = [
+    "alabaster==1.0.0",
+    "ast-serialize==0.8.0; implementation_name == \"cpython\"",
+    "astor==0.8.1",
+    "astroid==4.0.4",
+    "async-generator==1.10",
+    "attrs==26.1.0",
+    "babel==2.18.0",
+    "black==26.5.1; implementation_name == \"cpython\"",
+    "certifi==2026.7.22",
+    "cffi==2.1.1; os_name == \"nt\" or platform_python_implementation != \"PyPy\"",
+    "cfgv==3.5.0",
+    "charset-normalizer==3.5.1",
+    "click==8.5.0; implementation_name == \"cpython\"",
+    "codespell==2.4.3",
+    "colorama==0.4.6; sys_platform == \"win32\"",
+    "coverage==7.16.0",
+    "cryptography==48.0.0",
+    "dill==0.4.1",
+    "distlib==0.4.3",
+    "docutils==0.21.2; python_full_version < \"3.11\"",
+    "docutils==0.22.4; python_full_version >= \"3.11\"",
+    "exceptiongroup==1.3.1; python_full_version < \"3.11\"",
+    "filelock==3.32.5",
+    "identify==2.6.19",
+    "idna==3.19",
+    "imagesize==2.0.1",
+    "iniconfig==2.3.0",
+    "isort==9.0.1",
+    "jedi==0.20.0; implementation_name == \"cpython\"",
+    "jinja2==3.1.6",
+    "librt==0.15.0; implementation_name == \"cpython\" and platform_python_implementation != \"PyPy\"",
+    "markupsafe==3.0.3",
+    "mccabe==0.7.0",
+    "mypy-extensions==1.1.0",
+    "mypy==2.3.1; implementation_name == \"cpython\"",
+    "nodeenv==1.10.0",
+    "outcome==1.3.0.post0",
+    "packaging==26.3",
+    "parso==0.8.7; implementation_name == \"cpython\"",
+    "pathspec==1.1.1; implementation_name == \"cpython\"",
+    "platformdirs==4.11.5",
+    "pluggy==1.6.0",
+    "pre-commit==4.6.2",
+    "pycparser==3.0; (implementation_name != \"PyPy\" and os_name == \"nt\") or (implementation_name != \"PyPy\" and platform_python_implementation != \"PyPy\")",
+    "pygments==2.21.0",
+    "pylint==4.0.8",
+    "pyopenssl==26.2.0",
+    "pyright==1.1.411",
+    "pytest-trio",
+    "pytest==9.1.1",
+    "python-discovery==1.6.0",
+    "pytokens==0.4.1; implementation_name == \"cpython\"",
+    "pyyaml==6.0.3",
+    "requests==2.34.2",
+    "roman-numerals==4.1.0; python_full_version >= \"3.11\"",
+    "ruff==0.16.7",
+    "sniffio==1.3.1",
+    "snowballstemmer==3.1.1",
+    "sortedcontainers==2.4.0",
+    "sphinx==8.1.3; python_full_version < \"3.11\"",
+    "sphinx==9.0.4; python_full_version == \"3.11.*\"",
+    "sphinx==9.1.0; python_full_version >= \"3.12\"",
+    "sphinxcontrib-applehelp==2.0.0",
+    "sphinxcontrib-devhelp==2.0.0",
+    "sphinxcontrib-htmlhelp==2.1.0",
+    "sphinxcontrib-jsmath==1.0.1",
+    "sphinxcontrib-qthelp==2.0.0",
+    "sphinxcontrib-serializinghtml==2.0.0",
+    "tomli==2.4.1; python_full_version < \"3.11\"",
+    "tomlkit==0.15.1",
+    "trustme==1.2.1",
+    "types-cffi==2.1.0.20260827",
+    "types-docutils==0.23.0.20260827",
+    "types-pyopenssl==24.1.0.20240722",
+    "types-pyyaml==6.0.12.20260815",
+    "types-setuptools==84.0.0.20260812",
+    "typing-extensions==4.16.0",
+    "urllib3==2.7.0",
+    "uv==0.12.13",
+    "virtualenv==21.7.7",
+]
 test = ["{python}", "-m", "pytest", "-q", "src/trio/_tests"]
 expect_broken = "line-relative: test_deprecate.py asserts the exact line number a warning is issued from inside the test module, which a helper inserted above it shifts"
 known_failures = ["test_module_with_deprecations"]
 
 [[project]]
 name = "h11"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/python-hyper/h11.git"
 rev = "62c5068c971579d61fa1b55373390e12f25fd856"
 package = "h11"
+deps = [
+    "pytest",
+    "pytest-cov",
+]
 test = ["{python}", "-m", "pytest", "-q", "h11/tests"]
 
 [[project]]
 name = "jmespath"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/jmespath/jmespath.py.git"
 rev = "2812594e69d43098ef60f81f4efc404c071b0418"
 package = "jmespath"
-deps = ["hypothesis"]
+deps = [
+    "hypothesis",
+    "pytest",
+]
 
 [[project]]
 name = "dpath"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/dpath-maintainers/dpath-python.git"
 rev = "26b77325f5222be8c578261065af38587f98fd76"
 package = "dpath"
-deps = ["hypothesis", "nose2"]
+deps = [
+    "hypothesis",
+    "nose2",
+]
 
 [[project]]
 name = "loguru"
+# Test context: Selected extra:dev.
 url = "https://github.com/Delgan/loguru.git"
 rev = "48acf77ac2b3296acc67069511b99cc3ca3d0c41"
 exclude = ["modern"]
 package = "loguru"
-deps = ["freezegun", "pytest-mock", "colorama"]
+deps = [
+    "Sphinx==8.2.1; python_version >= \"3.11\"",
+    "build==1.3.0; python_version >= \"3.11\"",
+    "colorama==0.4.5; python_version < \"3.8\"",
+    "colorama==0.4.6; python_version >= \"3.8\"",
+    "exceptiongroup==1.1.3; python_version >= \"3.7\" and python_version < \"3.11\"",
+    "freezegun==1.1.0; python_version < \"3.8\"",
+    "freezegun==1.5.0; python_version >= \"3.8\"",
+    "mypy==v0.910; python_version < \"3.6\"",
+    "mypy==v0.971; python_version >= \"3.6\" and python_version < \"3.7\"",
+    "mypy==v1.14.1; python_version >= \"3.8\" and python_version < \"3.9\"",
+    "mypy==v1.18.2; python_version >= \"3.9\" and python_version < \"3.12\"",
+    "mypy==v1.4.1; python_version >= \"3.7\" and python_version < \"3.8\"",
+    "mypy==v2.1.0; python_version >= \"3.12\"",
+    "myst-parser==4.0.0; python_version >= \"3.11\"",
+    "pre-commit==4.6.0; python_version >= \"3.11\"",
+    "pytest-cov==2.12.1; python_version < \"3.8\"",
+    "pytest-cov==5.0.0; python_version >= \"3.8\" and python_version < \"3.9\"",
+    "pytest-cov==6.2.1; python_version >= \"3.9\"",
+    "pytest-mock",
+    "pytest-mypy-plugins==4.0.3; python_version >= \"3.12\"",
+    "pytest==6.1.2; python_version < \"3.8\"",
+    "pytest==8.3.2; python_version >= \"3.8\" and python_version < \"3.12\"",
+    "pytest==9.1.1; python_version >= \"3.12\"",
+    "sphinx-rtd-theme==3.0.2; python_version >= \"3.11\"",
+    "tox==3.27.1; python_version < \"3.8\"",
+    "tox==4.24.1; python_version >= \"3.8\" and python_version < \"3.12\"",
+    "tox==4.56.1; python_version >= \"3.12\"",
+    "twine==6.2.0; python_version >= \"3.11\"",
+]
 
 [[project]]
 name = "deepdiff"
+# Test context: Selected extra:cli, extra:dev, extra:static, extra:test.
 url = "https://github.com/seperman/deepdiff.git"
 rev = "79e4379278b1cfdd8e9e3dccac364956908e8989"
 package = "deepdiff"
-deps = ["cachebox", "orderly-set", "numpy", "python-dateutil", "pyyaml", "tomli-w", "click", "pydantic", "pytz", "orjson", "uuid6"]
+deps = [
+    "bump2version~=1.0.1",
+    "cachebox",
+    "click~=8.3.1",
+    "flake8-pyproject~=1.2.4",
+    "flake8~=7.3.0",
+    "flit-core==3.12.0",
+    "ipdb~=0.13.13",
+    "jsonpickle~=4.1.1",
+    "nox==2026.2.9",
+    "numpy~=2.2.0; python_version < \"3.14\"",
+    "numpy~=2.4.3; python_version >= \"3.14\"",
+    "orderly-set",
+    "orjson~=3.11.7",
+    "pandas~=2.2.0; python_version < \"3.11\"",
+    "pandas~=3.0.1; python_version >= \"3.11\"",
+    "polars~=1.39.3",
+    "pydantic~=2.12.5",
+    "pytest-benchmark~=5.2.3",
+    "pytest-cov~=7.1.0",
+    "pytest~=9.0.3",
+    "python-dateutil~=2.9.0.post0",
+    "python-dotenv~=1.2.2",
+    "pytz",
+    "pyyaml~=6.0.3",
+    "tomli-w~=1.2.0",
+    "tomli~=2.4.0",
+    "uuid6==2025.0.1",
+]
 
 [[project]]
 name = "markupsafe"
+# Test context: Declared outer/default tool context plus ordinary inner test requirements.
+# Original selected tool pins: mypy 1.18.2 (uv.lock), pyright 1.1.405 (uv.lock), ruff 0.13.2 (uv.lock).
 url = "https://github.com/pallets/markupsafe.git"
 rev = "b2e4d9c7687be25695fffbe93a37622302b24fb1"
 package = "src/markupsafe"
+deps = [
+    "mypy",
+    "mypy==1.18.2",
+    "pre-commit",
+    "pre-commit-uv",
+    "pyright",
+    "pyright==1.1.405",
+    "pytest",
+    "pytest-run-parallel; python_full_version >= \"3.13\"",
+    "ruff",
+    "ruff==0.13.2",
+    "tox",
+    "tox-uv",
+]
 pythonpath = "src"
 
 [[project]]
 name = "sniffio"
+# Test context: Selected group:test.
 url = "https://github.com/python-trio/sniffio.git"
 rev = "6996e05d9b9debe32f42f709c8041e744f850478"
 package = "sniffio"
+deps = [
+    "curio",
+    "pytest",
+    "pytest-cov",
+]
 test = ["{python}", "-m", "pytest", "-q", "sniffio/_tests"]
 
 [[project]]
 name = "outcome"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/python-trio/outcome.git"
 rev = "03ed6218b08001877745bb1a9e180c8c5cf7c903"
 package = "src/outcome"
 pythonpath = "src"
-deps = ["attrs"]
+deps = [
+    "attrs",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+]
 
 [[project]]
 name = "mako"
+# Test context: Selected group:tests.
 url = "https://github.com/sqlalchemy/mako.git"
 rev = "411b4ac6cf054e61a8fb44c236990fda1e41ade4"
 package = "mako"
-deps = ["markupsafe"]
+deps = [
+    "babel",
+    "beaker",
+    "dogpile.cache",
+    "junitparser",
+    "lingua>=4.16",
+    "markupsafe",
+    "pygments",
+    "pytest>8",
+]
 test = ["{python}", "-m", "pytest", "-q", "test"]
 
 [[project]]
 name = "html5lib"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/html5lib/html5lib-python.git"
 rev = "fd4f032bc090d44fb11a84b352dad7cbee0a4745"
 package = "html5lib"
-deps = ["six", "webencodings", "mock", "setuptools<81", "pytest-expect", "pytest<8"]
+deps = [
+    "coverage<6,>=5.1",
+    "flake8==3.9.2; python_version < \"3.6\"",
+    "flake8>=5.0.4; python_version >= \"3.6\"",
+    "mock<4,>=3.0.5; python_version < \"3.3\"",
+    "pytest-expect<2,>=1.1.0",
+    "pytest<5,>=4.6.10; python_version < \"3\"",
+    "pytest<8,>=5.4.2; python_version >= \"3\"",
+    "setuptools; python_version >= \"3.12\"",
+    "setuptools<81",
+    "six>=1.9",
+    "webencodings",
+]
 # An editable install cannot be built: setup.py imports pkg_resources, which the
 # setuptools an isolated build gets no longer has.
 install = false
 
 [[project]]
 name = "bleach"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/mozilla/bleach.git"
 rev = "f0355a7af00500482c5292c6c83290c6a178068d"
 package = "bleach"
-deps = ["six", "webencodings", "html5lib"]
+deps = [
+    "Sphinx==7.4.4",
+    "build==1.2.1",
+    "html5lib",
+    "mypy==1.10.1; implementation_name == \"cpython\"",
+    "pytest==9.0.3",
+    "ruff==0.15.6; implementation_name == \"cpython\"",
+    "setuptools==80.7.1",
+    "six",
+    "tox-gh-actions==3.2.0",
+    "tox==4.16.0",
+    "twine==6.1.0",
+    "webencodings",
+    "wheel==0.46.3",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "feedparser"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/kurtmckee/feedparser.git"
 rev = "a22c5521cbb109871f1a2318948581901bd47e26"
 package = "feedparser"
-deps = ["feedparser-sgmllib", "responses"]
+deps = [
+    "certifi==2026.7.22; python_version >= \"3.10\"",
+    "charset-normalizer==3.4.9; python_version >= \"3.10\"",
+    "colorama==0.4.6; python_version >= \"3.10\" and sys_platform == \"win32\"",
+    "coverage==7.15.2; python_version >= \"3.10\"",
+    "exceptiongroup==1.3.1; python_version == \"3.10\"",
+    "feedparser-sgmllib",
+    "idna==3.18; python_version >= \"3.10\"",
+    "iniconfig==2.3.0; python_version >= \"3.10\"",
+    "packaging==26.2; python_version >= \"3.10\"",
+    "pluggy==1.6.0; python_version >= \"3.10\"",
+    "pygments==2.20.0; python_version >= \"3.10\"",
+    "pytest-randomly==4.1.0; python_version >= \"3.10\"",
+    "pytest==9.1.1; python_version >= \"3.10\"",
+    "pyyaml==6.0.3; python_version >= \"3.10\"",
+    "requests==2.34.2; python_version >= \"3.10\"",
+    "responses==0.26.2; python_version >= \"3.10\"",
+    "tomli==2.4.1; python_version >= \"3.10\" and python_full_version <= \"3.11.0a6\"",
+    "typing-extensions==4.16.0; python_version == \"3.10\"",
+    "urllib3==2.7.0; python_version >= \"3.10\"",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "cerberus"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/pyeve/cerberus.git"
 rev = "65e977de08ab76d4b40ca981972f9ff68926ed63"
 package = "cerberus"
-deps = ["pytest-benchmark"]
+deps = [
+    "pytest",
+    "pytest-benchmark",
+]
 
 [[project]]
 name = "croniter"
+# Test context: Selected group:dev.
 url = "https://github.com/kiorky/croniter.git"
 rev = "3dd4d14e971294c03d3fb9be3f5ca03ae1c25310"
 package = "src/croniter"
 pythonpath = "src"
-deps = ["python-dateutil", "pytz", "natsort", "tzlocal"]
+deps = [
+    "coverage>=4.2",
+    "natsort",
+    "pytest-cov>=5.0.0",
+    "pytest>=8.3.3",
+    "python-dateutil",
+    "pytz>2021.1",
+    "setuptools",
+    "tzlocal",
+]
 
 [[project]]
 name = "prettytable"
+# Test context: Selected extra:tests.
 url = "https://github.com/prettytable/prettytable.git"
 rev = "2a6cd4fb41bc6754eac57b43fc6dbd43b08ae368"
 package = "src/prettytable"
 pythonpath = "src"
-deps = ["wcwidth", "pytest-lazy-fixtures"]
+deps = [
+    "pytest-cov",
+    "pytest-lazy-fixtures",
+    "pytest>=9",
+    "wcwidth",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "parsimonious"
+# Test context: Selected extra:testing.
 url = "https://github.com/erikrose/parsimonious.git"
 rev = "eb79639859a9697a86c0992a045174a8856b5fb0"
 package = "parsimonious"
-deps = ["regex"]
+deps = [
+    "pytest",
+    "regex",
+]
 
 [[project]]
 name = "inflection"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/jpvanhal/inflection.git"
 rev = "88eefaacf7d0caaa701af7c8ab2d0ab3f17086f1"
 package = "inflection"
+deps = [
+    "flake8",
+    "isort",
+    "pytest",
+    "pytest-mypy",
+]
 
 [[project]]
 name = "pyrsistent"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/tobgu/pyrsistent.git"
 rev = "0c0b7aec8cd25b1d2d8ba07b10acdefd0f38f2c7"
 package = "pyrsistent"
-deps = ["hypothesis", "typing-extensions"]
+deps = [
+    "hypothesis",
+    "pytest",
+    "typing_extensions",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "jsonpatch"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/stefankoegl/python-json-patch.git"
 rev = "d8e1a6e244728c04229d601bc9a384d9b034c603"
 package = "jsonpatch.py"
-deps = ["jsonpointer"]
+deps = [
+    "coveralls",
+    "flake8",
+    "jsonpointer>=1.9",
+    "pytest",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests.py"]
 
 # --- Added 2026-09-17: broader coverage -------------------------------------
 
 [[project]]
 name = "mistune"
+# Test context: Selected group:test.
+# Original selected tool pins: mypy 2.3.0 (uv.lock), ruff 0.15.22 (uv.lock).
 url = "https://github.com/lepture/mistune.git"
 rev = "a1b50bc12e066e5707ff797f821829bfcdab03b5"
 package = "src/mistune"
+deps = [
+    "mypy",
+    "mypy==2.3.0",
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "ruff==0.15.22",
+]
 pythonpath = "src"
 
 [[project]]
 name = "blinker"
+# Test context: Declared outer/default tool context plus ordinary inner test requirements.
+# Original selected tool pins: mypy 1.16.0 (uv.lock), pyright 1.1.401 (uv.lock), ruff 0.11.12 (uv.lock).
 url = "https://github.com/pallets-eco/blinker.git"
 rev = "c3364059663df1ddce32799d6b1922af89a345f6"
 package = "src/blinker"
@@ -767,7 +1785,22 @@ pythonpath = "src"
 # pytest 9's match syntax prevents the checker from running at that target.
 # A newer pytest-asyncio also requires a newer pytest. Keep the pair aligned
 # before the add-only typing setup preserves the installed test environment.
-deps = ["pytest==8.3.5", "pytest-asyncio==1.0.0"]
+deps = [
+    "mypy",
+    "mypy==1.16.0",
+    "pre-commit",
+    "pre-commit-uv",
+    "pyright",
+    "pyright==1.1.401",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-asyncio==1.0.0",
+    "pytest==8.3.5",
+    "ruff",
+    "ruff==0.11.12",
+    "tox",
+    "tox-uv",
+]
 
 [[project]]
 name = "pycparser"
@@ -778,138 +1811,306 @@ test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "invoke"
+# Test context: Selected group:dev.
 url = "https://github.com/pyinvoke/invoke.git"
 rev = "6a71e680c535ba6520e935c497099fbca011d03c"
 package = "invoke"
-deps = ["pytest-relaxed", "pytest-cov", "icecream", "lexicon"]
+deps = [
+    "alabaster==0.7.12",
+    "black>=23.3.0",
+    "coverage<7,>=6.2",
+    "flake8~=7.3.0",
+    "icecream>=2.1",
+    "invocations>=4",
+    "lexicon",
+    "mypy==0.971",
+    "pytest-cov>=4",
+    "pytest-relaxed>=2",
+    "releases>=2",
+    "setuptools>56",
+    "types-PyYAML==6.0.12.4",
+]
 
 [[project]]
 name = "python-fire"
+# Test context: Selected extra:test.
 url = "https://github.com/google/python-fire.git"
 rev = "716bbc23d7eca949fdb682172283c8d18f742cb6"
 package = "fire"
-deps = ["termcolor", "hypothesis", "mock", "levenshtein"]
+deps = [
+    "hypothesis<6.137.0",
+    "ipython",
+    "levenshtein<=0.27.1",
+    "mock",
+    "pip",
+    "pylint<3.3.8",
+    "pytest-pylint<=1.1.2",
+    "pytest-runner<7.0.0",
+    "pytest<=8.4.1",
+    "setuptools<=80.9.0",
+    "termcolor<3.2.0",
+]
 
 [[project]]
 name = "bottle"
+# Test context: Selected extra:dev.
 url = "https://github.com/bottlepy/bottle.git"
 rev = "90bd4aa7439419186a85446f2aa05c23e3ba7103"
 package = "bottle.py"
+deps = [
+    "build",
+    "pytest",
+    "pytest-cov",
+    "twine",
+]
 test = ["{python}", "-m", "pytest", "-q", "test"]
 
 [[project]]
 name = "waitress"
+# Test context: Selected extra:testing.
 url = "https://github.com/Pylons/waitress.git"
 rev = "016eea527dd4a3eb4a18d6dca4d0bfe32039e470"
 package = "src/waitress"
 pythonpath = "src"
-deps = ["pytest-cov"]
+deps = [
+    "coverage>=7.6.0",
+    "pytest",
+    "pytest-cov",
+]
 
 [[project]]
 name = "gunicorn"
+# Test context: Selected extra:testing.
 url = "https://github.com/benoitc/gunicorn.git"
 rev = "afc7d2fd5dd9f1de455b1be6c10044030c0adf8e"
 package = "gunicorn"
-deps = ["packaging", "coverage", "pytest-cov", "tornado", "pytest-asyncio"]
+deps = [
+    "coverage",
+    "gevent",
+    "gevent>=24.10.1",
+    "gunicorn_h1c>=0.6.9",
+    "h2>=4.4.1",
+    "httpx[http2]>=0.23.0",
+    "inotify>=0.2.10; sys_platform == \"linux\"",
+    "packaging",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest>=9.0.3",
+    "tornado",
+    "uvloop>=0.19.0",
+]
 
 [[project]]
 name = "wsproto"
+# Test context: Selected group:testing.
 url = "https://github.com/python-hyper/wsproto.git"
 rev = "5e0685d0740ec30716897442f336de1118f5f40a"
 package = "src/wsproto"
 pythonpath = "src"
-deps = ["h11"]
+deps = [
+    "h11",
+    "hypothesis<7,>=6.119.4",
+    "pytest-cov<7,>=6.0.0",
+    "pytest-xdist<4,>=3.6.1",
+    "pytest<9,>=8.3.3",
+]
 
 [[project]]
 name = "hpack"
+# Test context: Selected group:testing.
 url = "https://github.com/python-hyper/hpack.git"
 rev = "d05cff4cd462658847f67c48700aab40b2ba8cf1"
 package = "src/hpack"
 pythonpath = "src"
-deps = ["hypothesis"]
+deps = [
+    "hypothesis<7,>=6.152.1",
+    "pytest-cov<8,>=7.1.0",
+    "pytest-xdist<4,>=3.8.0",
+    "pytest<10,>=9.0.3",
+]
 
 [[project]]
 name = "hyperframe"
+# Test context: Selected group:testing.
 url = "https://github.com/python-hyper/hyperframe.git"
 rev = "632e309bf6d76d6a3cd04e3cbc0b006eddbf7056"
 package = "src/hyperframe"
+deps = [
+    "pytest-cov<7,>=6.0.0",
+    "pytest-xdist<4,>=3.6.1",
+    "pytest<9,>=8.3.3",
+]
 pythonpath = "src"
 
 [[project]]
 name = "h2"
+# Test context: Selected group:testing.
 url = "https://github.com/python-hyper/h2.git"
 rev = "bc239af1d1b85bc70482804f30a0e0e587d90a08"
 package = "src/h2"
 pythonpath = "src"
-deps = ["hypothesis", "hpack", "hyperframe"]
+deps = [
+    "hpack",
+    "hyperframe",
+    "hypothesis<7,>=6.119.4",
+    "pytest-cov<7,>=6.0.0",
+    "pytest-xdist<4,>=3.6.1",
+    "pytest<10,>=8.3.3",
+]
 
 [[project]]
 name = "pyupgrade"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/asottile/pyupgrade.git"
 rev = "fbad673bb8f149f3c6022a7dd9c616d39ad8a5e2"
 package = "pyupgrade"
-deps = ["tokenize-rt"]
+deps = [
+    "covdefaults>=2.1.0",
+    "coverage",
+    "pytest",
+    "tokenize-rt",
+]
 
 [[project]]
 name = "python-dotenv"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/theskumar/python-dotenv.git"
 rev = "a00cb2eed0704cd6d2071b2004c37e95ccc86ee5"
 package = "src/dotenv"
 pythonpath = "src"
-deps = ["click", "sh"]
+deps = [
+    "click",
+    "ipython",
+    "pytest",
+    "pytest-cov",
+    "sh",
+]
 
 [[project]]
 name = "backoff"
+# Test context: Selected poetry-legacy:dev-dependencies.
 url = "https://github.com/litl/backoff.git"
 rev = "d82b23c42d7a7e2402903e71e7a7f03014a00076"
 package = "backoff"
-deps = ["pytest-asyncio", "responses", "requests"]
+deps = [
+    "flake8<5.0.0,>=4.0.1",
+    "mypy<0.943.0,>=0.942",
+    "pytest-asyncio<0.19.0,>=0.18.3",
+    "pytest-cov<4.0.0,>=3.0.0",
+    "pytest<8.0.0,>=7.1.2",
+    "requests<3.0.0,>=2.26.0",
+    "responses<0.21.0,>=0.20.0",
+    "types-requests<3.0.0,>=2.27.20",
+]
 
 [[project]]
 name = "schedule"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/dbader/schedule.git"
 rev = "82a43db1b938d8fdf60103bd41f329e06c8d3651"
 package = "schedule"
+deps = [
+    "mypy",
+    "pytest",
+    "pytest-cov",
+    "types-pytz",
+]
 
 [[project]]
 name = "traitlets"
+# Test context: Selected extra:test.
+# Original selected tool pins: mypy 2.3.0 (.pre-commit-config.yaml).
 url = "https://github.com/ipython/traitlets.git"
 rev = "c4f12477747b9592d01dae5ff8fcdd2a7cdffd0b"
 package = "traitlets"
-deps = ["argcomplete", "pytest-mock", "mypy", "pytest-mypy-testing"]
+deps = [
+    "argcomplete>=3.0.3; python_version < \"3.12\"",
+    "argcomplete>=3.5.2; python_version >= \"3.12\"",
+    "coverage[toml]",
+    "mypy==2.3.0",
+    "mypy>=2.0; implementation_name != \"pypy\"",
+    "pre-commit",
+    "pytest-cov",
+    "pytest-mock",
+    "pytest-mypy-testing; implementation_name != \"pypy\"",
+    "pytest<10.0,>=7.0",
+]
 
 [[project]]
 name = "soupsieve"
+# Test context: Selected hatch-env:dev.
 url = "https://github.com/facelessuser/soupsieve.git"
 rev = "4caaf89344dc9a9baaedb7f0ab04d45526e61293"
 package = "soupsieve"
-deps = ["beautifulsoup4", "lxml", "html5lib"]
+deps = [
+    "beautifulsoup4",
+    "build",
+    "coverage",
+    "html5lib",
+    "lxml",
+    "mypy",
+    "pytest",
+    "pytest-cov",
+    "ruff",
+]
 
 [[project]]
 name = "beautifulsoup4"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://git.launchpad.net/beautifulsoup"
 rev = "c772c5e6b335c1dbd8ee59a01ea6b75b272cd737"
 package = "bs4"
-deps = ["soupsieve", "lxml", "html5lib", "typing_extensions"]
+deps = [
+    "html5lib",
+    "lxml",
+    "packaging",
+    "pytest>=6",
+    "soupsieve>=2.6",
+    "typing_extensions>=4.0.0",
+]
 expect_broken = "frame-relative: warnings.warn stacklevel attributes deprecation and markup warnings to an extracted helper caller; tests inspect the warning source filename"
 known_failures = ["bs4/tests/test_filter.py::TestSoupStrainer::test_constructor_string_deprecated_text_argument", "bs4/tests/test_filter.py::TestSoupStrainer::test_search_tag_deprecated", "bs4/tests/test_filter.py::TestSoupStrainer::test_search_deprecated", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[markup.html]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[markup.htm]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[markup.HTML]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[markup.txt]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[markup.xhtml]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[markup.xml]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[/home/user/file.txt]", "bs4/tests/test_soup.py::TestWarnings::test_resembles_filename_warning[c:\\\\user\\\\file.html\\\\\\\\server\\\\share\\\\path\\\\file.XhTml]", "bs4/tests/test_soup.py::TestWarnings::test_url_warning_with_bytes_url", "bs4/tests/test_soup.py::TestWarnings::test_url_warning_with_unicode_url"]
 
 [[project]]
 name = "mkdocs"
+# Test context: Selected hatch-env:test, extra:i18n.
 url = "https://github.com/mkdocs/mkdocs.git"
 rev = "2862536793b3c67d9d83c33e0dd6d50a791928f8"
 package = "mkdocs"
-deps = ["click", "jinja2", "markdown", "pyyaml", "watchdog", "ghp-import", "pyyaml-env-tag", "mergedeep", "pathspec", "packaging", "babel", "mkdocs-get-deps", "importlib-metadata"]
+deps = [
+    "babel>=2.9.0",
+    "click",
+    "coverage",
+    "ghp-import",
+    "importlib-metadata",
+    "jinja2",
+    "markdown",
+    "mergedeep",
+    "mkdocs-get-deps",
+    "packaging",
+    "pathspec",
+    "pyyaml",
+    "pyyaml-env-tag",
+    "watchdog",
+]
 exclude = ["tests"]
 test = ["{python}", "-m", "unittest", "discover", "-q", "-p", "*tests.py", "mkdocs"]
 
 [[project]]
 name = "chardet"
+# Test context: Selected group:dev.
 url = "https://github.com/chardet/chardet.git"
 rev = "e9603fad69cdc5d34d03616682650acd4891eb5d"
 package = "src/chardet"
 pythonpath = "src"
-deps = ["hypothesis"]
+deps = [
+    "hypothesis",
+    "prek>=0.3.4",
+    "pytest-cov>=7.0.0",
+    "pytest-xdist>=3.5.0",
+    "pytest>=9.0.2",
+    "ruff>=0.15.2",
+]
 
 [[project]]
 name = "pyasn1"
@@ -920,18 +2121,37 @@ test = ["{python}", "-m", "pytest", "-q", "tests"]
 
 [[project]]
 name = "ecdsa"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/tlsfuzzer/python-ecdsa.git"
 rev = "bff40c6cf2340148d410d5b3def0e949c547caf1"
 package = "src/ecdsa"
 pythonpath = "src"
-deps = ["hypothesis", "six"]
+deps = [
+    "coverage",
+    "hypothesis",
+    "pytest",
+    "six",
+]
 
 [[project]]
 name = "rsa"
+# Test context: Selected poetry-legacy:dev-dependencies.
+# Original selected tool pins: mypy 1.5.1 (poetry.lock).
 url = "https://github.com/sybrenstuvel/python-rsa.git"
 rev = "42b0e14ffbeeb9d99d1037e6440a2cc61780e4ea"
 package = "rsa"
-deps = ["pyasn1", "mypy", "pytest-cov"]
+deps = [
+    "Sphinx<6.0.0,>=5.0.0",
+    "coveralls<4.0.0,>=3.0.0",
+    "flake8<4.0.0,>=3.8.4",
+    "mypy<2.0.0,>=1.2",
+    "mypy==1.5.1",
+    "poetry",
+    "pyasn1",
+    "pytest-cov<5.0.0,>=4.0",
+    "pytest<8.0.0,>=7.2",
+    "tox<4.0.0,>=3.22.0",
+]
 
 [[project]]
 name = "ply"
@@ -944,119 +2164,225 @@ test = ["sh", "-c", "{python} tests/testlex.py && {python} tests/testyacc.py"]
 
 [[project]]
 name = "inflect"
+# Test context: Selected extra:test, extra:check, extra:cover, extra:enabler, extra:type.
 url = "https://github.com/jaraco/inflect.git"
 rev = "262a247d2d99a47a520cdb2d46adb90df88b4326"
 package = "inflect"
-deps = ["typeguard", "more-itertools", "pytest-enabler"]
+deps = [
+    "more-itertools",
+    "pygments",
+    "pytest!=8.1.*,>=6",
+    "pytest-checkdocs>=2.14",
+    "pytest-cov",
+    "pytest-enabler>=3.4",
+    "pytest-mypy>=1.0.1; platform_python_implementation != \"PyPy\"",
+    "pytest-ruff>=0.2.1; sys_platform != \"cygwin\"",
+    "typeguard",
+]
 
 [[project]]
 name = "unidecode"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/avian2/unidecode.git"
 rev = "158ec2c7e7b5d4bc7894cb2a99e050cdf3229c48"
 exclude = ["benchmark.py"]
 package = "unidecode"
+deps = [
+    "pytest",
+    "pytest-cov",
+    "pytest-mypy",
+]
 
 [[project]]
 name = "texttable"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/foutaise/texttable.git"
 rev = "b4c00a68626a58944e9bf4d48b1e8d758efa6edb"
 package = "texttable.py"
+deps = [
+    "cjkwrap",
+    "pytest",
+    "pytest-cov",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests.py"]
 
 [[project]]
 name = "docopt-ng"
+# Test context: Selected group:dev.
+# Original selected tool pins: mypy 2.3.0 (uv.lock), ruff 0.15.22 (uv.lock).
 url = "https://github.com/jazzband/docopt-ng.git"
 rev = "587f41a61437b680b4215de1874fb6975d8a49d6"
 package = "docopt"
+deps = [
+    "mypy",
+    "mypy==2.3.0",
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+    "pytest-mypy",
+    "ruff",
+    "ruff==0.15.22",
+]
 
 [[project]]
 name = "yapf"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/google/yapf.git"
 rev = "12005095296072751e3e4c1f33a047d41b0ce18d"
 package = "yapf"
-deps = ["platformdirs", "tomli"]
+deps = [
+    "platformdirs",
+    "pytest",
+    "pytest-cov",
+    "tomli",
+]
 
 [[project]]
 name = "mccabe"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/PyCQA/mccabe.git"
 rev = "292b5c71c3fe5496771b46ac9d86361c9b760d17"
 package = "mccabe.py"
-deps = ["hypothesis", "hypothesmith"]
+deps = [
+    "hypothesis; python_version >= \"3.6\"",
+    "hypothesmith; python_version >= \"3.6\"",
+    "pytest",
+]
 
 [[project]]
 name = "flake8"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/PyCQA/flake8.git"
 rev = "efe6750405be77b661f64e60002c4ef8e922daf5"
 package = "src/flake8"
 pythonpath = "src"
-deps = ["mccabe", "pycodestyle", "pyflakes"]
+deps = [
+    "covdefaults",
+    "coverage>=6",
+    "mccabe",
+    "pycodestyle",
+    "pyflakes",
+    "pytest!=3.0.5,!=5.2.3",
+]
 
 [[project]]
 name = "jsonpointer"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/stefankoegl/python-json-pointer.git"
 rev = "5998f951dcc5ace60f67f35afe6778c445401a07"
 package = "jsonpointer.py"
+deps = [
+    "coverage",
+    "flake8",
+    "setuptools",
+    "wheel",
+]
 test = ["{python}", "-m", "pytest", "-q", "tests.py"]
 
 [[project]]
 name = "rfc3986"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/python-hyper/rfc3986.git"
 rev = "2248a185cb3961ce5df418c733e79f350f588f66"
 package = "src/rfc3986"
+deps = [
+    "attrs==20.1.0",
+    "idna",
+    "pytest",
+    "pytest-cov>=2.0",
+]
 pythonpath = "src"
 
 [[project]]
 name = "uritemplate"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/python-hyper/uritemplate.git"
 rev = "e7a947e7385de3e04bb05d73d4acbc4c4409f059"
 package = "uritemplate"
+deps = [
+    "pytest",
+]
 
 [[project]]
 name = "tomli-w"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/hukkin/tomli-w.git"
 rev = "1210bb6f5708a4dc084cc3deb4a3a3e3939f4d6d"
 package = "src/tomli_w"
 pythonpath = "src"
-deps = ["tomli"]
+deps = [
+    "pytest",
+    "pytest-cov>=2.12.1",
+    "pytest-randomly",
+    "tomli; python_version < \"3.11\"",
+]
 
 [[project]]
 name = "wheel"
+# Test context: Selected group:test.
 url = "https://github.com/pypa/wheel.git"
 rev = "b25c3c2ef5c789116b0545889aea68f5f65185a7"
 package = "src/wheel"
 pythonpath = "src"
-deps = ["setuptools", "pytest-timeout"]
+deps = [
+    "packaging>=26.0",
+    "pytest-timeout",
+    "pytest>=6.0.0",
+    "setuptools>=77",
+]
 
 [[project]]
 name = "installer"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/pypa/installer.git"
 rev = "59f0a65af99246566f7462429dbd5964363a2e35"
 package = "src/installer"
 pythonpath = "src"
-deps = ["pytest-mock"]
+deps = [
+    "pytest",
+    "pytest-cov",
+    "pytest-mock",
+    "pytest-xdist",
+]
 
 [[project]]
 name = "pyproject-hooks"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/pypa/pyproject-hooks.git"
 rev = "184c9f56a87ede1276a5b33f5024204adb792cd2"
 package = "src/pyproject_hooks"
 pythonpath = "src"
-deps = ["testpath", "setuptools"]
+deps = [
+    "flake8",
+    "pytest",
+    "setuptools>=30",
+    "testpath",
+    "tomli>=1.1.0; python_version < \"3.11\"",
+]
 
 [[project]]
 name = "simpy"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://gitlab.com/team-simpy/simpy.git"
 rev = "f43816490c6f76f336ad6e457d3cab9f386894af"
 package = "src/simpy"
 pythonpath = "src"
-deps = ["pytest-benchmark"]
+deps = [
+    "pytest",
+    "pytest-benchmark",
+]
 test = ["{python}", "-m", "pytest", "-q", "-o", "addopts=", "tests"]
 
 [[project]]
 name = "termcolor"
+# Test context: Selected extra:tests.
 url = "https://github.com/termcolor/termcolor.git"
 rev = "4ce05dda98e006cdcacb7c855857c5cf8ff0e1e5"
 package = "src/termcolor"
+deps = [
+    "pytest-cov",
+    "pytest>=9",
+]
 pythonpath = "src"
 
 [[project]]
@@ -1071,10 +2397,33 @@ known_failures = ["unittest:test_pickle (test_typing_extensions.TypeAliasTypeTes
 
 [[project]]
 name = "cheroot"
+# Test context: Ordinary CPython test requirements declared by tox/workflow.
 url = "https://github.com/cherrypy/cheroot.git"
 rev = "edef8ff8629022408a9dc7a77484c3c4ea295829"
 package = "cheroot"
-deps = ["jaraco.functools", "more-itertools", "jaraco.text", "jaraco.context", "pytest-mock", "requests", "requests-toolbelt", "requests-unixsocket", "portend", "pypytools", "jaraco.functools", "pyopenssl", "trustme", "pytest-cov", "pytest-xdist", "pytest-rerunfailures", "chardet"]
+deps = [
+    "chardet",
+    "coverage>=6.2",
+    "jaraco.context",
+    "jaraco.functools",
+    "jaraco.text>=3.1",
+    "more-itertools",
+    "portend",
+    "pyopenssl",
+    "pypytools",
+    "pytest-clarity",
+    "pytest-cov",
+    "pytest-mock>=1.11.0",
+    "pytest-rerunfailures",
+    "pytest-sugar>=0.9.3",
+    "pytest-watch==4.2.0",
+    "pytest-xdist>=1.28.0",
+    "pytest>=7",
+    "requests-unixsocket",
+    "requests[use_chardet_on_py3]",
+    "requests_toolbelt",
+    "trustme>=0.4.0",
+]
 exclude = ["test"]
 timeout = 3600
 
@@ -1087,27 +2436,69 @@ pythonpath = "src"
 
 [[project]]
 name = "environs"
+# Test context: Declared outer/default tool context plus ordinary inner test requirements.
+# Original selected tool pins: mypy 2.3.1 (uv.lock).
 url = "https://github.com/sloria/environs.git"
 rev = "4e57a32ffecb64b7c6df06748086987d3bc8c86e"
 package = "src/environs"
 pythonpath = "src"
-deps = ["marshmallow", "python-dotenv", "dj-database-url", "dj-email-url", "django-cache-url"]
+deps = [
+    "backports.strenum; python_version < \"3.11\"",
+    "dj-database-url",
+    "dj-email-url",
+    "django-cache-url",
+    "marshmallow",
+    "mypy",
+    "mypy==2.3.1",
+    "pre-commit<5.0,>=4.0",
+    "pytest",
+    "python-dotenv",
+    "tox",
+    "tox-uv",
+]
 
 [[project]]
 name = "apispec"
+# Test context: Declared outer/default tool context plus ordinary inner test requirements.
 url = "https://github.com/marshmallow-code/apispec.git"
 rev = "bfac55c9bfbc4edbdde505d29d8c20c62133fc10"
 package = "src/apispec"
 pythonpath = "src"
-deps = ["marshmallow", "pyyaml", "packaging", "openapi-spec-validator"]
+deps = [
+    "PyYAML>=3.10",
+    "marshmallow>=3.18.0",
+    "openapi-spec-validator",
+    "packaging",
+    "pre-commit<5.0,>=3.5",
+    "pytest",
+    "tox",
+    "tox-uv",
+]
 
 [[project]]
 name = "webargs"
+# Test context: Selected group:test-all-frameworks.
 url = "https://github.com/marshmallow-code/webargs.git"
 rev = "abe0d763aeb4158764b8be3e19e36ce49c95ec8c"
 package = "src/webargs"
 pythonpath = "src"
-deps = ["marshmallow", "packaging", "webtest", "webtest-aiohttp", "flask", "django", "bottle", "tornado", "pytest-aiohttp", "aiohttp", "falcon", "pyramid"]
+deps = [
+    "Django>=5.2.0",
+    "Flask>=3.1.0",
+    "aiohttp>=3.13.0",
+    "bottle>=0.13.0",
+    "falcon>=4.1.0",
+    "marshmallow",
+    "packaging>=17.0",
+    "pyramid>=2.0.2",
+    "pytest",
+    "pytest-aiohttp>=0.3.0",
+    "pytest-asyncio",
+    "setuptools<82.0",
+    "tornado>=6.5.0",
+    "webtest-aiohttp==2.0.0",
+    "webtest==3.0.7",
+]
 timeout = 3600
 
 # --- Towel itself, at each released version --------------------------------
@@ -1120,27 +2511,85 @@ timeout = 3600
 
 [[project]]
 name = "towel-v1.414"
+# Test context: Selected extra:dev.
+# Original selected tool pins: mypy 2.3.1 (uv.lock), black 26.5.1 (uv.lock).
 url = "https://github.com/ericeallen/towel.git"
 rev = "4bb390b8a4e2a867b09e880290e8af777b62b37a"  # tag v1.414
 package = "src/towel"
 pythonpath = "src"
-deps = ["tqdm", "black", "tomli", "hypothesis"]
+deps = [
+    "bandit>=1.7.6",
+    "black==26.5.1",
+    "black>=26.3.1",
+    "build>=1.0.0",
+    "coverage>=7.0.0",
+    "flake8>=6.0.0",
+    "hypothesis",
+    "mypy==2.3.1",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "pydocstyle>=6.0.0",
+    "pytest>=9.0.3",
+    "tomli>=2.0.1",
+    "tqdm>=4.66.0",
+]
 timeout = 3600
 
 [[project]]
 name = "towel-v1.618"
+# Test context: Selected extra:dev.
+# Original selected tool pins: mypy 2.3.1 (uv.lock), black 26.5.1 (uv.lock).
 url = "https://github.com/ericeallen/towel.git"
 rev = "21500b5bf6d7107e2e8f9d3f21303090190736b4"  # tag v1.618
 package = "src/towel"
 pythonpath = "src"
-deps = ["tqdm", "black", "tomli", "hypothesis"]
+deps = [
+    "bandit>=1.7.6",
+    "black==26.5.1",
+    "black>=26.3.1",
+    "build>=1.0.0",
+    "coverage>=7.0.0",
+    "flake8>=6.0.0",
+    "hypothesis",
+    "mypy==2.3.1",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "pydocstyle>=6.0.0",
+    "pytest>=9.0.3",
+    "tomli>=2.0.1",
+    "tqdm>=4.66.0",
+]
 timeout = 3600
 
 [[project]]
 name = "towel-main"
+# Test context: Selected extra:dev.
+# Original selected tool pins: mypy 2.3.1 (uv.lock), pyright 1.1.414 (uv.lock), black 26.5.1 (uv.lock), isort 9.0.1 (uv.lock), ruff 0.16.8 (uv.lock).
 url = "https://github.com/ericeallen/towel.git"
 rev = "HEAD"  # on purpose: this entry tracks current main, never a fixed commit
 package = "src/towel"
 pythonpath = "src"
-deps = ["tqdm", "black", "tomli", "hypothesis"]
+deps = [
+    "bandit>=1.7.6",
+    "black==26.5.1",
+    "black>=26.3.1",
+    "build>=1.0.0",
+    "coverage>=7.0.0",
+    "flake8>=6.0.0",
+    "hypothesis>=6.100",
+    "isort==9.0.1",
+    "isort>=5.12",
+    "mypy==2.3.1",
+    "mypy>=1.0.0",
+    "pip-audit>=2.7",
+    "pre-commit>=3.0.0",
+    "pydocstyle>=6.0.0",
+    "pyright==1.1.414",
+    "pyright>=1.1",
+    "pytest>=9.0.3",
+    "ruff==0.16.8",
+    "ruff>=0.4",
+    "tomli",
+    "tqdm>=4.66.0",
+]
 timeout = 3600

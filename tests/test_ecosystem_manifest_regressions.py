@@ -57,6 +57,49 @@ def test_manifest_supplies_declared_test_prerequisites(name: str, dependency: st
     ), f"{name} must install {dependency} so its declared test suite can run"
 
 
+def test_tabulate_ci_dependencies_retain_wide_character_and_data_tests() -> None:
+    # This pin's .github/workflows/tabulate.yml installs all three optional
+    # libraries, and tox's py312-extra repeats them. Without wcwidth, the
+    # checker loses its concrete imported bindings and declines a useful helper;
+    # numpy/pandas test bodies also skip. These are the selected test context,
+    # rather than an invitation to install unrelated project extras.
+    project = _project("tabulate")
+    assert project.rev == "268615a5c27dc40e5c22454c07b44d5c50410da0"
+    requirements = {
+        canonicalize_name(requirement.name): requirement
+        for requirement in map(Requirement, project.deps)
+    }
+    assert {"pytest-cov", "numpy", "pandas", "wcwidth"} <= requirements.keys()
+    assert str(requirements[canonicalize_name("wcwidth")].specifier) == ">=0.6.0"
+    assert not requirements[canonicalize_name("numpy")].specifier
+    assert not requirements[canonicalize_name("pandas")].specifier
+
+
+def test_markdown_it_ci_testing_and_linkify_requirements_are_complete() -> None:
+    # The test CI job selects .[testing,linkify]; pytest-timeout makes the
+    # configured timeout active instead of silently yielding an unknown option.
+    # flit_core and requests are test prerequisites, not docs/plugin-job extras.
+    project = _project("markdown-it-py")
+    assert project.rev == "a5950caef3434ed83045b43311aefcf7e0578aa3"
+    requirements = {
+        canonicalize_name(requirement.name): requirement
+        for requirement in map(Requirement, project.deps)
+    }
+    assert {
+        "coverage",
+        "flit-core",
+        "pytest-cov",
+        "pytest-regressions",
+        "pytest-timeout",
+        "requests",
+        "linkify-it-py",
+    } <= requirements.keys()
+    assert str(requirements[canonicalize_name("flit-core")].specifier) == "<5,>=3.4"
+    assert str(requirements[canonicalize_name("linkify-it-py")].specifier) == "<3,>=1"
+    assert {"psutil", "pytest-benchmark"} <= requirements.keys()
+    assert {"sphinx", "mdit-py-plugins", "panflute"}.isdisjoint(requirements)
+
+
 def test_blinker_test_dependencies_preserve_its_declared_typing_target() -> None:
     # This pin's uv.lock selects pytest 8.3.5 and pytest-asyncio 1.0.0. The
     # corpus installed pytest 9.1.1, whose match syntax makes mypy abort for
@@ -119,3 +162,120 @@ def test_ply_manifest_runs_both_scripts_against_each_source_copy(tmp_path: Path)
         assert paths == [module, module]
         imported.append(paths[0])
     assert imported[0] != imported[1], "Both phases imported the same source tree"
+
+
+_CONTEXT_SOURCES = Path(__file__).with_name("ecosystem_context_sources")
+
+
+def _context_requirements(name: str) -> list[Requirement]:
+    """Read actual selected source groups, including recursive project extras."""
+    import json
+
+    source = _CONTEXT_SOURCES / name
+    index = ecosystem._table(json.loads((_CONTEXT_SOURCES / "index.json").read_text()))
+    rows = index["projects"]
+    assert isinstance(rows, list)
+    row = next(ecosystem._table(value) for value in rows if ecosystem._table(value)["name"] == name)
+    assert _project(name).rev == row["declared_pin"]
+    assert isinstance(row["pin"], str) and len(row["pin"]) == 40
+    data = ecosystem._read_toml(source / "pyproject.toml")
+    project = ecosystem._table(data.get("project"))
+    project_name = str(project.get("name", name))
+    declarer = ecosystem._Declarer(source, ecosystem._canonical(project_name), data)
+    requirements: list[str] = []
+    selectors = row["selectors"]
+    assert isinstance(selectors, list)
+    for selector_value in selectors:
+        selector = ecosystem._table(selector_value)
+        kind, selected = str(selector["kind"]), str(selector["name"])
+        if kind in ("group", "extra"):
+            declarations = declarer.declared(
+                "pinned selected test source",
+                groups=(selected,) if kind == "group" else (),
+                extras=(selected,) if kind == "extra" else (),
+            )
+            requirements.extend(
+                declaration.requirement
+                for declaration in declarations
+                if canonicalize_name(Requirement(declaration.requirement).name)
+                != canonicalize_name(project_name)
+            )
+        elif kind == "hatch-env":
+            hatch = ecosystem._table(ecosystem._table(data.get("tool")).get("hatch"))
+            selected_env = ecosystem._table(ecosystem._table(hatch.get("envs")).get(selected))
+            requirements.extend(ecosystem._strings(selected_env["dependencies"]))
+        else:
+            assert kind == "poetry-legacy"
+            poetry = ecosystem._table(ecosystem._table(data.get("tool")).get("poetry"))
+            for dependency, version in ecosystem._table(poetry[selected]).items():
+                assert isinstance(version, str)
+                if version.startswith("^"):
+                    lower = version[1:]
+                    parts = [int(component) for component in lower.split(".")]
+                    while len(parts) < 3:
+                        parts.append(0)
+                    first = next(index for index, component in enumerate(parts) if component)
+                    upper = [*parts[:first], parts[first] + 1, *([0] * (2 - first))]
+                    version = f">={lower},<{'.'.join(map(str, upper))}"
+                elif version[0].isdigit():
+                    version = "==" + version
+                requirements.append(dependency + version)
+    return list(map(Requirement, requirements))
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "markdown-it-py",
+        "starlette",
+        "jinja2",
+        "rich",
+        "networkx",
+        "tenacity",
+        "bottle",
+        "soupsieve",
+        "httpx",
+        "towel-main",
+    ],
+)
+def test_manifest_covers_actual_pinned_selected_source_context(name: str) -> None:
+    """Read upstream declarations rather than restating a curated dependency list."""
+    selected = _context_requirements(name)
+    assert selected, name
+    declared = list(map(Requirement, _project(name).deps))
+    for requirement in selected:
+        matching = [
+            item
+            for item in declared
+            if canonicalize_name(item.name) == canonicalize_name(requirement.name)
+        ]
+        assert matching, (name, str(requirement))
+        assert any(
+            item.extras >= requirement.extras
+            and (not requirement.specifier or item.specifier == requirement.specifier)
+            and item.marker == requirement.marker
+            for item in matching
+        ), (name, str(requirement), list(map(str, matching)))
+
+
+@pytest.mark.parametrize("name", ["jinja2", "rich", "starlette", "towel-main"])
+def test_new_weak_tool_requirements_retain_the_actual_upstream_tool_selection(name: str) -> None:
+    import json
+
+    source = _CONTEXT_SOURCES / name
+    index = ecosystem._table(json.loads((_CONTEXT_SOURCES / "index.json").read_text()))
+    rows = index["projects"]
+    assert isinstance(rows, list)
+    row = next(ecosystem._table(value) for value in rows if ecosystem._table(value)["name"] == name)
+    expected = ecosystem._table(row["pin_sources"])
+    actual = ecosystem.tool_pins(Path(sys.executable), source, tuple(expected))
+    assert {tool: list(choice) for tool, choice in actual.items()} == expected
+    selected = {canonicalize_name(requirement.name) for requirement in _context_requirements(name)}
+    declared = list(map(Requirement, _project(name).deps))
+    for tool, (_, version) in actual.items():
+        if canonicalize_name(tool) in selected:
+            assert any(
+                canonicalize_name(requirement.name) == canonicalize_name(tool)
+                and str(requirement.specifier) == "==" + version
+                for requirement in declared
+            ), (name, tool, version)

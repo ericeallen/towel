@@ -37,13 +37,11 @@ repos:
     hooks:
       # Remove trailing whitespace
       - id: trailing-whitespace
-        # Retained validation output is evidence: preserve its original bytes.
-        exclude: ^(test_examples.*_expected_output/|tests/(hostile_cases|hostile_crossfile)/|tests/release_evidence/[^/]+/[^/]+\.txt$|tests/ecosystem_context_sources/(?!index\.json$))
+        exclude: ^(test_examples.*_expected_output/|tests/(hostile_cases|hostile_crossfile)/)
 
       # Ensure files end with newline
       - id: end-of-file-fixer
-        # Pinned upstream fixtures retain their exact public source bytes.
-        exclude: ^(test_examples.*_expected_output/|tests/(hostile_cases|hostile_crossfile)/|tests/ecosystem_context_sources/(?!index\.json$))
+        exclude: ^(test_examples.*_expected_output/|tests/(hostile_cases|hostile_crossfile)/)
 
       # Check YAML syntax
       - id: check-yaml
