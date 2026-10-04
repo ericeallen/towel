@@ -360,6 +360,13 @@ def checked(formatter: SnippetFormatter) -> SnippetFormatter:
     return format_snippet
 
 
+def _leading_blank_lines(source: str) -> int:
+    for index, line in enumerate(source.split("\n")):
+        if line.strip():
+            return index
+    return source.count("\n") + 1
+
+
 def format_at_indentation(formatter: SnippetFormatter, source: str, prefix: str) -> str:
     """Format a snippet at its destination depth, returning column-zero text.
 
@@ -394,6 +401,11 @@ def format_at_indentation(formatter: SnippetFormatter, source: str, prefix: str)
     unwrapped = "\n".join(
         line[len(margin) :] if line.startswith(margin) else line for line in lines
     )
+    # Ruff separates a definition from its synthetic enclosing ``if`` with a
+    # blank line. That suite's spacing does not belong to the destination;
+    # insertion supplies its own separator. Keep blanks the input already had.
+    extra = max(_leading_blank_lines(unwrapped) - _leading_blank_lines(source), 0)
+    unwrapped = "\n".join(unwrapped.split("\n")[extra:])
     if canonical_dump(ast.parse(unwrapped)) != canonical_dump(ast.parse(source)):
         raise FormattingChangedCode(
             "formatting changed the generated code's meaning:\n" + unwrapped

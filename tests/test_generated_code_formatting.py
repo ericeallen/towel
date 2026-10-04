@@ -388,6 +388,75 @@ def test_r1792_engine_output_stays_formatted_after_insertion(tmp_path: Path, too
     assert result != original
 
 
+@pytest.mark.parametrize("prefix", ["    ", "        ", "\t"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def helper(value: str) -> str:\n    return value",
+        "# carried comment\ndef helper(value: str) -> str:  # noqa: ANN001\n    return value",
+        "@decorator\ndef helper(value: str) -> str:\n    return value",
+    ],
+)
+def test_ruff_context_does_not_export_its_suite_spacing(
+    tmp_path: Path, prefix: str, source: str
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff]\n")
+    formatted = format_at_indentation(ruff_formatter(tmp_path / "module.py"), source, prefix)
+    assert not formatted.startswith("\n")
+    assert ast.dump(ast.parse(formatted)) == ast.dump(ast.parse(source))
+    assert [line.strip() for line in formatted.splitlines() if "#" in line] == [
+        line.strip() for line in source.splitlines() if "#" in line
+    ]
+
+
+def test_context_unwrapping_keeps_original_leading_blank_lines() -> None:
+    source = "\n\n# carried comment\ndef helper():\n    return 1"
+    # An identity formatter keeps the snippet's own blank lines inside the wrapper.
+    assert format_at_indentation(checked(lambda text: text), source, "    ") == source
+
+
+def test_ruff_method_helper_materialization_is_already_formatted(tmp_path: Path) -> None:
+    """MarkdownIt's useful method helpers must pass its complete-file Ruff format check."""
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff]\nline-length = 75\n")
+    path = tmp_path / "module.py"
+    formatter = ruff_formatter(path)
+    original = formatter(textwrap.dedent("""
+        class Greeter:
+            suffix = "!"
+
+            def first(self, name):
+                prefix = "Mr. "
+                greeting = prefix + name + self.suffix
+                return greeting.strip()
+
+            def second(self, name):
+                prefix = "Dr. "
+                greeting = prefix + name + self.suffix
+                return greeting.strip()
+        """)) + "\n"
+    path.write_text(original)
+    result = _refactor(path, snippet_formatter=formatter)
+    (owner,) = ast.parse(result).body
+    assert isinstance(owner, ast.ClassDef)
+    (helper,) = [
+        node
+        for node in owner.body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func_")
+    ]
+    assert helper.args.args[0].arg == "self"
+    assert (
+        sum(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == helper.name
+            for node in ast.walk(owner)
+        )
+        == 2
+    )
+    assert formatter(result) == result.rstrip("\n")
+    assert path.read_text() == original
+
+
 def test_r1792_contextual_formatting_still_refuses_semantic_changes() -> None:
     formatter = checked(lambda source: source.replace("+", "-"))
     with pytest.raises(FormattingChangedCode):
