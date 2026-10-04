@@ -916,7 +916,7 @@ class BlockAnalysis(EngineState):
         statement = body[0]
         thunks = frozenset(
             argument.arg
-            for argument in func.args.args
+            for argument in (*func.args.posonlyargs, *func.args.args)
             if argument.arg.startswith(GENERATED_PARAMETER_PREFIX)
         )
         if isinstance(statement, ast.Return):
@@ -1043,7 +1043,7 @@ class BlockAnalysis(EngineState):
         """
         thunks = frozenset(
             argument.arg
-            for argument in func.args.args
+            for argument in (*func.args.posonlyargs, *func.args.args)
             if argument.arg.startswith(GENERATED_PARAMETER_PREFIX)
         )
         values: List[ast.expr] = []

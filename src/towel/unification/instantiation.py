@@ -199,10 +199,9 @@ def _instantiation_mismatch(
     call = _extract_call(call_statement, helper.name)
     if call is None:
         return "call shape"
-    parameters = [argument.arg for argument in helper.args.args]
+    parameters = [argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)]
     if (
-        helper.args.posonlyargs
-        or helper.args.kwonlyargs
+        helper.args.kwonlyargs
         or helper.args.vararg
         or helper.args.kwarg
         or len(parameters) != len(call.args)

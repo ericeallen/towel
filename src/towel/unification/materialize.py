@@ -200,6 +200,12 @@ class Materialization(
         """
         # Materialization owns its ASTs; callers may reuse or inspect the proposal.
         proposal = copy.deepcopy(proposal)
+        if proposal.reused_function is None:
+            host = self._parsed_host(proposal.file_path)
+            if self._oldest_python_for(proposal.file_path, host) < (3, 8):
+                arguments = proposal.extracted_function.args
+                arguments.args = arguments.posonlyargs + arguments.args
+                arguments.posonlyargs = []
         self._infer_helper_annotations(proposal)
         check_types = self._active_type_oracle() is not None
         counters = dict(self._helper_name_counters)
@@ -376,7 +382,13 @@ class Materialization(
         receiver_name = proposal.method_param_name or (
             "cls" if proposal.method_kind == "classmethod" else "self"
         )
-        parameters = [arg.arg for arg in proposal.extracted_function.args.args]
+        parameters = [
+            arg.arg
+            for arg in (
+                *proposal.extracted_function.args.posonlyargs,
+                *proposal.extracted_function.args.args,
+            )
+        ]
         return _HelperNaming(
             original_name=original_name,
             final_name=proposal.extracted_function.name,

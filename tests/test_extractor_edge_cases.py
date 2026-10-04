@@ -104,8 +104,8 @@ other = value * free2
     assert len(returned_ids) == len(ret.elts), "every returned element must be a Name"
     assert set(returned_ids) == {"value", "other"}
     # Parameters include unified first then free variables sorted
-    assert [a.arg for a in func_def.args.args][:2] == ["__param_0", "__param_1"]
-    assert set(a.arg for a in func_def.args.args[2:]) == {"free1", "free2"}
+    assert [a.arg for a in func_def.args.posonlyargs] == ["__param_0", "__param_1"]
+    assert set(a.arg for a in func_def.args.args) == {"free1", "free2"}
 
 
 def test_generate_call_params_used_as_callee_wrapped():

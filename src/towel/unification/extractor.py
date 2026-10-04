@@ -52,6 +52,7 @@ from .lexical_scopes import (
     nested_scope_names,
 )
 from .models import FunctionNode
+from .parameters import GENERATED_PARAMETER_PREFIX
 from .statement_facts import block_contains_return, import_binding_names, pattern_capture_names
 
 if TYPE_CHECKING:
@@ -842,11 +843,23 @@ class HygienicExtractor:
         )
         all_param_names = [name for name in all_param_names if name in needed]
         param_order = {name: idx for idx, name in enumerate(all_param_names)}
+        # Synthetic double-underscore names denote positional-only parameters
+        # to type checkers. Every generated call passes its arguments by position;
+        # give the helper the same runtime signature, without changing any names.
+        positional_only_count = max(
+            (
+                index + 1
+                for index, name in enumerate(all_param_names)
+                if name in substitution.param_expressions
+                and name.startswith(GENERATED_PARAMETER_PREFIX)
+            ),
+            default=0,
+        )
         func_def = ast.FunctionDef(
             name=function_name,
             args=ast.arguments(
-                posonlyargs=[],
-                args=[ast.arg(arg=name) for name in all_param_names],
+                posonlyargs=[ast.arg(arg=name) for name in all_param_names[:positional_only_count]],
+                args=[ast.arg(arg=name) for name in all_param_names[positional_only_count:]],
                 kwonlyargs=[],
                 kw_defaults=[],
                 defaults=[],

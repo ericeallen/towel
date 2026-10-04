@@ -544,11 +544,11 @@ class HelperPlacement(EngineState):
 
     @staticmethod
     def _ensure_leading_param(fn: ast.FunctionDef, param_name: str) -> None:
-        """Ensure the positional-args list starts with ``param_name`` (preserving annotations)."""
+        """Put the receiver first, preserving annotations and positional-only arguments."""
 
         existing: Optional[ast.arg] = None
         remaining: List[ast.arg] = []
-        for arg in fn.args.args:
+        for arg in (*fn.args.posonlyargs, *fn.args.args):
             if arg.arg == param_name and existing is None:
                 existing = arg
                 continue
@@ -560,7 +560,16 @@ class HelperPlacement(EngineState):
         if existing is None:
             existing = ast.arg(arg=param_name)
 
-        fn.args.args = [existing] + remaining
+        positional_only_names = {argument.arg for argument in fn.args.posonlyargs}
+        if fn.args.posonlyargs:
+            fn.args.posonlyargs = [existing] + [
+                argument for argument in remaining if argument.arg in positional_only_names
+            ]
+            fn.args.args = [
+                argument for argument in remaining if argument.arg not in positional_only_names
+            ]
+        else:
+            fn.args.args = [existing] + remaining
 
     @staticmethod
     def _retarget_helper_calls(node: ast.AST, original_name: str, final_name: str) -> ast.AST:
