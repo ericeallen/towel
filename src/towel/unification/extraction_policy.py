@@ -22,13 +22,11 @@ nested bodies, is opaque; its line number and surrounding module may change.
 from __future__ import annotations
 
 import ast
-import io
 import tokenize
-from bisect import bisect_right
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from ..source_text import source_lines
+from ..source_text import definition_start_line, logical_line_tokens, source_lines
 from .exceptions import RefactoringError
 
 LineRange = Tuple[int, int]
@@ -48,9 +46,8 @@ def _header_lines(source: str) -> Tuple[frozenset[int], Tuple[int, ...]]:
     marked: set[int] = set()
     decorators: List[int] = []
     depth = 0
-    logical_start = True
     previous: Optional[tokenize.TokenInfo] = None
-    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+    for token, logical_start in logical_line_tokens(source):
         if token.type == tokenize.OP and token.string == "@" and logical_start:
             decorators.append(token.start[0])
         if (
@@ -68,31 +65,8 @@ def _header_lines(source: str) -> Tuple[frozenset[int], Tuple[int, ...]]:
                 depth += 1
             elif token.string in ")]}":
                 depth -= 1
-        if token.type == tokenize.NEWLINE:
-            logical_start = True
-        elif token.type not in (
-            tokenize.COMMENT,
-            tokenize.NL,
-            tokenize.INDENT,
-            tokenize.DEDENT,
-            tokenize.ENCODING,
-            tokenize.ENDMARKER,
-        ):
-            logical_start = False
         previous = token
     return frozenset(marked), tuple(decorators)
-
-
-def _definition_start(
-    node: ast.FunctionDef | ast.AsyncFunctionDef, decorators: Tuple[int, ...]
-) -> int:
-    """Use the lexical @ opener, which may precede the decorator expression's AST."""
-    if not node.decorator_list:
-        return node.lineno
-    first_expression = min(decorator.lineno for decorator in node.decorator_list)
-    index = bisect_right(decorators, first_expression)
-    assert index, "A decorated definition must have a lexical decorator header"
-    return decorators[index - 1]
 
 
 def _definition_end(node: ast.FunctionDef | ast.AsyncFunctionDef, lines: List[str]) -> int:
@@ -134,7 +108,7 @@ def protected_definitions(source: str, tree: ast.AST) -> Tuple[ProtectedDefiniti
         def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
             ancestry.append(node.name)
             if any(node.lineno <= line < node.body[0].lineno for line in marked):
-                start = _definition_start(node, decorators)
+                start = definition_start_line(node, decorators)
                 end = _definition_end(node, lines)
                 found.append(
                     ProtectedDefinition(

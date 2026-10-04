@@ -35,9 +35,11 @@ from __future__ import annotations
 
 import ast
 from collections import OrderedDict
+from collections import Counter
 import configparser
 from dataclasses import dataclass
 import copy
+import json
 from enum import Enum
 from pathlib import Path
 import posixpath
@@ -45,13 +47,13 @@ import re
 import sys
 import shutil
 import subprocess
-from typing import TYPE_CHECKING, Callable, List, Mapping, NamedTuple, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Callable, List, Mapping, NamedTuple, Optional, Set, Tuple, cast
 
 from .canonical_ast import canonical_dump
 from .project_layout import find_project_root, load_pyproject
 from .project_tools import ToolChoice, python_tool_environment
 from .diagnostics import LOG
-from .source_text import try_read_source
+from .source_text import decorator_line_numbers, definition_start_line, try_read_source
 
 if TYPE_CHECKING:
     import isort
@@ -82,6 +84,180 @@ class FormattingChangedCode(ValueError):
     Either way nothing it returned is written: the proposal it was formatting
     is declined, and the run goes on.
     """
+
+
+class LintRejected(FormattingChangedCode):
+    """The configured Ruff check failed or found a diagnostic the change introduced."""
+
+
+@dataclass(frozen=True)
+class _LintDiagnostic:
+    code: str
+    message: str
+    row: int
+    column: int
+    scopes: tuple[tuple[str, str], ...] = ()
+
+
+def _lint_diagnostics(output: str) -> tuple[_LintDiagnostic, ...]:
+    """Validate Ruff's located JSON diagnostics before using them as a baseline."""
+    try:
+        values: object = json.loads(output)
+    except ValueError as error:
+        raise LintRejected("Ruff returned invalid diagnostic JSON") from error
+    if not isinstance(values, list):
+        raise LintRejected("Ruff returned a diagnostic value that is not a list")
+    diagnostics: list[_LintDiagnostic] = []
+    for value in cast(list[object], values):
+        if not isinstance(value, dict):
+            raise LintRejected("Ruff returned a diagnostic that is not an object")
+        record = cast(Mapping[str, object], value)
+        code, message, location = record.get("code"), record.get("message"), record.get("location")
+        if (
+            not isinstance(code, str)
+            or not isinstance(message, str)
+            or not isinstance(location, dict)
+        ):
+            raise LintRejected("Ruff returned an unlocated diagnostic")
+        coordinates = cast(Mapping[str, object], location)
+        row, column = coordinates.get("row"), coordinates.get("column")
+        if type(row) is not int or type(column) is not int or row < 1 or column < 1:
+            raise LintRejected("Ruff returned an invalid diagnostic location")
+        diagnostics.append(_LintDiagnostic(code, message, row, column))
+    return tuple(diagnostics)
+
+
+def _ruff_lint_guard(command: List[str], root: Path) -> FileFinisher:
+    """Reject new diagnostics; only errors on exactly retained lines spend the baseline.
+
+    A warning moved into a helper is conservatively new. Code, message, aligned
+    line, column and named lexical scopes must all match; a removed warning
+    cannot pay for one in a new helper. The file still holds this proposal's input.
+    """
+    from .type_baseline import unchanged_lines
+
+    def diagnostics(path: str, source: str) -> tuple[_LintDiagnostic, ...]:
+        try:
+            result = subprocess.run(
+                [
+                    *command,
+                    "check",
+                    "--no-fix",
+                    "--no-fix-only",
+                    "--no-cache",
+                    "--force-exclude",
+                    "--output-format",
+                    "json",
+                    "--stdin-filename",
+                    str(_counterpart(root, Path(path))),
+                    "-",
+                ],
+                input=source,
+                capture_output=True,
+                text=True,
+                cwd=root,
+                env=python_tool_environment(),
+                check=False,
+                timeout=TOOL_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise LintRejected(f"The configured Ruff check failed: {error}") from error
+        if result.returncode not in (0, 1):
+            raise LintRejected(f"The configured Ruff check failed: {result.stderr.strip()}")
+        found = _lint_diagnostics(result.stdout)
+        if result.returncode == 1 and not found:
+            raise LintRejected("Ruff failed without a located diagnostic")
+        try:
+            decorators = decorator_line_numbers(source)
+            definitions = [
+                node
+                for node in ast.walk(ast.parse(source))
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            ]
+        except SyntaxError as error:
+            raise LintRejected(
+                "Cannot establish Ruff diagnostic scopes in invalid source"
+            ) from error
+        return tuple(
+            _LintDiagnostic(
+                error.code,
+                error.message,
+                error.row,
+                error.column,
+                tuple(
+                    (type(node).__name__, node.name)
+                    for node in sorted(
+                        definitions,
+                        key=lambda node: (
+                            definition_start_line(node, decorators),
+                            -(node.end_lineno or node.lineno),
+                        ),
+                    )
+                    if definition_start_line(node, decorators)
+                    <= error.row
+                    <= (node.end_lineno or node.lineno)
+                ),
+            )
+            for error in found
+        )
+
+    def finish(path: str, source: str) -> str:
+        original = try_read_source(Path(path))
+        if original is None:
+            raise LintRejected(f"Cannot read the configured Ruff baseline: {path}")
+        lines = unchanged_lines(original, source).after_of
+        baseline = Counter(
+            _LintDiagnostic(error.code, error.message, lines[error.row], error.column, error.scopes)
+            for error in diagnostics(path, original)
+            if error.row in lines
+        )
+        introduced = Counter(diagnostics(path, source)) - baseline
+        if introduced:
+            first = next(iter(introduced))
+            raise LintRejected(f"The change introduces Ruff {first.code}: {first.message}")
+        return source
+
+    return finish
+
+
+def _ruff_configures_file(path: Path, root: Path) -> bool:
+    """Whether Ruff can find a project configuration above this exact source file."""
+    folder = _counterpart(root, path).parent
+    while folder.is_relative_to(root):
+        if _tool_section(folder, "ruff") or any(
+            (folder / name).is_file() for name in ("ruff.toml", ".ruff.toml")
+        ):
+            return True
+        if folder == root:
+            break
+        folder = folder.parent
+    return False
+
+
+def file_finisher_for_project(path: Path, *, sort_imports: bool = True) -> ToolChoice[FileFinisher]:
+    """Sort added imports, then require the project's configured Ruff lint baseline."""
+    sorting = (
+        import_sorter_for_project(path) if sort_imports else ToolChoice[FileFinisher](None, "")
+    )
+    command = _ruff_executable()
+    if command is None:
+        return (
+            ToolChoice(sorting.tool, "ruff is configured but not installed; lint not checked")
+            if project_configures_ruff(path)
+            else sorting
+        )
+    root = _root(path)
+    guard = _ruff_lint_guard(command, root)
+
+    def finish(file_path: str, source: str) -> str:
+        finished = sorting.tool(file_path, source) if sorting.tool else source
+        return (
+            guard(file_path, finished) if _ruff_configures_file(Path(file_path), root) else finished
+        )
+
+    return ToolChoice(
+        finish, "; ".join(note for note in (sorting.note, "configured Ruff lint") if note)
+    )
 
 
 @dataclass(frozen=True)

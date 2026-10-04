@@ -82,7 +82,7 @@ from .progress import (
 from towel.changes import ChangePlan, StaleSource, apply_changes
 from ..consumers import MAXIMUM_FILES
 from ..diagnostics import LOG, OVERLAP, REJECTIONS, TYPES, UNIFIER, VALIDATION, debugging
-from ..formatting import FormattingChangedCode
+from ..formatting import FormattingChangedCode, LintRejected
 from ..filesystem import (
     StagedProject,
     copy_project,
@@ -124,6 +124,7 @@ DeclineReason = Union[
         "not representable in its file's encoding",
         "not writable in place: its file is hard-linked",
         "the formatter changed its code or failed",
+        "the configured Ruff check failed or introduced diagnostics",
         "could not be rendered",
         "changed nothing",
     ],
@@ -479,6 +480,11 @@ class FixedPointDrivers(Materialization):
                 "no annotated helper signature types"
                 if reason is Untypeable.UNANNOTATED_IN_ANNOTATED_MODULE
                 else "no helper signature can type"
+            )
+        elif isinstance(error, LintRejected):
+            reason, said = (
+                "the configured Ruff check failed or introduced diagnostics",
+                "the configured Ruff check refused",
             )
         elif isinstance(error, FormattingChangedCode):
             reason, said = (

@@ -407,7 +407,7 @@ def _add_execution_flags(parser: argparse.ArgumentParser) -> None:
         help="Format generated code (the default) with the project's formatter (ruff when "
         "configured, else Black; the 'format' extra) at the line length the project declares, "
         "and sort inserted imports the way the project does (ruff's I rules or isort). "
-        "--no-format inserts code as rendered.",
+        "--no-format inserts code as rendered. Configured Ruff lint checks remain active.",
     )
 
 
@@ -847,13 +847,15 @@ def _generated_code_formatter(project_path: "Path") -> Optional[Callable[[str], 
     return choice.tool
 
 
-def _import_sorter(project_path: "Path") -> Optional[Callable[[str, str], str]]:
-    """Import sorting the project configures, or None (with a note if the tool is missing)."""
-    from towel.formatting import import_sorter_for_project
+def _file_finisher(
+    project_path: "Path", *, sort_imports: bool
+) -> Optional[Callable[[str, str], str]]:
+    """The project's import sorting and Ruff lint guard, with missing-tool notes."""
+    from towel.formatting import file_finisher_for_project
 
-    choice = import_sorter_for_project(project_path)
-    if choice.tool is None and choice.note:
-        print(f"Note: {choice.note}; inserted imports are left where Towel put them.")
+    choice = file_finisher_for_project(project_path, sort_imports=sort_imports)
+    if "not installed" in choice.note:
+        print(f"Note: {choice.note}.")
     return choice.tool
 
 
@@ -1082,7 +1084,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
             snippet_formatter=(
                 _generated_code_formatter(Path(input_path)) if options.format else None
             ),
-            file_finisher=(_import_sorter(Path(input_path)) if options.format else None),
+            file_finisher=_file_finisher(Path(input_path), sort_imports=options.format),
             annotate_helpers=options.types,
             type_oracle=oracle,
         )

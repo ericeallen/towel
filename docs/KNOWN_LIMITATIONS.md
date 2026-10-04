@@ -210,6 +210,16 @@ describe belong to that version.
   `extend-exclude` or `force-exclude`. That choice is made for the whole
   run, since a snippet is formatted before the file it goes into is known;
   it changes only layout.
+- **Configured Ruff lint.** When Ruff is installed, each modified file with
+  a project Ruff configuration is checked against its preceding source,
+  including nested configurations, file exclusions and per-file ignores.
+  Towel declines a proposal that introduces a diagnostic, or whose check
+  fails. An existing diagnostic must match an unchanged line in the same
+  named lexical scope, with the same code, message and column. A warning
+  moved into a helper is conservatively new and can cost an extraction.
+  The check does not apply fixes or add suppressions, and remains active
+  with `--no-format`. It uses configured rules, rather than interpreting
+  additional lint options in a project's CI commands.
 - **Annotations.** Every generated helper and its call sites are checked
   together in the prospective project, including unchanged consumers, and the
   check is compared with the project's own as it stood: an error the project

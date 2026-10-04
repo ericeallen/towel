@@ -24,12 +24,52 @@ refactoring changed.
 from __future__ import annotations
 
 import ast
+from bisect import bisect_right
 import io
 from pathlib import Path
 import tokenize
-from typing import List, Optional, Tuple, Union
+from typing import Iterator, List, Optional, Sequence, Tuple, Union
 
 from .canonical_ast import canonical_dump
+
+
+def logical_line_tokens(source: str) -> Iterator[Tuple[tokenize.TokenInfo, bool]]:
+    """Tokens paired with whether they begin a Python logical line."""
+    logical_start = True
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        yield token, logical_start
+        if token.type == tokenize.NEWLINE:
+            logical_start = True
+        elif token.type not in (
+            tokenize.COMMENT,
+            tokenize.NL,
+            tokenize.INDENT,
+            tokenize.DEDENT,
+            tokenize.ENCODING,
+            tokenize.ENDMARKER,
+        ):
+            logical_start = False
+
+
+def decorator_line_numbers(source: str) -> Tuple[int, ...]:
+    """Logical @ openers, including parenthesized decorators whose AST starts later."""
+    return tuple(
+        token.start[0]
+        for token, logical_start in logical_line_tokens(source)
+        if token.type == tokenize.OP and token.string == "@" and logical_start
+    )
+
+
+def definition_start_line(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef, decorators: Sequence[int]
+) -> int:
+    """The lexical first line of a definition, including its first @ opener."""
+    if not node.decorator_list:
+        return node.lineno
+    first_expression = min(decorator.lineno for decorator in node.decorator_list)
+    index = bisect_right(decorators, first_expression)
+    assert index, "A decorated definition must have a lexical decorator header"
+    return decorators[index - 1]
 
 
 def source_encoding(data: bytes) -> str:

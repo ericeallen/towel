@@ -90,7 +90,15 @@ project's formatter configuration: `ruff format` when the project configures
 ruff, otherwise Black, using the declared line length. Added imports are
 sorted with ruff's import rules or isort when the project uses them. Install
 these tools with `pip install "code-towel[format]"`; `--no-format` disables this
-step. Each tool respects the files its configuration excludes.
+formatting and import sorting. Each tool respects the files its configuration excludes.
+
+When Ruff is configured and installed, Towel also checks each modified
+file with its configured lint rules. A proposal is declined if it introduces
+a diagnostic or the check fails. An existing diagnostic is retained only on
+an unchanged line, in the same named lexical scope, with the same code,
+message and column. Moving a warning into a helper can therefore decline an
+extraction. This check remains active with `--no-format`. Towel does not add
+suppressions or apply lint fixes.
 
 Sorting must not change the order of existing imports, because that order can
 affect execution. If the sorter would reorder the file's existing imports,

@@ -228,7 +228,7 @@ def test_quick_is_explicitly_partial_and_does_not_run_checkers_or_formatters(
     source = tmp_path / "module.py"
     source.write_text(DUPLICATES)
     forbidden = Mock(side_effect=AssertionError("quick must only analyze"))
-    for name in ("_execute_dry", "_type_oracle", "_generated_code_formatter", "_import_sorter"):
+    for name in ("_execute_dry", "_type_oracle", "_generated_code_formatter", "_file_finisher"):
         monkeypatch.setattr(cli, name, forbidden)
     result = invoke(["preview", str(source), "--quick", "--progress", "none"])
     assert result.status == 0, result
@@ -400,7 +400,7 @@ def test_formatter_refusals_are_not_shown_as_applicable_changes(
         return fail
 
     monkeypatch.setattr(cli, "_generated_code_formatter", select)
-    monkeypatch.setattr(cli, "_import_sorter", lambda path: None)
+    monkeypatch.setattr(cli, "_file_finisher", lambda path, *, sort_imports: None)
     flags = ["--no-types", "--progress", "none"]
     preview = invoke(["preview", str(target), *flags])
     output = tmp_path / ("out" if directory else "out.py")
