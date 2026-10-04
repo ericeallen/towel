@@ -1029,12 +1029,16 @@ test = ["{python}", "-m", "pytest", "-q", "testing"]
 [[project]]
 name = "sphinx"
 # Test context: Selected group:test.
+# This pin's uv.lock selects Pygments 2.19.2, within its runtime >=2.17
+# requirement. Pygments 2.21 changes quote escaping and breaks six unchanged
+# baseline fixtures; the locked version restores the complete selected suite.
 url = "https://github.com/sphinx-doc/sphinx.git"
 rev = "e44a40eb2f810558ccd9da1425421270ccb81351"
 package = "sphinx"
 deps = [
     "cython>=3.0",
     "defusedxml>=0.7.1",
+    "Pygments==2.19.2",
     "pytest-xdist[psutil]>=3.4",
     "pytest>=9.0",
     "setuptools>=70.0",
