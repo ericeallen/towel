@@ -18,8 +18,10 @@
 # environment), test (command run from the project root; {python} is the
 # environment interpreter), failure_exit_codes (default [1]; a recorded custom
 # runner contract for completed failing suites only; successful suites always
-# require exit 0), prepare (optional command run once after cloning,
-# split into arguments and run without a shell), expect_broken (why the
+# require exit 0), prepare (optional command run after checkout, before installation,
+# split into arguments and run without a shell), post_install (optional literal
+# argv array after installation, before baseline; {python} names that interpreter;
+# uses the phase timeout and stops on failure), expect_broken (why the
 # suite is expected to differ after transformation) with known_failures (test
 # id substrings; the verdict is BROKEN_KNOWN only when every new failure
 # matches one, otherwise BROKEN), timeout (seconds per phase for this project,
@@ -630,15 +632,20 @@ deps = [
     "hypothesis>=3.30",
     "mock; python_version < \"3.0\"",
     "pytest-cov>=2.0.0",
-    "pytest>=3.0; python_version != \"3.3\"",
+    "pytest==8.4.2; python_version != \"3.3\"",
     "six",
 ]
-# tests/property imports the IANA tz database that `updatezinfo.py` downloads
-# and builds, which this corpus does not run: it needs the network at corpus
-# time and runs before a project's dependencies are installed. Without it the
-# directory cannot even be collected, so it yields no before/after evidence
-# either way, and its collection error stopped the whole suite -- including the
-# several hundred tests that do run and do give evidence.
+# The ordinary selected suite also needs the bundled IANA timezone archive.
+# Stage the public payload named by pinned zonefile_metadata.json locally before
+# this offline hook; fail if absent, then let the unchanged upstream builder
+# verify its SHA512 and build using the installed project's dependencies.
+# pytest 8.4.2 satisfies upstream >=3.0 without pytest 9's generator-parametrize
+# deprecation, which this pinned revision treats as an error.
+post_install = [
+    "{python}", "-c",
+    "import json, runpy; from pathlib import Path; metadata = json.loads(Path('zonefile_metadata.json').read_text()); Path(metadata['tzdata_file']).read_bytes(); runpy.run_path('updatezinfo.py', run_name='__main__')",
+]
+# Retain the selected ordinary profile; property tests are a separate profile.
 test = [
     "{python}", "-m", "pytest", "-q", "--ignore=tests/property",
 ]

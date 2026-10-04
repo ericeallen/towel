@@ -239,6 +239,26 @@ tox test group is a broader corpus environment, not the original single CI
 testenv. Independent contexts with incompatible constraints remain separate.
 One selected context does not claim coverage of the whole CI matrix.
 
+A manifest `prepare` command runs at clone time for Git setup, before dependency
+installation. An optional `post_install` argv array runs from the original
+project root after installation, using `{python}` for the selected environment's
+interpreter. It uses the project's test environment and phase timeout, records
+its command and log, and a failed preparation stops before baseline as
+`SETUP_ERROR`. The prepared original tree is copied to the refactoring role.
+Dateutil selects compatible upstream-allowed pytest 8.4.2 and builds its bundled
+timezone archive with its unchanged `updatezinfo.py`. Stage the public tarball
+named by pinned `zonefile_metadata.json` locally first: missing data fails
+before any download, and the upstream builder verifies SHA512. Ordinary selected
+timezone tests require that archive too; `--ignore=tests/property` remains the
+explicit selected profile. Record staged payload and generated archive hashes.
+Selected system prerequisites need the same provenance as Python dependencies.
+Natsort's selected CI tests require its three declared locales. Provision the
+verified matching-glibc locale directories read-only at the isolated corpus
+container's standard locale lookup paths; record payload hashes and actual locale
+availability. The harness's test environment does not pass inherited `LOCPATH`.
+Missing-locale fixture errors do not establish a completed baseline. This does
+not install system packages or change the host's locale configuration.
+
 Peewee uses its documented local/default SQLite profile and `runtests.py`.
 Optional features can skip when their modules are absent; CPython may still
 build its default extensions from shipped C sources. Its broader CI service,

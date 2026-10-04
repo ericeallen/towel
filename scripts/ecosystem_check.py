@@ -192,8 +192,14 @@ class Project:
     """Refactor with extraction across modules, which the corpus exists to exercise."""
     cross_module_reason: str = ""
     """Why this project turns ``cross_module`` off; required exactly when it does."""
+    post_install: Tuple[str, ...] = ()
+    """Literal argv run after installation and before baseline; {python} names that interpreter."""
 
     def __post_init__(self) -> None:
+        if type(self.post_install) is not tuple or any(
+            type(part) is not str or not part for part in self.post_install
+        ):
+            raise ValueError(f"{self.name}: post_install must be an argv array of nonempty strings")
         if not self.failure_exit_codes or any(
             type(code) is not int or not 1 <= code <= 255 for code in self.failure_exit_codes
         ):
@@ -218,6 +224,12 @@ class Phase:
     seconds: float
     summary: str
     log: str
+
+
+@dataclasses.dataclass(frozen=True)
+class Preparation:
+    command: Tuple[str, ...]
+    phase: Phase
 
 
 @dataclasses.dataclass(frozen=True)
@@ -361,12 +373,16 @@ class Result:
     """What Towel ran with; absent only when the environment could not be built."""
     cross_module: Optional[CrossModule] = None
     """Whether the refactor extracted across modules; absent when no refactor ran."""
+    post_install: Optional[Preparation] = None
 
 
 def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     projects = []
     for entry in data["project"]:
+        post_install = entry.get("post_install", [])
+        if type(post_install) is not list:
+            raise ValueError(f"{entry['name']}: post_install must be an argv array")
         project = Project(
             name=entry["name"],
             url=entry["url"],
@@ -376,6 +392,7 @@ def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
             deps=tuple(entry.get("deps", ())),
             test=tuple(entry.get("test", DEFAULT_TEST)),
             prepare=entry.get("prepare", ""),
+            post_install=tuple(post_install),
             install=bool(entry.get("install", True)),
             expect_broken=entry.get("expect_broken", ""),
             known_failures=tuple(entry.get("known_failures", [])),
@@ -406,7 +423,15 @@ def _end_group(pgid: int) -> None:
             time.sleep(0.2)
 
 
-def run(command: Sequence[str], cwd: Path, env: Dict[str, str], timeout: int, log: Path) -> Phase:
+def run(
+    command: Sequence[str],
+    cwd: Path,
+    env: Dict[str, str],
+    timeout: int,
+    log: Path,
+    *,
+    header: str = "",
+) -> Phase:
     """Run one phase, streaming its output to ``log`` so progress is visible while it runs.
 
     The phase leads its own process group, and the group is ended when the
@@ -419,6 +444,8 @@ def run(command: Sequence[str], cwd: Path, env: Dict[str, str], timeout: int, lo
     """
     start = time.monotonic()
     with log.open("w", encoding="utf-8") as handle:
+        handle.write(header)
+        handle.flush()
         process = subprocess.Popen(
             list(command),
             cwd=cwd,
@@ -2992,6 +3019,23 @@ def _setup_failed(result: Result, error: Exception) -> Result:
     return result
 
 
+def prepare_installed_project(
+    project: Project, python: Path, source: Path, env: Dict[str, str], timeout: int, log: Path
+) -> Preparation:
+    """Run explicit preparation with the installed project's interpreter, without a shell."""
+    command = tuple(part.replace("{python}", str(python)) for part in project.post_install)
+    header = f"command: {json.dumps(command)}\n"
+    start = time.monotonic()
+    try:
+        phase = run(command, source, env, timeout, log, header=header)
+    except OSError as error:
+        # The phase never spawned, but still needs an explicit failed receipt and log.
+        message = f"could not start post-install preparation: {error}"
+        log.write_text(header + message + "\n", encoding="utf-8")
+        phase = Phase(127, time.monotonic() - start, message, str(log))
+    return Preparation(command, phase)
+
+
 def check_project(
     project: Project, work: Path, candidate: Candidate, timeout: int, no_types: bool = False
 ) -> Result:
@@ -3012,6 +3056,18 @@ def check_project(
     python = installed.python
     test = _prepare_test_command([part.format(python=python) for part in project.test])
     env = base_env(project.pythonpath, python.parent)
+    if project.post_install:
+        result.post_install = prepare_installed_project(
+            project, python, source, env, timeout, logs / f"{project.name}-post-install.log"
+        )
+        if result.post_install.phase.returncode != 0:
+            return _setup_failed(
+                result,
+                EnvironmentFailure(
+                    f"post-install preparation failed (exit {result.post_install.phase.returncode}): "
+                    f"{result.post_install.phase.summary}; log: {result.post_install.phase.log}"
+                ),
+            )
     result.baseline = run(test, source, env, timeout, logs / f"{project.name}-before.log")
     baseline_outcome = _completed_test_run(result.baseline, project.failure_exit_codes)
     if baseline_outcome is None:
