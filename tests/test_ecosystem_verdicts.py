@@ -1014,6 +1014,31 @@ def test_a_clean_check_records_no_pre_existing_errors(
     assert result.verdict == "PASS" and result.pre_existing is None and result.unchecked is None
 
 
+def test_untyped_imports_are_recorded_without_a_type_error_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # NetworkX's imports are typed as Any without diagnostic errors. Towel
+    # reports the scope warning independently, so an absent error header must
+    # not erase the files and proposals it conservatively leaves alone.
+    report = (
+        "warning: 74 import(s) or error(s) leave a name the checker cannot type\n"
+        "No change to these 39 file(s) is attempted; install their stubs\n"
+        "Applied 1 refactoring(s) across 1 file(s)\n"
+        "Declined: not verifiable: its file holds a name the type checker cannot type 42\n"
+    )
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(0, report),
+    )
+    assert result.verdict == "PASS" and result.typing_mode == "default" and not result.fallback
+    assert result.pre_existing == ecosystem.PreExistingErrors(
+        errors=0, files=0, names_any=74, declined_files=39, declined_proposals=42
+    )
+
+
 def test_an_older_towels_refusal_for_existing_errors_is_reported_and_not_retried(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

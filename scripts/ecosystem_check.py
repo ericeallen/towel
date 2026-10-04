@@ -321,7 +321,7 @@ class CrossModule:
 
 @dataclasses.dataclass(frozen=True)
 class PreExistingErrors:
-    """What a typed refactor said, before it began, about the errors the project's check reports.
+    """The original check's reported errors and names it cannot type.
 
     Towel leaves them as they are and rejects a change only for an error they
     do not account for; the counts come from its report on standard error.
@@ -330,7 +330,7 @@ class PreExistingErrors:
     errors: int
     files: int
     names_any: int = 0
-    """How many of them leave a name the checker cannot type (an unresolved import and the like)."""
+    """Untyped names found in imports or errors, including checks with no reported errors."""
     declined_files: int = 0
     """Files of the refactored code holding one, which Towel declined to change."""
     declined_proposals: int = 0
@@ -366,7 +366,7 @@ class Result:
     fallback: str = ""
     """Why the typed attempt was declined, when the verdict came from a retry without types."""
     pre_existing: Optional[PreExistingErrors] = None
-    """The errors the project's check reported before the typed refactor, when it reported any."""
+    """The original check's errors or untyped-name warnings, absent when neither was reported."""
     unchecked: Optional[UncheckedCode] = None
     """Code the checker does not look at, when the typed refactor found any."""
     environment: Optional[Environment] = None
@@ -3535,7 +3535,7 @@ def _unchecked_code(log_path: Path) -> Optional[UncheckedCode]:
 
 
 def _pre_existing_errors(log_path: Path) -> Optional[PreExistingErrors]:
-    """What a typed refactor reported about the errors the project's check already has.
+    """What a typed refactor reported about original errors and untyped imports.
 
     ``None`` when it reported none: a clean check, or a run that never got as
     far as checking.
@@ -3545,14 +3545,14 @@ def _pre_existing_errors(log_path: Path) -> Optional[PreExistingErrors]:
     except OSError:
         return None
     reported = PRE_EXISTING.search(text)
-    if reported is None:
-        return None
     names_any = NAMES_ANY.search(text)
+    if reported is None and names_any is None:
+        return None
     declined_files = NAMES_ANY_FILES.search(text)
     declined_proposals = UNVERIFIABLE.search(text)
     return PreExistingErrors(
-        errors=int(reported.group(1)),
-        files=int(reported.group(2)),
+        errors=int(reported.group(1)) if reported else 0,
+        files=int(reported.group(2)) if reported else 0,
         names_any=int(names_any.group(1)) if names_any else 0,
         declined_files=int(declined_files.group(1)) if declined_files else 0,
         declined_proposals=int(declined_proposals.group(1)) if declined_proposals else 0,
@@ -3972,8 +3972,8 @@ def main() -> int:
     if pre_existing:
         lines += [
             "",
-            "Typed against pre-existing errors (errors, of them leaving a name the checker "
-            "cannot type, files and proposals declined for it): "
+            "Typed against pre-existing errors (errors, untyped names, "
+            "files and proposals declined for it): "
             + "; ".join(
                 f"{name} ({found.errors}, {found.names_any}, {found.declined_files}, "
                 f"{found.declined_proposals})"
