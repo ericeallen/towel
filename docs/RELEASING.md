@@ -169,7 +169,12 @@ Use Python 3.13 for the pinned quality tools and `uv sync --frozen --extra dev`.
 Run `just ci`: formatting, lint, typing, Bandit, the dependency audit, full tests,
 coverage with the unconditional 85% gate, and a wheel/source build. Repeat the
 full tests and coverage on Python 3.11–3.13, combining coverage before each
-report. If dependencies or extras changed, review and commit the refreshed
+report. Complete this Python 3.11–3.13 matrix **before starting the corpus**.
+Every interpreter's full test suite and coverage gate must pass on the frozen
+candidate. A failed or incomplete matrix blocks the corpus run; fix the failure
+and repeat the affected validation first. A passing native Python 3.13 suite
+alone does not satisfy this prerequisite.
+If dependencies or extras changed, review and commit the refreshed
 `uv.lock` before the frozen runs. Record the candidate commit, commands,
 interpreter/tool versions, exit statuses, and retained evidence paths.
 
@@ -204,8 +209,9 @@ explanation. Never update an expectation solely because a new run differs.
 
 ### Consumer and typing evidence
 
-Run the ecosystem harness from a committed snapshot (`--towel-src` names that
-snapshot's `src` directory). What runs is one wheel of that source, the one
+Start the ecosystem harness only after the frozen candidate's Python
+3.11–3.13 matrix has completed successfully. Run it from a committed snapshot
+(`--towel-src` names that snapshot's `src` directory). What runs is one wheel of that source, the one
 `--towel-wheel` names or one the harness builds from the snapshot when none is
 named, and the harness refuses a wheel whose Python files differ from
 `--towel-src`, so the commit it records is the code that ran. It runs
