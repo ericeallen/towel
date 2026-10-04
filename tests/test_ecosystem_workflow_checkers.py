@@ -237,3 +237,226 @@ def test_unsupported_or_duplicate_root_fields_cannot_hide_a_shell(
     path = _workflow(tmp_path, _job("check", "pip install mypy==1"))
     path.write_text(prefix + path.read_text())
     assert ecosystem.typing_declarations(tmp_path, None) == []
+
+
+@pytest.mark.parametrize(
+    "argument",
+    [
+        "-r .github/requirements/lint.txt",
+        "-r.github/requirements/lint.txt",
+        "--requirement .github/requirements/lint.txt",
+        "--requirement=.github/requirements/lint.txt",
+    ],
+)
+def test_idna_hashed_workflow_requirements_keep_pins_and_support_context(
+    tmp_path: Path, argument: str
+) -> None:
+    requirements = tmp_path / ".github/requirements/lint.txt"
+    requirements.parent.mkdir(parents=True)
+    requirements.write_text(
+        "mypy==2.1.0 \\\n    --hash=sha256:0123\n"
+        "ruff==0.16.3 \\\n    --hash=sha256:4567\n"
+        "-r support.txt\n"
+    )
+    (requirements.parent / "support.txt").write_text(
+        "ast-serialize==0.4.0\nlibrt==0.11.0\n"
+        "typing-extensions==4.15.0; python_version >= '3.10'\n"
+    )
+    _workflow(tmp_path, _job("lint", f"python -m pip install --require-hashes {argument}"))
+    choices = ecosystem._typing_tool_choices(Path(sys.executable), tmp_path, ["mypy", "ruff"])
+    assert choices["mypy"].requirements == ("mypy==2.1.0",)
+    assert choices["ruff"].requirements == ("ruff==0.16.3",)
+    assert {choice.source for choice in choices.values()} == {
+        "typing context: .github/workflows/check.yml job lint"
+    }
+    declarations = ecosystem.typing_declarations(tmp_path, None)
+    assert [item.requirement for item in declarations] == [
+        "mypy==2.1.0",
+        "ruff==0.16.3",
+        "ast-serialize==0.4.0",
+        "librt==0.11.0",
+        "typing-extensions==4.15.0; python_version >= '3.10'",
+    ]
+    assert {item.context for item in declarations} == {".github/workflows/check.yml job lint"}
+    before = ecosystem._selection_inputs(tmp_path)
+    (requirements.parent / "support.txt").write_text("ast-serialize==0.5.0\n")
+    assert ecosystem._selection_inputs(tmp_path) != before
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "pip install -r ../outside.txt",
+        "pip install -r /outside.txt",
+        "pip install -r missing.txt",
+        "pip install -r $FILE",
+        "pip install -r '${{ matrix.file }}'",
+        "pip install --requirement=",
+        "pip install --require-hashes -r lint.txt || true",
+    ],
+)
+def test_unestablished_workflow_requirement_paths_cannot_select_tools(
+    tmp_path: Path, script: str
+) -> None:
+    (tmp_path / "lint.txt").write_text("mypy==1\n")
+    _workflow(tmp_path, _job("lint", script))
+    assert ecosystem._workflow_installs(tmp_path)[0][1].requirements == ()
+    assert ecosystem._workflow_installs(tmp_path)[0][1].files == ()
+
+
+def test_workflow_requirement_symlinks_and_nested_includes_cannot_escape_tree(
+    tmp_path: Path,
+) -> None:
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("mypy==99\n")
+    (tree / "linked.txt").symlink_to(outside)
+    _workflow(tree, _job("lint", "pip install -r linked.txt"))
+    assert ecosystem.requirement_pins(Path(sys.executable), tree, ["mypy"]) == {}
+    (tree / "local.txt").write_text("mypy==1\n-r ../outside.txt\n")
+    _workflow(tree, _job("lint", "pip install -r local.txt"))
+    assert ecosystem._typing_tool_choices(Path(sys.executable), tree, ["mypy"]) == {}
+
+
+@pytest.mark.parametrize("where", ["job", "step", "directory"])
+def test_workflow_file_installs_obey_conditions_and_working_directory(
+    tmp_path: Path, where: str
+) -> None:
+    req = tmp_path / ".github/requirements/lint.txt"
+    req.parent.mkdir(parents=True)
+    req.write_text("mypy==1\n")
+    fields = (
+        {"condition": "false"}
+        if where == "job"
+        else {
+            "step_fields": (
+                "      if: false\n" if where == "step" else "      working-directory: subdir\n"
+            )
+        }
+    )
+    _workflow(tmp_path, _job("lint", "pip install -r .github/requirements/lint.txt", **fields))
+    assert ecosystem.typing_declarations(tmp_path, None) == []
+    assert ecosystem.requirement_pins(Path(sys.executable), tmp_path, ["mypy"]) == {}
+
+
+@uv_required
+def test_workflow_file_pin_is_installed_and_file_change_rebuilds_environment(
+    tmp_path: Path, offline_index: Path
+) -> None:
+    work = tmp_path / "work"
+    tree = project_tree(work / "sample", "sample", "sample", "source")
+    req = tree / ".github/requirements/lint.txt"
+    req.parent.mkdir(parents=True)
+    req.write_text("mypy==1.0\nruff==0.4.0\npackaging==24.2\n")
+    _workflow(
+        tree,
+        _job("lint", "python -m pip install --require-hashes -r .github/requirements/lint.txt"),
+    )
+    candidate = ecosystem.load_candidate(candidate_wheel(tmp_path / "dist"))
+    project = ecosystem.Project("sample", "unused", "pinned", "sample")
+    result = ecosystem.environment(project, work, tree, candidate, tmp_path / "log")
+    assert result.record.checkers[0] == ecosystem.Tool(
+        "mypy",
+        "1.0.0",
+        ecosystem.TypingContext("typing context: .github/workflows/check.yml job lint"),
+    )
+    support = next(
+        item for item in result.record.typing.requirements if item.declared == "packaging==24.2"
+    )
+    assert support.source == ".github/workflows/check.yml job lint"
+    installed = ecosystem.probe_environment(work / "sample-env/bin/python", ["packaging"]).versions[
+        "packaging"
+    ]
+    assert support.skipped == f"already installed at packaging {installed}"
+    assert support.installed_as == ""  # A declared support pin never overwrites the held runtime.
+    assert result.record.formatters[-1] == ecosystem.Tool(
+        "ruff",
+        "0.4.0",
+        ecosystem.TypingContext("typing context: .github/workflows/check.yml job lint"),
+    )
+    req.write_text("mypy==2.0\nruff==0.4.0\npackaging==24.2\n")
+    again = ecosystem.environment(project, work, tree, candidate, tmp_path / "log")
+    assert again.record.checkers[0].version == "2.0.0"
+
+
+def test_workflow_requirement_jobs_remain_alternatives_in_job_order(tmp_path: Path) -> None:
+    directory = tmp_path / ".github/requirements"
+    directory.mkdir(parents=True)
+    (directory / "z-first.txt").write_text("mypy==1\nruff==1\n")
+    (directory / "a-second.txt").write_text("mypy==2\nruff==2\n")
+    _workflow(
+        tmp_path,
+        _job("first", "pip install -r .github/requirements/z-first.txt")
+        + _job("second", "pip install -r .github/requirements/a-second.txt"),
+    )
+    choices = ecosystem._typing_tool_choices(Path(sys.executable), tmp_path, ["mypy", "ruff"])
+    assert choices["mypy"].requirements == ("mypy==1",)
+    assert choices["ruff"].requirements == ("ruff==1",)
+    assert all(choice.source.endswith("job first") for choice in choices.values())
+
+
+def test_workflow_test_only_file_does_not_declare_typing_context(tmp_path: Path) -> None:
+    path = tmp_path / ".github/requirements/test.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text("pytest==8.3.5\nhypothesis==6.165.9\n")
+    _workflow(
+        tmp_path, _job("tests", "pip install --require-hashes -r .github/requirements/test.txt")
+    )
+    assert ecosystem.typing_declarations(tmp_path, None) == []
+
+
+@pytest.mark.parametrize(
+    "operand",
+    [
+        "-r missing.txt",
+        "-r ../outside.txt",
+        "-r",
+        "--requirement",
+        "--requirement=",
+        "-r a.txt b.txt",
+    ],
+)
+def test_partial_workflow_include_graph_never_declares_a_checker(
+    tmp_path: Path, operand: str
+) -> None:
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tmp_path / "outside.txt").write_text("mypy==99\n")
+    (tree / "local.txt").write_text(f"mypy==1\n{operand}\n")
+    _workflow(tree, _job("lint", "pip install -r local.txt"))
+    assert ecosystem.typing_declarations(tree, None) == []
+
+
+@pytest.mark.parametrize("kind", ["symlink", "file", "unicode", "directory"])
+def test_unreadable_or_recursive_workflow_includes_fail_closed(tmp_path: Path, kind: str) -> None:
+    (tmp_path / "local.txt").write_text("mypy==1\n-r nested.txt\n")
+    nested = tmp_path / "nested.txt"
+    if kind == "symlink":
+        nested.symlink_to(tmp_path / "loop.txt")
+        (tmp_path / "loop.txt").symlink_to(nested)
+    elif kind == "file":
+        nested.write_text("-r local.txt\n")
+    elif kind == "unicode":
+        nested.write_bytes(b"\xff")
+    else:
+        nested.mkdir()
+    _workflow(tmp_path, _job("lint", "pip install -r local.txt"))
+    assert ecosystem.typing_declarations(tmp_path, None) == []
+
+
+def test_shared_acyclic_workflow_include_is_not_a_recursive_cycle(tmp_path: Path) -> None:
+    (tmp_path / "local.txt").write_text("-r left.txt\n-r right.txt\n")
+    (tmp_path / "left.txt").write_text("mypy==1\n-r common.txt\n")
+    (tmp_path / "right.txt").write_text("-r common.txt\n")
+    (tmp_path / "common.txt").write_text("typing-extensions==4.15.0\n")
+    _workflow(tmp_path, _job("lint", "pip install -r local.txt"))
+    declarations = ecosystem.typing_declarations(tmp_path, None)
+    assert [item.requirement for item in declarations] == [
+        "mypy==1",
+        "typing-extensions==4.15.0",
+        "typing-extensions==4.15.0",
+    ]
+    before = ecosystem._selection_inputs(tmp_path)
+    (tmp_path / "common.txt").write_text("typing-extensions==4.15.0 --hash=sha256:0123\n")
+    assert ecosystem._selection_inputs(tmp_path) != before

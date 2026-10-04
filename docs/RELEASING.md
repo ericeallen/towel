@@ -232,7 +232,12 @@ requirements file, those named for typing read first (httpx's
 uses its first applicable version-bearing typing declaration context, such as
 a tox environment or a dependency group. Literal checker installs in GitHub
 Actions workflows are considered after those other declaration sources, with
-each job treated as a separate context. This limited reader preserves Python
+each job treated as a separate context. Unconditional literal `pip install -r`
+and `--requirement` paths within the project are read with their nested includes,
+including `--require-hashes` installs. These files preserve checker and formatter
+pins and the job's supporting dependency declarations; their content participates
+in environment reuse checks. Escaping, computed or ambiguous paths and steps
+with a custom working directory are skipped. This limited reader preserves Python
 version markers and skips conditional or computed installs it cannot establish
 statically; it does not execute shell or interpret workflow expressions or YAML
 merges. The applicable requirements for that

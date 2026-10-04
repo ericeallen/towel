@@ -1276,7 +1276,7 @@ def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) ->
 
     A tool the project's own requirements installed stays, and one the project pins
     (see ``tool_pins``) is installed at that version, so the project is checked and
-    formatted by that selected context's tools. An otherwise unselected checker
+    formatted by that selected context's tools. An otherwise unselected tool
     uses its first version-bearing typing context, resolved together with the
     candidate's extra; conflicting requirements fail the build. One the project
     leaves to Towel comes from the extra at the version that resolves today, and so does one
@@ -1302,11 +1302,7 @@ def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) ->
     contexts = _typing_tool_choices(
         python,
         tree,
-        [
-            requirement_name(r)
-            for r in candidate.types_requirements
-            if requirement_name(r) not in offered
-        ],
+        [name for name in names if name not in offered],
     )
     judged = [(name, requirement) for name, requirement, _ in requested if name in offered]
     satisfied = (
@@ -2165,27 +2161,70 @@ def _requirement_file_declarations(declarer: _Declarer) -> List[Declaration]:
     ]
 
 
-def _literal_checker_installs(script: str) -> Tuple[str, ...]:
-    """Checker requirements in a sequence of literal pip installs, without interpreting shell.
+def _workflow_requirement_files(
+    path: Path, root: Path, ancestors: frozenset[Path]
+) -> tuple[Path, ...] | None:
+    """Establish the entire literal include graph before reading a workflow context.
+
+    A partial graph cannot prove which checker or support constraints pip installs.
+    Only ancestors on this branch reject recursion; repeated acyclic includes remain
+    valid. The older general requirements reader's behavior stays unchanged.
+    """
+    try:
+        resolved = path.resolve()
+        if not resolved.is_relative_to(root) or resolved in ancestors or not resolved.is_file():
+            return None
+        text = resolved.read_text(encoding="utf-8")
+    except (OSError, RuntimeError, UnicodeError):
+        return None
+    files = [resolved]
+    for line in text.replace("\\\n", " ").splitlines():
+        line = re.sub(r"(^|\s)#.*$", "", line).strip()
+        if not line or line == "--require-hashes" or not line.startswith("-"):
+            continue
+        included = re.fullmatch(r"(?:-r\s*|--requirement(?:=|\s+))(\S+)", line)
+        if included is None or any(character in included[1] for character in "$`%*?[]\"'"):
+            return None
+        filename = Path(included[1])
+        if filename.is_absolute():
+            return None
+        nested = _workflow_requirement_files(
+            resolved.parent / filename, root, ancestors | {resolved}
+        )
+        if nested is None:
+            return None
+        files.extend(nested)
+    return tuple(files)
+
+
+@dataclasses.dataclass(frozen=True)
+class WorkflowInstall:
+    requirements: tuple[str, ...] = ()
+    files: tuple[Path, ...] = ()
+
+
+def _literal_checker_installs(script: str, tree: Path) -> WorkflowInstall:
+    """Checker installs and referenced requirement files, without interpreting shell.
 
     An unfamiliar command makes the whole step unreadable: an install inside an
     ``if``, heredoc, echo or other shell construct is not an executed declaration.
     Expansion, pipelines and redirection are likewise outside this small grammar.
     Quoted requirement markers remain part of the requirement, not shell syntax.
     """
-    requirements: List[str] = []
+    requirements: list[str] = []
+    files: list[Path] = []
     for line in script.replace("\\\n", " ").splitlines():
         line = _without_comment(line).strip()
         if not line:
             continue
         if any(character in line for character in "$`%*?[]"):
-            return ()
+            return WorkflowInstall()
         try:
             lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
             lexer.whitespace_split = True
             tokens = list(lexer)
         except ValueError:
-            return ()
+            return WorkflowInstall()
         prefixes = (
             ("python", "-m", "pip", "install"),
             ("python3", "-m", "pip", "install"),
@@ -2195,9 +2234,38 @@ def _literal_checker_installs(script: str) -> Tuple[str, ...]:
         )
         prefix = next((value for value in prefixes if tokens[: len(value)] == list(value)), None)
         if prefix is None:
-            return ()
-        for argument in tokens[len(prefix) :]:
-            if argument in ("-U", "--upgrade", "--pre", "--no-deps", "--disable-pip-version-check"):
+            return WorkflowInstall()
+        arguments = iter(tokens[len(prefix) :])
+        for argument in arguments:
+            if argument in (
+                "-U",
+                "--upgrade",
+                "--pre",
+                "--no-deps",
+                "--disable-pip-version-check",
+                "--require-hashes",
+            ):
+                continue
+            if argument in ("-r", "--requirement"):
+                filename = next(arguments, "")
+            elif argument.startswith("--requirement="):
+                filename = argument.partition("=")[2]
+            elif argument.startswith("-r"):
+                filename = argument[2:]
+            else:
+                filename = None
+            if filename is not None:
+                if not filename or Path(filename).is_absolute():
+                    return WorkflowInstall()
+                included_files = _workflow_requirement_files(
+                    tree / filename, tree.resolve(), frozenset()
+                )
+                if included_files is None:
+                    return WorkflowInstall()
+                files.extend(included_files)
+                requirements.extend(
+                    _requirements_file(included_files[0], tree.resolve(), frozenset())
+                )
                 continue
             match = _LEADING_NAME.match(argument)
             if (
@@ -2205,13 +2273,13 @@ def _literal_checker_installs(script: str) -> Tuple[str, ...]:
                 or argument.startswith("-")
                 or argument in (";", "&&", "||", "|", "&", ">", "<")
             ):
-                return ()
+                return WorkflowInstall()
             if _canonical(match[1]) in CHECKER_COMMANDS:
                 requirements.append(argument)
-    return tuple(requirements)
+    return WorkflowInstall(tuple(requirements), tuple(files))
 
 
-def _workflow_files(tree: Path) -> Tuple[Path, ...]:
+def _workflow_files(tree: Path) -> tuple[Path, ...]:
     return tuple(
         sorted(
             path
@@ -2221,11 +2289,9 @@ def _workflow_files(tree: Path) -> Tuple[Path, ...]:
     )
 
 
-def _workflow_fields(
-    lines: Sequence[str], indent: int
-) -> Optional[Tuple[Tuple[int, str, str], ...]]:
+def _workflow_fields(lines: Sequence[str], indent: int) -> tuple[tuple[int, str, str], ...] | None:
     """Unambiguous plain YAML keys at one indentation, excluding indentless lists."""
-    fields: List[Tuple[int, str, str]] = []
+    fields: list[tuple[int, str, str]] = []
     for index, line in enumerate(lines):
         if not line.strip() or len(line) - len(line.lstrip()) != indent:
             continue
@@ -2238,38 +2304,40 @@ def _workflow_fields(
     return tuple(fields)
 
 
-def _workflow_job_installs(lines: Sequence[str]) -> Tuple[str, ...]:
+def _workflow_job_installs(lines: Sequence[str], tree: Path) -> WorkflowInstall:
     """Literal, unconditional install steps in one ordinary YAML workflow job."""
     populated = [line for line in lines if line.strip()]
     if not populated:
-        return ()
+        return WorkflowInstall()
     indent = min(len(line) - len(line.lstrip()) for line in populated)
     fields = _workflow_fields(lines, indent)
     if fields is None or any(
         key == "defaults" or (key == "if" and _yaml_scalar(value).lower() != "true")
         for _, key, value in fields
     ):
-        return ()
+        return WorkflowInstall()
     start = next((index + 1 for index, key, value in fields if key == "steps" and not value), None)
     if start is None:
-        return ()
+        return WorkflowInstall()
     end = next((index for index, _, _ in fields if index >= start), len(lines))
     steps = lines[start:end]
     first = next((line for line in steps if line.strip()), "")
     if not first.lstrip().startswith("- "):
-        return ()
+        return WorkflowInstall()
     step_indent = len(first) - len(first.lstrip())
     starts = [
         index
         for index, line in enumerate(steps)
         if len(line) - len(line.lstrip()) == step_indent and line.lstrip().startswith("- ")
     ]
-    found: List[str] = []
+    found: list[str] = []
+    files: list[Path] = []
     for at, stop in zip(starts, [*starts[1:], len(steps)]):
         block = [" " * (step_indent + 2) + steps[at].lstrip()[2:], *steps[at + 1 : stop]]
         keys = _workflow_fields(block, step_indent + 2)
         if keys is None or any(
             (key == "if" and _yaml_scalar(value).lower() != "true")
+            or key == "working-directory"
             or (key == "shell" and _yaml_scalar(value) not in ("bash", "sh"))
             for _, key, value in keys
         ):
@@ -2298,18 +2366,20 @@ def _workflow_job_installs(lines: Sequence[str]) -> Tuple[str, ...]:
             script = value
         else:
             continue
-        found.extend(_literal_checker_installs(script))
-    return tuple(found)
+        install = _literal_checker_installs(script, tree)
+        found.extend(install.requirements)
+        files.extend(install.files)
+    return WorkflowInstall(tuple(found), tuple(files))
 
 
-def _workflow_declarations(declarer: _Declarer) -> List[Declaration]:
+def _workflow_installs(tree: Path) -> list[tuple[str, WorkflowInstall]]:
     """Read literal CI checker installs last; each workflow job is an alternative context.
 
     Only ordinary block jobs and steps are recognized. No workflow expressions,
     shell commands, aliases or YAML constructors are evaluated.
     """
-    found: List[Declaration] = []
-    for path in _workflow_files(declarer.tree):
+    found: list[tuple[str, WorkflowInstall]] = []
+    for path in _workflow_files(tree):
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
@@ -2340,9 +2410,22 @@ def _workflow_declarations(declarer: _Declarer) -> List[Declaration]:
             and (match := re.fullmatch(r"\s*([A-Za-z_][\w-]*):\s*", line)) is not None
         ]
         for (at, name), stop in zip(jobs, [*(index for index, _ in jobs[1:]), len(body)]):
-            source = f"{path.relative_to(declarer.tree).as_posix()} job {name}"
-            found.extend(declarer.declared(source, _workflow_job_installs(body[at + 1 : stop])))
+            source = f"{path.relative_to(tree).as_posix()} job {name}"
+            found.append((source, _workflow_job_installs(body[at + 1 : stop], tree)))
     return found
+
+
+def _workflow_declarations(declarer: _Declarer) -> list[Declaration]:
+    return [
+        declaration
+        for context, install in _workflow_installs(declarer.tree)
+        if any(
+            (match := _LEADING_NAME.match(requirement)) is not None
+            and _canonical(match[1]) in CHECKER_COMMANDS
+            for requirement in install.requirements
+        )
+        for declaration in declarer.declared(context, install.requirements)
+    ]
 
 
 def typing_declarations(tree: Path, project: Optional[str]) -> List[Declaration]:
@@ -2541,6 +2624,11 @@ def _selection_inputs(tree: Path) -> str:
         "setup.cfg",
         "setup.py",
         *(path.relative_to(tree).as_posix() for path in _workflow_files(tree)),
+        *(
+            path.relative_to(tree).as_posix()
+            for _, install in _workflow_installs(tree)
+            for path in install.files
+        ),
     )
     inputs = {
         "files": {
