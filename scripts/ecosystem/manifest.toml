@@ -1004,6 +1004,9 @@ exclude = ["tests"]
 [[project]]
 name = "pytest"
 # Test context: Selected extra:dev.
+# Keep the Python 3.11+ NumPy version from this revision's lock. Newer 2.5
+# stubs use syntax incompatible with the project's configured Python 3.10
+# checker target; 2.4.1 preserves default typed checking in our 3.12 profile.
 url = "https://github.com/pytest-dev/pytest.git"
 rev = "99ab2acccff15f757260a1e1fbb0d2a47fc01041"
 package = "src/_pytest"
@@ -1016,6 +1019,7 @@ deps = [
     "hypothesis>=6.75",
     "mock",
     "numpy>=1.26",
+    "numpy==2.4.1; python_version >= \"3.11\"",
     "pexpect>=4.9",
     "pygments",
     "pytest-xdist>=3.5",
