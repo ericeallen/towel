@@ -50,6 +50,7 @@ from tests.hostile_refactoring import refactor_script, with_known_defects
 CASES = Path(__file__).parent / "hostile_cases"
 
 TRANSFORMED = {
+    "rmypyoverlay_constructor_fields",
     # The consumer-formatting regression also retains its original results
     # and scopes under the ordinary hostile battery.
     "r1792_formatting_destination_indentation",

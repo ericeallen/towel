@@ -12,6 +12,7 @@ A historical passing result applies to its recorded commit and test environment.
 
 **Contents — release checkpoints**
 
+- [1.792 October 4 checker overlay correction](#2026-10-04-1792-checker-overlay-correction)
 - [1.792 October 3 remediation](#2026-10-03-1792-discovery-remediation)
 - [1.792 October 2 follow-up](#2026-10-02-1792-preparation-follow-up) · [September 30 preparation](#2026-09-30-1792-preparation)
 - [1.772 release](#2026-09-26-1772) · [1.772 candidate](#2026-09-19-1772-candidate)
@@ -19,6 +20,19 @@ A historical passing result applies to its recorded commit and test environment.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-10-04 (1.792 checker overlay correction)
+
+Pyparsing's final cold audit found introduced errors that warm candidate checks
+had missed with the project's selected mypy 2.4. Its native parser can read the
+physical baseline instead of supplied candidate text. Owned checker builds now
+use mypy's Python parser, which honors that text. This execution setting is chosen
+before per-module options are copied and remains stable throughout each cache;
+project type rules and incremental caching remain in effect. Same-file and cross-file negative
+controls, useful extraction, reveal and subtype regressions fail against the
+preceding candidate and pass with this correction under actual mypy 2.4.
+The release remains held pending fresh frozen-source gates and performance
+measurements; these focused controls do not approve it.
 
 ## 2026-10-03 (1.792 discovery remediation)
 

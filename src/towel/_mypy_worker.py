@@ -188,6 +188,13 @@ def _options(
         raise ValueError("Unsupported mypy CLI policy")
     configured = _read_configuration(config, cli_flags, cli_targets)
     options = configured.options
+    # mypy 2.4's native parser can read a physical file instead of supplied
+    # BuildSource.text when only one uncached module needs parsing. Every
+    # owned cache may receive candidate or probe text, including a foreign
+    # group's second build. Choose the Python parser before module options
+    # are cloned, and keep one parser/cache-key regime throughout that cache.
+    if hasattr(options, "native_parser"):
+        setattr(options, "native_parser", False)
     options.build_type = BuildType.STANDARD
     if cli_targets:
         # mypy.main uses its returned CLI source list ahead of configured targets.
