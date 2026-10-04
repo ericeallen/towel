@@ -601,3 +601,56 @@ def test_shell_quoted_strict_tokens_cannot_downgrade_unsupported_yaml(tmp_path: 
     )
     with pytest.raises(UnsupportedMypyPolicy):
         mypy_policy(tmp_path, [module])
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        r'echo "$(my\py --strict pkg)"',
+        r'echo "$(mypy --str\ict pkg)"',
+        r'echo "$(my\py --str\ict pkg)"',
+        r'echo "$(echo $(my\py --str\ict pkg))"',
+        'echo "$(my"p"y --str"ict" pkg)"',
+        r'echo "`my\py --str\ict pkg`"',
+    ],
+)
+def test_nested_shell_text_with_possible_strict_tokens_refuses_conservatively(
+    tmp_path: Path, command: str
+) -> None:
+    module = _project(tmp_path, "|\n          " + command)
+    with pytest.raises(UnsupportedMypyPolicy):
+        mypy_policy(tmp_path, [module])
+    oracle = MypyInferrer()
+    try:
+        assert isinstance(oracle.check_project({str(module): module.read_text()}), CheckFailure)
+    finally:
+        oracle.close()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        r"echo '$(my\py --str\ict pkg)'",
+        r"printf '`my\py --str\ict pkg`'",
+    ],
+)
+def test_singlequoted_substitution_examples_do_not_declare_policy(
+    tmp_path: Path, command: str
+) -> None:
+    module = _project(tmp_path, "|\n          " + command)
+    assert mypy_policy(tmp_path, [module]).flags == ()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "my\\py \\\n          --str\\ict pkg",
+        'echo "$(my\\py \\\n          --str\\ict pkg)"',
+    ],
+)
+def test_possible_strict_tokens_across_shell_continuations_do_not_fall_open(
+    tmp_path: Path, command: str
+) -> None:
+    module = _project(tmp_path, "|\n          " + command)
+    with pytest.raises(UnsupportedMypyPolicy):
+        mypy_policy(tmp_path, [module])

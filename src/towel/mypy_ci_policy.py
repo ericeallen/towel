@@ -149,16 +149,14 @@ def _fields(lines: Sequence[str], indent: int) -> Tuple[Tuple[int, str, str], ..
 
 
 def _mentions_shell_word(script: str, pattern: str) -> bool:
-    # Shell quote concatenation and backslash quoting can spell a literal
-    # checker/flag without its raw spelling. This classifies text only; the
-    # standalone-command and YAML readers still decide whether it is supported.
-    if re.search(pattern, script) is not None:
-        return True
-    try:
-        decoded = " ".join(shlex.split(script, comments=True))
-    except ValueError:
-        return False
-    return re.search(pattern, decoded) is not None
+    # This is deliberately conservative recognition, not a shell parser.
+    # Outer shlex tokens cannot see commands inside quoted substitutions.
+    # Removing lexical quoting can reveal a possible checker declaration in
+    # unsupported text; only the exact standalone reader may accept it. Pure
+    # literal echo/printf examples are exempted before strict classification.
+    normalized = script.replace("\\\n", "")
+    normalized = normalized.translate(str.maketrans("", "", "\\\"'"))
+    return re.search(pattern, script) is not None or re.search(pattern, normalized) is not None
 
 
 def _mentions_mypy(script: str) -> bool:
@@ -263,6 +261,7 @@ def _literal_shell_command(line: str) -> bool:
 
 
 def _strict_in_script(script: str) -> bool:
+    possible_commands: list[str] = []
     for line in script.split("\n"):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
@@ -272,9 +271,11 @@ def _strict_in_script(script: str) -> bool:
             tokens = []
         if tokens and tokens[0] in {"echo", "printf"} and _literal_shell_command(line):
             continue
-        if _mentions_mypy(line) and _mentions_strict(line):
-            return True
-    return False
+        possible_commands.append(line)
+    # Unsupported continuations/substitutions may split the checker and flag
+    # across lines. Recognition is conservative across the remaining script.
+    possible = "\n".join(possible_commands)
+    return _mentions_mypy(possible) and _mentions_strict(possible)
 
 
 def _commands(script: str, root: Path, provenance: str) -> Tuple[MypyCommand, ...]:

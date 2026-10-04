@@ -1584,3 +1584,13 @@ remains deferred by `project-own-check.md`. This reader does not execute CI
 or establish full CI parity. The strict-safe IDNA core extraction remains
 available; the codec signatures that its actual strict checker rejects are
 refused without casts or diagnostic suppression.
+
+Unsupported workflow shell text is classified conservatively for this narrow
+strict policy: lexical quotes and backslashes can hide a possible `mypy` or
+`--strict` spelling, including inside command substitution. Recognizing those
+spellings does not interpret or accept the shell construct; verification refuses
+it rather than selecting weaker defaults. Standalone acceptance still requires
+an exact literal command. A wholly literal `echo` or `printf` example remains
+ordinary text, including singlequoted substitution examples. Consequently an
+ambiguous unsupported script may be refused even when no checker would execute;
+full shell/CI interpretation remains deferred.
