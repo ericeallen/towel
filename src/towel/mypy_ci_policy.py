@@ -148,12 +148,25 @@ def _fields(lines: Sequence[str], indent: int) -> Tuple[Tuple[int, str, str], ..
     return tuple(fields)
 
 
+def _mentions_shell_word(script: str, pattern: str) -> bool:
+    # Shell quote concatenation and backslash quoting can spell a literal
+    # checker/flag without its raw spelling. This classifies text only; the
+    # standalone-command and YAML readers still decide whether it is supported.
+    if re.search(pattern, script) is not None:
+        return True
+    try:
+        decoded = " ".join(shlex.split(script, comments=True))
+    except ValueError:
+        return False
+    return re.search(pattern, decoded) is not None
+
+
 def _mentions_mypy(script: str) -> bool:
-    return re.search(r"(?<![\w.-])mypy(?![\w.-])", script) is not None
+    return _mentions_shell_word(script, r"(?<![\w.-])mypy(?![\w.-])")
 
 
 def _mentions_strict(script: str) -> bool:
-    return re.search(r"(?<![\w-])--strict(?![\w-])", script) is not None
+    return _mentions_shell_word(script, r"(?<![\w-])--strict(?![\w-])")
 
 
 def _quoted_end(text: str, at: int) -> Optional[int]:
@@ -229,6 +242,26 @@ def _run_scripts(lines: Sequence[str]) -> Tuple[str, ...]:
     return tuple(found)
 
 
+def _literal_shell_command(line: str) -> bool:
+    """No command boundary, expansion or substitution outside literal quoting."""
+    quote = ""
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+        elif char == "\\" and quote != "'":
+            escaped = True
+        elif char in "\"'" and (not quote or quote == char):
+            quote = "" if quote else char
+        elif char == "#" and not quote:
+            return index == 0 or line[index - 1].isspace()
+        elif char in "$`" and quote != "'":
+            return False
+        elif char in ";|&<>(){}" and not quote:
+            return False
+    return not quote and not escaped
+
+
 def _strict_in_script(script: str) -> bool:
     for line in script.split("\n"):
         if not line.strip() or line.lstrip().startswith("#"):
@@ -237,7 +270,7 @@ def _strict_in_script(script: str) -> bool:
             tokens = shlex.split(line, comments=True)
         except ValueError:
             tokens = []
-        if tokens and tokens[0] in {"echo", "printf"} and not any(char in line for char in "$`"):
+        if tokens and tokens[0] in {"echo", "printf"} and _literal_shell_command(line):
             continue
         if _mentions_mypy(line) and _mentions_strict(line):
             return True
@@ -259,7 +292,7 @@ def _commands(script: str, root: Path, provenance: str) -> Tuple[MypyCommand, ..
             raise UnsupportedMypyPolicy(f"{provenance}: malformed shell command") from None
         if not tokens:
             continue
-        literal = not any(char in line for char in "$`;|&<>\\")
+        literal = _literal_shell_command(line)
         installation = (
             tokens[:2] in (["pip", "install"], ["pip3", "install"])
             or (
@@ -306,7 +339,7 @@ def _commands(script: str, root: Path, provenance: str) -> Tuple[MypyCommand, ..
             raise UnsupportedMypyPolicy(f"{provenance}: --strict requires explicit path targets")
     if (
         unsupported
-        and "--strict" in script
+        and _mentions_strict(script)
         and (commands or any(_mentions_mypy(line) for line in unsupported))
     ):
         raise UnsupportedMypyPolicy(

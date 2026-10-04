@@ -513,3 +513,91 @@ def test_comments_names_and_echoed_quoted_check_examples_are_not_policy(tmp_path
     path = tmp_path / ".github/workflows/ci.yml"
     path.write_text("# mypy --strict pkg\n" + path.read_text())
     assert mypy_policy(tmp_path, [module]).flags == ()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo setup; mypy --strict pkg",
+        "echo setup && mypy --strict pkg",
+        "echo setup || mypy --strict pkg",
+        "echo setup | mypy --strict pkg",
+        "printf setup; python -m mypy --strict pkg",
+        "echo $(mypy --strict pkg)",
+        "echo `mypy --strict pkg`",
+        "echo setup > log; mypy --strict pkg",
+        "echo setup\\\n          mypy --strict pkg",
+    ],
+)
+def test_echo_or_printf_cannot_hide_a_compound_strict_declaration(
+    tmp_path: Path, command: str
+) -> None:
+    module = _project(tmp_path, "|\n          " + command)
+    with pytest.raises(UnsupportedMypyPolicy):
+        mypy_policy(tmp_path, [module])
+    oracle = MypyInferrer()
+    try:
+        assert isinstance(oracle.check_project({str(module): module.read_text()}), CheckFailure)
+    finally:
+        oracle.close()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo 'mypy --strict pkg; example'",
+        "echo 'mypy --strict $PACKAGE'",
+        "printf 'mypy --strict pkg | example'",
+        "echo 'mypy --strict pkg && example'",
+        "echo 'mypy --strict pkg > example'",
+    ],
+)
+def test_quoted_literal_shell_operators_in_echo_examples_are_not_checker_policy(
+    tmp_path: Path, command: str
+) -> None:
+    module = _project(tmp_path, "|\n          " + command)
+    assert mypy_policy(tmp_path, [module]).flags == ()
+    from towel.mypy_ci_policy import declared_mypy_root
+
+    assert declared_mypy_root(module) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [r"my\py --str\ict pkg", '"my"py --str"ict" pkg'],
+)
+def test_shell_quoted_literal_checker_and_flag_keep_strict_policy(
+    tmp_path: Path, command: str
+) -> None:
+    module = _project(tmp_path, "|\n          " + command)
+    assert mypy_policy(tmp_path, [module]).flags == ("--strict",)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        r"echo setup; my\py --str\ict pkg",
+        'echo setup && "my"py --str"ict" pkg',
+        r"my\py --str\ict $PACKAGE",
+    ],
+)
+def test_shell_quoted_strict_tokens_cannot_downgrade_unsupported_commands(
+    tmp_path: Path, command: str
+) -> None:
+    module = _project(tmp_path, "|\n          " + command)
+    with pytest.raises(UnsupportedMypyPolicy):
+        mypy_policy(tmp_path, [module])
+    oracle = MypyInferrer()
+    try:
+        assert isinstance(oracle.check_project({str(module): module.read_text()}), CheckFailure)
+    finally:
+        oracle.close()
+
+
+def test_shell_quoted_strict_tokens_cannot_downgrade_unsupported_yaml(tmp_path: Path) -> None:
+    module = _project(tmp_path, r"my\py --str\ict pkg")
+    (tmp_path / ".github/workflows/ci.yml").write_text(
+        r"jobs: {lint: {steps: [{run: my\py --str\ict pkg}]}}" + "\n"
+    )
+    with pytest.raises(UnsupportedMypyPolicy):
+        mypy_policy(tmp_path, [module])
