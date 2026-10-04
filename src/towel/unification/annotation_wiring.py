@@ -32,7 +32,6 @@ from collections import Counter
 import configparser
 import copy
 import dataclasses
-import fnmatch
 import hashlib
 import os
 from pathlib import Path
@@ -90,6 +89,7 @@ from .exceptions import (
 )
 from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import LOG, TYPES
+from ..mypy_ci_policy import mypy_policy
 from ..checker_project import _read_json_config
 from ..declared_python import declared_requirement, python_lower_bound
 from ..project_layout import find_project_root, load_pyproject, package_chain
@@ -119,6 +119,7 @@ from ..type_inference import (
     TypeDiagnostic,
     TypeOracle,
     _configured_root,
+    _checker_root,
     _module_name_and_root,
     _mypy_config,
     _RelocatedOracle,
@@ -320,7 +321,12 @@ def _names_module(pattern: str, module: str) -> bool:
         prefix = pattern[:-2]
         return module == prefix or module.startswith(prefix + ".")
     if "*" in pattern:
-        return fnmatch.fnmatchcase(module, pattern) or fnmatch.fnmatchcase(module, pattern[:-2])
+        parts = pattern.split(".")
+        expression = ".*" if parts[0] == "*" else re.escape(parts[0])
+        expression += "".join(
+            r"(\..*)?" if part == "*" else re.escape("." + part) for part in parts[1:]
+        )
+        return re.fullmatch(expression, module) is not None
     return module == pattern
 
 
@@ -329,24 +335,36 @@ def mypy_ladder_flags(path: Path) -> Dict[str, bool]:
 
     What the global section says, ``strict`` setting both where a flag is not
     given, then every per-module section whose pattern names the module, in
-    the order the file gives them. A project without a mypy configuration has
-    mypy's defaults, which set neither.
+    native specificity order. Literal CI --strict overrides global options,
+    while per-module sections retain their precedence over CLI flags.
     """
     root = _configured_root(path, "mypy")
     config = _mypy_config(root) if root is not None else None
-    if config is None:
-        return {flag: False for flag in _LADDER_FLAGS}
-    options, overrides = _mypy_sections(Path(config))
+    ci_strict = "--strict" in mypy_policy(root or _checker_root(path), [path]).flags
+    options, overrides = _mypy_sections(Path(config)) if config else ({}, [])
     normalized = {str(key).replace("-", "_"): value for key, value in options.items()}
-    strict = _boolean(normalized.get("strict")) or False
+    strict = ci_strict or (_boolean(normalized.get("strict")) or False)
     flags: Dict[str, bool] = {}
     for flag in _LADDER_FLAGS:
         given = _boolean(normalized.get(flag))
-        flags[flag] = strict if given is None else given
+        flags[flag] = True if ci_strict else strict if given is None else given
     module = _module_name_and_root(path)[0]
-    for patterns, section in overrides:
-        if not any(_names_module(pattern, module) for pattern in patterns):
-            continue
+    # Native mypy: specific structured suffixes, then unstructured globs in
+    # file order, then exact module sections, independently of file order.
+    matched = [
+        (
+            (
+                (2, 0, index)
+                if "*" not in pattern
+                else (1, 0, index) if "*" in pattern[:-1] else (0, len(pattern.split(".")), index)
+            ),
+            section,
+        )
+        for index, (patterns, section) in enumerate(overrides)
+        for pattern in patterns
+        if _names_module(pattern, module)
+    ]
+    for _, section in sorted(matched, key=lambda match: match[0]):
         for key, value in section.items():
             flag = str(key).replace("-", "_")
             given = _boolean(value)

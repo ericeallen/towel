@@ -74,6 +74,7 @@ from typing import (
 )
 
 from .diagnostics import LOG
+from .mypy_ci_policy import UnsupportedMypyPolicy, declared_mypy_root, mypy_policy
 from .project_tools import ToolChoice, python_tool_environment
 from .unification.exceptions import TowelError
 from .checker_project import (
@@ -763,6 +764,26 @@ class MypyInferrer:
                 root = _configured_root(Path(sources[0].path), "mypy") or _checker_root(
                     Path(sources[0].path)
                 )
+            try:
+                policy = mypy_policy(
+                    root,
+                    (
+                        [
+                            Path(path)
+                            for path in self._run_targets
+                            if Path(path).is_relative_to(root)
+                        ]
+                        if self._run_targets is not None
+                        else [Path(source.path) for source in sources]
+                    ),
+                )
+            except (UnsupportedMypyPolicy, OSError, UnicodeError) as error:
+                return CheckFailure(f"Cannot establish mypy CI policy: {error}")
+            for provenance in policy.provenance:
+                note = f"mypy CLI policy {policy.flags or 'defaults'} from {provenance}"
+                if note not in self._warned:
+                    self._warned.add(note)
+                    LOG.info(note)
             group = self._group_caches.setdefault(
                 root.resolve(),
                 (
@@ -777,6 +798,9 @@ class MypyInferrer:
             request = {
                 "root": os.path.realpath(root),
                 "config": _mypy_config(root),
+                "cli_flags": policy.flags,
+                "cli_provenance": policy.provenance,
+                "cli_targets": [str(path) for path in policy.targets],
                 "sources": {os.path.realpath(source.path): source.text for source in sources},
                 # A complete build is a check of the project, any other a probe.
                 "complete": complete,
@@ -2253,7 +2277,7 @@ def type_oracle_for_project(path: Path) -> ToolChoice[TypeOracle]:
     :class:`CheckerNotInstalled`: substituting another, or none, would verify
     against a check the project does not run.
     """
-    mypy_root = _configured_root(path, "mypy")
+    mypy_root = _configured_root(path, "mypy") or declared_mypy_root(path)
     pyright_root = _configured_root(path, "pyright")
     mypy: Optional[TypeOracle] = None
     pyright: Optional[TypeOracle] = None

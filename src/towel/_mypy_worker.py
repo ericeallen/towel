@@ -100,9 +100,12 @@ class _Configured(NamedTuple):
 
     options: Options
     said: Tuple[str, ...]
+    run: Optional[Tuple[BuildSource, ...]] = None
 
 
-def _read_configuration(config: str | None) -> _Configured:
+def _read_configuration(
+    config: str | None, cli_flags: Sequence[str] = (), cli_targets: Sequence[str] = ()
+) -> _Configured:
     """The project's options exactly as its own ``mypy`` reads them, and what mypy said doing so.
 
     mypy writes every problem it finds in a configuration file and carries
@@ -121,14 +124,14 @@ def _read_configuration(config: str | None) -> _Configured:
     # (``--strict-concatenate is deprecated``) are printed to standard output.
     try:
         with redirect_stdout(said):
-            _, options = process_options(
+            sources, options = process_options(
                 [
+                    *cli_flags,
                     "--config-file",
                     config or "",
                     "--python-executable",
                     sys.executable,
-                    "--module",
-                    "__towel_config_probe__",
+                    *(cli_targets or ("--module", "__towel_config_probe__")),
                 ],
                 stdout=said,
                 stderr=said,
@@ -138,10 +141,22 @@ def _read_configuration(config: str | None) -> _Configured:
         raise ValueError(
             said.getvalue().strip() or f"mypy stopped reading its configuration ({stopped.code})"
         ) from None
-    return _Configured(options, tuple(line for line in said.getvalue().splitlines() if line))
+    return _Configured(
+        options,
+        tuple(line for line in said.getvalue().splitlines() if line),
+        tuple(sources) if cli_targets else None,
+    )
 
 
-def _options(root: Path, config: str | None, cache: str, *, probe: bool) -> _Configured:
+def _options(
+    root: Path,
+    config: str | None,
+    cache: str,
+    *,
+    probe: bool,
+    cli_flags: Sequence[str] = (),
+    cli_targets: Sequence[str] = (),
+) -> _Configured:
     """The options of one build: the project's own, but for what a probe needs beyond them.
 
     A check (a complete build: the baseline, a candidate, the cold
@@ -169,9 +184,18 @@ def _options(root: Path, config: str | None, cache: str, *, probe: bool) -> _Con
     therefore checks them, in a cache of its own (see ``_PROBE_CACHE``). A
     configured project's probes run with its own options, as its checks do.
     """
-    configured = _read_configuration(config)
+    if any(flag != "--strict" for flag in cli_flags):
+        raise ValueError("Unsupported mypy CLI policy")
+    configured = _read_configuration(config, cli_flags, cli_targets)
     options = configured.options
     options.build_type = BuildType.STANDARD
+    if cli_targets:
+        # mypy.main uses its returned CLI source list ahead of configured targets.
+        # The owned worker's scope helpers use these fields to make the same choice,
+        # including explicit implementation paths beside a sibling stub.
+        options.files = list(cli_targets)
+        options.packages = None
+        options.modules = None
     if probe and config is None:
         options.check_untyped_defs = True
         cache = os.path.join(cache, _PROBE_CACHE)
@@ -204,7 +228,7 @@ def _options(root: Path, config: str | None, cache: str, *, probe: bool) -> _Con
     options.mypy_path = list(
         dict.fromkeys(str((root / path).resolve()) for path in options.mypy_path)
     )
-    return _Configured(options, configured.said)
+    return _Configured(options, configured.said, configured.run)
 
 
 class _PluginUnavailable(Exception):
@@ -1082,12 +1106,21 @@ def _request(request: object, cache: str) -> _Answered:
     os.chdir(root)
     complete = request.get("complete") is True
     configured = _options(
-        root, config, _group_cache(cache, request.get("group")), probe=not complete
+        root,
+        config,
+        _group_cache(cache, request.get("group")),
+        probe=not complete,
+        cli_flags=_strings(request.get("cli_flags") or []),
+        cli_targets=_strings(request.get("cli_targets") or []),
     )
     options = configured.options
     # The project's own run, read before Towel's exclusions, which name what
     # Towel writes (a relocated output), never the project's own files.
-    run = _sources_of_the_projects_run(options, root)
+    run = (
+        list(configured.run)
+        if configured.run is not None
+        else _sources_of_the_projects_run(options, root)
+    )
     targets = request.get("targets")
     judged = _judged_by_the_project(
         options,

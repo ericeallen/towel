@@ -131,6 +131,7 @@ BUILTIN_CALLER_LOOKUPS = {
 }
 
 TRANSFORMED = {
+    "xf1792_ci_strict_any",
     "xf1792_typed_shared_helper_comments",
     "xf1792_excluded_probe_import",
     "xf10_reuse_existing_function",
@@ -261,6 +262,7 @@ REFUSED: Dict[str, str] = {
 
 TYPED = frozenset(
     {
+        "xf1792_ci_strict_any",
         "xf1792_typed_shared_helper_comments",
         "xf1792_excluded_probe_import",
         # The round-3 audit's typed cases: refactored with the strict checker

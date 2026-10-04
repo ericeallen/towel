@@ -1554,3 +1554,33 @@ a module called `__future__` receive ordinary import and annotation treatment.
 
 *Status: implemented with focused ordinary-import regressions; final release
 gates remain separately required.*
+
+
+## 2026-10-04: Literal CI mypy strict policy reaches every typed check
+
+IDNA's pinned CI runs `mypy --strict idna`, while its project has no mypy
+configuration. Checking only mypy's defaults accepted a generated helper
+returning `Any`; the annotated codec methods then failed CI's
+`no-any-return` check. The earlier decision to defer project-own CI command
+discovery is extended for this concrete defect.
+
+Towel reads literal unconditional mypy `--strict` commands with existing
+project path targets in ordinary GitHub workflow jobs. Direct `mypy`,
+`python -m mypy` (including a literal versioned interpreter), and
+`uv run --frozen mypy` are supported. CLI flags and targets go through mypy's
+own option parser for inference, baseline, candidate and cold confirmation.
+Explicit CLI targets override configured `files`, `packages` and `modules`;
+per-module rules retain their native precedence over CLI strict flags. The
+annotation ladder follows that same strict policy and override precedence.
+The source workflow, job, step and line are retained as policy provenance.
+
+Conditional or computed strict declarations, custom execution contexts,
+unsupported shell/YAML forms and conflicting literal policies refuse typed
+verification with a diagnostic. A run spanning strict targets and files
+outside those targets must be narrowed. Non-strict CI commands with other
+flags keep the existing configured/default behavior: discovering their
+flags, platform matrices, checker versions, dependencies and other CI tools
+remains deferred by `project-own-check.md`. This reader does not execute CI
+or establish full CI parity. The strict-safe IDNA core extraction remains
+available; the codec signatures that its actual strict checker rejects are
+refused without casts or diagnostic suppression.
