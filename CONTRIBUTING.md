@@ -256,8 +256,9 @@ Natsort's selected CI tests require its three declared locales. Provision the
 verified matching-glibc locale directories read-only at the isolated corpus
 container's standard locale lookup paths; record payload hashes and actual locale
 availability. The harness's test environment does not pass inherited `LOCPATH`.
-Missing-locale fixture errors do not establish a completed baseline. This does
-not install system packages or change the host's locale configuration.
+Missing locales leave the selected CI prerequisites unmet, even when the test
+runner completes. This does not install system packages or change the host's
+locale configuration.
 
 Peewee uses its documented local/default SQLite profile and `runtests.py`.
 Optional features can skip when their modules are absent; CPython may still
