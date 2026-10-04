@@ -142,6 +142,52 @@ def test_a_fixed_point_run_looks_up_each_input_a_fixed_number_of_times(
     assert max(counted[1]) <= 2, counted
 
 
+def test_python_floor_reuses_layout_but_rechecks_host_syntax(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = _project(tmp_path, {"mod": 1})
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "p"\nversion = "0"\nrequires-python = ">=3.7"\n'
+    )
+    path = str(package / "mod.py")
+    engine = UnificationRefactorEngine(settings=SERIAL)
+    engine.begin_refactoring_run([path])
+    calls = _count_lookups(monkeypatch)
+    old_host = ast.parse("value = 1")
+    younger_host = ast.parse("value: list[int] = []")
+    assert [engine._oldest_python_for(path, old_host) for _ in range(5)] == [(3, 7)] * 5
+    assert engine._oldest_python_for(path, younger_host) == (3, 9)
+    assert engine._oldest_python_for(path, old_host) == (3, 7)
+    assert calls["_origin_of", path] == 1
+    assert calls["find_project_root", str(Path(path).resolve())] == 1
+
+
+def test_python_floor_refreshes_declaration_and_stage_origin_between_runs(tmp_path: Path) -> None:
+    package = _project(tmp_path / "original", {"mod": 1})
+    original = package / "mod.py"
+    config = package.parent / "pyproject.toml"
+    config.write_text('[project]\nname = "p"\nversion = "0"\nrequires-python = ">=3.7"\n')
+    stage = _project(tmp_path / "stage", {"mod": 1})
+    (stage.parent / "pyproject.toml").write_text(
+        '[project]\nname = "p"\nversion = "0"\nrequires-python = ">=3.12"\n'
+    )
+    copied = str(stage / "mod.py")
+    engine = UnificationRefactorEngine(settings=SERIAL)
+    host = ast.parse("value = 1")
+    engine.begin_refactoring_run([str(original)])
+    engine._output_origin = (package.parent, stage.parent)
+    assert engine._oldest_python_for(copied, host) == (3, 7)
+    config.write_text('[project]\nname = "p"\nversion = "0"\nrequires-python = ">=3.9"\n')
+    # Layout and declared metadata are stable within a run; a new explicit run
+    # rereads them. The host's evaluated syntax is never memoized with the layout.
+    assert engine._oldest_python_for(copied, host) == (3, 7)
+    engine.begin_refactoring_run([str(original)])
+    engine._output_origin = (package.parent, stage.parent)
+    assert engine._oldest_python_for(copied, host) == (3, 9)
+    engine.begin_refactoring_run([copied])
+    assert engine._oldest_python_for(copied, host) == (3, 12)
+
+
 def test_a_functions_own_locals_are_found_once_per_block_site(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

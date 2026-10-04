@@ -240,7 +240,9 @@ def _checker_targets(path: Path) -> List[PythonVersion]:
     return [target for target in targets if target is not None]
 
 
-def declared_oldest_python(path: Path) -> Optional[PythonVersion]:
+def declared_oldest_python(
+    path: Path, *, project_root: Optional[Path] = None
+) -> Optional[PythonVersion]:
     """The oldest Python the project around ``path`` says it supports, or None when it says nothing.
 
     ``requires-python`` first (``[project]`` in pyproject.toml, else setup.cfg's
@@ -248,8 +250,11 @@ def declared_oldest_python(path: Path) -> Optional[PythonVersion]:
     promise the package makes to whoever installs it. Failing that, the older
     of the versions mypy and pyright are configured to check for: a project
     whose checker targets 3.9 means its code to run there.
+
+    A caller that already resolved the layout can supply that root; checker
+    configuration still resolves from the actual module's original path.
     """
-    requirement = declared_requirement(find_project_root(path))
+    requirement = declared_requirement(project_root or find_project_root(path))
     if requirement is not None:
         bound = python_lower_bound(requirement)
         if bound is not None:
@@ -492,7 +497,7 @@ def _imported_files(path: Path, tree: ast.Module, roots: Sequence[Path]) -> Set[
 class HelperAnnotationWiring(EngineState):
     """Helper AnnotationWiring methods of the engine; see the module docstring."""
 
-    # The oldest Python each project root declares, read once per engine.
+    # The oldest Python each project root declares, read once per run.
     _declared_pythons: Mapping[str, Optional[PythonVersion]] = {}
     # What the project's mypy settles about the fallback rungs, per module, once per run.
     _ladder_policies: Mapping[str, _LadderPolicy] = {}
@@ -511,6 +516,8 @@ class HelperAnnotationWiring(EngineState):
         """
         self._type_run_oracle = self.type_oracle
         self._type_run_baseline = None
+        self._declared_pythons = {}
+        self._forget_run_lookups()
         self._ladder_policies = {}
         self._refused_checks = {}
         self._type_known = KnownErrors()
@@ -743,11 +750,13 @@ class HelperAnnotationWiring(EngineState):
         anyway, so its own evidence raises the floor
         (:func:`~towel.unification.annotations.evaluated_syntax`).
         """
-        root = str(find_project_root(Path(self._origin_of(file_path))))
+        root = str(self._project_root_in_run(file_path))
         if root not in self._declared_pythons:
             self._declared_pythons = {
                 **self._declared_pythons,
-                root: declared_oldest_python(Path(self._origin_of(file_path))),
+                root: declared_oldest_python(
+                    self._origin_in_run(file_path), project_root=Path(root)
+                ),
             }
         declared = self._declared_pythons[root] or OLDEST_PYTHON
         return max(declared, evaluated_syntax(host)) if host is not None else declared
