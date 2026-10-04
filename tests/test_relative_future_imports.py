@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A relative module named __future__ has ordinary runtime import semantics."""
+"""Relative future imports are ordinary imports starting with CPython 3.13.
+
+Older compilers accidentally enable future features for relative imports
+(CPython issue 118216). Towel's effect analysis remains conservative there,
+and its checker probes must refuse code those compilers cannot instrument.
+"""
 
 from __future__ import annotations
 
@@ -64,7 +69,8 @@ def test_relative_future_annotations_execute_and_remain_free(
         timeout=30,
     )
     assert run.returncode == 0, run.stderr
-    assert run.stdout == ("['effect']\n" if relative else "[]\n")
+    executes_annotation = relative and sys.version_info >= (3, 13)
+    assert run.stdout == ("['effect']\n" if executes_annotation else "[]\n")
     tree = ast.parse(source)
     analyzer = ScopeAnalyzer()
     analyzer.analyze(tree)
@@ -95,6 +101,14 @@ def test_relative_future_is_an_ordinary_checker_probe_site(relative: bool) -> No
     prefix = "." if relative else ""
     source = f"from {prefix}__future__ import annotations\nvalue = 1\n"
     plan = probe_plan(source)
+    if relative and sys.version_info < (3, 13):
+        # A reveal inserted before this ordinary import triggers the older
+        # compiler's misplaced-future error. Refusal is the safe result.
+        with pytest.raises(SyntaxError, match="from __future__ imports must occur"):
+            compile("reveal_type(probe)\n" + source, "<probes>", "exec", dont_inherit=True)
+        assert plan is None
+        assert import_probes("/project/pkg/sample.py", source) is None
+        return
     assert plan is not None
     assert ((1, 0) in plan.sites) is relative
     probes = import_probes("/project/pkg/sample.py", source)
