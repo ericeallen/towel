@@ -1581,9 +1581,10 @@ outside those targets must be narrowed. Non-strict CI commands with other
 flags keep the existing configured/default behavior: discovering their
 flags, platform matrices, checker versions, dependencies and other CI tools
 remains deferred by `project-own-check.md`. This reader does not execute CI
-or establish full CI parity. The strict-safe IDNA core extraction remains
-available; the codec signatures that its actual strict checker rejects are
-refused without casts or diagnostic suppression.
+or establish full CI parity. A bounded strict-only probe retained an IDNA
+core extraction; configured lint rules may still decline it. The codec
+signatures that its actual strict checker rejects are refused without casts
+or diagnostic suppression.
 
 Unsupported workflow shell text is classified conservatively for this narrow
 strict policy: lexical quotes and backslashes can hide a possible `mypy` or
