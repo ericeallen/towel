@@ -1100,7 +1100,20 @@ where the evidence comes from:
   a name from one of these files (`from pkg.compat import wcwidth`) sees it as
   `Any` too and is not declined. In the study's 20 projects, no module imports
   any of the 22 names that such imports and decorators bind at module scope.
-- A project that configures no mypy is checked with mypy's defaults, as its
+- Literal unconditional `mypy --strict` checks in ordinary GitHub workflow
+  jobs also determine the typed run. Supported commands are direct `mypy`,
+  `python -m mypy` (including a literal versioned interpreter), and
+  `uv run --frozen mypy`, with existing project path targets. Their explicit
+  targets override configured `files`, `packages` and `modules`; per-module
+  options retain mypy's precedence over CLI flags. The same policy applies
+  to inference, baseline, candidate and final confirmation checks. Unsupported
+  strict commands, conditional or computed contexts and conflicting policies
+  refuse typed verification with a diagnostic. If one Towel input spans strict
+  targets and files outside them, narrow the input. Other CI flags, platform
+  matrices, checker versions and dependencies remain outside this reader's
+  contract; it does not establish full CI parity.
+- A project with neither mypy configuration nor a supported literal strict
+  workflow check is checked with mypy's defaults, as its
   own `mypy` would check the same files: the bodies of functions without
   annotations are not checked, an import mypy finds no types for (not
   installed, or installed without stubs or `py.typed`) is an error, and a
@@ -1127,7 +1140,8 @@ where the evidence comes from:
   not declare, is private to the module (a stubbed module never hosts a
   helper another module imports).
 - Which files' errors count, and what each module is called, is mypy's own
-  rule under the project's configuration. Where the configuration names no
+  rule under the project's configuration and supported literal CI targets.
+  Where neither names
   `files`, `packages` or `modules`, the project's run is taken to be mypy
   over what Towel is pointed at, less what `--exclude` names, so a consumer
   outside that target (the tests of `towel dry src/pkg`) is not checked; a

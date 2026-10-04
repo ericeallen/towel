@@ -61,6 +61,13 @@ from the helper. Towel skips trivial extractions that would add indirection
 without sharing real logic. After reviewing the result, use the
 [naming workflow](NAMING.md) to replace placeholders.
 
+Generated calls pass helper arguments by position. For projects whose declared
+Python floor or existing syntax establishes Python 3.8 or newer, synthetic
+`__param_N` arguments are positional-only: for example,
+`def __extracted_func_0(__param_0, /):`. Leading arguments before a synthetic
+parameter join that positional-only group. Older or undeclared targets keep
+ordinary parameters. Reusing an existing function preserves its signature.
+
 ## Protect a definition
 
 An exact `# towel: no-extract` comment immediately after a function signature's
