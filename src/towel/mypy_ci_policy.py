@@ -22,7 +22,6 @@ refuse verification rather than silently checking with weaker defaults.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from pathlib import Path
 import re
 import shlex
@@ -59,13 +58,58 @@ def workflow_files(root: Path) -> Tuple[Path, ...]:
 
 def _scalar(value: str) -> str:
     if value.startswith('"'):
-        try:
-            decoded: object = json.loads(value)
-        except ValueError:
-            raise UnsupportedMypyPolicy("computed or malformed YAML scalar") from None
-        if not isinstance(decoded, str):
-            raise UnsupportedMypyPolicy("non-string YAML scalar")
-        return decoded
+        if len(value) < 2 or not value.endswith('"'):
+            raise UnsupportedMypyPolicy("malformed YAML scalar")
+        escapes = {
+            "0": "\0",
+            "a": "\a",
+            "b": "\b",
+            "t": "\t",
+            "\t": "\t",
+            "n": "\n",
+            "v": "\v",
+            "f": "\f",
+            "r": "\r",
+            "e": "\x1b",
+            " ": " ",
+            '"': '"',
+            "\\": "\\",
+            "/": "/",
+            "N": "\x85",
+            "_": "\xa0",
+            "L": "\u2028",
+            "P": "\u2029",
+        }
+        decoded: list[str] = []
+        index = 1
+        while index < len(value) - 1:
+            char = value[index]
+            if char == '"' or char in "\r\n":
+                raise UnsupportedMypyPolicy("only single-line quoted YAML scalars are supported")
+            if char != "\\":
+                decoded.append(char)
+                index += 1
+                continue
+            index += 1
+            if index >= len(value) - 1:
+                raise UnsupportedMypyPolicy("unterminated YAML escape")
+            code = value[index]
+            if code in escapes:
+                decoded.append(escapes[code])
+                index += 1
+            elif code in {"x", "u", "U"}:
+                width = {"x": 2, "u": 4, "U": 8}[code]
+                digits = value[index + 1 : index + 1 + width]
+                if len(digits) != width or re.fullmatch(r"[0-9A-Fa-f]+", digits) is None:
+                    raise UnsupportedMypyPolicy("invalid Unicode YAML escape")
+                number = int(digits, 16)
+                if number > 0x10FFFF or 0xD800 <= number <= 0xDFFF:
+                    raise UnsupportedMypyPolicy("invalid Unicode YAML code point")
+                decoded.append(chr(number))
+                index += width + 1
+            else:
+                raise UnsupportedMypyPolicy("unsupported YAML escape")
+        return "".join(decoded)
     if value.startswith("'"):
         if len(value) < 2 or not value.endswith("'"):
             raise UnsupportedMypyPolicy("malformed YAML scalar")
@@ -110,6 +154,94 @@ def _mentions_mypy(script: str) -> bool:
 
 def _mentions_strict(script: str) -> bool:
     return re.search(r"(?<![\w-])--strict(?![\w-])", script) is not None
+
+
+def _quoted_end(text: str, at: int) -> Optional[int]:
+    quote = text[at]
+    index = at + 1
+    while index < len(text):
+        if quote == '"' and text[index] == "\\":
+            index += 2
+        elif text[index] == quote:
+            if quote == "'" and index + 1 < len(text) and text[index + 1] == "'":
+                index += 2
+            else:
+                return index + 1
+        else:
+            index += 1
+    return None
+
+
+def _run_scripts(lines: Sequence[str]) -> Tuple[str, ...]:
+    """Lexically classify run scalars even when their surrounding YAML is unsupported.
+
+    This never interprets jobs, aliases or constructors. Decoding actual run
+    text before structural validation prevents an encoded strict declaration
+    from becoming weaker defaults when that validation refuses it.
+    """
+    found: list[str] = []
+    for line_index, line in enumerate(lines):
+        index = 0
+        while index < len(line):
+            char = line[index]
+            previous = line[:index].strip()
+            boundary = not previous or previous.endswith(("{", "[", ",")) or previous == "-"
+            if char in "\"'":
+                end = _quoted_end(line, index)
+                if end is None:
+                    break
+                key = _scalar(line[index:end]) if boundary else ""
+            elif boundary and line.startswith("run", index):
+                end = index + 3
+                key = "run"
+            else:
+                index += 1
+                continue
+            after = end
+            while after < len(line) and line[after].isspace():
+                after += 1
+            if key != "run" or after >= len(line) or line[after] != ":":
+                index = end
+                continue
+            value = line[after + 1 :].lstrip()
+            # An anchor is recognized only to classify the literal scalar it
+            # prefixes; structural validation still refuses all anchors.
+            value = re.sub(r"^&[\w-]+\s+", "", value)
+            body: list[str] = []
+            for following in lines[line_index + 1 :]:
+                if following.strip() and _indent(following) <= index:
+                    break
+                body.append(following.strip())
+            if value.startswith(('"', "'")):
+                quoted = _quoted_end(value, 0)
+                if quoted is None:
+                    # Classification only: multiline quoted values remain
+                    # unsupported when the structural reader reaches them.
+                    value = " ".join([value, *body])
+                    quoted = _quoted_end(value, 0)
+                if quoted is not None:
+                    found.append(_scalar(value[:quoted]))
+            elif value.startswith(("|", ">")):
+                found.append("\n".join(body))
+            else:
+                found.append(" ".join([value, *body]))
+            index = after + 1
+    return tuple(found)
+
+
+def _strict_in_script(script: str) -> bool:
+    for line in script.split("\n"):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        try:
+            tokens = shlex.split(line, comments=True)
+        except ValueError:
+            tokens = []
+        if tokens and tokens[0] in {"echo", "printf"} and not any(char in line for char in "$`"):
+            continue
+        if _mentions_mypy(line) and _mentions_strict(line):
+            return True
+    return False
 
 
 def _commands(script: str, root: Path, provenance: str) -> Tuple[MypyCommand, ...]:
@@ -185,9 +317,11 @@ def _commands(script: str, root: Path, provenance: str) -> Tuple[MypyCommand, ..
 
 def _workflow_commands(path: Path, root: Path) -> Tuple[MypyCommand, ...]:
     text = path.read_text(encoding="utf-8")
-    if not _mentions_mypy(text):
-        return ()
     lines = [_commentless(line) for line in text.split("\n")]
+    scripts = _run_scripts(lines)
+    strict_candidate = any(_strict_in_script(script) for script in scripts)
+    if not any(_mentions_mypy(script) for script in scripts):
+        return ()
     found: list[MypyCommand] = []
     try:
         if "\t" in text:
@@ -209,7 +343,7 @@ def _workflow_commands(path: Path, root: Path) -> Tuple[MypyCommand, ...]:
         for offset, (at, name, value) in enumerate(fields):
             stop = fields[offset + 1][0] if offset + 1 < len(fields) else len(jobs)
             body = jobs[at + 1 : stop]
-            if not _mentions_mypy("\n".join(body)):
+            if not any(_mentions_mypy(script) for script in _run_scripts(body)):
                 continue
             if value:
                 raise UnsupportedMypyPolicy("ordinary block jobs are required")
@@ -233,7 +367,7 @@ def _workflow_commands(path: Path, root: Path) -> Tuple[MypyCommand, ...]:
                     " " * (step_indent + 2) + steps[step].lstrip()[2:],
                     *steps[step + 1 : stop],
                 ]
-                if not _mentions_mypy("\n".join(block)):
+                if not any(_mentions_mypy(script) for script in _run_scripts(block)):
                     continue
                 keys = _fields(block, step_indent + 2)
                 provenance = f"{path.relative_to(root)} job {name} step {starts.index(step) + 1}"
@@ -246,6 +380,11 @@ def _workflow_commands(path: Path, root: Path) -> Tuple[MypyCommand, ...]:
                     end = next((at for at, _, _ in keys if at > index), len(block))
                     script = "\n".join(line.strip() for line in block[index + 1 : end])
                 else:
+                    end = next((at for at, _, _ in keys if at > index), len(block))
+                    if not value or any(line.strip() for line in block[index + 1 : end]):
+                        raise UnsupportedMypyPolicy(
+                            f"{provenance}: continued run scalar is unsupported"
+                        )
                     if value.startswith(("|", ">", "&", "*", "!", "{", "[")) or "${{" in value:
                         raise UnsupportedMypyPolicy(
                             f"{provenance}: computed or unsupported run scalar"
@@ -269,7 +408,7 @@ def _workflow_commands(path: Path, root: Path) -> Tuple[MypyCommand, ...]:
                     )
                 found.extend(commands)
     except UnsupportedMypyPolicy as error:
-        if not _mentions_strict("\n".join(lines)):
+        if not strict_candidate:
             return ()
         raise UnsupportedMypyPolicy(f"{path.relative_to(root)}: {error}") from None
     return tuple(found)

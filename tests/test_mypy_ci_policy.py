@@ -280,9 +280,7 @@ def test_workflow_execution_context_is_not_silently_ignored(tmp_path: Path, extr
         mypy_policy(tmp_path, [module])
 
 
-@pytest.mark.parametrize(
-    "run", [">\n          mypy --strict pkg", "${{ matrix.command }}", "*check"]
-)
+@pytest.mark.parametrize("run", [">\n          mypy --strict pkg"])
 def test_computed_folded_or_aliased_named_check_refuses(tmp_path: Path, run: str) -> None:
     module = _project(tmp_path, run)
     path = tmp_path / ".github/workflows/ci.yml"
@@ -410,3 +408,108 @@ def test_strict_ci_declaration_does_not_select_mypy_for_an_unrelated_file(tmp_pa
     assert declared_mypy_root(module) == tmp_path
     assert declared_mypy_root(tmp_path) == tmp_path
     assert declared_mypy_root(outside) is None
+
+
+@pytest.mark.parametrize("run", ["${{ matrix.command }}", "*check"])
+def test_labels_alone_do_not_establish_a_strict_checker_declaration(
+    tmp_path: Path, run: str
+) -> None:
+    module = _project(tmp_path, run, step="        name: mypy --strict\n")
+    assert mypy_policy(tmp_path, [module]).flags == ()
+
+
+@pytest.mark.parametrize(
+    "checker,flag",
+    [
+        (r"my\u0070y", r"\u002d\u002dstrict"),
+        ("mypy", r"\x2d\x2dstrict"),
+        (r"my\U00000070y", r"\U0000002d\U0000002dstrict"),
+    ],
+)
+def test_decoded_checker_and_strict_tokens_reach_the_real_checker(
+    tmp_path: Path, checker: str, flag: str
+) -> None:
+    module = _project(tmp_path, f'"{checker} {flag} pkg"')
+    assert mypy_policy(tmp_path, [module]).flags == ("--strict",)
+    source = "from typing import Any\ndef helper(v: Any) -> Any:\n    return v\ndef typed(v: int) -> int:\n    return helper(v)\n"
+    module.write_text(source)
+    oracle = MypyInferrer()
+    try:
+        verdict = oracle.check_project({str(module): source})
+        assert isinstance(verdict, CheckSuccess) and len(verdict.errors) == 1
+        assert "Returning Any" in verdict.errors[0].message
+    finally:
+        oracle.close()
+
+
+@pytest.mark.parametrize("shape", ["ordinary", "flow", "anchor", "env"])
+def test_decoded_strict_tokens_in_unsupported_declarations_never_become_defaults(
+    tmp_path: Path, shape: str
+) -> None:
+    command = r'"my\u0070y \u002d\u002dstrict $PACKAGE"'
+    module = _project(tmp_path, command)
+    workflow = tmp_path / ".github/workflows/ci.yml"
+    if shape == "flow":
+        workflow.write_text("jobs: {lint: {steps: [{run: " + command + "}]}}\n")
+    elif shape == "anchor":
+        workflow.write_text(workflow.read_text().replace("run: ", "run: &check "))
+    elif shape == "env":
+        workflow.write_text("env:\n  PACKAGE: pkg\n" + workflow.read_text())
+    with pytest.raises(UnsupportedMypyPolicy):
+        mypy_policy(tmp_path, [module])
+    oracle = MypyInferrer()
+    try:
+        assert isinstance(oracle.check_project({str(module): module.read_text()}), CheckFailure)
+    finally:
+        oracle.close()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        r'"echo my\u0070y \u002d\u002dstrict pkg"',
+        "'echo mypy --strict pkg'",
+        "mypy '--strict' pkg",
+        "'mypy ''--strict'' pkg'",
+    ],
+)
+def test_shell_quoting_is_respected_and_echoed_examples_are_not_policy(
+    tmp_path: Path, command: str
+) -> None:
+    module = _project(tmp_path, command)
+    assert bool(mypy_policy(tmp_path, [module]).flags) == ("echo" not in command)
+
+
+def test_quoted_run_key_in_unsupported_yaml_still_refuses_a_literal_strict_check(
+    tmp_path: Path,
+) -> None:
+    module = _project(tmp_path, r'"my\u0070y \x2d\x2dstrict pkg"')
+    path = tmp_path / ".github/workflows/ci.yml"
+    path.write_text(path.read_text().replace("run:", '"run":'))
+    with pytest.raises(UnsupportedMypyPolicy):
+        mypy_policy(tmp_path, [module])
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        '"mypy\n          --strict pkg"',
+        "'mypy\n          --strict pkg'",
+        "\n          mypy --strict pkg",
+        "mypy\n          --strict pkg",
+        r'"my\u0070y' + "\n          " + r'\u002d\u002dstrict pkg"',
+    ],
+)
+def test_split_or_continued_run_headers_never_hide_strict_policy(tmp_path: Path, run: str) -> None:
+    module = _project(tmp_path, run)
+    with pytest.raises(UnsupportedMypyPolicy):
+        mypy_policy(tmp_path, [module])
+
+
+def test_comments_names_and_echoed_quoted_check_examples_are_not_policy(tmp_path: Path) -> None:
+    module = _project(
+        tmp_path, '"echo \\"mypy --strict pkg\\""', step="        name: mypy --strict\n"
+    )
+    path = tmp_path / ".github/workflows/ci.yml"
+    path.write_text("# mypy --strict pkg\n" + path.read_text())
+    assert mypy_policy(tmp_path, [module]).flags == ()
