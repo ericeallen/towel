@@ -64,8 +64,11 @@ replacement call (`after`), including sites that were a function's whole body.
 This context helps a reader choose a name, write a docstring or assess types.
 
 The before/after information comes from `.towel-helpers.json`, which `dry`
-writes beside its output. It is for the naming step and can be deleted when
-that step is complete.
+writes beside its output. It is optional metadata for the naming step and can
+be deleted when that step is complete. If it cannot be written, `dry` reports
+a warning and exits successfully because source publication has succeeded.
+Helper inventory and renaming still work; call-site before/after information
+is unavailable. Existing sidecar collisions and symlink targets are preserved.
 
 ## Rename keys and class-private names
 

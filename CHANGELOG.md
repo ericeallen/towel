@@ -15,6 +15,8 @@ ecosystem evidence behind each claim. The format follows
   helper return, preserving observable resource and finalizer lifetimes.
 - Treat all context managers as potentially suppressing exceptions, keeping
   conditional reads of possibly unbound locals at their original sites.
+- Report optional naming-sidecar write failures as warnings after successful
+  source publication, with a successful command exit and preserved collisions.
 
 ## [1.792]
 

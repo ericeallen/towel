@@ -26,8 +26,8 @@ from tests.test_cli_integration import invoke
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_oracle_closes_after_success_or_output_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool
+def test_oracle_closes_after_success_or_optional_sidecar_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, fail: bool
 ) -> None:
     source = tmp_path / "input"
     source.mkdir()
@@ -59,7 +59,8 @@ def test_oracle_closes_after_success_or_output_failure(
     result = invoke(
         ["dry", str(source), str(output), "--no-interactive", "--no-format", "--progress", "none"]
     )
-    assert result.status == int(fail), result.stderr
+    assert result.status == 0, result.stderr
+    assert ("Source publication succeeded" in caplog.text) == fail
     oracle.check_project.assert_called_once_with({str(source / "main.py"): "value = 3\n"})
     oracle.close.assert_called_once_with()
     assert (source / "main.py").read_text() == "value = 3\n"

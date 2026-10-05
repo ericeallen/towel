@@ -1156,7 +1156,17 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
             )
         _print_declined(engine.run_report, applied)
         if not preview:
-            _write_change_sidecar(engine, output_path)
+            # Publication has succeeded. This optional naming aid cannot
+            # retroactively make that source transaction a failed command.
+            try:
+                _write_change_sidecar(engine, output_path)
+            except (OSError, ValueError) as error:
+                LOG.warning(
+                    "Source publication succeeded, but the optional naming sidecar"
+                    " could not be written: %s. Helper inventory and renaming remain"
+                    " available without call-site before/after metadata.",
+                    error,
+                )
     finally:
         if oracle is not None:
             oracle.close()
