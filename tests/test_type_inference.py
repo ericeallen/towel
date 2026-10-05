@@ -273,7 +273,10 @@ def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> Non
     # ``Any`` is reached through a private alias, so the module gains no public name.
     assert "import typing as _typing\n" in result and "from typing import Any" not in result
     # ``json`` is the module's import, read bare inside the helper, not a parameter.
-    assert _signature(result) == "def __extracted_func_0(text: str) -> 'list[_typing.Any]':"
+    # Retaining the opaque payload must not erase the known type of keys.
+    assert _signature(result) == (
+        "def __extracted_func_0(text: str) -> 'tuple[_typing.Any, list[_typing.Any]]':"
+    )
     exec(compile(result, "<any>", "exec"), {})
 
 

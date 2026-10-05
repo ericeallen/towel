@@ -1642,7 +1642,11 @@ def _joined_tuple(
         return None
     columns = [texts[offset::width] for offset in range(width)]
     elements = [
-        _joined_revealed(column, host, same_module, subtypes, allowed, preserve_any=True)
+        (
+            ast.Name(id="Any", ctx=ast.Load())
+            if column and all(text == "Any" for text in column)
+            else _joined_revealed(column, host, same_module, subtypes, allowed, preserve_any=True)
+        )
         for column in columns
     ]
     if any(element is None for element in elements):

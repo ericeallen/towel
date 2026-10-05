@@ -62,9 +62,12 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 NEWER = "lazy import json  # PEP 810: Python 3.15\n"
 """A line no supported Python parses, standing for syntax newer than the running one."""
 
+# Keep the loop target bound even for an empty range: these tests exercise
+# unrelated instrumentation policy, independently of opaque iterator lifetimes.
 KERNELS = """\
 def first(n):
     total = 0
+    i = 0
     for i in range(n):
         total += i * 2
     total = total + 1
@@ -73,6 +76,7 @@ def first(n):
 
 def second(n):
     total = 0
+    i = 0
     for i in range(n):
         total += i * 2
     total = total + 1

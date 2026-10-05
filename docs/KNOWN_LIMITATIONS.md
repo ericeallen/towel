@@ -104,7 +104,12 @@ describe belong to that version.
   and assignment expressions, as is a name bound from an expression containing
   a call, whose result may own a resource or finalizer that a later statement
   could observe. This includes ordinary factories, aliases and methods;
-  callee spelling does not establish the returned object's lifetime. A
+  callee spelling does not establish the returned object's lifetime. Aliases
+  and results computed from those values are retained too. When several
+  such values are returned, their caller bindings preserve the original
+  compiler local-slot order, so finalizers run in the same relative order.
+  An occurrence with an incompatible order, or without compiler evidence
+  sufficient to establish it, is declined. A
   returned name must be definitely bound where the block ends or have
   entered as a parameter.
 - **Control flow and class context.** Blocks containing `yield`, `await`,

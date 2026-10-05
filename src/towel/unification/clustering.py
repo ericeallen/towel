@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
 from ..canonical_ast import canonical_dump
 from .assignment_analyzer import has_reassignments_without_bindings
-from .block_analysis import align_return_variables
+from .block_analysis import align_return_variables, lifetime_order_preserved
 from .block_comments import call_argument_lines, directive_conflict, site_comments
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
@@ -203,10 +203,15 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             set(template.bound_in_block),
             set(candidate.snapshot.bound_in_block),
             cluster_renames,
+            template_order=template.return_variables,
         )
         if aligned is None or aligned[0] != list(template.return_variables):
             return None
         returned = aligned[1]
+        if not lifetime_order_preserved(
+            candidate.nodes, candidate.function, candidate.analyzer, returned
+        ):
+            return None
         # A name the call rebinds is not orphaned by moving the block.
         indices = self._get_block_indices(candidate.function, candidate.nodes)
         if indices is None:

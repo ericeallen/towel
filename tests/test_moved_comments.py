@@ -1103,7 +1103,7 @@ def test_a_block_opening_with_an_excluded_clause_still_moves(tmp_path: Path) -> 
         def first(values, error):
             total = len(values) * 2
             if error:  # pragma: no cover
-                message = "bad: " + str(values)
+                message = f"bad: {values}"
                 values.clear()
                 raise ValueError(message)
             return total + 1
@@ -1112,7 +1112,7 @@ def test_a_block_opening_with_an_excluded_clause_still_moves(tmp_path: Path) -> 
         def second(values, error):
             total = sum(values) - 3
             if error:  # pragma: no cover
-                message = "bad: " + str(values)
+                message = f"bad: {values}"
                 values.clear()
                 raise ValueError(message)
             return total * 5

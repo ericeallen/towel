@@ -51,6 +51,7 @@ CASES = Path(__file__).parent / "hostile_cases"
 
 TRANSFORMED = {
     "r1792_factory_finalizer_continuation",
+    "r1792_factory_finalizer_order",
     "r1792_aliased_suppress_conditional_read",
     # Returning opaque call results keeps these names local at the callers,
     # including their earlier unbound reads (the battery checks both).

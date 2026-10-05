@@ -93,7 +93,12 @@ def test_identical_blocks_with_a_live_variable_share_one_helper(tmp_path: Path) 
     assert helpers == ["__extracted_func_0"], "one helper serves every site"
     assert applied == 1
     for index in range(12):
-        assert unparsed_body(functions[f"f{index}"]).startswith("total = __extracted_func_0(order)")
+        assignment = functions[f"f{index}"].body[0]
+        assert isinstance(assignment, ast.Assign)
+        # sum and round are opaque calls: keep both results alive at the
+        # caller while still using just one helper for all twelve sites.
+        expected = ast.parse("subtotal, total = __extracted_func_0(order)").body[0]
+        assert ast.dump(assignment) == ast.dump(expected)
     names = [f"f{index}" for index in range(12)]
     assert _summaries(final, names) == _summaries(source, names)
 
@@ -531,15 +536,20 @@ def test_a_forwarded_thunk_is_passed_through(
 
 
 @pytest.mark.parametrize("formatted", [True, False])
-def test_sqlglots_generator_ends_after_one_helper(
+def test_sqlglots_generator_ends_without_forwarding_helpers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, formatted: bool
 ) -> None:
     # The r5_chain reproducer as ``towel dry`` runs it: formatted, three lines.
     final, applied = _refactor_generator(
         tmp_path, monkeypatch, escape_guard=True, min_lines=3, formatted=formatted
     )
-    assert applied == 1
-    assert len(_generated_helpers(final)) == 1
+    # Preserving caller binding order can split the shared prefix from the
+    # remaining self.func call. That second helper computes the SQL result;
+    # neither helper merely forwards to a generated helper.
+    assert applied == (2 if formatted else 1)
+    helpers = _generated_helpers(final)
+    assert len(helpers) == applied
+    assert not any(_only_forwards_to_generated_helpers(helper) for helper in helpers)
     assert _rendered_sql(final) == _rendered_sql(SQL_GENERATOR)
 
 

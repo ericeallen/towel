@@ -173,7 +173,10 @@ def test_r9bd_the_audit_s_pair_is_declined_under_its_reason(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     path = tmp_path / "m.py"
-    path.write_text(REPRODUCER)
+    # Opaque call results are now returned to preserve lifetime, which also
+    # keeps total local. Use call-free arithmetic to exercise the refusal
+    # when moving the block would actually orphan its binding.
+    path.write_text(REPRODUCER.replace("sum(items)", "items[0]").replace("sum(rows)", "rows[0]"))
     traced = _rejections(path, caplog)
     assert any(line.startswith("REJECT[moves_only_binding]") for line in traced), traced
     assert any(line.endswith("['total']") for line in traced), traced

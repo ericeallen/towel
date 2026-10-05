@@ -76,6 +76,14 @@ def test_tuple_composition_quotes_the_whole_type_after_joining_its_members() -> 
     assert result.value == "tuple[pkg.websocket.First | Any, int]"
 
 
+def test_an_any_tuple_column_does_not_erase_the_other_columns() -> None:
+    result = _joined_tuple(["Any", "list[Any]", "Any", "list[Any]"], 2, ast.parse(""), True)
+    assert isinstance(result, ast.Constant)
+    assert result.value == "tuple[Any, list[Any]]"
+    # A missing measurement still prevents inference; it is not an Any result.
+    assert _joined_tuple([None, "int", "Any", "int"], 2, ast.parse(""), True) is None
+
+
 @pytest.mark.parametrize("annotation", ["int", "Optional", "object"])
 def test_simple_known_annotations_can_still_be_evaluated(annotation: str) -> None:
     helper = ast.parse(f"def helper(value: {annotation!r}) -> None: pass").body[0]

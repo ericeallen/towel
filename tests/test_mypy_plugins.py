@@ -107,7 +107,9 @@ def _project(root: Path, plugins: str = '"myplugin.py"', result: str = "str") ->
     (package / "b.py").write_text(
         SITE.format(
             name="fb",
-            preamble='with open("/dev/null") as fh:\n        fh.read()\n        value = magic(7)',
+            # The helper-input proof is independent of opaque manager behavior;
+            # the plugin's type for magic remains the obligation exercised here.
+            preamble='with open("/dev/null") as fh:\n        fh.read()\n    value = magic(7)',
             number=2,
         ).lstrip(),
         encoding="utf-8",

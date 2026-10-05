@@ -12,7 +12,9 @@ ecosystem evidence behind each claim. The format follows
 ### Fixed
 
 - Retain block-bound results of ordinary factories and other calls across
-  helper return, preserving observable resource and finalizer lifetimes.
+  helper return, preserving observable resource and finalizer lifetimes,
+  including aliases and the relative cleanup order of multiple results.
+- Preserve known tuple-element types when another retained result is `Any`.
 - Treat all context managers as potentially suppressing exceptions, keeping
   conditional reads of possibly unbound locals at their original sites.
 - Report optional naming-sidecar write failures as warnings after successful

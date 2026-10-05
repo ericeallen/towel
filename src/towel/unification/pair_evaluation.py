@@ -59,7 +59,12 @@ from .assignment_analyzer import (
     own_scope_bindings,
     scope_declarations,
 )
-from .block_analysis import align_return_variables
+from .block_analysis import (
+    align_return_variables,
+    lifetime_bound_names,
+    lifetime_order_preserved,
+    local_cleanup_order,
+)
 from .block_comments import (
     CommentConflict,
     call_argument_lines,
@@ -576,7 +581,7 @@ class PairEvaluation(
     ) -> Optional[_Placed]:
         """Stages 4 to 10; every name in ``forced_parameters`` the template reads is a parameter."""
         ctx = setup.ctx
-        unified = self._unify_pair(pair, analysis)
+        unified = self._unify_pair(pair, analysis, ctx)
         if unified is None:
             return None
         scope = self._helper_scope(pair, ctx, functions)
@@ -873,7 +878,9 @@ class PairEvaluation(
 
     # -- 4 ---------------------------------------------------------------------
 
-    def _unify_pair(self, pair: CodeBlockPair, analysis: _BindingAnalysis) -> Optional[_Unified]:
+    def _unify_pair(
+        self, pair: CodeBlockPair, analysis: _BindingAnalysis, ctx: _PairContext
+    ) -> Optional[_Unified]:
         """Anti-unify the blocks and align the variables each must return."""
         debug_enabled = debugging(VALIDATION)
         blocks = [pair.block1_nodes, pair.block2_nodes]
@@ -901,8 +908,19 @@ class PairEvaluation(
             analysis.snapshot1.bound_in_block,
             analysis.snapshot2.bound_in_block,
             hygienic_renames,
+            template_order=(
+                local_cleanup_order(ctx.func1, ctx.scope_analyzer)
+                if len(lifetime_bound_names(pair.block1_nodes, analysis.return_variables1)) > 1
+                else ()
+            ),
         )
-        if aligned is None:
+        if aligned is None or not all(
+            lifetime_order_preserved(nodes, function, analyzer, returned)
+            for nodes, function, analyzer, returned in (
+                (pair.block1_nodes, ctx.func1, ctx.scope_analyzer, aligned[0]),
+                (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, aligned[1]),
+            )
+        ):
             self._debug_reject(RejectReason.RETURN_VARIABLES_NOT_ALIGNED, pair)
             return None
         if aligned[0] and (

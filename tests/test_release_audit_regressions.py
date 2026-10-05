@@ -69,3 +69,29 @@ def test_release_audit_behavior(
     after = subprocess.run([sys.executable, str(output)], capture_output=True, check=True)
     assert (after.stdout, after.stderr) == (before.stdout, before.stderr)
     assert source.read_text() == original_text
+
+
+@pytest.mark.parametrize("typed", [False, True])
+@pytest.mark.parametrize("alias", [False, True])
+def test_multiple_finalizers_keep_their_cleanup_order(
+    tmp_path: Path, typed: bool, alias: bool
+) -> None:
+    """An alphabetic tuple reorders destruction; aliases can delay it further."""
+    fixture = Path(__file__).parent / "hostile_cases" / "r1792_factory_finalizer_order.py"
+    original_text = fixture.read_text()
+    if alias:
+        original_text = original_text.replace(
+            '    a = acquire("a")', '    a = acquire("a")\n    copy_z = z'
+        )
+    source, output = tmp_path / "input.py", tmp_path / "output.py"
+    source.write_text(original_text)
+    before = subprocess.run([sys.executable, str(source)], capture_output=True, check=True)
+    arguments = ["dry", str(source), str(output), "--no-interactive", "--progress", "none"]
+    if not typed:
+        arguments.append("--no-types")
+    result = invoke(arguments)
+    assert result.status == 0, result.stderr
+    assert "def __extracted_func_" in output.read_text()
+    after = subprocess.run([sys.executable, str(output)], capture_output=True, check=True)
+    assert (after.stdout, after.stderr) == (before.stdout, before.stderr)
+    assert source.read_text() == original_text

@@ -10,7 +10,7 @@ def __extracted_func_6(__param_0, __param_1, response, validator):
     data = response.json().get(__param_0, {}).get(__param_1, [])
     cleaned = [item.strip().lower() for item in data]
     validated = [validator.check(item) for item in cleaned]
-    return (cleaned, data, validated)
+    return (data, cleaned, validated)
 
 
 def __extracted_func_5(result, transformer):
@@ -74,7 +74,7 @@ def __extracted_func_0(__param_0, db, mapper):
 def process_api_response_v1(response, validator, transformer):
     """Version 1: Method chaining on API response."""
     # Complex method chain
-    cleaned, data, validated = __extracted_func_6('data', 'items', response, validator)
+    data, cleaned, validated = __extracted_func_6('data', 'items', response, validator)
     result = transformer.process(validated).filter(lambda x: x is not None).to_list()
 
     return __extracted_func_5(result, transformer)
@@ -83,7 +83,7 @@ def process_api_response_v1(response, validator, transformer):
 def process_api_response_v2(response, validator, transformer):
     """Version 2: Different key path, same chaining pattern."""
     # Different keys, same chain
-    cleaned, data, validated = __extracted_func_6('payload', 'records', response, validator)
+    data, cleaned, validated = __extracted_func_6('payload', 'records', response, validator)
     result = transformer.process(validated).filter(lambda x: x is not None).to_list()
 
     return __extracted_func_5(result, transformer)

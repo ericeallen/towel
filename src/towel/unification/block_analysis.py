@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import ast
 import sys
+from types import CodeType
 from weakref import WeakKeyDictionary
 
 from typing import (
@@ -40,6 +41,7 @@ from typing import (
     FrozenSet,
     Iterable,
     List,
+    Mapping,
     Optional,
     Sequence,
     Set,
@@ -132,6 +134,8 @@ def align_return_variables(
     bound_first: Set[str],
     bound_second: Set[str],
     renames: Sequence[Dict[str, str]],
+    *,
+    template_order: Sequence[str] = (),
 ) -> Optional[Tuple[List[str], List[str]]]:
     """Order both blocks' live variables so one helper return serves every call.
 
@@ -154,7 +158,9 @@ def align_return_variables(
         canonical = template_renames.get(name, name)
         return canonical_to_block.get(canonical, canonical)
 
-    template_names = sorted(set(first) | {to_template(name) for name in second})
+    names = set(first) | {to_template(name) for name in second}
+    template_names = [name for name in template_order if name in names]
+    template_names.extend(sorted(names - set(template_names)))
     block_names = [to_block(name) for name in template_names]
     if not set(template_names) <= bound_first or not set(block_names) <= bound_second:
         return None
@@ -184,19 +190,81 @@ def lifetime_bound_names(block: Sequence[ast.stmt], initially_bound: Set[str]) -
     not entered.
     """
     names: Set[str] = set()
-    for statement in block:
-        for node in walk_own_scope(statement):
+    nodes = [node for statement in block for node in walk_own_scope(statement)]
+    # Aliases and results computed from owned values may keep them alive or
+    # own further finalizable objects. Propagate until every such binding is
+    # included, even when a conditional write precedes its source's binding.
+    previous: Optional[Set[str]] = None
+    while previous != names:
+        previous = set(names)
+        for node in nodes:
             if isinstance(node, (ast.Assign, ast.AnnAssign)):
                 value = node.value
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                if value is not None and _allocates(value):
+                if value is not None and _lifetime_depends_on(value, names):
                     for target in targets:
                         names |= stored_names(target)
-            elif isinstance(node, ast.NamedExpr) and _allocates(node.value):
+            elif isinstance(node, ast.NamedExpr) and _lifetime_depends_on(node.value, names):
                 names.add(node.target.id)
-            elif isinstance(node, (ast.For, ast.AsyncFor)) and _allocates(node.iter):
+            elif isinstance(node, (ast.For, ast.AsyncFor)) and _lifetime_depends_on(
+                node.iter, names
+            ):
                 names |= stored_names(node.target)
     return names & initially_bound
+
+
+def _lifetime_depends_on(expression: ast.AST, owned: AbstractSet[str]) -> bool:
+    return _allocates(expression) or any(
+        isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in owned
+        for node in ast.walk(expression)
+    )
+
+
+_LOCAL_ORDERS: "WeakKeyDictionary[ast.AST, Mapping[Tuple[str, int], Tuple[str, ...]]]" = (
+    WeakKeyDictionary()
+)
+
+
+def _compiled_local_orders(module: ast.AST) -> Mapping[Tuple[str, int], Tuple[str, ...]]:
+    """Compile without executing: names in each frame's local cleanup order."""
+    orders: Dict[Tuple[str, int], Tuple[str, ...]] = {}
+    if not isinstance(module, ast.Module):
+        return orders
+    try:
+        pending = [compile(module, "<towel-lifetime-order>", "exec", dont_inherit=True)]
+    except (SyntaxError, ValueError, TypeError):
+        return orders
+    while pending:
+        code = pending.pop()
+        orders[(code.co_name, code.co_firstlineno)] = tuple(
+            dict.fromkeys((*code.co_varnames, *code.co_cellvars))
+        )
+        pending.extend(item for item in code.co_consts if isinstance(item, CodeType))
+    return orders
+
+
+def local_cleanup_order(function: FunctionNode, analyzer: ScopeAnalyzer) -> Tuple[str, ...]:
+    """Original local slots, including cells; unavailable compiler evidence yields no order."""
+    module = analyzer.analyzed_tree
+    if not isinstance(module, ast.Module):
+        return ()
+    orders = memoized_per_node(_LOCAL_ORDERS, module, _compiled_local_orders)
+    first_line = min([function.lineno, *(node.lineno for node in function.decorator_list)])
+    return orders.get((function.name, first_line), ())
+
+
+def lifetime_order_preserved(
+    block: Sequence[ast.stmt],
+    function: FunctionNode,
+    analyzer: ScopeAnalyzer,
+    returned: Sequence[str],
+) -> bool:
+    """Returning owned values must preserve their relative finalization order."""
+    owned = lifetime_bound_names(block, set(returned))
+    if len(owned) < 2:
+        return True
+    original = [name for name in local_cleanup_order(function, analyzer) if name in owned]
+    return original == [name for name in returned if name in owned]
 
 
 class BlockAnalysis(EngineState):
