@@ -40,14 +40,19 @@ archives, six installed-wheel CLI checks, strict distribution checks and
 dependency audit passed. These are completed audit-fix validation results;
 later documentation and auxiliary checks retain their own source identities.
 
-The maintainer waived a repeat of the ecosystem corpus. Its earlier outcomes
-remain historical evidence with their original source and wheel hashes, not
-validation of this changed runtime. Fresh differential fuzzing, self-refactored
-Towel tests and source-archive documentation checks are being prepared against
-the final documented candidate. Production performance against published
-1.772, exact-commit remote CI and publication remain incomplete. The first
-audit-fix performance preflight stopped for host load before taking any sample.
-Final commit and archive identities belong in the external release record.
+At the documentation snapshot `0a7a62b`, fresh differential fuzzing completed
+9,400 observations with zero failures, the full self-refactored Towel suite
+passed 9,320 tests and 26 subtests, and 234 source-archive documentation and
+evidence tests passed. Six installed-wheel cases passed, with every installed
+runtime file independently matched to the wheel.
+
+A fresh ecosystem corpus is required after the runtime repairs. The earlier
+skip decision preceded those repairs; its outcomes remain historical evidence
+with their original source and wheel hashes. Production performance against
+published 1.772, the new corpus, exact-commit remote CI and publication remain
+incomplete. The first audit-fix performance preflight stopped for host load
+before taking any sample. Final commit and archive identities belong in the
+external release record.
 
 ## 2026-10-04 (1.792 checker overlay correction)
 

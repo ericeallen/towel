@@ -73,8 +73,9 @@ completion of that final release validation.
 The October 3 remediation filters verification probes to each checker's
 configured file scope. Cheroot's own check and one typed extraction passed in
 the same development environment after that correction. The completed corpus
-validation retains its original identity; the maintainer waived its repeat for the audit-fix
-candidate. No corpus result is relabelled as a run on the changed runtime.
+validation retains its original identity. A fresh corpus is required for the
+audit-fix candidate: the earlier skip decision preceded the runtime repairs.
+No corpus result is relabelled as a run on the changed runtime.
 The earlier development corpus's Cheroot, Trio
 and typing_extensions fallbacks establish untyped parity only. Conservative
 import-origin refusals and listed frame/traceback-reflection differences retain
