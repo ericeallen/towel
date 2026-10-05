@@ -201,6 +201,10 @@ from typing import Dict, List, Optional
 
 
 def fb(items: List[int], table: Dict[str, int]) -> Optional[int]:
+    # Establish helper inputs even if an opaque manager suppresses a failure.
+    # This test exercises annotation compatibility, not manager behavior.
+    v: Optional[int] = None
+    w: List[int] = []
     with open("/dev/null") as fh:
         fh.read()
         v = table.get(fh.name)
