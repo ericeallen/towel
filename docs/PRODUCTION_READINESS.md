@@ -28,6 +28,17 @@ batching, broader safe duplicate discovery, generated-helper reuse and inert
 precise annotations. [Design decisions](DECISIONS.md) and intent-bearing tests
 record the preservation contract.
 
+The October 5 audit repairs preserve opaque factory-result lifetimes and
+finalizer order, conservatively account for aliased and custom suppressing
+context managers, and treat optional naming metadata failures as warnings
+after successful publication. At `c5311b4`, native tests passed 9,320 cases;
+the full Linux Python 3.11–3.13 matrix passed with 93–94% coverage. Archives
+and six installed-wheel CLI checks also passed. These results belong to that
+audit-fix commit, not to a later documentation commit or a published release.
+The [release log](RELEASE_LOG.md#2026-10-05-1792-audit-repairs) records their
+scope. Final auxiliary checks and release evidence remain external to the
+source tree so their identities cannot refer circularly to their own commit.
+
 The October 2 follow-up removes reflection-specific protections and shares
 immutable source, narrowing and subtype evidence. The current preservation
 requirement covers programs that do not use reflection or self-instrumentation,
@@ -61,8 +72,10 @@ completion of that final release validation.
 
 The October 3 remediation filters verification probes to each checker's
 configured file scope. Cheroot's own check and one typed extraction passed in
-the same development environment after that correction; fresh complete corpus
-validation remains required. The earlier development corpus's Cheroot, Trio
+the same development environment after that correction. The completed corpus
+validation retains its original identity; the maintainer waived its repeat for the audit-fix
+candidate. No corpus result is relabelled as a run on the changed runtime.
+The earlier development corpus's Cheroot, Trio
 and typing_extensions fallbacks establish untyped parity only. Conservative
 import-origin refusals and listed frame/traceback-reflection differences retain
 their explicit scope in the pinned corpus manifest and review.

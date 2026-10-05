@@ -9,17 +9,6 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
-### Fixed
-
-- Retain block-bound results of ordinary factories and other calls across
-  helper return, preserving observable resource and finalizer lifetimes,
-  including aliases and the relative cleanup order of multiple results.
-- Preserve known tuple-element types when another retained result is `Any`.
-- Treat all context managers as potentially suppressing exceptions, keeping
-  conditional reads of possibly unbound locals at their original sites.
-- Report optional naming-sidecar write failures as warnings after successful
-  source publication, with a successful command exit and preserved collisions.
-
 ## [1.792]
 
 Named for ln 6, approximately 1.791759469. Changes since 1.772.
@@ -46,6 +35,17 @@ release verification binds the final versioned source to its own evidence.
 - Generated helper signatures omit free names used only inside caller-side
   thunks; differing attribute lookups no longer spend unused child parameters.
 
+
+### Fixed
+
+- Retain block-bound results of ordinary factories and other calls across
+  helper return, preserving observable resource and finalizer lifetimes,
+  including aliases and the relative cleanup order of multiple results.
+- Preserve known tuple-element types when another retained result is `Any`.
+- Treat all context managers as potentially suppressing exceptions, keeping
+  conditional reads of possibly unbound locals at their original sites.
+- Report optional naming-sidecar write failures as warnings after successful
+  source publication, with a successful command exit and preserved collisions.
 
 ### Changed
 

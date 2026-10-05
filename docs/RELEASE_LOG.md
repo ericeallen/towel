@@ -12,6 +12,7 @@ A historical passing result applies to its recorded commit and test environment.
 
 **Contents — release checkpoints**
 
+- [1.792 October 5 audit repairs](#2026-10-05-1792-audit-repairs)
 - [1.792 October 4 checker overlay correction](#2026-10-04-1792-checker-overlay-correction)
 - [1.792 October 3 remediation](#2026-10-03-1792-discovery-remediation)
 - [1.792 October 2 follow-up](#2026-10-02-1792-preparation-follow-up) · [September 30 preparation](#2026-09-30-1792-preparation)
@@ -20,6 +21,33 @@ A historical passing result applies to its recorded commit and test environment.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-10-05 (1.792 audit repairs)
+
+The release audit's two P1 findings and one P2 finding are repaired through
+`c5311b4`. Extracted blocks retain ordinary factory and method results,
+including aliases and the relative cleanup order of multiple finalizable
+objects. Context-manager bodies establish no new definite bindings after the
+manager exits: aliases and custom managers may suppress exceptions. Optional
+naming-sidecar failures warn after successful source publication rather than
+reporting the published operation as failed. Retained tuple results also keep
+known element types when another element is `Any`.
+
+At that commit, native tests completed with 9,320 passed, 20 skipped and 26
+passing subtests. Full Linux Python 3.11, 3.12 and 3.13 suites completed with
+9,096, 9,251 and 9,246 passed respectively, with 93–94% coverage. The exact
+archives, six installed-wheel CLI checks, strict distribution checks and
+dependency audit passed. These are completed audit-fix validation results;
+later documentation and auxiliary checks retain their own source identities.
+
+The maintainer waived a repeat of the ecosystem corpus. Its earlier outcomes
+remain historical evidence with their original source and wheel hashes, not
+validation of this changed runtime. Fresh differential fuzzing, self-refactored
+Towel tests and source-archive documentation checks are being prepared against
+the final documented candidate. Production performance against published
+1.772, exact-commit remote CI and publication remain incomplete. The first
+audit-fix performance preflight stopped for host load before taking any sample.
+Final commit and archive identities belong in the external release record.
 
 ## 2026-10-04 (1.792 checker overlay correction)
 

@@ -54,6 +54,15 @@ separate development operations. The verifier neither uploads nor tags and
 does not prevent an owner from invoking an upload tool manually. A successful
 local check does not reserve a version or replace the final maintainer decision.
 
+For the October 5 audit-fix candidate, the maintainer explicitly waived a
+repeat of the ecosystem corpus. Preserve the earlier corpus's source, wheel,
+logs and dispositions as historical evidence and record the waiver alongside
+the final candidate's identity and runtime changes. The standard verifier
+still requires a completed corpus for the frozen source; an external component
+verification with that maintainer exception must not be described as a passing
+`just release` check or as a corpus run on the repaired runtime. All remaining
+validation, performance and exact-commit remote CI requirements still apply.
+
 For an unreleased experiment, use
 `just verify-release-evidence VERSION /path/to/release-evidence.json`.
 This explicitly reports validation only, never permission to upload. The
