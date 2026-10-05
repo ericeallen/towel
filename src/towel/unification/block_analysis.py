@@ -161,29 +161,14 @@ def align_return_variables(
     return template_names, block_names
 
 
-# Callees whose result plausibly owns a resource or a finalizer: a class
-# instantiation (a capitalized name, by convention) or one of the standard
-# factories that return such objects under lowercase names. A weak reference
-# can only target a class instance, and ``__del__`` only lives on a class, so
-# the result of a lowercase function is kept alive only when the function is
-# a known resource factory; a factory outside this list is not detected.
-_RESOURCE_FACTORIES = frozenset(
-    {"open", "connect", "socket", "mkdtemp", "Popen", "popen", "urlopen", "create_connection"}
-)
-
-
 def _allocates(expression: ast.AST) -> bool:
-    """Whether evaluating ``expression`` may construct an object whose lifetime is observable."""
-    for node in ast.walk(expression):
-        if isinstance(node, ast.Call):
-            callee = node.func
-            name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
-            if name in _RESOURCE_FACTORIES or (name[:1].isupper() and name not in _VALUE_TYPES):
-                return True
-    return False
+    """Whether an opaque call may supply an object whose lifetime is observable.
 
-
-_VALUE_TYPES = frozenset({"True", "False", "None"})
+    A function, a method, an alias or a callable object can return a resource
+    or an instance with a finalizer. Its spelling provides no evidence about
+    that result. Containers computed around a call may own the result too.
+    """
+    return any(isinstance(node, ast.Call) for node in ast.walk(expression))
 
 
 def lifetime_bound_names(block: Sequence[ast.stmt], initially_bound: Set[str]) -> Set[str]:
@@ -193,8 +178,8 @@ def lifetime_bound_names(block: Sequence[ast.stmt], initially_bound: Set[str]) -
     rebinds it; a helper drops what it does not return when it returns. For
     a plain value that is invisible; for the result of a call it may not be
     (a ``NamedTemporaryFile`` is deleted, a weak reference dies). Every name
-    the block binds from an expression that instantiates a class or calls a
-    known resource factory (``_allocates``) is therefore returned and rebound
+    the block binds from an expression containing a call (``_allocates``)
+    is therefore returned and rebound
     at the site. Nested functions and classes are their own scopes and are
     not entered.
     """

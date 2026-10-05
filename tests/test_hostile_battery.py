@@ -50,6 +50,11 @@ from tests.hostile_refactoring import refactor_script, with_known_defects
 CASES = Path(__file__).parent / "hostile_cases"
 
 TRANSFORMED = {
+    "r1792_factory_finalizer_continuation",
+    "r1792_aliased_suppress_conditional_read",
+    # Returning opaque call results keeps these names local at the callers,
+    # including their earlier unbound reads (the battery checks both).
+    "r9bd_only_binding_read_before_block",
     "rmypyoverlay_constructor_fields",
     # The consumer-formatting regression also retains its original results
     # and scopes under the ordinary hostile battery.
@@ -319,7 +324,8 @@ TRANSFORMED = {
     "r7fz_misc_async_no_await",
     "r7fz_misc_binder_renamed_unbound_message_inner",
     "r7fz_misc_block_raises_in_handler_context",
-    "r7fz_misc_decorated_lru_cache",
+    # r7fz_misc_decorated_lru_cache is declined: keeping the loop's call-
+    # supplied item alive requires returning a target an empty loop never binds.
     "r7fz_misc_except_star_reraise",
     "r7fz_misc_generator_return_block",
     "r7fz_misc_mutable_default_host",

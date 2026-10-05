@@ -9,6 +9,13 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Retain block-bound results of ordinary factories and other calls across
+  helper return, preserving observable resource and finalizer lifetimes.
+- Treat all context managers as potentially suppressing exceptions, keeping
+  conditional reads of possibly unbound locals at their original sites.
+
 ## [1.792]
 
 Named for ln 6, approximately 1.791759469. Changes since 1.772.

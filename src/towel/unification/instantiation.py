@@ -327,8 +327,8 @@ def observable_renamings(block: Sequence[ast.stmt], renamed: AbstractSet[str]) -
     they are evaluated, ``and``/``or``, conditional expressions and chained
     comparisons may skip their later operands, loops may run zero times and
     repeat, a handler or ``finally`` may start anywhere in its ``try``, and
-    only ``contextlib.suppress`` among context managers is taken to swallow
-    an exception, as the definite-assignment analysis takes it.
+    any context manager may swallow an exception, as the definite-assignment
+    analysis assumes too.
     """
     names = frozenset(renamed)
     if not names:
@@ -375,12 +375,6 @@ def _irrefutable(pattern: ast.AST) -> bool:
     if isinstance(pattern, ast.MatchOr):
         return any(_irrefutable(alternative) for alternative in pattern.patterns)
     return False
-
-
-def _suppresses(expression: ast.AST) -> bool:
-    callee = expression.func if isinstance(expression, ast.Call) else expression
-    name = callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", "")
-    return name == "suppress"
 
 
 _TRY_STATEMENTS: Tuple[type, ...] = tuple(
@@ -489,14 +483,16 @@ class _UnboundReads:
             self.run(node.orelse, fails)
             return holds & fails
         if isinstance(node, (ast.With, ast.AsyncWith)):
+            entry = state
             for item in node.items:
                 state = self._expression(item.context_expr, state)
                 if item.optional_vars is not None:
                     state = self._target(item.optional_vars, state)
-            after = self.run(node.body, state)
-            if any(_suppresses(item.context_expr) for item in node.items):
-                return state - _names_unbound_anywhere(node.body)
-            return after
+            self.run(node.body, state)
+            # Unknown __exit__/__aexit__ behavior can leave the with early.
+            # Earlier managers can suppress later entry/target failures too.
+            # Inspect body reads, but export no newly established bindings.
+            return entry - _names_unbound_anywhere([node])
         if isinstance(node, _TRY_STATEMENTS):
             return self._try(node, state)
         if isinstance(node, ast.Match):

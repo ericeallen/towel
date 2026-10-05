@@ -10,7 +10,7 @@ def __extracted_func_6(__param_0, __param_1, response, validator):
     data = response.json().get(__param_0, {}).get(__param_1, [])
     cleaned = [item.strip().lower() for item in data]
     validated = [validator.check(item) for item in cleaned]
-    return validated
+    return (cleaned, data, validated)
 
 
 def __extracted_func_5(result, transformer):
@@ -43,6 +43,7 @@ def __extracted_func_2(__param_0, cache, data, serializer):
     response.set_status(200)
     response.add_header('Content-Type', 'application/json')
     response.add_header('Cache-Control', __param_0)
+    # Cache the response
     cache_key = serializer.generate_key(data)
     cache.set(cache_key, response.to_dict())
     return response.build()
@@ -53,6 +54,7 @@ def __extracted_func_1(__param_0, entity, transformer, validator):
     entity.increment_version()
     transformed_data = transformer.apply(entity.get_data())
     entity.set_data(transformed_data)
+    # Validate
     errors = validator.validate_entity(entity)
     if not errors:
         entity.mark_clean()
@@ -63,6 +65,7 @@ def __extracted_func_1(__param_0, entity, transformer, validator):
 
 def __extracted_func_0(__param_0, db, mapper):
     results = db.table('users').where('age', '>', __param_0).where('status', '=', 'active').order_by('created_at', 'desc').limit(100).get()
+    # Map results
     mapped = [mapper.to_dto(row) for row in results]
     validated = [item for item in mapped if item.is_valid()]
     return validated
@@ -71,7 +74,7 @@ def __extracted_func_0(__param_0, db, mapper):
 def process_api_response_v1(response, validator, transformer):
     """Version 1: Method chaining on API response."""
     # Complex method chain
-    validated = __extracted_func_6('data', 'items', response, validator)
+    cleaned, data, validated = __extracted_func_6('data', 'items', response, validator)
     result = transformer.process(validated).filter(lambda x: x is not None).to_list()
 
     return __extracted_func_5(result, transformer)
@@ -80,7 +83,7 @@ def process_api_response_v1(response, validator, transformer):
 def process_api_response_v2(response, validator, transformer):
     """Version 2: Different key path, same chaining pattern."""
     # Different keys, same chain
-    validated = __extracted_func_6('payload', 'records', response, validator)
+    cleaned, data, validated = __extracted_func_6('payload', 'records', response, validator)
     result = transformer.process(validated).filter(lambda x: x is not None).to_list()
 
     return __extracted_func_5(result, transformer)

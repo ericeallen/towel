@@ -101,10 +101,10 @@ describe belong to that version.
   function declares differently from the pair's. Names bound in the
   block and read afterwards are returned, where `count += 1` and `del count`
   read `count` as a load does, including targets of annotated assignments
-  and assignment expressions, as is a name bound to a class instantiation or
-  to a known resource factory (`open`, `connect`,
-  `socket`, `mkdtemp`, `Popen`, `urlopen`, ...), whose lifetime a later
-  statement could observe; a factory outside that list is not detected. A
+  and assignment expressions, as is a name bound from an expression containing
+  a call, whose result may own a resource or finalizer that a later statement
+  could observe. This includes ordinary factories, aliases and methods;
+  callee spelling does not establish the returned object's lifetime. A
   returned name must be definitely bound where the block ends or have
   entered as a parameter.
 - **Control flow and class context.** Blocks containing `yield`, `await`,
@@ -128,7 +128,7 @@ describe belong to that version.
   This gives up extractions whose read of such a local can never happen
   unbound, because only a correlation between paths shows it
   (`r85_conditionally_bound_parameter`). Definite assignment is computed conservatively:
-  loops, `contextlib.suppress`, and non-exhaustive `match` statements never
+  loops, context managers, and non-exhaustive `match` statements never
   bind definitely, and a name a statement may delete (`del`, or the end of
   an `except ... as` clause) is unbound for whatever may follow it: the rest
   of its list, the next iteration of a loop that holds it, and the handlers,
