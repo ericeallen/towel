@@ -3,7 +3,7 @@
 [Documentation index](README.md)
 
 A cumulative log of adversarial counterexamples and their repairs, across the
-September 2026 audit rounds. Each row records fixture coverage and, where
+September and October 2026 audit rounds. Each row records fixture coverage and, where
 noted, ecosystem checks at that time.
 
 The [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
@@ -40,6 +40,9 @@ describe belong to that version.
 
 | Counterexample | Repair and executable evidence |
 |---|---|
+| An ordinary lowercase factory's result is finalized when the extracted helper returns, before its caller finishes | Retain opaque call results, aliases and derived values; preserve relative compiler-local cleanup order or decline. The factory defect also reproduced in published 1.772; `test_release_audit_regressions.py` covers factory, alias and multiple-finalizer cases. |
+| An aliased or custom context manager suppresses an exception before a local is bound, but extraction eagerly reads that local on a path that originally avoided it | Treat all context managers as potentially suppressing; `r1792_aliased_suppress_conditional_read.py` and definite-assignment/binder-observability tests cover the conditional read. Published 1.772 reproduced the defect without types; its default typed CLI declined the audit's exact input. |
+| Optional naming metadata fails after a successful in-place or out-of-place source publication, and the CLI reports the published operation as failed | Warn and exit successfully for optional sidecar I/O/validation failures, preserving collisions and symlink targets. `test_cli_sidecar_publication.py` checks actual publication and source execution; source-publication failures still fail. |
 | An extracted call fits the formatter width at column zero but exceeds it after insertion into a method | Format generated snippets at their destination depth and check their unwrapped AST; `r1792_formatting_destination_indentation.py` and `test_generated_code_formatting.py` cover Ruff, Black and execution. |
 | A clean configured mypy check fails when reachability probes explicitly target excluded tests and their imports | Filter probe requests per checker before constructing the batch; `test_mypy_judged_as_configured.py` keeps covered extraction and the clean check while excluded imports contain syntax unavailable at the configured target. |
 | Moving `self.__value` into another lexical class loses Python's private-name mangling | Reject private-name extraction across lexical classes; preserve same-class extraction. Read-only private properties prevent tests from accidentally accommodating the wrong attribute. |

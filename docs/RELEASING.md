@@ -61,6 +61,16 @@ original source, wheel, logs and dispositions as historical evidence; they do
 not validate the changed runtime. Performance and exact-commit remote CI
 remain required before publication.
 
+For the repaired 1.792 runtime, that fresh corpus and the complete production
+comparison have now finished at source snapshot `00b4f4f`. The corpus retained
+five reviewed reflection differences and five unchanged import refusals;
+the Packaging comparison was 11.9% slower than published 1.772. See the
+[current readiness summary](PRODUCTION_READINESS.md#1792-release-preparation)
+for completed observations and their exact scope. Final source-bound evidence
+assembly, successful verification by the unmodified release gate, exact-commit
+CI and the maintainer's performance disposition remain required. Completed
+timing does not itself accept a regression or authorize publication.
+
 For an unreleased experiment, use
 `just verify-release-evidence VERSION /path/to/release-evidence.json`.
 This explicitly reports validation only, never permission to upload. The

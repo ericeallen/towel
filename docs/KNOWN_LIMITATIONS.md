@@ -134,7 +134,10 @@ describe belong to that version.
   unbound, because only a correlation between paths shows it
   (`r85_conditionally_bound_parameter`). Definite assignment is computed conservatively:
   loops, context managers, and non-exhaustive `match` statements never
-  bind definitely, and a name a statement may delete (`del`, or the end of
+  establish new definite bindings after the statement. All context managers
+  may suppress an exception before a body assignment; an earlier manager may
+  also suppress a later manager's entry failure. A name a statement may delete
+  (`del`, or the end of
   an `except ... as` clause) is unbound for whatever may follow it: the rest
   of its list, the next iteration of a loop that holds it, and the handlers,
   `else` and `finally` of a `try` that holds it.

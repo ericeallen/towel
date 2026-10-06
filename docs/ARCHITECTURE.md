@@ -304,13 +304,25 @@ treated as orphaned and the block is rejected. `extractor.py`'s
 return on every path before it may be called as `return helper(...)`, using
 both the rendered shape and the all-paths-exit property.
 
-A name the block binds to a class instantiation (a capitalized callee) or to
-one of a short list of resource factories (`open`, `connect`, `socket`,
-`mkdtemp`, `Popen`, `urlopen`, ...) is returned from the helper and rebound
-at the site whether or not later code reads it, so the object is not
-finalized when the helper's frame ends: a temporary file read after the
-block, a weak reference, a `__del__` (`lifetime_bound_names` in
-`block_analysis.py`). A factory outside that list is not detected.
+A name the block binds from an expression containing a call is returned from
+the helper and rebound at the site even when later code does not read it.
+Ordinary factories, methods, aliases and callable objects can supply resources
+or finalizable objects; callee spelling cannot establish their lifetime.
+`lifetime_bound_names` in `block_analysis.py` also retains aliases and results
+computed from those values, propagating ownership through the block.
+When multiple retained values are returned, the helper result and caller
+assignment preserve their relative order in the original compiler's local
+slots, including cell variables. The original module AST is compiled without
+executing it, and that immutable evidence is shared for the AST's lifetime.
+Incompatible orders or insufficient compiler evidence decline the occurrence.
+
+All `with` and `async with` managers are treated as potentially suppressing
+exceptions. Their bodies therefore establish no new definite bindings after
+the statement: suppression can skip an assignment, and an earlier manager can
+suppress a later manager's entry failure. Binder-observability analysis still
+inspects body reads but exports no new bindings. This keeps a conditional read
+of a possibly unbound local at its original site rather than evaluating it
+eagerly as a helper argument.
 
 ### The visitors
 
@@ -1517,6 +1529,12 @@ refused the result left it in the project. The stage is removed however the
 run ends. Every path the run reports -- progress and dropped-proposal messages,
 the per-file summary, the `.towel-helpers.json` sidecar -- is rewritten from
 the stage to `OUT` (or, outside the target, to the original project).
+
+The naming sidecar is optional metadata written after source publication. An
+`OSError` or `ValueError` writing it produces a warning and a successful command
+exit; helper inventory and renaming remain available without the before/after
+context. Existing collisions and symlink targets are preserved. Failures of
+source validation or publication retain their failure semantics.
 
 During that run `relocate_oracle` maps the staged target back onto the
 original target, which preserves the input project's tool configuration and

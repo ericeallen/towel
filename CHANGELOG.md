@@ -15,6 +15,11 @@ Named for ln 6, approximately 1.791759469. Changes since 1.772.
 The measurements below retain their original development-source identities;
 release verification binds the final versioned source to its own evidence.
 
+- Add `# towel: no-extract` immediately after a function signature's final
+  colon to protect that definition and its nested bodies on every pass.
+  Unmarked code remains eligible. This protects the definition, not its
+  absolute line position, module namespace or unmarked callers and callees;
+  see [the scoped opt-out](docs/CLI_GUIDE.md#protect-a-function).
 - The soundness requirement is to preserve the behavior of programs that do
   not use reflection or self-instrumentation, including through their callees.
   Violations within that scope must be fixed or the transformation refused.
@@ -152,6 +157,16 @@ release verification binds the final versioned source to its own evidence.
 
 ### Performance
 
+The October 5 comparison of the repaired runtime at `00b4f4f` averaged
+43.43 seconds versus 38.80 seconds for published 1.772 on the complete typed,
+formatted Packaging command: **11.9% slower**. Four fresh-process samples per
+arm produced consistent results in two balanced blocks. The candidate applied
+20 refactorings versus 18; these are full requested paths with different
+transformations, not identical-work timings. No whole-corpus speedup is
+established. See the [final comparison](docs/PERFORMANCE.md#october-5-repaired-candidate-comparison).
+The earlier improvements below belong to their development checkpoints and
+are not final-release performance claims.
+
 - Keep sharing immutable analysis for warning-free source containing comments,
   raw strings and valid numeric literals. A bounded lexical cache distinguishes
   those cases from syntax that needs native parser diagnostics. Its source-byte
@@ -159,7 +174,8 @@ release verification binds the final versioned source to its own evidence.
   discovery also avoids collecting scope bindings that its literal guards cannot use.
 - Reuse definite subtype verdicts within one helper's annotation inference
   and immutable narrowing facts across overlapping source windows. Complete
-  typed, formatted Packaging runs averaged 36.24 seconds versus 41.59 seconds
+  typed, formatted Packaging runs at runtime commit `000d751` on October 2
+  averaged 36.24 seconds versus 41.59 seconds
   for published 1.772, about 13% faster, while applying one more refactoring.
   Generated Python is unchanged from the preceding candidate. See the
   [measurement conditions and samples](docs/PERFORMANCE.md#october-2-complete-cli-comparison).

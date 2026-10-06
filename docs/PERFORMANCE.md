@@ -7,12 +7,19 @@ Use this guide to estimate a run and understand the limits of the published meas
 On this page:
 
 - [Measurement conditions](#measurement-conditions)
+- [October 5 repaired candidate comparison](#october-5-repaired-candidate-comparison)
 - [October 2 complete CLI comparison](#october-2-complete-cli-comparison)
 - [Planning and bounding a run](#planning-and-bounding-a-run)
 - [Historical end-to-end timings](#historical-end-to-end-timings)
 - [Why larger projects take longer](#why-larger-projects-take-longer)
 
 ## How long it takes
+
+The repaired 1.792 runtime is **11.9% slower** than published 1.772 on the
+October 5 complete typed, formatted Packaging comparison: 43.43 seconds versus
+38.80 seconds. This is one controlled fixture, not a whole-corpus estimate.
+The candidate performs more extractions, but that does not establish improved
+throughput or justify dividing elapsed time by the refactoring count.
 
 A controlled comparison during 1.792 development used the actual published
 1.772 wheel: Sphinx's first Pyright reveal fell from 931.07 to 8.63 seconds,
@@ -24,12 +31,65 @@ whole-corpus speedup is established. The
 records the precise source/artifact identities, alternating runs and ordinary
 background activity. The older timings below retain their historical scope.
 
+### October 5 repaired candidate comparison
+
+The completed comparison ran from 23:06 to 23:14 UTC on October 5, after the
+matrix, native tests, fuzz, self-refactoring and fresh corpus had finished.
+It used source commit `00b4f4f27eeb45a17236fc7af4e74a3881339b23`, whose runtime
+tree is `2b1181b59a50599f339b9dc552b383836e441c3d`, unchanged since audit-fix
+commit `c5311b4`. Each run started a fresh process and input copy, executing
+`towel dry <input>/packaging <output> --no-interactive --progress detail`
+with typing, formatting and automatic worker selection enabled.
+
+| Runtime | Mean seconds | Timing variation (CV) | Refactorings | Changed files |
+| --- | ---: | ---: | ---: | ---: |
+| Published 1.772 | 38.802 | 1.47% | 18 | 8 |
+| Earlier 1.792 control (`000d751`) | 35.375 | 0.85% | 19 | 9 |
+| Repaired 1.792 (`00b4f4f`) | 43.425 | 0.87% | 20 | 9 |
+
+Four observations per arm ran in two balanced blocks, each ordered
+published, earlier control, repaired, repaired, earlier control, published.
+The repaired candidate was 11.51% and 12.32% slower than published 1.772 in
+the respective blocks, and 22.76% slower than the earlier control overall.
+All 12 commands exited zero without untyped fallback. Input hashes stayed
+unchanged and repeated Python outputs were byte-identical within each arm;
+outputs differ between versions. These observations resolve a roughly 10%
+difference, not sub-percent precision. They do not isolate the cause of the
+slowdown or establish identical-work performance.
+
+The host was an Apple M5 Max with 18 cores and 128 GiB RAM, native macOS and
+Python 3.13.7. All arms used identical installed dependency versions apart
+from Towel, including mypy 2.3.1, Pyright 1.1.414 and Black 26.5.1. The
+controlled Packaging 26.3 fixture contains 22 Python modules and a strict
+mypy configuration targeting Python 3.10. The actual published wheel's
+SHA-256 is `4af0f6067d830e396aecf82320d69cb82343a848f24b7d1f3e2a152018605683`.
+The repaired wheel's SHA-256 is
+`1a3e3b81dec76cd1330e256f42756b833a0530198e3a0bf7ade0237420560683`;
+its installed runtime files were checked against the frozen source.
+
+Background Python and Spotlight activity remained. The preceding host survey
+showed 80–93% CPU idle and no change in swap counters; per-process load was
+recorded every five seconds during timing. This capacity experiment made
+the earlier arbitrary CPU thresholds observations rather than automatic
+rejection, retaining identity, dependency, input, output and typed-CLI checks.
+It does not claim a quiet-host preflight pass, continuous whole-system
+telemetry or an interference-free machine.
+
+The [retained observations](../tests/release_evidence/1.792-audit-fixes/README.md)
+include all 12 timings and CLI logs, runtime/input/output hashes, original
+completion records and the capacity experiment's declared changes. Complete
+background-load records remain in the external handoff. The following
+October 2 results describe an earlier runtime, not this repaired candidate.
+
 ### October 2 complete CLI comparison
 
 After removing reflection-specific analysis and sharing repeated typing
 evidence, runtime commit `000d751` completes the controlled Packaging 26.3
 workload about 13% faster than the published 1.772 wheel with typing,
 formatting and automatic worker selection enabled:
+
+This is a historical development result. The repaired candidate's completed
+October 5 result above supersedes it for current-release performance.
 
 | Complete command settings | Published 1.772 | Candidate `000d751` |
 | --- | ---: | ---: |

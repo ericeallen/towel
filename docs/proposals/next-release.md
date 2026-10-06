@@ -3,7 +3,8 @@
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
 The owner authorized this scope on September 27, 2026. Development ran on
-`codex/post-1772-performance`; final versioned validation uses `release/1.792`.
+`codex/post-1772-performance`; the repaired candidate is prepared on
+`release/1.792-audit-fixes`.
 Publication remains the owner's action. The implementation and development
 validation are complete; the owner selected 1.792 on September 30. Final
 versioned validation follows [the release procedure](../RELEASING.md).
@@ -11,6 +12,13 @@ Sections below preserve intermediate checkpoints under their recorded dates;
 the completed [validation](next-validation-final.md) and
 [published-wheel comparison](published-1772-comparison.md) supersede their
 pending-work statements.
+
+The October 5 audit repairs and their completed corpus and production-CLI
+comparison are recorded in the current [readiness report](../PRODUCTION_READINESS.md#1792-release-preparation).
+The repaired candidate is 11.9% slower than published 1.772 on the measured
+Packaging fixture. The intermediate improvements below do not establish a
+performance gain for that final runtime. Publication and final evidence
+verification remain pending.
 
 ## Preservation contract
 

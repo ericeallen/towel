@@ -12,6 +12,7 @@ A historical passing result applies to its recorded commit and test environment.
 
 **Contents — release checkpoints**
 
+- [1.792 October 5 final corpus and performance](#2026-10-05-1792-final-corpus-and-performance)
 - [1.792 October 5 audit repairs](#2026-10-05-1792-audit-repairs)
 - [1.792 October 4 checker overlay correction](#2026-10-04-1792-checker-overlay-correction)
 - [1.792 October 3 remediation](#2026-10-03-1792-discovery-remediation)
@@ -21,6 +22,35 @@ A historical passing result applies to its recorded commit and test environment.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-10-05 (1.792 final corpus and performance)
+
+The repaired runtime remains unchanged since `c5311b4`. At source snapshot
+`00b4f4f`, the fresh 141-project corpus completed after the full interpreter
+matrix: 96 PASS, 35 NO_CHANGE, five pinned reflection differences and five
+import-origin refusals. Sphinx passed with 25 changed files. The review
+verified raw before/after outcomes, failed-test identities and listed
+exceptions; an independent read-only check confirmed all five refusals left
+256 tracked package files unchanged and produced no output. Three projects
+used the untyped fallback. The [readiness report](PRODUCTION_READINESS.md#1792-release-preparation)
+names them and explains the limits of each disposition.
+
+The completed full typed, formatted Packaging comparison averaged
+43.43 seconds versus 38.80 seconds for published 1.772: **11.9% slower**.
+The earlier 1.792 control averaged 35.38 seconds in the same experiment.
+Four fresh-process observations per version were run in two balanced blocks;
+all 12 commands succeeded, with identical repeated Python output within each
+version. Current 1.792 applied 20 refactorings versus 18 for 1.772. Background
+activity was recorded; this was a capacity/repeatability experiment, not a
+quiet-host preflight pass. The [performance guide](PERFORMANCE.md#october-5-repaired-candidate-comparison)
+records the exact source, runtime, archives, settings and limits.
+
+Final source-bound evidence assembly, the standard repository release gate,
+exact-commit remote CI, the maintainer's performance disposition and
+publication remain pending. This entry records completed local observations,
+not a published release or permission to upload. The retained
+[documentation evidence subset](../tests/release_evidence/1.792-audit-fixes/README.md)
+keeps the original records and does not replace the full external bundle.
 
 ## 2026-10-05 (1.792 audit repairs)
 
@@ -46,13 +76,13 @@ passed 9,320 tests and 26 subtests, and 234 source-archive documentation and
 evidence tests passed. Six installed-wheel cases passed, with every installed
 runtime file independently matched to the wheel.
 
-A fresh ecosystem corpus is required after the runtime repairs. The earlier
-skip decision preceded those repairs; its outcomes remain historical evidence
-with their original source and wheel hashes. Production performance against
-published 1.772, the new corpus, exact-commit remote CI and publication remain
-incomplete. The first audit-fix performance preflight stopped for host load
-before taking any sample. Final commit and archive identities belong in the
-external release record.
+At this checkpoint a fresh ecosystem corpus was required after the runtime
+repairs. The earlier skip decision preceded those repairs; its outcomes remain
+historical evidence with their original source and wheel hashes. The first
+audit-fix performance preflight stopped for host load before taking any
+sample. The completed corpus and production comparison are recorded in the
+later October 5 entry above. Final commit and archive identities belong in
+the external release record.
 
 ## 2026-10-04 (1.792 checker overlay correction)
 

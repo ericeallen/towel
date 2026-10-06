@@ -25,7 +25,8 @@ Start with the current release preparation. The later sections retain the eviden
 Version **1.792** carries the [post-1.772 changes](../CHANGELOG.md#1792):
 checked fixed-point preview, caller-narrowing preservation, Pyright reveal
 batching, broader safe duplicate discovery, generated-helper reuse and inert
-precise annotations. [Design decisions](DECISIONS.md) and intent-bearing tests
+precise annotations, plus the [scoped function opt-out](CLI_GUIDE.md#protect-a-function).
+[Design decisions](DECISIONS.md) and intent-bearing tests
 record the preservation contract.
 
 The October 5 audit repairs preserve opaque factory-result lifetimes and
@@ -39,6 +40,54 @@ The [release log](RELEASE_LOG.md#2026-10-05-1792-audit-repairs) records their
 scope. Final auxiliary checks and release evidence remain external to the
 source tree so their identities cannot refer circularly to their own commit.
 
+At documentation/source snapshot `00b4f4f`, the fresh 141-project corpus
+completed and its raw outcomes were reviewed. It followed the completed
+Python 3.11–3.13 matrix; runtime and test trees were independently unchanged
+from the earlier audit-fix and auxiliary validations.
+
+| Current corpus disposition | Projects |
+| --- | ---: |
+| PASS | 96 |
+| NO_CHANGE | 35 |
+| Known reflection differences (`BROKEN_KNOWN`) | 5 |
+| Import-origin refusals (harness label `CRASH`) | 5 |
+
+Sphinx passed, with 25 changed files. The known reflection differences are
+Beautiful Soup, Boltons, Pluggy, Pyparsing and typing_extensions; they introduce
+only the manifest-listed failures, not ordinary-behavior regressions accepted
+under a broad waiver. Import refusals are Isort, Invoke and Towel's main,
+1.414 and 1.618 corpus entries. All five refused before a transformed suite;
+an independent read-only check matched 256 tracked package files to Git and
+confirmed no output directory. They are not successful refactorings.
+
+python-prompt-toolkit, Trio and typing_extensions used the explicit untyped
+fallback, establishing untyped parity only; typing_extensions retains its
+listed reflection differences. Nineteen projects had baseline test failures
+in this run's environment, whose identities the review retained. NO_CHANGE
+and refusals do not establish transformed-suite coverage. The only verdict
+change from the preceding candidate's corpus was python-dotenv, PASS to
+NO_CHANGE. No new runtime regression outside the pinned reflection
+expectations was found in this completed corpus.
+
+The [October 5 complete CLI comparison](PERFORMANCE.md#october-5-repaired-candidate-comparison)
+measured the repaired runtime at **43.43 seconds versus 38.80 seconds** for
+published 1.772, **11.9% slower**, on the controlled typed, formatted Packaging
+fixture. Four fresh-process observations per arm were repeatable under the
+recorded background activity. The candidate applied 20 refactorings versus
+18; this is not an identical-transformation comparison or a whole-corpus
+speedup. Its runtime is unchanged since `c5311b4`.
+
+The [retained documentation evidence](../tests/release_evidence/1.792-audit-fixes/README.md)
+preserves original performance records and corpus summaries/review, with
+their source and archive identities. It is a subset of the external raw
+release evidence, not a complete publication bundle. Final source-bound
+evidence assembly, verification by the unmodified repository release gate,
+exact-commit remote CI, the maintainer's performance disposition and
+publication remain pending. No `just release` success is claimed. Updating
+these documents requires release archives containing the updated text and
+successful archive documentation checks; existing observations keep their
+original identities.
+
 The October 2 follow-up removes reflection-specific protections and shares
 immutable source, narrowing and subtype evidence. The current preservation
 requirement covers programs that do not use reflection or self-instrumentation,
@@ -51,7 +100,8 @@ measured the controlled typed, formatted Packaging fixture at 36.24 seconds
 versus 41.59 seconds for published 1.772, about 13% faster. It used runtime
 commit `000d751`, applied one more refactoring than 1.772 and preserved the
 preceding candidate's output bytes. Two fresh-process samples per arm establish
-this measured workload's improvement, not a whole-corpus speedup.
+that checkpoint's improvement, not a whole-corpus speedup or a claim about the
+repaired release candidate. The October 5 comparison above is the current result.
 
 The [completed development validation](proposals/next-validation-final.md)
 identifies its exact frozen source, three Linux interpreter runs, native
@@ -73,9 +123,10 @@ completion of that final release validation.
 The October 3 remediation filters verification probes to each checker's
 configured file scope. Cheroot's own check and one typed extraction passed in
 the same development environment after that correction. The completed corpus
-validation retains its original identity. A fresh corpus is required for the
-audit-fix candidate: the earlier skip decision preceded the runtime repairs.
-No corpus result is relabelled as a run on the changed runtime.
+validation retains its original identity. The required fresh audit-fix corpus
+is complete at `00b4f4f`, as recorded above: the earlier skip decision preceded
+the runtime repairs and is superseded. No older corpus result is relabelled
+as a run on the changed runtime.
 The earlier development corpus's Cheroot, Trio
 and typing_extensions fallbacks establish untyped parity only. Conservative
 import-origin refusals and listed frame/traceback-reflection differences retain

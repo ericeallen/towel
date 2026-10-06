@@ -15,6 +15,12 @@ for this version's changes and the
 [readiness report](https://github.com/ericeallen/towel/blob/v1.792/docs/PRODUCTION_READINESS.md)
 for the validation scope.
 
+On the controlled Packaging fixture, 1.792's complete typed, formatted command
+is 11.9% slower than 1.772. The
+[performance guide](https://github.com/ericeallen/towel/blob/v1.792/docs/PERFORMANCE.md#october-5-repaired-candidate-comparison)
+records the workload, samples and limits; earlier development speedups do not
+describe the final candidate.
+
 **Start with the [Quick start](https://github.com/ericeallen/towel/blob/v1.792/docs/QUICKSTART.md),
 or browse the [documentation index](https://github.com/ericeallen/towel/blob/v1.792/docs/README.md).**
 
@@ -133,6 +139,10 @@ Reflection and source, AST, bytecode, frame or namespace inspection are outside
 its preservation guarantee, as is instrumentation that uses them to transform
 functions or classes. Towel does not scan for these behaviors or refuse code to
 protect them; decorators, ordinary calls and hooks have the same boundary.
+Protect sensitive definitions with `# towel: no-extract` immediately after
+the signature's final colon. The
+[function opt-out guide](https://github.com/ericeallen/towel/blob/v1.792/docs/CLI_GUIDE.md#protect-a-function)
+explains its placement and limits.
 Review the
 [known limitations](https://github.com/ericeallen/towel/blob/v1.792/docs/KNOWN_LIMITATIONS.md)
 and run your tests before adopting changes.
