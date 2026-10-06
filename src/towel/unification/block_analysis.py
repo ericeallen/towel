@@ -179,51 +179,51 @@ def _may_own_observable_value(expression: ast.AST) -> bool:
     return not isinstance(expression, ast.Constant)
 
 
-def lifetime_bound_names(block: Sequence[ast.stmt], initially_bound: Set[str]) -> Set[str]:
-    """Block-bound names whose object must outlive the helper.
+_LIFETIME_BINDINGS: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
 
-    In the original function a local lives until the function returns or
-    rebinds it; a helper drops what it does not return when it returns. For
-    a literal constant that is invisible; for an opaque result it may not be
-    (a ``NamedTemporaryFile`` is deleted, a weak reference dies). Every name
-    the block binds from an opaque expression
-    is therefore returned and rebound
-    at the site. Nested functions and classes are their own scopes and are
-    not entered.
+
+def _statement_lifetime_bindings(statement: ast.AST) -> FrozenSet[str]:
+    """Immutable ownership facts for one immutable statement, without AST references.
+
+    Every nonliteral result already seeds ownership, including bare aliases.
+    Consequently no fixed-point propagation is needed: a constant cannot
+    load an owned name, and every expression that can load one is opaque.
     """
     names: Set[str] = set()
-    nodes = [node for statement in block for node in walk_own_scope(statement)]
-    # Aliases and results computed from owned values may keep them alive or
-    # own further finalizable objects. Propagate until every such binding is
-    # included, even when a conditional write precedes its source's binding.
-    previous: Optional[Set[str]] = None
-    while previous != names:
-        previous = set(names)
-        for node in nodes:
-            if isinstance(node, (ast.Assign, ast.AnnAssign)):
-                value = node.value
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                if value is not None and _lifetime_depends_on(value, names):
-                    for target in targets:
-                        names |= stored_names(target)
-            elif isinstance(node, ast.NamedExpr) and _lifetime_depends_on(node.value, names):
-                names.add(node.target.id)
-            elif isinstance(node, (ast.For, ast.AsyncFor)):
-                # Iteration invokes a protocol even when its expression is a
-                # bare name. The target may receive a freshly created object.
-                names |= stored_names(node.target)
-            elif isinstance(node, (ast.With, ast.AsyncWith)):
-                for item in node.items:
-                    if item.optional_vars is not None:
-                        names |= stored_names(item.optional_vars)
-    return names & initially_bound
+    for node in walk_own_scope(statement):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if value is not None and _may_own_observable_value(value):
+                for target in targets:
+                    names |= stored_names(target)
+        elif isinstance(node, ast.NamedExpr) and _may_own_observable_value(node.value):
+            names.add(node.target.id)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            names |= stored_names(node.target)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    names |= stored_names(item.optional_vars)
+    return frozenset(names)
 
 
-def _lifetime_depends_on(expression: ast.AST, owned: AbstractSet[str]) -> bool:
-    return _may_own_observable_value(expression) or any(
-        isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in owned
-        for node in ast.walk(expression)
-    )
+def lifetime_bound_names(block: Sequence[ast.stmt], initially_bound: Set[str]) -> Set[str]:
+    """Fresh block-bound names whose opaque object must outlive the helper.
+
+    A literal constant has no observable finalizer; every other expression,
+    iterator target and manager target may. Facts depend only on each parsed
+    statement, never the surrounding block or caller's initial-binding set.
+    The weak memo dies with the immutable AST and is bypassed under
+    ``memoization_disabled``. The intersection is always a fresh mutable set.
+    """
+    owned: Set[str] = set()
+    for statement in block:
+        facts: FrozenSet[str] = memoized_per_node(
+            _LIFETIME_BINDINGS, statement, _statement_lifetime_bindings
+        )
+        owned.update(facts)
+    return owned & initially_bound
 
 
 _POSITIONED_BINDINGS: "WeakKeyDictionary[ast.AST, Tuple[Tuple[Binding, Tuple[int, int]], ...]]" = (
