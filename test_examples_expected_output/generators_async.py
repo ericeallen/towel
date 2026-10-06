@@ -16,12 +16,12 @@ def __extracted_func_0(size, values):
     cleaned = [value for value in values if value is not None]
     limit = len(cleaned) - len(cleaned) % size
     window = cleaned[:limit]
-    return (limit, window)
+    return (cleaned, limit, window)
 
 
 def batched_totals(values, size):
     """Sum each full run of ``size`` values, one total per run."""
-    limit, window = __extracted_func_0(size, values)
+    _towel_keep_cleaned, _towel_keep_limit, window = __extracted_func_0(size, values)
     total = 0
     count = 0
     for value in window:
@@ -35,7 +35,7 @@ def batched_totals(values, size):
 
 def batched_peaks(values, size):
     """The largest value of each full run of ``size`` values."""
-    limit, window = __extracted_func_0(size, values)
+    _towel_keep_cleaned, _towel_keep_limit, window = __extracted_func_0(size, values)
     peak = None
     count = 0
     for value in window:
@@ -67,14 +67,14 @@ def numbered_words(text):
 
 async def settle_totals(values, size):
     """Batch totals after yielding to the event loop once."""
-    limit, window = __extracted_func_0(size, values)
+    _towel_keep_cleaned, limit, window = __extracted_func_0(size, values)
     await asyncio.sleep(0)
     return [sum(window[start : start + size]) for start in range(0, limit, size)]
 
 
 async def settle_peaks(values, size):
     """Batch peaks after yielding to the event loop once."""
-    limit, window = __extracted_func_0(size, values)
+    _towel_keep_cleaned, limit, window = __extracted_func_0(size, values)
     await asyncio.sleep(0)
     return [max(window[start : start + size]) for start in range(0, limit, size)]
 

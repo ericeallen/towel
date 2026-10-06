@@ -122,7 +122,7 @@ def __extracted_func_12(__param_0):
     result = x + y
     a, b, c = __param_0[:3]
     result += a + b + c
-    return result
+    return (x, y, result, a, b, c)
 
 
 def __extracted_func_11(__param_0, __param_1):
@@ -141,10 +141,10 @@ def __extracted_func_10(__param_0, __param_1):
 
 
 def __extracted_func_9(__param_0):
-    data = [__param_0, __param_0 + 1, __param_0 + 2]
-    data = data + list((__param_0, __param_0 + 1))
-    data = data + list({__param_0, __param_0 + 1})
-    data = data + list({'a': __param_0, 'b': __param_0 + 1}.values())
+    data = [__param_0, __param_0 + 1, __param_0 + 2]  # list
+    data = data + list((__param_0, __param_0 + 1))  # tuple
+    data = data + list({__param_0, __param_0 + 1})  # set
+    data = data + list({'a': __param_0, 'b': __param_0 + 1}.values())  # dict
     return sum(data)
 
 
@@ -158,52 +158,52 @@ def __extracted_func_8(__param_0):
 
 
 def __extracted_func_7(__param_0, __param_1):
-    result = helper(__param_0, __param_1)
-    result += helper(__param_0, __param_1, 20)
-    result += helper(__param_0, __param_1, c=30)
-    result += helper(__param_0, __param_1, 40, 50)
-    result += helper(__param_0, __param_1, d=60)
+    result = helper(__param_0, __param_1)  # positional
+    result += helper(__param_0, __param_1, 20)  # with optional
+    result += helper(__param_0, __param_1, c=30)  # keyword
+    result += helper(__param_0, __param_1, 40, 50)  # *args
+    result += helper(__param_0, __param_1, d=60)  # **kwargs
     return result
 
 
 def __extracted_func_6(__param_0):
-    result = __param_0[0]
-    result += __param_0[-1]
-    result += sum(__param_0[1:3])
-    result += sum(__param_0[::2])
-    result += sum(__param_0[::-1])
+    result = __param_0[0]  # simple subscript
+    result += __param_0[-1]  # negative index
+    result += sum(__param_0[1:3])  # slice
+    result += sum(__param_0[::2])  # step slice
+    result += sum(__param_0[::-1])  # reverse
     return result
 
 
 def __extracted_func_5(__param_0, __param_1):
-    result = __param_0 & __param_1
-    result = result | __param_1
-    result = result ^ __param_1
-    result = ~result
-    result = result << 1
-    result = result >> 1
+    result = __param_0 & __param_1  # and
+    result = result | __param_1  # or
+    result = result ^ __param_1  # xor
+    result = ~result  # not
+    result = result << 1  # left shift
+    result = result >> 1  # right shift
     return result
 
 
 def __extracted_func_4(__param_0, __param_1):
-    result = __param_0 + __param_1
-    result = result - __param_1
-    result = result * 2
-    result = result / 2
-    result = result // 2
-    result = result % 3
-    result = result ** 2
+    result = __param_0 + __param_1  # addition
+    result = result - __param_1  # subtraction
+    result = result * 2  # multiplication
+    result = result / 2  # division
+    result = result // 2  # floor division
+    result = result % 3  # modulo
+    result = result ** 2  # exponentiation
     return result
 
 
 def __extracted_func_3(__param_0):
-    result = __param_0 + 42
-    result = result + 3.14
-    result = result + 1j
-    result = result + len('string')
-    result = result + len(b'bytes')
-    result = result + (1 if True else 0)
-    result = result + (0 if None else 1)
+    result = __param_0 + 42  # int
+    result = result + 3.14  # float
+    result = result + 1j  # complex
+    result = result + len('string')  # string
+    result = result + len(b'bytes')  # bytes
+    result = result + (1 if True else 0)  # boolean
+    result = result + (0 if None else 1)  # None
     return result
 
 
@@ -353,7 +353,7 @@ def augmented_b(y):
 
 def unpacking_a(data):
     """Test various unpacking patterns."""
-    result = __extracted_func_12(data)
+    _towel_keep_x, _towel_keep_y, result, _towel_keep_a, _towel_keep_b, _towel_keep_c = __extracted_func_12(data)
     first, *rest = data
     result += first + sum(rest)
     return result
@@ -361,7 +361,7 @@ def unpacking_a(data):
 
 def unpacking_b(items):
     """Test various unpacking patterns."""
-    output = __extracted_func_12(items)
+    _towel_keep_p, _towel_keep_q, output, _towel_keep_m, _towel_keep_n, _towel_keep_o = __extracted_func_12(items)
     head, *tail = items
     output += head + sum(tail)
     return output

@@ -247,10 +247,15 @@ SET_ASIDE_PREFIX = ".towel-set-aside-"
 """What a journal recovery cannot use is renamed to; no run reads a name beginning so."""
 
 
+def _recovery_command(journal: Path) -> str:
+    """A shell command whose journal is exactly one non-option argument."""
+    return shlex.join(("towel", "recover", "--", str(journal)))
+
+
 def _set_aside(journal: Path) -> str:
     """The command that moves ``journal`` out of every run's way, keeping what it holds."""
     aside = journal.parent / (SET_ASIDE_PREFIX + journal.name.removeprefix(JOURNAL_PREFIX))
-    return f"mv {shlex.quote(str(journal))} {shlex.quote(str(aside))}"
+    return shlex.join(("mv", "--", str(journal), str(aside)))
 
 
 def _instead_of_recovery(journal: Path, error: ChangeConflict) -> str:
@@ -264,8 +269,8 @@ def _instead_of_recovery(journal: Path, error: ChangeConflict) -> str:
     if isinstance(error, ExternalEdit):
         return (
             "Recovering would discard that edit: resolve it, so the file holds what the"
-            " interrupted change left or what it replaced, and then run towel recover"
-            f" {journal}; or keep the files as they are and move the journal aside:"
+            " interrupted change left or what it replaced, and then run"
+            f" {_recovery_command(journal)}; or keep the files as they are and move the journal aside:"
             f" {_set_aside(journal)}"
         )
     return (
@@ -327,7 +332,7 @@ def pending_journal_remedy(journal: Path, changing: str = "this change writes") 
             f" {_instead_of_recovery(journal, obstacle)}"
         )
     if distrust is None:
-        return f"{why}; recover it first: towel recover {journal}"
+        return f"{why}; recover it first: {_recovery_command(journal)}"
     return f"{why}, and towel recover will not read it as it stands: {distrust}"
 
 
@@ -385,7 +390,7 @@ def apply_changes(plan: ChangePlan) -> None:
                 recover(journal)
             except BaseException as recovery_error:
                 raise RecoveryRequired(
-                    f"Recovery required: towel recover {journal}"
+                    f"Recovery required: {_recovery_command(journal)}"
                 ) from recovery_error
         else:
             try:
@@ -443,14 +448,14 @@ def _distrust(journal: Path) -> Optional[str]:
     if info.st_uid != os.getuid():
         return (
             f"{journal} belongs to another user (uid {info.st_uid}); only its owner can recover"
-            f" it, with towel recover {journal}"
+            f" it, with {_recovery_command(journal)}"
         )
     mode = stat.S_IMODE(info.st_mode)
     if mode != 0o700:
         return (
             f"{journal} has mode {mode:04o}, and every journal Towel writes has mode 0700; if"
-            f" Towel wrote it, restore that with chmod 700 {journal} and then run towel recover"
-            f" {journal}, and if it did not, rename or remove it"
+            f" Towel wrote it, restore that with {shlex.join(('chmod', '--', '700', str(journal)))}"
+            f" and then run {_recovery_command(journal)}, and if it did not, rename or remove it"
         )
     return None
 

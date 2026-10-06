@@ -17,7 +17,16 @@ def __extracted_func_6():
     return (current_state, history, outputs)
 
 
-def __extracted_func_5(__param_0, a, b, c, d, e, f, g, h):
+def __extracted_func_5(handlers, transformed):
+    if transformed > 100:
+        handlers['high'].handle(transformed)
+    elif transformed > 50:
+        handlers['medium'].handle(transformed)
+    else:
+        handlers['low'].handle(transformed)
+
+
+def __extracted_func_4(__param_0, a, b, c, d, e, f, g, h):
     step1 = (a + b) * (c - d) + (e / f if f != 0 else 0) ** (g % 5)
     step2 = step1 + h
     step3 = step2 * __param_0
@@ -28,40 +37,20 @@ def __extracted_func_5(__param_0, a, b, c, d, e, f, g, h):
     return '0.00'
 
 
-def __extracted_func_4(__param_0, current_state, event, handlers, history, old_state, outputs, transition):
+def __extracted_func_3(__param_0, current_state, event, handlers, history, old_state, outputs, transition):
     action_result = handlers[transition['action']](event, current_state)
     outputs.append(action_result * __param_0)
     history.append({'from': old_state, 'to': current_state, 'event': event['type'], 'result': action_result})
+    return action_result
 
 
-def __extracted_func_3(__param_0, data, filters, mappers):
+def __extracted_func_2(__param_0, data, filters, mappers):
     list_comp = [x * __param_0 for x in data if filters['positive'](x)]
     dict_comp = {k: v * __param_0 for k, v in enumerate(list_comp) if v > 10}
     set_comp = {v for v in dict_comp.values() if v < 1000}
+    # Nested comprehension
     nested = [[mappers['inner'](y) for y in row if y is not None] for row in [list_comp[i:i + 5] for i in range(0, len(list_comp), 5)] if len(row) > 0]
     return {'list': list_comp, 'dict': dict_comp, 'set': set_comp, 'nested': nested}
-
-
-def __extracted_func_2(__param_0, __param_1, __param_2, data, handlers, transformers, validators):
-    for item in data:
-        if item.get(__param_0) == 'A':
-            if validators['A'].validate(item):
-                transformed = transformers['A'].transform(item[__param_1])
-                if transformed > 100:
-                    handlers['high'].handle(transformed)
-                elif transformed > 50:
-                    handlers['medium'].handle(transformed)
-                else:
-                    handlers['low'].handle(transformed)
-        elif item.get(__param_0) == 'B':
-            if validators['B'].validate(item):
-                transformed = transformers['B'].transform(item[__param_2])
-                if transformed > 100:
-                    handlers['high'].handle(transformed)
-                elif transformed > 50:
-                    handlers['medium'].handle(transformed)
-                else:
-                    handlers['low'].handle(transformed)
 
 
 def __extracted_func_1(__param_0, cache, config, data, logger, metrics):
@@ -71,6 +60,8 @@ def __extracted_func_1(__param_0, cache, config, data, logger, metrics):
             for middle_item in outer_item.get('children', []):
                 if middle_item.get('status') == 'active':
                     for inner_item in middle_item.get('values', []):
+                        # This deeply nested block should be extractable
+                        # Same structure, different multiplier
                         computed = (inner_item['value'] * config[__param_0] + config['offset']) ** config['power']
                         if computed > config['threshold']:
                             normalized = computed / config['normalizer']
@@ -87,6 +78,8 @@ def __extracted_func_0(__param_0, fallback, items, logger, processor):
     errors = {'value': [], 'type': [], 'runtime': [], 'other': []}
     for i, item in enumerate(items):
         try:
+            # Multiple exception-raising operations
+            # Same structure, different mode
             validated = processor.validate(item, strict=True)
             parsed = processor.parse(validated)
             transformed = processor.transform(parsed, mode=__param_0)
@@ -124,35 +117,51 @@ def deeply_nested_computation_v2(data, config, cache, logger, metrics):
 def many_parameters_v1(a, b, c, d, e, f, g, h):
     """Version 1: Many parameters, complex expression."""
     # Very complex expression using many variables
-    return __extracted_func_5(2, a, b, c, d, e, f, g, h)
+    return __extracted_func_4(2, a, b, c, d, e, f, g, h)
 
 
 def many_parameters_v2(a, b, c, d, e, f, g, h):
     """Version 2: Different multiplier in step3."""
     # Same complex expression, different multiplier
-    return __extracted_func_5(3, a, b, c, d, e, f, g, h)
+    return __extracted_func_4(3, a, b, c, d, e, f, g, h)
 
 
 def complex_control_flow_a(data, validators, transformers, handlers):
     """Version A: Complex control flow with multiple branches."""
-    __extracted_func_2('type', 'value', 'data', data, handlers, transformers, validators)
+    for item in data:
+        if item.get("type") == "A":
+            if validators["A"].validate(item):
+                transformed = transformers["A"].transform(item["value"])
+                __extracted_func_5(handlers, transformed)
+        elif item.get("type") == "B":
+            if validators["B"].validate(item):
+                transformed = transformers["B"].transform(item["data"])
+                __extracted_func_5(handlers, transformed)
 
 
 def complex_control_flow_b(data, validators, transformers, handlers):
     """Version B: Different keys, same control flow."""
-    __extracted_func_2('category', 'amount', 'total', data, handlers, transformers, validators)
+    for item in data:
+        if item.get("category") == "A":
+            if validators["A"].validate(item):
+                transformed = transformers["A"].transform(item["amount"])
+                __extracted_func_5(handlers, transformed)
+        elif item.get("category") == "B":
+            if validators["B"].validate(item):
+                transformed = transformers["B"].transform(item["total"])
+                __extracted_func_5(handlers, transformed)
 
 
 def mixed_comprehensions_v1(data, filters, mappers):
     """Version 1: Multiple comprehension types."""
     # Mix of comprehensions
-    return __extracted_func_3(2, data, filters, mappers)
+    return __extracted_func_2(2, data, filters, mappers)
 
 
 def mixed_comprehensions_v2(data, filters, mappers):
     """Version 2: Different multiplier, same comprehensions."""
     # Same structure, different multiplier
-    return __extracted_func_3(3, data, filters, mappers)
+    return __extracted_func_2(3, data, filters, mappers)
 
 
 def exception_heavy_processing_a(items, processor, logger, fallback):
@@ -183,7 +192,7 @@ def state_machine_pattern_v1(events, states, transitions, handlers):
                             current_state = transition["target"]
 
                             # Execute actions
-                            __extracted_func_4(2, current_state, event, handlers, history, old_state, outputs, transition)
+                            _towel_keep_action_result = __extracted_func_3(2, current_state, event, handlers, history, old_state, outputs, transition)
 
     return {"final_state": current_state, "history": history, "outputs": outputs}
 
@@ -206,6 +215,6 @@ def state_machine_pattern_v2(events, states, transitions, handlers):
                             current_state = transition["target"]
 
                             # Different multiplier
-                            __extracted_func_4(3, current_state, event, handlers, history, old_state, outputs, transition)
+                            _towel_keep_action_result = __extracted_func_3(3, current_state, event, handlers, history, old_state, outputs, transition)
 
     return {"final_state": current_state, "history": history, "outputs": outputs}

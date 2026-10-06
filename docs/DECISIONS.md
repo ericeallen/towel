@@ -1595,3 +1595,32 @@ an exact literal command. A wholly literal `echo` or `printf` example remains
 ordinary text, including singlequoted substitution examples. Consequently an
 ambiguous unsupported script may be refused even when no checker would execute;
 full shell/CI interpretation remains deferred.
+
+## 2026-10-06: Caller ownership includes implicit protocols and exceptional exits
+
+An explicit `ast.Call` is not the only way an expression can produce a resource.
+A property, subscription, operator, iterator or context manager can return an
+object with an observable finalizer. A name lookup may also add the caller's last
+surviving reference before another callee deletes the original binding. Only a
+literal constant proves that the expression's result needs no retention from
+syntax alone. Newly bound opaque values are returned and rebound at the caller,
+in the original local cleanup order. Iterator and manager targets are included.
+This covers ordinary object lifetime, independently of the reflection exclusion.
+
+Binding snapshots compare the actual binding nodes' source positions, including
+columns, rather than walking an enclosing compound statement wholesale because
+its header precedes a nested block. Later reads within the same suite count too.
+The existing definite-assignment and reassignment guards still apply.
+
+A helper that raises cannot return its newly owned values to its caller. An
+outer handler or manager may continue after those helper locals are released,
+while the original caller retained them. Such partial extractions are refused
+until exceptional ownership transfer can be proved. A complete manager or try
+statement remains eligible subject to normal binding and lifetime checks.
+
+A returned value retained solely for lifetime has a hygienic underscore binding
+when occurrence counts prove the original name has no binding or reference
+outside the extracted block, including nested free references. This keeps
+configured unused-binding lint rules applicable without discarding owned values.
+Assignment and tuple order are unchanged; outside reads, rebindings, deletions,
+parameters and global/nonlocal declarations preserve the original spelling.

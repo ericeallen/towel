@@ -40,11 +40,16 @@ from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
 from ..canonical_ast import canonical_dump
 from .assignment_analyzer import has_reassignments_without_bindings
-from .block_analysis import align_return_variables, lifetime_order_preserved
+from .block_analysis import (
+    align_return_variables,
+    lifetime_order_preserved,
+    owned_binding_crosses_exception_boundary,
+)
 from .block_comments import call_argument_lines, directive_conflict, site_comments
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
+from .retained_bindings import spell_retained_bindings
 from .models import FunctionArtifact, FunctionNode, RejectReason, Replacement
 from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
@@ -318,7 +323,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             for name in used2
         ):
             return None
-        return call_node2, call_argument_lines(subst2, 1)
+        return spell_retained_bindings(
+            candidate.function, candidate.nodes, call_node2
+        ), call_argument_lines(subst2, 1)
 
     @staticmethod
     def _declares_alike(template: "HelperTemplate", candidate: "_ClusterCandidate") -> bool:
@@ -498,6 +505,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             if self._block_rejected(frame_guard, cand_nodes, fn, analyzer, site=site):
                 return None
         for guard in (
+            owned_binding_crosses_exception_boundary,
             nested_bindings_escape,
             nested_scopes_cross_block_boundary,
             moves_scope_declaration,

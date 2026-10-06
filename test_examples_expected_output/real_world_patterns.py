@@ -12,8 +12,7 @@ def __extracted_func_7(__param_0, e, error_handler, failed, i, item, metrics):
     metrics.increment(__param_0)
 
 
-def __extracted_func_6(__param_0, item, metrics, processed, processor):
-    result = processor.transform(item)
+def __extracted_func_6(__param_0, metrics, processed, processor, result):
     processor.enrich(result)
     processed.append(result)
     metrics.increment(__param_0)
@@ -168,7 +167,8 @@ def process_batch_with_errors_a(items, processor, error_handler, metrics):
                 metrics.increment("validation_failures")
                 continue
 
-            __extracted_func_6('processed', item, metrics, processed, processor)
+            result = processor.transform(item)
+            __extracted_func_6('processed', metrics, processed, processor, result)
 
         except Exception as e:
             __extracted_func_7('processing_errors', e, error_handler, failed, i, item, metrics)
@@ -190,7 +190,8 @@ def process_batch_with_errors_b(items, processor, error_handler, metrics):
                 metrics.increment("invalid_items")
                 continue
 
-            __extracted_func_6('success_count', item, metrics, processed, processor)
+            result = processor.transform(item)
+            __extracted_func_6('success_count', metrics, processed, processor, result)
 
         except Exception as e:
             __extracted_func_7('error_count', e, error_handler, failed, i, item, metrics)

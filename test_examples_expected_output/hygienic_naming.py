@@ -9,8 +9,10 @@ collide with variables in the surrounding scope or in the calling context.
 def __extracted_func_5(__param_0, __param_1, data):
     results = []
     for item in data:
+        # This block could have naming conflicts with nested functions
+        # Different computation, same structure
         a = item ** __param_0
-        __extracted_func_4(__param_1, a, results)
+        _towel_keep_b, _towel_keep_c = __extracted_func_4(__param_1, a, results)
     return results
 
 
@@ -18,12 +20,15 @@ def __extracted_func_4(__param_0, a, results):
     b = a + __param_0
     c = b * 3
     results.append(c)
+    return (b, c)
 
 
 def __extracted_func_3(__param_0, data, result):
     for item in data:
+        # This block should be extracted, but 'x' might collide
+        # Same block - extracted function must avoid collision with 'result'
         x = item * __param_0
-        __extracted_func_2(result, x)
+        _towel_keep_y, _towel_keep_z = __extracted_func_2(result, x)
     return result
 
 
@@ -31,6 +36,7 @@ def __extracted_func_2(result, x):
     y = x + 10
     z = y ** 2
     result.append(z)
+    return (y, z)
 
 
 def __extracted_func_1(__param_0, cache, key, processed, temp):
@@ -38,11 +44,14 @@ def __extracted_func_1(__param_0, cache, key, processed, temp):
     if validated:
         temp.append(processed)
         cache[key] = processed
+    return validated
 
 
 def __extracted_func_0(__param_0, values, x, y):
     output = []
     for val in values:
+        # This block references outer 'x' and 'y'
+        # Same structure but different constant
         a = val + x
         b = a * y
         c = b - __param_0
@@ -80,7 +89,7 @@ def transform_with_shadowing_v1(data, temp, cache):
     for key, value in data.items():
         # Block that modifies outer 'temp' and 'cache'
         processed = value.upper()
-        __extracted_func_1(5, cache, key, processed, temp)
+        _towel_keep_validated = __extracted_func_1(5, cache, key, processed, temp)
 
     return temp, cache
 
@@ -93,7 +102,7 @@ def transform_with_shadowing_v2(data, temp, cache):
     for key, value in data.items():
         # Same pattern, different validation condition
         processed = value.lower()
-        __extracted_func_1(3, cache, key, processed, temp)
+        _towel_keep_validated = __extracted_func_1(3, cache, key, processed, temp)
 
     return temp, cache
 

@@ -56,7 +56,10 @@ introduce an error the baseline cannot account for.
 All prospective changed modules are checked together with unchanged consumers.
 Once a change is accepted, its result becomes the baseline for the next
 change. A run verified through the Pyright language server also receives a
-fresh command-line Pyright check at the end.
+fresh command-line Pyright check at the end. A malformed diagnostic
+publication is rejected before it can clear known errors or acknowledge a
+completed check. Towel abandons that warm session and checks the same candidate
+with command-line Pyright; a failed fallback cannot certify a change.
 
 ### How existing errors are matched
 

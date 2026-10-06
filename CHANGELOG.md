@@ -46,6 +46,18 @@ release verification binds the final versioned source to its own evidence.
 - Retain block-bound results of ordinary factories and other calls across
   helper return, preserving observable resource and finalizer lifetimes,
   including aliases and the relative cleanup order of multiple results.
+- Preserve caller ownership of opaque values returned by properties,
+  subscription, operators, iterators and context-manager enter protocols.
+  Count nested bindings at their actual source positions and refuse unsafe
+  exceptional ownership transfers to an outer handler or context manager.
+- Spell lifetime-only caller bindings with hygienic underscore names when no
+  outside code reads, rebinds or deletes them, preserving configured lint checks.
+- Discover Ruff without importing project-owned modules; run Black and isort in
+  persistent isolated workers with bounded replies and parent-exit cleanup.
+- Reject malformed Pyright diagnostics before changing stored checker errors;
+  abandon the warm session and require the normal cold-check fallback.
+- Quote executable recovery remedies, including paths with spaces and shell
+  metacharacters, and use portable permission-command option ordering.
 - Preserve known tuple-element types when another retained result is `Any`.
 - Treat all context managers as potentially suppressing exceptions, keeping
   conditional reads of possibly unbound locals at their original sites.

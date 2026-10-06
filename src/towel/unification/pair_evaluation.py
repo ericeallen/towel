@@ -60,6 +60,7 @@ from .assignment_analyzer import (
     scope_declarations,
 )
 from .block_analysis import (
+    owned_binding_crosses_exception_boundary,
     align_return_variables,
     lifetime_bound_names,
     lifetime_order_preserved,
@@ -92,6 +93,7 @@ from .engine_state import BlockSite
 from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
+from .retained_bindings import spell_retained_bindings
 from .narrowing import (
     caller_narrowing_leaves_with_block,
     narrowing_lost_at_call_site,
@@ -666,6 +668,11 @@ class PairEvaluation(
             (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, ctx.site2),
         )
         for nodes, function, analyzer, site in blocks:
+            if self._block_rejected(
+                owned_binding_crosses_exception_boundary, nodes, function, site=site
+            ):
+                self._debug_reject(RejectReason.OWNED_BINDING_EXCEPTION_BOUNDARY, pair)
+                return None
             if self._block_rejected(
                 block_requires_original_frame,
                 nodes,
@@ -1481,7 +1488,7 @@ class PairEvaluation(
         return Replacement(
             line_range=block_range,
             columns=BlockColumns.of(nodes),
-            node=call_node,
+            node=spell_retained_bindings(function, nodes, call_node),
             file_path=file_path,
             class_name=class_name,
             method_kind=method_info.kind,

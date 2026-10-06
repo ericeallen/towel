@@ -42,21 +42,16 @@ import copy
 import json
 from enum import Enum
 from pathlib import Path
-import posixpath
-import re
 import sys
 import shutil
 import subprocess
-from typing import TYPE_CHECKING, Callable, List, Mapping, NamedTuple, Optional, Set, Tuple, cast
+from typing import Callable, List, Mapping, NamedTuple, Optional, Set, Tuple, cast
 
 from .canonical_ast import canonical_dump
 from .project_layout import find_project_root, load_pyproject
-from .project_tools import ToolChoice, python_tool_environment
+from .project_tools import IsolatedFormatTool, ToolChoice, ToolFailure, python_tool_environment
 from .diagnostics import LOG
 from .source_text import decorator_line_numbers, definition_start_line, try_read_source
-
-if TYPE_CHECKING:
-    import isort
 
 SnippetFormatter = Callable[[str], str]
 """Maps one generated snippet (a definition or a statement) to its formatted text."""
@@ -345,7 +340,12 @@ def checked(formatter: SnippetFormatter) -> SnippetFormatter:
             # the proposal it was given, never the run (numbagg's snippet
             # that Black could not parse ended every formatted run).
             raise FormattingChangedCode(
-                f"the formatter failed: {type(error).__name__}: {error}"
+                "the formatter failed: "
+                + (
+                    str(error)
+                    if isinstance(error, ToolFailure)
+                    else f"{type(error).__name__}: {error}"
+                )
             ) from error
         try:
             formatted_tree = ast.parse(formatted)
@@ -419,15 +419,18 @@ def black_formatter(settings: BlackSettings) -> SnippetFormatter:
     Raises ``ImportError`` when Black is not installed; install the
     ``format`` extra (``pip install "code-towel[format]"``) to provide it.
     """
-    import black
+    return _black_formatter(IsolatedFormatTool("black"), settings)
 
-    mode = black.Mode(
-        line_length=settings.line_length,
-        string_normalization=settings.string_normalization,
-    )
 
+def _black_formatter(tool: IsolatedFormatTool, settings: BlackSettings) -> SnippetFormatter:
     def run_black(source: str) -> str:
-        return black.format_str(source, mode=mode)
+        return tool.render(
+            {
+                "source": source,
+                "line_length": settings.line_length,
+                "string_normalization": settings.string_normalization,
+            }
+        )
 
     return checked(run_black)
 
@@ -493,13 +496,29 @@ def project_configures_isort(path: Path) -> bool:
 def _ruff_executable() -> Optional[List[str]]:
     """How to run ruff: this interpreter's copy first, then one on PATH."""
     try:
-        import ruff  # noqa: F401
-    except ImportError:
-        executable = shutil.which("ruff")
-        return [executable] if executable else None
-    # Both callers run from the analyzed project's root. Do not let a
-    # project-owned ruff.py, or a shadow of one of its dependencies, run.
-    return [sys.executable, "-I", "-m", "ruff"]
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                "-c",
+                "import importlib.util;raise SystemExit(0 if importlib.util.find_spec('ruff') else 1)",
+            ],
+            capture_output=True,
+            env=python_tool_environment(),
+            timeout=TOOL_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise FormattingChangedCode(f"Could not discover installed Ruff: {error}") from error
+
+    if probe.returncode == 0:
+        return [sys.executable, "-I", "-m", "ruff"]
+    if probe.returncode != 1 or probe.stderr:
+        raise FormattingChangedCode(
+            "Could not discover installed Ruff: " + probe.stderr.decode("utf-8", "replace")
+        )
+    executable = shutil.which("ruff")
+    return [executable] if executable else None
 
 
 def ruff_formatter(path: Path) -> SnippetFormatter:
@@ -554,34 +573,27 @@ def black_excludes(path: Path) -> bool:
     that does not compile is its own to report, so such a pattern excludes
     nothing here.
     """
-    from black import re_compile_maybe_verbose
-    from black.const import DEFAULT_EXCLUDES
-    from black.files import path_is_excluded
-
-    root = _root(path)
+    tool = IsolatedFormatTool("black")
     try:
-        parts = path.resolve().relative_to(root).parts
-    except ValueError:
-        return False
-    black = _tool_section(root, "black")
-    patterns = []
-    for key, default in (
-        ("exclude", DEFAULT_EXCLUDES),
-        ("extend-exclude", ""),
-        ("force-exclude", ""),
-    ):
-        value = black.get(key) or default
-        if isinstance(value, str) and value:
-            try:
-                patterns.append(re_compile_maybe_verbose(value))
-            except re.error:
-                continue
-    for depth in range(1, len(parts) + 1):
-        relative = Path(*parts[:depth])
-        normalized = "/" + relative.as_posix() + ("/" if (root / relative).is_dir() else "")
-        if any(path_is_excluded(normalized, pattern) for pattern in patterns):
-            return True
-    return False
+        return _black_excludes(tool, path)
+    finally:
+        tool.close()
+
+
+def _black_excludes(tool: IsolatedFormatTool, path: Path) -> bool:
+    root = _root(path)
+    configuration = _tool_section(root, "black")
+    patterns = {
+        name: (
+            None
+            if not configuration.get(name)
+            else configuration[name] if isinstance(configuration[name], str) else ""
+        )
+        for name in ("exclude", "extend-exclude", "force-exclude")
+    }
+    return tool.excludes(
+        {"operation": "excludes", "root": str(root), "path": str(path), **patterns}
+    )
 
 
 def _black_for_project(path: Path, note: str) -> ToolChoice[SnippetFormatter]:
@@ -589,10 +601,16 @@ def _black_for_project(path: Path, note: str) -> ToolChoice[SnippetFormatter]:
 
     Raises ``ImportError`` when Black is not installed.
     """
-    formatter = black_formatter(BlackSettings.for_project(path))
-    if black_excludes(path):
+    tool = IsolatedFormatTool("black")
+    try:
+        excluded = _black_excludes(tool, path)
+    except BaseException:
+        tool.close()
+        raise
+    if excluded:
+        tool.close()
         return ToolChoice(checked(_unformatted), f"{note}, which the project excludes {path} from")
-    return ToolChoice(formatter, note)
+    return ToolChoice(_black_formatter(tool, BlackSettings.for_project(path)), note)
 
 
 def formatter_for_project(path: Path) -> ToolChoice[SnippetFormatter]:
@@ -637,10 +655,10 @@ def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
         )
     if project_configures_isort(path):
         try:
-            import isort  # noqa: F401
+            sorter = _isort_sorter(_root(path))
         except ImportError:
             return ToolChoice(None, "isort is configured but not installed")
-        return ToolChoice(sorted_where_already_sorted(_isort_sorter(_root(path)), "isort"), "isort")
+        return ToolChoice(sorted_where_already_sorted(sorter, "isort"), "isort")
     return ToolChoice(None, "")
 
 
@@ -714,46 +732,17 @@ def _ruff_sorter(command: List[str], root: Path) -> ImportSorter:
 
 def _isort_sorter(root: Path) -> ImportSorter:
     """isort over one file's text, with the project's configuration found from ``root``."""
-    import isort
+    tool = IsolatedFormatTool("isort")
 
     def sort(file_path: str, source: str) -> Optional[str]:
         target = _counterpart(root, Path(file_path))
         try:
-            config = isort.Config(settings_path=str(root))
-            if _isort_skips(config, root, target):
-                return source
-            return isort.code(source, config=config, file_path=target)
-        except isort.exceptions.FileSkipped:
-            # ``# isort: skip_file`` in the text, or a skip setting ``_isort_skips``
-            # agrees with: the project told isort to leave the file alone.
-            return source
-        except isort.exceptions.ISortError as error:
+            return tool.render({"source": source, "root": str(root), "path": str(target)})
+        except ToolFailure as error:
             LOG.warning("isort declined %s; imports left as assembled: %s", file_path, error)
             return None
 
     return sort
-
-
-def _isort_skips(config: "isort.Config", root: Path, target: Path) -> bool:
-    """Whether isort, run over the project at ``root``, would leave ``target`` alone.
-
-    Walking the project, isort asks ``Config.is_skipped`` of every directory
-    it enters and of every file it finds, by ``skip``, ``extend_skip``,
-    ``skip_glob``, ``extend_skip_glob`` and ``skip_gitignore``; ``isort.code``
-    asks it of the file alone, so a skipped directory is asked here too. An
-    entry naming a path (``tests/_sync``) isort resolves against the
-    directory it runs in, which for the project is its root, not wherever
-    Towel happens to run.
-    """
-    try:
-        relative = target.relative_to(root)
-    except ValueError:
-        return bool(config.is_skipped(target))
-    named = {posixpath.normpath(entry) for entry in config.skips if not posixpath.isabs(entry)}
-    return any(
-        part.as_posix() in named or config.is_skipped(root / part)
-        for part in (relative, *list(relative.parents)[:-1])
-    )
 
 
 class SortOutcome(Enum):

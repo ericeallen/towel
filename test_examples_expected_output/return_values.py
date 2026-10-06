@@ -6,12 +6,6 @@ properly propagate return values in replacement calls.
 """
 
 
-def __extracted_func_4(x):
-    result = []
-    for i in range(x):
-        result.append(i * 2)
-
-
 def __extracted_func_3(items):
     for item in items:
         if item > 100:
@@ -86,11 +80,15 @@ def multiple_returns_b(x):
 
 def no_return_a(x):
     """Function with no explicit return (returns None)."""
-    __extracted_func_4(x)
+    result = []
+    for i in range(x):
+        result.append(i * 2)
     # No return statement
 
 
 def no_return_b(x):
     """Function with no explicit return (duplicate)."""
-    __extracted_func_4(x)
+    result = []
+    for i in range(x):
+        result.append(i * 2)
     # No return statement

@@ -74,7 +74,7 @@ def __extracted_func_0(__param_0, db, mapper):
 def process_api_response_v1(response, validator, transformer):
     """Version 1: Method chaining on API response."""
     # Complex method chain
-    data, cleaned, validated = __extracted_func_6('data', 'items', response, validator)
+    _towel_keep_data, _towel_keep_cleaned, validated = __extracted_func_6('data', 'items', response, validator)
     result = transformer.process(validated).filter(lambda x: x is not None).to_list()
 
     return __extracted_func_5(result, transformer)
@@ -83,7 +83,7 @@ def process_api_response_v1(response, validator, transformer):
 def process_api_response_v2(response, validator, transformer):
     """Version 2: Different key path, same chaining pattern."""
     # Different keys, same chain
-    data, cleaned, validated = __extracted_func_6('payload', 'records', response, validator)
+    _towel_keep_data, _towel_keep_cleaned, validated = __extracted_func_6('payload', 'records', response, validator)
     result = transformer.process(validated).filter(lambda x: x is not None).to_list()
 
     return __extracted_func_5(result, transformer)

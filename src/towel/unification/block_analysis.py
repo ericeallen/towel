@@ -51,7 +51,8 @@ from typing import (
 )
 from .assignment_analyzer import (
     stored_names,
-    _collect_bindings_and_reassignments,
+    Binding,
+    own_scope_bindings,
     _collect_block_binding_stats,
     analyze_assignments,
 )
@@ -167,14 +168,15 @@ def align_return_variables(
     return template_names, block_names
 
 
-def _allocates(expression: ast.AST) -> bool:
-    """Whether an opaque call may supply an object whose lifetime is observable.
+def _may_own_observable_value(expression: ast.AST) -> bool:
+    """Only a literal constant proves its result needs no lifetime retention.
 
-    A function, a method, an alias or a callable object can return a resource
-    or an instance with a finalizer. Its spelling provides no evidence about
-    that result. Containers computed around a call may own the result too.
+    Properties, subscription, arithmetic and other implicit protocols can
+    produce resources without an explicit Call node. A bare name can also
+    add the caller's last surviving reference when later code deletes its
+    original binding. Syntax alone does not prove those values harmless.
     """
-    return any(isinstance(node, ast.Call) for node in ast.walk(expression))
+    return not isinstance(expression, ast.Constant)
 
 
 def lifetime_bound_names(block: Sequence[ast.stmt], initially_bound: Set[str]) -> Set[str]:
@@ -182,9 +184,9 @@ def lifetime_bound_names(block: Sequence[ast.stmt], initially_bound: Set[str]) -
 
     In the original function a local lives until the function returns or
     rebinds it; a helper drops what it does not return when it returns. For
-    a plain value that is invisible; for the result of a call it may not be
+    a literal constant that is invisible; for an opaque result it may not be
     (a ``NamedTemporaryFile`` is deleted, a weak reference dies). Every name
-    the block binds from an expression containing a call (``_allocates``)
+    the block binds from an opaque expression
     is therefore returned and rebound
     at the site. Nested functions and classes are their own scopes and are
     not entered.
@@ -206,18 +208,84 @@ def lifetime_bound_names(block: Sequence[ast.stmt], initially_bound: Set[str]) -
                         names |= stored_names(target)
             elif isinstance(node, ast.NamedExpr) and _lifetime_depends_on(node.value, names):
                 names.add(node.target.id)
-            elif isinstance(node, (ast.For, ast.AsyncFor)) and _lifetime_depends_on(
-                node.iter, names
-            ):
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                # Iteration invokes a protocol even when its expression is a
+                # bare name. The target may receive a freshly created object.
                 names |= stored_names(node.target)
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for item in node.items:
+                    if item.optional_vars is not None:
+                        names |= stored_names(item.optional_vars)
     return names & initially_bound
 
 
 def _lifetime_depends_on(expression: ast.AST, owned: AbstractSet[str]) -> bool:
-    return _allocates(expression) or any(
+    return _may_own_observable_value(expression) or any(
         isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in owned
         for node in ast.walk(expression)
     )
+
+
+_POSITIONED_BINDINGS: "WeakKeyDictionary[ast.AST, Tuple[Tuple[Binding, Tuple[int, int]], ...]]" = (
+    WeakKeyDictionary()
+)
+
+
+def _positioned_bindings(function: ast.AST) -> Tuple[Tuple[Binding, Tuple[int, int]], ...]:
+    """Own-scope binding positions, with no strong reference to the parsed tree."""
+    assert isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+    positions = {
+        id(node): (node.lineno, node.col_offset)
+        for node in ast.walk(function)
+        if hasattr(node, "lineno") and hasattr(node, "col_offset")
+    }
+    return tuple(
+        (binding, positions[binding.node_id])
+        for binding in own_scope_bindings(function.body)
+        if binding.node_id in positions and not binding.deleted_on_exit
+    )
+
+
+_EXCEPTION_BOUNDARY_NODES: "WeakKeyDictionary[ast.AST, FrozenSet[int]]" = WeakKeyDictionary()
+
+
+def _exception_boundary_nodes(function: ast.AST) -> FrozenSet[int]:
+    """Nodes whose enclosing handler/manager remains outside an extracted helper."""
+    assert isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+    protected: Set[int] = set()
+    pending: List[Tuple[ast.AST, bool]] = [(statement, False) for statement in function.body]
+    boundaries: Tuple[type[ast.AST], ...] = (ast.Try, ast.With, ast.AsyncWith)
+    try_star = getattr(ast, "TryStar", None)
+    if try_star is not None:
+        boundaries += (try_star,)
+    while pending:
+        node, inside = pending.pop()
+        if inside:
+            protected.add(id(node))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        pending.extend(
+            (child, inside or isinstance(node, boundaries)) for child in ast.iter_child_nodes(node)
+        )
+    return frozenset(protected)
+
+
+def owned_binding_crosses_exception_boundary(
+    function: FunctionNode, nodes: Sequence[ast.stmt]
+) -> bool:
+    """A failed helper cannot transfer its new locals back to an outer handler.
+
+    Returning an owned local preserves normal completion, but an exception
+    bypasses that return. A caller's handler or manager can then continue
+    after the helper frame releases the value, whereas the original caller
+    kept it. Until exceptional transfers are modeled, refuse these sites.
+    A complete manager/try statement can still move as one block.
+    """
+    protected = memoized_per_node(_EXCEPTION_BOUNDARY_NODES, function, _exception_boundary_nodes)
+    if not nodes or id(nodes[0]) not in protected:
+        return False
+    bound = {binding.name for binding in own_scope_bindings(nodes) if not binding.deleted_on_exit}
+    return bool(lifetime_bound_names(nodes, bound))
 
 
 _LOCAL_ORDERS: "WeakKeyDictionary[ast.AST, Mapping[Tuple[str, int], Tuple[str, ...]]]" = (
@@ -677,29 +745,21 @@ class BlockAnalysis(EngineState):
             block_nodes, reassignments
         )
 
-        bound_before_block: Set[str] = set()
-        block_start_line = block_range[0]
-        for stmt in func.body:
-            if hasattr(stmt, "lineno") and stmt.lineno < block_start_line:
-                stmt_bound: Set[str] = set()
-                stmt_reassigned: Set[str] = set()
-                _collect_bindings_and_reassignments(
-                    stmt, reassignments, stmt_bound, stmt_reassigned
-                )
-                bound_before_block.update(stmt_bound)
-
+        first, last = block_nodes[0], block_nodes[-1]
+        start = (first.lineno, first.col_offset)
+        end = (last.end_lineno or last.lineno, last.end_col_offset or last.col_offset)
+        bindings = memoized_per_node(_POSITIONED_BINDINGS, func, _positioned_bindings)
+        initial = [
+            (binding.name, position)
+            for binding, position in bindings
+            if not binding.reads_first and not reassignments.get(binding.node_id, False)
+        ]
+        # An enclosing compound statement starts before its child block, but
+        # bindings inside that block do not. Compare actual binding positions,
+        # including columns for multiple statements on one source line.
+        bound_before_block = {name for name, position in initial if position < start}
         bound_before_block.update(self._collect_parameter_names(func))
-
-        bound_after_block: Set[str] = set()
-        block_end_line = block_range[1]
-        for stmt in func.body:
-            if hasattr(stmt, "lineno") and stmt.lineno > block_end_line:
-                stmt_bound = set()
-                stmt_reassigned = set()
-                _collect_bindings_and_reassignments(
-                    stmt, reassignments, stmt_bound, stmt_reassigned
-                )
-                bound_after_block.update(stmt_bound)
+        bound_after_block = {name for name, position in initial if position >= end}
 
         initially_bound = bound_in_block - bound_before_block
 
@@ -734,11 +794,18 @@ class BlockAnalysis(EngineState):
         block_end_line = block_range[1]
         result: Set[str] = set()
         debug_enabled = debugging(VALIDATION)
-        continues = any(getattr(stmt, "lineno", 0) > block_end_line for stmt in func.body)
-        if block and continues and not self._is_value_producing(block):
+        if block and not self._is_value_producing(block):
+            # Keeping caller ownership also matters at the end of a nested
+            # suite, before its enclosing manager/finally cleanup executes.
             result |= lifetime_bound_names(block, initially_bound)
 
-        for stmt in func.body:
+        statements = (
+            node
+            for statement in func.body
+            for node in walk_own_scope(statement)
+            if isinstance(node, ast.stmt)
+        )
+        for stmt in statements:
             if not hasattr(stmt, "lineno") or stmt.lineno <= block_end_line:
                 continue
 
