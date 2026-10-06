@@ -41,6 +41,7 @@ from typing import List
 
 import pytest
 
+from tests.test_helpers import method_helper_calls
 from tests.test_class_private_helpers import (
     _class_helpers,
     _module_helpers,
@@ -65,14 +66,93 @@ class _Outcome:
     reasons: List[str]
 
 
-def _refactored(tmp_path: Path, source: str, caplog: pytest.LogCaptureFixture) -> _Outcome:
+def _whole_body_companion(source: str) -> str:
+    """Keep original outputs via a default operation, so shared bodies are complete.
+
+    Prefix owners cannot be moved alone. A default callable gives each method
+    its original upper/lower/container conversion while making that complete
+    body shareable. Existing receiver rebinding remains outside this companion.
+    """
+    module = ast.parse(textwrap.dedent(source))
+    typed = False
+    for function in ast.walk(module):
+        if (
+            not isinstance(function, ast.FunctionDef)
+            or function.name
+            not in {"first", "second", "third", "small", "large", "credit", "refund"}
+            or not function.body
+            or not isinstance(function.body[-1], ast.Return)
+        ):
+            continue
+        returned = function.body[-1]
+        value = returned.value
+        operation = value.elts[0] if isinstance(value, ast.Tuple) else value
+        if not isinstance(operation, ast.Call) or operation.keywords:
+            continue
+        argument: ast.expr
+        default: ast.expr
+        if isinstance(operation.func, ast.Attribute) and not operation.args:
+            default = ast.Attribute(
+                value=ast.Name(id="str", ctx=ast.Load()),
+                attr=operation.func.attr,
+                ctx=ast.Load(),
+            )
+            argument = operation.func.value
+        elif (
+            isinstance(operation.func, ast.Name)
+            and operation.func.id in {"tuple", "list"}
+            and len(operation.args) == 1
+        ):
+            default = operation.func
+            argument = operation.args[0]
+        else:
+            continue
+        annotation = None
+        if function.returns is not None:
+            annotation = ast.parse("Callable[[str], str]", mode="eval").body
+            typed = True
+        function.args.args.append(ast.arg(arg="transform", annotation=annotation))
+        function.args.defaults.append(default)
+        invocation = ast.Call(
+            func=ast.Name(id="transform", ctx=ast.Load()), args=[argument], keywords=[]
+        )
+        if isinstance(value, ast.Tuple):
+            value.elts[0] = invocation
+        else:
+            returned.value = invocation
+    if typed:
+        imported = ast.ImportFrom(module="typing", names=[ast.alias(name="Callable")], level=0)
+        future_count = sum(
+            isinstance(node, ast.ImportFrom) and node.module == "__future__" for node in module.body
+        )
+        module.body.insert(future_count, imported)
+    return ast.unparse(ast.fix_missing_locations(module)) + "\n"
+
+
+def _refactored(
+    tmp_path: Path,
+    source: str,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    whole_body: bool = False,
+    max_parameters: int = 5,
+    driver: str = DRIVER,
+) -> _Outcome:
     """Refactor ``pkg/lib.py`` holding ``source`` to a fixed point, tracing why pairs were declined.
 
     The program must print the same before and after, and nothing on stderr.
     """
+    original_output = None
+    if whole_body:
+        original = _project(tmp_path / "original", {"pkg/__init__.py": "", "pkg/lib.py": source})
+        original_output = _run(original, driver, original)
+        source = _whole_body_companion(source)
+        tmp_path = tmp_path / "companion"
     root = _project(tmp_path, {"pkg/__init__.py": "", "pkg/lib.py": source})
-    before = _run(root, DRIVER, root)
-    engine = UnificationRefactorEngine(min_lines=3)
+    before = _run(root, driver, root)
+    if original_output is not None:
+        assert before == original_output, "The companion must preserve the original fixture effects"
+    engine = UnificationRefactorEngine(min_lines=3, max_parameters=max_parameters)
     with (
         caplog.at_level(logging.DEBUG, logger="towel.rejections"),
         contextlib.redirect_stdout(io.StringIO()),
@@ -81,7 +161,7 @@ def _refactored(tmp_path: Path, source: str, caplog: pytest.LogCaptureFixture) -
         results, _ = engine.refactor_directory_to_fixed_point(
             str(root / "pkg"), str(root / "pkg"), progress="none"
         )
-    after = _run(root, DRIVER, root)
+    after = _run(root, driver, root)
     assert before == after, (before, after)
     assert before.endswith("|"), before  # nothing on stderr
     return _Outcome(
@@ -337,7 +417,13 @@ def main():
         (CLASSMETHODS, "Square"),
         (NESTED_SCOPES, "Child"),
     ],
-    ids=["single-inheritance", "diamond", "cooperative-init", "classmethod", "nested-scopes"],
+    ids=[
+        "single-inheritance",
+        "diamond",
+        "cooperative-init",
+        "classmethod",
+        "nested-scopes",
+    ],
 )
 def test_super_moves_into_a_helper_of_the_class_holding_both_duplicates(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, source: str, host: str
@@ -349,7 +435,7 @@ def test_super_moves_into_a_helper_of_the_class_holding_both_duplicates(
     diamond still resolves ``B``, ``C``, ``A`` in order; a helper in any other
     class would have started the search elsewhere.
     """
-    outcome = _refactored(tmp_path, source, caplog)
+    outcome = _refactored(tmp_path, source, caplog, whole_body=True)
     assert outcome.applied == 1
     text = outcome.source
     helpers = _class_helpers(text)
@@ -366,7 +452,7 @@ def test_a_helper_reads_the_class_cell_bare_and_the_call_passes_nothing_for_it(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """``__class__`` beside ``super()`` is the helper's own cell, not an argument of the call."""
-    text = _refactored(tmp_path, DIAMOND, caplog).source
+    text = _refactored(tmp_path, DIAMOND, caplog, whole_body=True).source
     tree = ast.parse(text)
     (helper,) = _helpers_in(text, "D")
     assert "__class__" not in [argument.arg for argument in helper.args.args]
@@ -443,7 +529,7 @@ def test_only_methods_of_the_class_with_the_same_receiver_share_the_helper(
     ``super()`` in ``fourth`` reads whatever ``self`` holds when it runs, and in
     ``Two`` it starts after ``Two``; each keeps its own code.
     """
-    text = _refactored(tmp_path, CLUSTER, caplog).source
+    text = _refactored(tmp_path, CLUSTER, caplog, whole_body=True).source
     helpers = _class_helpers(text)
     assert len(helpers["One"]) == 1 and not helpers["Two"] and not _module_helpers(text)
     methods = {
@@ -454,7 +540,11 @@ def test_only_methods_of_the_class_with_the_same_receiver_share_the_helper(
         if isinstance(item, ast.FunctionDef)
     }
     helper = helpers["One"][0]
-    assert all(f"self.{helper}(" in methods[name] for name in ("first", "second", "third"))
+    for name in ("first", "second", "third"):
+        calls = method_helper_calls(methods[name])
+        assert len(calls) == 1
+        assert isinstance(calls[0].func, ast.Attribute)
+        assert calls[0].func.attr == helper
     assert "super().who()" in methods["fourth"] and "super().who()" in methods["fifth"]
 
 
@@ -835,9 +925,13 @@ def test_super_is_declined_where_no_helper_of_its_class_can_hold_it(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, source: str, reason: str
 ) -> None:
     """Nothing is extracted, for the stated reason, and no module function takes the code instead."""
-    outcome = _refactored(tmp_path, source, caplog)
+    use_companion = reason in {"needs_class_body", "super_in_call"}
+    outcome = _refactored(tmp_path, source, caplog, whole_body=use_companion)
+    expected = (
+        _whole_body_companion(source) if use_companion else textwrap.dedent(source).lstrip("\n")
+    )
     assert outcome.applied == 0, outcome.source
-    assert outcome.source == textwrap.dedent(source).lstrip("\n")
+    assert outcome.source == expected
     assert any(key.partition("[")[0] == reason for key in outcome.reasons), outcome.reasons
 
 
@@ -845,7 +939,7 @@ def test_super_is_declined_where_no_helper_of_its_class_can_hold_it(
 def test_class_decorators_and_hooks_allow_super_in_private_method_helpers(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, source: str
 ) -> None:
-    outcome = _refactored(tmp_path, source, caplog)
+    outcome = _refactored(tmp_path, source, caplog, whole_body=True)
     assert outcome.applied > 0
     assert len(_class_helpers(outcome.source)["One"]) == 1
     assert not _module_helpers(outcome.source)
@@ -882,7 +976,7 @@ def test_super_naming_its_class_and_object_still_moves_to_a_module_function(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """``super(One, self)`` reads no cell: sibling classes share a module function for it."""
-    text = _refactored(tmp_path, EXPLICIT, caplog).source
+    text = _refactored(tmp_path, EXPLICIT, caplog, whole_body=True, max_parameters=6).source
     assert len(_module_helpers(text)) == 1
     assert not any(_class_helpers(text).values())
 
@@ -966,7 +1060,14 @@ def test_a_super_helper_passes_mypy_strict_and_pyright_strict(tmp_path: Path) ->
     from towel.type_inference import MypyInferrer
 
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
-    (tmp_path / "ledger.py").write_text(TYPED.lstrip())
+    original = _project(tmp_path / "original", {"ledger.py": TYPED.lstrip()})
+    original_driver = (
+        "from ledger import Audited, Ledger\n"
+        "for ledger in (Ledger(), Audited()):\n"
+        "    print(ledger.credit(3), ledger.refund(1), ledger.label(0))\n"
+    )
+    expected = _run(original, original_driver, original)
+    (tmp_path / "ledger.py").write_text(_whole_body_companion(TYPED))
     for tool in ("mypy", "pyright"):
         assert _strict_errors(tool, tmp_path / "ledger.py") == []
     driver = (
@@ -975,6 +1076,7 @@ def test_a_super_helper_passes_mypy_strict_and_pyright_strict(tmp_path: Path) ->
         "    print(ledger.credit(3), ledger.refund(1), ledger.label(0))\n"
     )
     before = _run(tmp_path, driver, tmp_path)
+    assert before == expected
     oracle = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
@@ -990,3 +1092,21 @@ def test_a_super_helper_passes_mypy_strict_and_pyright_strict(tmp_path: Path) ->
     assert _run(tmp_path, driver, tmp_path) == before
     for tool in ("mypy", "pyright"):
         assert _strict_errors(tool, tmp_path / "ledger.py") == [], (tool, source)
+
+
+@pytest.mark.parametrize("source", [SINGLE, DIAMOND, CLASSMETHODS, CLUSTER, TYPED])
+def test_original_owned_super_partials_remain_refused(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, source: str
+) -> None:
+    """Preserve the exact prior fixtures; no caller-ownership certificate covers their partials."""
+    driver = (
+        "from pkg.lib import Audited, Ledger\n"
+        "for ledger in (Ledger(), Audited()):\n"
+        "    print(ledger.credit(3), ledger.refund(1), ledger.label(0))\n"
+        if source == TYPED
+        else DRIVER
+    )
+    outcome = _refactored(tmp_path, source, caplog, driver=driver)
+    assert outcome.applied == 0
+    assert outcome.source == textwrap.dedent(source).lstrip("\n")
+    assert "owned_binding_frame_boundary" in outcome.reasons

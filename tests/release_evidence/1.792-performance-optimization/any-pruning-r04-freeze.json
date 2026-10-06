@@ -1,0 +1,25 @@
+{
+  "commit": "e0c185675e094eb14db305eaadd1a918934eaf55",
+  "control": "optimized",
+  "diagnostic_control_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "runtime": "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/any-pruning-r04/venv/lib/python3.13/site-packages/towel",
+  "wheel_sha256": "63331791714bb0d7ef23b20d38e8392bfb20b5848a755399a7f49baaec08329d",
+  "dependencies": {
+    "ast_serialize": "0.11.2",
+    "black": "26.5.1",
+    "click": "8.5.0",
+    "code-towel": "1.792",
+    "isort": "9.0.1",
+    "librt": "0.15.0",
+    "mypy": "2.3.1",
+    "mypy_extensions": "1.1.0",
+    "nodeenv": "1.11.0",
+    "packaging": "26.3",
+    "pathspec": "1.1.1",
+    "platformdirs": "4.12.0",
+    "pyright": "1.1.414",
+    "pytokens": "0.4.1",
+    "ruff": "0.16.9",
+    "typing_extensions": "4.16.0"
+  }
+}

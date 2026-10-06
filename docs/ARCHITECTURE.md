@@ -1184,7 +1184,7 @@ flowchart TD
     queue -- "no" --> global["global pass:<br/>re-pair the files changed<br/>since the last one"]
     global -- "found something" --> queue
     global -- "found nothing" --> pending{"anything declined, and<br/>something applied since<br/>the last rehearing?"}
-    pending -- "yes" --> rehear["rehearing: forget every<br/>declined proposal and<br/>re-pair the whole project"]
+    pending -- "yes" --> rehear["rehearing: retain certified<br/>current-revision refusals and<br/>re-pair the whole project"]
     rehear --> queue
     pending -- "no" --> done["fixed point"]
 ```
@@ -1202,11 +1202,22 @@ pass re-pairs the whole project, because a change in one file can create a
 cross-file duplicate with a file the localized pass never looked at. The
 loop ends after a rehearing: when nothing more applies and something was
 declined that the project has changed under since, the memory of declined
-proposals is cleared and the whole project analysed once more, so each is
-heard against the project as it now stands. Only a rehearing that applies
+proposals from older revisions is cleared and the whole project analysed
+once more. A completed checker refusal can survive this unchanged-revision
+rehearing only for its exact candidate, checker and rendering context. Only a rehearing that applies
 nothing ends the run, and one needs an application since the previous
 rehearing, so a proposal the project keeps refusing cannot make the run
 circle.
+
+`rehearing.py` includes every proposal field and AST attribute in the candidate
+key, serializing its typed projection once. Unknown metadata disables retention.
+The execution context includes built-in checker identities, explicit plugin-free
+configuration bytes, registered live formatters and their configuration, engine
+options, naming state, baseline errors, environment and working directory. Custom
+oracles/callbacks and transient or unknown failures are retried. Every accepted
+source application or stale-source recovery advances the whole-project revision;
+no approximate import-dependency subset substitutes for that revision. Installed
+tools remain fixed during a run. Final project verification remains required.
 
 A global pass after the first re-pairs only functions in files rewritten
 since the previous global pass, together with files of proposals deferred by
@@ -1256,8 +1267,8 @@ previous pass produced from them has since been consumed:
    files are explicitly retained as deferred paths, and the proposal itself is
    remembered for the rest of the run, so no later analysis retries it. One
    further global pass does run on an unchanged revision: the rehearing, which
-   clears that memory and reconsiders the whole project rather than only the
-   files that changed.
+   clears older-revision and uncertified failures and reconsiders the whole
+   project rather than only the files that changed.
 6. *Rejections stand.* A pair rejected by the previous pass is rejected by
    the same guards on the same inputs (1 to 3), except for the cycle guard,
    whose input grew monotonically (4).

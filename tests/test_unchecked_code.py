@@ -58,7 +58,10 @@ def _twins(indent: str = "") -> str:
 
 
 def _run(
-    tmp_path: Path, source: str, oracle: object, config: str = "[tool.mypy]\nstrict = true\n"
+    tmp_path: Path,
+    source: str,
+    oracle: object,
+    config: str = "[tool.mypy]\nstrict = true\n",
 ) -> tuple[str, int, UnificationRefactorEngine]:
     (tmp_path / "pyproject.toml").write_text(config, encoding="utf-8")
     path = tmp_path / "m.py"
@@ -125,18 +128,18 @@ def _guarded(test: str) -> str:
         import sys
 
 
-        def first(value: int) -> int:
+        def first() -> int:
             if {test}:
-                total = value + 1
+                total = 2
                 doubled = total * 2
                 answer = doubled - 3
                 return answer
             return 0
 
 
-        def second(value: int) -> int:
+        def second() -> int:
             if {test}:
-                total = value + 1
+                total = 2
                 doubled = total * 2
                 answer = doubled - 3
                 return answer
@@ -172,21 +175,21 @@ def test_the_branch_the_checker_does_look_at_is_refactored(tmp_path: Path) -> No
         import sys
 
 
-        def first(value: int) -> int:
+        def first() -> int:
             if sys.platform == "win32":
                 return 0
             else:
-                total = value + 1
+                total = 2
                 doubled = total * 2
                 answer = doubled - 3
                 return answer
 
 
-        def second(value: int) -> int:
+        def second() -> int:
             if sys.platform == "win32":
                 raise OSError("unsupported")
             else:
-                total = value + 1
+                total = 2
                 doubled = total * 2
                 answer = doubled - 3
                 return answer
@@ -196,7 +199,7 @@ def test_the_branch_the_checker_does_look_at_is_refactored(tmp_path: Path) -> No
         written, applied, engine = _run(tmp_path, source, oracle)
     finally:
         oracle.close()
-    assert applied == 1 and "def __extracted_func_0(value: int) -> int:" in written, written
+    assert applied == 1 and "def __extracted_func_0() -> int:" in written, written
     assert 'if sys.platform == "win32":\n        return 0' in written
     assert UNCHECKED not in engine.run_report.declined_proposals
 
@@ -254,23 +257,25 @@ def test_dead_code_the_regions_before_the_run_miss_is_refused_by_the_check_itsel
     change is asked about the lines it writes, and refused there.
     """
     source = textwrap.dedent("""
-        def first(value: int) -> int:
+        value: int = 4
+
+        def first() -> int:
             if value:
                 return 1
             else:
                 return 2
-            total = value + 1
+            total = 2
             doubled = total * 2
             answer = doubled - 3
             return answer
 
 
-        def second(value: int) -> int:
+        def second() -> int:
             if value > 3:
                 raise ValueError(value)
             else:
                 return 3
-            total = value + 1
+            total = 2
             doubled = total * 2
             answer = doubled - 3
             return answer
@@ -309,7 +314,10 @@ def test_a_one_line_body_is_probed_on_a_line_of_its_own() -> None:
         "    w = 4",
     ]
     assert plan.sites[(2, 28)] == (3, "    ")
-    assert plan.sites[(2, 35)] == (4, "    "), "each ; sibling has its own reachability question"
+    assert plan.sites[(2, 35)] == (
+        4,
+        "    ",
+    ), "each ; sibling has its own reachability question"
     assert (3, 0) not in plan.sites, "nothing can stand before an elif"
     assert plan.sites[(3, 31)] == (6, "    ") and plan.sites[(4, 6)] == (8, "    ")
 
@@ -350,7 +358,10 @@ def test_a_class_body_is_answered_for_by_its_class() -> None:
     assert plan is not None
     assert plan.sites[(5, 4)] == plan.sites[(4, 0)] == (4, "")
     assert plan.sites[(9, 4)] == plan.sites[(11, 4)] == plan.sites[(8, 0)]
-    assert plan.sites[(12, 8)] == (12, "        "), "a method's body is probed where it stands"
+    assert plan.sites[(12, 8)] == (
+        12,
+        "        ",
+    ), "a method's body is probed where it stands"
 
 
 @requires_mypy

@@ -94,7 +94,7 @@ from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
 from .retained_bindings import spell_retained_bindings
-from .argument_ownership import argument_handoff_plan
+from .argument_ownership import argument_handoff_fits, argument_handoff_plan
 from .narrowing import (
     caller_narrowing_leaves_with_block,
     narrowing_lost_at_call_site,
@@ -1493,6 +1493,9 @@ class PairEvaluation(
             if ownership.split and ownership.whole_body
             else None
         )
+        if handoff is not None and not argument_handoff_fits(func_def, self.unifier.max_parameters):
+            self._debug_reject(RejectReason.OWNERSHIP_PARAMETER_BUDGET, pair)
+            return None
         if ownership.split and handoff is None:
             self._debug_reject(
                 RejectReason.OWNED_BINDING_FRAME_BOUNDARY,

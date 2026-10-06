@@ -195,12 +195,41 @@ def _carry_out(remedy: str) -> None:
     if aside is not None:
         subprocess.run(shlex.split(aside.group(1)), check=True)
         return
-    for mode, path in re.findall(r"chmod (\d+) (/\S+?)(?=,|;| |$)", remedy):
-        os.chmod(path, int(mode, 8))
-    commands = re.findall(r"towel recover (/\S+?)(?=,|;| |$)", remedy)
+    words = _remedy_words(remedy)
+    for index, word in enumerate(words):
+        if word == "chmod":
+            assert words[index + 1] == "--", remedy
+            os.chmod(words[index + 3], int(words[index + 2], 8))
+    commands = _recovery_paths(remedy)
     assert commands, remedy
-    result = invoke(["recover", commands[-1]])
+    result = invoke(["recover", "--", commands[-1]])
     assert result.status == 0, result.stderr
+
+
+def _remedy_words(remedy: str) -> List[str]:
+    """Parse command boundaries outside shell-quoted paths, including commas."""
+    lexer = shlex.shlex(remedy, posix=True, punctuation_chars=";,")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    return list(lexer)
+
+
+def _recovery_paths(remedy: str) -> List[str]:
+    words = _remedy_words(remedy)
+    return [
+        words[index + 3]
+        for index in range(len(words) - 3)
+        if words[index : index + 3] == ["towel", "recover", "--"]
+    ]
+
+
+def test_remedy_parser_preserves_shell_quoted_paths(tmp_path: Path) -> None:
+    journal = tmp_path / "journal with spaces, and 'quotes'"
+    journal.mkdir(mode=0o755)
+    command = shlex.join(["towel", "recover", "--", str(journal)])
+    assert _recovery_paths(f"then run {command}; or move it aside") == [str(journal)]
+    words = _remedy_words(shlex.join(["chmod", "--", "700", str(journal)]))
+    assert words == ["chmod", "--", "700", str(journal)]
 
 
 @pytest.mark.parametrize("case", REFUSES, ids=[case.__name__.strip("_") for case in REFUSES])
@@ -244,7 +273,9 @@ def test_preview_warns_only_of_a_journal_that_may_name_its_files(tmp_path: Path)
     _, journal = _interrupted_transaction(package)
     warned = invoke(["preview", str(package)])
     assert warned.status == 0
-    assert f"recover it first: towel recover {journal}" in warned.stderr
+    assert (
+        "recover it first: " + shlex.join(["towel", "recover", "--", str(journal)]) in warned.stderr
+    )
 
 
 def test_r9p2_an_edited_file_is_recovered_once_the_edit_is_resolved(tmp_path: Path) -> None:
@@ -255,9 +286,9 @@ def test_r9p2_an_edited_file_is_recovered_once_the_edit_is_resolved(tmp_path: Pa
     refused = _dry_in_place(package)
     assert "Recovering would discard that edit" in refused.stderr
     (package / "a.py").write_text("value = 2\n")  # what the interrupted change left
-    commands = re.findall(r"then run towel recover (/\S+?)(?=,|;| |$)", refused.stderr)
+    commands = _recovery_paths(refused.stderr)
     assert commands == [str(journal)], refused.stderr
-    assert invoke(["recover", commands[0]]).status == 0
+    assert invoke(["recover", "--", commands[0]]).status == 0
     assert (package / "a.py").read_text() == "value = 1\n" and not journal.exists()
 
 
@@ -317,7 +348,9 @@ def test_r9p2_an_out_of_place_run_names_the_projects_journal_and_leaves_it_behin
     assert result.status == 0, result.stderr
     assert "Applied 1 refactoring" in result.stdout
     assert "towel-stage-" not in result.stderr
-    assert f"recover it first: towel recover {journal}" in result.stderr
+    assert (
+        "recover it first: " + shlex.join(["towel", "recover", "--", str(journal)]) in result.stderr
+    )
     assert not any(output.rglob(".towel-transaction-*"))
     assert invoke(["recover", str(journal)]).status == 0
     assert (package / "mod.py").read_text() == DUPLICATES

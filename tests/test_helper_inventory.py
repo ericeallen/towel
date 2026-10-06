@@ -166,7 +166,9 @@ def test_inventory_includes_before_after_from_the_dry_sidecar(tmp_path: Path) ->
         assert change["before"] and change["after"]
         # 'before' is the original block; 'after' is the generated call.
         assert "compute(" in change["before"]
-        assert change["after"].startswith("return ") and "(" in change["after"]
+        assert change["after"].splitlines()[-1].startswith("return ")
+        assert change["after"].splitlines()[-1].endswith("_towel_arguments.pop())")
+        assert change["after"].splitlines()[0].startswith("_towel_arguments = [(")
 
 
 def test_inventory_has_empty_changes_without_a_sidecar(tmp_path: Path) -> None:

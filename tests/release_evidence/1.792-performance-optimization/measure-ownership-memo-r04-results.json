@@ -1,0 +1,1154 @@
+[
+  {
+    "ordinal": 1,
+    "stage": "corrected-control-r04",
+    "wall": 51.92027175007388,
+    "child_cpu": 49.481275,
+    "command": [
+      "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/corrected-control-r04/venv/bin/towel",
+      "dry",
+      "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/measure-ownership-memo-r04/1-corrected-control-r04/input/packaging",
+      "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/measure-ownership-memo-r04/1-corrected-control-r04/output",
+      "--no-interactive",
+      "--progress",
+      "detail"
+    ],
+    "exit_code": 0,
+    "applications": [
+      [
+        "19",
+        "8"
+      ]
+    ],
+    "load_before": [
+      9.11962890625,
+      7.470703125,
+      6.59716796875
+    ],
+    "load_after": [
+      7.36572265625,
+      7.26708984375,
+      6.5703125
+    ],
+    "observations": [
+      {
+        "elapsed": 2.0116615830920637,
+        "load": [
+          9.11962890625,
+          7.470703125,
+          6.59716796875
+        ]
+      },
+      {
+        "elapsed": 4.0217103329487145,
+        "load": [
+          8.78955078125,
+          7.42919921875,
+          6.58740234375
+        ]
+      },
+      {
+        "elapsed": 6.021893915953115,
+        "load": [
+          8.78955078125,
+          7.42919921875,
+          6.58740234375
+        ]
+      },
+      {
+        "elapsed": 8.031931041041389,
+        "load": [
+          8.78955078125,
+          7.42919921875,
+          6.58740234375
+        ]
+      },
+      {
+        "elapsed": 10.038335416000336,
+        "load": [
+          8.72607421875,
+          7.4384765625,
+          6.59521484375
+        ]
+      },
+      {
+        "elapsed": 12.048372250050306,
+        "load": [
+          8.72607421875,
+          7.4384765625,
+          6.59521484375
+        ]
+      },
+      {
+        "elapsed": 14.058070291066542,
+        "load": [
+          8.42724609375,
+          7.39794921875,
+          6.58544921875
+        ]
+      },
+      {
+        "elapsed": 16.068153833039105,
+        "load": [
+          8.42724609375,
+          7.39794921875,
+          6.58544921875
+        ]
+      },
+      {
+        "elapsed": 18.07077729096636,
+        "load": [
+          8.42724609375,
+          7.39794921875,
+          6.58544921875
+        ]
+      },
+      {
+        "elapsed": 20.080830791033804,
+        "load": [
+          8.953125,
+          7.52392578125,
+          6.63427734375
+        ]
+      },
+      {
+        "elapsed": 22.08515679091215,
+        "load": [
+          8.953125,
+          7.52392578125,
+          6.63427734375
+        ]
+      },
+      {
+        "elapsed": 24.09519241610542,
+        "load": [
+          8.55615234375,
+          7.46533203125,
+          6.61865234375
+        ]
+      },
+      {
+        "elapsed": 26.098830958129838,
+        "load": [
+          8.55615234375,
+          7.46533203125,
+          6.61865234375
+        ]
+      },
+      {
+        "elapsed": 28.10065154102631,
+        "load": [
+          8.55615234375,
+          7.46533203125,
+          6.61865234375
+        ]
+      },
+      {
+        "elapsed": 30.110698957927525,
+        "load": [
+          8.27099609375,
+          7.42431640625,
+          6.60888671875
+        ]
+      },
+      {
+        "elapsed": 32.12073804112151,
+        "load": [
+          8.27099609375,
+          7.42431640625,
+          6.60888671875
+        ]
+      },
+      {
+        "elapsed": 34.12734837504104,
+        "load": [
+          7.9287109375,
+          7.3671875,
+          6.59326171875
+        ]
+      },
+      {
+        "elapsed": 36.12858441611752,
+        "load": [
+          7.9287109375,
+          7.3671875,
+          6.59326171875
+        ]
+      },
+      {
+        "elapsed": 38.13502599997446,
+        "load": [
+          7.9287109375,
+          7.3671875,
+          6.59326171875
+        ]
+      },
+      {
+        "elapsed": 40.14195275004022,
+        "load": [
+          7.69384765625,
+          7.32763671875,
+          6.58349609375
+        ]
+      },
+      {
+        "elapsed": 42.14795612497255,
+        "load": [
+          7.69384765625,
+          7.32763671875,
+          6.58349609375
+        ]
+      },
+      {
+        "elapsed": 44.155312333023176,
+        "load": [
+          7.39794921875,
+          7.27197265625,
+          6.56787109375
+        ]
+      },
+      {
+        "elapsed": 46.16535604093224,
+        "load": [
+          7.39794921875,
+          7.27197265625,
+          6.56787109375
+        ]
+      },
+      {
+        "elapsed": 48.17394812498242,
+        "load": [
+          7.39794921875,
+          7.27197265625,
+          6.56787109375
+        ]
+      },
+      {
+        "elapsed": 50.18399166595191,
+        "load": [
+          7.36572265625,
+          7.26708984375,
+          6.5703125
+        ]
+      },
+      {
+        "elapsed": 51.920097625115886,
+        "load": [
+          7.36572265625,
+          7.26708984375,
+          6.5703125
+        ]
+      }
+    ],
+    "input_sha256": {
+      "packaging/__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+      "packaging/_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+      "packaging/_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+      "packaging/_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+      "packaging/_parser.py": "88a348115209327497e453b635e5db099fd592f9335d710c7313b29cdb30c50c",
+      "packaging/_ranges.py": "b7b595f2e692aeb3697c545b85c24cbbcb4552f2adc6d9059aa82d0877e816b7",
+      "packaging/_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+      "packaging/_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+      "packaging/dependency_groups.py": "5309cc564ca3022dfb594816e9d593bb09cdf34208c1fb8c5ec9afb6c670278c",
+      "packaging/direct_url.py": "843baa95d04cbb49288de9d9fd77ee946e862cb603123e7e46a69e171fa7d06b",
+      "packaging/errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+      "packaging/licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+      "packaging/licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+      "packaging/markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+      "packaging/metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+      "packaging/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "packaging/pylock.py": "1bce0a9fe63e42b87e8ced05da272baf16a68aa704b3718405e2735a6112467c",
+      "packaging/ranges.py": "b4781ce913e5dff9e07906f20585c54c3028e1f7ff56341828e79d522ddbfab6",
+      "packaging/requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+      "packaging/specifiers.py": "661ad31ddf45ffb861d2626734f4e3d66966029b8fdb79586bb105825d8d9d59",
+      "packaging/tags.py": "0e717a082a79620d79cf0321b420df15593c4916fcda03c27cb9d82e07ef5d6e",
+      "packaging/utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+      "packaging/version.py": "558b2fb50fd198c660a4c082f96b8919c565911b6b4b6e07f34b6b60c074be97",
+      "pyproject.toml": "f0614796cab0fd138f7bfd05db2d05e2dbeb28ab651dae54ea9a7367f3a06de9"
+    },
+    "output_sha256": {
+      ".towel-helpers.json": "eed0826c0ded13886cb0f02aeae1f14e0a976f17ff7a99bbf1afd944a441dec0",
+      "__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+      "_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+      "_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+      "_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+      "_parser.py": "88a348115209327497e453b635e5db099fd592f9335d710c7313b29cdb30c50c",
+      "_ranges.py": "1ac863aafdcc3b00c4e40a2b314da4bf1e01a69e15b700e060371de97ed79743",
+      "_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+      "_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+      "dependency_groups.py": "7a04097da37a44ab4f42e28dd881fe46f87f441c940f983c080ca66d276985d0",
+      "direct_url.py": "5d0258be6b1f6fce5a7e5150cab2e9c7673b478c56110608d56aeec6bb9328f8",
+      "errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+      "licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+      "licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+      "markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+      "metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+      "py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pylock.py": "b60d0ecbe980688d9b3b3d231494fc615e95b590cf9f01589dc2958f23f5bc16",
+      "ranges.py": "9524c178719d0dd5cd194b73ab324539588e308421a1b4ec65b85b7e6637a290",
+      "requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+      "specifiers.py": "5d412c4774b230c343bbb2cf3334ab621385c67dea755310f3a52aa4ee76f650",
+      "tags.py": "934753eb44e48ced2651b51fc68a756db6f51a2bf2063aaa3828c92f03488453",
+      "utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+      "version.py": "13fa7206b3033a5b74f6747d23d666af8875dcac8fba8390acfb4d1f1ba8e5b1"
+    }
+  },
+  {
+    "ordinal": 2,
+    "stage": "ownership-memo-r04",
+    "wall": 50.643509624991566,
+    "child_cpu": 48.570125000000004,
+    "command": [
+      "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/ownership-memo-r04/venv/bin/towel",
+      "dry",
+      "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/measure-ownership-memo-r04/2-ownership-memo-r04/input/packaging",
+      "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/measure-ownership-memo-r04/2-ownership-memo-r04/output",
+      "--no-interactive",
+      "--progress",
+      "detail"
+    ],
+    "exit_code": 0,
+    "applications": [
+      [
+        "19",
+        "8"
+      ]
+    ],
+    "load_before": [
+      7.36572265625,
+      7.26708984375,
+      6.5703125
+    ],
+    "load_after": [
+      7.2919921875,
+      7.3291015625,
+      6.63623046875
+    ],
+    "observations": [
+      {
+        "elapsed": 2.011669165920466,
+        "load": [
+          7.49658203125,
+          7.29541015625,
+          6.58447265625
+        ]
+      },
+      {
+        "elapsed": 4.0217210000846535,
+        "load": [
+          7.49658203125,
+          7.29541015625,
+          6.58447265625
+        ]
+      },
+      {
+        "elapsed": 6.031763749895617,
+        "load": [
+          7.49658203125,
+          7.29541015625,
+          6.58447265625
+        ]
+      },
+      {
+        "elapsed": 8.040088957874104,
+        "load": [
+          7.29638671875,
+          7.2568359375,
+          6.57470703125
+        ]
+      },
+      {
+        "elapsed": 10.04417779087089,
+        "load": [
+          7.29638671875,
+          7.2568359375,
+          6.57470703125
+        ]
+      },
+      {
+        "elapsed": 12.051504791015759,
+        "load": [
+          8.4736328125,
+          7.50146484375,
+          6.6650390625
+        ]
+      },
+      {
+        "elapsed": 14.056774915894493,
+        "load": [
+          8.4736328125,
+          7.50146484375,
+          6.6650390625
+        ]
+      },
+      {
+        "elapsed": 16.06462795799598,
+        "load": [
+          8.4736328125,
+          7.50146484375,
+          6.6650390625
+        ]
+      },
+      {
+        "elapsed": 18.07466849987395,
+        "load": [
+          8.515625,
+          7.52587890625,
+          6.6787109375
+        ]
+      },
+      {
+        "elapsed": 20.081833249889314,
+        "load": [
+          8.515625,
+          7.52587890625,
+          6.6787109375
+        ]
+      },
+      {
+        "elapsed": 22.08651241590269,
+        "load": [
+          8.15380859375,
+          7.46728515625,
+          6.66259765625
+        ]
+      },
+      {
+        "elapsed": 24.09592237486504,
+        "load": [
+          8.15380859375,
+          7.46728515625,
+          6.66259765625
+        ]
+      },
+      {
+        "elapsed": 26.105958166066557,
+        "load": [
+          8.15380859375,
+          7.46728515625,
+          6.66259765625
+        ]
+      },
+      {
+        "elapsed": 28.115249499911442,
+        "load": [
+          7.90087890625,
+          7.42626953125,
+          6.65283203125
+        ]
+      },
+      {
+        "elapsed": 30.116855500033125,
+        "load": [
+          7.90087890625,
+          7.42626953125,
+          6.65283203125
+        ]
+      },
+      {
+        "elapsed": 32.12225770787336,
+        "load": [
+          8.22900390625,
+          7.501953125,
+          6.68408203125
+        ]
+      },
+      {
+        "elapsed": 34.12259995797649,
+        "load": [
+          8.22900390625,
+          7.501953125,
+          6.68408203125
+        ]
+      },
+      {
+        "elapsed": 36.123758000088856,
+        "load": [
+          8.22900390625,
+          7.501953125,
+          6.68408203125
+        ]
+      },
+      {
+        "elapsed": 38.125972165958956,
+        "load": [
+          7.89013671875,
+          7.443359375,
+          6.66796875
+        ]
+      },
+      {
+        "elapsed": 40.135285374941304,
+        "load": [
+          7.89013671875,
+          7.443359375,
+          6.66796875
+        ]
+      },
+      {
+        "elapsed": 42.14532637502998,
+        "load": [
+          7.57861328125,
+          7.3857421875,
+          6.65185546875
+        ]
+      },
+      {
+        "elapsed": 44.15171375009231,
+        "load": [
+          7.57861328125,
+          7.3857421875,
+          6.65185546875
+        ]
+      },
+      {
+        "elapsed": 46.156898708082736,
+        "load": [
+          7.57861328125,
+          7.3857421875,
+          6.65185546875
+        ]
+      },
+      {
+        "elapsed": 48.16064104088582,
+        "load": [
+          7.2919921875,
+          7.3291015625,
+          6.63623046875
+        ]
+      },
+      {
+        "elapsed": 50.170718415873125,
+        "load": [
+          7.2919921875,
+          7.3291015625,
+          6.63623046875
+        ]
+      },
+      {
+        "elapsed": 50.64328745799139,
+        "load": [
+          7.2919921875,
+          7.3291015625,
+          6.63623046875
+        ]
+      }
+    ],
+    "input_sha256": {
+      "packaging/__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+      "packaging/_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+      "packaging/_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+      "packaging/_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+      "packaging/_parser.py": "88a348115209327497e453b635e5db099fd592f9335d710c7313b29cdb30c50c",
+      "packaging/_ranges.py": "b7b595f2e692aeb3697c545b85c24cbbcb4552f2adc6d9059aa82d0877e816b7",
+      "packaging/_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+      "packaging/_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+      "packaging/dependency_groups.py": "5309cc564ca3022dfb594816e9d593bb09cdf34208c1fb8c5ec9afb6c670278c",
+      "packaging/direct_url.py": "843baa95d04cbb49288de9d9fd77ee946e862cb603123e7e46a69e171fa7d06b",
+      "packaging/errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+      "packaging/licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+      "packaging/licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+      "packaging/markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+      "packaging/metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+      "packaging/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "packaging/pylock.py": "1bce0a9fe63e42b87e8ced05da272baf16a68aa704b3718405e2735a6112467c",
+      "packaging/ranges.py": "b4781ce913e5dff9e07906f20585c54c3028e1f7ff56341828e79d522ddbfab6",
+      "packaging/requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+      "packaging/specifiers.py": "661ad31ddf45ffb861d2626734f4e3d66966029b8fdb79586bb105825d8d9d59",
+      "packaging/tags.py": "0e717a082a79620d79cf0321b420df15593c4916fcda03c27cb9d82e07ef5d6e",
+      "packaging/utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+      "packaging/version.py": "558b2fb50fd198c660a4c082f96b8919c565911b6b4b6e07f34b6b60c074be97",
+      "pyproject.toml": "f0614796cab0fd138f7bfd05db2d05e2dbeb28ab651dae54ea9a7367f3a06de9"
+    },
+    "output_sha256": {
+      ".towel-helpers.json": "eed0826c0ded13886cb0f02aeae1f14e0a976f17ff7a99bbf1afd944a441dec0",
+      "__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+      "_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+      "_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+      "_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+      "_parser.py": "88a348115209327497e453b635e5db099fd592f9335d710c7313b29cdb30c50c",
+      "_ranges.py": "1ac863aafdcc3b00c4e40a2b314da4bf1e01a69e15b700e060371de97ed79743",
+      "_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+      "_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+      "dependency_groups.py": "7a04097da37a44ab4f42e28dd881fe46f87f441c940f983c080ca66d276985d0",
+      "direct_url.py": "5d0258be6b1f6fce5a7e5150cab2e9c7673b478c56110608d56aeec6bb9328f8",
+      "errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+      "licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+      "licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+      "markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+      "metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+      "py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pylock.py": "b60d0ecbe980688d9b3b3d231494fc615e95b590cf9f01589dc2958f23f5bc16",
+      "ranges.py": "9524c178719d0dd5cd194b73ab324539588e308421a1b4ec65b85b7e6637a290",
+      "requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+      "specifiers.py": "5d412c4774b230c343bbb2cf3334ab621385c67dea755310f3a52aa4ee76f650",
+      "tags.py": "934753eb44e48ced2651b51fc68a756db6f51a2bf2063aaa3828c92f03488453",
+      "utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+      "version.py": "13fa7206b3033a5b74f6747d23d666af8875dcac8fba8390acfb4d1f1ba8e5b1"
+    }
+  },
+  {
+    "ordinal": 3,
+    "stage": "ownership-memo-r04",
+    "wall": 49.17125150002539,
+    "child_cpu": 48.55681299999998,
+    "command": [
+      "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/ownership-memo-r04/venv/bin/towel",
+      "dry",
+      "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/measure-ownership-memo-r04/3-ownership-memo-r04/input/packaging",
+      "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/measure-ownership-memo-r04/3-ownership-memo-r04/output",
+      "--no-interactive",
+      "--progress",
+      "detail"
+    ],
+    "exit_code": 0,
+    "applications": [
+      [
+        "19",
+        "8"
+      ]
+    ],
+    "load_before": [
+      7.2919921875,
+      7.3291015625,
+      6.63623046875
+    ],
+    "load_after": [
+      7.2197265625,
+      7.39111328125,
+      6.70361328125
+    ],
+    "observations": [
+      {
+        "elapsed": 2.00559079204686,
+        "load": [
+          7.2685546875,
+          7.3232421875,
+          6.63818359375
+        ]
+      },
+      {
+        "elapsed": 4.008228332968429,
+        "load": [
+          7.2685546875,
+          7.3232421875,
+          6.63818359375
+        ]
+      },
+      {
+        "elapsed": 6.01902149990201,
+        "load": [
+          7.2685546875,
+          7.3232421875,
+          6.63818359375
+        ]
+      },
+      {
+        "elapsed": 8.020782167091966,
+        "load": [
+          8.60791015625,
+          7.60009765625,
+          6.73974609375
+        ]
+      },
+      {
+        "elapsed": 10.03083208296448,
+        "load": [
+          8.60791015625,
+          7.60009765625,
+          6.73974609375
+        ]
+      },
+      {
+        "elapsed": 12.037331874947995,
+        "load": [
+          8.47900390625,
+          7.58984375,
+          6.7412109375
+        ]
+      },
+      {
+        "elapsed": 14.047368542058393,
+        "load": [
+          8.47900390625,
+          7.58984375,
+          6.7412109375
+        ]
+      },
+      {
+        "elapsed": 16.04823683295399,
+        "load": [
+          8.47900390625,
+          7.58984375,
+          6.7412109375
+        ]
+      },
+      {
+        "elapsed": 18.053581041982397,
+        "load": [
+          8.2802734375,
+          7.56298828125,
+          6.73681640625
+        ]
+      },
+      {
+        "elapsed": 20.06295374990441,
+        "load": [
+          8.2802734375,
+          7.56298828125,
+          6.73681640625
+        ]
+      },
+      {
+        "elapsed": 22.063315249979496,
+        "load": [
+          8.09765625,
+          7.53662109375,
+          6.732421875
+        ]
+      },
+      {
+        "elapsed": 24.064010582864285,
+        "load": [
+          8.09765625,
+          7.53662109375,
+          6.732421875
+        ]
+      },
+      {
+        "elapsed": 26.07060245797038,
+        "load": [
+          8.09765625,
+          7.53662109375,
+          6.732421875
+        ]
+      },
+      {
+        "elapsed": 28.08063566708006,
+        "load": [
+          8.40966796875,
+          7.6103515625,
+          6.76318359375
+        ]
+      },
+      {
+        "elapsed": 30.08293345803395,
+        "load": [
+          8.40966796875,
+          7.6103515625,
+          6.76318359375
+        ]
+      },
+      {
+        "elapsed": 32.092980624875054,
+        "load": [
+          8.13623046875,
+          7.56689453125,
+          6.75244140625
+        ]
+      },
+      {
+        "elapsed": 34.097906874958426,
+        "load": [
+          8.13623046875,
+          7.56689453125,
+          6.75244140625
+        ]
+      },
+      {
+        "elapsed": 36.102567417081445,
+        "load": [
+          8.13623046875,
+          7.56689453125,
+          6.75244140625
+        ]
+      },
+      {
+        "elapsed": 38.10429749987088,
+        "load": [
+          7.8046875,
+          7.50732421875,
+          6.73583984375
+        ]
+      },
+      {
+        "elapsed": 40.10599466692656,
+        "load": [
+          7.8046875,
+          7.50732421875,
+          6.73583984375
+        ]
+      },
+      {
+        "elapsed": 42.109697124920785,
+        "load": [
+          7.5,
+          7.44873046875,
+          6.7197265625
+        ]
+      },
+      {
+        "elapsed": 44.11083050002344,
+        "load": [
+          7.5,
+          7.44873046875,
+          6.7197265625
+        ]
+      },
+      {
+        "elapsed": 46.11986766709015,
+        "load": [
+          7.5,
+          7.44873046875,
+          6.7197265625
+        ]
+      },
+      {
+        "elapsed": 48.12030183291063,
+        "load": [
+          7.2197265625,
+          7.39111328125,
+          6.70361328125
+        ]
+      },
+      {
+        "elapsed": 49.17100370791741,
+        "load": [
+          7.2197265625,
+          7.39111328125,
+          6.70361328125
+        ]
+      }
+    ],
+    "input_sha256": {
+      "packaging/__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+      "packaging/_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+      "packaging/_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+      "packaging/_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+      "packaging/_parser.py": "88a348115209327497e453b635e5db099fd592f9335d710c7313b29cdb30c50c",
+      "packaging/_ranges.py": "b7b595f2e692aeb3697c545b85c24cbbcb4552f2adc6d9059aa82d0877e816b7",
+      "packaging/_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+      "packaging/_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+      "packaging/dependency_groups.py": "5309cc564ca3022dfb594816e9d593bb09cdf34208c1fb8c5ec9afb6c670278c",
+      "packaging/direct_url.py": "843baa95d04cbb49288de9d9fd77ee946e862cb603123e7e46a69e171fa7d06b",
+      "packaging/errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+      "packaging/licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+      "packaging/licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+      "packaging/markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+      "packaging/metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+      "packaging/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "packaging/pylock.py": "1bce0a9fe63e42b87e8ced05da272baf16a68aa704b3718405e2735a6112467c",
+      "packaging/ranges.py": "b4781ce913e5dff9e07906f20585c54c3028e1f7ff56341828e79d522ddbfab6",
+      "packaging/requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+      "packaging/specifiers.py": "661ad31ddf45ffb861d2626734f4e3d66966029b8fdb79586bb105825d8d9d59",
+      "packaging/tags.py": "0e717a082a79620d79cf0321b420df15593c4916fcda03c27cb9d82e07ef5d6e",
+      "packaging/utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+      "packaging/version.py": "558b2fb50fd198c660a4c082f96b8919c565911b6b4b6e07f34b6b60c074be97",
+      "pyproject.toml": "f0614796cab0fd138f7bfd05db2d05e2dbeb28ab651dae54ea9a7367f3a06de9"
+    },
+    "output_sha256": {
+      ".towel-helpers.json": "eed0826c0ded13886cb0f02aeae1f14e0a976f17ff7a99bbf1afd944a441dec0",
+      "__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+      "_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+      "_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+      "_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+      "_parser.py": "88a348115209327497e453b635e5db099fd592f9335d710c7313b29cdb30c50c",
+      "_ranges.py": "1ac863aafdcc3b00c4e40a2b314da4bf1e01a69e15b700e060371de97ed79743",
+      "_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+      "_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+      "dependency_groups.py": "7a04097da37a44ab4f42e28dd881fe46f87f441c940f983c080ca66d276985d0",
+      "direct_url.py": "5d0258be6b1f6fce5a7e5150cab2e9c7673b478c56110608d56aeec6bb9328f8",
+      "errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+      "licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+      "licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+      "markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+      "metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+      "py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pylock.py": "b60d0ecbe980688d9b3b3d231494fc615e95b590cf9f01589dc2958f23f5bc16",
+      "ranges.py": "9524c178719d0dd5cd194b73ab324539588e308421a1b4ec65b85b7e6637a290",
+      "requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+      "specifiers.py": "5d412c4774b230c343bbb2cf3334ab621385c67dea755310f3a52aa4ee76f650",
+      "tags.py": "934753eb44e48ced2651b51fc68a756db6f51a2bf2063aaa3828c92f03488453",
+      "utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+      "version.py": "13fa7206b3033a5b74f6747d23d666af8875dcac8fba8390acfb4d1f1ba8e5b1"
+    }
+  },
+  {
+    "ordinal": 4,
+    "stage": "corrected-control-r04",
+    "wall": 47.67592312488705,
+    "child_cpu": 47.549796000000015,
+    "command": [
+      "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/corrected-control-r04/venv/bin/towel",
+      "dry",
+      "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/measure-ownership-memo-r04/4-corrected-control-r04/input/packaging",
+      "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/measure-ownership-memo-r04/4-corrected-control-r04/output",
+      "--no-interactive",
+      "--progress",
+      "detail"
+    ],
+    "exit_code": 0,
+    "applications": [
+      [
+        "19",
+        "8"
+      ]
+    ],
+    "load_before": [
+      7.2197265625,
+      7.39111328125,
+      6.70361328125
+    ],
+    "load_after": [
+      5.44287109375,
+      6.88037109375,
+      6.552734375
+    ],
+    "observations": [
+      {
+        "elapsed": 2.0115830418653786,
+        "load": [
+          7.2197265625,
+          7.39111328125,
+          6.70361328125
+        ]
+      },
+      {
+        "elapsed": 4.0142408749088645,
+        "load": [
+          6.96142578125,
+          7.33447265625,
+          6.6875
+        ]
+      },
+      {
+        "elapsed": 6.0194620420224965,
+        "load": [
+          6.96142578125,
+          7.33447265625,
+          6.6875
+        ]
+      },
+      {
+        "elapsed": 8.02950408286415,
+        "load": [
+          6.80419921875,
+          7.29541015625,
+          6.67724609375
+        ]
+      },
+      {
+        "elapsed": 10.031963541870937,
+        "load": [
+          6.80419921875,
+          7.29541015625,
+          6.67724609375
+        ]
+      },
+      {
+        "elapsed": 12.037309666862711,
+        "load": [
+          6.80419921875,
+          7.29541015625,
+          6.67724609375
+        ]
+      },
+      {
+        "elapsed": 14.040937499841675,
+        "load": [
+          6.49951171875,
+          7.2236328125,
+          6.6552734375
+        ]
+      },
+      {
+        "elapsed": 16.0443137078546,
+        "load": [
+          6.49951171875,
+          7.2236328125,
+          6.6552734375
+        ]
+      },
+      {
+        "elapsed": 18.054346666904166,
+        "load": [
+          6.21923828125,
+          7.1533203125,
+          6.6337890625
+        ]
+      },
+      {
+        "elapsed": 20.064384874887764,
+        "load": [
+          6.21923828125,
+          7.1533203125,
+          6.6337890625
+        ]
+      },
+      {
+        "elapsed": 22.064653666922823,
+        "load": [
+          6.21923828125,
+          7.1533203125,
+          6.6337890625
+        ]
+      },
+      {
+        "elapsed": 24.074683082988486,
+        "load": [
+          6.20166015625,
+          7.1337890625,
+          6.6298828125
+        ]
+      },
+      {
+        "elapsed": 26.082112042000517,
+        "load": [
+          6.20166015625,
+          7.1337890625,
+          6.6298828125
+        ]
+      },
+      {
+        "elapsed": 28.083625207887962,
+        "load": [
+          6.02490234375,
+          7.08154296875,
+          6.6142578125
+        ]
+      },
+      {
+        "elapsed": 30.08629500004463,
+        "load": [
+          6.02490234375,
+          7.08154296875,
+          6.6142578125
+        ]
+      },
+      {
+        "elapsed": 32.09146137489006,
+        "load": [
+          6.02490234375,
+          7.08154296875,
+          6.6142578125
+        ]
+      },
+      {
+        "elapsed": 34.09163145790808,
+        "load": [
+          5.8623046875,
+          7.0302734375,
+          6.5986328125
+        ]
+      },
+      {
+        "elapsed": 36.09764691698365,
+        "load": [
+          5.8623046875,
+          7.0302734375,
+          6.5986328125
+        ]
+      },
+      {
+        "elapsed": 38.09964429191314,
+        "load": [
+          5.712890625,
+          6.9794921875,
+          6.5830078125
+        ]
+      },
+      {
+        "elapsed": 40.10231295786798,
+        "load": [
+          5.712890625,
+          6.9794921875,
+          6.5830078125
+        ]
+      },
+      {
+        "elapsed": 42.11200274992734,
+        "load": [
+          5.712890625,
+          6.9794921875,
+          6.5830078125
+        ]
+      },
+      {
+        "elapsed": 44.12203179183416,
+        "load": [
+          5.65576171875,
+          6.9462890625,
+          6.57373046875
+        ]
+      },
+      {
+        "elapsed": 46.12366445781663,
+        "load": [
+          5.65576171875,
+          6.9462890625,
+          6.57373046875
+        ]
+      },
+      {
+        "elapsed": 47.675727624911815,
+        "load": [
+          5.44287109375,
+          6.88037109375,
+          6.552734375
+        ]
+      }
+    ],
+    "input_sha256": {
+      "packaging/__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+      "packaging/_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+      "packaging/_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+      "packaging/_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+      "packaging/_parser.py": "88a348115209327497e453b635e5db099fd592f9335d710c7313b29cdb30c50c",
+      "packaging/_ranges.py": "b7b595f2e692aeb3697c545b85c24cbbcb4552f2adc6d9059aa82d0877e816b7",
+      "packaging/_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+      "packaging/_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+      "packaging/dependency_groups.py": "5309cc564ca3022dfb594816e9d593bb09cdf34208c1fb8c5ec9afb6c670278c",
+      "packaging/direct_url.py": "843baa95d04cbb49288de9d9fd77ee946e862cb603123e7e46a69e171fa7d06b",
+      "packaging/errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+      "packaging/licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+      "packaging/licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+      "packaging/markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+      "packaging/metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+      "packaging/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "packaging/pylock.py": "1bce0a9fe63e42b87e8ced05da272baf16a68aa704b3718405e2735a6112467c",
+      "packaging/ranges.py": "b4781ce913e5dff9e07906f20585c54c3028e1f7ff56341828e79d522ddbfab6",
+      "packaging/requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+      "packaging/specifiers.py": "661ad31ddf45ffb861d2626734f4e3d66966029b8fdb79586bb105825d8d9d59",
+      "packaging/tags.py": "0e717a082a79620d79cf0321b420df15593c4916fcda03c27cb9d82e07ef5d6e",
+      "packaging/utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+      "packaging/version.py": "558b2fb50fd198c660a4c082f96b8919c565911b6b4b6e07f34b6b60c074be97",
+      "pyproject.toml": "f0614796cab0fd138f7bfd05db2d05e2dbeb28ab651dae54ea9a7367f3a06de9"
+    },
+    "output_sha256": {
+      ".towel-helpers.json": "eed0826c0ded13886cb0f02aeae1f14e0a976f17ff7a99bbf1afd944a441dec0",
+      "__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+      "_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+      "_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+      "_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+      "_parser.py": "88a348115209327497e453b635e5db099fd592f9335d710c7313b29cdb30c50c",
+      "_ranges.py": "1ac863aafdcc3b00c4e40a2b314da4bf1e01a69e15b700e060371de97ed79743",
+      "_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+      "_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+      "dependency_groups.py": "7a04097da37a44ab4f42e28dd881fe46f87f441c940f983c080ca66d276985d0",
+      "direct_url.py": "5d0258be6b1f6fce5a7e5150cab2e9c7673b478c56110608d56aeec6bb9328f8",
+      "errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+      "licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+      "licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+      "markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+      "metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+      "py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "pylock.py": "b60d0ecbe980688d9b3b3d231494fc615e95b590cf9f01589dc2958f23f5bc16",
+      "ranges.py": "9524c178719d0dd5cd194b73ab324539588e308421a1b4ec65b85b7e6637a290",
+      "requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+      "specifiers.py": "5d412c4774b230c343bbb2cf3334ab621385c67dea755310f3a52aa4ee76f650",
+      "tags.py": "934753eb44e48ced2651b51fc68a756db6f51a2bf2063aaa3828c92f03488453",
+      "utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+      "version.py": "13fa7206b3033a5b74f6747d23d666af8875dcac8fba8390acfb4d1f1ba8e5b1"
+    }
+  }
+]

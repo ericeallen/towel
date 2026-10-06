@@ -66,20 +66,22 @@ GUARDED = textwrap.dedent("""
 
 # The same shape with the differing expressions reading a name no test narrows.
 INDEPENDENT = textwrap.dedent("""
-    def describe_first(value: object, label: str) -> str:
+    from typing import Callable
+
+    def describe_first(value: object, label: str, transform: Callable[[str], str] = str.upper, separator: str = "_") -> str:
         if not isinstance(value, str):
             return "not a string"
-        prefix = label.strip().upper()
+        prefix = transform(label.strip())
         joined = prefix + ":" + value
-        return joined.replace(" ", "_")
+        return joined.replace(" ", separator)
 
 
-    def describe_second(value: object, label: str) -> str:
+    def describe_second(value: object, label: str, transform: Callable[[str], str] = str.lower, separator: str = "-") -> str:
         if not isinstance(value, str):
             return "not a string"
-        prefix = label.strip().lower()
+        prefix = transform(label.strip())
         joined = prefix + ":" + value
-        return joined.replace(" ", "-")
+        return joined.replace(" ", separator)
     """).lstrip()
 
 
@@ -99,6 +101,17 @@ def test_a_guard_separated_from_its_use_is_refused(tmp_path: Path) -> None:
 def test_a_guard_whose_narrowing_nothing_left_behind_needs_is_kept(tmp_path: Path) -> None:
     """The refusal must cost only the extractions that would actually break."""
     assert _proposals(tmp_path, INDEPENDENT) != []
+    engine = UnificationRefactorEngine(min_lines=2, reuse_existing_functions=False)
+    written, applied, _ = engine.refactor_to_fixed_point(str(tmp_path / "m.py"), progress="none")
+    assert applied > 0
+    for source in (INDEPENDENT, written):
+        namespace: dict[str, object] = {}
+        exec(
+            source + "\nresult = (describe_first('one two', ' Tag '), "
+            "describe_second('one two', ' Tag '), describe_first(1, 'Tag'))",
+            namespace,
+        )
+        assert namespace["result"] == ("TAG:one_two", "tag:one-two", "not a string")
 
 
 def _helper(source: str) -> ast.FunctionDef:

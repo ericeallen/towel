@@ -21,6 +21,7 @@ reading a different binding, or reading the right binding on an untaken path.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 import sys
 import textwrap
@@ -37,9 +38,37 @@ REQUIRES_TYPE_PARAMETERS = pytest.mark.skipif(
 )
 
 
-def _assert_preserved(source: str, expected: str, tmp_path: Path) -> None:
+def _assert_preserved(
+    source: str, expected: str, tmp_path: Path, *, safe_companion: bool = False
+) -> None:
     before = tmp_path / "before.py"
     before.write_text(textwrap.dedent(source))
+    if safe_companion:
+        # Retain the original owned-frame refusal and its binding observations.
+        guarded = UnificationRefactorEngine(settings=SERIAL)
+        unchanged, count, _ = guarded.refactor_to_fixed_point(str(before), progress="none")
+        assert count == 0 and unchanged == before.read_text()
+        assert observe("before.py", tmp_path) == (0, expected, [])
+        module = ast.parse(textwrap.dedent(source))
+        for function in list(ast.walk(module)):
+            if isinstance(function, ast.FunctionDef) and function.name in {
+                "first",
+                "second",
+                "third",
+            }:
+                # A bind-free inner effect block can move while the outer
+                # generic/unbound lexical references keep their exact scope.
+                prefix = ast.parse(
+                    "def _safe_effects():\n"
+                    "    _lexical_events.append(1)\n"
+                    "    _lexical_events.append(2)\n"
+                    "    _lexical_events.append(3)\n"
+                    "_safe_effects()\n"
+                ).body
+                function.body[:0] = prefix
+        module.body.insert(0, ast.parse("_lexical_events = []").body[0])
+        source = ast.unparse(ast.fix_missing_locations(module))
+        before.write_text(source)
     engine = UnificationRefactorEngine(settings=SERIAL)
     final, applied, _ = engine.refactor_to_fixed_point(str(before), progress="none")
     assert applied > 0, "The regression must exercise a real transformation"
@@ -63,11 +92,13 @@ def test_generic_functions_keep_their_own_type_parameter_identity(
     return a, c
 """ for name in names)
     source += "\n".join(f"print({name}(1)[0] is {name}.__type_params__[0])" for name in names)
-    _assert_preserved(source, "True\n" * site_count, tmp_path)
+    _assert_preserved(source, "True\n" * site_count, tmp_path, safe_companion=True)
 
 
 @REQUIRES_TYPE_PARAMETERS
-def test_partial_generic_function_bodies_keep_type_parameter_bindings(tmp_path: Path) -> None:
+def test_partial_generic_function_bodies_keep_type_parameter_bindings(
+    tmp_path: Path,
+) -> None:
     _assert_preserved(
         """
         def first[T](x):
@@ -89,6 +120,7 @@ def test_partial_generic_function_bodies_keep_type_parameter_bindings(tmp_path: 
         """,
         "T1 T2\n",
         tmp_path,
+        safe_companion=True,
     )
 
 
@@ -163,6 +195,7 @@ def test_unbound_local_shadows_builtins_and_module_bindings(name: str, tmp_path:
         """,
         "7 7 13 15\n",
         tmp_path,
+        safe_companion=True,
     )
 
 
@@ -202,7 +235,8 @@ def test_unbound_closure_cell_shadows_builtins_and_module_bindings(
 
 @REQUIRES_TYPE_PARAMETERS
 def test_unbound_function_local_shadows_its_type_parameter(tmp_path: Path) -> None:
-    source = "\n".join(f"""def {name}[T](flag):
+    source = "\n".join(
+        f"""def {name}[T](flag):
     {binding}
         T = 7
     if flag:
@@ -212,6 +246,11 @@ def test_unbound_function_local_shadows_its_type_parameter(tmp_path: Path) -> No
     b = a * 2
     c = b - 3
     return c
-""" for name, binding in (("first", "if flag:"), ("second", "for _ in range(int(flag)):")))
+"""
+        for name, binding in (
+            ("first", "if flag:"),
+            ("second", "for _ in range(int(flag)):"),
+        )
+    )
     source += "print(first(False), second(False), first(True), second(True))\n"
-    _assert_preserved(source, "7 7 13 13\n", tmp_path)
+    _assert_preserved(source, "7 7 13 13\n", tmp_path, safe_companion=True)

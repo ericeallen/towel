@@ -130,7 +130,7 @@ BUILTIN_CALLER_LOOKUPS = {
     "xf9xi_type_only_import_of_a_missing_module",
 }
 
-TRANSFORMED = {
+HISTORICAL_EXTRACTIONS = {
     "xf1792_ci_strict_any",
     "xf1792_typed_shared_helper_comments",
     "xf1792_excluded_probe_import",
@@ -260,6 +260,55 @@ REFUSED: Dict[str, str] = {
 }
 """Packages whose run Towel refuses before writing anything, with the file the refusal names."""
 
+# Preserve the original import, checker and runtime fixtures. A proved host
+# load does not also prove that a split frame can transfer owned locals on
+# exceptional paths, or that every retained local is bound at block exit.
+OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "r9dc_star_import_that_cannot_bind_a_decorator": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf10_reuse_existing_function": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf1792_typed_shared_helper_comments": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7d_asserts_shared_by_modules_rewritten_alike": "retained local is not definitely bound on every block exit",
+    "xf7fz_extra_typed_binder_message_mypy": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_extra_typed_binder_message_pyright": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_grammar_t11094_semicolon": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_misc_typed_for_prebound_mypy": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_modules_init_hosts": "retained local is not definitely bound on every block exit",
+    "xf7fz_modules_script_main_guard": "retained local is not definitely bound on every block exit",
+    "xf7fz_typeguard2_from_compat_true_both": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_typeguard2_from_compat_true_late_use_both": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_typeguard2_from_compat_true_late_use_mypy": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_typeguard2_from_compat_true_mypy": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_typeguard2_import_alias_flag_both": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_typeguard2_import_alias_flag_mypy": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+}
+EXPLICIT_OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "xf21_builtin_shadowed_in_third_module": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf24_relative_import_climbs_elsewhere": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf25_relative_import_in_the_same_package": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf27_registration_decorator_in_host": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_binding_x_class_level_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_binding_x_dunder_file": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_builtins_x_shadow_in_b": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_grammar_u0624_for_target_prebound": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_grammar_u1209_for_target_prebound": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_modules_b_imports_a": "retained local is not definitely bound on every block exit",
+    "xf7fz_modules_rel_import_in_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_modules_three_modules_cluster": "retained local is not definitely bound on every block exit",
+    "xf7n_host_the_wheel_leaves_out": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7n_subpackage_the_wheel_leaves_out": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf9xi_type_only_import_of_a_missing_module": "retained local is not definitely bound on every block exit",
+}
+CALLER_LOOKUP_OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "xf11_package_init_reaches_back": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+}
+REFLECTION_OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "r9dc_star_import_binds_an_instrumenting_decorator": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r9dc_star_import_of_a_module_part_way_through_a_cycle": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+}
+TRANSFORMED = HISTORICAL_EXTRACTIONS - OWNERSHIP_REFUSALS.keys()
+REJECTED |= OWNERSHIP_REFUSALS.keys()
+
 TYPED = frozenset(
     {
         "xf1792_ci_strict_any",
@@ -384,18 +433,30 @@ def _check_directory_program_output(
             modules = _modules(before)
             assert module_faces(after, modules) == module_faces(before, modules)
         if case not in KNOWN_DEFECTS:
+            ordinary_refusal = (
+                case in EXPLICIT_OWNERSHIP_REFUSALS
+                if explicit_imports
+                else (
+                    case in CALLER_LOOKUP_OWNERSHIP_REFUSALS
+                    if parameterize_builtins
+                    else case in OWNERSHIP_REFUSALS
+                )
+            )
             # Pinned only once the defect is fixed: a fix that declines the
             # package must show as an XPASS, not fail here as expected.
             assert (
-                results or case in REJECTED
+                results or case in REJECTED or ordinary_refusal
             ), "Each fixture must exercise a real cross-file extraction"
             assert transformed == (
-                bool(explicit_imports)
-                or case in TRANSFORMED
-                or (
-                    parameterize_builtins
-                    and case in BUILTIN_CALLER_LOOKUPS
-                    and case not in IMPORT_REFUSALS
+                not ordinary_refusal
+                and (
+                    bool(explicit_imports)
+                    or case in TRANSFORMED
+                    or (
+                        parameterize_builtins
+                        and case in BUILTIN_CALLER_LOOKUPS
+                        and case not in IMPORT_REFUSALS
+                    )
                 )
             ), ("rejected" if not transformed else "transformed")
 
@@ -492,7 +553,11 @@ def test_instrumentation_does_not_veto_directory_extraction(tmp_path: Path, case
         file_finisher=scopes,
         parameterize_builtins=True,
     )
-    assert sum(applied for applied, _ in results.values()) > 0, REFLECTION_CASES[case]
+    applied = sum(applied for applied, _ in results.values())
+    if case in REFLECTION_OWNERSHIP_REFUSALS:
+        assert applied == 0, REFLECTION_OWNERSHIP_REFUSALS[case]
+    else:
+        assert applied > 0, REFLECTION_CASES[case]
     assert scopes.found == []
     for path in (root / "pkg").rglob("*.py"):
         compile(path.read_bytes(), str(path), "exec")

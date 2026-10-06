@@ -7,6 +7,7 @@ Use this guide to estimate a run and understand the limits of the published meas
 On this page:
 
 - [Measurement conditions](#measurement-conditions)
+- [October 6 optimization experiments](#october-6-optimization-experiments)
 - [October 5 repaired candidate comparison](#october-5-repaired-candidate-comparison)
 - [October 2 complete CLI comparison](#october-2-complete-cli-comparison)
 - [Planning and bounding a run](#planning-and-bounding-a-run)
@@ -15,7 +16,7 @@ On this page:
 
 ## How long it takes
 
-The repaired 1.792 runtime is **11.9% slower** than published 1.772 on the
+The October 5 repaired 1.792 runtime was **11.9% slower** than published 1.772 on the
 October 5 complete typed, formatted Packaging comparison: 43.43 seconds versus
 38.80 seconds. This is one controlled fixture, not a whole-corpus estimate.
 The candidate performs more extractions, but that does not establish improved
@@ -30,6 +31,33 @@ whole-corpus speedup is established. The
 [comparison report](proposals/published-1772-comparison.md)
 records the precise source/artifact identities, alternating runs and ordinary
 background activity. The older timings below retain their historical scope.
+
+### October 6 optimization experiments
+
+The audit repairs changed the runtime after the October 5 freeze. Those older
+release gates and timings do not validate the new source. Complete installed CLI
+controls from correctness checkpoint `e0c185675e094eb14db305eaadd1a918934eaf55`
+used the same Python/dependencies and fresh copies of the same Packaging slice.
+Each comparison used two samples per arm in ABBA order, with default typing,
+formatting, automatic workers and final checking. All outputs were byte-identical:
+19 refactorings across 8 files.
+
+| Optimization | Control mean seconds | Enabled mean seconds | Measured wall benefit |
+| --- | ---: | ---: | --- |
+| Immutable statement ownership memo | 49.80 | 49.91 | None established |
+| Witnessed Any-result retry pruning | 47.49 | 48.59 | None established |
+
+These small samples include changing ordinary host activity. They do not establish
+a regression, a general speedup, or a new comparison with published 1.772. The
+ownership memo reduced its isolated repeated-input CPU cost by about 93 percent,
+but that phase reduction has not translated into a measurable complete-command
+benefit. The second optimization preserves precise signatures and skips only
+parameter erasure that cannot repair a witnessed fixed-Any return diagnostic.
+
+The third implementation retains completed type refusals only for an unchanged
+whole-project revision and exact candidate/checker/rendering context. Its focused
+controls pass; complete CLI measurement remains pending. Matrix and corpus reruns
+remain pending explicit authorization.
 
 ### October 5 repaired candidate comparison
 

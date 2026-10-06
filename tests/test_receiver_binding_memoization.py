@@ -29,6 +29,7 @@ import pytest
 from towel.unification import placement
 from towel.unification.bounded_cache import memoization_disabled
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.test_helpers import method_helper_calls
 
 
 @pytest.mark.parametrize("name", ["Self", "missing"])
@@ -147,4 +148,4 @@ class Box:
         assert applied > 0
         outputs.append(result)
     assert outputs[0] == outputs[1]
-    assert "self.__extracted_func_" in outputs[0]
+    assert method_helper_calls(outputs[0])

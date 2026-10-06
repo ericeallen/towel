@@ -31,7 +31,12 @@ from typing import List, Mapping, Sequence
 
 import pytest
 
-from towel.type_inference import CheckResult, CheckSuccess, RevealRequest, TypeDiagnostic
+from towel.type_inference import (
+    CheckResult,
+    CheckSuccess,
+    RevealRequest,
+    TypeDiagnostic,
+)
 from towel.unification.models import FunctionNode, RefactoringProposal
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -56,13 +61,15 @@ class _RefusedInsideTheHelper(CountingMypy):
 
 
 SUMS = """
-def first(values: list[int]) -> int:
+def first() -> int:
+    values = [1, 2]
     total = sum(values)
     count = len(values)
     return total + count
 
 
-def second(items: list[int]) -> int:
+def second() -> int:
+    items = [1, 2]
     total = sum(items)
     count = len(items)
     return total * count
@@ -82,7 +89,9 @@ def test_the_unannotated_rung_is_not_tried_where_annotations_are_required(
     )
     assert outcome.error is not None
     assert outcome.checked_helpers, outcome
-    assert all(": " in signature for signature in outcome.checked_helpers), outcome.checked_helpers
+    assert all(
+        " -> " in signature for signature in outcome.checked_helpers
+    ), outcome.checked_helpers
 
 
 @requires_mypy
@@ -113,19 +122,23 @@ class _RevealsNothing(CountingMypy):
 
 
 @requires_mypy
-def test_a_helper_inference_left_bare_still_gets_the_fallback_rungs(tmp_path: Path) -> None:
+def test_a_helper_inference_left_bare_still_gets_the_fallback_rungs(
+    tmp_path: Path,
+) -> None:
     outcome = apply_one(
         tmp_path,
         """
-        def first(text: str) -> int:
+        def first() -> int:
+            text = "same input"
             words = text.split()
             size = len(words)
             doubled = size * 2
             return doubled
 
 
-        def second(line: str) -> int:
-            parts = line.split(",")
+        def second() -> int:
+            line = "same input"
+            parts = line.split()
             size = len(parts)
             doubled = size * 2
             return doubled + 1
@@ -274,7 +287,10 @@ def test_the_type_the_block_saw_replaces_a_wider_declared_one(tmp_path: Path) ->
         pick="append and append_text",
     )
     assert outcome.error is None, outcome.error
-    assert outcome.signature() in {"(self, text: 'Text') -> None", "(self, text: Text) -> None"}
+    assert outcome.signature() in {
+        "(self, length: int, text: 'Text') -> None",
+        "(self, length: int, text: Text) -> None",
+    }
     assert outcome.prospective_checks == 1, outcome.checked_helpers
 
 
@@ -324,7 +340,10 @@ def test_a_variant_accepted_after_a_replayed_refusal_is_still_probed_for_reachab
         (tmp_path / "versions.py").write_text(
             VERSIONS.lstrip()
             .replace("tuple[int, int] | None", "Any")
-            .replace("from helpers import key", "from typing import Any\n\nfrom helpers import key")
+            .replace(
+                "from helpers import key",
+                "from typing import Any\n\nfrom helpers import key",
+            )
         )
         engine = UnificationRefactorEngine(
             min_lines=2, reuse_existing_functions=False, type_oracle=oracle

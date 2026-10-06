@@ -317,6 +317,7 @@ class RejectReason(StrEnum):
     CONDITIONALLY_IMPORTED_HOST = "conditionally_imported_host"
     CREATED_OBJECT_ESCAPES = "created_object_escapes"
     OWNED_BINDING_EXCEPTION_BOUNDARY = "owned_binding_exception_boundary"
+    OWNERSHIP_PARAMETER_BUDGET = "ownership_parameter_budget"
     CROSS_MODULE_GLOBAL_DECLARATION = "cross_module_global_declaration"
     EXISTING_HELPER_BECOMES_FORWARDER = "existing_helper_becomes_forwarder"
     FRAME_READ_IN_FUNCTION = "frame_read_in_function"

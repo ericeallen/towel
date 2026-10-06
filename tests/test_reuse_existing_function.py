@@ -28,8 +28,12 @@ import ast
 import contextlib
 import io
 from pathlib import Path
+import subprocess
+import sys
+import textwrap
 from typing import Unpack
 
+from tests.test_functions_keep_their_own_bodies import _assert_owned_helper_call
 from tests.test_helpers import (
     EngineOptions,
     module_functions,
@@ -93,12 +97,23 @@ def _extracted_helper(
     return helper
 
 
+def _observed(source: str, driver: str) -> str:
+    return subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(source) + "\n" + driver],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout
+
+
 def test_identical_functions_both_call_one_new_helper(tmp_path: Path) -> None:
     final = _fixed_point(write_module(tmp_path, IDENTICAL_PAIR))
     helper = _extracted_helper(final, ("alpha", "beta"))
     functions = module_functions(final)
-    assert unparsed_body(functions["alpha"]) == f"return {helper}(value)"
-    assert unparsed_body(functions["beta"]) == f"return {helper}(value)"
+    _assert_owned_helper_call(functions["alpha"], functions[helper], ("value",))
+    _assert_owned_helper_call(functions["beta"], functions[helper], ("value",))
+    assert _observed(final, "print(alpha(3), beta(5))") == "8 12\n"
 
 
 def test_the_proposal_extracts_a_helper_and_reuses_no_function(tmp_path: Path) -> None:
@@ -112,30 +127,46 @@ def test_the_proposal_extracts_a_helper_and_reuses_no_function(tmp_path: Path) -
     ]
 
 
-def test_a_block_inside_a_larger_function_shares_the_helper_with_a_whole_body(
-    tmp_path: Path,
-) -> None:
-    final = _fixed_point(
-        write_module(
-            tmp_path,
-            """
-            def norm(items):
-                total = sum(items)
-                scaled = [i / total for i in items]
-                return scaled
+def test_a_partial_owned_body_declines_but_complete_bodies_share(tmp_path: Path) -> None:
+    original = """
+    def norm(items):
+        total = sum(items)
+        scaled = [i / total for i in items]
+        return scaled
 
-            def report(data, label):
-                print(label)
-                total = sum(data)
-                scaled = [i / total for i in data]
-                return scaled
-            """,
-        )
-    )
+    def report(data, label):
+        print(label)
+        total = sum(data)
+        scaled = [i / total for i in data]
+        return scaled
+    """
+    driver = "print(norm([1, 3]), report([2, 2], 'report'))"
+    unchanged = _fixed_point(write_module(tmp_path, original))
+    assert ast.dump(ast.parse(unchanged)) == ast.dump(ast.parse(textwrap.dedent(original)))
+    assert _observed(unchanged, driver) == _observed(original, driver)
+    # A complete matching body can transfer both arguments without changing
+    # norm's quiet behavior or report's label effect.
+    whole = """
+    def norm(items, label=None):
+        if label is not None:
+            print(label)
+        total = sum(items)
+        scaled = [i / total for i in items]
+        return scaled
+
+    def report(data, label):
+        if label is not None:
+            print(label)
+        total = sum(data)
+        scaled = [i / total for i in data]
+        return scaled
+    """
+    final = _fixed_point(write_module(tmp_path, whole, "whole.py"))
     helper = _extracted_helper(final, ("norm", "report"))
     functions = module_functions(final)
-    assert unparsed_body(functions["report"]) == f"print(label)\nreturn {helper}(data)"
-    assert "norm(" not in unparsed_body(functions["report"])
+    _assert_owned_helper_call(functions["norm"], functions[helper], ("items", "label"))
+    _assert_owned_helper_call(functions["report"], functions[helper], ("data", "label"))
+    assert _observed(final, driver) == _observed(original, driver)
 
 
 def test_three_copies_all_call_one_helper(tmp_path: Path) -> None:
@@ -182,48 +213,75 @@ def test_a_method_and_a_function_share_a_helper(tmp_path: Path) -> None:
         )
     )
     assert "return alpha(value)" not in final
-    assert "_extracted_func_0(value)" in final
+    functions = module_functions(final)
+    helpers = [node for name, node in functions.items() if name != "alpha"]
+    (helper,) = helpers
+    _assert_owned_helper_call(functions["alpha"], helper, ("value",))
+    klass = next(node for node in ast.parse(final).body if isinstance(node, ast.ClassDef))
+    method = next(node for node in klass.body if isinstance(node, ast.FunctionDef))
+    storage, delete_self, delete_value, invocation = method.body
+    assert isinstance(storage, ast.Assign) and isinstance(storage.targets[0], ast.Name)
+    box = storage.targets[0].id
+    assert ast.dump(storage.value) == ast.dump(ast.parse("[(value, self)]", mode="eval").body)
+    assert ast.dump(delete_self) == ast.dump(ast.parse("del self").body[0])
+    assert ast.dump(delete_value) == ast.dump(ast.parse("del value").body[0])
+    expected = ast.parse(f"return {helper.name}({box}[0][0], {box}.pop())").body[0]
+    assert ast.dump(invocation) == ast.dump(expected)
+    assert len(helper.args.args + helper.args.posonlyargs) == 2
+    assert _observed(final, "print(alpha(3), K().m(5))") == "8 12\n"
 
 
-def test_non_returning_bodies_call_the_helper_as_a_statement(tmp_path: Path) -> None:
-    final = _fixed_point(
-        write_module(
-            tmp_path,
-            """
-            def alpha(items, log):
-                for i in items:
-                    log.append(i * 2)
-                log.append(len(items))
+def test_non_returning_owned_loop_declines_and_binding_free_statements_share(
+    tmp_path: Path,
+) -> None:
+    body = """
+    def alpha(items, log):
+        for i in items:
+            log.append(i * 2)
+        log.append(len(items))
 
-            def beta(items, log):
-                for i in items:
-                    log.append(i * 2)
-                log.append(len(items))
-            """,
-        )
+    def beta(items, log):
+        for i in items:
+            log.append(i * 2)
+        log.append(len(items))
+    """
+    final = _fixed_point(write_module(tmp_path, body))
+    assert ast.dump(ast.parse(final)) == ast.dump(ast.parse(textwrap.dedent(body)))
+    safe = textwrap.dedent(body).replace(
+        "    for i in items:\n        log.append(i * 2)",
+        "    log.append(items[0] * 2)\n    log.append(items[1] * 2)",
     )
+    final = _fixed_point(write_module(tmp_path, safe, "statements.py"))
     helper = _extracted_helper(final, ("alpha", "beta"))
-    assert unparsed_body(module_functions(final)["beta"]) == f"{helper}(items, log)"
+    functions = module_functions(final)
+    assert unparsed_body(functions["beta"]) == f"{helper}(items, log)"
+    driver = "log=[]; print(alpha([1, 3], log), beta([2, 4], log), log)"
+    assert _observed(final, driver) == _observed(body, driver) == "None None [2, 6, 2, 4, 8, 2]\n"
 
 
-def test_async_duplicates_share_a_synchronous_helper(tmp_path: Path) -> None:
-    final = _fixed_point(
-        write_module(
-            tmp_path,
-            """
-            async def alpha(value):
-                tmp = value + 1
-                total = tmp * 2
-                return total
+def test_async_owned_bodies_decline_but_binding_free_work_shares(tmp_path: Path) -> None:
+    original = """
+    async def alpha(value):
+        tmp = value + 1
+        total = tmp * 2
+        return total
 
-            async def gamma(value):
-                tmp = value + 1
-                total = tmp * 2
-                return total
-            """,
-        )
+    async def gamma(value):
+        tmp = value + 1
+        total = tmp * 2
+        return total
+    """
+    final = _fixed_point(write_module(tmp_path, original))
+    assert ast.dump(ast.parse(final)) == ast.dump(ast.parse(textwrap.dedent(original)))
+    safe = textwrap.dedent(original).replace(
+        "    tmp = value + 1\n    total = tmp * 2\n    return total",
+        "    value + 1\n    value * 2\n    return (value + 1) * 2",
     )
-    _extracted_helper(final, ("alpha", "gamma"))
+    final = _fixed_point(write_module(tmp_path, safe, "async_safe.py"))
+    helper = _extracted_helper(final, ("alpha", "gamma"))
+    assert isinstance(module_functions(final)[helper], ast.FunctionDef)
+    driver = "import asyncio; print(asyncio.run(alpha(3)), asyncio.run(gamma(5)))"
+    assert _observed(final, driver) == _observed(original, driver) == "8 12\n"
 
 
 def test_globally_rebound_functions_share_a_helper(tmp_path: Path) -> None:
@@ -299,7 +357,9 @@ def test_a_cross_file_site_imports_the_new_helper(tmp_path: Path) -> None:
     a_source, b_source = (package / "a.py").read_text(), (package / "b.py").read_text()
     helper = _extracted_helper(a_source, ("alpha",))
     assert f"from .a import {helper}" in b_source
-    assert unparsed_body(module_functions(b_source)["beta"]) == f"return {helper}(value)"
+    _assert_owned_helper_call(
+        module_functions(b_source)["beta"], module_functions(a_source)[helper], ("value",)
+    )
 
 
 def test_a_cross_file_helper_is_hosted_where_no_import_cycle_closes(tmp_path: Path) -> None:

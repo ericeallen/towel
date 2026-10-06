@@ -37,6 +37,8 @@ from typing import Mapping, Sequence
 
 import pytest
 
+from tests.test_helpers import method_helper_calls
+
 from towel.pyright_session import (
     UNSEEN_MARKER_TIMEOUT_SECONDS,
     PyrightSession,
@@ -224,29 +226,25 @@ def test_a_directory_pyright_excludes_costs_no_wait(tmp_path: Path) -> None:
         helper.args.kwonlyargs,
         helper.args.defaults,
     ) == (None, None, [], [])
-    assert [parameter.arg for parameter in helper.args.args] == ["prefix"]
+    assert [parameter.arg for parameter in helper.args.args] == ["prefix", "_towel_owner"]
     assert helper.args.posonlyargs[0].annotation is None
     annotations = [
         ast.unparse(parameter.annotation)
-        for parameter in helper.args.posonlyargs + helper.args.args
+        for parameter in helper.args.posonlyargs + helper.args.args[:-1]
         if parameter.annotation is not None
     ]
     assert annotations == [
         "_typing.Any",
         "str",
     ], "what the sites declare and Any for the rest: nothing would check an inferred type"
+    assert isinstance(helper.args.args[-1].annotation, ast.Constant)
+    assert helper.args.args[-1].annotation.value == "object"
     assert helper.returns is not None and ast.unparse(helper.returns) == "str"
-    calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == helper.name
-    ]
+    calls = method_helper_calls(written)
     assert len(calls) == 2
     assert all(
         isinstance(call.func, ast.Attribute)
-        and ast.unparse(call.func.value) == "self"
+        and call.func.attr == helper.name
         and not call.keywords
         and len(call.args) + 1 == len(helper.args.posonlyargs + helper.args.args)
         for call in calls

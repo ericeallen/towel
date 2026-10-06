@@ -29,6 +29,7 @@ import pytest
 from towel.unification.bounded_cache import memoization_disabled
 from towel.unification.placement import _dispatches_on
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.test_helpers import method_helper_calls
 
 METHODS = """class Box:
     offset = 10
@@ -97,4 +98,4 @@ def test_placement_memos_preserve_exact_fixed_point_output(
         assert applied > 0
         outputs.append(result)
     assert outputs[0] == outputs[1]
-    assert "self.__extracted_func_" in outputs[0]
+    assert method_helper_calls(outputs[0])

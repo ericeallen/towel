@@ -30,8 +30,8 @@ lands the fixture passes, pytest reports the XPASS as a failure, and the
 fixture moves from ``KNOWN_DEFECTS`` to ``TRANSFORMED`` or stays out of both.
 
 ``REFLECTION_CASES`` instead records examples outside the equivalence contract.
-Their separate test requires extraction and valid generated syntax, without
-asserting runtime preservation for reflection or body instrumentation.
+Their separate test pins extraction or an ordinary ownership refusal and
+valid syntax, without asserting preservation for reflection or instrumentation.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ from tests.hostile_refactoring import refactor_script, with_known_defects
 
 CASES = Path(__file__).parent / "hostile_cases"
 
-TRANSFORMED = {
+HISTORICAL_EXTRACTIONS = {
     "r1792_factory_finalizer_continuation",
     "r1792_factory_finalizer_order",
     "r1792_aliased_suppress_conditional_read",
@@ -404,6 +404,122 @@ TRANSFORMED = {
 # r86_annotated_assignment_live left the set when the trivial-helper filter
 # began declining its shared block, which binds only a literal and a parameter.
 
+# These original fixtures continue to check ordinary effects and scope. Their
+# earlier extraction pins predate the ownership proof: an exceptional exit
+# cannot hand new owned locals back to a caller retaining other values, and
+# a conditionally unbound local cannot be returned just to extend its lifetime.
+OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "h04_closure_freevar": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "h39_augassign_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "h52_del_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "h61_str_method_param": "retained local is not definitely bound on every block exit",
+    "r103_lambda_parameter_spelling": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r107_unbound_global_argument": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r108_clustered_sites_assign_the_returned_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r109_eager_optional_import_failed": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r110_eager_type_checking_import": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r111_eager_module_except_as_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r112_eager_module_match_capture_unmatched": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r113_eager_class_attr_in_method": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r114_eager_nested_class_attr": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r115_eager_class_in_function_attr": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r116_eager_enclosing_bound_after_inner_call": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r117_eager_enclosing_deleted_before_inner_call": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r118_eager_enclosing_conditionally_bound": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r119_eager_module_def_and_class_after_call": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r120_eager_module_import_after_call": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r121_eager_comprehension_variable": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r122_eager_lambda_parameter": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r130_resource_observed_after_block_differs": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r133_formfeed": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r139_literal_roundtrip": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r140_unbound_name_on_untaken_branch": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r141_module_name_bound_after_an_early_call": "retained local is not definitely bound on every block exit",
+    "r142_module_data_rebound_by_callback": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r143_module_name_shadowed_by_a_local_elsewhere": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r154_bare_annotation_reads_the_caller": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r156_created_objects_that_escape": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r157_created_objects_only_called": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r1792_aliased_suppress_conditional_read": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r1792_factory_finalizer_continuation": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r1792_factory_finalizer_order": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r27_del_subscript": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r39_cluster_alpha": "ordered retained-value slots do not align across sites",
+    "r45_async_no_await": "retained local is not definitely bound on every block exit",
+    "r46_nonlocal_counter": "retained local is not definitely bound on every block exit",
+    "r69_annassign": "retained local is not definitely bound on every block exit",
+    "r76_return_order": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7bi_augassign_and_del_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7bi_except_name_in_nested_block": "retained local is not definitely bound on every block exit",
+    "r7bi_loop_capture_def_rebind_prebound": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7bi_renamed_binder_named_by_unbound_error": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7c_top_level_copy_beside_a_loop_copy": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7d_method_helper_in_a_testcase": "retained local is not definitely bound on every block exit",
+    "r7fz_binding_builtin_rebound_mid_module": "retained local is not definitely bound on every block exit",
+    "r7fz_binding_class_attr_vs_local": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_binding_loop_var_leak": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_builtins_differ_in_builtin": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_builtins_param_named_len": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_builtins_print_shadowed_local": "retained local is not definitely bound on every block exit",
+    "r7fz_classhost_dataclass_slots_super": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_dunder_class_same_class": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_enum_methods": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_getattr_fallback": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_siblings_plain": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_underscore_class_names": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_zero_arg_super": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_directives_fmt_off_region": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_directives_type_ignore_line": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_grammar_u0417_augassign_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_late_after_block_augassign": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_late_after_block_del": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_literals_cast_literal": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_literals_enum_functional": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_literals_gettext_differ": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_literals_typevar_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_misc_async_no_await": "retained local is not definitely bound on every block exit",
+    "r7fz_misc_binder_renamed_del_message": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_misc_binder_renamed_unbound_message_inner": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_misc_generator_return_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_misc_mutable_default_host": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_misc_nested_host_called_early": "retained local is not definitely bound on every block exit",
+    "r7fz_misc_super_inside_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_prebound_class_conditional_rebind": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_prebound_def_conditional_rebind": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_prebound_for_else_prebound": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_prebound_for_read_in_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_prebound_match_capture_prebound": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_srctext_form_feed": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_srctext_semicolons_continuations": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_srctext_tabs_indent": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_thunks2_lambda_kwdefault": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_thunks_conditional": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_thunks_lambda_default_first": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_thunks_match_guard": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_thunks_short_circuit_and": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7sp_block_ends_before_a_semicolon": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r87_nested_function_in_method": "physical helper parameters plus ownership holder exceed max5",
+    "r94_import_binds_live_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r96_unpacked_targets_live": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r9bd_only_binding_read_before_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+}
+REFLECTION_OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "r106_dir_reads_the_frame": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r123_direct_eval_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r124_eval_alias_reads_preblock_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r125_locals_dir_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r127_eval_alias_partial_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r145_getframe_assigned_alias": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_init_subclass_wraps": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_metaclass_registry": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+}
+TRANSFORMED = (HISTORICAL_EXTRACTIONS - OWNERSHIP_REFUSALS.keys()) | {
+    # Certified complete-body handoff, or a binding-free inner effect block.
+    "r1792_protocol_context_target",
+    "r1792_protocol_iteration_target",
+    "r1792_value_return_owner",
+}
+
 KNOWN_DEFECTS: Dict[str, str] = {}
 """Fixtures whose defect is reported and not yet fixed, each with its reason from
 ``tests/audit_defects.py``. None is open: every round-3 P1 fixture passes."""
@@ -482,6 +598,11 @@ def test_reflection_does_not_veto_extraction(tmp_path: Path, case: str) -> None:
     script = tmp_path / "m.py"
     shutil.copy(fixture, script)
     scopes = ScopeWatch()
-    assert refactor_script(script, file_finisher=scopes) > 0, REFLECTION_CASES[case]
+    applied = refactor_script(script, file_finisher=scopes)
+    if case in REFLECTION_OWNERSHIP_REFUSALS:
+        # Reflection has no veto: the same ordinary ownership guard applies.
+        assert applied == 0, REFLECTION_OWNERSHIP_REFUSALS[case]
+    else:
+        assert applied > 0, REFLECTION_CASES[case]
     compile(script.read_text(), str(script), "exec")
     assert scopes.found == []

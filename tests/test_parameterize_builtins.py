@@ -78,6 +78,8 @@ def _refactor(target: Path, parameterize_builtins: bool) -> Tuple[int, Mapping[s
     """
     engine = UnificationRefactorEngine(
         min_lines=3,
+        # The complete body includes its header effect and argument owner.
+        max_parameters=6,
         parameterize_builtins=parameterize_builtins,
         cross_module_helpers=target.is_dir(),
     )
@@ -212,7 +214,7 @@ def test_a_site_reading_the_builtin_shares_with_one_binding_its_name_only_with_t
     applied, declined = _refactor(after / "m.py", parameterize_builtins=flag)
     if flag:
         assert applied == 1
-        assert _parameters(after) == [["__param_0", "__param_1", "name", "rows"]]
+        assert _parameters(after) == [["__param_0", "__param_1", "name", "rows", "_towel_owner"]]
     else:
         assert applied == 0
         assert "builtin_argument" in declined
@@ -220,16 +222,18 @@ def test_a_site_reading_the_builtin_shares_with_one_binding_its_name_only_with_t
 
 
 @pytest.mark.parametrize("flag", [False, True])
-def test_a_clustered_builtin_site_requires_a_helper_that_preserves_lookup(
+def test_local_owned_sites_do_not_reuse_their_eager_helper_for_a_builtin_site(
     tmp_path: Path, flag: bool
 ) -> None:
     before, after = tmp_path / "before", tmp_path / "after"
     for root in (before, after):
         _write(root, {"m.py": CLUSTERED + "\n", "drive.py": SAME_MODULE_DRIVER})
     applied, _ = _refactor(after / "m.py", parameterize_builtins=flag)
-    assert applied == (2 if flag else 1)
+    assert applied == 1
     calls = _calls((after / "m.py").read_text())
-    assert (calls["first"], calls["second"], calls["third"]) == (1, 1, 1 if flag else 0)
+    # The first two local sites establish an eager ABI. A builtin site cannot
+    # reuse that ABI: it requires caller lookups and a fresh ownership helper.
+    assert (calls["first"], calls["second"], calls["third"]) == (1, 1, 0)
     assert _run(after, "drive.py") == _run(before, "drive.py")
 
 
@@ -380,7 +384,7 @@ def test_the_flag_preserves_cross_module_lookups_and_same_module_bare_reads(tmp_
     applied, _ = _refactor(tmp_path / "proj" / "pkg", parameterize_builtins=True)
     assert applied > 0
     assert _parameters(tmp_path / "proj") == [
-        ["__param_0", "__param_1", "__param_2", "name", "rows"]
+        ["__param_0", "__param_1", "__param_2", "name", "rows", "_towel_owner"]
     ]
     same_module = tmp_path / "same" / "m.py"
     _write(
@@ -388,7 +392,7 @@ def test_the_flag_preserves_cross_module_lookups_and_same_module_bare_reads(tmp_
         {"m.py": _function("first(rows, name)", "a") + "\n\n\n" + _function("s(rows, name)", "b")},
     )
     assert _refactor(same_module, parameterize_builtins=True)[0] == 1
-    assert _parameters(tmp_path / "same") == [["__param_0", "name", "rows"]]
+    assert _parameters(tmp_path / "same") == [["__param_0", "name", "rows", "_towel_owner"]]
 
 
 DIFFERING_IN_A_BUILTIN = """
@@ -454,7 +458,7 @@ def test_the_flag_reaches_the_engine_from_the_command_line(tmp_path: Path) -> No
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
     assert completed.returncode == 0, completed.stderr
-    assert _parameters(tmp_path) == [["__param_0", "__param_1", "name", "rows"]]
+    assert _parameters(tmp_path) == [["__param_0", "__param_1", "name", "rows", "_towel_owner"]]
 
 
 # What the checker reveals for a builtin, and the annotation Towel writes.
@@ -538,8 +542,8 @@ from builtins import len as len
 import pkg.reports as reports  # exports already depends on reports
 
 
-def export_size(rows: list[int], name: str) -> int:
-    print("exports", name)
+def export_size(rows: list[int], name: str, heading: bool = True) -> int:
+    print("exports", name) if heading else print("reports")
     width = len(name)
     height = len(rows)
     label = str(width) + name
@@ -548,8 +552,8 @@ def export_size(rows: list[int], name: str) -> int:
 """
 
 TYPED_REPORTS = """
-def report_size(rows: list[int], name: str) -> int:
-    print("reports")
+def report_size(rows: list[int], name: str, heading: bool = False) -> int:
+    print("exports", name) if heading else print("reports")
     width = len(name)
     height = len(rows)
     label = str(width) + name
@@ -581,6 +585,13 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(
             "tests/test_exports.py": TYPED_TEST,
         },
     )
+    driver = (
+        "from pkg import exports, reports\n"
+        "print(exports.export_size([1, 2], 'ab'), reports.report_size([1, 2], 'ab'))\n"
+    )
+    (tmp_path / "check.py").write_text(driver)
+    expected = _run(tmp_path, "check.py")
+    assert expected == "exports ab\nmeasured 2ab\nreports\nmeasured 2ab\n5 5\n"
     completed = subprocess.run(
         [
             sys.executable,
@@ -594,6 +605,8 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(
             "--progress",
             "none",
             "--cross-module",
+            "--max-parameters",
+            "8",
             "--parameterize-builtins",
         ],
         cwd=tmp_path,
@@ -603,6 +616,7 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
     assert completed.returncode == 0, completed.stderr
+    assert _run(tmp_path, "check.py") == expected
     (helper,) = _helpers(tmp_path / "pkg")
     parameters = helper.args.posonlyargs + helper.args.args
     assert helper.args.posonlyargs

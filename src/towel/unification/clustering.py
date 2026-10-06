@@ -51,7 +51,7 @@ from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signatu
 from .extractor import HygienicExtractor, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
 from .retained_bindings import spell_retained_bindings
-from .argument_ownership import argument_handoff_plan
+from .argument_ownership import argument_handoff_fits, argument_handoff_plan
 from .models import ArgumentHandoff, FunctionArtifact, FunctionNode, RejectReason, Replacement
 from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
@@ -338,6 +338,17 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             if ownership.split and ownership.whole_body
             else None
         )
+        if handoff is not None and not argument_handoff_fits(
+            template.func_def, self.unifier.max_parameters
+        ):
+            self._debug_decline_site(
+                RejectReason.OWNERSHIP_PARAMETER_BUDGET,
+                pair,
+                candidate.function,
+                candidate.nodes,
+                "the final ownership parameter exceeds the helper budget",
+            )
+            return None
         if ownership.split and handoff is None:
             self._debug_decline_site(
                 RejectReason.OWNED_BINDING_FRAME_BOUNDARY,

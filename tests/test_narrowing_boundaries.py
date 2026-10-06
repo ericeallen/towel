@@ -150,21 +150,28 @@ def test_narrowing_and_all_dependent_code_can_move_together(tmp_path: Path) -> N
     outcome = apply_one(
         tmp_path,
         """
-        def first(value: str | None) -> str:
-            assert value is not None
-            cleaned = value.strip()
-            return cleaned.upper()
+        from typing import Callable
 
-        def second(value: str | None) -> str:
+        def first(value: str | None, transform: Callable[[str], str] = str.upper) -> str:
             assert value is not None
             cleaned = value.strip()
-            return cleaned.lower()
+            return transform(cleaned)
+
+        def second(value: str | None, transform: Callable[[str], str] = str.lower) -> str:
+            assert value is not None
+            cleaned = value.strip()
+            return transform(cleaned)
         """,
         pick="first and second",
     )
     assert outcome.error is None, outcome.error
     assert any(isinstance(node, ast.Assert) for node in ast.walk(outcome.helper()))
     assert outcome.prospective_checks == 1, outcome.checked_helpers
+    assert "Any" not in outcome.signature()
+    assert outcome.module is not None
+    namespace: dict[str, object] = {}
+    exec(outcome.module + "\nresult = (first(' AbC '), second(' AbC '))", namespace)
+    assert namespace["result"] == ("ABC", "abc")
 
 
 @pytest.mark.parametrize(

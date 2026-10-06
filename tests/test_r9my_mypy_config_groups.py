@@ -65,24 +65,26 @@ def _typed_run(root: Path) -> UnificationRefactorEngine:
 
 
 SUB_MODULE = """\
+    from typing import Callable
+
     def legacy(x):
         return x
 
 
-    def first(values: list[int], scale: int) -> str:
+    def first(values: list[int], scale: int, transform: Callable[[str], str] = str.upper) -> str:
         total = 0
         for v in values:
             total += v * scale
         label = f"sum={total}"
-        return label.upper()
+        return transform(label)
 
 
-    def second(items: list[int], factor: int) -> str:
+    def second(items: list[int], factor: int, transform: Callable[[str], str] = str.lower) -> str:
         total = 0
         for v in items:
             total += v * factor
         label = f"sum={total}"
-        return label.lower()
+        return transform(label)
     """
 
 
@@ -117,17 +119,15 @@ HOLDER = """\
             print("count", n)
 
         def first(self, n: int) -> None:
-            od = make_od(n)
+            self.data = make_od(n)
             print("first")
-            self.data = od
-            self.count = len(od)
+            self.count = len(self.data)
             self.log(self.count)
 
         def second(self, n: int) -> None:
-            od = make_od(n + 1)
+            self.data = make_od(n + 1)
             print("second")
-            self.data = od
-            self.count = len(od)
+            self.count = len(self.data)
             self.log(self.count)
     """
 
@@ -185,7 +185,9 @@ def test_r9my_a_cross_group_import_leaves_the_cold_confirmation_nothing_to_refus
     accepted = {str(path): path.read_text() for path in tmp_path.rglob("*.py")}
     erased = (
         "from typing import Any\n\n"
-        + textwrap.dedent(HOLDER).replace("self.data = od", "self.data = lose_type(od)")
+        + textwrap.dedent(HOLDER)
+        .replace("self.data = make_od(n)", "self.data = lose_type(make_od(n))")
+        .replace("self.data = make_od(n + 1)", "self.data = lose_type(make_od(n + 1))")
         + "\n\ndef lose_type(value: object) -> Any:\n    return value\n"
     )
     oracle = MypyInferrer()

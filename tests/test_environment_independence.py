@@ -45,19 +45,19 @@ from towel.unification.semantic_safety import available_argument_names
 from towel.unification.visitors import FreeNameCollector
 
 TWO_ROUNDS = textwrap.dedent("""
-    def alpha(items):
+    def alpha(items, delta=0):
         total = 0
         for item in items:
             total += item
         scaled = total * 2
-        return scaled
+        return scaled + delta
 
-    def beta(items):
+    def beta(items, delta=1):
         total = 0
         for item in items:
             total += item
         scaled = total * 2
-        return scaled + 1
+        return scaled + delta
     """)
 
 

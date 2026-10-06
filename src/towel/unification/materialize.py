@@ -49,13 +49,22 @@ from .annotation_imports import (
     words_of,
 )
 from .block_comments import excluded_lines, weave_comments
-from .argument_ownership import render_argument_handoff, verify_argument_handoff
+from .argument_ownership import (
+    argument_handoff_fits,
+    render_argument_handoff,
+    verify_argument_handoff,
+)
 from .function_scope import identifiers
 from ..formatting import checked, formatting_repeatability
 from ..canonical_ast import canonical_dump
 from .class_private import is_class_private, mangled, mangling_classes, mangling_prefix
 from .engine_state import HelperNameClaims
-from .exceptions import ProjectScanLimitError, RefactoringError, UntypeableExtraction
+from .exceptions import (
+    ProjectScanLimitError,
+    RefactoringError,
+    TypeRejectedExtraction,
+    UntypeableExtraction,
+)
 from .import_graph import (
     ImportTimeCode,
     TypeCheckingGuards,
@@ -221,17 +230,22 @@ class Materialization(
         check_types = self._active_type_oracle() is not None
         counters = dict(self._helper_name_counters)
         hearing = Hearing(self._judge_for(proposal))
+        offered = False
+        fully_judged = check_types
         for variant in self._annotation_ladder(proposal, check_types, hearing):
             outcome = self._attempt(variant, counters, check_types)
             if isinstance(outcome, Verified):
                 return outcome.files
+            offered = True
+            fully_judged = fully_judged and bool(outcome.errors)
             hearing.refused(variant, outcome)
         settled = hearing.settled_by()
         if settled is not None:
             raise UntypeableExtraction(settled.reason, settled.detail)
+        refusal = TypeRejectedExtraction if offered and fully_judged else RefactoringError
         if proposal.reused_function is not None:
-            raise RefactoringError("Reusing the existing function introduces project type errors")
-        raise RefactoringError("Every helper annotation variant introduces project type errors")
+            raise refusal("Reusing the existing function introduces project type errors")
+        raise refusal("Every helper annotation variant introduces project type errors")
 
     def _attempt(
         self, variant: RefactoringProposal, counters: Dict[str, int], check_types: bool
@@ -288,14 +302,7 @@ class Materialization(
                         "Argument ownership certificate does not match the original source"
                     )
         arguments = helper.args
-        if (
-            arguments.kwonlyargs
-            or arguments.defaults
-            or arguments.vararg
-            or arguments.kwarg
-            or getattr(helper, "type_comment", None) is not None
-            or len(arguments.posonlyargs) + len(arguments.args) + 1 > self.unifier.max_parameters
-        ):
+        if not argument_handoff_fits(helper, self.unifier.max_parameters):
             raise RefactoringError("The helper cannot add a final ownership parameter")
         taken = identifiers((helper,))
         name = "_towel_owner"

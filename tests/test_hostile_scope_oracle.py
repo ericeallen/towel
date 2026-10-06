@@ -66,3 +66,52 @@ def test_box_spelling_cannot_shadow_an_original_import_binder() -> None:
 def test_prefix_alone_never_exempts_a_new_local() -> None:
     after = BEFORE.replace("    local=make()", "    _towel_arguments = []\n    local=make()")
     assert "gains local _towel_arguments" in scope_changes(BEFORE, after)["f#0"]
+
+
+RETAINED_BEFORE = """def f():
+    owner = make()
+    result = observe(owner)
+    return result
+"""
+RETAINED_AFTER = """def __extracted_func_0():
+    owner = make()
+    result = observe(owner)
+    return owner, result
+def f():
+    _towel_keep_owner, result = __extracted_func_0()
+    return result
+"""
+
+
+def test_unread_hygienic_slot_retains_an_original_local() -> None:
+    assert scope_changes(RETAINED_BEFORE, RETAINED_AFTER) == {}
+    before = "def f():\n    owner=make()\n    consume(owner)\n"
+    after = (
+        "def __extracted_func_0():\n    owner=make()\n    consume(owner)\n    return owner\n"
+        "def f():\n    _towel_keep_owner=__extracted_func_0()\n"
+    )
+    assert scope_changes(before, after) == {}
+
+
+@pytest.mark.parametrize(
+    "after",
+    [
+        RETAINED_AFTER.replace("return owner, result", "return result, owner"),
+        RETAINED_AFTER.replace("return owner, result", "return None, result"),
+        RETAINED_AFTER.replace("    return result\n", "    return _towel_keep_owner\n"),
+        RETAINED_AFTER.replace(
+            "    return result\n", "    _towel_keep_owner = None\n    return result\n"
+        ),
+        RETAINED_AFTER.replace(
+            "    return result\n", "    import math as _towel_keep_owner\n    return result\n"
+        ),
+        RETAINED_AFTER.replace("    return result\n", "    del owner\n    return result\n"),
+    ],
+)
+def test_unproved_retained_slot_does_not_hide_a_gained_local(after: str) -> None:
+    assert "gains local _towel_keep_owner" in scope_changes(RETAINED_BEFORE, after)["f#0"]
+
+
+def test_retained_slot_cannot_shadow_an_original_module_binding() -> None:
+    before = "import math as _towel_keep_owner\n" + RETAINED_BEFORE
+    assert "gains local _towel_keep_owner" in scope_changes(before, RETAINED_AFTER)["f#0"]

@@ -43,7 +43,10 @@ from towel.type_inference import (
 from towel.unification.exceptions import RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.type_bindings import TypeKind, TypeTerm
-from towel.unification.type_generalization import GenericSignature, generalize_signatures
+from towel.unification.type_generalization import (
+    GenericSignature,
+    generalize_signatures,
+)
 
 
 @pytest.fixture(params=["mypy", "pyright"])
@@ -127,7 +130,7 @@ def test_checker_disagreement_cannot_accept_a_generic_candidate(tmp_path: Path) 
     original = path.read_text()
     primary = _Oracle(lambda _: CheckSuccess())
     dissenting = _Oracle(
-        lambda sources: CheckSuccess() if sources[str(path)] == original else _error(path)
+        lambda sources: (CheckSuccess() if sources[str(path)] == original else _error(path))
     )
     oracle = CombinedOracle(primary, [dissenting])
     engine = _engine(oracle)
@@ -185,7 +188,15 @@ def test_rejected_generic_declarations_do_not_leak_into_fallbacks(
         if _declarations(source):
             return _error(path)
         helper = _helper(source)
-        annotations = [argument.annotation for argument in helper.args.args] + [helper.returns]
+        holder = helper.args.args[-1]
+        assert holder.arg == "_towel_owner"
+        annotations = [argument.annotation for argument in helper.args.args[:-1]] + [helper.returns]
+        if any(annotation is not None for annotation in annotations):
+            assert (
+                isinstance(holder.annotation, ast.Constant) and holder.annotation.value == "object"
+            )
+        else:
+            assert holder.annotation is None
         expected = all(annotation is None for annotation in annotations)
         if fallback == "any":
             # ``Any`` as the module reaches it: through the private alias of typing.
@@ -246,7 +257,8 @@ def test_real_checkers_validate_even_an_unused_constraint_body(
         )
 
     with patch(
-        "towel.unification.generic_annotations.generalize_signatures", side_effect=extra_constraint
+        "towel.unification.generic_annotations.generalize_signatures",
+        side_effect=extra_constraint,
     ):
         try:
             fallback = engine.apply_refactoring(str(path), proposal)

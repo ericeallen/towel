@@ -269,16 +269,19 @@ def test_smaller_valid_suffix_is_still_discovered_and_applies(tmp_path: Path) ->
     """Rejecting the larger bool-guard window must not hide its narrowed suffix."""
     source = MATCHES.replace(
         "return matches_bounds_only(self._bounds, parsed)",
-        "matched = matches_bounds_only(self._bounds, parsed)\n        return matched and self._bounds[0] >= 0",
+        "if not matches_bounds_only(self._bounds, parsed):\n            return False\n        return self._bounds[0] >= 0",
     ).replace(
         "return matches_bounds_only(self._bounds, item)",
-        "matched = matches_bounds_only(self._bounds, item)\n        return matched and self._bounds[0] >= 0",
+        "if not matches_bounds_only(self._bounds, item):\n            return False\n        return self._bounds[0] >= 0",
     )
     outcome = apply_one(tmp_path, source, pick="matches_literal and contains")
     assert outcome.error is None, outcome.error
     assert outcome.prospective_checks == 1, outcome.checked_helpers
     assert "Any" not in outcome.signature()
-    assert not any(isinstance(node, ast.If) for node in ast.walk(outcome.helper()))
+    guards = [node for node in ast.walk(outcome.helper()) if isinstance(node, ast.If)]
+    assert len(guards) == 1
+    assert "matches_bounds_only" in ast.unparse(guards[0].test)
+    assert "is None" not in ast.unparse(guards[0].test)
     assert outcome.module is not None
     first = next(
         node

@@ -408,11 +408,79 @@ def _ownership_box(old: ast.AST, new: ast.AST, original: ast.Module) -> frozense
     return frozenset((box,))
 
 
+def _retained_locals(
+    old: ast.AST, new: ast.AST, original: ast.Module, rewritten: ast.Module
+) -> frozenset[str]:
+    """Recognize fresh, unread tuple slots that keep a moved original local alive.
+
+    Each slot must return the original local from a generated helper. An
+    arbitrary new binding, a wrong slot, or any further use is not exempt.
+    """
+    if not isinstance(old, (ast.FunctionDef, ast.AsyncFunctionDef)) or not isinstance(
+        new, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        return frozenset()
+    original_names = _spelled_names(original)
+    old_locals = {
+        node.id
+        for node in ast.walk(old)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    helpers = {
+        node.name: node
+        for node in ast.walk(rewritten)
+        if isinstance(node, ast.FunctionDef) and node.name.startswith(_GENERATED_HELPER_PREFIXES)
+    }
+    accepted: set[str] = set()
+    for assignment in ast.walk(new):
+        if not (
+            isinstance(assignment, ast.Assign)
+            and len(assignment.targets) == 1
+            and isinstance(assignment.targets[0], (ast.Name, ast.Tuple))
+            and isinstance(assignment.value, ast.Call)
+            and isinstance(assignment.value.func, ast.Name)
+        ):
+            continue
+        helper = helpers.get(assignment.value.func.id)
+        if helper is None or not helper.body or not isinstance(helper.body[-1], ast.Return):
+            continue
+        returned = helper.body[-1].value
+        target_root = assignment.targets[0]
+        targets = target_root.elts if isinstance(target_root, ast.Tuple) else [target_root]
+        values = returned.elts if isinstance(returned, ast.Tuple) else [returned]
+        if len(values) != len(targets):
+            continue
+        for target, value in zip(targets, values):
+            if not (
+                isinstance(target, ast.Name)
+                and target.id not in original_names
+                and isinstance(value, ast.Name)
+                and value.id in old_locals
+            ):
+                continue
+            # Exactly one Store and no Load, nested capture, or string binder.
+            occurrences = [
+                node
+                for node in ast.walk(new)
+                if isinstance(node, ast.Name) and node.id == target.id
+            ]
+            if occurrences != [target]:
+                continue
+            if any(
+                {value.id, target.id} & _spelled_names(statement)
+                for statement in new.body
+                if statement is not assignment
+            ):
+                continue
+            accepted.add(target.id)
+    return frozenset(accepted)
+
+
 def scope_changes(before: Union[bytes, str], after: Union[bytes, str]) -> Dict[str, List[str]]:
     """How ``after`` changes the scope of names in the functions ``before`` defines, per function.
 
-    A function the refactoring kept may gain no local, since its call binds
-    only names the block bound. It may lose a local only with every read of
+    A kept function may gain only a structurally certified ownership box or
+    an unread slot retaining an original moved local. It may lose a local only with every read of
     it: the code that used the name went into the helper. A local it loses
     and still reads, or that a scope nested in it still reads, now finds an
     enclosing function's variable, a module name or a builtin (the round-4
@@ -440,10 +508,11 @@ def scope_changes(before: Union[bytes, str], after: Union[bytes, str]) -> Dict[s
         )
         old_locals, new_locals = _locals(old) - set_aside, _locals(new) - set_aside
         handoff = _ownership_box(definitions[0][key], definitions[1][key], trees[0])
+        retained = _retained_locals(definitions[0][key], definitions[1][key], trees[0], trees[1])
         found = [
             f"gains local {name}"
             for name in sorted(new_locals - old_locals)
-            if not name.startswith(_GENERATED_HELPER_PREFIXES) and name not in handoff
+            if not name.startswith(_GENERATED_HELPER_PREFIXES) and name not in handoff | retained
         ]
         found += [
             f"loses local {name}, which it still reads"

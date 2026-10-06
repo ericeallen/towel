@@ -54,7 +54,7 @@ pytestmark = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason
 
 PACKAGING = '[project]\nname = "pkg"\nversion = "0"\nrequires-python = ">=3.11"\n'
 ADD = "def add(a: int, b: int) -> int:\n    return a + b\n"
-TWINS = """
+OWNED_PARTIAL_TWINS = """
     def first(values: list[int]) -> int:
         total = 0
         for value in values:
@@ -67,6 +67,21 @@ TWINS = """
         for value in values:
             total += value * 2
         return total + 2
+"""
+
+TWINS = """
+    def first(values: list[int], delta: int = 1) -> int:
+        total = 0
+        for value in values:
+            total += value * 2
+        return total + delta
+
+
+    def second(values: list[int], delta: int = 2) -> int:
+        total = 0
+        for value in values:
+            total += value * 2
+        return total + delta
 """
 UNCHECKED_TEST = """
     from pkg.core import first
@@ -316,7 +331,10 @@ def test_an_unannotated_test_the_projects_mypy_never_checks_does_not_refuse_the_
     run = _dry(tmp_path)
     assert run.returncode == 0, run.stdout + run.stderr
     written = (tmp_path / "pkg" / "core.py").read_text(encoding="utf-8")
-    assert "def __extracted_func_0(values: 'list[int]') -> int:" in written, written
+    assert (
+        "def __extracted_func_0(delta: int, values: 'list[int]', _towel_owner: 'object') -> int:"
+        in written
+    ), written
     assert (tmp_path / "tests" / "test_core.py").read_text(encoding="utf-8") == textwrap.dedent(
         UNCHECKED_TEST
     ).lstrip()
@@ -334,7 +352,10 @@ def test_an_error_the_projects_mypy_reports_in_the_package_is_left_as_it_was(
     assert "The original project's type check reports 1 error(s) in 1 file(s)." in run.stderr
     assert "  pkg/core.py: 1" in run.stderr
     written = (tmp_path / "pkg" / "core.py").read_text(encoding="utf-8")
-    assert "def __extracted_func_0(values: 'list[int]') -> int:" in written, written
+    assert (
+        "def __extracted_func_0(delta: int, values: 'list[int]', _towel_owner: 'object') -> int:"
+        in written
+    ), written
     assert "WRONG: str = first([1])" in written
     after = _plain_mypy(tmp_path, ("pkg",))
     assert before[0] == after[0] == "checked"
@@ -398,7 +419,7 @@ def _helper_signature(source: str) -> str:
     return ast.unparse(helper).splitlines()[0]
 
 
-BESIDE_AN_UNANNOTATED_FUNCTION = """
+OWNED_BESIDE_AN_UNANNOTATED_FUNCTION = """
     def load() -> list[int]:
         return [1, 2, 3]
 
@@ -419,6 +440,30 @@ BESIDE_AN_UNANNOTATED_FUNCTION = """
         for value in values:
             total += value * 2
         return total + 2
+"""
+
+
+BESIDE_AN_UNANNOTATED_FUNCTION = """
+    def load() -> list[int]:
+        return [1, 2, 3]
+
+
+    def report() -> int:
+        values = load()
+        values.sort()
+        delta = 1
+        values.count(0)
+        values.count(5)
+        return sum(values) * 2 + delta
+
+
+    def summary():
+        values = load()
+        values.reverse()
+        delta = 2
+        values.count(0)
+        values.count(5)
+        return sum(values) * 2 + delta
 """
 
 
@@ -443,7 +488,16 @@ def test_a_helper_shared_with_an_unannotated_function_keeps_the_types_probes_fin
         written = engine.apply_refactoring(str(core), proposal)
     finally:
         oracle.close()
-    assert _helper_signature(written) == "def __extracted_func_0(values: 'list[int]') -> int:"
+    assert (
+        _helper_signature(written)
+        == "def __extracted_func_0(__param_0: int, /, values: 'list[int]') -> int:"
+    )
+    results = []
+    for text in (OWNED_BESIDE_AN_UNANNOTATED_FUNCTION, BESIDE_AN_UNANNOTATED_FUNCTION, written):
+        program = textwrap.dedent(text).lstrip() + "\nprint(report(), summary())\n"
+        run = subprocess.run([sys.executable, "-c", program], capture_output=True, check=True)
+        results.append(run.stdout)
+    assert results == [b"13 14\n"] * 3
 
 
 @pytest.mark.parametrize("configured", [False, True])
@@ -477,3 +531,11 @@ def test_probes_that_check_more_than_the_project_build_in_a_cache_of_their_own(
     if not configured:
         # The check's own entries were never written from a probe's text.
         assert not (cache / _SUPPLIED_TEXT_RECORD).exists()
+
+
+def test_original_unannotated_owning_partial_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "owning.py"
+    path.write_text(textwrap.dedent(OWNED_BESIDE_AN_UNANNOTATED_FUNCTION).lstrip())
+    engine = UnificationRefactorEngine(reuse_existing_functions=False)
+    assert engine.analyze_file(str(path)) == []
+    assert path.read_text() == textwrap.dedent(OWNED_BESIDE_AN_UNANNOTATED_FUNCTION).lstrip()

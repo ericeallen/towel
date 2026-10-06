@@ -126,6 +126,19 @@ def _helper_call(statement: ast.AST, name: str) -> Optional[ast.Call]:
     return found[0] if len(found) == 1 else None
 
 
+def argument_handoff_fits(helper: ast.FunctionDef, max_parameters: int) -> bool:
+    """The complete rendered ABI, including its final holder, fits the declared budget."""
+    args = helper.args
+    return not (
+        args.kwonlyargs
+        or args.defaults
+        or args.vararg
+        or args.kwarg
+        or getattr(helper, "type_comment", None) is not None
+        or len(args.posonlyargs) + len(args.args) + 1 > max_parameters
+    )
+
+
 def argument_handoff_plan(
     function: FunctionNode,
     nodes: Sequence[ast.stmt],

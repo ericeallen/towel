@@ -123,7 +123,7 @@ def test_class_bound_result_keeps_the_public_contract(
         invalid = checker.check(str(path), rendered + '\nbad = Box[int].first(["x"])\n')
         assert isinstance(invalid, CheckSuccess) and invalid.errors
         invalid_helper_use = checker.check(
-            str(path), rendered + f'\nbad_use: int = {helper.name}(["x"])\n'
+            str(path), rendered + f'\nbad_use: int = {helper.name}(["x"], None)\n'
         )
         assert isinstance(invalid_helper_use, CheckSuccess) and invalid_helper_use.errors
     else:
@@ -131,7 +131,9 @@ def test_class_bound_result_keeps_the_public_contract(
         assert _declarations(rendered) == _declarations(
             source
         ), "Class binders need no fresh declaration"
-        assert len(helper.args.args) == 1
+        assert len(helper.args.args) == 2
+        holder = helper.args.args[-1]
+        assert holder.arg == "_towel_owner" and _annotation(holder.annotation) == "object"
         receiver = helper.args.args[0].annotation
         assert receiver is None or _annotation(receiver) == "Box[T]"
 

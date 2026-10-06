@@ -283,13 +283,9 @@ class TestUnifyBlocks:
         pairs = pair_blocks(eng, funcs, progress="none")
 
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
-        # Before overlap filtering, each pair of the three functions unifies
-        # into six overlapping proposals, in pairing order; a proposal a later
-        # pair repeats (the same helper over the same clustered sites) is
-        # kept once, under the pair that found it first. The user/guest pairs
-        # repeat the user/admin proposals; three admin/guest proposals order
-        # the helper's parameters differently and are their own.
-        assert descriptions(proposals) == [USER_ADMIN] * 6 + [ADMIN_GUEST] * 3
+        # Only three admissible variants remain after unsafe ownership
+        # splits are declined. Equivalent clustered proposals stay deduplicated.
+        assert descriptions(proposals) == [USER_ADMIN] * 3
 
 
 class TestFilterOverlaps:
@@ -306,8 +302,8 @@ class TestFilterOverlaps:
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
 
         filtered = filter_overlaps(proposals)
-        # The nine distinct overlapping proposals collapse to the one the engine reports.
-        assert len(proposals) == 9
+        # The three admissible overlapping proposals collapse to one.
+        assert len(proposals) == 3
         assert descriptions(filtered) == [USER_ADMIN]
 
 

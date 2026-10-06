@@ -521,3 +521,26 @@ def test_black_keeps_independent_parameter_deletes_and_cleanup_order(
             *(chr(97 + index) for index in range(len(parameters))),
             "local-" + name,
         ]
+
+
+def test_analysis_reserves_the_final_holder_in_the_parameter_budget(tmp_path: Path) -> None:
+    _, proposal = _proposal(tmp_path, SOURCE)
+    path = tmp_path / "p.py"
+    semantic_count = len(proposal.extracted_function.args.posonlyargs) + len(
+        proposal.extracted_function.args.args
+    )
+    refused = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, max_parameters=semantic_count
+    )
+    assert refused.analyze_file(str(path)) == []
+    assert "ownership_parameter_budget" in refused.declined_pairs
+    admitted = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, max_parameters=semantic_count + 1
+    )
+    candidates = admitted.analyze_file(str(path))
+    assert candidates
+    for candidate in candidates:
+        output = admitted.apply_refactoring(str(path), candidate)
+        assert _effects(SOURCE, "f") == _effects(output, "f")
+        assert _effects(SOURCE, "g") == _effects(output, "g")
+    assert path.read_text() == SOURCE

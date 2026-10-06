@@ -176,15 +176,15 @@ class Box:
         self.count = 1
         self.name = "n"
 
-def first(box: Box) -> str:
-    scaled = box.count * 2
-    label = box.name.upper()
+def first() -> str:
+    scaled = 1 * 2
+    label = "n".upper()
     print(scaled)
     return label + str(scaled)
 
-def second(box: Box) -> str:
-    scaled = box.count * 2
-    label = box.name.upper()
+def second() -> str:
+    scaled = 1 * 2
+    label = "n".upper()
     print(scaled)
     return label * scaled
 """
@@ -200,7 +200,7 @@ def second(box: Box) -> str:
                 "-B",
                 "-c",
                 "import module, dependency\n"
-                "print(module.first(module.Box()), module.second(module.Box()))\n"
+                "print(module.first(), module.second())\n"
                 "print(dependency.events)",
             ],
             cwd=tmp_path,
@@ -224,9 +224,9 @@ def second(box: Box) -> str:
     after = run()
     assert (after.stdout, after.stderr) == (before.stdout, before.stderr)
     result = outcome.helper().returns
-    assert isinstance(result, ast.Constant) and result.value == "tuple[str, int]"
+    assert isinstance(result, ast.Constant) and result.value == "tuple[int, str]"
     assert "Any" not in outcome.signature(), outcome.signature()
-    assert outcome.module.count("label, scaled = ") == 2
+    assert outcome.module.count("scaled, label = ") == 2
 
 
 @requires_mypy

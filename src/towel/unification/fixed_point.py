@@ -59,6 +59,7 @@ from ..canonical_ast import canonical_dump
 from .defaults import DEFAULT_MAX_ITERATIONS
 from .exceptions import (
     CheckerUnavailableError,
+    TypeRejectedExtraction,
     RefactoringError,
     UncheckedCodeError,
     Untypeable,
@@ -97,6 +98,7 @@ from ..type_inference import relocate_oracle
 
 from .annotation_wiring import UNTYPED_REMEDY
 from .materialize import Materialization
+from .rehearing import exact_candidate_key, execution_context
 
 _TQDM_NOTED = False
 
@@ -710,7 +712,7 @@ class FixedPointDrivers(Materialization):
                     # calls itself finished. A rehearing needs an application
                     # since the last one, so the run cannot circle on proposals
                     # the project keeps refusing.
-                    run.begin_rehearing()
+                    run.begin_rehearing(execution_context(self))
                     reporter.detail("Rehearing proposals declined earlier")
                     found = self._global_pass(
                         output_path, run, global_passes, reporter, rehearing=True
@@ -756,7 +758,15 @@ class FixedPointDrivers(Materialization):
                         *(rep.file_path or proposal.file_path for rep in proposal.replacements),
                     }
                 )
-                run.rejected.add(proposal)
+                run.rejected.add(
+                    proposal,
+                    revision=(run.revision if isinstance(error, TypeRejectedExtraction) else None),
+                    context=(
+                        execution_context(self)
+                        if isinstance(error, TypeRejectedExtraction)
+                        else None
+                    ),
+                )
                 self._report_dropped(proposal, error)
                 continue
             except StaleSource as conflict:
@@ -952,10 +962,11 @@ class _RejectedProposals:
     Re-analyzing a rewritten file finds again every proposal in it that was
     rejected before, and a rejection costs a project check per annotation
     variant: on a capped Sphinx run 204 of 287 checks retried four proposals,
-    and no proposal was ever accepted after being rejected. Nothing is lost by
-    declining those retries, because the run does not end here: a changed
-    project gets another whole analysis, which empties this and hears each
-    proposal once more.
+    and no proposal was ever accepted after being rejected. A changed project
+    gets another whole analysis and hears old refusals again. A completed
+    checker refusal of the current revision survives only for its exact
+    candidate and unchanged built-in checker/configuration context; unknown,
+    tool, formatter and source-proof failures are heard again.
 
     A proposal is known by what it extracts and where it puts it, not by line
     numbers, which every earlier application shifts.
@@ -963,6 +974,8 @@ class _RejectedProposals:
 
     def __init__(self) -> None:
         self._identities: Set[str] = set()
+        self._definitive: Dict[str, Tuple[int, str, str]] = {}
+        self._retained_exact: Dict[str, str] = {}
 
     @staticmethod
     def identity(proposal: RefactoringProposal) -> str:
@@ -971,7 +984,7 @@ class _RejectedProposals:
                 proposal.file_path,
                 proposal.insert_into_class,
                 proposal.insert_into_function,
-                None if proposal.reused_function is None else proposal.reused_function.name,
+                (None if proposal.reused_function is None else proposal.reused_function.name),
                 canonical_dump(proposal.extracted_function),
                 sorted(
                     repr(
@@ -986,17 +999,48 @@ class _RejectedProposals:
             )
         )
 
-    def add(self, proposal: RefactoringProposal) -> None:
-        self._identities.add(self.identity(proposal))
+    def add(
+        self,
+        proposal: RefactoringProposal,
+        *,
+        revision: Optional[int] = None,
+        context: Optional[str] = None,
+    ) -> None:
+        identity = self.identity(proposal)
+        self._identities.add(identity)
+        self._retained_exact.pop(identity, None)
+        self._definitive.pop(identity, None)
+        if revision is not None and context is not None:
+            key = exact_candidate_key(proposal)
+            if key is not None:
+                self._definitive[identity] = (revision, context, key)
+
+    def retain_current(self, revision: int, context: Optional[str]) -> None:
+        """Keep only completed exact refusals of this unchanged context."""
+        self._definitive = {
+            identity: refusal
+            for identity, refusal in self._definitive.items()
+            if refusal[:2] == (revision, context)
+        }
+        self._identities = set(self._definitive)
+        self._retained_exact = {
+            identity: refusal[2] for identity, refusal in self._definitive.items()
+        }
 
     def __contains__(self, proposal: RefactoringProposal) -> bool:
-        return self.identity(proposal) in self._identities
+        identity = self.identity(proposal)
+        if identity not in self._identities:
+            return False
+        retained = self._retained_exact.get(identity)
+        return retained is None or exact_candidate_key(proposal) == retained
 
     def __bool__(self) -> bool:
         return bool(self._identities)
 
     def clear(self) -> None:
         self._identities.clear()
+        self._definitive.clear()
+        self._retained_exact.clear()
 
 
 @dataclass
@@ -1024,9 +1068,9 @@ class _DirectoryRun:
         """Whether anything was declined that the project has changed under since."""
         return bool(self.rejected) and self.applied != self.reheard_after
 
-    def begin_rehearing(self) -> None:
+    def begin_rehearing(self, context: Optional[str] = None) -> None:
         self.reheard_after = self.applied
-        self.rejected.clear()
+        self.rejected.retain_current(self.revision, context)
 
     def record(self, path: str, description: str) -> None:
         count, descriptions = self.results.get(path, (0, []))

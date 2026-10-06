@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.test_helpers import refactor_to_fixed_point_silently
+from tests.test_helpers import method_helper_calls, refactor_to_fixed_point_silently
 from tests.test_method_host_machinery import _module, _run
 from towel.unification.models import ClassInfo
 from towel.unification import import_graph
@@ -93,12 +93,28 @@ def _files(root: Path, files: dict[str, str]) -> None:
             {"aliases.py": "from typing import Protocol as Contract\n__all__ = ['Contract']\n"},
         ),
         ("from typing import Protocol", "Protocol if True else object", {}),
-        ("from typing import Protocol\nchoose = True", "Protocol if choose else object", {}),
-        ("from typing import Protocol\nAlias = Protocol if True else object", "Alias", {}),
+        (
+            "from typing import Protocol\nchoose = True",
+            "Protocol if choose else object",
+            {},
+        ),
+        (
+            "from typing import Protocol\nAlias = Protocol if True else object",
+            "Alias",
+            {},
+        ),
         ("from typing import Protocol\nbases = (Protocol,)", "*bases", {}),
-        ("from typing import Protocol\ndef choose():\n    return Protocol", "choose()", {}),
+        (
+            "from typing import Protocol\ndef choose():\n    return Protocol",
+            "choose()",
+            {},
+        ),
         ("from typing import Protocol\n(Contract := Protocol)", "Contract", {}),
-        ("from typing import Protocol\nfor Contract in (Protocol,):\n    pass", "Contract", {}),
+        (
+            "from typing import Protocol\nfor Contract in (Protocol,):\n    pass",
+            "Contract",
+            {},
+        ),
         (
             "from typing import Protocol\nclass Aliases:\n    Contract = Protocol",
             "Aliases.Contract",
@@ -134,7 +150,7 @@ def test_protocol_aliases_preserve_runtime_structural_conformance(
     assert before == "True\n|"
     final, applied = refactor_to_fixed_point_silently(str(tmp_path / "box.py"), min_lines=3)
     assert applied > 0
-    assert "self.__extracted_func" not in final
+    assert not method_helper_calls(final)
     assert any(isinstance(node, ast.FunctionDef) for node in ast.parse(final).body)
     (tmp_path / "box.py").write_text(final)
     assert _run(tmp_path, driver) == before
@@ -174,7 +190,20 @@ def test_concrete_subclasses_keep_private_method_helpers(
     before = _run(tmp_path, driver)
     assert before.endswith("4 6\n|")
     final, applied = refactor_to_fixed_point_silently(str(tmp_path / "box.py"), min_lines=3)
-    assert applied > 0 and "self.__extracted_func" in final
+    assert applied > 0
+    calls = method_helper_calls(final)
+    assert len(calls) == 2
+    helpers = [
+        node
+        for node in ast.walk(ast.parse(final))
+        if isinstance(node, ast.ClassDef) and node.name == "Box"
+        for node in node.body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func")
+    ]
+    assert len(helpers) == 1
+    assert all(
+        isinstance(call.func, ast.Attribute) and call.func.attr == helpers[0].name for call in calls
+    )
     (tmp_path / "box.py").write_text(final)
     assert _run(tmp_path, driver) == before
 
@@ -214,7 +243,9 @@ def test_reexport_verdict_reads_changed_dependency_source(tmp_path: Path) -> Non
     assert ast.dump(tree, include_attributes=True) == before
 
 
-def test_cyclic_star_exports_stay_finite_and_reread_protocol_bindings(tmp_path: Path) -> None:
+def test_cyclic_star_exports_stay_finite_and_reread_protocol_bindings(
+    tmp_path: Path,
+) -> None:
     """A real package cycle must not create growing imaginary parent-package names.
 
     Pyparsing exposed this before the first extraction: the resolver made

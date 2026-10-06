@@ -1,0 +1,21 @@
+{
+  "samples_per_arm": 2,
+  "order": "ABBA",
+  "means": {
+    "ownership-memo-r04": 47.4949540841626,
+    "any-pruning-r04": 48.59073925006669
+  },
+  "child_cpu_means": {
+    "ownership-memo-r04": 47.38019800000001,
+    "any-pruning-r04": 47.6641145
+  },
+  "improvement_percent": -2.3071612280376685,
+  "identical_output": true,
+  "applications": [
+    [
+      "19",
+      "8"
+    ]
+  ],
+  "scope": "One Packaging 26.3 slice; full default typed/formatted installed CLI; preliminary two samples per arm; no matrix/corpus."
+}

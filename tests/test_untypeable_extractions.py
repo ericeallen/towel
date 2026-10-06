@@ -79,7 +79,7 @@ def test_a_lambda_that_needs_a_tests_narrowing_is_declined_without_a_check(
                 if task.finished
                 else fallback
             )
-            return value * 2
+            return value + 1
         """,
         pick="describe_total and describe_done",
     )
