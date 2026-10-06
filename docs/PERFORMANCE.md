@@ -36,8 +36,9 @@ background activity. The older timings below retain their historical scope.
 
 The audit repairs changed the runtime after the October 5 freeze. Those older
 release gates and timings do not validate the new source. Complete installed CLI
-controls from correctness checkpoint `e0c185675e094eb14db305eaadd1a918934eaf55`
-used the same Python/dependencies and fresh copies of the same Packaging slice.
+controls for the first two optimizations used correctness checkpoint
+`e0c185675e094eb14db305eaadd1a918934eaf55`; the third used
+`8626d50e359a6aabfe19e34514bcb8b29ef768e2`. Each comparison used the same Python/dependencies and fresh copies of the same Packaging slice.
 Each comparison used two samples per arm in ABBA order, with default typing,
 formatting, automatic workers and final checking. All outputs were byte-identical:
 19 refactorings across 8 files.
@@ -46,6 +47,7 @@ formatting, automatic workers and final checking. All outputs were byte-identica
 | --- | ---: | ---: | --- |
 | Immutable statement ownership memo | 49.80 | 49.91 | None established |
 | Witnessed Any-result retry pruning | 47.49 | 48.59 | None established |
+| Exact completed-refusal retention | 47.30 | 47.37 | None established |
 
 These small samples include changing ordinary host activity. They do not establish
 a regression, a general speedup, or a new comparison with published 1.772. The
@@ -56,8 +58,13 @@ parameter erasure that cannot repair a witnessed fixed-Any return diagnostic.
 
 The third implementation retains completed type refusals only for an unchanged
 whole-project revision and exact candidate/checker/rendering context. Its focused
-controls pass; complete CLI measurement remains pending. Matrix and corpus reruns
-remain pending explicit authorization.
+controls pass. Instrumented complete CLI runs each performed 185 mypy exchanges
+and 30 materializations: all five earlier completed refusals predated the last
+project change, so revision 19 correctly invalidated them before rehearing. This
+fixture supplies no applicable repeated refusal for the new optimization to skip.
+The [retained evidence](../tests/release_evidence/1.792-performance-optimization/README.md)
+binds all three comparisons to source, wheel, dependencies and output hashes.
+Matrix and corpus reruns remain pending explicit authorization.
 
 ### October 5 repaired candidate comparison
 

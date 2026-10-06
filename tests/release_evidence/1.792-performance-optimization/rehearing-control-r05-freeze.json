@@ -1,0 +1,25 @@
+{
+  "commit": "8626d50e359a6aabfe19e34514bcb8b29ef768e2",
+  "control": "no-rehearing-retention",
+  "diagnostic_control_sha256": "ea9307276c06e18957aa0cc1b04ed7d03eb137df18fb2590047005a436890a17",
+  "runtime": "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/rehearing-control-r05/venv/lib/python3.13/site-packages/towel",
+  "wheel_sha256": "6874c4c7a385a408a3c8f22b7400bc168c0a648c800dfb5914e8ce59e3800c6c",
+  "dependencies": {
+    "ast_serialize": "0.11.2",
+    "black": "26.5.1",
+    "click": "8.5.0",
+    "code-towel": "1.792",
+    "isort": "9.0.1",
+    "librt": "0.15.0",
+    "mypy": "2.3.1",
+    "mypy_extensions": "1.1.0",
+    "nodeenv": "1.11.0",
+    "packaging": "26.3",
+    "pathspec": "1.1.1",
+    "platformdirs": "4.12.0",
+    "pyright": "1.1.414",
+    "pytokens": "0.4.1",
+    "ruff": "0.16.9",
+    "typing_extensions": "4.16.0"
+  }
+}

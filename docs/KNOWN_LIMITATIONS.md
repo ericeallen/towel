@@ -1379,7 +1379,11 @@ the proposals it built and did not apply, by reason:
   a whole f-string (container syntax rather than values), a lambda with
   positional-only, keyword-only, or variadic parameters, an expression
   containing an assignment expression, and a substitution that would need
-  more than the configured maximum parameters (`--max-parameters`). It
+  more than the configured maximum newly parameterized differing expressions
+  (`--max-parameters`). Ordinary helper signatures may also include unchanged
+  free inputs. Certified argument-ownership transfer additionally requires the
+  complete expanded positional signature, including its holder, to fit that
+  maximum. It
   also includes a difference a tool reads where it stands: a translation
   marker's message, or the name, fields or type a checker reads of a typing
   form. A form is what the block's module binds to typing's object,

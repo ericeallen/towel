@@ -1,0 +1,321 @@
+{
+  "rehearing-control-r05": {
+    "source": "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/rehearing-control-r05/venv/lib/python3.13/site-packages/towel/__init__.py",
+    "exit_status": 0,
+    "cache_events": [
+      {
+        "kind": "add",
+        "description": "Extract common code from _key and __extracted_func_0",
+        "revision": null,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": false,
+        "sha256": null
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from _matches_literal and is_empty",
+        "revision": 5,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": false,
+        "sha256": null
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from _encode_upper and admit",
+        "revision": 6,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": false,
+        "sha256": null
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from __lt__ and range_is_empty",
+        "revision": 7,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": false,
+        "sha256": null
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from _get_required and _get_required_sequence_of_objects",
+        "revision": 12,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": false,
+        "sha256": null
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from __gt__ and _lowest_release_at_or_above",
+        "revision": 18,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from __and__ and __or__",
+        "revision": null,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": false,
+        "sha256": null
+      },
+      {
+        "kind": "retain",
+        "revision": 19,
+        "context": false,
+        "before": 0,
+        "after": 0
+      },
+      {
+        "kind": "context",
+        "available": false,
+        "sha256": null
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from __lt__ and range_is_empty",
+        "revision": 19,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from _key and __extracted_func_0",
+        "revision": null,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": false,
+        "sha256": null
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from _encode_upper and admit",
+        "revision": 19,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": false,
+        "sha256": null
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from __gt__ and _lowest_release_at_or_above",
+        "revision": 19,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from __and__ and __or__",
+        "revision": null,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": false,
+        "sha256": null
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from _get_required and _get_required_sequence_of_objects",
+        "revision": 19,
+        "context": false,
+        "key": true
+      }
+    ],
+    "subtype_calls": 81,
+    "distinct_exact_subtype_inputs": 75,
+    "repeated_exact_subtype_inputs": 6,
+    "mypy_exchanges": 185,
+    "materializations": 30
+  },
+  "rehearing-r05": {
+    "source": "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/rehearing-r05/venv/lib/python3.13/site-packages/towel/__init__.py",
+    "exit_status": 0,
+    "cache_events": [
+      {
+        "kind": "add",
+        "description": "Extract common code from _key and __extracted_func_0",
+        "revision": null,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": true,
+        "sha256": "79996942eacc862ecede745a3394177a9e0abde57429a242d34d0a3a98092e77"
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from _matches_literal and is_empty",
+        "revision": 5,
+        "context": true,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": true,
+        "sha256": "79996942eacc862ecede745a3394177a9e0abde57429a242d34d0a3a98092e77"
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from _encode_upper and admit",
+        "revision": 6,
+        "context": true,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": true,
+        "sha256": "79996942eacc862ecede745a3394177a9e0abde57429a242d34d0a3a98092e77"
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from __lt__ and range_is_empty",
+        "revision": 7,
+        "context": true,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": true,
+        "sha256": "79996942eacc862ecede745a3394177a9e0abde57429a242d34d0a3a98092e77"
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from _get_required and _get_required_sequence_of_objects",
+        "revision": 12,
+        "context": true,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": true,
+        "sha256": "79996942eacc862ecede745a3394177a9e0abde57429a242d34d0a3a98092e77"
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from __gt__ and _lowest_release_at_or_above",
+        "revision": 18,
+        "context": true,
+        "key": true
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from __and__ and __or__",
+        "revision": null,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": true,
+        "sha256": "4e04de678b22333ea34112b15e17abc5c408b2cac5edf5ac32ba495186e09b80"
+      },
+      {
+        "kind": "retain",
+        "revision": 19,
+        "context": true,
+        "before": 5,
+        "after": 0
+      },
+      {
+        "kind": "context",
+        "available": true,
+        "sha256": "4e04de678b22333ea34112b15e17abc5c408b2cac5edf5ac32ba495186e09b80"
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from __lt__ and range_is_empty",
+        "revision": 19,
+        "context": true,
+        "key": true
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from _key and __extracted_func_0",
+        "revision": null,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": true,
+        "sha256": "4e04de678b22333ea34112b15e17abc5c408b2cac5edf5ac32ba495186e09b80"
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from _encode_upper and admit",
+        "revision": 19,
+        "context": true,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": true,
+        "sha256": "4e04de678b22333ea34112b15e17abc5c408b2cac5edf5ac32ba495186e09b80"
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from __gt__ and _lowest_release_at_or_above",
+        "revision": 19,
+        "context": true,
+        "key": true
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from __and__ and __or__",
+        "revision": null,
+        "context": false,
+        "key": true
+      },
+      {
+        "kind": "context",
+        "available": true,
+        "sha256": "4e04de678b22333ea34112b15e17abc5c408b2cac5edf5ac32ba495186e09b80"
+      },
+      {
+        "kind": "add",
+        "description": "Extract common code from _get_required and _get_required_sequence_of_objects",
+        "revision": 19,
+        "context": true,
+        "key": true
+      }
+    ],
+    "subtype_calls": 81,
+    "distinct_exact_subtype_inputs": 75,
+    "repeated_exact_subtype_inputs": 6,
+    "mypy_exchanges": 185,
+    "materializations": 30
+  },
+  "limitations": "Instrumented complete CLI work counts, not benchmark wall timings. Both variants use the recorded frozen wheels, fresh same Packaging inputs, and reproduce the same output. Definitive refusals at revisions 5,6,7,12,18 correctly invalidated at revision19; no retained refusal applicable at rehearing."
+}

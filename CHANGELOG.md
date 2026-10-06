@@ -182,6 +182,20 @@ established. See the [final comparison](docs/PERFORMANCE.md#october-5-repaired-c
 The earlier improvements below belong to their development checkpoints and
 are not final-release performance claims.
 
+The October 6 audit repairs supersede that runtime. Three separate paired
+complete CLI comparisons measured immutable ownership memoization, witnessed
+fixed-Any retry pruning, and exact unchanged-context refusal retention. Each
+produced byte-identical output; none established a complete-command speedup.
+See [the optimization measurements](docs/PERFORMANCE.md#october-6-optimization-experiments).
+
+- Cache pure ownership facts weakly by immutable AST identity, returning fresh
+  mutable result sets to callers.
+- Skip parameter-only annotation erasure only when a plugin-free checker
+  diagnostic proves the unchanged helper's fixed-Any result still fails.
+- Retain definitive completed type refusals only for the exact candidate,
+  current whole-project revision and complete built-in checker/rendering
+  context; retry unknown answers and invalidate after source changes.
+
 - Keep sharing immutable analysis for warning-free source containing comments,
   raw strings and valid numeric literals. A bounded lexical cache distinguishes
   those cases from syntax that needs native parser diagnostics. Its source-byte

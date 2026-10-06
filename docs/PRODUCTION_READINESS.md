@@ -82,7 +82,10 @@ fixture. Four fresh-process observations per arm were repeatable under the
 recorded background activity. The candidate applied 20 refactorings versus
 18; this is not an identical-transformation comparison or a whole-corpus
 speedup. The measured runtime was unchanged since `c5311b4`; the October 6
-repairs and optimizations require their own measurements.
+repairs and optimizations have separate [paired installed CLI measurements](PERFORMANCE.md#october-6-optimization-experiments).
+All three bounded optimization comparisons produced identical outputs and
+established no complete-command speedup. They do not compare the changed
+October 6 source with published 1.772 or clear a release gate.
 
 The [retained documentation evidence](../tests/release_evidence/1.792-audit-fixes/README.md)
 preserves original performance records and corpus summaries/review, with
