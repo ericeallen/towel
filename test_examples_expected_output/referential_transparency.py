@@ -6,28 +6,7 @@ and don't accidentally capture or modify variables incorrectly.
 """
 
 
-def __extracted_func_4(inner_var, processor, step1):
-    step2 = step1 - inner_var
-    step3 = step2 * 2  # Correct: uses step2
-    processor.add(step3)
-    return (step2, step3)
-
-
-def __extracted_func_3(inner_var, item, outer_var, processor):
-    step1 = item + outer_var
-    step2, step3 = __extracted_func_4(inner_var, processor, step1)
-    return (step1, step2, step3)
-
-
-def __extracted_func_2(__param_0, counter):
-    counter['total'] += __param_0()
-    counter['processed'] += 1
-    result = counter['total'] / counter['processed']
-    print(f'Current average: {result}')
-    return result
-
-
-def __extracted_func_1(accumulator, multiplier, value):
+def __extracted_func_1(accumulator, multiplier, value, _towel_owner):
     processed = value * multiplier
     validated = processed > 0
     if validated:
@@ -35,7 +14,7 @@ def __extracted_func_1(accumulator, multiplier, value):
     return processed
 
 
-def __extracted_func_0(__param_0, cache, data, metrics):
+def __extracted_func_0(__param_0, cache, data, metrics, _towel_owner):
     for key, value in data.items():
         # Modifies both cache and metrics
         # Same pattern, different multiplier
@@ -54,7 +33,10 @@ def update_mutable_state_v1(items, counter):
 
     for item in items:
         # This block modifies mutable state
-        _towel_keep_result = __extracted_func_2(lambda: item, counter)
+        counter["total"] += item
+        counter["processed"] += 1
+        result = counter["total"] / counter["processed"]
+        print(f"Current average: {result}")
 
     return counter
 
@@ -65,7 +47,10 @@ def update_mutable_state_v2(items, counter):
 
     for item in items:
         # Same pattern of mutation
-        _towel_keep_result = __extracted_func_2(lambda: item * 2, counter)
+        counter["total"] += item * 2
+        counter["processed"] += 1
+        result = counter["total"] / counter["processed"]
+        print(f"Current average: {result}")
 
     return counter
 
@@ -104,7 +89,10 @@ def accumulate_with_closure_v1(items, accumulator):
 
     def add_processed(value, multiplier):
         # Closure captures 'accumulator'
-        return __extracted_func_1(accumulator, multiplier, value)
+        _towel_arguments_1 = [(multiplier, value)]
+        del value
+        del multiplier
+        return __extracted_func_1(accumulator, _towel_arguments_1[0][0], _towel_arguments_1[0][1], _towel_arguments_1.pop())
 
     results = [add_processed(item, 2) for item in items]
     return accumulator, results
@@ -116,7 +104,10 @@ def accumulate_with_closure_v2(items, accumulator):
 
     def add_processed(value, multiplier):
         # Same closure pattern
-        return __extracted_func_1(accumulator, multiplier, value)
+        _towel_arguments_1 = [(multiplier, value)]
+        del value
+        del multiplier
+        return __extracted_func_1(accumulator, _towel_arguments_1[0][0], _towel_arguments_1[0][1], _towel_arguments_1.pop())
 
     results = [add_processed(item, 3) for item in items]
     return accumulator, results
@@ -179,7 +170,10 @@ def nested_scope_capture_v1(outer_data, processor):
         inner_var = 50
         for item in data:
             # This block uses both outer_var and inner_var
-            _towel_keep_step1, _towel_keep_step2, _towel_keep_step3 = __extracted_func_3(inner_var, item, outer_var, processor)
+            step1 = item + outer_var
+            step2 = step1 - inner_var
+            step3 = step2 * 2
+            processor.add(step3)
 
     inner_process(outer_data)
     return processor.get_results()
@@ -224,7 +218,10 @@ def nested_scope_capture_valid_v1(outer_data, processor):
         # Captures outer_var
         inner_var = 50
         for item in data:
-            _towel_keep_step1, _towel_keep_step2, _towel_keep_step3 = __extracted_func_3(inner_var, item, outer_var, processor)
+            step1 = item + outer_var
+            step2 = step1 - inner_var
+            step3 = step2 * 2  # Correct: uses step2
+            processor.add(step3)
 
     inner_process(outer_data)
     return processor.get_results()
@@ -244,7 +241,9 @@ def nested_scope_capture_valid_v2(outer_data, processor):
         inner_var = 50
         for item in data:
             step1 = item + outer_var
-            _towel_keep_step2, _towel_keep_step3 = __extracted_func_4(inner_var, processor, step1)
+            step2 = step1 - inner_var
+            step3 = step2 * 2  # Correct: uses step2
+            processor.add(step3)
 
     inner_process(outer_data)
     return processor.get_results()
@@ -252,9 +251,17 @@ def nested_scope_capture_valid_v2(outer_data, processor):
 
 def modify_external_state_a(data, cache, metrics):
     """Version A: Modifies multiple external objects."""
-    return __extracted_func_0(2, cache, data, metrics)
+    _towel_arguments = [(metrics, cache, data)]
+    del data
+    del cache
+    del metrics
+    return __extracted_func_0(2, _towel_arguments[0][1], _towel_arguments[0][2], _towel_arguments[0][0], _towel_arguments.pop())
 
 
 def modify_external_state_b(data, cache, metrics):
     """Version B: Different multiplier, same modification pattern."""
-    return __extracted_func_0(3, cache, data, metrics)
+    _towel_arguments = [(metrics, cache, data)]
+    del data
+    del cache
+    del metrics
+    return __extracted_func_0(3, _towel_arguments[0][1], _towel_arguments[0][2], _towel_arguments[0][0], _towel_arguments.pop())

@@ -6,48 +6,13 @@ collide with variables in the surrounding scope or in the calling context.
 """
 
 
-def __extracted_func_5(__param_0, __param_1, data):
-    results = []
-    for item in data:
-        # This block could have naming conflicts with nested functions
-        # Different computation, same structure
-        a = item ** __param_0
-        _towel_keep_b, _towel_keep_c = __extracted_func_4(__param_1, a, results)
-    return results
-
-
-def __extracted_func_4(__param_0, a, results):
-    b = a + __param_0
-    c = b * 3
-    results.append(c)
-    return (b, c)
-
-
-def __extracted_func_3(__param_0, data, result):
-    for item in data:
-        # This block should be extracted, but 'x' might collide
-        # Same block - extracted function must avoid collision with 'result'
-        x = item * __param_0
-        _towel_keep_y, _towel_keep_z = __extracted_func_2(result, x)
-    return result
-
-
-def __extracted_func_2(result, x):
-    y = x + 10
-    z = y ** 2
-    result.append(z)
-    return (y, z)
-
-
-def __extracted_func_1(__param_0, cache, key, processed, temp):
-    validated = len(processed) > __param_0
+def __extracted_func_1(cache, key, processed, temp, validated):
     if validated:
         temp.append(processed)
         cache[key] = processed
-    return validated
 
 
-def __extracted_func_0(__param_0, values, x, y):
+def __extracted_func_0(__param_0, values, x, y, _towel_owner):
     output = []
     for val in values:
         # This block references outer 'x' and 'y'
@@ -62,23 +27,43 @@ def __extracted_func_0(__param_0, values, x, y):
 def process_with_temp_var_v1(data, result):
     """Version 1: Uses 'result' in outer scope, 'x' in duplicate block."""
     result = []
-    return __extracted_func_3(2, data, result)
+    for item in data:
+        # This block should be extracted, but 'x' might collide
+        x = item * 2
+        y = x + 10
+        z = y**2
+        result.append(z)
+    return result
 
 
 def process_with_temp_var_v2(data, result):
     """Version 2: Same pattern but 'result' is a parameter name."""
     result = []
-    return __extracted_func_3(3, data, result)
+    for item in data:
+        # Same block - extracted function must avoid collision with 'result'
+        x = item * 3
+        y = x + 10
+        z = y**2
+        result.append(z)
+    return result
 
 
 def calculate_nested_scope_a(values, x, y):
     """Uses x and y as parameters - extracted function must avoid these."""
-    return __extracted_func_0(5, values, x, y)
+    _towel_arguments = [(y, x, values)]
+    del values
+    del x
+    del y
+    return __extracted_func_0(5, _towel_arguments[0][2], _towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
 
 
 def calculate_nested_scope_b(values, x, y):
     """Same outer variable names - extracted function needs hygienic naming."""
-    return __extracted_func_0(10, values, x, y)
+    _towel_arguments = [(y, x, values)]
+    del values
+    del x
+    del y
+    return __extracted_func_0(10, _towel_arguments[0][2], _towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
 
 
 def transform_with_shadowing_v1(data, temp, cache):
@@ -89,7 +74,8 @@ def transform_with_shadowing_v1(data, temp, cache):
     for key, value in data.items():
         # Block that modifies outer 'temp' and 'cache'
         processed = value.upper()
-        _towel_keep_validated = __extracted_func_1(5, cache, key, processed, temp)
+        validated = len(processed) > 5
+        __extracted_func_1(cache, key, processed, temp, validated)
 
     return temp, cache
 
@@ -102,7 +88,8 @@ def transform_with_shadowing_v2(data, temp, cache):
     for key, value in data.items():
         # Same pattern, different validation condition
         processed = value.lower()
-        _towel_keep_validated = __extracted_func_1(3, cache, key, processed, temp)
+        validated = len(processed) > 3
+        __extracted_func_1(cache, key, processed, temp, validated)
 
     return temp, cache
 
@@ -142,7 +129,15 @@ def nested_function_scope_v1(data, helper, processor):
     def processor(x):
         return x + 5
 
-    return __extracted_func_5(2, 100, data)
+    results = []
+    for item in data:
+        # This block could have naming conflicts with nested functions
+        a = item**2
+        b = a + 100
+        c = b * 3
+        results.append(c)
+
+    return results
 
 
 def nested_function_scope_v2(data, helper, processor):
@@ -154,4 +149,12 @@ def nested_function_scope_v2(data, helper, processor):
     def processor(x):
         return x + 5
 
-    return __extracted_func_5(3, 200, data)
+    results = []
+    for item in data:
+        # Different computation, same structure
+        a = item**3
+        b = a + 200
+        c = b * 3
+        results.append(c)
+
+    return results

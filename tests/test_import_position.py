@@ -209,7 +209,17 @@ def test_r9xh_the_borrowers_own_patch_still_runs_before_the_host(tmp_path: Path)
         ).stdout
 
     before = run()
-    assert _refactor(package, cross_module_helpers=True, parameterize_builtins=True) > 0
+    original = {path: path.read_text() for path in package.glob("*.py")}
+    assert _refactor(package, cross_module_helpers=True, parameterize_builtins=True) == 0
+    assert {path: path.read_text() for path in package.glob("*.py")} == original
+    # A definite loop binding plus the physical holder budget gives the import
+    # position regression a complete, transferable body with identical output.
+    for path, source in original.items():
+        path.write_text(source.replace("    for r in rows:", "    r = ''\n    for r in rows:"))
+    assert (
+        _refactor(package, cross_module_helpers=True, parameterize_builtins=True, max_parameters=8)
+        > 0
+    )
     lines = (package / "b.py").read_text().splitlines()
     assert lines.index("from shop.a import __extracted_func_0") > lines.index(
         "time.sleep = lambda s: print('patched sleep', s)"

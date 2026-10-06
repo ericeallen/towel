@@ -156,8 +156,20 @@ def find_duplicate_helpers(root: Path) -> list[str]:
 # - example3_file1.py / example3_file2.py: their duplicate is across the two
 #   files, which single-file mode cannot see (the cross-file run is covered by
 #   test_crossfile_integration.py).
+# - generators_async.py: the pre-suspension prefix creates owned cleaned/window
+#   locals while the original parameters remain in the caller; partial-frame
+#   ownership transfer is not proved for generators or coroutines.
+# - global_nonlocal_examples.py: moving nested nonlocal scopes is declined;
+#   the former f/g suffix creates owned call results while outer stays local
+#   in the caller, so it also lacks a certified frame ownership transfer.
 EXPECTED_UNCHANGED_EXAMPLES = frozenset(
-    {"bindings_comprehensions.py", "example3_file1.py", "example3_file2.py"}
+    {
+        "bindings_comprehensions.py",
+        "example3_file1.py",
+        "example3_file2.py",
+        "generators_async.py",
+        "global_nonlocal_examples.py",
+    }
 )
 
 # class_hierarchy's duplicated statistics read len/sum/min/max in different modules. The

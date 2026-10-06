@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import subprocess
+import sys
 import textwrap
 
 from towel.diagnostics import Settings
@@ -57,6 +59,46 @@ TWO_SITES = textwrap.dedent("""
     """)
 
 
+SAFE_SITES = """
+import json
+
+def first(text, flag, strip=True, ending=()):
+    normalized = text.strip() if strip else text
+    data = json.loads(normalized)
+    names = [item["name"] for item in data]
+    if flag:
+        names.append(helper(normalized))
+    return names + list(ending)
+
+def second(text, flag, strip=False, ending=("done",)):
+    normalized = text.strip() if strip else text
+    data = json.loads(normalized)
+    names = [item["name"] for item in data]
+    if flag:
+        names.append(helper(normalized))
+    return names + list(ending)
+
+def helper(text):
+    return text.upper()
+"""
+
+
+def _trace(root: Path, driver: str) -> str:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            f"import sys; sys.path.insert(0, {str(root)!r})\n" + driver,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout
+
+
 def _helper_signature(source: str) -> str:
     tree = ast.parse(source)
     helper = next(
@@ -72,9 +114,31 @@ def test_module_names_are_read_bare_inside_a_same_file_helper(tmp_path: Path) ->
     path.write_text(TWO_SITES)
     engine = UnificationRefactorEngine(min_lines=3, settings=SERIAL)
     final, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
+    assert applied == 0
+    assert ast.dump(ast.parse(final)) == ast.dump(ast.parse(TWO_SITES))
+    driver = (
+        "import m\nfrom types import SimpleNamespace\n"
+        'text=\' [{"name":"a"}] \'\n'
+        "print(m.first(text, True), m.second(text, True))\n"
+        "m.helper=lambda text: 'patched'\n"
+        "m.json=SimpleNamespace(loads=lambda text: [{'name': 'rebound'}])\n"
+        "print(m.first(text, True), m.second(text, True))\n"
+    )
+    expected = _trace(tmp_path, driver)
+    path.write_text(SAFE_SITES)
+    assert _trace(tmp_path, driver) == expected
+    final, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
     assert applied == 1
-    assert _helper_signature(final) == "flag, text"
-    assert "json.loads(text)" in final and "helper(text)" in final
+    path.write_text(final)
+    assert _trace(tmp_path, driver) == expected
+    assert set(_helper_signature(final).split(", ")) == {
+        "text",
+        "flag",
+        "strip",
+        "ending",
+        "_towel_owner",
+    }
+    assert "json.loads(normalized)" in final and "helper(normalized)" in final
     assert "lambda" not in final
 
 
@@ -111,8 +175,35 @@ def test_a_cross_file_helper_still_takes_module_names(tmp_path: Path) -> None:
     results, _ = engine.refactor_directory_to_fixed_point(
         str(tmp_path / "pkg"), str(tmp_path / "out"), progress="none"
     )
+    assert sum(count for count, _ in results.values()) == 0
+    for filename, name, offset in (("a.py", "first", 0), ("b.py", "second", 1)):
+        path = tmp_path / "pkg" / filename
+        source = (
+            path.read_text()
+            .replace(f"def {name}(items):", f"def {name}(items, offset={offset}):")
+            .replace("return total - 1", "return total - offset")
+            .replace("return total\n", "return total - offset\n")
+        )
+        path.write_text(source)
+    driver = "from pkg import a, b; print(a.first([1, 2]), b.second([1, 2])); a.scale=lambda x:x*10; print(a.first([1, 2]), b.second([1, 2]))"
+    expected = _trace(tmp_path, driver)
+    engine = UnificationRefactorEngine(
+        min_lines=3,
+        max_parameters=8,
+        settings=SERIAL,
+        cross_module_helpers=True,
+        parameterize_builtins=True,
+    )
+    results, _ = engine.refactor_directory_to_fixed_point(
+        str(tmp_path / "pkg"), str(tmp_path / "safe-out"), progress="none"
+    )
     assert sum(count for count, _ in results.values()) > 0
-    rewritten = (tmp_path / "out" / "a.py").read_text() + (tmp_path / "out" / "b.py").read_text()
+    for filename in ("a.py", "b.py"):
+        (tmp_path / "pkg" / filename).write_text((tmp_path / "safe-out" / filename).read_text())
+    assert _trace(tmp_path, driver) == expected
+    rewritten = (tmp_path / "safe-out" / "a.py").read_text() + (
+        tmp_path / "safe-out" / "b.py"
+    ).read_text()
     assert "lambda: scale" in rewritten
 
 

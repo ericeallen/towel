@@ -343,10 +343,16 @@ def test_a_type_only_import_towel_wrote_refuses_no_later_pair(tmp_path: Path) ->
     second = _dry(tmp_path, types=True)
     assert second.returncode == 0, second.stdout + second.stderr
     assert "Extract common code from summary_direct" in second.stdout, second.stdout
-    assert (
-        "def summary_lock(values: list[int]) -> int:\n    return "
-        in (tmp_path / "pkg" / "lock.py").read_text()
+    rewritten = ast.parse((tmp_path / "pkg" / "lock.py").read_text())
+    summary = next(
+        node
+        for node in rewritten.body
+        if isinstance(node, ast.FunctionDef) and node.name == "summary_lock"
     )
+    assert ast.unparse(summary.args) == "values: list[int]"
+    assert isinstance(summary.body[-1], ast.Return)
+    assert isinstance(summary.body[-1].value, ast.Call)
+    assert "__extracted_func" in ast.unparse(summary.body[-1].value)
     imports_in_every_order(
         tmp_path,
         ["pkg.direct", "pkg.lock"],

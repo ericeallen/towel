@@ -45,6 +45,7 @@ from typing import List, Optional, Sequence, Tuple
 import pytest
 
 from tests.hostile_refactoring import refactor_script
+from tests.test_observational_equivalence import CallCase, compare_function_behavior
 from towel.diagnostics import Settings
 from towel.formatting import BlackSettings, SnippetFormatter, black_formatter, ruff_formatter
 from towel.unification.block_comments import (
@@ -492,6 +493,13 @@ def _helper_text(result: str) -> str:
     return "\n".join(lines[helper.lineno - 1 : helper.end_lineno])
 
 
+def _assert_behavior_preserved(source: str, result: str, names: Sequence[str]) -> None:
+    cases: List[CallCase] = [((rows,), {}) for rows in ([], [1, 2], [-1, 0, 3])]
+    for name in names:
+        passed, differences = compare_function_behavior(source, result, name, cases)
+        assert passed, differences
+
+
 @pytest.mark.parametrize("formatter", [None, "black", "ruff"])
 def test_the_layout_fmt_off_keeps_is_written_into_the_helper_as_it_was(
     tmp_path: Path, formatter: Optional[str]
@@ -525,10 +533,23 @@ def test_a_line_fmt_skip_keeps_is_written_as_it_was(tmp_path: Path) -> None:
         print(total)
         return total + 2
     """
-    result, _ = _refactored(
+    unchanged, engine = _refactored(
         tmp_path, source, "black" if importlib.util.find_spec("black") else None
     )
+    assert unchanged == textwrap.dedent(source).lstrip()
+    assert "conditionally_bound_return" in engine.declined_pairs
+    # Retaining the partial loop's row would return an unbound local for an
+    # empty iterable. Keep that refusal; the identical complete body needs no
+    # returned row and transfers arguments while exercising the same kept line.
+    complete = textwrap.dedent(source).lstrip().replace("return total + 2", "return total + 1")
+    result, _ = _refactored(
+        tmp_path,
+        complete,
+        "black" if importlib.util.find_spec("black") else None,
+        name="complete.py",
+    )
     assert "        total += row  *  2  # fmt: skip" in _helper_text(result).split("\n")
+    _assert_behavior_preserved(complete, result, ("g1", "g2"))
 
 
 def test_a_region_around_both_blocks_that_reaches_the_helper_keeps_it_all(tmp_path: Path) -> None:
@@ -548,9 +569,16 @@ def test_a_region_around_both_blocks_that_reaches_the_helper_keeps_it_all(tmp_pa
         print("m",   total)
         return head
     """
-    result, _ = _refactored(tmp_path, source)
+    unchanged, engine = _refactored(tmp_path, source)
+    assert unchanged == textwrap.dedent(source).lstrip()
+    assert "owned_binding_frame_boundary" in engine.declined_pairs
+    # The divergent head slicing formerly left an owned head in the caller.
+    # A shared full body retains the module-wide directive and exact layout.
+    complete = textwrap.dedent(source).lstrip().replace("head = rows[1:]", "head = rows[:1]")
+    result, _ = _refactored(tmp_path, complete, name="complete.py")
     helper = _helper_text(result).split("\n")
     assert "    total = sum(rows)   *   2" in helper and '    print("m",   total)' in helper
+    _assert_behavior_preserved(complete, result, ("g1", "g2"))
 
 
 @pytest.mark.parametrize(
@@ -630,4 +658,16 @@ def test_the_matrix_fixture_keeps_its_layout_through_a_fixed_point_run(tmp_path:
     text = after.read_text(encoding="utf-8")
     for region in _regions(source.read_text(encoding="utf-8")):
         assert _kept(region, text), "\n".join(region)
-    assert text.count("        count += row  *  2  # fmt: skip") == 1
+    # The matrix region still moves, but the fmt:skip loops have divergent
+    # returns and cannot transfer their owned count back on exceptional paths.
+    # Preserve their original AST and both exact kept lines.
+    original = ast.parse(source.read_text(encoding="utf-8"))
+    rewritten = ast.parse(text)
+    for name in ("h1", "h2"):
+        before = next(n for n in original.body if isinstance(n, ast.FunctionDef) and n.name == name)
+        current = next(
+            n for n in rewritten.body if isinstance(n, ast.FunctionDef) and n.name == name
+        )
+        assert ast.dump(before) == ast.dump(current)
+    assert text.count("        count += row  *  2  # fmt: skip") == 2
+    _assert_behavior_preserved(source.read_text(), text, ("g1", "g2", "h1", "h2"))

@@ -37,7 +37,16 @@ from towel.unification.pair_evaluation import _module_namespace_names
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
-def _extract(tmp_path: Path, source: str) -> tuple[str, int]:
+def _extract(tmp_path: Path, source: str, *, safe_arithmetic: bool = False) -> tuple[str, int]:
+    if safe_arithmetic:
+        untouched, refused = _extract(tmp_path / "original", source)
+        assert refused == 0 and untouched == textwrap.dedent(source)
+        source = source.replace(
+            "total = value + 1\n                doubled = total * 2\n                print(doubled)\n                return doubled",
+            "assert isinstance(value, int)\n                print((value + 1) * 2)\n                return (value + 1) * 2",
+        )
+        tmp_path = tmp_path / "companion"
+    tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "before.py"
     original = textwrap.dedent(source)
     path.write_text(original)
@@ -80,6 +89,7 @@ def test_nonlocal_declaration_does_not_block_an_unrelated_suffix(tmp_path: Path)
             return left, right, count
         print(outer())
     """,
+        safe_arithmetic=True,
     )
     assert count >= 1, result
     helpers = [
@@ -114,6 +124,7 @@ def test_private_attribute_elsewhere_does_not_block_a_public_suffix(tmp_path: Pa
                 return doubled
         print(First().calculate(3), Second().calculate(5))
     """,
+        safe_arithmetic=True,
     )
     assert count >= 1, result
     helpers = [
@@ -183,9 +194,9 @@ def test_annotation_only_cross_module_type_is_not_a_runtime_argument(
         "from typing import TypedDict\nclass BodyEvent(TypedDict):\n    body: bytes\n"
     )
     template = (
-        "from __future__ import annotations\n{imports}\n"
+        "from __future__ import annotations\nfrom builtins import print as emit\n{imports}\n"
         "def {name}(queue: list[BodyEvent]) -> list[BodyEvent]:\n"
-        "    print('start')\n"
+        "    emit('start')\n"
         "    empty: BodyEvent = {{'body': {payload}}}\n"
         "    queue.append(empty)\n"
         "    return queue\n"

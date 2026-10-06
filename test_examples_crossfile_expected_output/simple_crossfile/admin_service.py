@@ -2,7 +2,6 @@
 Admin service module.
 """
 
-
 def __extracted_func_0(parts):
     if not parts[0] or not parts[1]:
         return False

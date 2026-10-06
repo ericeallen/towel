@@ -22,6 +22,7 @@ of block extraction, pair finding, and proposal generation.
 
 import unittest
 import ast
+from pathlib import Path
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.models import FunctionArtifact
 from tests.test_helpers import TemporaryModuleTestCase
@@ -392,7 +393,23 @@ def outer2(data, threshold):
     return transformed
 """)
 
-        proposals = self.engine.analyze_file(temp_path)
+        original = Path(temp_path).read_text()
+        self.assertEqual(self.engine.analyze_file(temp_path), [])
+        # The captured threshold stays in its original nested factory. The
+        # duplicate suffix creates no helper-owned locals beside that cell.
+        source = original.replace(
+            "    validator = make_validator(5)\n"
+            "    transformer = make_transformer(2)\n"
+            "    filtered = list(filter(validator, data))\n"
+            "    transformed = list(map(transformer, filtered))\n"
+            "    return transformed",
+            "    assert isinstance(data, list)\n"
+            "    assert all(isinstance(item, int) for item in data)\n"
+            "    assert isinstance(threshold, int)\n"
+            "    return list(map(make_transformer(2), filter(make_validator(5), data)))",
+        )
+        companion = self._write_temp(source, "companion.py")
+        proposals = self.engine.analyze_file(companion)
 
         # Should have at least one proposal
         self.assertGreater(len(proposals), 0, "Should generate at least one proposal")
@@ -419,6 +436,13 @@ def outer2(data, threshold):
                     [],
                     "Extracted helper should not contain nested function definitions",
                 )
+
+        written = self.engine.apply_refactoring(companion, relevant_proposals[0])
+        for program in (original, source, written):
+            namespace: dict[str, object] = {}
+            exec(program + "\nobserved = (outer1([1,5,6,9],3), outer2([1,5,6,9],3))", namespace)
+            self.assertEqual(namespace["observed"], ([15, 21], [15, 21]))
+        self.assertEqual(Path(temp_path).read_text(), original)
 
 
 class TestEdgeCases(TemporaryModuleTestCase):

@@ -6,7 +6,7 @@ when variables are captured from enclosing scopes.
 """
 
 
-def __extracted_func_0(__param_0, __param_1):
+def __extracted_func_0(__param_0, __param_1, _towel_owner):
     result = 0
     for i in range(__param_0):
         result += __param_1
@@ -94,12 +94,18 @@ def accumulator_b(values):
 # These should NOT be extractable because they capture different variables
 def multiplier_a(x, factor):
     """Multiplier with captured factor."""
-    return __extracted_func_0(x, factor)
+    _towel_arguments = [(factor, x)]
+    del x
+    del factor
+    return __extracted_func_0(_towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
 
 
 def multiplier_b(y, multiplier):
     """Similar pattern but captures different variable names."""
-    return __extracted_func_0(y, multiplier)
+    _towel_arguments = [(multiplier, y)]
+    del y
+    del multiplier
+    return __extracted_func_0(_towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
 
 
 # Variable shadowing edge case

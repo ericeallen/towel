@@ -35,6 +35,7 @@ import argparse
 import ast
 import contextlib
 import io
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
@@ -82,6 +83,30 @@ def second(n):
     total = total + 1
     return -total
 """
+
+SAFE_KERNELS = (
+    KERNELS.replace("def first(n):", "def first(n, sign=1):")
+    .replace("def second(n):", "def second(n, sign=-1):")
+    .replace("return -total", "return sign * total")
+    .replace("return total\n", "return sign * total\n")
+)
+
+
+def _kernel_results(source: str) -> str:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            source + "\nprint([(first(n), second(n)) for n in (0, 1, 4)])",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout
+
 
 HAND_APPLIED = "import numba\nfrom pkg import kernels\nfast_first = numba.njit(kernels.first)\n"
 
@@ -492,8 +517,14 @@ def test_an_excluded_instrumenter_does_not_veto_extraction(
     hand = _project(tmp_path / "hand", {"extras/fast.py": HAND_APPLIED})
     (hand / "pkg" / "a.py").unlink()
     (hand / "pkg" / "b.py").unlink()
+    assert _refactored(hand, ".", ("extras",), cross_module=False) == 0
+    assert kernels.read_text() == KERNELS
+    expected = _kernel_results(KERNELS)
+    assert _kernel_results(SAFE_KERNELS) == expected
+    kernels.write_text(SAFE_KERNELS)
     assert _refactored(hand, ".", ("extras",), cross_module=False) == 1
-    assert kernels.read_text() != KERNELS
+    assert kernels.read_text() != SAFE_KERNELS
+    assert _kernel_results(kernels.read_text()) == expected
     assert (hand / "extras" / "fast.py").read_text() == HAND_APPLIED
 
 
@@ -547,7 +578,10 @@ def test_same_file_library_analysis_does_not_scan_unrelated_instrumenters(tmp_pa
     project = _project(tmp_path, {"pkg/fast.py": NEWER + HAND_APPLIED})
     engine = UnificationRefactorEngine(min_lines=3)
     proposals = engine.analyze_files([str(project / "pkg" / "kernels.py")], progress="none")
-    assert proposals
+    assert proposals == []
+    kernels = project / "pkg" / "kernels.py"
+    kernels.write_text(SAFE_KERNELS)
+    assert engine.analyze_files([str(kernels)], progress="none")
 
 
 def test_the_towel_repository_parses_on_this_python() -> None:

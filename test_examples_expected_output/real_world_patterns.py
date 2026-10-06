@@ -6,32 +6,19 @@ data validation, ETL pipelines, error handling, and logging.
 """
 
 
-def __extracted_func_7(__param_0, e, error_handler, failed, i, item, metrics):
+def __extracted_func_6(__param_0, e, error_handler, failed, i, item, metrics):
     error_handler.log(e, context={'index': i, 'item': item})
     failed.append({'index': i, 'error': str(e), 'item': item})
     metrics.increment(__param_0)
 
 
-def __extracted_func_6(__param_0, metrics, processed, processor, result):
+def __extracted_func_5(__param_0, metrics, processed, processor, result):
     processor.enrich(result)
     processed.append(result)
     metrics.increment(__param_0)
 
 
-def __extracted_func_5(__param_0, auth, logger, rate_limiter, request):
-    if not auth.verify_token(request.headers.get('Authorization')):
-        logger.warn('Invalid token')
-        return ({'error': 'Unauthorized'}, 401)
-    if not rate_limiter.check(request.user_id, limit=__param_0):
-        logger.warn(f'Rate limit exceeded for user {request.user_id}')
-        return ({'error': 'Too many requests'}, 429)
-    # Validate and process
-    return __extracted_func_4(auth, logger, request)
-
-
-def __extracted_func_4(auth, logger, request):
-    data = request.json()
-    validated = auth.validate_payload(data)
+def __extracted_func_4(logger, request, validated):
     if not validated:
         logger.error('Invalid payload')
         return ({'error': 'Bad request'}, 400)
@@ -39,7 +26,7 @@ def __extracted_func_4(auth, logger, request):
     return ({'status': 'success'}, 200)
 
 
-def __extracted_func_3(__param_0, cache, database, key):
+def __extracted_func_3(__param_0, cache, database, key, _towel_owner):
     cached = cache.get(key)
     if cached is not None:
         cache.increment_hits()
@@ -60,7 +47,7 @@ def __extracted_func_3(__param_0, cache, database, key):
     return None
 
 
-def __extracted_func_2(__param_0, config, logger, source):
+def __extracted_func_2(__param_0, config, logger, source, _towel_owner):
     logger.info('Starting extract phase')
     # Extract with retry logic
     # Same retry logic, different timeout
@@ -81,7 +68,7 @@ def __extracted_func_2(__param_0, config, logger, source):
     return data
 
 
-def __extracted_func_1(__param_0, audit_log, data, rules_engine):
+def __extracted_func_1(__param_0, audit_log, data, rules_engine, _towel_owner):
     errors = []
     warnings = []
     # Validate required fields
@@ -102,7 +89,7 @@ def __extracted_func_1(__param_0, audit_log, data, rules_engine):
     return {'valid': len(errors) == 0, 'errors': errors, 'warnings': warnings}
 
 
-def __extracted_func_0(__param_0, events, time_window):
+def __extracted_func_0(__param_0, events, time_window, _towel_owner):
     buckets = {}
     for event in events:
         # Bucket by time window
@@ -124,33 +111,73 @@ def __extracted_func_0(__param_0, events, time_window):
 def handle_api_request_v1(request, auth, rate_limiter, logger):
     """Version 1: Complete API request handling."""
     # Authentication and rate limiting
-    return __extracted_func_5(100, auth, logger, rate_limiter, request)
+    if not auth.verify_token(request.headers.get("Authorization")):
+        logger.warn("Invalid token")
+        return {"error": "Unauthorized"}, 401
+
+    if not rate_limiter.check(request.user_id, limit=100):
+        logger.warn(f"Rate limit exceeded for user {request.user_id}")
+        return {"error": "Too many requests"}, 429
+
+    # Validate and process
+    data = request.json()
+    validated = auth.validate_payload(data)
+
+    return __extracted_func_4(logger, request, validated)
 
 
 def handle_api_request_v2(request, auth, rate_limiter, logger):
     """Version 2: Different rate limit, same handling pattern."""
     # Same pattern, different limit
-    return __extracted_func_5(200, auth, logger, rate_limiter, request)
+    if not auth.verify_token(request.headers.get("Authorization")):
+        logger.warn("Invalid token")
+        return {"error": "Unauthorized"}, 401
+
+    if not rate_limiter.check(request.user_id, limit=200):
+        logger.warn(f"Rate limit exceeded for user {request.user_id}")
+        return {"error": "Too many requests"}, 429
+
+    # Validate and process
+    data = request.json()
+    validated = auth.validate_payload(data)
+
+    return __extracted_func_4(logger, request, validated)
 
 
 def etl_pipeline_extract_a(source, config, logger):
     """Version A: ETL extract phase."""
-    return __extracted_func_2(30, config, logger, source)
+    _towel_arguments_2 = [(logger, config, source)]
+    del source
+    del config
+    del logger
+    return __extracted_func_2(30, _towel_arguments_2[0][1], _towel_arguments_2[0][0], _towel_arguments_2[0][2], _towel_arguments_2.pop())
 
 
 def etl_pipeline_extract_b(source, config, logger):
     """Version B: Different timeout, same extraction pattern."""
-    return __extracted_func_2(60, config, logger, source)
+    _towel_arguments_2 = [(logger, config, source)]
+    del source
+    del config
+    del logger
+    return __extracted_func_2(60, _towel_arguments_2[0][1], _towel_arguments_2[0][0], _towel_arguments_2[0][2], _towel_arguments_2.pop())
 
 
 def validate_business_rules_v1(data, rules_engine, audit_log):
     """Version 1: Business rule validation."""
-    return __extracted_func_1(10000, audit_log, data, rules_engine)
+    _towel_arguments_1 = [(audit_log, rules_engine, data)]
+    del data
+    del rules_engine
+    del audit_log
+    return __extracted_func_1(10000, _towel_arguments_1[0][0], _towel_arguments_1[0][2], _towel_arguments_1[0][1], _towel_arguments_1.pop())
 
 
 def validate_business_rules_v2(data, rules_engine, audit_log):
     """Version 2: Different amount threshold, same validation."""
-    return __extracted_func_1(5000, audit_log, data, rules_engine)
+    _towel_arguments_1 = [(audit_log, rules_engine, data)]
+    del data
+    del rules_engine
+    del audit_log
+    return __extracted_func_1(5000, _towel_arguments_1[0][0], _towel_arguments_1[0][2], _towel_arguments_1[0][1], _towel_arguments_1.pop())
 
 
 def process_batch_with_errors_a(items, processor, error_handler, metrics):
@@ -168,10 +195,10 @@ def process_batch_with_errors_a(items, processor, error_handler, metrics):
                 continue
 
             result = processor.transform(item)
-            __extracted_func_6('processed', metrics, processed, processor, result)
+            __extracted_func_5('processed', metrics, processed, processor, result)
 
         except Exception as e:
-            __extracted_func_7('processing_errors', e, error_handler, failed, i, item, metrics)
+            __extracted_func_6('processing_errors', e, error_handler, failed, i, item, metrics)
 
     return {"processed": processed, "failed": failed, "total": len(items)}
 
@@ -191,10 +218,10 @@ def process_batch_with_errors_b(items, processor, error_handler, metrics):
                 continue
 
             result = processor.transform(item)
-            __extracted_func_6('success_count', metrics, processed, processor, result)
+            __extracted_func_5('success_count', metrics, processed, processor, result)
 
         except Exception as e:
-            __extracted_func_7('error_count', e, error_handler, failed, i, item, metrics)
+            __extracted_func_6('error_count', e, error_handler, failed, i, item, metrics)
 
     return {"processed": processed, "failed": failed, "total": len(items)}
 
@@ -202,20 +229,38 @@ def process_batch_with_errors_b(items, processor, error_handler, metrics):
 def cache_with_fallback_v1(key, cache, database, ttl):
     """Version 1: Cache with database fallback."""
     # Try cache first
-    return __extracted_func_3(3600, cache, database, key)
+    _towel_arguments_3 = [(ttl, database, cache, key)]
+    del key
+    del cache
+    del database
+    del ttl
+    return __extracted_func_3(3600, _towel_arguments_3[0][2], _towel_arguments_3[0][1], _towel_arguments_3[0][3], _towel_arguments_3.pop())
 
 
 def cache_with_fallback_v2(key, cache, database, ttl):
     """Version 2: Different TTL, same caching pattern."""
     # Same pattern, different TTL
-    return __extracted_func_3(7200, cache, database, key)
+    _towel_arguments_3 = [(ttl, database, cache, key)]
+    del key
+    del cache
+    del database
+    del ttl
+    return __extracted_func_3(7200, _towel_arguments_3[0][2], _towel_arguments_3[0][1], _towel_arguments_3[0][3], _towel_arguments_3.pop())
 
 
 def aggregate_metrics_a(events, time_window, aggregator):
     """Version A: Time-series aggregation."""
-    return __extracted_func_0(2, events, time_window)
+    _towel_arguments = [(aggregator, time_window, events)]
+    del events
+    del time_window
+    del aggregator
+    return __extracted_func_0(2, _towel_arguments[0][2], _towel_arguments[0][1], _towel_arguments.pop())
 
 
 def aggregate_metrics_b(events, time_window, aggregator):
     """Version B: Different multiplier, same aggregation."""
-    return __extracted_func_0(3, events, time_window)
+    _towel_arguments = [(aggregator, time_window, events)]
+    del events
+    del time_window
+    del aggregator
+    return __extracted_func_0(3, _towel_arguments[0][2], _towel_arguments[0][1], _towel_arguments.pop())

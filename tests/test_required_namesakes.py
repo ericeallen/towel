@@ -612,5 +612,28 @@ def test_where_the_directory_is_what_the_program_means_the_import_that_lacks_is_
     ran = _towel(root, ".", "--exclude", "tools", "--parameterize-builtins")
     assert ran.returncode == 0, ran.stdout + ran.stderr
     assert "zzclick could be any of" not in ran.stderr
-    assert "import __extracted_func" in (tmp_path / "project-out/zzapp/cli.py").read_text()
-    assert run(tmp_path / "project-out") == expected
+    output = tmp_path / "project-out"
+    assert "import __extracted_func" not in (output / "zzapp/cli.py").read_text()
+    assert run(output) == expected
+    # Preserve the original owning-prefix refusal, then use a binding-free
+    # arithmetic companion to exercise the same local namesake import remedy.
+    companion = root.parent / "binding-free-project"
+    shutil.copytree(root, companion)
+    root = companion
+    for relative in ("zzapp/cli.py", "third_party/zzclick/utils.py"):
+        path = root / relative
+        source = (
+            path.read_text()
+            .replace("total = n * 3", "n * 3")
+            .replace("extra = total + 7", "n * 3 + 7")
+            .replace('print("shared", total, extra)', 'print("shared", n * 3, n * 3 + 7)')
+            .replace("return extra + 1", "return n * 3 + 8")
+            .replace("return extra", "return n * 3 + 7")
+        )
+        path.write_text(source)
+    assert run(root) == expected
+    ran = _towel(root, ".", "--exclude", "tools", "--parameterize-builtins")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    output = root.parent / f"{root.name}-out"
+    assert "import __extracted_func" in (output / "zzapp/cli.py").read_text()
+    assert run(output) == expected

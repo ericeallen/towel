@@ -215,7 +215,7 @@ def test_explanatory_comments_keep_their_statements_and_order(tmp_path: Path) ->
     assert result.count("# the bonus for a large value") == 1
     assert result.count("# large values count double") == 1
     # A comment above the block is the call site's own, and stays with each call.
-    assert result.count("    # Start from nothing.\n    return __extracted_func_0(") == 2, result
+    assert result.count("    # Start from nothing.\n    _towel_arguments = ") == 2, result
     _assert_same_refactoring_without_comments(path, result)
 
 
@@ -662,11 +662,16 @@ def _package(root: Path, comment: str) -> Sequence[Path]:
         path = root / "zzshared" / f"{name}.py"
         # A direct host load lets these cases reach the comment/directive
         # rules rather than declining a newly imported package module.
-        prefix = "from .first import total_first\n\n" if name == "second" else ""
+        prefix = "from builtins import print as emit\n"
+        if name == "second":
+            prefix += "from .first import total_first\n"
+        prefix += "\n"
         path.write_text(
             prefix
             + textwrap.dedent(
-                block.format(name=f"total_{name}", tag=name, comment=comment)
+                block.replace("print(", "emit(").format(
+                    name=f"total_{name}", tag=name, comment=comment
+                )
             ).lstrip()
         )
         paths.append(path)
@@ -1040,7 +1045,20 @@ def _inside(**parts: str) -> str:
         "start_comment": "",
     }
     defaults.update(parts)
-    return _INSIDE.format(**defaults)
+    # Keep the original opaque-frame boundary as a separate negative below.
+    # Globals and literal prefixes leave no caller-owned locals beside this block.
+    safe = (
+        _INSIDE.replace("def first(values, error):", "def first():")
+        .replace("def second(values, error):", "def second():")
+        .replace("total = len(values) * 2", "total = 0")
+        .replace("total = sum(values) - 3", "total = 3")
+        .replace("return total * 5", "return -total * 5")
+    )
+    prelude = defaults["prelude"]
+    body = textwrap.dedent(safe.format(**(defaults | {"prelude": ""}))).lstrip()
+    return (prelude + "\nvalues = []\nerror = False\n" + body).replace(
+        "for item in values:", "if values:"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1100,19 +1118,22 @@ def test_a_block_opening_with_an_excluded_clause_still_moves(tmp_path: Path) -> 
     path = _write(
         tmp_path,
         """
-        def first(values, error):
-            total = len(values) * 2
+        values = []
+        error = False
+
+        def first():
+            total = 2
             if error:  # pragma: no cover
-                message = f"bad: {values}"
+                message = "bad input"
                 values.clear()
                 raise ValueError(message)
             return total + 1
 
 
-        def second(values, error):
-            total = sum(values) - 3
+        def second():
+            total = 3
             if error:  # pragma: no cover
-                message = f"bad: {values}"
+                message = "bad input"
                 values.clear()
                 raise ValueError(message)
             return total * 5
@@ -1239,13 +1260,9 @@ def test_without_the_configuration_the_main_block_moves(tmp_path: Path) -> None:
     "source",
     [
         _MAIN_BLOCK.format(pragma="  # pragma: no cover"),
-        _INSIDE.format(
-            prelude="",
-            first_header_comment="",
-            second_header_comment="",
+        _inside(
             first_opener="for item in values:",
             second_opener="while error:",
-            opener_comment="",
             disable="pass  # pragma: no cover",
             start_comment="  # pragma: no cover",
         ),
@@ -1390,3 +1407,17 @@ def test_the_run_reports_an_unreadable_configuration(tmp_path: Path) -> None:
     output = completed.stdout + completed.stderr
     assert output.count("coverage.py could not read its configuration") == 1, output
     assert "Applied 1 refactoring" in output, output
+
+
+def test_original_opaque_message_partial_remains_refused(tmp_path: Path) -> None:
+    source = _INSIDE.format(
+        prelude="",
+        first_header_comment="",
+        second_header_comment="",
+        first_opener="for item in values:",
+        second_opener="while error:",
+        opener_comment="",
+        disable="pass",
+        start_comment="",
+    )
+    assert "owned_binding_frame_boundary" in _declined(tmp_path / "m.py", source)

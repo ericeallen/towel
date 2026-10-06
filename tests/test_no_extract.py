@@ -46,6 +46,11 @@ def _function(name: str, marker: str = "") -> str:
     return f"def {name}(values):{marker}\n{BODY}\n"
 
 
+def _reusable_function(name: str, marker: str = "") -> str:
+    """The same arithmetic provider over a module value, without caller-owned parameters."""
+    return f"def {name}():{marker}\n{BODY}\n"
+
+
 def _write(tmp_path: Path, source: str) -> Path:
     path = tmp_path / "example.py"
     path.write_text(textwrap.dedent(source))
@@ -317,12 +322,15 @@ def test_cross_module_extraction_survives_a_protected_neighbor(tmp_path: Path) -
 def test_materialization_rejects_manual_bypasses_without_writing_or_mutating(
     tmp_path: Path, bypass: str
 ) -> None:
+    function = _reusable_function if bypass == "reuse" else _function
     source = (
-        _function("__extracted_func_0", "  # towel: no-extract").rstrip()
+        function("__extracted_func_0", "  # towel: no-extract").rstrip()
         + "\n    # retained trailing comment\n\n"
-        + _function("alpha")
-        + _function("beta")
+        + function("alpha")
+        + function("beta")
     )
+    if bypass == "reuse":
+        source = "values = [1, 3]\n\n" + source
     path = _write(tmp_path, source)
     engine = UnificationRefactorEngine(min_lines=3)
     proposal = engine.analyze_file(str(path))[0]
@@ -414,10 +422,10 @@ def test_introduced_generated_helper_can_be_reused_only_until_explicitly_protect
     for directory in (origin, stage):
         directory.mkdir()
         (directory / "pyproject.toml").write_text("[project]\nname = 'probe'\nversion = '0'\n")
-    callers = _function("alpha") + _function("beta")
-    (origin / "module.py").write_text(callers)
+    callers = _reusable_function("alpha") + _reusable_function("beta")
+    (origin / "module.py").write_text("values = [1, 3]\n\n" + callers)
     path = stage / "module.py"
-    path.write_text(_function("__extracted_func_0") + callers)
+    path.write_text("values = [1, 3]\n\n" + _reusable_function("__extracted_func_0") + callers)
 
     control = UnificationRefactorEngine(min_lines=3, annotate_helpers=False)
     control._output_origin = (origin, stage)
@@ -437,13 +445,17 @@ def test_introduced_generated_helper_can_be_reused_only_until_explicitly_protect
 
     unmarked_namespace: dict[str, object] = {}
     exec(unmarked_output, unmarked_namespace)
-    unmarked_namespace["__extracted_func_0"] = lambda _values: "patched"
+    unmarked_namespace["__extracted_func_0"] = lambda: "patched"
     for name in ("alpha", "beta"):
         caller = unmarked_namespace[name]
         assert callable(caller)
-        assert caller([1, 3]) == "patched"
+        assert caller() == "patched"
 
-    source = _function("__extracted_func_0", "  # towel: no-extract") + callers
+    source = (
+        "values = [1, 3]\n\n"
+        + _reusable_function("__extracted_func_0", "  # towel: no-extract")
+        + callers
+    )
     path.write_text(source)
     protected = UnificationRefactorEngine(min_lines=3, annotate_helpers=False)
     protected._output_origin = (origin, stage)
@@ -458,9 +470,9 @@ def test_introduced_generated_helper_can_be_reused_only_until_explicitly_protect
     )
     namespace: dict[str, object] = {}
     exec(marked_output, namespace)
-    namespace["__extracted_func_0"] = lambda _values: "patched"
+    namespace["__extracted_func_0"] = lambda: "patched"
     for name in ("alpha", "beta"):
         caller = namespace[name]
         assert callable(caller)
-        assert caller([1, 3]) == 15
+        assert caller() == 15
     assert path.read_text() == source

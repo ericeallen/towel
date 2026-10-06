@@ -11,12 +11,6 @@ Tests that Towel correctly handles scope modifiers:
 counter = 0
 
 
-def __extracted_func_0(outer):
-    f = outer()
-    g = f()
-    return g()
-
-
 def test_global_modify_a():
     """Function that modifies global variable."""
     global counter
@@ -82,7 +76,9 @@ def test_nested_nonlocal_a():
 
         return middle
 
-    return __extracted_func_0(outer)
+    f = outer()
+    g = f()
+    return g()
 
 
 def test_nested_nonlocal_b():
@@ -104,7 +100,9 @@ def test_nested_nonlocal_b():
 
         return middle
 
-    return __extracted_func_0(outer)
+    f = outer()
+    g = f()
+    return g()
 
 
 def test_global_and_local_a(items):

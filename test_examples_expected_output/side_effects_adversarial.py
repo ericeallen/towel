@@ -10,7 +10,7 @@ counter = 0
 log = []
 
 
-def __extracted_func_4(__param_0, __param_1):
+def __extracted_func_4(__param_0, __param_1, _towel_owner):
     for item in __param_0:
         __param_1.append(item)
     return len(__param_1)
@@ -29,7 +29,7 @@ def __extracted_func_2(__param_0, cache):
     return False
 
 
-def __extracted_func_1(__param_0, __param_1):
+def __extracted_func_1(__param_0, __param_1, _towel_owner):
     temp = __param_0[:]
     __param_0.clear()
     __param_0.extend(__param_1)
@@ -38,7 +38,7 @@ def __extracted_func_1(__param_0, __param_1):
     return len(__param_0) + len(__param_1)
 
 
-def __extracted_func_0(__param_0):
+def __extracted_func_0(__param_0, _towel_owner):
     global counter
     result = []
     for x in __param_0:
@@ -81,12 +81,16 @@ def process_with_cache_b(value, cache=[]):
 # Side effects in comprehensions
 def filter_and_log_a(items):
     """Side effect in list comprehension via global."""
-    return __extracted_func_0(items)
+    _towel_arguments = [(items,)]
+    del items
+    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 def filter_and_log_b(values):
     """Similar side effect pattern."""
-    return __extracted_func_0(values)
+    _towel_arguments = [(values,)]
+    del values
+    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 # Mutable object modification
@@ -103,20 +107,32 @@ def modify_dict_b(config, k, v):
 # List mutation
 def extend_and_return_a(lst, items):
     """Extends list in place."""
-    return __extracted_func_4(items, lst)
+    _towel_arguments_2 = [(items, lst)]
+    del lst
+    del items
+    return __extracted_func_4(_towel_arguments_2[0][0], _towel_arguments_2[0][1], _towel_arguments_2.pop())
 
 
 def extend_and_return_b(target, values):
     """Similar list extension pattern."""
-    return __extracted_func_4(values, target)
+    _towel_arguments_2 = [(values, target)]
+    del target
+    del values
+    return __extracted_func_4(_towel_arguments_2[0][0], _towel_arguments_2[0][1], _towel_arguments_2.pop())
 
 
 # Multiple mutable arguments
 def swap_contents_a(list1, list2):
     """Swaps contents of two lists."""
-    return __extracted_func_1(list1, list2)
+    _towel_arguments_1 = [(list2, list1)]
+    del list1
+    del list2
+    return __extracted_func_1(_towel_arguments_1[0][1], _towel_arguments_1[0][0], _towel_arguments_1.pop())
 
 
 def swap_contents_b(a, b):
     """Similar swap pattern."""
-    return __extracted_func_1(a, b)
+    _towel_arguments_1 = [(b, a)]
+    del a
+    del b
+    return __extracted_func_1(_towel_arguments_1[0][1], _towel_arguments_1[0][0], _towel_arguments_1.pop())

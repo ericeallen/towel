@@ -26,6 +26,7 @@ is written, quoting mypy's own message.
 
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
@@ -243,6 +244,7 @@ def test_a_refactoring_of_a_plugin_project_passes_the_projects_own_mypy(tmp_path
     borrower = root / "src" / "alpha" / "b.py"
     borrower.write_text("import alpha.a\n" + borrower.read_text(encoding="utf-8"), encoding="utf-8")
     assert _fresh_mypy(root) == []
+    original = {path: path.read_bytes() for path in root.rglob("*.py")}
     result = invoke(
         [
             "dry",
@@ -257,7 +259,75 @@ def test_a_refactoring_of_a_plugin_project_passes_the_projects_own_mypy(tmp_path
         ]
     )
     assert result.status == 0, result
-    assert "__extracted_func_0" in (root / "src" / "alpha" / "a.py").read_text(encoding="utf-8")
+    assert "No refactorings found!" in result.stdout, result
+    assert {path: path.read_bytes() for path in original} == original
+    assert _fresh_mypy(root) == []
+    # The original owning loop/preamble boundary remains refused. A pure
+    # statement-call companion requires the plugin's str type at an ordinary
+    # annotated consumer, without transferring caller-owned locals.
+    for path in (root / "src" / "alpha" / "a.py", borrower):
+        source = path.read_text().replace(
+            "    for item in items:\n        print(value, item)\n        print(item, value)\n    print(value)",
+            "    consume(value)\n    consume(value)\n    consume(value)",
+        )
+        source = source.replace(
+            "from alpha.magic import magic\n",
+            "from alpha.magic import magic\n\ndef consume(value: str) -> None:\n    print('value', value)\n",
+        )
+        path.write_text(source)
+
+    def observed() -> str:
+        return subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                "-c",
+                f"import sys; sys.path.insert(0, {str(root / 'src')!r})\nfrom alpha import a,b; a.fa([1,2]); b.fb([1,2])",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        ).stdout
+
+    expected = observed()
+    assert _fresh_mypy(root) == []
+    result = invoke(
+        [
+            "dry",
+            str(root),
+            str(root),
+            "--no-interactive",
+            "--no-format",
+            "--cross-module",
+            "--parameterize-builtins",
+            "--progress",
+            "none",
+        ]
+    )
+    assert result.status == 0, result
+    assert "Applied " in result.stdout and "No refactorings found!" not in result.stdout, result
+    helpers = [
+        node
+        for path in (root / "src" / "alpha").glob("*.py")
+        for node in ast.parse(path.read_text()).body
+        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+    ]
+    assert helpers, result
+    annotations = {
+        (
+            argument.annotation.value
+            if isinstance(argument.annotation, ast.Constant)
+            and isinstance(argument.annotation.value, str)
+            else ast.unparse(argument.annotation)
+        )
+        for helper in helpers
+        for argument in helper.args.posonlyargs + helper.args.args
+        if argument.annotation is not None
+    }
+    assert "str" in annotations, annotations
+    assert observed() == expected
     assert _fresh_mypy(root) == []
 
 

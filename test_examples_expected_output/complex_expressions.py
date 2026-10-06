@@ -6,21 +6,11 @@ including nested calls, arithmetic, boolean logic, and method chains.
 """
 
 
-def __extracted_func_1(processor, result):
-    validated = processor.validate(result)
+def __extracted_func_0(processor, result, validated):
     if validated:
         processor.store(result)
         return result
     return None
-
-
-def __extracted_func_0(__param_0, __param_1, __param_2, __param_3, customer_level, price):
-    base = price * 0.9
-    if customer_level > __param_0 and base > __param_1 or (customer_level > __param_2 and base > __param_3):
-        final = base - 20
-        print(f'Applied discount: {final}')
-        return final
-    return base
 
 
 def process_user_score_v1(user, threshold):
@@ -43,24 +33,36 @@ def process_user_score_v2(user, threshold):
 
 def calculate_discount_tier1(price, customer_level):
     """Tier 1: Complex boolean expression."""
-    return __extracted_func_0(5, 100, 10, 50, customer_level, price)
+    base = price * 0.9
+    if (customer_level > 5 and base > 100) or (customer_level > 10 and base > 50):
+        final = base - 20
+        print(f"Applied discount: {final}")
+        return final
+    return base
 
 
 def calculate_discount_tier2(price, customer_level):
     """Tier 2: Different boolean expression, same structure."""
-    return __extracted_func_0(3, 200, 8, 75, customer_level, price)
+    base = price * 0.9
+    if (customer_level > 3 and base > 200) or (customer_level > 8 and base > 75):
+        final = base - 20
+        print(f"Applied discount: {final}")
+        return final
+    return base
 
 
 def transform_data_format_a(data, processor):
     """Format A: Nested method calls and indexing."""
     result = processor.normalize(data["values"]).upper().strip()
-    return __extracted_func_1(processor, result)
+    validated = processor.validate(result)
+    return __extracted_func_0(processor, result, validated)
 
 
 def transform_data_format_b(data, processor):
     """Format B: Different nested calls, same pattern."""
     result = processor.normalize(data["items"]).lower().strip()
-    return __extracted_func_1(processor, result)
+    validated = processor.validate(result)
+    return __extracted_func_0(processor, result, validated)
 
 
 def compute_metrics_slow(dataset, multiplier, offset):

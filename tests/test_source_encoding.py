@@ -143,7 +143,7 @@ def test_an_escape_the_rendering_spelled_as_a_character_is_written_back_escaped(
             )
             applied = sum(count for count, _ in results.values())
             written = (out / "m.py").read_bytes()
-    assert applied == 2
+    assert applied == 1  # Only the complete body preserves opaque argument lifetime.
     assert "cannot represent" not in caplog.text
     text = written.decode("latin-1")
     # The helper spells the escape as the source did, never the character.

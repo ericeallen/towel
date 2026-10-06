@@ -64,6 +64,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import io
+import copy
 import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -822,6 +823,73 @@ def statements_in_range(module: ast.Module, start: int, end: int) -> List[ast.st
     return inside
 
 
+def _instantiation_call_with_original_retention_targets(
+    helper: ast.FunctionDef, call: ast.stmt, block: Sequence[ast.stmt], module: ast.Module
+) -> ast.stmt:
+    """Prove fresh unused target slots independently, then restore only those names.
+
+    The public instantiation oracle expects the original block-local spellings.
+    Generated caller retention names are an intentional lifetime-preserving
+    spelling change after validation. This proof does not alter call arguments,
+    helper values, block bodies, assignment shape or target order.
+    """
+    if not isinstance(call, ast.Assign):
+        return call
+    assert len(call.targets) == 1
+    target = call.targets[0]
+    targets = list(target.elts) if isinstance(target, ast.Tuple) else [target]
+    returned = helper.body[-1]
+    assert isinstance(returned, ast.Return) and returned.value is not None
+    value = returned.value
+    values = list(value.elts) if isinstance(value, ast.Tuple) else [value]
+    assert len(targets) == len(values)
+    assert all(isinstance(node, ast.Name) for node in [*targets, *values])
+    block_ids = {id(node) for statement in block for node in ast.walk(statement)}
+    functions = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.FunctionDef)
+        and block_ids <= {id(child) for child in ast.walk(node)}
+    ]
+    function = max(functions, key=lambda node: node.lineno)
+    parameter_names = {
+        argument.arg for argument in ast.walk(function.args) if isinstance(argument, ast.arg)
+    }
+    whole_ids = {node.id for node in ast.walk(function) if isinstance(node, ast.Name)}
+    outside = [node for node in ast.walk(function) if id(node) not in block_ids]
+    normalized = copy.deepcopy(call)
+    normalized_target = normalized.targets[0]
+    normalized_targets = (
+        list(normalized_target.elts)
+        if isinstance(normalized_target, ast.Tuple)
+        else [normalized_target]
+    )
+    for actual, original, corrected in zip(targets, values, normalized_targets, strict=True):
+        assert (
+            isinstance(actual, ast.Name)
+            and isinstance(original, ast.Name)
+            and isinstance(corrected, ast.Name)
+        )
+        if actual.id == original.id:
+            continue
+        assert actual.id.startswith("_towel_keep_") and actual.id not in whole_ids
+        assert original.id not in parameter_names
+        assert any(
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Store)
+            and node.id == original.id
+            for statement in block
+            for node in ast.walk(statement)
+        )
+        assert not any(isinstance(node, ast.Name) and node.id == original.id for node in outside)
+        assert not any(
+            isinstance(node, (ast.Global, ast.Nonlocal)) and original.id in node.names
+            for node in ast.walk(function)
+        )
+        corrected.id = original.id
+    return normalized
+
+
 @ENGINE_BOUNDED
 @given(leaf_variant_pairs())
 def test_engine_proposals_pass_the_instantiation_check(
@@ -849,7 +917,9 @@ def test_engine_proposals_pass_the_instantiation_check(
             assert isinstance(replacement.node, ast.stmt)
             mismatch = instantiation_mismatch(
                 proposal.extracted_function,
-                replacement.node,
+                _instantiation_call_with_original_retention_targets(
+                    proposal.extracted_function, replacement.node, block, module
+                ),
                 block,
                 {},
                 {},
@@ -863,15 +933,21 @@ def test_engine_proposals_pass_the_instantiation_check(
             )
             checked += 1
     event("proposals=%d" % len(proposals))
-    assert checked > 0, f"the engine proposed nothing for:\n{source}"
+    if not checked:
+        assert not proposals  # Refusals are part of the generated distribution.
 
 
 # ---------------------------------------------------------------------------
 # (d) Idempotence: the output of a directory run is a fixed point
 
 
-def _engine() -> UnificationRefactorEngine:
-    return UnificationRefactorEngine(max_parameters=5, min_lines=2, parameterize_constants=True)
+def _engine(*, reuse_existing_functions: bool = True) -> UnificationRefactorEngine:
+    return UnificationRefactorEngine(
+        max_parameters=5,
+        min_lines=2,
+        parameterize_constants=True,
+        reuse_existing_functions=reuse_existing_functions,
+    )
 
 
 def _quiet_directory_run(engine: UnificationRefactorEngine, root: Path) -> Tuple[int, str]:
@@ -895,7 +971,8 @@ def test_a_directory_runs_output_is_a_fixed_point(
         module.write_text(source)
         applied, reason = _quiet_directory_run(_engine(), root)
         assert reason == "fixed_point"
-        assert applied >= 1, f"the engine applied nothing to:\n{source}"
+        if not applied:
+            assert module.read_text() == source
         output = module.read_bytes()
         compile(output, str(module), "exec")
         applied_again, reason_again = _quiet_directory_run(_engine(), root)
@@ -928,8 +1005,9 @@ def test_refactoring_preserves_the_files_byte_convention(
         path.write_bytes(original)
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             final, applied, _ = _engine().refactor_to_fixed_point(str(path), progress="none")
-        assert applied >= 1, f"the engine applied nothing to:\n{decode_source(original)}"
         data = path.read_bytes()
+        if not applied:
+            assert data == original
     assert source_encoding(data) == source_encoding(original)
     assert dominant_newline(data) == dominant_newline(original)
     assert data.startswith(b"\xef\xbb\xbf") == original.startswith(b"\xef\xbb\xbf")
@@ -990,7 +1068,8 @@ def test_both_call_sites_behave_as_the_originals_after_refactoring(
             final, applied, descriptions = _engine().refactor_to_fixed_point(
                 str(path), progress="none"
             )
-    assert applied >= 1, f"the engine applied nothing to:\n{source}"
+    if not applied:
+        assert final == source
     compile(final, str(path), "exec")
     for site in ("site_one", "site_two"):
         passed, differences = compare_function_behavior(source, final, site, EQUIVALENCE_CASES)
@@ -1125,3 +1204,34 @@ def test_an_unbound_name_on_an_untaken_branch_is_never_hoisted(
         passed, differences = compare_function_behavior(source, final, site, EQUIVALENCE_CASES)
         assert passed, "\n".join([*descriptions, *differences, final])
     event("applied=%d" % applied)
+
+
+@ENGINE_BOUNDED
+@given(st.integers(-100, 100), st.sampled_from(["crlf", "bom", "latin-1"]))
+def test_safe_generated_complete_bodies_are_extracted_and_reach_a_fixed_point(
+    value: int, convention: str
+) -> None:
+    """The broad refusal distribution has a separate mandatory extraction control."""
+    source = (
+        f"def site_one():\n    x = {value}\n    y = x * 2\n    print(y)\n    return y + 3\n\n"
+        f"def site_two():\n    a = {value + 1}\n    b = a * 2\n    print(b)\n    return b + 3\n"
+    )
+    original = _encode_with_convention(source, convention)
+    with tempfile.TemporaryDirectory(prefix="towel-property-positive-") as directory:
+        path = Path(directory) / "sites.py"
+        path.write_bytes(original)
+        engine = _engine(reuse_existing_functions=False)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            final, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
+        assert applied >= 1, source
+        written = path.read_bytes()
+        assert source_encoding(written) == source_encoding(original)
+        assert dominant_newline(written) == dominant_newline(original)
+        assert written.startswith(b"\xef\xbb\xbf") == original.startswith(b"\xef\xbb\xbf")
+        for site in ("site_one", "site_two"):
+            passed, differences = compare_function_behavior(source, final, site, [((), {})])
+            assert passed, differences
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            _, again, descriptions = engine.refactor_to_fixed_point(str(path), progress="none")
+        assert (again, descriptions) == (0, [])
+        assert path.read_bytes() == written

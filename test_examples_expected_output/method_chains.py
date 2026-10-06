@@ -6,21 +6,21 @@ and object-oriented code patterns correctly.
 """
 
 
-def __extracted_func_6(__param_0, __param_1, response, validator):
-    data = response.json().get(__param_0, {}).get(__param_1, [])
-    cleaned = [item.strip().lower() for item in data]
-    validated = [validator.check(item) for item in cleaned]
-    return (data, cleaned, validated)
+def __extracted_func_5(handler, item):
+    handler.process(item)
+    handler.update_metrics(item.get_size())
+    if handler.should_commit():
+        handler.commit()
 
 
-def __extracted_func_5(result, transformer):
+def __extracted_func_4(result, transformer):
     if len(result) > 0:
         transformer.commit()
         return result
     return []
 
 
-def __extracted_func_4(model, validator):
+def __extracted_func_3(model, validator):
     if validator.is_valid(model):
         model.save()
         model.notify_observers()
@@ -28,16 +28,7 @@ def __extracted_func_4(model, validator):
     return False
 
 
-def __extracted_func_3(handler, processed):
-    for item in processed:
-        handler.process(item)
-        handler.update_metrics(item.get_size())
-        if handler.should_commit():
-            handler.commit()
-    return handler.get_statistics()
-
-
-def __extracted_func_2(__param_0, cache, data, serializer):
+def __extracted_func_2(__param_0, cache, data, serializer, _towel_owner):
     response = serializer.create_response()
     response.set_data(data)
     response.set_status(200)
@@ -49,7 +40,7 @@ def __extracted_func_2(__param_0, cache, data, serializer):
     return response.build()
 
 
-def __extracted_func_1(__param_0, entity, transformer, validator):
+def __extracted_func_1(__param_0, entity, transformer, validator, _towel_owner):
     entity.set_field(__param_0, True)
     entity.increment_version()
     transformed_data = transformer.apply(entity.get_data())
@@ -63,7 +54,7 @@ def __extracted_func_1(__param_0, entity, transformer, validator):
     return None
 
 
-def __extracted_func_0(__param_0, db, mapper):
+def __extracted_func_0(__param_0, db, mapper, _towel_owner):
     results = db.table('users').where('age', '>', __param_0).where('status', '=', 'active').order_by('created_at', 'desc').limit(100).get()
     # Map results
     mapped = [mapper.to_dto(row) for row in results]
@@ -74,19 +65,23 @@ def __extracted_func_0(__param_0, db, mapper):
 def process_api_response_v1(response, validator, transformer):
     """Version 1: Method chaining on API response."""
     # Complex method chain
-    _towel_keep_data, _towel_keep_cleaned, validated = __extracted_func_6('data', 'items', response, validator)
+    data = response.json().get("data", {}).get("items", [])
+    cleaned = [item.strip().lower() for item in data]
+    validated = [validator.check(item) for item in cleaned]
     result = transformer.process(validated).filter(lambda x: x is not None).to_list()
 
-    return __extracted_func_5(result, transformer)
+    return __extracted_func_4(result, transformer)
 
 
 def process_api_response_v2(response, validator, transformer):
     """Version 2: Different key path, same chaining pattern."""
     # Different keys, same chain
-    _towel_keep_data, _towel_keep_cleaned, validated = __extracted_func_6('payload', 'records', response, validator)
+    data = response.json().get("payload", {}).get("records", [])
+    cleaned = [item.strip().lower() for item in data]
+    validated = [validator.check(item) for item in cleaned]
     result = transformer.process(validated).filter(lambda x: x is not None).to_list()
 
-    return __extracted_func_5(result, transformer)
+    return __extracted_func_4(result, transformer)
 
 
 def update_model_fields_a(model, updates, validator):
@@ -96,7 +91,7 @@ def update_model_fields_a(model, updates, validator):
         "active"
     ).validate()
 
-    return __extracted_func_4(model, validator)
+    return __extracted_func_3(model, validator)
 
 
 def update_model_fields_b(model, updates, validator):
@@ -106,19 +101,27 @@ def update_model_fields_b(model, updates, validator):
         "active"
     ).validate()
 
-    return __extracted_func_4(model, validator)
+    return __extracted_func_3(model, validator)
 
 
 def query_database_v1(db, filters, mapper):
     """Version 1: Database query builder pattern."""
     # Method chaining query
-    return __extracted_func_0(18, db, mapper)
+    _towel_arguments = [(mapper, filters, db)]
+    del db
+    del filters
+    del mapper
+    return __extracted_func_0(18, _towel_arguments[0][2], _towel_arguments[0][0], _towel_arguments.pop())
 
 
 def query_database_v2(db, filters, mapper):
     """Version 2: Different age threshold, same pattern."""
     # Same query pattern, different threshold
-    return __extracted_func_0(21, db, mapper)
+    _towel_arguments = [(mapper, filters, db)]
+    del db
+    del filters
+    del mapper
+    return __extracted_func_0(21, _towel_arguments[0][2], _towel_arguments[0][0], _towel_arguments.pop())
 
 
 def process_stream_v1(stream, parser, handler):
@@ -131,7 +134,10 @@ def process_stream_v1(stream, parser, handler):
         .take(1000)
     )
 
-    return __extracted_func_3(handler, processed)
+    for item in processed:
+        __extracted_func_5(handler, item)
+
+    return handler.get_statistics()
 
 
 def process_stream_v2(stream, parser, handler):
@@ -144,31 +150,50 @@ def process_stream_v2(stream, parser, handler):
         .take(5000)
     )
 
-    return __extracted_func_3(handler, processed)
+    for item in processed:
+        __extracted_func_5(handler, item)
+
+    return handler.get_statistics()
 
 
 def build_response_a(data, serializer, cache):
     """Version A: Response builder with multiple method calls."""
     # Building response
-    return __extracted_func_2('max-age=3600', cache, data, serializer)
+    _towel_arguments_2 = [(cache, serializer, data)]
+    del data
+    del serializer
+    del cache
+    return __extracted_func_2('max-age=3600', _towel_arguments_2[0][0], _towel_arguments_2[0][2], _towel_arguments_2[0][1], _towel_arguments_2.pop())
 
 
 def build_response_b(data, serializer, cache):
     """Version B: Different cache duration, same pattern."""
     # Same building pattern
-    return __extracted_func_2('max-age=7200', cache, data, serializer)
+    _towel_arguments_2 = [(cache, serializer, data)]
+    del data
+    del serializer
+    del cache
+    return __extracted_func_2('max-age=7200', _towel_arguments_2[0][0], _towel_arguments_2[0][2], _towel_arguments_2[0][1], _towel_arguments_2.pop())
 
 
 def transform_entity_v1(entity, transformer, validator):
     """Version 1: Entity transformation with validation."""
     # Transform entity
-    return __extracted_func_1('processed', entity, transformer, validator)
+    _towel_arguments_1 = [(validator, transformer, entity)]
+    del entity
+    del transformer
+    del validator
+    return __extracted_func_1('processed', _towel_arguments_1[0][2], _towel_arguments_1[0][1], _towel_arguments_1[0][0], _towel_arguments_1.pop())
 
 
 def transform_entity_v2(entity, transformer, validator):
     """Version 2: Different field name, same pattern."""
     # Same transformation pattern
-    return __extracted_func_1('completed', entity, transformer, validator)
+    _towel_arguments_1 = [(validator, transformer, entity)]
+    del entity
+    del transformer
+    del validator
+    return __extracted_func_1('completed', _towel_arguments_1[0][2], _towel_arguments_1[0][1], _towel_arguments_1[0][0], _towel_arguments_1.pop())
 
 
 def aggregate_results_a(results, aggregator, formatter):

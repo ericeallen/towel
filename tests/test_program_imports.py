@@ -32,6 +32,8 @@ import sys
 import textwrap
 from typing import Mapping
 
+import pytest
+
 from towel.unification.import_graph import (
     ImportChange,
     ImportGraphCache,
@@ -63,11 +65,18 @@ def _write(root: Path, files: Mapping[str, str]) -> Path:
     return root
 
 
-def _vendoring(root: Path) -> Path:
+def _vendoring(root: Path, *, safe: bool = False) -> Path:
     """A package whose first module loads a vendored module that prints as it is imported.
 
     ``a_host`` sorts first, so it is the pair's own file and the host tried first.
     """
+    block = (
+        _BLOCK.replace("(values):", "(values, offset={offset}):")
+        .replace("    for value", "    value = 0\n    for value")
+        .replace("total + {offset}", "total + offset")
+        if safe
+        else _BLOCK
+    )
     return _write(
         root,
         {
@@ -75,8 +84,8 @@ def _vendoring(root: Path) -> Path:
             "pkg/_vendor/__init__.py": "",
             "pkg/_vendor/noisy.py": 'print("loading noisy")\n',
             "pkg/a_host.py": "import pkg.b_borrower\nfrom pkg._vendor import noisy\n\n"
-            + _BLOCK.format(name="fa", offset=1),
-            "pkg/b_borrower.py": _BLOCK.format(name="fb", offset=2),
+            + block.format(name="fa", offset=1),
+            "pkg/b_borrower.py": block.format(name="fb", offset=2),
             "tests/test_pkg.py": "import pkg.a_host\nimport pkg.b_borrower\n",
         },
     )
@@ -98,8 +107,11 @@ def test_an_import_into_an_excluded_directory_is_unknown_not_empty(tmp_path: Pat
     assert not would_create_import_cycle(borrower, {host}, excluded)
 
 
-def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(tmp_path: Path) -> None:
-    root = _vendoring(tmp_path / "project")
+@pytest.mark.parametrize("safe", [False, True])
+def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(
+    tmp_path: Path, safe: bool
+) -> None:
+    root = _vendoring(tmp_path / "project", safe=safe)
 
     def imported() -> str:
         completed = subprocess.run(
@@ -127,8 +139,12 @@ def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(tmp_path:
         results, _ = engine.refactor_directory_to_fixed_point(
             str(root / "pkg"), str(root / "pkg"), progress="none"
         )
-    assert results, "the duplicate must still be shared, from the module that loads nothing"
-    assert "def __extracted_func_0(" in (root / "pkg/b_borrower.py").read_text()
+    assert bool(results) is safe
+    assert ("def __extracted_func_0(" in (root / "pkg/b_borrower.py").read_text()) is safe
+    if not safe:
+        assert (root / "pkg/b_borrower.py").read_text() == _BLOCK.format(
+            name="fb", offset=2
+        ).lstrip()
     assert imported() == before == ""
 
 

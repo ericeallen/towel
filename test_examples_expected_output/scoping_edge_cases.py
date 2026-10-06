@@ -9,7 +9,7 @@ Tests:
 """
 
 
-def __extracted_func_2(items):
+def __extracted_func_2(items, _towel_owner):
     result = []
     for item in items:
         if len(item) > 0:
@@ -17,7 +17,7 @@ def __extracted_func_2(items):
     return result
 
 
-def __extracted_func_1(items, multiplier):
+def __extracted_func_1(items, multiplier, _towel_owner):
     result = []
     for item in items:
         if item > 0:
@@ -25,7 +25,8 @@ def __extracted_func_1(items, multiplier):
     return result
 
 
-def __extracted_func_0(items, processor):
+def __extracted_func_0(items, _towel_owner):
+    processor = lambda x: x * 2
     result = []
     for item in items:
         if item > 0:
@@ -52,26 +53,34 @@ def with_nested_func_b(items):
     def processor(x):
         return x * 2
 
-    return __extracted_func_0(items, processor)
+    result = []
+    for item in items:
+        if item > 0:
+            result.append(processor(item))
+    return result
 
 
 def with_lambda_a(items):
     """Lambda expression."""
-    processor = lambda x: x * 2
-    return __extracted_func_0(items, processor)
+    _towel_arguments = [(items,)]
+    del items
+    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 def with_lambda_b(items):
     """Lambda expression (duplicate)."""
-    processor = lambda y: y * 2
-    return __extracted_func_0(items, processor)
+    _towel_arguments = [(items,)]
+    del items
+    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 def closure_a(multiplier):
     """Function that creates closure."""
 
     def process(items):
-        return __extracted_func_1(items, multiplier)
+        _towel_arguments_1 = [(items,)]
+        del items
+        return __extracted_func_1(_towel_arguments_1[0][0], multiplier, _towel_arguments_1.pop())
 
     return process
 
@@ -80,7 +89,9 @@ def closure_b(multiplier):
     """Function that creates closure (duplicate)."""
 
     def process(items):
-        return __extracted_func_1(items, multiplier)
+        _towel_arguments_1 = [(items,)]
+        del items
+        return __extracted_func_1(_towel_arguments_1[0][0], multiplier, _towel_arguments_1.pop())
 
     return process
 
@@ -105,9 +116,13 @@ def shadowing_b(x):
 
 def builtin_override_a(items):
     """Don't treat builtin names as parameters."""
-    return __extracted_func_2(items)
+    _towel_arguments_2 = [(items,)]
+    del items
+    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
 
 
 def builtin_override_b(items):
     """Don't treat builtin names as parameters (duplicate)."""
-    return __extracted_func_2(items)
+    _towel_arguments_2 = [(items,)]
+    del items
+    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())

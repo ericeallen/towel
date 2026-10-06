@@ -109,6 +109,17 @@ def test_module_data_is_read_where_the_block_read_it_across_callbacks(tmp_path: 
     final, applied, _ = UnificationRefactorEngine().refactor_to_fixed_point(
         str(path), progress="none"
     )
+    assert applied == 0 and final == source
+
+    # A binding-free callback body has no competing frame owners.
+    body = "    print(value)\n    update()\n    print(value)\n"
+    source = "value = 1\ndef update():\n    global value\n    value += 1\n"
+    source += "def first():\n" + body + "    return value\n"
+    source += "def second():\n" + body + "    return value\n"
+    path.write_text(source)
+    final, applied, _ = UnificationRefactorEngine(
+        reuse_existing_functions=False
+    ).refactor_to_fixed_point(str(path), progress="none")
     assert applied == 1
     helper = next(line for line in final.splitlines() if line.startswith("def __extracted_func"))
     assert "value" not in helper

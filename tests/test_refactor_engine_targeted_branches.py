@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import ast
+import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -136,36 +138,77 @@ class TestRefactorEngineTargetedBranches(TemporaryModuleTestCase):
         # Should reject due to missing complete return coverage
         self.assertFalse(proposals, "Expected no proposals due to incomplete return coverage")
 
-    def test_global_assignment_promotes_declaration(self):
-        # Global variable assigned in both blocks should be declared in extracted function
+    def test_global_writes_decline_and_shared_global_reads_remain_live(self) -> None:
         code = textwrap.dedent("""
             G = 0
             def f1():
+                global G
                 G = G + 1
                 x = 2
                 y = x + G
                 return y
 
             def f2():
-                G = G + 2
-                a = 3
+                global G
+                G = G + 1
+                a = 2
                 b = a + G
                 return b
             """)
+
+        def observed(source: str, driver: str) -> str:
+            return subprocess.run(
+                [sys.executable, "-I", "-B", "-c", source + "\n" + driver],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            ).stdout
+
+        # The original missing global declaration raises, rather than passing
+        # G through a helper parameter as the former fallback allowed.
+        local = code.replace("    global G\n", "")
+        with self.assertRaises(subprocess.CalledProcessError) as failure:
+            observed(local, "f1()")
+        self.assertIn("UnboundLocalError", failure.exception.stderr)
         path = self._write_temp(code)
         engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+        self.assertEqual(engine.analyze_file(path), [])
+        self.assertEqual(Path(path).read_text(), code)
+        self.assertEqual(observed(code, "print(f1(), f2(), G)"), "3 4 2\n")
+        safe = textwrap.dedent("""
+            G = 0
+            def f1():
+                G
+                G * 2
+                return G + 2
+            def f2():
+                G
+                G * 2
+                return G + 2
+            def advance():
+                global G
+                G += 1
+            """)
+        path = self._write_temp(safe)
         proposals = engine.analyze_file(path)
-        self.assertTrue(proposals, "Expected proposal for global assignment blocks")
+        self.assertTrue(proposals, "shared module reads must still extract")
         modified = engine.apply_refactoring(path, proposals[0])
-        # Depending on current engine behavior, global may or may not be promoted.
-        # Accept either explicit global declaration or implicit pass-through of G as parameter.
-        if "global G" in modified:
-            self.assertIn("global G", modified)
-        else:
-            # Fallback: ensure helper exists referencing G
-            self.assertIn("def __extracted_func", modified)
-            # Extracted function signature should include G or body should assign to G.
-            self.assertRegex(modified, r"def (?:__)?extracted_func\([^)]*G[^)]*\):|G = G \+")
+        driver = "print(f1(), f2(), G); advance(); print(f1(), f2(), G)"
+        self.assertEqual(observed(modified, driver), observed(safe, driver))
+        self.assertEqual(observed(modified, driver), "2 2 0\n3 3 1\n")
+        helper = next(
+            node
+            for node in ast.parse(modified).body
+            if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+        )
+        self.assertFalse(helper.args.args or helper.args.posonlyargs)
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Name) and node.id == "G" and isinstance(node.ctx, ast.Load)
+                for node in ast.walk(helper)
+            )
+        )
 
     def test_nonlocal_in_enclosing_functions_skips_proposal(self):
         # Nonlocal variables in enclosing function should cause engine to skip proposal

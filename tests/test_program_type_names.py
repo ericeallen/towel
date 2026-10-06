@@ -798,22 +798,70 @@ def test_returned_values_follow_the_arguments_they_are_end_to_end(tmp_path: Path
                 """,
         },
     )
-    changed = _extract_first(tmp_path / "text.py")
+    path = tmp_path / "text.py"
+    original = path.read_text()
+    oracle = MypyInferrer()
+    try:
+        engine = UnificationRefactorEngine(
+            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        )
+        unchanged, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
+    finally:
+        oracle.close()
+    assert applied == 0 and unchanged == original and path.read_text() == original
+    # Keep the same correlated Span/count and text/Span rows without caller
+    # parameters or loop-target owners outside the duplicated prefix.
+    companion = original.split("class Text:", 1)[0] + """
+_spans: list[Span] = []
+
+def highlight_regex() -> int:
+    append_span = _spans.append
+    _Span = Span
+    plain = "abc"
+    append_span(_Span(0, len(plain)))
+    return len(_spans)
+
+def highlight_words() -> int:
+    add_span = _spans.append
+    count = 0
+    _Span = Span
+    add_span(_Span(count, count + 1))
+    return count
+"""
+    path.write_text(companion)
+    changed = _extract_first(path)
     helper = _helper(changed)
     kinds = {
         parameter.arg: _annotation(parameter.annotation)
         for parameter in helper.args.posonlyargs + helper.args.args
         if parameter.arg != "self"
     }
-    # Both values are evaluated at their original positions: Span is a module
-    # binding, and self.plain is the other site's attribute lookup.
+    # Both values are evaluated at their original positions: the correlated
+    # rows exchange the module's Span constructor, a count, and literal text.
     assert kinds == {
         "__param_0": "_typing.Callable[[], _TowelT0]",
         "__param_1": "_typing.Callable[[], _TowelT1]",
     }, changed
     assert (
-        _annotation(helper.returns) == "tuple[_TowelT0, _typing.Callable[[Span], None], _TowelT1]"
+        _annotation(helper.returns) == "tuple[_typing.Callable[[Span], None], _TowelT0, _TowelT1]"
     )
+
+    assert "Any" not in changed, changed
+    helper_returns = [n for n in ast.walk(helper) if isinstance(n, ast.Return)]
+    assert len(helper_returns) == 1 and isinstance(helper_returns[0].value, ast.Tuple)
+    assert [ast.unparse(e) for e in helper_returns[0].value.elts] == [
+        "append_span",
+        "_Span",
+        "plain",
+    ]
+    for program in (companion, changed):
+        namespace: dict[str, object] = {}
+        exec(
+            program
+            + "\nobserved = (highlight_regex(), highlight_words(), [tuple(s) for s in _spans])",
+            namespace,
+        )
+        assert namespace["observed"] == (1, 0, [(0, 3), (0, 1)])
 
 
 def test_a_module_no_import_names_is_named_as_mypy_names_it(tmp_path: Path) -> None:

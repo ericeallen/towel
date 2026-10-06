@@ -10,129 +10,107 @@ ensuring the refactoring system handles all edge cases correctly.
 # =============================================================================
 
 
-def __extracted_func_28(__param_0, __param_1):
+def __extracted_func_25(__param_0, __param_1, _towel_owner):
     result = __param_0 and __param_1 or __param_0
     result = result and __param_0 + __param_1 or __param_0 - __param_1
     return result
 
 
-def __extracted_func_27(__param_0, __param_1):
-    result = len(f'{__param_0 + __param_1}')
-    result += len(f'{__param_0 * 2:04d}')
-    result += len(f'{__param_0:.2f}')
-    return result
-
-
-def __extracted_func_26(__param_0, __param_1):
+def __extracted_func_24(__param_0, __param_1, _towel_owner):
     result = __param_0 * 2 if __param_0 > __param_1 else __param_0
     result = result + 10 if result < 100 else result - 10
     return result
 
 
-def __extracted_func_25(__param_0):
+def __extracted_func_23(__param_0, _towel_owner):
     result = sum((x * 2 for x in __param_0))
     result += sum((x for x in __param_0 if x > 0))
     return result
 
 
-def __extracted_func_24(__param_0):
+def __extracted_func_22(__param_0, _towel_owner):
     result = sum({i: x * 2 for i, x in enumerate(__param_0)}.values())
     result += sum({i: x for i, x in enumerate(__param_0) if x > 0}.values())
     return result
 
 
-def __extracted_func_23(__param_0):
+def __extracted_func_21(__param_0, _towel_owner):
     result = sum({x * 2 for x in __param_0})
     result += sum({x for x in __param_0 if x > 0})
     return result
 
 
-def __extracted_func_22(__param_0, __param_1, __param_2):
+def __extracted_func_20(__param_0, __param_1, __param_2, _towel_owner):
     result = (__param_0 + __param_1) * 2 + sum([i * 2 for i in __param_2 if i > __param_0])
     result += len([i for i in __param_2 if __param_0 < i < __param_1])
     result += sum(map(lambda i: i ** 2, filter(lambda i: i > 0, __param_2)))
     return result
 
 
-def __extracted_func_21(__param_0, __param_1):
+def __extracted_func_19(__param_0, __param_1, _towel_owner):
     result = 1 if __param_0 is None else 0
     result += 1 if __param_0 is not None else 0
     result += 1 if __param_0 is __param_1 else 0
     return result
 
 
-def __extracted_func_20(__param_0, __param_1):
+def __extracted_func_18(__param_0, __param_1, _towel_owner):
     result = 1 if __param_0 in __param_1 else 0
     result += 1 if __param_0 not in __param_1 else 0
     result += 1 if 'key' in {'key': __param_0} else 0
     return result
 
 
-def __extracted_func_19(__param_0):
+def __extracted_func_17(__param_0, _towel_owner):
     result = __param_0[0][0]
     result += __param_0[1]['key']
     result += __param_0[2][0][1]
     return result
 
 
-def __extracted_func_18(__param_0, __param_1, __param_2):
+def __extracted_func_16(__param_0, __param_1, __param_2, _towel_owner):
     result = 1 if __param_0 < __param_1 < __param_2 else 0
     result += 1 if __param_0 <= __param_1 <= __param_2 else 0
     result += 1 if __param_0 == __param_1 == __param_2 else 0
     return result
 
 
-def __extracted_func_17(__param_0):
+def __extracted_func_15(__param_0, _towel_owner):
     result = __param_0
     with DummyContext(10) as value:
         result += value
     return result
 
 
-def __extracted_func_16(__param_0, __param_1, __param_2, __param_3, s1):
-    s2 = __param_0 % (__param_1, __param_2)
-    s3 = __param_3.format(__param_1, __param_2)
-    result = len(s1) + len(s2) + len(s3)
-    return result
-
-
-def __extracted_func_15(__param_0):
+def __extracted_func_14(__param_0, _towel_owner):
     mapper = lambda x: x * 2
     result = sum(map(mapper, __param_0))
     result += sum(map(lambda x: x + 1, __param_0))
     return result
 
 
-def __extracted_func_14(__param_0):
+def __extracted_func_13(__param_0, _towel_owner):
     result = sum([x * 2 for x in __param_0])
     result += sum([x for x in __param_0 if x > 0])
     result += sum([x + y for x in __param_0 for y in __param_0])
     return result
 
 
-def __extracted_func_13(__param_0):
+def __extracted_func_12(__param_0, _towel_owner):
     result = __param_0.value
     result += __param_0.data[0]
     result += __param_0.get_value()
     return result
 
 
-def __extracted_func_12(__param_0):
-    x, y = __param_0[:2]
-    result = x + y
-    a, b, c = __param_0[:3]
-    result += a + b + c
-    return (x, y, result, a, b, c)
-
-
-def __extracted_func_11(__param_0, __param_1):
+def __extracted_func_11(__param_0, __param_1, _towel_owner):
     result = __param_0 and __param_1
     result = result or __param_1
     result = not result
     return result
 
 
-def __extracted_func_10(__param_0, __param_1):
+def __extracted_func_10(__param_0, __param_1, _towel_owner):
     result = total = __param_0 + __param_1
     result += total
     a = b = c = __param_0
@@ -140,7 +118,7 @@ def __extracted_func_10(__param_0, __param_1):
     return result
 
 
-def __extracted_func_9(__param_0):
+def __extracted_func_9(__param_0, _towel_owner):
     data = [__param_0, __param_0 + 1, __param_0 + 2]  # list
     data = data + list((__param_0, __param_0 + 1))  # tuple
     data = data + list({__param_0, __param_0 + 1})  # set
@@ -148,7 +126,7 @@ def __extracted_func_9(__param_0):
     return sum(data)
 
 
-def __extracted_func_8(__param_0):
+def __extracted_func_8(__param_0, _towel_owner):
     result = 0
     if (n := len(__param_0)) > 5:
         result += n
@@ -157,7 +135,7 @@ def __extracted_func_8(__param_0):
     return result
 
 
-def __extracted_func_7(__param_0, __param_1):
+def __extracted_func_7(__param_0, __param_1, _towel_owner):
     result = helper(__param_0, __param_1)  # positional
     result += helper(__param_0, __param_1, 20)  # with optional
     result += helper(__param_0, __param_1, c=30)  # keyword
@@ -166,7 +144,7 @@ def __extracted_func_7(__param_0, __param_1):
     return result
 
 
-def __extracted_func_6(__param_0):
+def __extracted_func_6(__param_0, _towel_owner):
     result = __param_0[0]  # simple subscript
     result += __param_0[-1]  # negative index
     result += sum(__param_0[1:3])  # slice
@@ -175,7 +153,7 @@ def __extracted_func_6(__param_0):
     return result
 
 
-def __extracted_func_5(__param_0, __param_1):
+def __extracted_func_5(__param_0, __param_1, _towel_owner):
     result = __param_0 & __param_1  # and
     result = result | __param_1  # or
     result = result ^ __param_1  # xor
@@ -185,7 +163,7 @@ def __extracted_func_5(__param_0, __param_1):
     return result
 
 
-def __extracted_func_4(__param_0, __param_1):
+def __extracted_func_4(__param_0, __param_1, _towel_owner):
     result = __param_0 + __param_1  # addition
     result = result - __param_1  # subtraction
     result = result * 2  # multiplication
@@ -196,7 +174,7 @@ def __extracted_func_4(__param_0, __param_1):
     return result
 
 
-def __extracted_func_3(__param_0):
+def __extracted_func_3(__param_0, _towel_owner):
     result = __param_0 + 42  # int
     result = result + 3.14  # float
     result = result + 1j  # complex
@@ -207,7 +185,7 @@ def __extracted_func_3(__param_0):
     return result
 
 
-def __extracted_func_2(__param_0):
+def __extracted_func_2(__param_0, _towel_owner):
     result = __param_0
     result += 10
     result -= 5
@@ -219,7 +197,7 @@ def __extracted_func_2(__param_0):
     return result
 
 
-def __extracted_func_1(__param_0, __param_1):
+def __extracted_func_1(__param_0, __param_1, _towel_owner):
     result = 1 if __param_0 == __param_1 else 0
     result += 1 if __param_0 != __param_1 else 0
     result += 1 if __param_0 < __param_1 else 0
@@ -231,7 +209,7 @@ def __extracted_func_1(__param_0, __param_1):
     return result
 
 
-def __extracted_func_0(__param_0):
+def __extracted_func_0(__param_0, _towel_owner):
     result = __param_0
     try:
         result = result / __param_0
@@ -248,12 +226,16 @@ def __extracted_func_0(__param_0):
 
 def literals_a(x):
     """Test all literal types."""
-    return __extracted_func_3(x)
+    _towel_arguments_3 = [(x,)]
+    del x
+    return __extracted_func_3(_towel_arguments_3[0][0], _towel_arguments_3.pop())
 
 
 def literals_b(y):
     """Test all literal types."""
-    return __extracted_func_3(y)
+    _towel_arguments_3 = [(y,)]
+    del y
+    return __extracted_func_3(_towel_arguments_3[0][0], _towel_arguments_3.pop())
 
 
 # =============================================================================
@@ -263,12 +245,16 @@ def literals_b(y):
 
 def collections_a(x):
     """Test collection literal construction."""
-    return __extracted_func_9(x)
+    _towel_arguments_9 = [(x,)]
+    del x
+    return __extracted_func_9(_towel_arguments_9[0][0], _towel_arguments_9.pop())
 
 
 def collections_b(y):
     """Test collection literal construction."""
-    return __extracted_func_9(y)
+    _towel_arguments_9 = [(y,)]
+    del y
+    return __extracted_func_9(_towel_arguments_9[0][0], _towel_arguments_9.pop())
 
 
 # =============================================================================
@@ -278,12 +264,18 @@ def collections_b(y):
 
 def arithmetic_a(x, y):
     """Test all arithmetic operators."""
-    return __extracted_func_4(x, y)
+    _towel_arguments_4 = [(y, x)]
+    del x
+    del y
+    return __extracted_func_4(_towel_arguments_4[0][1], _towel_arguments_4[0][0], _towel_arguments_4.pop())
 
 
 def arithmetic_b(a, b):
     """Test all arithmetic operators."""
-    return __extracted_func_4(a, b)
+    _towel_arguments_4 = [(b, a)]
+    del a
+    del b
+    return __extracted_func_4(_towel_arguments_4[0][1], _towel_arguments_4[0][0], _towel_arguments_4.pop())
 
 
 # =============================================================================
@@ -293,12 +285,18 @@ def arithmetic_b(a, b):
 
 def comparisons_a(x, y):
     """Test all comparison operators."""
-    return __extracted_func_1(x, y)
+    _towel_arguments_1 = [(y, x)]
+    del x
+    del y
+    return __extracted_func_1(_towel_arguments_1[0][1], _towel_arguments_1[0][0], _towel_arguments_1.pop())
 
 
 def comparisons_b(a, b):
     """Test all comparison operators."""
-    return __extracted_func_1(a, b)
+    _towel_arguments_1 = [(b, a)]
+    del a
+    del b
+    return __extracted_func_1(_towel_arguments_1[0][1], _towel_arguments_1[0][0], _towel_arguments_1.pop())
 
 
 # =============================================================================
@@ -308,12 +306,18 @@ def comparisons_b(a, b):
 
 def logical_a(x, y):
     """Test logical operators."""
-    return __extracted_func_11(x, y)
+    _towel_arguments_11 = [(y, x)]
+    del x
+    del y
+    return __extracted_func_11(_towel_arguments_11[0][1], _towel_arguments_11[0][0], _towel_arguments_11.pop())
 
 
 def logical_b(a, b):
     """Test logical operators."""
-    return __extracted_func_11(a, b)
+    _towel_arguments_11 = [(b, a)]
+    del a
+    del b
+    return __extracted_func_11(_towel_arguments_11[0][1], _towel_arguments_11[0][0], _towel_arguments_11.pop())
 
 
 # =============================================================================
@@ -323,12 +327,18 @@ def logical_b(a, b):
 
 def bitwise_a(x, y):
     """Test bitwise operators."""
-    return __extracted_func_5(x, y)
+    _towel_arguments_5 = [(y, x)]
+    del x
+    del y
+    return __extracted_func_5(_towel_arguments_5[0][1], _towel_arguments_5[0][0], _towel_arguments_5.pop())
 
 
 def bitwise_b(a, b):
     """Test bitwise operators."""
-    return __extracted_func_5(a, b)
+    _towel_arguments_5 = [(b, a)]
+    del a
+    del b
+    return __extracted_func_5(_towel_arguments_5[0][1], _towel_arguments_5[0][0], _towel_arguments_5.pop())
 
 
 # =============================================================================
@@ -338,12 +348,16 @@ def bitwise_b(a, b):
 
 def augmented_a(x):
     """Test augmented assignment operators."""
-    return __extracted_func_2(x)
+    _towel_arguments_2 = [(x,)]
+    del x
+    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
 
 
 def augmented_b(y):
     """Test augmented assignment operators."""
-    return __extracted_func_2(y)
+    _towel_arguments_2 = [(y,)]
+    del y
+    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
 
 
 # =============================================================================
@@ -353,7 +367,10 @@ def augmented_b(y):
 
 def unpacking_a(data):
     """Test various unpacking patterns."""
-    _towel_keep_x, _towel_keep_y, result, _towel_keep_a, _towel_keep_b, _towel_keep_c = __extracted_func_12(data)
+    x, y = data[:2]
+    result = x + y
+    a, b, c = data[:3]
+    result += a + b + c
     first, *rest = data
     result += first + sum(rest)
     return result
@@ -361,7 +378,10 @@ def unpacking_a(data):
 
 def unpacking_b(items):
     """Test various unpacking patterns."""
-    _towel_keep_p, _towel_keep_q, output, _towel_keep_m, _towel_keep_n, _towel_keep_o = __extracted_func_12(items)
+    p, q = items[:2]
+    output = p + q
+    m, n, o = items[:3]
+    output += m + n + o
     head, *tail = items
     output += head + sum(tail)
     return output
@@ -374,12 +394,16 @@ def unpacking_b(items):
 
 def subscript_a(data):
     """Test subscript and slice operations."""
-    return __extracted_func_6(data)
+    _towel_arguments_6 = [(data,)]
+    del data
+    return __extracted_func_6(_towel_arguments_6[0][0], _towel_arguments_6.pop())
 
 
 def subscript_b(items):
     """Test subscript and slice operations."""
-    return __extracted_func_6(items)
+    _towel_arguments_6 = [(items,)]
+    del items
+    return __extracted_func_6(_towel_arguments_6[0][0], _towel_arguments_6.pop())
 
 
 # =============================================================================
@@ -398,12 +422,16 @@ class TestClass:
 
 def attributes_a(obj):
     """Test attribute access."""
-    return __extracted_func_13(obj)
+    _towel_arguments_12 = [(obj,)]
+    del obj
+    return __extracted_func_12(_towel_arguments_12[0][0], _towel_arguments_12.pop())
 
 
 def attributes_b(thing):
     """Test attribute access."""
-    return __extracted_func_13(thing)
+    _towel_arguments_12 = [(thing,)]
+    del thing
+    return __extracted_func_12(_towel_arguments_12[0][0], _towel_arguments_12.pop())
 
 
 # =============================================================================
@@ -417,12 +445,18 @@ def helper(a, b, c=10, *args, **kwargs):
 
 def calls_a(x, y):
     """Test various function call patterns."""
-    return __extracted_func_7(x, y)
+    _towel_arguments_7 = [(y, x)]
+    del x
+    del y
+    return __extracted_func_7(_towel_arguments_7[0][1], _towel_arguments_7[0][0], _towel_arguments_7.pop())
 
 
 def calls_b(a, b):
     """Test various function call patterns."""
-    return __extracted_func_7(a, b)
+    _towel_arguments_7 = [(b, a)]
+    del a
+    del b
+    return __extracted_func_7(_towel_arguments_7[0][1], _towel_arguments_7[0][0], _towel_arguments_7.pop())
 
 
 # =============================================================================
@@ -432,12 +466,16 @@ def calls_b(a, b):
 
 def list_comp_a(data):
     """Test list comprehensions."""
-    return __extracted_func_14(data)
+    _towel_arguments_13 = [(data,)]
+    del data
+    return __extracted_func_13(_towel_arguments_13[0][0], _towel_arguments_13.pop())
 
 
 def list_comp_b(items):
     """Test list comprehensions."""
-    return __extracted_func_14(items)
+    _towel_arguments_13 = [(items,)]
+    del items
+    return __extracted_func_13(_towel_arguments_13[0][0], _towel_arguments_13.pop())
 
 
 # =============================================================================
@@ -447,12 +485,16 @@ def list_comp_b(items):
 
 def set_comp_a(data):
     """Test set comprehensions."""
-    return __extracted_func_23(data)
+    _towel_arguments_21 = [(data,)]
+    del data
+    return __extracted_func_21(_towel_arguments_21[0][0], _towel_arguments_21.pop())
 
 
 def set_comp_b(items):
     """Test set comprehensions."""
-    return __extracted_func_23(items)
+    _towel_arguments_21 = [(items,)]
+    del items
+    return __extracted_func_21(_towel_arguments_21[0][0], _towel_arguments_21.pop())
 
 
 # =============================================================================
@@ -462,12 +504,16 @@ def set_comp_b(items):
 
 def dict_comp_a(data):
     """Test dict comprehensions."""
-    return __extracted_func_24(data)
+    _towel_arguments_22 = [(data,)]
+    del data
+    return __extracted_func_22(_towel_arguments_22[0][0], _towel_arguments_22.pop())
 
 
 def dict_comp_b(items):
     """Test dict comprehensions."""
-    return __extracted_func_24(items)
+    _towel_arguments_22 = [(items,)]
+    del items
+    return __extracted_func_22(_towel_arguments_22[0][0], _towel_arguments_22.pop())
 
 
 # =============================================================================
@@ -477,12 +523,16 @@ def dict_comp_b(items):
 
 def generator_a(data):
     """Test generator expressions."""
-    return __extracted_func_25(data)
+    _towel_arguments_23 = [(data,)]
+    del data
+    return __extracted_func_23(_towel_arguments_23[0][0], _towel_arguments_23.pop())
 
 
 def generator_b(items):
     """Test generator expressions."""
-    return __extracted_func_25(items)
+    _towel_arguments_23 = [(items,)]
+    del items
+    return __extracted_func_23(_towel_arguments_23[0][0], _towel_arguments_23.pop())
 
 
 # =============================================================================
@@ -492,12 +542,16 @@ def generator_b(items):
 
 def lambda_a(data):
     """Test lambda expressions."""
-    return __extracted_func_15(data)
+    _towel_arguments_14 = [(data,)]
+    del data
+    return __extracted_func_14(_towel_arguments_14[0][0], _towel_arguments_14.pop())
 
 
 def lambda_b(items):
     """Test lambda expressions."""
-    return __extracted_func_15(items)
+    _towel_arguments_14 = [(items,)]
+    del items
+    return __extracted_func_14(_towel_arguments_14[0][0], _towel_arguments_14.pop())
 
 
 # =============================================================================
@@ -507,12 +561,18 @@ def lambda_b(items):
 
 def ternary_a(x, threshold):
     """Test conditional expressions."""
-    return __extracted_func_26(x, threshold)
+    _towel_arguments_24 = [(threshold, x)]
+    del x
+    del threshold
+    return __extracted_func_24(_towel_arguments_24[0][1], _towel_arguments_24[0][0], _towel_arguments_24.pop())
 
 
 def ternary_b(y, limit):
     """Test conditional expressions."""
-    return __extracted_func_26(y, limit)
+    _towel_arguments_24 = [(limit, y)]
+    del y
+    del limit
+    return __extracted_func_24(_towel_arguments_24[0][1], _towel_arguments_24[0][0], _towel_arguments_24.pop())
 
 
 # =============================================================================
@@ -523,13 +583,19 @@ def ternary_b(y, limit):
 def string_fmt_a(x, y):
     """Test string formatting."""
     s1 = f"x={x}, y={y}"
-    return __extracted_func_16('x=%d, y=%d', x, y, 'x={}, y={}', s1)
+    s2 = "x=%d, y=%d" % (x, y)
+    s3 = "x={}, y={}".format(x, y)
+    result = len(s1) + len(s2) + len(s3)
+    return result
 
 
 def string_fmt_b(a, b):
     """Test string formatting."""
     s1 = f"a={a}, b={b}"
-    return __extracted_func_16('a=%d, b=%d', a, b, 'a={}, b={}', s1)
+    s2 = "a=%d, b=%d" % (a, b)
+    s3 = "a={}, b={}".format(a, b)
+    output = len(s1) + len(s2) + len(s3)
+    return output
 
 
 # =============================================================================
@@ -539,14 +605,18 @@ def string_fmt_b(a, b):
 
 def fstring_a(x, y):
     """Test f-string with expressions."""
-    result = __extracted_func_27(x, y)
+    result = len(f"{x + y}")
+    result += len(f"{x * 2:04d}")
+    result += len(f"{x:.2f}")
     result += len(f"{x=}")
     return result
 
 
 def fstring_b(a, b):
     """Test f-string with expressions."""
-    output = __extracted_func_27(a, b)
+    output = len(f"{a + b}")
+    output += len(f"{a * 2:04d}")
+    output += len(f"{a:.2f}")
     output += len(f"{a=}")
     return output
 
@@ -558,12 +628,16 @@ def fstring_b(a, b):
 
 def exceptions_a(x):
     """Test exception handling."""
-    return __extracted_func_0(x)
+    _towel_arguments = [(x,)]
+    del x
+    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 def exceptions_b(y):
     """Test exception handling."""
-    return __extracted_func_0(y)
+    _towel_arguments = [(y,)]
+    del y
+    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 # =============================================================================
@@ -584,12 +658,16 @@ class DummyContext:
 
 def context_mgr_a(x):
     """Test context managers."""
-    return __extracted_func_17(x)
+    _towel_arguments_15 = [(x,)]
+    del x
+    return __extracted_func_15(_towel_arguments_15[0][0], _towel_arguments_15.pop())
 
 
 def context_mgr_b(y):
     """Test context managers."""
-    return __extracted_func_17(y)
+    _towel_arguments_15 = [(y,)]
+    del y
+    return __extracted_func_15(_towel_arguments_15[0][0], _towel_arguments_15.pop())
 
 
 # =============================================================================
@@ -599,12 +677,16 @@ def context_mgr_b(y):
 
 def walrus_a(data):
     """Test walrus operator."""
-    return __extracted_func_8(data)
+    _towel_arguments_8 = [(data,)]
+    del data
+    return __extracted_func_8(_towel_arguments_8[0][0], _towel_arguments_8.pop())
 
 
 def walrus_b(items):
     """Test walrus operator."""
-    return __extracted_func_8(items)
+    _towel_arguments_8 = [(items,)]
+    del items
+    return __extracted_func_8(_towel_arguments_8[0][0], _towel_arguments_8.pop())
 
 
 # =============================================================================
@@ -614,12 +696,20 @@ def walrus_b(items):
 
 def chained_comp_a(x, y, z):
     """Test chained comparisons."""
-    return __extracted_func_18(x, y, z)
+    _towel_arguments_16 = [(z, y, x)]
+    del x
+    del y
+    del z
+    return __extracted_func_16(_towel_arguments_16[0][2], _towel_arguments_16[0][1], _towel_arguments_16[0][0], _towel_arguments_16.pop())
 
 
 def chained_comp_b(a, b, c):
     """Test chained comparisons."""
-    return __extracted_func_18(a, b, c)
+    _towel_arguments_16 = [(c, b, a)]
+    del a
+    del b
+    del c
+    return __extracted_func_16(_towel_arguments_16[0][2], _towel_arguments_16[0][1], _towel_arguments_16[0][0], _towel_arguments_16.pop())
 
 
 # =============================================================================
@@ -629,12 +719,18 @@ def chained_comp_b(a, b, c):
 
 def short_circuit_a(x, y):
     """Test boolean short-circuit evaluation."""
-    return __extracted_func_28(x, y)
+    _towel_arguments_25 = [(y, x)]
+    del x
+    del y
+    return __extracted_func_25(_towel_arguments_25[0][1], _towel_arguments_25[0][0], _towel_arguments_25.pop())
 
 
 def short_circuit_b(a, b):
     """Test boolean short-circuit evaluation."""
-    return __extracted_func_28(a, b)
+    _towel_arguments_25 = [(b, a)]
+    del a
+    del b
+    return __extracted_func_25(_towel_arguments_25[0][1], _towel_arguments_25[0][0], _towel_arguments_25.pop())
 
 
 # =============================================================================
@@ -644,12 +740,16 @@ def short_circuit_b(a, b):
 
 def nested_a(data):
     """Test nested data structure access."""
-    return __extracted_func_19(data)
+    _towel_arguments_17 = [(data,)]
+    del data
+    return __extracted_func_17(_towel_arguments_17[0][0], _towel_arguments_17.pop())
 
 
 def nested_b(items):
     """Test nested data structure access."""
-    return __extracted_func_19(items)
+    _towel_arguments_17 = [(items,)]
+    del items
+    return __extracted_func_17(_towel_arguments_17[0][0], _towel_arguments_17.pop())
 
 
 # =============================================================================
@@ -659,12 +759,18 @@ def nested_b(items):
 
 def multi_assign_a(x, y):
     """Test multi-target assignment."""
-    return __extracted_func_10(x, y)
+    _towel_arguments_10 = [(y, x)]
+    del x
+    del y
+    return __extracted_func_10(_towel_arguments_10[0][1], _towel_arguments_10[0][0], _towel_arguments_10.pop())
 
 
 def multi_assign_b(m, n):
     """Test multi-target assignment."""
-    return __extracted_func_10(m, n)
+    _towel_arguments_10 = [(n, m)]
+    del m
+    del n
+    return __extracted_func_10(_towel_arguments_10[0][1], _towel_arguments_10[0][0], _towel_arguments_10.pop())
 
 
 # =============================================================================
@@ -697,12 +803,18 @@ def starred_b(items):
 
 def membership_a(x, data):
     """Test membership operators."""
-    return __extracted_func_20(x, data)
+    _towel_arguments_18 = [(data, x)]
+    del x
+    del data
+    return __extracted_func_18(_towel_arguments_18[0][1], _towel_arguments_18[0][0], _towel_arguments_18.pop())
 
 
 def membership_b(y, items):
     """Test membership operators."""
-    return __extracted_func_20(y, items)
+    _towel_arguments_18 = [(items, y)]
+    del y
+    del items
+    return __extracted_func_18(_towel_arguments_18[0][1], _towel_arguments_18[0][0], _towel_arguments_18.pop())
 
 
 # =============================================================================
@@ -712,12 +824,18 @@ def membership_b(y, items):
 
 def identity_a(x, y):
     """Test identity operators."""
-    return __extracted_func_21(x, y)
+    _towel_arguments_19 = [(y, x)]
+    del x
+    del y
+    return __extracted_func_19(_towel_arguments_19[0][1], _towel_arguments_19[0][0], _towel_arguments_19.pop())
 
 
 def identity_b(a, b):
     """Test identity operators."""
-    return __extracted_func_21(a, b)
+    _towel_arguments_19 = [(b, a)]
+    del a
+    del b
+    return __extracted_func_19(_towel_arguments_19[0][1], _towel_arguments_19[0][0], _towel_arguments_19.pop())
 
 
 # =============================================================================
@@ -727,9 +845,17 @@ def identity_b(a, b):
 
 def complex_expr_a(x, y, data):
     """Test complex nested expressions."""
-    return __extracted_func_22(x, y, data)
+    _towel_arguments_20 = [(data, y, x)]
+    del x
+    del y
+    del data
+    return __extracted_func_20(_towel_arguments_20[0][2], _towel_arguments_20[0][1], _towel_arguments_20[0][0], _towel_arguments_20.pop())
 
 
 def complex_expr_b(a, b, items):
     """Test complex nested expressions."""
-    return __extracted_func_22(a, b, items)
+    _towel_arguments_20 = [(items, b, a)]
+    del a
+    del b
+    del items
+    return __extracted_func_20(_towel_arguments_20[0][2], _towel_arguments_20[0][1], _towel_arguments_20[0][0], _towel_arguments_20.pop())

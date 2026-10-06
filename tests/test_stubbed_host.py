@@ -51,12 +51,42 @@ BODY = """
 """
 
 
-def _function(name: str, tag: str, offset: int) -> str:
+def _function(name: str, tag: str, offset: int, *, safe: bool = False) -> str:
+    if safe:
+        body = (
+            BODY.replace('print("begin {tag}")', 'emit("begin " + tag)')
+            .replace('print("{tag}",', "emit(tag,")
+            .replace("len(items)", "size(items)")
+            .replace("{offset}", "offset")
+            .replace("    for item", "    item = 0\n    for item")
+        )
+        return (
+            "from builtins import print as emit, len as size\n\n"
+            + f"def {name}(items: list[int], scale: int, tag: str={tag!r}, offset: int={offset}) -> int:\n"
+            + textwrap.indent(textwrap.dedent(body).strip("\n"), "    ")
+            + "\n"
+        )
     return (
         f"def {name}(items: list[int], scale: int) -> int:\n"
         + textwrap.indent(textwrap.dedent(BODY.format(tag=tag, offset=offset)).strip("\n"), "    ")
         + "\n"
     )
+
+
+def _calls(root: Path, program: str) -> str:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            f"import sys; sys.path.insert(0, {str(root)!r})\n" + program,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout
 
 
 def _write(root: Path, files: Dict[str, str]) -> None:
@@ -98,27 +128,34 @@ def _mypy_errors(root: Path) -> List[str]:
     ],
     ids=["sibling", "partial-stub-package", "stub-package", "typings"],
 )
+@pytest.mark.parametrize("safe", [False, True])
 def test_the_typed_project_still_checks_after_the_extraction(
-    tmp_path: Path, stubs: Dict[str, str], hosted: bool
+    tmp_path: Path, stubs: Dict[str, str], hosted: bool, safe: bool
 ) -> None:
     stub = "def fa(items: list[int], scale: int) -> int: ...\n"
     files = {
         "pyproject.toml": '[project]\nname = "alpha"\nversion = "0.1"\n',
         "src/alpha/__init__.py": "",
         "src/alpha/py.typed": "",
-        "src/alpha/a.py": "import alpha.b\n" + _function("fa", "a", 1),
-        "src/alpha/b.py": _function("fb", "bb", 2),
+        "src/alpha/a.py": "import alpha.b\n" + _function("fa", "a", 1, safe=safe),
+        "src/alpha/b.py": _function("fb", "bb", 2, safe=safe),
         **{path: stub if text == "STUB" else text for path, text in stubs.items()},
     }
     _write(tmp_path, files)
+    program = "from alpha import a, b; print(a.fa([1, -2], 2), b.fb([1, -2], 3))"
+    expected = _calls(tmp_path / "src", program)
     engine = UnificationRefactorEngine(
-        min_lines=3, annotate_helpers=False, cross_module_helpers=True
+        min_lines=3, max_parameters=8, annotate_helpers=False, cross_module_helpers=True
     )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(tmp_path / "src" / "alpha"), str(tmp_path / "src" / "alpha"), progress="none"
         )
-    assert (sum(applied for applied, _ in results.values()) > 0) == hosted
+    assert _calls(tmp_path / "src", program) == expected
+    assert (sum(applied for applied, _ in results.values()) > 0) == (hosted and safe)
+    if not safe:
+        for relative, source in files.items():
+            assert (tmp_path / relative).read_text() == source
     assert "def __extracted_func" not in (tmp_path / "src" / "alpha" / "a.py").read_text()
     if "src/alpha/a.pyi" in stubs:
         # The checker reads the sibling stub in place of the module.

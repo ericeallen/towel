@@ -14,7 +14,7 @@ def __extracted_func_2(__param_0, __param_1, name):
     return prefix + name + suffix
 
 
-def __extracted_func_1(value):
+def __extracted_func_1(value, _towel_owner):
     precision = 2
     result = f'Value: {value:.{precision}f}'
     return result
@@ -48,12 +48,16 @@ def log_admin(admin_id, name):
 
 def format_number_a(value):
     """F-string with formatting."""
-    return __extracted_func_1(value)
+    _towel_arguments = [(value,)]
+    del value
+    return __extracted_func_1(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 def format_number_b(value):
     """F-string with formatting (same literal - should unify)."""
-    return __extracted_func_1(value)
+    _towel_arguments = [(value,)]
+    del value
+    return __extracted_func_1(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 def const_parameterization_a(item):

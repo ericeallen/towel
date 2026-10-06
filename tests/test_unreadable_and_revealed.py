@@ -132,16 +132,16 @@ ROW = textwrap.dedent("""\
         if row.n < 0:
             raise ValueError("negative row")
         print("first row", row.n)
-        total = row.n * 2
-        return total
+        assert isinstance(row.n, int)
+        return row.n * 2
 
 
     def second(k: int) -> int:
         row = make_row(k + 1)
         assert row.n >= 0
         print("second row", row.n)
-        total = row.n * 2
-        return total
+        assert isinstance(row.n, int)
+        return row.n * 2
     """)
 
 MODELS = textwrap.dedent("""\
@@ -196,3 +196,14 @@ def test_a_whole_path_the_host_cannot_import_is_written_any() -> None:
     assert isinstance(helper, ast.FunctionDef)
     assert unwritten_as_any(helper, host) == (("typing", "Any"),)
     assert ast.unparse(helper.args) == "stream: Any, path: 'os.PathLike[str]'"
+
+
+def test_original_row_suffix_with_new_owned_total_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "row.py"
+    path.write_text(
+        textwrap.dedent(
+            '    from pkg.models import make_row\n\n\n    def first(k: int) -> int:\n        row = make_row(k)\n        if row.n < 0:\n            raise ValueError("negative row")\n        print("first row", row.n)\n        total = row.n * 2\n        return total\n\n\n    def second(k: int) -> int:\n        row = make_row(k + 1)\n        assert row.n >= 0\n        print("second row", row.n)\n        total = row.n * 2\n        return total\n    '
+        )
+    )
+    engine = UnificationRefactorEngine()
+    assert engine.analyze_file(str(path)) == []

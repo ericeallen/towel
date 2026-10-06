@@ -40,7 +40,7 @@ import logging
 from pathlib import Path
 import sys
 import textwrap
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple, cast
 
 import pytest
 
@@ -185,14 +185,43 @@ def test_r9bd_the_audit_s_pair_is_declined_under_its_reason(
 def test_r9bd_a_call_that_assigns_the_name_back_keeps_it_local(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     # Each function now reads total after the block too, so the call assigns it.
-    path.write_text(REPRODUCER.replace("len(items))", "total)").replace("len(rows))", "total)"))
+    original = REPRODUCER.replace("len(items))", "total)").replace("len(rows))", "total)")
+    path.write_text(original)
+    assert not UnificationRefactorEngine(min_lines=3).analyze_file(str(path))
+    # No original frame parameters compete with the returned local's lifetime.
+    safe = original.replace("summarize_a(items)", "summarize_a()").replace(
+        "summarize_b(rows)", "summarize_b()"
+    )
+    safe = safe.replace("not items", "empty").replace("not rows", "empty")
+    safe = safe.replace("sum(items)", "sum((1, 2))").replace("sum(rows)", "sum((1, 2))")
+    safe = "empty = False\n" + safe
+    path.write_text(safe)
     proposals = UnificationRefactorEngine(min_lines=3).analyze_file(str(path))
     calls = [
         ast.unparse(replacement.node)
         for proposal in proposals
         for replacement in proposal.replacements
     ]
-    assert calls and all(call.startswith("total = ") for call in calls), calls
+    assert calls and all(
+        isinstance(replacement.node, ast.Assign)
+        and "total"
+        in {node.id for node in ast.walk(replacement.node.targets[0]) if isinstance(node, ast.Name)}
+        for proposal in proposals
+        for replacement in proposal.replacements
+    ), calls
+    rewritten = UnificationRefactorEngine(min_lines=3).apply_refactoring(str(path), proposals[0])
+    for empty in (False, True):
+        observations: List[Tuple[str, object]] = []
+        for text in (safe, rewritten):
+            namespace: Dict[str, object] = {}
+            exec(compile(text, "m.py", "exec"), namespace)
+            namespace["empty"] = empty
+            try:
+                result = cast(Callable[[], object], namespace["summarize_a"])()
+                observations.append(("value", result))
+            except UnboundLocalError:
+                observations.append(("unbound", None))
+        assert observations[0] == observations[1]
 
 
 @pytest.mark.parametrize(

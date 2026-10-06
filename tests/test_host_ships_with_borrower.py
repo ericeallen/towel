@@ -58,12 +58,42 @@ BLOCK = """
 """
 
 
-def _function(name: str, tag: str, offset: int) -> str:
+def _function(name: str, tag: str, offset: int, *, safe: bool = False) -> str:
+    if safe:
+        body = (
+            BLOCK.replace('print("begin {tag}")', 'emit("begin " + tag)')
+            .replace('print("{tag}",', "emit(tag,")
+            .replace("len(items)", "size(items)")
+            .replace("{offset}", "offset")
+            .replace("    for item", "    item = 0\n    for item")
+        )
+        return (
+            "from builtins import print as emit, len as size\n\n"
+            + f"def {name}(items, scale, tag={tag!r}, offset={offset}):\n"
+            + textwrap.indent(textwrap.dedent(body).strip("\n"), "    ")
+            + "\n"
+        )
     return (
         f"def {name}(items, scale):\n"
         + textwrap.indent(textwrap.dedent(BLOCK.format(tag=tag, offset=offset)).strip("\n"), "    ")
         + "\n"
     )
+
+
+def _calls(root: Path, program: str) -> str:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            f"import sys; sys.path.insert(0, {str(root)!r})\n" + program,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout
 
 
 def _write(root: Path, files: Dict[str, str]) -> None:
@@ -74,7 +104,7 @@ def _write(root: Path, files: Dict[str, str]) -> None:
 
 
 def _refactor(root: Path, target: str) -> bool:
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(min_lines=3, max_parameters=8, cross_module_helpers=True)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(root / target), str(root / target), progress="none"
@@ -160,18 +190,27 @@ def test_the_shipped_package_never_imports_one_that_stays_behind(
     )
 
 
-def test_a_test_module_that_imports_the_package_may_borrow_from_it(tmp_path: Path) -> None:
+@pytest.mark.parametrize("safe", [False, True])
+def test_a_test_module_that_imports_the_package_may_borrow_from_it(
+    tmp_path: Path, safe: bool
+) -> None:
     files = {
         "pyproject.toml": FLAT_PYPROJECT,
         "zeta/__init__.py": "",
-        "zeta/a.py": _function("fa", "a", 1),
+        "zeta/a.py": _function("fa", "a", 1, safe=safe),
         "tests/__init__.py": "",
-        "tests/test_b.py": "import zeta.a\n\n\n" + _function("test_fb", "bb", 2),
+        "tests/test_b.py": "import zeta.a\n\n\n" + _function("test_fb", "bb", 2, safe=safe),
     }
     _write(tmp_path, files)
-    assert _refactor(tmp_path, ".")
+    program = "from zeta import a; from tests import test_b; print(a.fa([1, -2], 2), test_b.test_fb([1, -2], 3))"
+    expected = _calls(tmp_path, program)
+    assert _refactor(tmp_path, ".") is safe
+    assert _calls(tmp_path, program) == expected
     assert "from tests" not in (tmp_path / "zeta" / "a.py").read_text()
-    assert "extracted_func" in (tmp_path / "tests" / "test_b.py").read_text()
+    if not safe:
+        for relative, source in files.items():
+            assert (tmp_path / relative).read_text() == source
+    assert ("extracted_func" in (tmp_path / "tests" / "test_b.py").read_text()) is safe
     assert _import_shipped(tmp_path, ["zeta"], ["zeta", "zeta.a"], tmp_path).split() == [
         "zeta",
         "ok",
