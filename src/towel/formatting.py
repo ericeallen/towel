@@ -45,13 +45,38 @@ from pathlib import Path
 import sys
 import shutil
 import subprocess
-from typing import Callable, List, Mapping, NamedTuple, Optional, Set, Tuple, cast
+import weakref
+from typing import (
+    Callable,
+    List,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Set,
+    Tuple,
+    cast,
+)
+
+from ._formatting_repeatability import (
+    FormattingRepeatability,
+    formatting_repeatability as _formatting_repeatability,
+    _register_repeatable,
+    _propagate_repeatability,
+    _invalidate_repeatability,
+)
 
 from .canonical_ast import canonical_dump
 from .project_layout import find_project_root, load_pyproject
-from .project_tools import IsolatedFormatTool, ToolChoice, ToolFailure, python_tool_environment
+from .project_tools import (
+    IsolatedFormatTool,
+    ToolChoice,
+    ToolFailure,
+    python_tool_environment,
+)
 from .diagnostics import LOG
 from .source_text import decorator_line_numbers, definition_start_line, try_read_source
+
+formatting_repeatability = _formatting_repeatability
 
 SnippetFormatter = Callable[[str], str]
 """Maps one generated snippet (a definition or a statement) to its formatted text."""
@@ -66,6 +91,7 @@ ImportSorter = Callable[[str, str], Optional[str]]
 
 ``source`` itself for a file the tool's own configuration leaves alone; None
 when the tool failed or declined, which it reports."""
+
 
 TOOL_TIMEOUT_SECONDS = 120.0
 """How long an external formatter or sorter may take on one file before Towel gives up on it."""
@@ -107,7 +133,11 @@ def _lint_diagnostics(output: str) -> tuple[_LintDiagnostic, ...]:
         if not isinstance(value, dict):
             raise LintRejected("Ruff returned a diagnostic that is not an object")
         record = cast(Mapping[str, object], value)
-        code, message, location = record.get("code"), record.get("message"), record.get("location")
+        code, message, location = (
+            record.get("code"),
+            record.get("message"),
+            record.get("location"),
+        )
         if (
             not isinstance(code, str)
             or not isinstance(message, str)
@@ -130,6 +160,8 @@ def _ruff_lint_guard(command: List[str], root: Path) -> FileFinisher:
     cannot pay for one in a new helper. The file still holds this proposal's input.
     """
     from .type_baseline import unchanged_lines
+
+    command = list(tuple(command))
 
     def diagnostics(path: str, source: str) -> tuple[_LintDiagnostic, ...]:
         try:
@@ -212,7 +244,13 @@ def _ruff_lint_guard(command: List[str], root: Path) -> FileFinisher:
             raise LintRejected(f"The change introduces Ruff {first.code}: {first.message}")
         return source
 
-    return finish
+    return _register_repeatable(
+        finish,
+        FormattingRepeatability(
+            ("ruff-lint", *command),
+            (root,),
+        ),
+    )
 
 
 def _ruff_configures_file(path: Path, root: Path) -> bool:
@@ -251,7 +289,8 @@ def file_finisher_for_project(path: Path, *, sort_imports: bool = True) -> ToolC
         )
 
     return ToolChoice(
-        finish, "; ".join(note for note in (sorting.note, "configured Ruff lint") if note)
+        _propagate_repeatability(finish, sorting.tool, guard),
+        "; ".join(note for note in (sorting.note, "configured Ruff lint") if note),
     )
 
 
@@ -357,7 +396,7 @@ def checked(formatter: SnippetFormatter) -> SnippetFormatter:
             )
         return formatted.rstrip("\n")
 
-    return format_snippet
+    return _propagate_repeatability(format_snippet, formatter)
 
 
 def _leading_blank_lines(source: str) -> int:
@@ -432,6 +471,19 @@ def _black_formatter(tool: IsolatedFormatTool, settings: BlackSettings) -> Snipp
             }
         )
 
+    if type(tool) is IsolatedFormatTool:
+        _register_repeatable(
+            run_black,
+            FormattingRepeatability(
+                (
+                    "black",
+                    sys.executable,
+                    str(settings.line_length),
+                    str(settings.string_normalization),
+                ),
+                workers=(weakref.ref(tool),),
+            ),
+        )
     return checked(run_black)
 
 
@@ -532,13 +584,21 @@ def ruff_formatter(path: Path) -> SnippetFormatter:
     command = _ruff_executable()
     if command is None:
         raise FormatterUnavailable("ruff")
+    command = list(tuple(command))
     root = _root(path)
     target = str(path.resolve())
 
     def run_ruff(source: str) -> str:
         try:
             completed = subprocess.run(
-                [*command, "format", "--force-exclude", "--stdin-filename", target, "-"],
+                [
+                    *command,
+                    "format",
+                    "--force-exclude",
+                    "--stdin-filename",
+                    target,
+                    "-",
+                ],
                 input=source,
                 capture_output=True,
                 text=True,
@@ -553,11 +613,21 @@ def ruff_formatter(path: Path) -> SnippetFormatter:
             raise FormattingChangedCode(f"ruff format failed: {completed.stderr.strip()}")
         return completed.stdout
 
+    _register_repeatable(
+        run_ruff,
+        FormattingRepeatability(
+            ("ruff-format", *command, target),
+            (root,),
+        ),
+    )
     return checked(run_ruff)
 
 
 def _unformatted(source: str) -> str:
     return source
+
+
+_register_repeatable(_unformatted, FormattingRepeatability(("identity",)))
 
 
 def black_excludes(path: Path) -> bool:
@@ -691,6 +761,9 @@ def _ruff_sorter(command: List[str], root: Path) -> ImportSorter:
     and ``# ruff: noqa`` need no flag, since they only silence the rule.
     """
 
+    command = list(tuple(command))
+    context = FormattingRepeatability(("ruff-sort", *command), (root,))
+
     def sort(file_path: str, source: str) -> Optional[str]:
         try:
             completed = subprocess.run(
@@ -716,9 +789,11 @@ def _ruff_sorter(command: List[str], root: Path) -> ImportSorter:
                 timeout=TOOL_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired as error:
+            _invalidate_repeatability(context)
             LOG.warning("ruff import sorting timed out for %s (%s s)", file_path, error.timeout)
             return None
         if completed.returncode != 0 or not completed.stdout:
+            _invalidate_repeatability(context)
             LOG.warning(
                 "ruff import sorting failed for %s; imports left as assembled: %s",
                 file_path,
@@ -727,22 +802,24 @@ def _ruff_sorter(command: List[str], root: Path) -> ImportSorter:
             return None
         return completed.stdout
 
-    return sort
+    return _register_repeatable(sort, context)
 
 
 def _isort_sorter(root: Path) -> ImportSorter:
     """isort over one file's text, with the project's configuration found from ``root``."""
     tool = IsolatedFormatTool("isort")
+    context = FormattingRepeatability(("isort", sys.executable), (root,), (weakref.ref(tool),))
 
     def sort(file_path: str, source: str) -> Optional[str]:
         target = _counterpart(root, Path(file_path))
         try:
             return tool.render({"source": source, "root": str(root), "path": str(target)})
         except ToolFailure as error:
+            _invalidate_repeatability(context)
             LOG.warning("isort declined %s; imports left as assembled: %s", file_path, error)
             return None
 
-    return sort
+    return _register_repeatable(sort, context)
 
 
 class SortOutcome(Enum):
@@ -860,7 +937,7 @@ def sorted_where_already_sorted(sort: ImportSorter, tool: str) -> FileFinisher:
             LOG.warning(report, file_path, tool)
         return result.text
 
-    return finish
+    return _propagate_repeatability(finish, sort)
 
 
 def imports_permuted_only(finisher: FileFinisher) -> FileFinisher:

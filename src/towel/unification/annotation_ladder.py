@@ -61,7 +61,7 @@ from typing import (
 from ..canonical_ast import canonical_dump
 from .exceptions import Untypeable
 from .models import FunctionNode, RefactoringProposal
-from .semantic_safety import walk_own_scope
+from .semantic_safety import bound_names, walk_own_scope
 from ..type_inference import TypeDiagnostic
 
 
@@ -635,6 +635,123 @@ _MISSING_ANNOTATION = ("is missing a type annotation", "is missing a return type
 _UNTYPED_CALL = "Call to untyped function"
 _VALUE_REFUSED = ("Incompatible return value type", "Incompatible types in assignment")
 """What a checker says on the call's own line when the helper's value is the wrong type."""
+
+
+def any_result_still_refused(
+    helper: ast.FunctionDef, rejection: Rejection, checked_helper: ast.FunctionDef
+) -> bool:
+    """Whether loosening only parameters leaves a witnessed direct-return ``Any`` error.
+
+    The caller must still receive exactly ``typing.Any`` from the same plain
+    module function. This says nothing about a precise or correlated generic
+    result, a decorated function, or a checker plugin that refines calls: the
+    caller must separately establish that mypy runs without configured plugins.
+    An absent location or an ambiguous binding costs another check.
+    """
+    if (
+        helper.name != checked_helper.name
+        or getattr(helper, "type_comment", None) != getattr(checked_helper, "type_comment", None)
+        or tuple(canonical_dump(parameter) for parameter in getattr(helper, "type_params", ()))
+        != tuple(
+            canonical_dump(parameter) for parameter in getattr(checked_helper, "type_params", ())
+        )
+        or helper.returns is None
+        or not _is_any(helper.returns)
+    ):
+        return False
+    project = _RenderedProject(rejection)
+    tree = project.tree(rejection.helper_path)
+    before = project.definition
+    if (
+        tree is None
+        or not isinstance(before, ast.FunctionDef)
+        or before not in tree.body
+        or before.type_comment != getattr(helper, "type_comment", None)
+        or tuple(canonical_dump(parameter) for parameter in getattr(before, "type_params", ()))
+        != tuple(canonical_dump(parameter) for parameter in getattr(helper, "type_params", ()))
+        or before.decorator_list
+        or helper.decorator_list
+        or before.returns is None
+        or helper.returns is None
+        or canonical_dump(before.returns) != canonical_dump(helper.returns)
+        or canonical_dump(ast.Module(body=before.body, type_ignores=[]))
+        != canonical_dump(ast.Module(body=helper.body, type_ignores=[]))
+    ):
+        return False
+    expression, _ = _unquoted(before.returns)
+    binding: Optional[str] = None
+    imported: Optional[ast.Import | ast.ImportFrom] = None
+    for statement in tree.body:
+        if isinstance(expression, ast.Name) and isinstance(statement, ast.ImportFrom):
+            if statement.module in {"typing", "typing_extensions"} and not statement.level:
+                for alias in statement.names:
+                    if alias.name == "Any" and (alias.asname or alias.name) == expression.id:
+                        binding, imported = expression.id, statement
+        elif (
+            isinstance(expression, ast.Attribute)
+            and expression.attr == "Any"
+            and isinstance(expression.value, ast.Name)
+            and isinstance(statement, ast.Import)
+        ):
+            for alias in statement.names:
+                if (
+                    alias.name in {"typing", "typing_extensions"}
+                    and (alias.asname or alias.name) == expression.value.id
+                ):
+                    binding, imported = expression.value.id, statement
+    if binding is None or imported is None:
+        return False
+    # Keep the proof local and unambiguous; even an unrelated nested shadow
+    # is left to the checker rather than resolving scopes here.
+    protected = {binding, rejection.helper_name}
+    if any(
+        getattr(parameter, "name", None) in protected
+        for parameter in getattr(before, "type_params", ())
+    ):
+        return False
+    other_bindings = bound_names(
+        [statement for statement in tree.body if statement not in (before, imported)]
+        + [before.args, *before.body]
+    )
+    other_bindings |= {node.arg for node in ast.walk(tree) if isinstance(node, ast.arg)}
+    if (
+        protected & other_bindings
+        or sum((alias.asname or alias.name.split(".")[0]) == binding for alias in imported.names)
+        != 1
+        or any(
+            isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names)
+            for node in ast.walk(tree)
+        )
+    ):
+        return False
+    arguments = copy.deepcopy(helper.args)
+    original_arguments = copy.deepcopy(before.args)
+    for signature in (arguments, original_arguments):
+        for argument in (*signature.posonlyargs, *signature.args, *signature.kwonlyargs):
+            argument.annotation = None
+        for extra in (signature.vararg, signature.kwarg):
+            if extra is not None:
+                extra.annotation = None
+    if canonical_dump(arguments) != canonical_dump(original_arguments):
+        return False
+    for call in project.calls():
+        statement = call.statement
+        if not (
+            _same_file(call.path, rejection.helper_path)
+            and isinstance(statement, ast.Return)
+            and isinstance(statement.value, ast.Call)
+            and isinstance(statement.value.func, ast.Name)
+            and statement.value.func.id == rejection.helper_name
+        ):
+            continue
+        if any(
+            error.message.startswith(_RETURNING_ANY)
+            and error.line == statement.lineno
+            and _same_file(error.path, call.path)
+            for error in rejection.errors
+        ):
+            return True
+    return False
 
 
 def _loosening_on_line(

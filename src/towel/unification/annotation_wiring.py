@@ -36,6 +36,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import tomllib
 
 from typing import Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 from ..canonical_ast import canonical_dump
@@ -44,6 +45,7 @@ from .annotation_ladder import (
     Judge,
     Rejection,
     Unanswerable,
+    any_result_still_refused,
     declarations_leave_their_class,
     drop_unbound_variables,
     method_at,
@@ -89,7 +91,8 @@ from .exceptions import (
 )
 from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import LOG, TYPES
-from ..mypy_ci_policy import mypy_policy
+from ..formatting import formatting_repeatability
+from ..mypy_ci_policy import UnsupportedMypyPolicy, mypy_policy
 from ..checker_project import _read_json_config
 from ..declared_python import declared_requirement, python_lower_bound
 from ..project_layout import find_project_root, load_pyproject, package_chain
@@ -114,6 +117,7 @@ from ..type_inference import (
     CheckSuccess,
     CombinedOracle,
     MypyInferrer,
+    PyrightOracle,
     RevealKey,
     RevealRequest,
     TypeDiagnostic,
@@ -389,6 +393,61 @@ def verifies_with_mypy(oracle: Optional[TypeOracle]) -> bool:
     return False
 
 
+def _builtin_oracle(oracle: Optional[TypeOracle]) -> bool:
+    """Whether every checker and relocation/combination wrapper is exactly built-in.
+
+    An override can emit mypy-shaped diagnostics without using mypy's call
+    semantics. Inference from those messages must leave every fallback intact.
+    """
+    if type(oracle) in (MypyInferrer, PyrightOracle):
+        return True
+    if type(oracle) is _RelocatedOracle:
+        return _builtin_oracle(oracle.inner)
+    if type(oracle) is CombinedOracle:
+        return bool(oracle.checkers) and all(_builtin_oracle(one) for one in oracle.checkers)
+    return False
+
+
+def _mypy_config_identity(path: Path) -> Optional[Tuple[str, str]]:
+    """The explicit configuration's path and exact bytes, or no reusable evidence."""
+    root = _configured_root(path, "mypy")
+    filename = _mypy_config(root) if root is not None else None
+    if filename is None:
+        return None
+    try:
+        return os.path.realpath(filename), hashlib.sha256(Path(filename).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _mypy_without_plugins(path: Path) -> bool:
+    """Whether a readable explicit mypy configuration proves no configured plugins.
+
+    A plugin can refine even a declared ``Any`` result using parameter types,
+    so unreadable, absent or malformed configuration leaves every rung intact.
+    """
+    root = _configured_root(path, "mypy")
+    filename = _mypy_config(root) if root is not None else None
+    if filename is None:
+        return False
+    config = Path(filename)
+    try:
+        if config.name == "pyproject.toml":
+            with config.open("rb") as stream:
+                parsed = tomllib.load(stream)
+            options = _table(parsed, "tool", "mypy")
+            if not options:
+                return False
+            plugins = options.get("plugins", [])
+            return plugins == [] or plugins == ""
+        parser = configparser.ConfigParser()
+        with config.open(encoding="utf-8") as stream:
+            parser.read_file(stream)
+        return parser.has_section("mypy") and not parser.get("mypy", "plugins", fallback="").strip()
+    except (OSError, UnicodeError, ValueError, configparser.Error):
+        return False
+
+
 @dataclasses.dataclass(frozen=True)
 class _LadderPolicy:
     """What the project's checker settles in advance about the fallback rungs of one module."""
@@ -401,6 +460,12 @@ class _LadderPolicy:
     """mypy's ``check_untyped_defs``: the body of an unannotated function is checked too."""
     mypy: bool = False
     """Whether mypy verifies at all; every other field is False when it does not."""
+    builtin_mypy: bool = False
+    """Only exact built-in checkers/wrappers participate, including at least one mypy."""
+    configuration: Optional[Tuple[str, str]] = None
+    """The exact mypy configuration that supplied the policy, when readable."""
+    plugins_absent: bool = False
+    """An explicit readable configuration has no plugin that could refine a helper call."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -974,9 +1039,40 @@ class HelperAnnotationWiring(EngineState):
                 returning_any_refused=flags["warn_return_any"],
                 untyped_bodies_checked=flags["check_untyped_defs"],
                 mypy=True,
+                builtin_mypy=_builtin_oracle(self._type_run_oracle),
+                configuration=_mypy_config_identity(Path(origin)),
+                plugins_absent=_mypy_without_plugins(Path(origin)),
             )
             self._ladder_policies = {**self._ladder_policies, origin: known}
         return known
+
+    def _fixed_any_result(self, policy: _LadderPolicy, file_path: str) -> bool:
+        """Whether the witnessed mypy result survives current configuration and rendering.
+
+        Recheck between rungs: CI may change strict flags, a plugin may be
+        introduced, or a tool failure may invalidate a rendering capability.
+        Unknown or changed evidence retains the checker attempt.
+        """
+        if not (policy.builtin_mypy and policy.plugins_absent and policy.configuration is not None):
+            return False
+        origin = Path(self._origin_of(file_path))
+        if policy.configuration != _mypy_config_identity(origin) or not _mypy_without_plugins(
+            origin
+        ):
+            return False
+        try:
+            flags = mypy_ladder_flags(origin)
+        except (UnsupportedMypyPolicy, OSError, ValueError):
+            return False
+        return (
+            flags["disallow_untyped_defs"] == policy.annotations_required
+            and flags["warn_return_any"] == policy.returning_any_refused
+            and flags["check_untyped_defs"] == policy.untyped_bodies_checked
+            and all(
+                callback is None or formatting_repeatability(callback) is not None
+                for callback in (self.snippet_formatter, self.file_finisher)
+            )
+        )
 
     def _annotation_ladder(
         self, proposal: RefactoringProposal, check_types: bool, hearing: Hearing
@@ -1053,7 +1149,13 @@ class HelperAnnotationWiring(EngineState):
             if hearing.settled_by() is not None:
                 return
         targeted = self._targeted_variant(ordinary, refusal) if refusal is not None else None
-        if targeted is not None:
+        if targeted is not None and not (
+            self._fixed_any_result(policy, proposal.file_path)
+            and refusal is not None
+            and any_result_still_refused(
+                targeted.extracted_function, refusal, ordinary.extracted_function
+            )
+        ):
             TYPES.debug("ladder rung targeted for %s", proposal.description)
             yield targeted
             if hearing.settled_by() is not None:
@@ -1065,6 +1167,14 @@ class HelperAnnotationWiring(EngineState):
             if targeted is None or canonical_dump(every_any.extracted_function) != canonical_dump(
                 targeted.extracted_function
             ):
+                if (
+                    self._fixed_any_result(policy, proposal.file_path)
+                    and refusal is not None
+                    and any_result_still_refused(
+                        every_any.extracted_function, refusal, ordinary.extracted_function
+                    )
+                ):
+                    return
                 TYPES.debug("ladder rung every-Any for %s", proposal.description)
                 yield self._finished(every_any)
                 if hearing.settled_by() is not None:
