@@ -12,6 +12,7 @@ A historical passing result applies to its recorded commit and test environment.
 
 **Contents — release checkpoints**
 
+- [1.792 October 6 audit and optimization validation](#2026-10-06-1792-audit-and-optimization-validation)
 - [1.792 October 5 final corpus and performance](#2026-10-05-1792-final-corpus-and-performance)
 - [1.792 October 5 audit repairs](#2026-10-05-1792-audit-repairs)
 - [1.792 October 4 checker overlay correction](#2026-10-04-1792-checker-overlay-correction)
@@ -22,6 +23,35 @@ A historical passing result applies to its recorded commit and test environment.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-10-06: 1.792 audit and optimization validation
+
+The five fresh audit findings were corrected: implicit-protocol ownership,
+nested binding positions, isolated formatter discovery/execution, quoted
+recovery remedies and atomic rejection of malformed Pyright diagnostics.
+Additional frame guards preserve original arguments and relative local cleanup
+on normal and exceptional exits, or refuse an uncertifiable split. Original
+unsafe fixtures remain negative checks beside useful extraction controls;
+25 golden artifacts were reviewed individually against behavioral evidence.
+
+At source checkpoint `1e87842`, the complete native Python 3.13 suite passed
+9,671 tests and 26 subtests, with 20 skips and 93% combined coverage. All four
+static gates passed. Full before/after source inventories matched exactly.
+[Native evidence](../tests/release_evidence/1.792-october6-native/README.md)
+records runtime tree `87bd254a7948b5611b334e85856c2aec94d13207`.
+
+All three proposed optimizations were implemented and measured separately
+through the complete installed typed/formatted CLI. Each paired comparison
+produced byte-identical outputs (19 refactorings across 8 files); none
+established a whole-command speedup. Exact refusal retention was active,
+but all five stored refusals became stale before rehearing, so the workload
+gave it no repeated unchanged-revision work to skip.
+[Performance evidence](PERFORMANCE.md#october-6-optimization-experiments)
+retains all arm identities, samples and limits.
+
+No matrix or corpus was rerun, at the maintainer's explicit instruction.
+Their earlier results do not validate this changed source; release remains
+held pending the remaining release gates and performance disposition.
 
 ## 2026-10-05 (1.792 final corpus and performance)
 

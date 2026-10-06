@@ -28,6 +28,14 @@ are development evidence. The full matrix and corpus have not been rerun for
 this source, at the maintainer's explicit instruction; they remain release
 gates. The dated results below do not clear the changed source for release.
 
+At `1e87842`, the complete native Python 3.13 suite passed **9,671 tests and
+26 subtests**, with 20 skips and **93% combined coverage**. Black, Flake8,
+mypy and Bandit passed. The before/after full source inventories matched;
+the run changed no source, fixture, test or documentation bytes. The
+[retained native evidence](../tests/release_evidence/1.792-october6-native/README.md)
+binds the runtime tree `87bd254a7948b5611b334e85856c2aec94d13207`, identical
+to the final installed-wheel optimization comparison at `8626d50`.
+
 Version **1.792** carries the [post-1.772 changes](../CHANGELOG.md#1792):
 checked fixed-point preview, caller-narrowing preservation, Pyright reveal
 batching, broader safe duplicate discovery, generated-helper reuse and inert

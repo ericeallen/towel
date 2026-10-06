@@ -1,0 +1,23 @@
+{
+  "commit": "77f6793de462c33b9ea8c63675aa19f0d0f08506",
+  "runtime": "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/stage1-ownership-memo/venv/lib/python3.13/site-packages/towel",
+  "wheel_sha256": "dc1faf370d4e5dd53818750a25a9e0e74a627666a1e73f407c8b83ccd576cd94",
+  "dependencies": {
+    "ast_serialize": "0.11.2",
+    "black": "26.5.1",
+    "click": "8.5.0",
+    "code-towel": "1.792",
+    "isort": "9.0.1",
+    "librt": "0.15.0",
+    "mypy": "2.3.1",
+    "mypy_extensions": "1.1.0",
+    "nodeenv": "1.11.0",
+    "packaging": "26.3",
+    "pathspec": "1.1.1",
+    "platformdirs": "4.12.0",
+    "pyright": "1.1.414",
+    "pytokens": "0.4.1",
+    "ruff": "0.16.9",
+    "typing_extensions": "4.16.0"
+  }
+}

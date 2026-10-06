@@ -31,3 +31,10 @@ unchanged-revision refusal to skip in this workload. Raw traces/CLI logs and
 telemetry remain in the October 6 shared handoff.
 
 The matrix and corpus were not rerun; these measurements do not clear release.
+
+The earlier phase-only ownership experiment is retained in
+`ownership-cost-*.json.gz`, `ownership-cost-source.py.txt`, and the two
+`*-phase-freeze.json` manifests. It compares `3fdce9d` and `77f6793`, before
+the later frame-transfer repairs, replaying 4,705 calls over 941 fixture-derived
+inputs. All four result arrays match. Its roughly 93% CPU saving (0.279 to 0.020
+seconds) is a bounded repeated-call diagnostic, not a complete CLI timing.

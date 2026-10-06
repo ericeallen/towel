@@ -51,8 +51,11 @@ formatting, automatic workers and final checking. All outputs were byte-identica
 
 These small samples include changing ordinary host activity. They do not establish
 a regression, a general speedup, or a new comparison with published 1.772. The
-ownership memo reduced its isolated repeated-input CPU cost by about 93 percent,
-but that phase reduction has not translated into a measurable complete-command
+earlier phase-only ownership experiment (`3fdce9d` versus `77f6793`)
+replayed 4,705 calls over 941 distinct fixture-derived inputs, with identical
+results. Mean CPU cost fell from 0.279 to 0.020 seconds, about 93 percent.
+That bounded repeated-call diagnostic predates the later frame-transfer
+repairs and measures a phase, rather than a complete command. Its reduction has not translated into a measurable complete-command
 benefit. The second optimization preserves precise signatures and skips only
 parameter erasure that cannot repair a witnessed fixed-Any return diagnostic.
 
