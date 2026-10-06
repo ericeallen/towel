@@ -27,12 +27,13 @@ import ast
 import importlib.util
 from pathlib import Path
 import re
-from typing import Dict
+from typing import Callable, Dict, cast
 import textwrap
 
 import pytest
 
 from tests.test_cli_integration import invoke
+from tests.test_helpers import original_argument_name
 from towel.type_inference import (
     CheckFailure,
     CheckSuccess,
@@ -122,7 +123,9 @@ def test_mypy_inferrer_reveals_types_at_the_probe_line(tmp_path: Path) -> None:
 
 
 @requires_mypy
-def test_engine_fills_expression_arguments_and_the_return_from_mypy(tmp_path: Path) -> None:
+def test_engine_fills_expression_arguments_and_the_return_from_mypy(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
             class Box:
@@ -146,7 +149,10 @@ def test_engine_fills_expression_arguments_and_the_return_from_mypy(tmp_path: Pa
     proposals = engine.analyze_file(str(path))
     assert proposals
     result = engine.apply_refactoring(str(path), proposals[0])
-    assert _signature(result) == "def __extracted_func_0(__param_0: int, box: Box) -> str:"
+    assert (
+        _signature(result)
+        == "def __extracted_func_0(__param_0: int, box: Box, _towel_owner: 'object') -> str:"
+    )
     exec(compile(result, "<inferred>", "exec"), {})
 
 
@@ -185,7 +191,12 @@ def test_dry_infers_by_default_and_not_with_no_types(tmp_path: Path) -> None:
     ) == (None, None, [], [])
     multiplier_type = typed_helper.args.posonlyargs[0].annotation
     assert multiplier_type is not None and ast.unparse(multiplier_type) == "int"
-    assert [parameter.arg for parameter in typed_helper.args.args] == ["items"]
+    assert [parameter.arg for parameter in typed_helper.args.args] == [
+        "items",
+        "_towel_owner",
+    ]
+    owner_type = typed_helper.args.args[-1].annotation
+    assert isinstance(owner_type, ast.Constant) and owner_type.value == "object"
     items_type = typed_helper.args.args[0].annotation
     assert isinstance(items_type, ast.Constant) and items_type.value == "list[int]"
     assert typed_helper.returns is not None and ast.unparse(typed_helper.returns) == "int"
@@ -203,21 +214,45 @@ def test_dry_infers_by_default_and_not_with_no_types(tmp_path: Path) -> None:
         bare_helper.args.defaults,
     ) == (None, None, [], [])
     assert [parameter.arg for parameter in bare_helper.args.posonlyargs] == ["__param_0"]
-    assert [parameter.arg for parameter in bare_helper.args.args] == ["items"]
+    assert [parameter.arg for parameter in bare_helper.args.args] == [
+        "items",
+        "_towel_owner",
+    ]
     assert all(parameter.annotation is None for parameter in parameters)
     assert bare_helper.returns is None
     for tree, helper in ((typed_tree, typed_helper), (bare_tree, bare_helper)):
-        calls = [
+        callers = [
             node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == helper.name
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name in {"first", "second"}
         ]
-        assert [tuple(ast.unparse(argument) for argument in call.args) for call in calls] == [
-            ("2", "items"),
-            ("3", "items"),
-        ]
+        calls = []
+        for function, multiplier in zip(callers, ("2", "3")):
+            (call,) = [
+                node
+                for node in ast.walk(function)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == helper.name
+            ]
+            calls.append(call)
+            assert ast.unparse(call.args[0]) == multiplier
+            assert original_argument_name(function, call.args[1]) == "items"
+            owner = call.args[-1]
+            assert isinstance(owner, ast.Call) and isinstance(owner.func, ast.Attribute)
+            assert owner.func.attr == "pop" and not owner.args and not owner.keywords
+            assert isinstance(owner.func.value, ast.Name)
+            box = owner.func.value.id
+            (storage,) = [
+                statement
+                for statement in function.body
+                if isinstance(statement, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == box
+                    for target in statement.targets
+                )
+            ]
+            assert ast.dump(storage.value) == ast.dump(ast.parse("[(items,)]", mode="eval").body)
         assert all(
             not call.keywords and len(call.args) == len(helper.args.posonlyargs + helper.args.args)
             for call in calls
@@ -232,7 +267,9 @@ def test_non_identifier_package_names_never_reach_an_annotation() -> None:
 
 
 @requires_mypy
-def test_inferrer_names_a_non_identifier_package_with_a_placeholder(tmp_path: Path) -> None:
+def test_inferrer_names_a_non_identifier_package_with_a_placeholder(
+    tmp_path: Path,
+) -> None:
     package = tmp_path / "cleaned-out"
     package.mkdir()
     (package / "__init__.py").write_text("")
@@ -252,14 +289,14 @@ def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> Non
     path.write_text(textwrap.dedent("""
             import json
 
-            def first(text: str) -> int:
-                payload = json.loads(text)
+            def first() -> int:
+                payload = json.loads('{\"a\": 1}')
                 keys = sorted(payload)
                 print(keys)
                 return len(keys)
 
-            def second(text: str) -> int:
-                payload = json.loads(text)
+            def second() -> int:
+                payload = json.loads('{\"a\": 1}')
                 keys = sorted(payload)
                 print(keys)
                 return len(keys) * 2
@@ -275,7 +312,7 @@ def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> Non
     # ``json`` is the module's import, read bare inside the helper, not a parameter.
     # Retaining the opaque payload must not erase the known type of keys.
     assert _signature(result) == (
-        "def __extracted_func_0(text: str) -> 'tuple[_typing.Any, list[_typing.Any]]':"
+        "def __extracted_func_0() -> 'tuple[_typing.Any, list[_typing.Any]]':"
     )
     exec(compile(result, "<any>", "exec"), {})
 
@@ -316,7 +353,10 @@ def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
         assert oracle.check(str(path), result) == CheckSuccess()
     finally:
         oracle.close()
-    assert _signature(result) == "def __extracted_func_0(__param_0: float) -> str:"
+    assert (
+        _signature(result)
+        == "def __extracted_func_0(__param_0: float, _towel_owner: 'object') -> str:"
+    )
     for source in (path.read_text(), result):
         namespace: dict[str, object] = {}
         exec(
@@ -364,14 +404,32 @@ def test_unions_are_normalized_by_the_oracle(tmp_path: Path) -> None:
     relation = oracle_subtypes(MypyInferrer(), str(module), source)
     parse = lambda text: ast.parse(text, mode="eval").body  # noqa: E731
     normalized = normalize_union(
-        [parse(t) for t in ("Box", "bool", "Base", "int", "None", "list[int]", "Sequence[int]")],
+        [
+            parse(t)
+            for t in (
+                "Box",
+                "bool",
+                "Base",
+                "int",
+                "None",
+                "list[int]",
+                "Sequence[int]",
+            )
+        ],
         relation,
     )
-    assert [ast.unparse(m) for m in normalized] == ["Base", "int", "Sequence[int]", "None"]
+    assert [ast.unparse(m) for m in normalized] == [
+        "Base",
+        "int",
+        "Sequence[int]",
+        "None",
+    ]
 
 
 @requires_mypy
-def test_revealed_return_is_written_when_it_satisfies_every_declaration(tmp_path: Path) -> None:
+def test_revealed_return_is_written_when_it_satisfies_every_declaration(
+    tmp_path: Path,
+) -> None:
     # Sites declare ``-> int`` and ``-> object``; the helper returns an int,
     # which mypy confirms is a subtype of both, so ``int`` is written.
     path = tmp_path / "m.py"
@@ -392,7 +450,9 @@ def test_revealed_return_is_written_when_it_satisfies_every_declaration(tmp_path
     proposals = engine.analyze_file(str(path))
     assert proposals
     result = engine.apply_refactoring(str(path), proposals[0])
-    assert _signature(result) == "def __extracted_func_0(value: int) -> int:"
+    assert (
+        _signature(result) == "def __extracted_func_0(value: int, _towel_owner: 'object') -> int:"
+    )
 
 
 @requires_mypy
@@ -421,7 +481,9 @@ def test_declared_class_types_meet_through_the_oracle(tmp_path: Path) -> None:
     result = engine.apply_refactoring(str(path), proposals[0])
     # ``Box`` the class is passed as a parameter, revealed as its constructor
     # signature; the helper is placed after the class, so the return is bare.
-    assert _signature(result) == "def __extracted_func_0(flag: bool) -> Box:"
+    assert (
+        _signature(result) == "def __extracted_func_0(flag: bool, _towel_owner: 'object') -> Box:"
+    )
 
 
 @requires_mypy
@@ -444,7 +506,9 @@ def test_declared_return_meets_through_the_checker(tmp_path: Path) -> None:
     proposals = engine.analyze_file(str(path))
     assert proposals
     result = engine.apply_refactoring(str(path), proposals[0])
-    assert _signature(result) == "def __extracted_func_0(value: int) -> int:"
+    assert (
+        _signature(result) == "def __extracted_func_0(value: int, _towel_owner: 'object') -> int:"
+    )
 
 
 @pytest.mark.parametrize(
@@ -511,7 +575,10 @@ def test_generated_code_that_fails_the_checker_degrades_to_any(tmp_path: Path) -
     )
     proposals = engine.analyze_file(str(path))
     result = engine.apply_refactoring(str(path), proposals[0])
-    assert _signature(result) == "def __extracted_func_0(value: _typing.Any) -> _typing.Any:"
+    assert (
+        _signature(result)
+        == "def __extracted_func_0(value: _typing.Any, _towel_owner: 'object') -> _typing.Any:"
+    )
     assert "import typing as _typing\n" in result and "from typing import Any" not in result
 
 
@@ -529,7 +596,9 @@ class _CountingOracle(_Oracle):
 
 
 @requires_mypy
-def test_each_original_is_checked_once_across_the_fallback_attempts(tmp_path: Path) -> None:
+def test_each_original_is_checked_once_across_the_fallback_attempts(
+    tmp_path: Path,
+) -> None:
     """The annotated, all-``Any`` and bare attempts compare against one original."""
     path = tmp_path / "m.py"
     source = textwrap.dedent("""
@@ -541,7 +610,7 @@ def test_each_original_is_checked_once_across_the_fallback_attempts(tmp_path: Pa
             def second(value: int) -> int:
                 total = value * 2
                 text = str(total)
-                return len(text.strip()) + 2
+                return len(text.strip()) + 1
             """)
     path.write_text(source)
     oracle = _CountingOracle()
@@ -621,7 +690,9 @@ def test_pyright_oracle_judges_subtypes_and_checks(tmp_path: Path) -> None:
     module, source = _pyright_package(tmp_path)
     oracle = PyrightOracle()
     assert oracle.is_subtype(
-        str(module), source, [("bool", "int"), ("int", "bool"), ("Box", "Base"), ("int", "Unknown")]
+        str(module),
+        source,
+        [("bool", "int"), ("int", "bool"), ("Box", "Base"), ("int", "Unknown")],
     ) == [YES, NO, YES, UNKNOWN]
     assert oracle.check(str(module), source) == CheckSuccess()
     result = oracle.check(str(module), source + "x: int = 'a'\n")
@@ -694,7 +765,10 @@ def test_pyright_project_gets_pyright_types_end_to_end(tmp_path: Path) -> None:
     proposals = engine.analyze_file(str(path))
     assert proposals
     result = engine.apply_refactoring(str(path), proposals[0])
-    assert _signature(result) == "def __extracted_func_0(__param_0: int, box: Box) -> str:"
+    assert (
+        _signature(result)
+        == "def __extracted_func_0(__param_0: int, box: Box, _towel_owner: 'object') -> str:"
+    )
 
 
 @requires_mypy
@@ -710,15 +784,15 @@ def test_two_returned_variables_get_a_tuple_of_revealed_types(tmp_path: Path) ->
                     self.count = 1
                     self.name = "n"
 
-            def first(box: Box) -> str:
-                scaled = box.count * 2
-                label = box.name.upper()
+            def first() -> str:
+                scaled = 2 * 2
+                label = "n".upper()
                 print(scaled)
                 return label + str(scaled)
 
-            def second(box: Box) -> str:
-                scaled = box.count * 2
-                label = box.name.upper()
+            def second() -> str:
+                scaled = 2 * 2
+                label = "n".upper()
                 print(scaled)
                 return label * scaled
             """))
@@ -728,9 +802,14 @@ def test_two_returned_variables_get_a_tuple_of_revealed_types(tmp_path: Path) ->
     proposals = engine.analyze_file(str(path))
     assert [p.description for p in proposals] == ["Extract common code from first and second"]
     result = engine.apply_refactoring(str(path), proposals[0])
-    assert _signature(result) == "def __extracted_func_0(box: Box) -> 'tuple[str, int]':"
-    assert result.count("label, scaled = __extracted_func_0(box)") == 2
-    exec(compile(result, "<inferred>", "exec"), {})
+    assert _signature(result) == "def __extracted_func_0() -> 'tuple[int, str]':"
+    assert result.count("scaled, label = __extracted_func_0()") == 2
+    for source in (path.read_text(), result):
+        namespace: dict[str, object] = {}
+        exec(compile(source, "<inferred>", "exec"), namespace)
+        assert tuple(
+            cast(Callable[[], str], namespace[name])() for name in ("first", "second")
+        ) == ("N4", "NNNN")
 
 
 @requires_pyright
@@ -752,3 +831,17 @@ def test_pyright_never_executes_a_project_package_that_shadows_the_standard_libr
     assert not marker.exists(), "the project's locale package was executed"
     assert isinstance(messages, CheckSuccess)
     assert not messages.errors
+
+
+def test_original_box_owned_tuple_partial_stays_refused(tmp_path: Path) -> None:
+    # Exact original partial: opaque helper locals would cross a frame while
+    # the caller still owns its original parameter. Keep that refusal covered.
+    source = textwrap.dedent(
+        '\n            class Box:\n                def __init__(self) -> None:\n                    self.count = 1\n                    self.name = "n"\n\n            def first(box: Box) -> str:\n                scaled = box.count * 2\n                label = box.name.upper()\n                print(scaled)\n                return label + str(scaled)\n\n            def second(box: Box) -> str:\n                scaled = box.count * 2\n                label = box.name.upper()\n                print(scaled)\n                return label * scaled\n            '
+    )
+    path = tmp_path / "owned_partial.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(min_lines=2, annotate_helpers=False)
+    assert engine.analyze_file(str(path)) == []
+    assert "owned_binding_frame_boundary" in engine.declined_pairs
+    assert path.read_text() == source

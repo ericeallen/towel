@@ -82,7 +82,10 @@ def _apply_pair(tmp_path: Path, source: str, *, covering: str) -> str:
     path = tmp_path / "module.py"
     path.write_text(textwrap.dedent(source))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=None, annotate_helpers=False
+        min_lines=2,
+        reuse_existing_functions=False,
+        type_oracle=None,
+        annotate_helpers=False,
     )
     proposals = [
         p
@@ -118,7 +121,10 @@ def _apply_pair(tmp_path: Path, source: str, *, covering: str) -> str:
 def _observe(source: str, invocation: str) -> str:
     output = StringIO()
     with redirect_stdout(output):
-        exec(compile(textwrap.dedent(source) + "\n" + invocation, "fixture.py", "exec"), {})
+        exec(
+            compile(textwrap.dedent(source) + "\n" + invocation, "fixture.py", "exec"),
+            {},
+        )
     return output.getvalue()
 
 
@@ -146,7 +152,9 @@ def g(n):
 """
 
 
-def test_different_call_argument_kinds_extract_without_reordering_effects(tmp_path: Path) -> None:
+def test_different_call_argument_kinds_extract_without_reordering_effects(
+    tmp_path: Path,
+) -> None:
     """The recovered argument difference still passes through ordinary thunk safety."""
     changed = _apply_pair(tmp_path, EXPRESSIONS, covering="x = load(")
     invocation = "print(f(Number(1)), g(Number(2)))"
@@ -184,13 +192,18 @@ def g(cmd, n):
 
 def _case_headers(source: str) -> list[tuple[str, str | None]]:
     return [
-        (ast.dump(node.pattern), ast.dump(node.guard) if node.guard is not None else None)
+        (
+            ast.dump(node.pattern),
+            ast.dump(node.guard) if node.guard is not None else None,
+        )
         for node in ast.walk(ast.parse(textwrap.dedent(source)))
         if isinstance(node, ast.match_case)
     ]
 
 
-def test_match_case_bodies_extract_with_captures_and_guards_unchanged(tmp_path: Path) -> None:
+def test_match_case_bodies_extract_with_captures_and_guards_unchanged(
+    tmp_path: Path,
+) -> None:
     """Bodies are candidates even when their enclosing patterns cannot unify."""
     changed = _apply_pair(tmp_path, MATCH_CASES, covering="print('go', total)")
     assert _case_headers(changed) == _case_headers(MATCH_CASES)
@@ -202,7 +215,9 @@ def test_match_case_bodies_extract_with_captures_and_guards_unchanged(tmp_path: 
     assert _observe(changed, invocation) == before
 
 
-def test_match_capture_reassignment_keeps_the_existing_escape_guard(tmp_path: Path) -> None:
+def test_match_capture_reassignment_keeps_the_existing_escape_guard(
+    tmp_path: Path,
+) -> None:
     """Enumeration does not bypass the existing guard on nested bindings escaping.
 
     Captures read by a helper are supported above. Recovering this caller-visible
@@ -267,7 +282,19 @@ def g(items):
                 CONTROL
     return result
 """.replace("CONTROL", control)
-    changed = _apply_pair(tmp_path, source, covering="result.append(total)")
+    # The original prefix creates an owned local beside caller-held arguments
+    # and result. Keep it as a refusal; the companion creates no new binding.
+    path = tmp_path / "unsafe.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(min_lines=2, reuse_existing_functions=False)
+    assert engine.analyze_file(str(path)) == []
+    original = _observe(source, "print(f([0, 1, 0]), g([0, 1, 1]))")
+    assert original == ("[7] [10]\n" if control == "break" else "[7, 7] [10, 10]\n")
+    source = source.replace(
+        "total = n * 3\n                total = total + 7\n                result.append(total)",
+        "result.append(n * 3 + 7)\n                print('item', n)",
+    )
+    changed = _apply_pair(tmp_path, source, covering="result.append(n * 3 + 7)")
     cases = [node for node in ast.walk(ast.parse(changed)) if isinstance(node, ast.match_case)]
     assert len(cases) == 2
     assert all(
@@ -276,7 +303,11 @@ def g(items):
     )
     invocation = "print(f([0, 1, 0]), g([0, 1, 1]))"
     before = _observe(source, invocation)
-    assert before == ("[7] [10]\n" if control == "break" else "[7, 7] [10, 10]\n")
+    assert before == (
+        "item 0\nitem 1\n[7] [10]\n"
+        if control == "break"
+        else "item 0\nitem 0\nitem 1\nitem 1\n[7, 7] [10, 10]\n"
+    )
     assert _observe(changed, invocation) == before
 
 
@@ -323,9 +354,32 @@ def g(n, mixed=False):
 """
 
 
-def test_except_star_body_extraction_keeps_subgroups_cleanup_and_finally(tmp_path: Path) -> None:
+def test_except_star_body_extraction_keeps_subgroups_cleanup_and_finally(
+    tmp_path: Path,
+) -> None:
     """A handler helper consumes its subgroup while the original except* owns target cleanup."""
-    changed = _apply_pair(tmp_path, EXCEPT_STAR, covering="print('caught', total")
+    path = tmp_path / "unsafe.py"
+    path.write_text(EXCEPT_STAR)
+    engine = UnificationRefactorEngine(min_lines=2, reuse_existing_functions=False)
+    proposals = engine.analyze_file(str(path))
+    caught_lines = {
+        index
+        for index, line in enumerate(EXCEPT_STAR.splitlines(), 1)
+        if "print('caught', total" in line
+    }
+    assert not any(
+        start <= line <= end
+        for proposal in proposals
+        for replacement in proposal.replacements
+        for start, end in (replacement.line_range,)
+        for line in caught_lines
+    )
+    # Consume the subgroup directly, without moving an owned handler local.
+    source = EXCEPT_STAR.replace(
+        "total = n * 3\n        total = total + 7\n        print('caught', total, len(eg.exceptions))",
+        "print('caught', n * 3 + 7, len(eg.exceptions))\n        print('subgroup', [type(error).__name__ for error in eg.exceptions])",
+    )
+    changed = _apply_pair(tmp_path, source, covering="print('caught', n * 3 + 7")
     invocation = """
 print(f(2), g(3))
 for function in (f, g):
@@ -334,7 +388,11 @@ for function in (f, g):
     except ExceptionGroup as remaining:
         print('unhandled', [type(error).__name__ for error in remaining.exceptions])
 """
-    before = _observe(EXCEPT_STAR, invocation)
+    original = _observe(EXCEPT_STAR, invocation)
+    assert "cleared-f\n" in original and "cleared-g\n" in original
+    assert original.count("unhandled ['TypeError']") == 2
+    before = _observe(source, invocation)
+    assert before.count("subgroup ['ValueError']") == 4
     assert "cleared-f\n" in before and "cleared-g\n" in before
     assert before.count("unhandled ['TypeError']") == 2
     assert _observe(changed, invocation) == before
@@ -372,5 +430,9 @@ def f(subject):
     match = function.body[0]
     tried = function.body[1]
     assert isinstance(match, ast.Match) and isinstance(tried, ast.TryStar)
-    for suite in [*(case.body for case in match.cases), tried.handlers[0].body, tried.finalbody]:
+    for suite in [
+        *(case.body for case in match.cases),
+        tried.handlers[0].body,
+        tried.finalbody,
+    ]:
         assert any(nodes == suite for _, nodes in blocks)

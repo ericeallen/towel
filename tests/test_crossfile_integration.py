@@ -459,12 +459,16 @@ class TestExampleThreeCrossFile:
         }
         regular = (out / "example3_file1.py").read_text()
         premium = (out / "example3_file2.py").read_text()
-        assert "def __extracted_func_0(customer, price):\n" in regular
+        assert "def __extracted_func_0(customer, price, _towel_owner):\n" in regular
         assert "from example3_file1 import __extracted_func_0\n" in premium
         for text, kind in ((regular, "regular"), (premium, "premium")):
             assert (
                 f"def calculate_discount_for_{kind}_customer(price, customer):\n"
                 f'    """Calculate discount for {kind} customer."""\n'
                 "    # Calculate discount (DUPLICATE across files!)\n"
-                "    return __extracted_func_0(customer, price)\n"
+                "    _towel_arguments = [(customer, price)]\n"
+                "    del price\n"
+                "    del customer\n"
+                "    return __extracted_func_0(_towel_arguments[0][0], "
+                "_towel_arguments[0][1], _towel_arguments.pop())\n"
             ) in text

@@ -275,6 +275,139 @@ def _reads_through(table: symtable.SymbolTable, name: str, *, nested: bool = Fal
     return any(_reads_through(child, name, nested=True) for child in table.get_children())
 
 
+def _spelled_names(tree: ast.AST) -> set[str]:
+    """Lexical hygiene oracle independent of Towel's identifier collector."""
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            found.add(node.id)
+        elif isinstance(node, ast.arg):
+            found.add(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            found.add(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            found.update(node.names)
+        elif isinstance(node, ast.Import):
+            found.update(alias.asname or alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            found.update(alias.asname or alias.name for alias in node.names)
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+            found.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            found.add(node.rest)
+        parameters: object = getattr(node, "type_params", ())
+        if isinstance(parameters, list):
+            for parameter in parameters:
+                name: object = getattr(parameter, "name", None)
+                if isinstance(name, str):
+                    found.add(name)
+    return found
+
+
+def _ownership_box(old: ast.AST, new: ast.AST, original: ast.Module) -> frozenset[str]:
+    """Recognize a complete, hygienic caller-side transfer, never a name prefix.
+
+    The helper's behavior is checked by the execution battery. This scope
+    oracle independently proves that the one gained local owns exactly all
+    original parameters until the terminal call consumes its sole tuple.
+    """
+    if not isinstance(old, ast.FunctionDef) or not isinstance(new, ast.FunctionDef):
+        return frozenset()
+    if ast.dump(old.args) != ast.dump(new.args):
+        return frozenset()
+    parameters = [arg.arg for arg in old.args.posonlyargs + old.args.args + old.args.kwonlyargs]
+    parameters += [arg.arg for arg in (old.args.vararg, old.args.kwarg) if arg is not None]
+    if not parameters:
+        return frozenset()
+    body = new.body
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        body = body[1:]
+    if len(body) < 3 or not isinstance(body[0], ast.Assign):
+        return frozenset()
+    assigned = body[0]
+    if len(assigned.targets) != 1 or not isinstance(assigned.targets[0], ast.Name):
+        return frozenset()
+    box = assigned.targets[0].id
+    if box in _spelled_names(original):
+        return frozenset()
+    expected = ast.List(
+        elts=[
+            ast.Tuple(
+                elts=[ast.Name(id=n, ctx=ast.Load()) for n in reversed(parameters)], ctx=ast.Load()
+            )
+        ],
+        ctx=ast.Load(),
+    )
+    if ast.dump(assigned.value) != ast.dump(expected):
+        return frozenset()
+    deleted: List[str] = []
+    for statement in body[1:-1]:
+        if not isinstance(statement, ast.Delete) or any(
+            not isinstance(target, ast.Name) for target in statement.targets
+        ):
+            return frozenset()
+        deleted.extend(target.id for target in statement.targets if isinstance(target, ast.Name))
+    if deleted != parameters:
+        return frozenset()
+    last = body[-1]
+    call = (
+        last.value if isinstance(last, (ast.Return, ast.Expr, ast.Assign, ast.AnnAssign)) else None
+    )
+    if not isinstance(call, ast.Call) or not call.args or call.keywords:
+        return frozenset()
+    callee = (
+        call.func.id
+        if isinstance(call.func, ast.Name)
+        else call.func.attr if isinstance(call.func, ast.Attribute) else ""
+    )
+    if not callee.startswith(_GENERATED_HELPER_PREFIXES):
+        return frozenset()
+    consumed = ast.Call(
+        func=ast.Attribute(value=ast.Name(id=box, ctx=ast.Load()), attr="pop", ctx=ast.Load()),
+        args=[],
+        keywords=[],
+    )
+    if ast.dump(call.args[-1]) != ast.dump(consumed):
+        return frozenset()
+    for value in ast.walk(last):
+        if isinstance(value, (ast.Lambda, ast.GeneratorExp)) and any(
+            isinstance(n, ast.Name) and n.id == box for n in ast.walk(value)
+        ):
+            return frozenset()
+    parents = {child: parent for parent in ast.walk(last) for child in ast.iter_child_nodes(parent)}
+    pop = call.args[-1]
+    assert isinstance(pop, ast.Call) and isinstance(pop.func, ast.Attribute)
+    pop_name = pop.func.value
+    for name in ast.walk(last):
+        if not isinstance(name, ast.Name):
+            continue
+        if name.id in parameters:
+            return frozenset()  # no original parameter read after its explicit deletion
+        if name.id != box or name is pop_name:
+            continue
+        parent = parents.get(name)
+        outer = parents.get(parent) if parent is not None else None
+        if not (
+            isinstance(name.ctx, ast.Load)
+            and isinstance(parent, ast.Subscript)
+            and parent.value is name
+            and isinstance(parent.slice, ast.Constant)
+            and parent.slice.value == 0
+            and isinstance(outer, ast.Subscript)
+            and outer.value is parent
+            and isinstance(outer.slice, ast.Constant)
+            and type(outer.slice.value) is int
+            and 0 <= outer.slice.value < len(parameters)
+        ):
+            return frozenset()
+    return frozenset((box,))
+
+
 def scope_changes(before: Union[bytes, str], after: Union[bytes, str]) -> Dict[str, List[str]]:
     """How ``after`` changes the scope of names in the functions ``before`` defines, per function.
 
@@ -290,10 +423,13 @@ def scope_changes(before: Union[bytes, str], after: Union[bytes, str]) -> Dict[s
     """
     tables: List[Dict[_Key, symtable.SymbolTable]] = []
     definitions: List[Dict[_Key, ast.AST]] = []
+    trees: List[ast.Module] = []
     for source in (before, after):
         text = source if isinstance(source, str) else importlib.util.decode_source(source)
         tables.append(dict(_function_tables(symtable.symtable(text, "<m>", "exec"))))
-        definitions.append(dict(_definitions(ast.parse(text).body)))
+        tree = ast.parse(text)
+        trees.append(tree)
+        definitions.append(dict(_definitions(tree.body)))
     changes: Dict[str, List[str]] = {}
     for key, old in tables[0].items():
         new = tables[1].get(key)
@@ -303,10 +439,11 @@ def scope_changes(before: Union[bytes, str], after: Union[bytes, str]) -> Dict[s
             definitions[1][key]
         )
         old_locals, new_locals = _locals(old) - set_aside, _locals(new) - set_aside
+        handoff = _ownership_box(definitions[0][key], definitions[1][key], trees[0])
         found = [
             f"gains local {name}"
             for name in sorted(new_locals - old_locals)
-            if not name.startswith(_GENERATED_HELPER_PREFIXES)
+            if not name.startswith(_GENERATED_HELPER_PREFIXES) and name not in handoff
         ]
         found += [
             f"loses local {name}, which it still reads"

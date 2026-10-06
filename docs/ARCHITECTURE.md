@@ -304,12 +304,31 @@ treated as orphaned and the block is rejected. `extractor.py`'s
 return on every path before it may be called as `return helper(...)`, using
 both the rendered shape and the all-paths-exit property.
 
-A name the block binds from an expression containing a call is returned from
-the helper and rebound at the site even when later code does not read it.
-Ordinary factories, methods, aliases and callable objects can supply resources
-or finalizable objects; callee spelling cannot establish their lifetime.
-`lifetime_bound_names` in `block_analysis.py` also retains aliases and results
-computed from those values, propagating ownership through the block.
+A name bound from any nonconstant expression can own a finalizable value:
+properties, subscriptions, operators and aliases are as opaque as calls.
+Iteration and context-manager targets can own values too. For ordinary
+non-value-producing blocks these names are returned and rebound even when
+later code does not read them. `lifetime_bound_names` in `block_analysis.py`
+folds immutable per-statement ownership facts, weakly memoized for the parsed
+AST's lifetime. It returns a fresh set for each caller. Initial bindings and
+later reads use their actual source positions, including nested compounds.
+
+A helper must also preserve cleanup relative to locals left in the caller.
+`frame_ownership.py` counts every parameter and every opaque outside binding
+as potentially owning a value. Splitting ownership across frames is declined
+unless a whole-body extraction has a verified argument transfer. On CPython,
+`argument_ownership.py` certifies the original compiled parameter order,
+immutable bindings and nonescaping generated thunks against exact source.
+The caller places its parameters in a fresh box, deletes their bindings, and
+passes the box's tuple as the final helper argument. That holder releases the
+original parameters before helper locals, including on exceptions. Original
+parameter cells, rebinding, escaping thunks and unsupported runtime evidence
+are refused. Materialization revalidates the certificate and modifies only
+an owned rendering copy after annotation inference. Unregistered formatter
+callbacks must preserve the exact rendered AST. They remain ineligible for
+performance caches; the normal checker and lint gates still apply.
+Partial blocks under an outside exception handler or manager that might
+observe new locals are also refused.
 When multiple retained values are returned, the helper result and caller
 assignment preserve their relative order in the original compiler's local
 slots, including cell variables. The original module AST is compiled without

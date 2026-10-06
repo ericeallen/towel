@@ -230,9 +230,9 @@ REBINDINGS = {
 
 def _subclass(name: str, tail: int) -> str:
     return (
-        f"class {name}(Base):\n    offset = 0\n\n    def compute(self, value):\n"
+        f"class {name}(Base):\n    offset = {tail}\n\n    def compute(self, value):\n"
         "        first = value + 1\n        second = first * 2\n        third = second + 5\n"
-        f"        return third + {tail} + self.offset\n\n\n"
+        "        return third + self.offset\n\n\n"
     )
 
 

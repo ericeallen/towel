@@ -22,6 +22,12 @@ Start with the current release preparation. The later sections retain the eviden
 
 ## 1.792 release preparation
 
+The October 6 audit and performance changes alter runtime behavior after the
+October 5 validation. Their native checks and bounded performance experiments
+are development evidence. The full matrix and corpus have not been rerun for
+this source, at the maintainer's explicit instruction; they remain release
+gates. The dated results below do not clear the changed source for release.
+
 Version **1.792** carries the [post-1.772 changes](../CHANGELOG.md#1792):
 checked fixed-point preview, caller-narrowing preservation, Pyright reveal
 batching, broader safe duplicate discovery, generated-helper reuse and inert
@@ -45,7 +51,7 @@ completed and its raw outcomes were reviewed. It followed the completed
 Python 3.11–3.13 matrix; runtime and test trees were independently unchanged
 from the earlier audit-fix and auxiliary validations.
 
-| Current corpus disposition | Projects |
+| October 5 corpus disposition | Projects |
 | --- | ---: |
 | PASS | 96 |
 | NO_CHANGE | 35 |
@@ -75,7 +81,8 @@ published 1.772, **11.9% slower**, on the controlled typed, formatted Packaging
 fixture. Four fresh-process observations per arm were repeatable under the
 recorded background activity. The candidate applied 20 refactorings versus
 18; this is not an identical-transformation comparison or a whole-corpus
-speedup. Its runtime is unchanged since `c5311b4`.
+speedup. The measured runtime was unchanged since `c5311b4`; the October 6
+repairs and optimizations require their own measurements.
 
 The [retained documentation evidence](../tests/release_evidence/1.792-audit-fixes/README.md)
 preserves original performance records and corpus summaries/review, with

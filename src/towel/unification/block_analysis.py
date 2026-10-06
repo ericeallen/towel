@@ -60,6 +60,7 @@ from .extraction_policy import overlaps_protected
 from .block_signature import BlockSignature, extract_block_signature
 from .extractor import has_complete_return_coverage, is_value_producing
 from .function_scope import code_names, function_names, identifiers, scope_moving_names
+from .frame_ownership import FrameOwnership, frame_ownership
 from .models import (
     BlockBindingSnapshot,
     CodeBlockPair,
@@ -671,6 +672,14 @@ class BlockAnalysis(EngineState):
         if key in self._per_block_cache:
             return cast(T, self._per_block_cache[key])
         return cast(T, self._per_block_cache.put(key, compute()))
+
+    def _frame_ownership(
+        self, function: FunctionNode, nodes: Sequence[ast.stmt], *, site: Optional[BlockSite]
+    ) -> FrameOwnership:
+        """Immutable caller/block ownership facts once per original block site."""
+        return self._per_block(
+            "frame_ownership", lambda: frame_ownership(function, nodes), site=site
+        )
 
     def _own_scope_locals(
         self, function: FunctionNode, site: Optional[BlockSite]

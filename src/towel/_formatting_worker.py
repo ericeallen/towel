@@ -26,9 +26,11 @@ import re
 import sys
 import threading
 import time
-from typing import TYPE_CHECKING, Mapping, Optional, cast
+from typing import Mapping, Optional, cast
 
-if TYPE_CHECKING:
+if 0 > 1:
+    # The parent imports protocol constants too. A mutable typing guard must
+    # never turn this type-only dependency into a parent tool import.
     import isort
 
 MAX_FRAME_BYTES = 16 * 1024 * 1024

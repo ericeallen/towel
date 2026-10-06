@@ -101,17 +101,28 @@ describe belong to that version.
   function declares differently from the pair's. Names bound in the
   block and read afterwards are returned, where `count += 1` and `del count`
   read `count` as a load does, including targets of annotated assignments
-  and assignment expressions, as is a name bound from an expression containing
-  a call, whose result may own a resource or finalizer that a later statement
-  could observe. This includes ordinary factories, aliases and methods;
-  callee spelling does not establish the returned object's lifetime. Aliases
-  and results computed from those values are retained too. When several
+  and assignment expressions. Every nonconstant expression may produce a
+  resource or finalizable value, including properties, subscriptions,
+  operators and aliases; iterator and context-manager targets count too.
+  Such values are retained across an ordinary block's helper return. A
+  literal constant assignment is the narrow harmless case. When several
   such values are returned, their caller bindings preserve the original
   compiler local-slot order, so finalizers run in the same relative order.
   An occurrence with an incompatible order, or without compiler evidence
   sufficient to establish it, is declined. A
   returned name must be definitely bound where the block ends or have
-  entered as a parameter.
+  entered as a parameter. A partial extraction that splits potentially
+  owned values between caller and helper is refused, including values that
+  would bypass an ordinary returned tuple on exceptions. Whole-body
+  extraction can transfer original argument ownership on CPython when the
+  compiled cleanup order and immutable bindings are certified. It adds a
+  final holder parameter and a caller-side box/delete/pop sequence. Parameter
+  cells, rebinding, escaping thunks and unsupported runtimes do not receive
+  this exemption. A custom formatter must preserve the certified AST. Runtime
+  reads of native type parameters are refused when they require cells;
+  annotation-only native type parameters can remain on the original function. These conservative
+  checks can decline ordinary numeric-looking code: its runtime values are
+  not proved to lack finalizers merely by their spelling or annotations.
 - **Control flow and class context.** Blocks containing `yield`, `await`,
   async loops, context managers or comprehensions, `break`/`continue` targeting
   an outer loop, or comprehension assignment expressions are rejected where
@@ -1385,7 +1396,11 @@ the proposals it built and did not apply, by reason:
   binding in the other. `mixed_return_and_variables`: a block both returns
   early and binds variables read afterwards, which one call statement
   cannot render.
-- Free variables and lifetimes. `conditionally_bound_return`: a returned
+- Free variables and lifetimes. `owned_binding_exception_boundary`: a moved
+  owned binding crosses an outside handler or manager before ownership can
+  return. `owned_binding_frame_boundary`: caller and helper would retain
+  potentially finalizable values in different frames without a certified
+  whole-body argument transfer. `conditionally_bound_return`: a returned
   variable is not definitely bound at the block's exit and did not enter
   as a parameter. `incomplete_lifetime_block1`/`_block2`: the block reads a
   name that is bound only after it, or reads a local before its own binding

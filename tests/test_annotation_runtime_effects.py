@@ -76,7 +76,8 @@ def mark(name: str) -> str:
 def first(value: Annotated[int, mark('first')]) -> int:{BLOCK}    return scaled + 1
 
 
-def second(value: Annotated[int, mark('second')]) -> int:{BLOCK}    return scaled + 2
+# Identical complete bodies let ownership transfer without a partial frame split.
+def second(value: Annotated[int, mark('second')]) -> int:{BLOCK}    return scaled + 1
 """
 
 QUOTED_PROGRAM = METADATA_PROGRAM.replace(

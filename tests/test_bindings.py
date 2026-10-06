@@ -184,23 +184,24 @@ class TestScopingEdgeCases(unittest.TestCase):
 
         The nested definition is a binding local to each site, so the helper
         receives it as a parameter instead of carrying a copy of the def.
+        The effect-only block creates no owned local beside the retained def.
         """
         proposals = self._analyze_source(
             "def first(items):\n"
             "    def helper(value):\n"
             "        return value * 2\n"
-            "    out = []\n"
-            "    for item in items:\n"
-            "        out.append(helper(item))\n"
-            "    return out\n"
+            "    items.append(helper(len(items)))\n"
+            "    items.append(helper(len(items)))\n"
+            "    items.append(helper(len(items)))\n"
+            "    return items\n"
             "\n"
             "def second(items):\n"
             "    def helper(value):\n"
             "        return value * 2\n"
-            "    out = []\n"
-            "    for item in items:\n"
-            "        out.append(helper(item))\n"
-            "    return out\n"
+            "    items.append(helper(len(items)))\n"
+            "    items.append(helper(len(items)))\n"
+            "    items.append(helper(len(items)))\n"
+            "    return items\n"
         )
         self.assertEqual(len(proposals), 1, [p.description for p in proposals])
         helper = proposals[0].extracted_function

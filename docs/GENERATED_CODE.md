@@ -22,44 +22,65 @@ Towel uses *anti-unification*, following the work of
 least-general generalization of matching blocks: their shared structure
 becomes the helper body, and differences become parameters.
 
-For example:
+For example, a shared arithmetic block can become a helper:
 
 ```python
-def order_summary(order):
-    items = [i for i in order.items if i.in_stock]
-    subtotal = sum(i.price for i in items)
-    total = round(subtotal * 1.08, 2)
-    return f"Order {order.id}: ${total}"
-
-def quote_summary(quote):
-    items = [i for i in quote.items if i.in_stock]
-    subtotal = sum(i.price for i in items)
-    total = round(subtotal * 1.08, 2)
-    return f"Quote {quote.id}: ${total}"
-```
-
-The repeated block becomes a helper with a placeholder name:
-
-```python
-def __extracted_func_0(__param_0):
-    items = [i for i in __param_0.items if i.in_stock]
-    subtotal = sum((i.price for i in items))
-    total = round(subtotal * 1.08, 2)
+def standard_total():
+    subtotal = 100
+    tax = 8
+    total = subtotal + tax
     return total
 
-def order_summary(order):
-    total = __extracted_func_0(order)
-    return f"Order {order.id}: ${total}"
-
-def quote_summary(quote):
-    total = __extracted_func_0(quote)
-    return f"Quote {quote.id}: ${total}"
+def express_total():
+    subtotal = 100
+    tax = 8
+    total = subtotal + tax
+    return total + 10
 ```
 
-Each caller keeps its own result formatting and receives the value it needs
-from the helper. Towel skips trivial extractions that would add indirection
-without sharing real logic. After reviewing the result, use the
-[naming workflow](NAMING.md) to replace placeholders.
+One extraction of the three shared assignments has this shape:
+
+```python
+def __extracted_func_0():
+    subtotal = 100
+    tax = 8
+    total = subtotal + tax
+    return total
+
+def standard_total():
+    total = __extracted_func_0()
+    return total
+
+def express_total():
+    total = __extracted_func_0()
+    return total + 10
+```
+
+The normal fixed-point pipeline can choose a larger matching block instead.
+Each caller receives the values it needs. Towel skips trivial extractions
+that add indirection without sharing real logic. After reviewing the result,
+use the [naming workflow](NAMING.md) to replace placeholders.
+
+Opaque values also need lifetime protection when later statements do not
+read them. A helper may return those values into hygienic `_towel_keep_*`
+caller bindings. A partial block is refused if potentially finalizable
+values would be held on both sides of the new frame boundary without a proof
+that cleanup remains equivalent. This includes exceptional exits that never
+reach the helper's ordinary return.
+
+For certified whole-body extraction on CPython, the caller can instead
+transfer all original arguments to a final helper holder. Generated code
+first stores a reversed argument tuple in a fresh list, deletes the original
+argument bindings, evaluates the generated call arguments through that box,
+and passes `box.pop()` last. The holder keeps the original argument cleanup
+order ahead of helper locals. Only internal generated thunks may gain fresh
+capture factories, whose inner callable still takes no arguments;
+user-written lambda signatures stay intact. Unsupported
+captures, runtime type-parameter cells, parameter rebinding and unavailable
+cleanup evidence cause refusal. Annotation-only native type parameters remain
+on the original function. Custom formatters must preserve the generated AST.
+The final holder counts against the helper parameter budget. See the
+[ownership implementation](ARCHITECTURE.md).
 
 Generated calls pass helper arguments by position. For projects whose declared
 Python floor or existing syntax establishes Python 3.8 or newer, synthetic

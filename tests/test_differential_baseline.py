@@ -412,10 +412,28 @@ def test_a_project_whose_check_reports_errors_is_refactored_with_types(tmp_path:
     engine = UnificationRefactorEngine(type_oracle=oracle)
     proposal = engine.analyze_files([str(program), str(consumer)])[0]
     written = engine.apply_refactoring(str(program), proposal)
-    assert "def __extracted_func_0(value: int)" in written
+    _typed_value_helper(written)
     assert oracle.inferences > 0, "the checker was asked what the helper's types are"
     assert len(oracle.checks) >= 2, "one baseline, then the candidate"
     assert program.read_text() == TWINS and consumer.read_text() == 'broken: int = "wrong"\n'
+
+
+def _typed_value_helper(text: str, *, return_type: str | None = None) -> ast.FunctionDef:
+    helper = next(
+        node
+        for node in ast.parse(text).body
+        if isinstance(node, ast.FunctionDef) and node.name == "__extracted_func_0"
+    )
+    parameters = helper.args.posonlyargs + helper.args.args
+    assert [parameter.arg for parameter in parameters] == ["value", "_towel_owner"]
+    assert isinstance(parameters[0].annotation, ast.Name)
+    assert parameters[0].annotation.id == "int"
+    assert isinstance(parameters[1].annotation, ast.Constant)
+    assert parameters[1].annotation.value == "object"
+    if return_type is not None:
+        assert isinstance(helper.returns, ast.Name)
+        assert helper.returns.id == return_type
+    return helper
 
 
 def _line_of(text: str, fragment: str) -> int:
@@ -456,7 +474,7 @@ def test_a_change_that_adds_an_error_is_rejected_and_one_that_adds_none_is_accep
     assert engine.run_report.declined_proposals == {"refused by the type checker": 1}
 
 
-PARTIAL = textwrap.dedent("""
+OWNED_PARTIAL = textwrap.dedent("""
     def first(value: int) -> int:
         print("first")
         total = value + 1
@@ -472,7 +490,34 @@ PARTIAL = textwrap.dedent("""
         answer = doubled - 3
         return answer + len(log)
     """).lstrip() + WRONG
-"""Duplicated blocks that are not a whole body, and a statement of its own with an error."""
+"""Original partials retain an opaque caller local/parameter and cannot split frames."""
+
+PARTIAL = textwrap.dedent("""
+    def first() -> int:
+        print("first")
+        total = 1
+        doubled = total * 2
+        answer = doubled - 3
+        return answer
+
+
+    def second() -> int:
+        log = 1
+        total = 1
+        doubled = total * 2
+        answer = doubled - 3
+        return answer + log
+    """).lstrip() + WRONG
+"""Safe partials with no parameters or opaque caller locals, plus an untouched error."""
+
+
+def test_original_owned_partials_do_not_bypass_the_frame_boundary(tmp_path: Path) -> None:
+    path = tmp_path / "m.py"
+    path.write_text(OWNED_PARTIAL)
+    engine = UnificationRefactorEngine(annotate_helpers=False)
+    assert engine.analyze_file(str(path)) == []
+    assert "owned_binding_frame_boundary" in engine.declined_pairs
+    assert path.read_text() == OWNED_PARTIAL
 
 
 @pytest.mark.parametrize("where_after", ["swapped into the helper", "kept", "moved with its block"])
@@ -498,13 +543,13 @@ def test_an_error_only_its_message_matches_is_not_one_the_project_had(
         checked = next(p for p in sources if Path(p).name == "m.py")
         if "_extracted_func" not in text:
             moved = where_after == "moved with its block"
-            line = _line_of(text, "total = value + 1" if moved else "WRONG")
+            line = _line_of(text, "total = 1" if moved else "WRONG")
         elif where_after == "swapped into the helper":
             line = _line_of(text, "def __extracted_func")
         elif where_after == "kept":
             line = _line_of(text, "WRONG")
         else:
-            line = _line_of(text, "total = value + 1")
+            line = _line_of(text, "total = 1")
         return CheckSuccess((TypeDiagnostic(checked, message, line),))
 
     engine = UnificationRefactorEngine(type_oracle=_Oracle(verdict))
@@ -708,7 +753,8 @@ def test_mypy_an_error_below_the_helper_moves_with_it_and_is_still_the_same_erro
         WRONG: str = first(1)
         """,
     )
-    assert applied == 1 and "def __extracted_func_0(value: int) -> int:" in written
+    assert applied == 1
+    _typed_value_helper(written, return_type="int")
     assert "WRONG: str = first(1)" in written
 
 
@@ -913,10 +959,5 @@ def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
         "import towel_absent_module\n\n\n" + TWINS
     )
     seen = (package / "seen.py").read_text(encoding="utf-8")
-    helper = next(
-        node
-        for node in ast.parse(seen).body
-        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
-    )
-    assert ast.unparse(helper).splitlines()[0].endswith("(value: int) -> int:")
+    _typed_value_helper(seen, return_type="int")
     assert "not verifiable: its file holds a name the type checker cannot type 1" in run.stdout

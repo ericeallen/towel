@@ -133,9 +133,13 @@ class ExistingFunctionReuse(EngineState):
         function's result is then the tuple the call unpacks.
         """
         body = body_without_docstring(function.body)
+        # Retained local lifetimes can make a full-body call an assignment,
+        # even when the original function ends with an implicit None return.
+        if self._block_line_span(body) == tuple(replacement.line_range):
+            return True
         assigned = self._assigned_names(replacement.node)
         if assigned is None:
-            return self._block_line_span(body) == tuple(replacement.line_range)
+            return False
         if len(body) < 2 or self._return_positions(assigned, body[-1]) is None:
             return False
         return self._block_line_span(body[:-1]) == tuple(replacement.line_range)

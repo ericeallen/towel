@@ -28,6 +28,7 @@ from towel.unification.extractor import HygienicExtractor
 from towel.unification.substitution import Substitution
 from towel.unification.unifier import Unifier
 from tests.test_scope_guard_boundaries import _extract
+from tests.test_helpers import original_argument_name
 
 
 @pytest.mark.parametrize(
@@ -136,6 +137,29 @@ print(first(Config(), 2), second(Config(), 4))
             for node in ast.walk(statement)
             if isinstance(node, ast.Name)
         }
-        assert all(
-            arg.arg in referenced for arg in helper.args.posonlyargs + helper.args.args
-        ), ast.unparse(helper)
+        parameters = helper.args.posonlyargs + helper.args.args
+        # The last input deliberately retains original arguments until helper
+        # cleanup; it has an ownership effect even without a body read.
+        assert parameters[-1].arg == "_towel_owner"
+        assert parameters[-1].arg not in referenced
+        assert [parameter.arg for parameter in parameters[:-1]] == ["__param_0", "value"]
+        assert all(parameter.arg in referenced for parameter in parameters[:-1]), ast.unparse(
+            helper
+        )
+        for function in ast.parse(result).body:
+            if not isinstance(function, ast.FunctionDef) or function.name not in {
+                "first",
+                "second",
+            }:
+                continue
+            (call,) = [
+                node
+                for node in ast.walk(function)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == helper.name
+            ]
+            assert original_argument_name(function, call.args[-2]) == "value"
+            holder = call.args[-1]
+            assert isinstance(holder, ast.Call) and isinstance(holder.func, ast.Attribute)
+            assert holder.func.attr == "pop" and not holder.args and not holder.keywords

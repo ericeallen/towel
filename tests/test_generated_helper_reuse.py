@@ -45,7 +45,18 @@ BODY = (
 """A whole body with no module lookup to introduce an unrelated caller thunk."""
 
 
-def _package(root: Path, count: int, *, typed: bool = False, third_float: bool = False) -> Path:
+BINDING_FREE_BODY = "    n * 2\n    n - 11\n    return n * 2 - 11\n"
+"""Actual reuse control: no local values require a fresh ownership holder ABI."""
+
+
+def _package(
+    root: Path,
+    count: int,
+    *,
+    typed: bool = False,
+    third_float: bool = False,
+    binding_free: bool = False,
+) -> Path:
     package = root / "pkg"
     package.mkdir(parents=True)
     (root / "pyproject.toml").write_text(
@@ -57,7 +68,9 @@ def _package(root: Path, count: int, *, typed: bool = False, third_float: bool =
         annotation = "float" if third_float and name == "c" else "int"
         signature = f"(n: {annotation}) -> {annotation}:" if typed else "(n):"
         (package / f"{name}.py").write_text(
-            ("import pkg.a\n\n" if name != "a" else "") + f"def {name}_one{signature}\n" + BODY
+            ("import pkg.a\n\n" if name != "a" else "")
+            + f"def {name}_one{signature}\n"
+            + (BINDING_FREE_BODY if binding_free else BODY)
         )
     return package
 
@@ -98,7 +111,7 @@ def test_cross_module_batches_keep_real_helpers_without_forwarding_chains(
     tmp_path: Path, count: int, expected_helpers: int
 ) -> None:
     root, output = tmp_path / "input", tmp_path / "output"
-    package = _package(root, count)
+    package = _package(root, count, binding_free=True)
     before = {path.name: path.read_bytes() for path in package.iterdir()}
     expected = _runtime(root, count)
     engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
@@ -109,7 +122,7 @@ def test_cross_module_batches_keep_real_helpers_without_forwarding_chains(
     helpers = _helpers(output / "pkg")
     assert len(helpers) == expected_helpers
     for helper in helpers:
-        assert len(helper.body) == 5, ast.unparse(helper)
+        assert len(helper.body) == 3, ast.unparse(helper)
         assert not any(
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
@@ -131,7 +144,7 @@ def test_reuse_keeps_existing_signature_and_requires_project_type_acceptance(
 ) -> None:
     """An int helper is reused for int callers; float callers keep their body, without Any fallback."""
     root, output = tmp_path / "input", tmp_path / "output"
-    _package(root, 3, typed=True, third_float=third_float)
+    _package(root, 3, typed=True, third_float=third_float, binding_free=True)
     expected = _runtime(root, 3, half=third_float)
     oracle = MypyInferrer()
     try:
@@ -153,8 +166,8 @@ def test_reuse_keeps_existing_signature_and_requires_project_type_acceptance(
         )
         assert reused is not third_float
         if third_float:
-            assert "acc = n * 2" in (output / "pkg" / "c.py").read_text()
-            assert engine.run_report.declined_proposals
+            assert "return n * 2 - 11" in (output / "pkg" / "c.py").read_text()
+            assert engine.run_report.declined_pairs or engine.run_report.declined_proposals
         checked = oracle.check_project(
             {str(path): path.read_text() for path in (output / "pkg").glob("*.py")}
         )
@@ -186,8 +199,9 @@ def test_names_already_in_input_keep_independent_monkeypatch_behavior(
 
 
 @pytest.mark.parametrize("name", ["existing", "__extracted_func_0"])
+@pytest.mark.parametrize("binding_free", [False, True])
 def test_input_name_does_not_hide_a_whole_body_matching_another_prefix(
-    tmp_path: Path, name: str
+    tmp_path: Path, name: str, binding_free: bool
 ) -> None:
     """Audit5: provenance, not helper spelling, governs the forwarder quality guard.
 
@@ -215,8 +229,19 @@ print(first(1), second(2), events)
 {name} = lambda n: 'patched'
 print(second(3), events)
 """
+    if binding_free:
+        original = (
+            original.replace(
+                "    value = n + 3\n    result = value * 2\n    events.append(('same', result))",
+                "    n + 3\n    n * 2\n    events.append(('same', (n + 3) * 2))",
+            )
+            .replace("return result", "return (n + 3) * 2")
+            .replace("print('after block', result)", "print('after block', (n + 3) * 2)")
+        )
     final, count = _extract(tmp_path, original)
-    assert count == 1, final
+    assert count == (1 if binding_free else 0), final
+    if not binding_free:
+        assert ast.dump(ast.parse(final)) == ast.dump(ast.parse(original))
     tree = ast.parse(final)
     functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
     assert name in functions and "second" in functions
@@ -229,7 +254,7 @@ print(second(3), events)
 def test_initial_name_allocation_and_later_reuse_keep_borrower_bindings(tmp_path: Path) -> None:
     """The initial allocator sees all analyzed files, and reuse retains its fresh name."""
     root, output = tmp_path / "input", tmp_path / "output"
-    package = _package(root, 3)
+    package = _package(root, 3, binding_free=True)
     third = package / "c.py"
     third.write_text(third.read_text().replace("(n):", "(n, __extracted_func_0=None):"))
     expected = _runtime(root, 3)
@@ -376,3 +401,46 @@ def test_reuse_itself_checks_a_new_borrowers_bindings(tmp_path: Path) -> None:
         ),
     )
     assert engine._reusing_generated_helper(proposal, functions) is None
+
+
+def test_owned_cross_module_bodies_keep_fresh_holder_abi(tmp_path: Path) -> None:
+    """An existing provider cannot adopt the extra owner parameter for new sites."""
+    root, output = tmp_path / "input", tmp_path / "output"
+    package = _package(root, 3)
+    before = {path.name: path.read_bytes() for path in package.iterdir()}
+    expected = _runtime(root, 3)
+    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    results, reason = engine.refactor_directory_to_fixed_point(
+        str(root), str(output), progress="none"
+    )
+    assert results and reason == "fixed_point"
+    (helper,) = _helpers(output / "pkg")
+    parameters = helper.args.posonlyargs + helper.args.args
+    assert parameters[-1].arg.startswith("_towel_owner")
+    assert not any(
+        "in place of its restatement" in desc for _, descs in results.values() for desc in descs
+    )
+    handed = 0
+    for path in sorted((output / "pkg").glob("*.py")):
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node, ast.FunctionDef) and not is_generated_helper_name(node.name):
+                if any(isinstance(statement, ast.Delete) for statement in node.body):
+                    handed += 1
+                    assert isinstance(node.body[0], ast.Assign) and isinstance(
+                        node.body[1], ast.Delete
+                    )
+                    assert any(
+                        isinstance(call, ast.Call)
+                        and isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "pop"
+                        for call in ast.walk(node.body[-1])
+                    )
+                else:
+                    expected_body = ast.parse("def untouched(n):\n" + BODY).body[0]
+                    assert isinstance(expected_body, ast.FunctionDef)
+                    assert [ast.dump(statement) for statement in node.body] == [
+                        ast.dump(statement) for statement in expected_body.body
+                    ]
+    assert handed == 2
+    assert _runtime(output, 3) == expected
+    assert {path.name: path.read_bytes() for path in package.iterdir()} == before

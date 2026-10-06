@@ -472,7 +472,7 @@ def test_the_modules_own_type_checking_flag_survives_a_type_only_import(tmp_path
                 """,
             "pkg/m.py": """\
                 import pkg
-                from pkg.f import make
+                from pkg.f import make, make as make_again
                 from pkg.flags import DEBUG as TYPE_CHECKING
 
                 if TYPE_CHECKING:
@@ -481,23 +481,18 @@ def test_the_modules_own_type_checking_flag_survives_a_type_only_import(tmp_path
                     MODE = "normal"
 
 
+                # No opaque local crosses a partial helper-frame boundary. The
+                # differing factory spellings still require Widget's type-only import.
                 def f1(k: int) -> int:
-                    x = make()
-                    if k > 100:
-                        return 0
-                    x.poke(k)
-                    n = x.size + k
-                    print("f1", n)
-                    return n
+                    make().poke(k)
+                    print("f1", k)
+                    return make().size + k
 
 
                 def f2(k: int) -> int:
-                    x = make()
-                    k = k * 2
-                    x.poke(k)
-                    n = x.size + k
-                    print("f2", n)
-                    return n * 2
+                    make_again().poke(k)
+                    print("f2", k)
+                    return make_again().size + k
                 """,
         },
     )

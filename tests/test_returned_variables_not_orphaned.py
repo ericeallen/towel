@@ -32,7 +32,7 @@ from types import SimpleNamespace
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-README_EXAMPLE = textwrap.dedent("""
+OWNED_PARTIAL = textwrap.dedent("""
     def order_summary(order):
         items = [i for i in order.items if i.in_stock]
         subtotal = sum(i.price for i in items)
@@ -45,6 +45,8 @@ README_EXAMPLE = textwrap.dedent("""
         total = round(subtotal * 1.08, 2)
         return f"Quote {quote.id}: ${total}"
     """)
+
+README_EXAMPLE = 'def order_summary(order, label="Order"):\n    items = [i for i in order.items if i.in_stock]\n    subtotal = sum(i.price for i in items)\n    total = round(subtotal * 1.08, 2)\n    return f"{label} {order.id}: ${total}"\n\ndef quote_summary(quote, label="Quote"):\n    items = [i for i in quote.items if i.in_stock]\n    subtotal = sum(i.price for i in items)\n    total = round(subtotal * 1.08, 2)\n    return f"{label} {quote.id}: ${total}"\n'
 
 
 def _run(source: str) -> list[str]:
@@ -67,8 +69,9 @@ def test_readme_example_extracts_with_the_returned_variable(tmp_path: Path) -> N
     with contextlib.redirect_stdout(io.StringIO()):
         final, applied, _ = engine.refactor_to_fixed_point(str(path))
     assert applied == 1
-    assert "total = __extracted_func_0(order)" in final
-    assert "total = __extracted_func_0(quote)" in final
+    assert final.count("_towel_arguments.pop()") == 2
+    assert "del order" in final and "del quote" in final
+    assert final.count("del label") == 2
     helper = next(
         node
         for node in ast.parse(final).body
@@ -110,3 +113,12 @@ def test_a_name_bound_before_and_rebound_in_the_block_is_still_an_orphan(tmp_pat
         exec(compile(rewritten, "<orphan>", "exec"), namespace)
         assert namespace["first"]([1, 2, 3]) == 6  # type: ignore[operator]
         assert namespace["second"]([1, 2, 3]) == 12  # type: ignore[operator]
+
+
+def test_original_partial_example_is_refused_without_changing_behavior(tmp_path: Path) -> None:
+    path = tmp_path / "partial.py"
+    path.write_text(OWNED_PARTIAL)
+    engine = UnificationRefactorEngine(min_lines=3)
+    assert engine.analyze_file(str(path)) == []
+    assert "owned_binding_frame_boundary" in engine.declined_pairs
+    assert _run(OWNED_PARTIAL) == ["Order 7: $10.8", "Quote 7: $10.8"]

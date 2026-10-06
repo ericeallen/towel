@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from tests.stdlib_bases import STDLIB_BASES
-from tests.test_helpers import refactor_to_fixed_point_silently
+from tests.test_helpers import method_helper_calls, refactor_to_fixed_point_silently
 from tests.test_method_host_machinery import _run
 
 _METHODS = """
@@ -66,7 +66,7 @@ def _refactor(path: Path, source: str) -> str:
         if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func_")
     ]
     assert helpers
-    assert "self.__extracted_func_" in final
+    assert method_helper_calls(final)
     path.write_text(final)
     return final
 

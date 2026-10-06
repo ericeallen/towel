@@ -50,6 +50,9 @@ release verification binds the final versioned source to its own evidence.
   subscription, operators, iterators and context-manager enter protocols.
   Count nested bindings at their actual source positions and refuse unsafe
   exceptional ownership transfers to an outer handler or context manager.
+- Preserve cleanup relative to caller-held values on normal and exceptional
+  exits. Refuse unsafe partial frame splits; certify whole-body argument
+  transfer on CPython only when original bindings and cleanup order are proved.
 - Spell lifetime-only caller bindings with hygienic underscore names when no
   outside code reads, rebinds or deletes them, preserving configured lint checks.
 - Discover Ruff without importing project-owned modules; run Black and isort in

@@ -31,7 +31,7 @@ from typing import Dict, Tuple
 
 import pytest
 
-from tests.test_helpers import refactor_to_fixed_point_silently
+from tests.test_helpers import method_helper_calls, refactor_to_fixed_point_silently
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 METHODS = """
@@ -124,7 +124,7 @@ def test_a_receiver_annotated_as_a_protocol_takes_a_module_helper(tmp_path: Path
     """
     before, after, final = _refactored(tmp_path, source, driver)
     assert after == before
-    assert "self.__extracted_func" not in final
+    assert not method_helper_calls(final)
 
 
 def test_a_class_method_whose_receiver_may_be_another_class_takes_a_module_helper(
@@ -144,7 +144,7 @@ def test_a_class_method_whose_receiver_may_be_another_class_takes_a_module_helpe
     """
     before, after, final = _refactored(tmp_path, source, driver)
     assert after == before
-    assert "self.__extracted_func" not in final
+    assert not method_helper_calls(final)
 
 
 @pytest.mark.parametrize(
@@ -166,7 +166,7 @@ def test_a_receiver_annotated_as_its_own_class_keeps_the_method_helper(
     )
     before, after, final = _refactored(tmp_path, source)
     assert after == before
-    assert "self.__extracted_func" in final
+    assert method_helper_calls(final)
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 input requires Python 3.12")
@@ -178,7 +178,7 @@ def test_a_receiver_of_a_type_parameter_bound_to_its_class_keeps_the_method_help
     )
     before, after, final = _refactored(tmp_path, source)
     assert after == before
-    assert "self.__extracted_func" in final
+    assert method_helper_calls(final)
 
 
 def test_a_receiver_of_a_variable_bound_elsewhere_takes_a_module_helper(tmp_path: Path) -> None:
@@ -199,7 +199,7 @@ def test_a_receiver_of_a_variable_bound_elsewhere_takes_a_module_helper(tmp_path
     driver = "from box import Base, Box\nprint(Box().first(1), Box.second(Base(), 1))\n"
     before, after, final = _refactored(tmp_path, source, driver)
     assert after == before
-    assert "self.__extracted_func" not in final
+    assert not method_helper_calls(final)
 
 
 PLAIN_METACLASS = """
@@ -239,7 +239,7 @@ def test_implicit_class_hooks_allow_private_method_helpers(
 ) -> None:
     before, after, final = _refactored(tmp_path, _module(prelude, header), driver)
     assert after == before
-    assert "self.__extracted_func" in final
+    assert method_helper_calls(final)
 
 
 @pytest.mark.parametrize("inherited", [False, True])
@@ -254,7 +254,7 @@ def test_attribute_lookup_hooks_allow_private_method_helpers(
     header = "class Box(Base):\n    v = 1\n" if inherited else "class Box:\n    v = 1\n" + lookup
     before, after, final = _refactored(tmp_path, _module(prelude, header))
     assert after == before
-    assert "self.__extracted_func" in final
+    assert method_helper_calls(final)
 
 
 def test_logging_attribute_lookup_does_not_block_private_helpers(tmp_path: Path) -> None:
@@ -265,7 +265,7 @@ def test_logging_attribute_lookup_does_not_block_private_helpers(tmp_path: Path)
     )
     before, after, final = _refactored(tmp_path, source)
     assert after == before
-    assert "self.__extracted_func" in final
+    assert method_helper_calls(final)
     # The ordinary computation is preserved. Reflecting on the additional
     # lookup sees the helper, as the documented boundary permits.
     observed = _run(
@@ -287,7 +287,7 @@ def test_a_class_whose_getattr_serves_missing_names_keeps_the_method_helper(tmp_
     )
     before, after, final = _refactored(tmp_path, source, driver)
     assert after == before
-    assert "self.__extracted_func" in final
+    assert method_helper_calls(final)
 
 
 def test_a_metaclass_hosts_private_method_helpers(tmp_path: Path) -> None:
@@ -298,7 +298,7 @@ def test_a_metaclass_hosts_private_method_helpers(tmp_path: Path) -> None:
     )
     before, after, final = _refactored(tmp_path, source, driver)
     assert after == before
-    assert "self.__extracted_func" in final
+    assert method_helper_calls(final)
 
 
 def test_a_super_subclass_hosts_private_method_helpers(tmp_path: Path) -> None:
@@ -314,7 +314,7 @@ def test_a_super_subclass_hosts_private_method_helpers(tmp_path: Path) -> None:
     before, after, final = _refactored(tmp_path, source, driver)
     assert before.endswith("4 6\n|")
     assert after == before
-    assert "self.__extracted_func" in final
+    assert method_helper_calls(final)
 
 
 def test_an_imported_base_with_a_metaclass_allows_private_method_helpers(tmp_path: Path) -> None:
@@ -327,7 +327,7 @@ def test_an_imported_base_with_a_metaclass_allows_private_method_helpers(tmp_pat
         DRIVER,
     )
     assert after == before
-    assert "self.__extracted_func" in final
+    assert method_helper_calls(final)
 
 
 def test_a_base_imported_from_the_project_is_judged_where_it_is_defined(tmp_path: Path) -> None:
@@ -340,7 +340,7 @@ def test_a_base_imported_from_the_project_is_judged_where_it_is_defined(tmp_path
         DRIVER,
     )
     assert after == before
-    assert "self.__extracted_func" in final
+    assert method_helper_calls(final)
 
 
 ENUM_BOX = "class Box(enum.Enum):\n    ONE = 1\n\n    @property\n    def v(self):\n        return self.value\n"
@@ -372,4 +372,4 @@ def test_standard_class_forms_allow_private_method_helpers(
     )
     before, after, final = _refactored(tmp_path, _module(prelude, header), driver)
     assert after == before
-    assert "self.__extracted_func" in final
+    assert method_helper_calls(final)

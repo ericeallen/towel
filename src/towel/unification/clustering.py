@@ -39,6 +39,7 @@ import ast
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
 from ..canonical_ast import canonical_dump
+from ..diagnostics import REJECTIONS, debugging
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import (
     align_return_variables,
@@ -50,7 +51,8 @@ from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signatu
 from .extractor import HygienicExtractor, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
 from .retained_bindings import spell_retained_bindings
-from .models import FunctionArtifact, FunctionNode, RejectReason, Replacement
+from .argument_ownership import argument_handoff_plan
+from .models import ArgumentHandoff, FunctionArtifact, FunctionNode, RejectReason, Replacement
 from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import bindings_of, statement_shape
@@ -126,7 +128,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
 
     def _cluster_candidate_call(
         self, template: "HelperTemplate", candidate: "_ClusterCandidate"
-    ) -> Optional[Tuple[ast.stmt, FrozenSet[int]]]:
+    ) -> Optional[Tuple[ast.stmt, FrozenSet[int], Optional[ArgumentHandoff]]]:
         """The call replacing a clustered occurrence, and the lines where its code becomes an argument.
 
         None when the occurrence cannot share the helper. Everything here is a
@@ -323,9 +325,29 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             for name in used2
         ):
             return None
-        return spell_retained_bindings(
-            candidate.function, candidate.nodes, call_node2
-        ), call_argument_lines(subst2, 1)
+        safe_call = spell_retained_bindings(candidate.function, candidate.nodes, call_node2)
+        ownership = self._frame_ownership(candidate.function, candidate.nodes, site=candidate.site)
+        handoff = (
+            argument_handoff_plan(
+                candidate.function,
+                candidate.nodes,
+                candidate.analyzer,
+                safe_call,
+                template.func_def,
+            )
+            if ownership.split and ownership.whole_body
+            else None
+        )
+        if ownership.split and handoff is None:
+            self._debug_decline_site(
+                RejectReason.OWNED_BINDING_FRAME_BOUNDARY,
+                pair,
+                candidate.function,
+                candidate.nodes,
+                f"inside={sorted(ownership.inside)}, outside={sorted(ownership.outside)}",
+            )
+            return None
+        return safe_call, call_argument_lines(subst2, 1), handoff
 
     @staticmethod
     def _declares_alike(template: "HelperTemplate", candidate: "_ClusterCandidate") -> bool:
@@ -392,7 +414,10 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         """
         pair = template.pair
         module_digest = self._module_digest(pair.function1_node)
-        if module_digest is None:
+        # A traced scan emits pair-specific declined-site diagnostics. Reusing
+        # its site list would drop those observable messages; the pure, untraced
+        # production scan remains memoized.
+        if module_digest is None or debugging(REJECTIONS):
             return tuple(self._scan_clustered_sites(template, dce_node, functions))
         key = ClusterScanKey(
             self._template_key(template),
@@ -463,12 +488,13 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 found = self._cluster_candidate_call(template, candidate)
                 if found is None:
                     continue
-                call_node, arguments = found
+                call_node, arguments, handoff = found
                 yield ClusteredSite(
                     Replacement(
                         line_range=cand_range,
                         columns=BlockColumns.of(cand_nodes),
                         node=call_node,
+                        argument_handoff=handoff,
                         file_path=entry.file_path,
                         class_name=entry.class_name,
                         method_kind=None,

@@ -44,8 +44,11 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 SERIAL = Settings.from_environ({"TOWEL_WORKERS": "1"})
 
 _BLOCK = """
+from builtins import print as emit
+
+
 def {name}(values):
-    print({tag!r})
+    emit({tag!r})
     total = 0
     for value in values:
         if value > 1:

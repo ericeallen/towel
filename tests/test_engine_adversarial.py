@@ -27,6 +27,7 @@ from towel.unification.models import is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.unifier import Unifier
 from towel.unification.extractor import HygienicExtractor
+from tests.test_helpers import method_helper_calls, original_argument_name
 
 
 def _run_driver(directory: Path, driver: str) -> str:
@@ -220,7 +221,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self.assertIn("def __extracted_func", out)
         # Calls should be rewritten to the class-private self.__extracted_func and
         # not pass self explicitly
-        self.assertIn("return self.__extracted_func_", out)
+        self.assertTrue(method_helper_calls(out))
         self.assertNotIn("self, self.__extracted_func_", out)
 
     def test_decorators_preserved_and_no_triple_blank_lines_in_class(self):
@@ -259,7 +260,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         end = getattr(cls, "end_lineno", cls.lineno) - 1
         class_block = "\n".join(lines[start : end + 1])
         self.assertNotIn(
-            "\n\n\n", class_block, "Should not contain triple blank lines inside class body"
+            "\n\n\n",
+            class_block,
+            "Should not contain triple blank lines inside class body",
         )
 
     def test_staticmethod_extraction_produces_module_helper(self):
@@ -383,9 +386,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             self.assertTrue(call_targets, f"Method {method_name} should call the helper")
             for call in call_targets:
                 assert isinstance(call.func, ast.Attribute)
-                self.assertIsInstance(call.func.value, ast.Name)
-                assert isinstance(call.func.value, ast.Name)
-                self.assertEqual(call.func.value.id, binder_name)
+                self.assertEqual(original_argument_name(method, call.func.value), binder_name)
                 self.assertFalse(
                     any(isinstance(arg, ast.Name) and arg.id == binder_name for arg in call.args),
                     "Implicit class binder should not be passed explicitly",
@@ -429,7 +430,14 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             receiver = helper.args.args[0].arg
             self.assertIn(receiver, {"self", "cls"})
             for text in result.values():
-                for node in ast.walk(ast.parse(text)):
+                tree = ast.parse(text)
+                owners = {
+                    child: function
+                    for function in ast.walk(tree)
+                    if isinstance(function, ast.FunctionDef)
+                    for child in ast.walk(function)
+                }
+                for node in ast.walk(tree):
                     if isinstance(node, ast.ClassDef):
                         self.assertFalse(
                             [
@@ -446,9 +454,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                         and node.func.id == helper.name
                     ):
                         first = node.args[0]
-                        self.assertIsInstance(first, ast.Name)
-                        assert isinstance(first, ast.Name)
-                        self.assertEqual(first.id, receiver)
+                        self.assertEqual(original_argument_name(owners[node], first), receiver)
             for name in bases:
                 self.assertEqual(
                     (root / name).read_text(encoding="utf-8"),
@@ -602,7 +608,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 break
 
         self.assertTrue(
-            found_local_insertion, "Did not find a proposal inserting helper into outer()"
+            found_local_insertion,
+            "Did not find a proposal inserting helper into outer()",
         )
 
     def test_deepest_common_enclosing_function_is_chosen(self):
@@ -684,8 +691,20 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
             return await f1(3) + await f2(4)
         """
+        unsafe = TempModule(code)
+        self.addCleanup(unsafe.cleanup)
+        self.assertEqual(self._engine(min_lines=2).analyze_file(str(unsafe.path)), [])
+        # A coroutine's owned locals cannot use the synchronous ownership
+        # handoff. Keep that refusal, and test binding-free nested recovery.
+        code = code.replace(
+            "p = x + a\n                q = p * b\n                return q",
+            "print('compute', x + a)\n                return (x + a) * b",
+        )
         m = TempModule(code)
         self.addCleanup(m.cleanup)
+        driver = "import asyncio; from mod import outer; print(asyncio.run(outer(2, 5)))"
+        trace = _run_driver(m.dir, driver)
+        self.assertEqual(trace, "compute 5\ncompute 6\n55\n|")
 
         ns: dict[str, Any] = {}
         exec(m.path.read_text(), ns)
@@ -724,11 +743,15 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 exec(new_src, ns2)
                 new_val = asyncio.run(ns2["outer"](2, 5))
                 self.assertEqual(orig, new_val)
+                transformed = TempModule(new_src)
+                self.addCleanup(transformed.cleanup)
+                self.assertEqual(_run_driver(transformed.dir, driver), trace)
                 found_local_insertion = True
                 break
 
         self.assertTrue(
-            found_local_insertion, "Did not find a proposal inserting helper into async outer()"
+            found_local_insertion,
+            "Did not find a proposal inserting helper into async outer()",
         )
 
     def test_dce_with_class_method_nested_functions_inserts_into_method_scope(self):
@@ -759,7 +782,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         engine = self._engine(min_lines=2)
         proposals = engine.analyze_file(str(m.path))
         self.assertTrue(
-            proposals, "Expected a proposal for duplicate inner function bodies in a method"
+            proposals,
+            "Expected a proposal for duplicate inner function bodies in a method",
         )
 
         found_method_insertion = False
@@ -806,7 +830,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 break
 
         self.assertTrue(
-            found_method_insertion, "Did not find a proposal inserting helper into method scope C.m"
+            found_method_insertion,
+            "Did not find a proposal inserting helper into method scope C.m",
         )
 
     def test_deepest_common_enclosing_inner_function_is_chosen(self):
@@ -900,8 +925,20 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
             return await f1(3) + f2(4)
         """
+        unsafe = TempModule(code)
+        self.addCleanup(unsafe.cleanup)
+        self.assertEqual(self._engine(min_lines=2).analyze_file(str(unsafe.path)), [])
+        # A coroutine's owned locals cannot use the synchronous ownership
+        # handoff. Keep that refusal, and test binding-free nested recovery.
+        code = code.replace(
+            "p = x + a\n                q = p * b\n                return q",
+            "print('compute', x + a)\n                return (x + a) * b",
+        )
         m = TempModule(code)
         self.addCleanup(m.cleanup)
+        driver = "import asyncio; from mod import outer; print(asyncio.run(outer(2, 5)))"
+        trace = _run_driver(m.dir, driver)
+        self.assertEqual(trace, "compute 5\ncompute 6\n55\n|")
 
         ns: dict[str, Any] = {}
         exec(m.path.read_text(), ns)
@@ -939,6 +976,9 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 ns2: dict[str, Any] = {}
                 exec(out, ns2)
                 self.assertEqual(orig, asyncio.run(ns2["outer"](2, 5)))
+                transformed = TempModule(out)
+                self.addCleanup(transformed.cleanup)
+                self.assertEqual(_run_driver(transformed.dir, driver), trace)
                 found_insertion = True
                 break
 
@@ -1040,13 +1080,24 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 return u
             return f1() + f2()
         """
+        unsafe = TempModule(code_nonlocal)
+        self.addCleanup(unsafe.cleanup)
+        self.assertEqual(self._engine(min_lines=2).analyze_file(str(unsafe.path)), [])
+        self.assertEqual(_run_driver(unsafe.dir, "from mod import outer; print(outer())"), "4\n|")
+        # The old suffix owns u while caller-local t remains outside. A
+        # binding-free suffix proves that nonlocal prefix reads alone still
+        # do not block independent extraction.
+        code_nonlocal = code_nonlocal.replace(
+            "u = t * 2\n                return u",
+            "print('suffix', t * 2)\n                return t * 2",
+        )
         m1 = TempModule(code_nonlocal)
         self.addCleanup(m1.cleanup)
         engine = self._engine(min_lines=2)
         props1 = engine.analyze_file(str(m1.path))
         self.assertTrue(props1, "An unrelated suffix must remain extractable")
         original = _run_driver(m1.dir, "from mod import outer; print(outer())")
-        self.assertEqual(original, "4\n|")
+        self.assertEqual(original, "suffix 2\nsuffix 2\n4\n|")
         for proposal in props1:
             self.assertFalse(
                 any(
@@ -1061,7 +1112,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             transformed = TempModule(output)
             self.addCleanup(transformed.cleanup)
             self.assertEqual(
-                _run_driver(transformed.dir, "from mod import outer; print(outer())"), original
+                _run_driver(transformed.dir, "from mod import outer; print(outer())"),
+                original,
             )
 
     def test_dce_does_not_extract_a_nonlocal_read_or_write(self):
@@ -1139,7 +1191,8 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
                 found = True
                 break
         self.assertTrue(
-            found, "Expected a proposal inserting helper with global injection into outer()"
+            found,
+            "Expected a proposal inserting helper with global injection into outer()",
         )
 
 
@@ -1232,7 +1285,8 @@ class TestCrossFileImports(unittest.TestCase):
             # At least one file should gain an import of the extracted function
             has_import = any("import __extracted_func" in content for content in modified.values())
             self.assertTrue(
-                has_import, "Expected an import of __extracted_func in one modified file"
+                has_import,
+                "Expected an import of __extracted_func in one modified file",
             )
 
     def test_cross_file_runtime_equivalence_after_refactor(self):
@@ -1279,7 +1333,8 @@ class TestCrossFileImports(unittest.TestCase):
                 )
                 props = engine.analyze_directory(str(base), recursive=False)
                 self.assertTrue(
-                    props, "Expected a cross-file proposal between a.py and b.py in same directory"
+                    props,
+                    "Expected a cross-file proposal between a.py and b.py in same directory",
                 )
                 modified = engine.apply_refactoring_multi_file(props[0])
                 # Write modifications to disk

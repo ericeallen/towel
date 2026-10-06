@@ -52,36 +52,45 @@ without installing with `uvx --from code-towel towel --help`.
 Given two functions that share a block:
 
 ```python
-def order_summary(order):
+def order_summary(order, label="Order"):
     items = [i for i in order.items if i.in_stock]
     subtotal = sum(i.price for i in items)
     total = round(subtotal * 1.08, 2)
-    return f"Order {order.id}: ${total}"
+    return f"{label} {order.id}: ${total}"
 
-def quote_summary(quote):
+def quote_summary(quote, label="Quote"):
     items = [i for i in quote.items if i.in_stock]
     subtotal = sum(i.price for i in items)
     total = round(subtotal * 1.08, 2)
-    return f"Quote {quote.id}: ${total}"
+    return f"{label} {quote.id}: ${total}"
 ```
 
 Towel proposes a helper and rewrites both callers:
 
 ```python
-def __extracted_func_0(__param_0):
+def __extracted_func_0(__param_0, label, _towel_owner):
     items = [i for i in __param_0.items if i.in_stock]
     subtotal = sum((i.price for i in items))
     total = round(subtotal * 1.08, 2)
-    return total
+    return f'{label} {__param_0.id}: ${total}'
 
-def order_summary(order):
-    total = __extracted_func_0(order)
-    return f"Order {order.id}: ${total}"
 
-def quote_summary(quote):
-    total = __extracted_func_0(quote)
-    return f"Quote {quote.id}: ${total}"
+def order_summary(order, label="Order"):
+    _towel_arguments = [(label, order)]
+    del order
+    del label
+    return __extracted_func_0(_towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
+
+def quote_summary(quote, label="Quote"):
+    _towel_arguments = [(label, quote)]
+    del quote
+    del label
+    return __extracted_func_0(_towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
 ```
+
+The argument box and final holder preserve the original argument cleanup
+order when the entire body moves into a helper. Partial extractions whose
+owned values would cross frames without this proof are declined.
 
 The shared structure becomes the helper's body; differing expressions become
 parameters. Towel verifies that substituting each call's arguments into the

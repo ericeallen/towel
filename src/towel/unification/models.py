@@ -135,6 +135,26 @@ class HelperHome:
     method_param_name: Optional[str]
 
 
+@dataclass(frozen=True)
+class ArgumentHandoff:
+    """Certified whole-body parameter ownership, copied only while rendering.
+
+    Parameters are in compiler cleanup order; the caller transfers their
+    reversed tuple to the helper's final parameter. AST/source identities
+    prevent applying a certificate to a different function or call.
+    """
+
+    parameters: Tuple[str, ...]
+    box_name: str
+    captures: Tuple[Tuple[str, str], ...]
+    function_name: str
+    function_line: int
+    function_dump: str
+    call_dump: str
+    helper_name: str
+    module_dump: str
+
+
 @dataclass
 class Replacement:
     """Represents a replacement call to the extracted function/method."""
@@ -153,6 +173,7 @@ class Replacement:
     # Every block the engine finds records its columns; None stands for a
     # block of whole lines, as a replacement built by hand is.
     columns: Optional[BlockColumns] = None
+    argument_handoff: Optional[ArgumentHandoff] = None
 
 
 GENERATED_HELPER_NAME = re.compile(r"_{1,2}extracted_func(?:_\d+)?")
@@ -324,6 +345,7 @@ class RejectReason(StrEnum):
     OTHER_DISTRIBUTION = "other_distribution"
     PRIVATE_NAME_LEXICAL_CLASS = "private_name_lexical_class"
     REBOUND_EXTERNAL_BINDING = "rebound_external_binding"
+    OWNED_BINDING_FRAME_BOUNDARY = "owned_binding_frame_boundary"
     RELATIVE_IMPORT_ACROSS_PACKAGES = "relative_import_across_packages"
     RETURN_VARIABLES_NOT_ALIGNED = "return_variables_not_aligned"
     RETURN_VERSUS_VARIABLES = "return_versus_variables"

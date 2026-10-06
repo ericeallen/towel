@@ -25,6 +25,7 @@ patch.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 from pathlib import Path
@@ -107,6 +108,69 @@ def _refactor_directory(target: Path) -> int:
     return sum(applied for applied, _ in results.values())
 
 
+def _assert_owned_helper_call(
+    function: ast.FunctionDef, helper: ast.FunctionDef, parameters: tuple[str, ...]
+) -> None:
+    """The whole body transfers original arguments, then calls a fresh owned ABI."""
+    assert len(function.body) == len(parameters) + 2
+    storage, *deletions, invocation = function.body
+    assert isinstance(storage, ast.Assign) and len(storage.targets) == 1
+    assert isinstance(storage.targets[0], ast.Name)
+    box = storage.targets[0].id
+    expected_storage = ast.parse(f"{box} = [{tuple(reversed(parameters))!r}]").body[0]
+    assert isinstance(expected_storage, ast.Assign)
+    expected_storage.value = ast.List(
+        elts=[
+            ast.Tuple(
+                elts=[ast.Name(id=name, ctx=ast.Load()) for name in reversed(parameters)],
+                ctx=ast.Load(),
+            )
+        ],
+        ctx=ast.Load(),
+    )
+    assert ast.dump(storage) == ast.dump(expected_storage)
+    assert all(
+        isinstance(deletion, ast.Delete)
+        and len(deletion.targets) == 1
+        and isinstance(deletion.targets[0], ast.Name)
+        for deletion in deletions
+    )
+    assert [
+        target.id
+        for deletion in deletions
+        if isinstance(deletion, ast.Delete)
+        for target in deletion.targets
+        if isinstance(target, ast.Name)
+    ] == list(parameters)
+    calls = [
+        node
+        for node in ast.walk(invocation)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper.name
+    ]
+    assert len(calls) == 1
+    call = calls[0]
+    assert len(call.args) == len(parameters) + 1 and not call.keywords
+    expected_arguments = [
+        ast.parse(f"{box}[0][{len(parameters)-1-index}]", mode="eval").body
+        for index in range(len(parameters))
+    ]
+    expected_arguments.append(ast.parse(f"{box}.pop()", mode="eval").body)
+    assert [ast.dump(argument) for argument in call.args] == [
+        ast.dump(argument) for argument in expected_arguments
+    ]
+    helper_parameters = helper.args.posonlyargs + helper.args.args
+    assert len(helper_parameters) == len(call.args)
+    holder = helper_parameters[-1].arg
+    assert holder.startswith("_towel_owner")
+    assert not any(
+        isinstance(node, ast.Name) and node.id == holder
+        for statement in helper.body
+        for node in ast.walk(statement)
+    )
+
+
 def test_patching_one_function_leaves_its_duplicate_alone(tmp_path: Path) -> None:
     before, after = tmp_path / "before", tmp_path / "after"
     for root in (before, after):
@@ -116,8 +180,8 @@ def test_patching_one_function_leaves_its_duplicate_alone(tmp_path: Path) -> Non
     functions = module_functions((after / "c.py").read_text())
     helpers = [name for name in functions if name.startswith("__extracted_func")]
     assert len(helpers) == 1
-    assert unparsed_body(functions["f1"]) == f"return {helpers[0]}(xs)"
-    assert unparsed_body(functions["f2"]) == f"return {helpers[0]}(ys)"
+    _assert_owned_helper_call(functions["f1"], functions[helpers[0]], ("xs",))
+    _assert_owned_helper_call(functions["f2"], functions[helpers[0]], ("ys",))
 
 
 def test_a_function_in_another_module_is_not_called_in_place_of_a_duplicate(
@@ -126,22 +190,25 @@ def test_a_function_in_another_module_is_not_called_in_place_of_a_duplicate(
     files = {
         "pkg/__init__.py": "",
         "pkg/a.py": """
+            from builtins import print as emit
+
             def fa(items):
                 total = 0
                 for item in items:
                     total += item * 3
-                print("done", total)
+                emit("done", total)
                 return total
             """,
         "pkg/b.py": """
             import pkg.a
+            from builtins import print as emit
 
 
             def fb(values):
                 total = 0
                 for value in values:
                     total += value * 3
-                print("done", total)
+                emit("done", total)
                 return total
             """,
         "run.py": """
@@ -169,7 +236,7 @@ def test_two_whole_bodies_both_become_calls_of_the_new_helper(
 
     Were either redirected to the other, a later patch of the one would
     change the other; so both are rewritten, which leaves the earlier helper
-    a one-line call of the new one.
+    an ownership transfer followed by a call of the new one.
     """
     source = f"""
         def {helper_name}(result, x):
@@ -189,5 +256,20 @@ def test_two_whole_bodies_both_become_calls_of_the_new_helper(
     functions = module_functions(target.read_text())
     new = [name for name in functions if name not in {helper_name, "other"}]
     assert len(new) == 1
-    assert unparsed_body(functions[helper_name]) == f"{new[0]}(result, x)"
-    assert unparsed_body(functions["other"]) == f"{new[0]}(result, x)"
+    _assert_owned_helper_call(functions[helper_name], functions[new[0]], ("result", "x"))
+    _assert_owned_helper_call(functions["other"], functions[new[0]], ("result", "x"))
+    driver = f"""from unittest import mock
+import m
+with mock.patch('m.{helper_name}', return_value='patched'):
+    values = []
+    m.other(values, 2)
+    print(values)
+with mock.patch('m.other', return_value='patched'):
+    values = []
+    m.{helper_name}(values, 3)
+    print(values)
+"""
+    _write(tmp_path, {"drive.py": driver})
+    observed = _run(tmp_path, "drive.py")
+    _write(tmp_path, {"m.py": source})
+    assert observed == _run(tmp_path, "drive.py")

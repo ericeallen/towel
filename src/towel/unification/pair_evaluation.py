@@ -94,6 +94,7 @@ from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
 from .retained_bindings import spell_retained_bindings
+from .argument_ownership import argument_handoff_plan
 from .narrowing import (
     caller_narrowing_leaves_with_block,
     narrowing_lost_at_call_site,
@@ -1485,10 +1486,25 @@ class PairEvaluation(
                 RejectReason.BUILTIN_ARGUMENT, pair, detail=f"block{block_idx+1}: {sorted(handed)}"
             )
             return None
+        safe_call = spell_retained_bindings(function, nodes, call_node)
+        ownership = self._frame_ownership(function, nodes, site=site)
+        handoff = (
+            argument_handoff_plan(function, nodes, analyzer, safe_call, func_def)
+            if ownership.split and ownership.whole_body
+            else None
+        )
+        if ownership.split and handoff is None:
+            self._debug_reject(
+                RejectReason.OWNED_BINDING_FRAME_BOUNDARY,
+                pair,
+                detail=f"block{block_idx+1}: inside={sorted(ownership.inside)}, outside={sorted(ownership.outside)}",
+            )
+            return None
         return Replacement(
             line_range=block_range,
             columns=BlockColumns.of(nodes),
-            node=spell_retained_bindings(function, nodes, call_node),
+            node=safe_call,
+            argument_handoff=handoff,
             file_path=file_path,
             class_name=class_name,
             method_kind=method_info.kind,
@@ -1777,7 +1793,10 @@ class PairEvaluation(
             return None
         self._seen_proposals.add(identity)
         if self.skip_trivial_helpers:
-            reused = self._reusing_generated_helper(proposal, functions)
+            # A handoff changes the owned render copy's signature. An existing
+            # provider must keep its bookkeeping and every original consumer.
+            needs_handoff = any(rep.argument_handoff is not None for rep in proposal.replacements)
+            reused = None if needs_handoff else self._reusing_generated_helper(proposal, functions)
             if reused is not None:
                 return reused
             forwarder = self._helper_reduced_to_forwarder(proposal, functions)

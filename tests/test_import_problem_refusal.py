@@ -30,6 +30,7 @@ problem can matter, and none is reported.
 
 from __future__ import annotations
 
+import ast
 import os
 from pathlib import Path
 import shutil
@@ -45,8 +46,10 @@ from towel.cli import _problems_involving
 from towel.import_model import NameStatus, build_import_model
 
 _BLOCK = """
-def {name}(values):
-    print({tag!r})
+from builtins import print as emit
+
+def {name}(values, tag={tag!r}):
+    emit(tag)
     total = 0
     for value in values:
         if value > 1:
@@ -58,8 +61,10 @@ def {name}(values):
 """
 
 _WITHIN = """
-def {name}(words):
-    print({tag!r})
+from builtins import print as emit
+
+def {name}(words, tag={tag!r}):
+    emit(tag)
     seen = []
     for word in words:
         cleaned = word.strip().lower()
@@ -466,12 +471,22 @@ def test_a_problem_leaving_a_name_of_the_target_in_doubt_still_refuses(
 def test_without_cross_module_no_problem_is_reported_or_refuses(tmp_path: Path) -> None:
     """Only a same-file helper can be written, and no import that runs depends on the names."""
     root = _project(tmp_path / "project", _STALE_COPY)
+    before_imports = [
+        ast.dump(node)
+        for node in ast.parse((root / "src/zzalpha/a.py").read_text()).body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    ]
     ran = _towel(root, "dry")
     assert ran.returncode == 0, ran.stdout + ran.stderr
     assert "could be any of" not in ran.stderr and "--exclude <directory name>" not in ran.stderr
     b = (root / "src/zzalpha/b.py").read_text()
     assert "def __extracted_func_0(" in b, b
-    assert "import" not in (root / "src/zzalpha/a.py").read_text()
+    after_imports = [
+        ast.dump(node)
+        for node in ast.parse((root / "src/zzalpha/a.py").read_text()).body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    ]
+    assert after_imports == before_imports
     previewed = _towel(root, "preview")
     assert previewed.returncode == 0, previewed.stdout + previewed.stderr
     assert "could be any of" not in previewed.stderr

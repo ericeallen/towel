@@ -65,7 +65,7 @@ def _project(
             'def export_size(rows, name):\n    print("exports", name)\n    ',
         ),
         "pkg/reports.py": _module(
-            reports_prelude, 'def report_size(rows, name):\n    print("reports")\n    '
+            reports_prelude, 'def report_size(rows, name):\n    print("reports", name)\n    '
         ),
         **{path: textwrap.dedent(text).lstrip("\n") for path, text in extra.items()},
     }
@@ -88,7 +88,12 @@ def _refactor(
     """Refactor ``project/pkg`` in place; how many refactorings applied, and why pairs were declined."""
     # Every pair here spans modules, which is opt-in (docs/DECISIONS.md).
     engine = UnificationRefactorEngine(
-        min_lines=3, cross_module_helpers=True, parameterize_builtins=parameterize_builtins
+        # Full-body sharing preserves the header effect and needs one literal
+        # tag, two builtin lookups, two arguments and the ownership holder.
+        min_lines=3,
+        max_parameters=6,
+        cross_module_helpers=True,
+        parameterize_builtins=parameterize_builtins,
     )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
@@ -536,11 +541,18 @@ print("reports", pkg.exports.export_size("r", "n"), pkg.reports.report_size("r",
 def test_a_module_name_is_still_passed_so_patching_it_reaches_each_caller(
     tmp_path: Path,
 ) -> None:
-    files = _project("from os.path import join", "from os.path import join")
+    # This test targets an imported module binding, not the separate builtin
+    # opt-in. Keep its observable header through the imported print alias.
+    prelude = "from os.path import join\nfrom builtins import print as emit"
+    files = _project(prelude, prelude)
     for path in ("pkg/exports.py", "pkg/reports.py"):
-        files[path] = files[path].replace(
-            textwrap.dedent(BLOCK).strip("\n").replace("\n", "\n    "),
-            textwrap.dedent(MODULE_NAME_BLOCK).strip("\n").replace("\n", "\n    "),
+        files[path] = (
+            files[path]
+            .replace(
+                textwrap.dedent(BLOCK).strip("\n").replace("\n", "\n    "),
+                textwrap.dedent(MODULE_NAME_BLOCK).strip("\n").replace("\n", "\n    "),
+            )
+            .replace("    print(", "    emit(")
         )
     files["check.py"] = MODULE_NAME_CHECK
     before, after = tmp_path / "before", tmp_path / "after"
@@ -566,7 +578,7 @@ def first(rows, name):
 
 
 def second(rows, name):
-    print("second")
+    print("second", name)
     width = len(name)
     height = len(rows)
     area = width * height
@@ -589,7 +601,21 @@ def test_a_same_module_helper_is_unchanged_by_a_patch_of_its_module(tmp_path: Pa
     assert applied == 1
     (after / "m.py").write_text(final)
     helpers = [f for name, f in module_functions(final).items() if name.startswith("__extracted")]
-    assert [argument.arg for argument in helpers[0].args.args] == ["name", "rows"]
+    # The complete body also carries its header tag and final argument owner;
+    # len remains an ordinary lookup in this same module.
+    assert [argument.arg for argument in helpers[0].args.args] == [
+        "__param_0",
+        "name",
+        "rows",
+        "_towel_owner",
+    ]
+    assert (
+        sum(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "len"
+            for node in ast.walk(helpers[0])
+        )
+        == 2
+    )
     assert _run(after, "check.py") == _run(before, "check.py")
 
 

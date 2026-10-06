@@ -176,8 +176,8 @@ def test_dry_formats_by_default_and_not_with_no_format(tmp_path: Path) -> None:
 
 
 R9P2_DOCSTRING_BLOCK = textwrap.dedent("""
-    def first(a):
-        if a:
+    def first():
+        if True:
             x = 1
         else:
             x = 2
@@ -188,8 +188,8 @@ R9P2_DOCSTRING_BLOCK = textwrap.dedent("""
         return z * 10
 
 
-    def second(b):
-        x = len(b)
+    def second():
+        x = 3
         "  explain the next steps  "
         y = x * 2
         z = y - 3
@@ -283,7 +283,18 @@ def test_r9p2_a_formatter_that_fails_declines_the_proposal_not_the_directory_run
     source.mkdir()
     (source / "__init__.py").write_text("")
     (source / "docstring.py").write_text(R9P2_DOCSTRING_BLOCK)
-    (source / "strings.py").write_text(DUPLICATED_STRINGS)
+    # Custom formatters do not carry an ownership certificate. No-argument
+    # twins with literal inputs still exercise successful formatting alongside
+    # the failed partial, without any competing caller owner.
+    strings = DUPLICATED_STRINGS.replace(
+        "name, a_rather_long_parameter_name, another_long_parameter_name",
+        "",
+    ).replace(
+        "    prefix =",
+        "    name = 'x'\n    a_rather_long_parameter_name = '-y'\n"
+        "    another_long_parameter_name = '-z'\n    prefix =",
+    )
+    (source / "strings.py").write_text(strings)
     engine = UnificationRefactorEngine(min_lines=2, snippet_formatter=failing(monkeypatch, source))
     output = tmp_path / "out"
     results, _ = engine.refactor_directory_to_fixed_point(str(source), str(output), progress="none")

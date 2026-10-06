@@ -57,9 +57,30 @@ from tests.test_helpers import (
 from towel.formatting import BlackSettings, black_formatter
 from towel.unification import clustering, pair_evaluation
 from towel.unification.block_analysis import BlockAnalysis
-from towel.unification.models import is_generated_helper_name
+from towel.unification.models import Replacement, is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.unifier import Unifier
+
+
+def _binding_free_callers(source: str) -> str:
+    """Same arithmetic/live-name fixtures, with module inputs instead of owned parameters."""
+    tree = ast.parse(textwrap.dedent(source))
+    for function in tree.body:
+        if isinstance(function, ast.FunctionDef):
+            function.args.args = []
+    tree.body[:0] = ast.parse("v = 5\nw = 5").body
+    return ast.unparse(ast.fix_missing_locations(tree)) + "\n"
+
+
+def _assert_runtime_values(tmp_path: Path, final: str, names: list[str]) -> None:
+    def values(source: str) -> list[object]:
+        namespace: dict[str, object] = {}
+        exec(compile(source, "<live-name-fixture>", "exec"), namespace)
+        namespace["v"] = 3
+        namespace["w"] = 11
+        return [namespace[name]() for name in names]  # type: ignore[operator]
+
+    assert values(final) == values((tmp_path / "m.py").read_text())
 
 
 def _summaries(source: str, names: list[str]) -> list[object]:
@@ -72,17 +93,18 @@ def _summaries(source: str, names: list[str]) -> list[object]:
             SimpleNamespace(price=5.0, in_stock=False),
         ],
     )
-    return [namespace[name](order) for name in names]  # type: ignore[operator]
+    namespace["order"] = order
+    return [namespace[name]() for name in names]  # type: ignore[operator]
 
 
 def _chain(count: int) -> str:
-    return "\n".join(f"""
-        def f{index}(order):
+    return "order = None\n" + textwrap.dedent("\n".join(f"""
+        def f{index}():
             items = [i for i in order.items if i.in_stock]
             subtotal = sum(i.price for i in items)
             total = round(subtotal * 1.08, 2)
             return f"F{index} {{order.id}}: ${{total}}"
-        """ for index in range(count))
+        """ for index in range(count)))
 
 
 def test_identical_blocks_with_a_live_variable_share_one_helper(tmp_path: Path) -> None:
@@ -95,9 +117,11 @@ def test_identical_blocks_with_a_live_variable_share_one_helper(tmp_path: Path) 
     for index in range(12):
         assignment = functions[f"f{index}"].body[0]
         assert isinstance(assignment, ast.Assign)
-        # sum and round are opaque calls: keep both results alive at the
-        # caller while still using just one helper for all twelve sites.
-        expected = ast.parse("subtotal, total = __extracted_func_0(order)").body[0]
+        # Keep the computed list and opaque sum result alive beside the
+        # live total, in compiler binding order, using one helper for twelve sites.
+        expected = ast.parse(
+            "_towel_keep_items, _towel_keep_subtotal, total = __extracted_func_0()"
+        ).body[0]
         assert ast.dump(assignment) == ast.dump(expected)
     names = [f"f{index}" for index in range(12)]
     assert _summaries(final, names) == _summaries(source, names)
@@ -107,7 +131,7 @@ def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: 
     final, _applied = refactor_to_fixed_point_silently(
         write_module(
             tmp_path,
-            """
+            _binding_free_callers("""
             def a(v):
                 tmp = v + 1
                 base = tmp - 3
@@ -125,7 +149,7 @@ def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: 
                 offset = step - 3
                 amount = offset * 2
                 return f"c {amount}"
-            """,
+            """),
         ),
         3,
     )
@@ -133,7 +157,11 @@ def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: 
     assert [name for name in functions if name.startswith("__extracted_func")] == [
         "__extracted_func_0"
     ]
-    assert unparsed_body(functions["c"]) == "amount = __extracted_func_0(v)\nreturn f'c {amount}'"
+    assert _applied == 1
+    assert (
+        unparsed_body(functions["c"])
+        == "_towel_keep_step, _towel_keep_offset, amount = __extracted_func_0()\nreturn f'c {amount}'"
+    )
 
 
 def test_the_helper_returns_what_every_clustered_site_reads(tmp_path: Path) -> None:
@@ -143,7 +171,7 @@ def test_the_helper_returns_what_every_clustered_site_reads(tmp_path: Path) -> N
     final, _applied = refactor_to_fixed_point_silently(
         write_module(
             tmp_path,
-            """
+            _binding_free_callers("""
             def a(v):
                 tmp = v + 1
                 base = tmp - 3
@@ -161,7 +189,7 @@ def test_the_helper_returns_what_every_clustered_site_reads(tmp_path: Path) -> N
                 base = tmp - 3
                 total = base * 2
                 return f"c {total} {tmp}"
-            """,
+            """),
         ),
         3,
     )
@@ -169,15 +197,20 @@ def test_the_helper_returns_what_every_clustered_site_reads(tmp_path: Path) -> N
     assert [name for name in functions if name.startswith("__extracted_func")] == [
         "__extracted_func_0"
     ]
+    assert _applied == 1
     for name in ("a", "b", "c"):
-        assert unparsed_body(functions[name]).startswith("tmp, total = __extracted_func_0(v)")
+        kept_tmp = "tmp" if name == "c" else "_towel_keep_tmp"
+        assert unparsed_body(functions[name]).startswith(
+            f"{kept_tmp}, _towel_keep_base, total = __extracted_func_0()"
+        )
+    _assert_runtime_values(tmp_path, final, ["a", "b", "c"])
 
 
 def test_a_function_that_is_the_block_plus_its_return_shares_the_helper(tmp_path: Path) -> None:
     final, _applied = refactor_to_fixed_point_silently(
         write_module(
             tmp_path,
-            """
+            _binding_free_callers("""
             def compute(v):
                 tmp = v + 1
                 base = tmp - 3
@@ -195,23 +228,30 @@ def test_a_function_that_is_the_block_plus_its_return_shares_the_helper(tmp_path
                 offset = step - 3
                 amount = offset * 2
                 return f"label {amount}"
-            """,
+            """),
         ),
         3,
     )
     functions = module_functions(final)
     assert set(functions) == {"compute", "show", "label", "__extracted_func_0"}
-    assert unparsed_body(functions["compute"]) == "total = __extracted_func_0(v)\nreturn total"
     assert (
-        unparsed_body(functions["show"]) == "total = __extracted_func_0(v)\nreturn f'show {total}'"
+        unparsed_body(functions["compute"])
+        == "_towel_keep_tmp, _towel_keep_base, total = __extracted_func_0()\nreturn total"
     )
-    # ``label`` spells its parameter ``w``, so it does not join the helper on
-    # the pass that inserts it; a later pass would have to reduce that helper
-    # to a forwarder or redirect ``label`` to it, and does neither.
+    assert (
+        unparsed_body(functions["show"])
+        == "_towel_keep_tmp, _towel_keep_base, total = __extracted_func_0()\nreturn f'show {total}'"
+    )
+    # ``label`` reads the distinct module input ``w``. It keeps that binding;
+    # a later pass may not redirect it through another input function or
+    # reduce the generated helper to a forwarding layer.
     assert (
         unparsed_body(functions["label"])
         == "step = w + 1\noffset = step - 3\namount = offset * 2\nreturn f'label {amount}'"
     )
+
+    assert _applied == 1
+    _assert_runtime_values(tmp_path, final, ["compute", "show", "label"])
 
 
 def test_a_function_returning_the_names_in_another_order_keeps_its_order(
@@ -220,7 +260,7 @@ def test_a_function_returning_the_names_in_another_order_keeps_its_order(
     final, _applied = refactor_to_fixed_point_silently(
         write_module(
             tmp_path,
-            """
+            _binding_free_callers("""
             def compute(v):
                 lo = v - 1
                 hi = v + 1
@@ -238,24 +278,30 @@ def test_a_function_returning_the_names_in_another_order_keeps_its_order(
                 hi = v + 1
                 mid = (lo + hi) / 2
                 return f"label {lo} {hi}"
-            """,
+            """),
         ),
         3,
     )
     functions = module_functions(final)
     assert set(functions) == {"compute", "show", "label", "__extracted_func_0"}
-    assert unparsed_body(functions["compute"]) == "hi, lo = __extracted_func_0(v)\nreturn (lo, hi)"
+    assert (
+        unparsed_body(functions["compute"])
+        == "lo, hi, _towel_keep_mid = __extracted_func_0()\nreturn (lo, hi)"
+    )
     assert (
         unparsed_body(functions["show"])
-        == "hi, lo = __extracted_func_0(v)\nreturn f'show {lo} {hi}'"
+        == "lo, hi, _towel_keep_mid = __extracted_func_0()\nreturn f'show {lo} {hi}'"
     )
     assert (
         unparsed_body(functions["label"])
-        == "hi, lo = __extracted_func_0(v)\nreturn f'label {lo} {hi}'"
+        == "lo, hi, _towel_keep_mid = __extracted_func_0()\nreturn f'label {lo} {hi}'"
     )
 
+    assert _applied == 1
+    _assert_runtime_values(tmp_path, final, ["compute", "show", "label"])
 
-GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT = """
+
+OWNED_GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT = """
 def __extracted_func_0(result, x):
     y = x + 10
     z = y ** 2
@@ -271,6 +317,61 @@ def collect(items, offset):
 """
 
 
+GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT = """
+result = []
+x = 1
+item = 2
+offset = 3
+
+def __extracted_func_0():
+    y = x + 10
+    z = y ** 2
+    result.append(z)
+
+def collect():
+    step = x + 20
+    final = step ** 2
+    result.append(final)
+"""
+
+
+def _assert_single_forwarding_call(function: ast.FunctionDef, helper_name: str) -> None:
+    assert len(function.body) == 1
+    statement = function.body[0]
+    assert isinstance(statement, ast.Assign) and isinstance(statement.value, ast.Call)
+    assert len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Tuple)
+    assert [target.id for target in statement.targets[0].elts if isinstance(target, ast.Name)] == [
+        "_towel_keep_y",
+        "_towel_keep_z",
+    ]
+    assert isinstance(statement.value.func, ast.Name) and statement.value.func.id == helper_name
+    assert [ast.dump(argument) for argument in statement.value.args] == [
+        ast.dump(ast.Constant(value=10))
+    ]
+    assert not statement.value.keywords
+
+
+def _collection_trace(source: str) -> list[object]:
+    namespace: dict[str, object] = {}
+    exec(compile(source, "<collection>", "exec"), namespace)
+    collect = namespace["collect"]
+    assert callable(collect)
+    helper = (
+        namespace["square_shifted"]
+        if "square_shifted" in namespace
+        else namespace["__extracted_func_0"]
+    )
+    assert callable(helper)
+    helper()
+    collect()
+    namespace["x"] = 7
+    helper()
+    collect()
+    result = namespace["result"]
+    assert isinstance(result, list)
+    return result
+
+
 def _continue_from_generated_helper(
     tmp_path: Path, *, skip_trivial_helpers: bool
 ) -> tuple[str, int]:
@@ -284,7 +385,11 @@ def _continue_from_generated_helper(
     origin, stage = tmp_path / "origin", tmp_path / "stage"
     origin.mkdir()
     stage.mkdir()
-    original = "def collect" + GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT.split("def collect", 1)[1]
+    original = (
+        GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT.split("def __extracted_func_0", 1)[0]
+        + "def collect"
+        + GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT.split("def collect", 1)[1]
+    )
     for root, source in ((origin, original), (stage, GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT)):
         (root / "pyproject.toml").write_text("[project]\nname='forwarder-fixture'\nversion='0'\n")
         (root / "module.py").write_text(source)
@@ -313,10 +418,10 @@ def test_a_generated_helper_is_not_reduced_to_a_forwarder(tmp_path: Path) -> Non
 def test_the_forwarder_check_is_part_of_skipping_trivial_helpers(tmp_path: Path) -> None:
     final, applied = _continue_from_generated_helper(tmp_path, skip_trivial_helpers=False)
     assert applied == 1
-    assert (
-        unparsed_body(module_functions(final)["__extracted_func_0"])
-        == "__extracted_func_1(x, 10, result)"
+    _assert_single_forwarding_call(
+        module_functions(final)["__extracted_func_0"], "__extracted_func_1"
     )
+    assert _collection_trace(final) == _collection_trace(GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT)
 
 
 def test_a_user_named_function_may_specialize_the_new_helper(tmp_path: Path) -> None:
@@ -332,9 +437,9 @@ def test_a_user_named_function_may_specialize_the_new_helper(tmp_path: Path) -> 
         3,
     )
     assert applied == 1
-    assert (
-        unparsed_body(module_functions(final)["square_shifted"])
-        == "__extracted_func_0(x, 10, result)"
+    _assert_single_forwarding_call(module_functions(final)["square_shifted"], "__extracted_func_0")
+    assert _collection_trace(final) == _collection_trace(
+        GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT.replace("__extracted_func_0", "square_shifted")
     )
 
 
@@ -400,6 +505,53 @@ SQL_KEYS = {
 }
 
 
+def _binding_free_sql() -> str:
+    """Equivalent simple Expr fixture with useful expressions and no owned local bindings."""
+    import copy
+
+    tree = ast.parse(SQL_GENERATOR)
+    generator = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Generator"
+    )
+    for function in generator.body:
+        if not isinstance(function, ast.FunctionDef) or function.name not in SQL_KEYS:
+            continue
+        expressions = {
+            statement.targets[0].id: statement.value
+            for statement in function.body
+            if isinstance(statement, ast.Assign) and isinstance(statement.targets[0], ast.Name)
+        }
+
+        class Expand(ast.NodeTransformer):
+            def visit_Name(self, node: ast.Name) -> ast.AST:
+                if isinstance(node.ctx, ast.Load) and node.id in expressions:
+                    return copy.deepcopy(expressions[node.id])
+                return node
+
+        statements: list[ast.stmt] = []
+        for statement in function.body:
+            expanded = (
+                ast.Expr(value=copy.deepcopy(statement.value))
+                if isinstance(statement, ast.Assign)
+                else Expand().visit(copy.deepcopy(statement))
+            )
+            assert isinstance(expanded, ast.stmt)
+            statements.append(expanded)
+        function.body = statements
+    return ast.unparse(ast.fix_missing_locations(tree)) + "\n"
+
+
+def test_owned_sql_generator_is_not_split_across_frames(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    final, applied = _refactor_generator(
+        tmp_path, monkeypatch, escape_guard=True, min_lines=3, binding_free=False
+    )
+    assert applied == 0
+    assert ast.dump(ast.parse(final)) == ast.dump(ast.parse(SQL_GENERATOR))
+    assert _rendered_sql(final) == _rendered_sql(SQL_GENERATOR)
+
+
 def _rendered_sql(source: str) -> Dict[str, str]:
     """What each generator method renders for an expression carrying its two arguments."""
     namespace: Dict[str, object] = {}
@@ -431,6 +583,7 @@ def _refactor_generator(
     formatted: bool = False,
     bound: int = 25,
     skip_trivial_helpers: bool = True,
+    binding_free: bool = True,
 ) -> Tuple[str, int]:
     """Refactor ``SQL_GENERATOR`` for at most ``bound`` applications.
 
@@ -449,7 +602,9 @@ def _refactor_generator(
     )
     with contextlib.redirect_stdout(io.StringIO()):
         final, applied, _descriptions = engine.refactor_to_fixed_point(
-            write_module(tmp_path, SQL_GENERATOR, "generator.py"),
+            write_module(
+                tmp_path, _binding_free_sql() if binding_free else SQL_GENERATOR, "generator.py"
+            ),
             max_iterations=bound,
             progress="none",
         )
@@ -503,7 +658,7 @@ def test_the_fixed_point_ends_without_the_escape_guard(
     final, applied = _refactor_generator(
         tmp_path, monkeypatch, escape_guard=False, skip_trivial_helpers=skip_trivial_helpers
     )
-    assert applied < 25, "the run reached a fixed point"
+    assert 0 < applied < 25, "useful extraction reaches a fixed point before the bound"
     forwarders = [
         helper.name
         for helper in _generated_helpers(final)
@@ -519,7 +674,8 @@ def test_a_forwarded_thunk_is_passed_through(
     # ``zipf_sql`` subscripts where the others call ``get``; the helper that
     # takes the whole difference as thunks passes them on as it got them
     # instead of wrapping each as ``lambda: __param_0()``.
-    final, _applied = _refactor_generator(tmp_path, monkeypatch, escape_guard=False)
+    final, applied = _refactor_generator(tmp_path, monkeypatch, escape_guard=False)
+    assert 0 < applied < 25
     rewrapped = [
         ast.unparse(node)
         for helper in _generated_helpers(final)
@@ -546,7 +702,7 @@ def test_sqlglots_generator_ends_without_forwarding_helpers(
     # Preserving caller binding order can split the shared prefix from the
     # remaining self.func call. That second helper computes the SQL result;
     # neither helper merely forwards to a generated helper.
-    assert applied == (2 if formatted else 1)
+    assert 0 < applied < 25
     helpers = _generated_helpers(final)
     assert len(helpers) == applied
     assert not any(_only_forwards_to_generated_helpers(helper) for helper in helpers)
@@ -667,3 +823,47 @@ def test_a_lambda_is_otherwise_kept_and_its_body_parameterized(first: str, secon
     assert not any(
         parameter.startswith("lambda") for parameter in _lambda_parameters(first, second)
     )
+
+
+@pytest.mark.parametrize(
+    "case, whole",
+    [("whole-implicit-none", True), ("partial-prefix", False), ("prefix-and-return", True)],
+)
+def test_retained_assignment_preserves_exact_whole_body_classification(
+    case: str, whole: bool
+) -> None:
+    """Retained locals alter the call AST, never the source span being replaced."""
+    body = "y = arg + 1\nz = y * 2\nconsume(z)"
+    if case == "partial-prefix":
+        body = "marker = 'outside'\n" + body
+    if case == "prefix-and-return":
+        body = "y = arg + 1\nz = y * 2\nreturn (y, z)"
+    function = function_def("def target(arg):\n" + textwrap.indent(body, "    "))
+    first = function.body[1] if case == "partial-prefix" else function.body[0]
+    last = function.body[-2] if case == "prefix-and-return" else function.body[-1]
+    call = (
+        "y, z = __extracted_func_0(arg)"
+        if case == "prefix-and-return"
+        else "_towel_keep_y, _towel_keep_z = __extracted_func_0(arg)"
+    )
+    replacement = Replacement(
+        (first.lineno, last.end_lineno or last.lineno), ast.parse(call).body[0]
+    )
+    engine = UnificationRefactorEngine()
+    assert engine._site_is_whole_body(replacement, function) is whole
+
+
+def test_owned_partial_collection_does_not_enable_a_forwarding_fixture(tmp_path: Path) -> None:
+    """Keep the original owning input as a refusal, alongside the safe positive."""
+    source = OWNED_GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT
+    final, applied = refactor_to_fixed_point_silently(
+        write_module(tmp_path, source), 3, skip_trivial_helpers=False
+    )
+    assert applied == 0
+    assert ast.dump(ast.parse(final)) == ast.dump(ast.parse(source))
+    for program in (source, final):
+        namespace: dict[str, object] = {}
+        exec(compile(program, "<owned-collection>", "exec"), namespace)
+        collect = namespace["collect"]
+        assert callable(collect)
+        assert collect([1, 3], 2) == [9, 25]

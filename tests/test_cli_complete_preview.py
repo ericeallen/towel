@@ -388,7 +388,9 @@ def test_formatter_refusals_are_not_shown_as_applicable_changes(
     root = tmp_path / "project"
     root.mkdir()
     source = root / "module.py"
-    source.write_text(DUPLICATES)
+    # A custom formatter must be reached without an unrelated ownership refusal.
+    body = "    a = 1\n    b = 2\n    c = 3\n    return a * b + c\n"
+    source.write_text("def first():\n" + body + "\ndef second():\n" + body)
     target = root if directory else source
     selections: list[Path] = []
 

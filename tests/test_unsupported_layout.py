@@ -26,9 +26,12 @@ import contextlib
 import io
 from pathlib import Path
 import sys
+import subprocess
 
 import pytest
 
+from tests.test_helpers import module_functions
+from tests.test_functions_keep_their_own_bodies import _assert_owned_helper_call
 from towel.cli import main
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -40,12 +43,12 @@ SAME_FILE = (
     "def compute(v):\n    return v\n\n\n"
 )
 CROSS_A = (
-    "def g(items):\n    names = []\n    for item in items:\n"
-    "        names.append(item.name.strip().lower())\n    print(names, 'g')\n    return names\n"
+    "from builtins import print as emit\n\ndef g(items, tag='g'):\n    names = []\n    for item in items:\n"
+    "        names.append(item.name.strip().lower())\n    emit(names, tag)\n    return names\n"
 )
 CROSS_B = (
-    "def h(entries):\n    names = []\n    for entry in entries:\n"
-    "        names.append(entry.name.strip().lower())\n    print(names, 'h')\n    return names\n"
+    "from builtins import print as emit\n\ndef h(entries, tag='h'):\n    names = []\n    for entry in entries:\n"
+    "        names.append(entry.name.strip().lower())\n    emit(names, tag)\n    return names\n"
 )
 
 
@@ -62,8 +65,24 @@ def _hatch_project(root: Path) -> None:
     (root / "pkg" / "b.py").write_text(CROSS_B)
 
 
+def _behavior(project: Path) -> str:
+    program = f"""import sys
+sys.path.insert(0, {str(project)!r})
+from types import SimpleNamespace
+from pkg import a, b
+print(a.f1(3), a.f2(6))
+print(a.g([SimpleNamespace(name=' A '), SimpleNamespace(name='b')]))
+print(b.h([SimpleNamespace(name='c ')]))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", program], capture_output=True, text=True, check=True
+    )
+    return completed.stdout
+
+
 def test_same_file_extractions_still_happen(tmp_path: Path) -> None:
     _hatch_project(tmp_path / "proj")
+    expected = _behavior(tmp_path / "proj")
     engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, reason = engine.refactor_directory_to_fixed_point(
@@ -73,10 +92,12 @@ def test_same_file_extractions_still_happen(tmp_path: Path) -> None:
     changed = {Path(path).name: count for path, (count, _) in results.items()}
     assert changed == {"a.py": 1}
     assert (tmp_path / "out" / "pkg" / "b.py").read_text() == CROSS_B
+    assert _behavior(tmp_path / "out") == expected
 
 
 def test_the_cross_module_pair_is_shared_when_asked(tmp_path: Path) -> None:
     _hatch_project(tmp_path / "proj")
+    expected = _behavior(tmp_path / "proj")
     # Sharing also requires the borrower to load the host before definitions.
     (tmp_path / "proj" / "pkg" / "b.py").write_text("from .a import g\n\n" + CROSS_B)
     engine = UnificationRefactorEngine(
@@ -90,10 +111,12 @@ def test_the_cross_module_pair_is_shared_when_asked(tmp_path: Path) -> None:
     assert changed == {"a.py": 2, "b.py": 1}
     borrower = (tmp_path / "out" / "pkg" / "b.py").read_text()
     assert "from .a import __extracted_func" in borrower, borrower
+    assert _behavior(tmp_path / "out") == expected
 
 
 def test_the_command_line_completes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _hatch_project(tmp_path / "proj")
+    expected = _behavior(tmp_path / "proj")
     argv = [
         "towel",
         "dry",
@@ -110,6 +133,10 @@ def test_the_command_line_completes(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         main()
     rewritten = (tmp_path / "out" / "pkg" / "a.py").read_text()
     # The same-file pair: both functions call one helper.
-    assert "def f1(a):\n    return __extracted_func_0(a)\n" in rewritten
-    assert "def f2(b):\n    return __extracted_func_0(b)\n" in rewritten
+    functions = module_functions(rewritten)
+    helpers = [node for name, node in functions.items() if name.startswith("__extracted_func")]
+    assert len(helpers) == 1
+    _assert_owned_helper_call(functions["f1"], helpers[0], ("a",))
+    _assert_owned_helper_call(functions["f2"], helpers[0], ("b",))
     assert (tmp_path / "out" / "pkg" / "b.py").read_text() == CROSS_B
+    assert _behavior(tmp_path / "out") == expected

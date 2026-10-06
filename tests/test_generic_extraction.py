@@ -80,6 +80,22 @@ def _annotation(node: ast.expr | None) -> str:
     )
 
 
+def value_parameters(helper: ast.FunctionDef) -> list[ast.arg]:
+    parameters = helper.args.posonlyargs + helper.args.args
+    if parameters and parameters[-1].arg.startswith("_towel_owner"):
+        assert _annotation(parameters[-1].annotation) == "object"
+        parameters = parameters[:-1]
+    return parameters
+
+
+def ownership_argument(helper: ast.FunctionDef) -> str:
+    return (
+        ", None"
+        if len(value_parameters(helper)) < len(helper.args.posonlyargs + helper.args.args)
+        else ""
+    )
+
+
 ADDITION = """
     def integers(left: int, right: int) -> int:
         result = left + right
@@ -97,10 +113,12 @@ def test_addition_gets_a_constrained_parameter_and_rejects_mixed_calls(
     path = _project(tmp_path, ADDITION)
     rendered, helper = _extract(path, oracle)
     assert "TypeVar" in rendered and "Any" not in rendered
-    kinds = [_annotation(arg.annotation) for arg in helper.args.args]
+    kinds = [_annotation(arg.annotation) for arg in value_parameters(helper)]
     assert len(set(kinds)) == 1
     assert _annotation(helper.returns) == kinds[0]
-    rejected = oracle.check(str(path), rendered + f'\nwrong = {helper.name}(1, "x")\n')
+    rejected = oracle.check(
+        str(path), rendered + f'\nwrong = {helper.name}(1, "x"{ownership_argument(helper)})\n'
+    )
     assert isinstance(rejected, CheckSuccess) and rejected.errors
     namespace: dict[str, object] = {}
     exec(compile(rendered, str(path), "exec"), namespace)
@@ -129,12 +147,16 @@ def test_invariant_collections_share_element_and_result_parameters(
     )
     rendered, helper = _extract(path, oracle)
     assert "TypeVar" in rendered and "Any" not in rendered
-    kinds = {argument.arg: _annotation(argument.annotation) for argument in helper.args.args}
+    kinds = {
+        argument.arg: _annotation(argument.annotation) for argument in value_parameters(helper)
+    }
     assert kinds["items"] == f'list[{kinds["value"]}]'
     assert _annotation(helper.returns) == kinds["items"]
     wrong_arguments = {"items": "[1]", "value": '"x"'}
-    bad_call = ", ".join(wrong_arguments[argument.arg] for argument in helper.args.args)
-    rejected = oracle.check(str(path), rendered + f"\nwrong = {helper.name}({bad_call})\n")
+    bad_call = ", ".join(wrong_arguments[argument.arg] for argument in value_parameters(helper))
+    rejected = oracle.check(
+        str(path), rendered + f"\nwrong = {helper.name}({bad_call}{ownership_argument(helper)})\n"
+    )
     assert isinstance(rejected, CheckSuccess) and rejected.errors
     namespace: dict[str, object] = {}
     exec(compile(rendered, str(path), "exec"), namespace)
@@ -162,7 +184,7 @@ def test_two_independent_columns_keep_distinct_parameters(
     """,
     )
     rendered, helper = _extract(path, oracle)
-    kinds = [_annotation(argument.annotation) for argument in helper.args.args]
+    kinds = [_annotation(argument.annotation) for argument in value_parameters(helper)]
     assert len(set(kinds)) == 2
     assert all(kind.startswith("list[") for kind in kinds)
     assert _annotation(helper.returns) == f"tuple[{kinds[0][5:-1]}, {kinds[1][5:-1]}]"
@@ -213,7 +235,9 @@ def test_function_scoped_free_parameters_are_rebound_in_the_helper(
     )
     rendered, helper = _extract(path, oracle)
     result = _annotation(helper.returns)
-    assert result != "T" and _annotation(helper.args.args[0].annotation) == f"list[{result}]"
+    assert (
+        result != "T" and _annotation(value_parameters(helper)[0].annotation) == f"list[{result}]"
+    )
     assert "TypeVar" in rendered and "Any" not in rendered
     assert "def first[T]" in rendered and "def second[T]" in rendered
     namespace: dict[str, object] = {}
@@ -241,7 +265,7 @@ def test_class_scoped_parameters_can_flow_to_an_independent_module_helper(
     rendered, helper = _extract(path, oracle)
     result = _annotation(helper.returns)
     assert result not in {"T", "U", "Any"}
-    assert _annotation(helper.args.args[0].annotation) == f"list[{result}]"
+    assert _annotation(value_parameters(helper)[0].annotation) == f"list[{result}]"
     assert "class First[T]" in rendered and "class Second[U]" in rendered
 
 
@@ -267,7 +291,7 @@ def test_free_legacy_parameters_with_different_names_are_freshened(
     rendered, helper = _extract(path, oracle)
     result = _annotation(helper.returns)
     assert result not in {"T", "U", "Any"}
-    assert _annotation(helper.args.args[0].annotation) == f"list[{result}]"
+    assert _annotation(value_parameters(helper)[0].annotation) == f"list[{result}]"
     assert 'T = TypeVar("T")' in rendered and 'U = TypeVar("U")' in rendered
 
 
@@ -404,8 +428,12 @@ def test_precise_subclass_result_is_not_promoted_to_a_constraint(
     assert "TypeVar" in rendered
     assert "bound=" not in rendered
     result = _annotation(helper.returns)
-    assert _annotation(helper.args.args[0].annotation) == f"list[{result}]"
+    assert _annotation(value_parameters(helper)[0].annotation) == f"list[{result}]"
     assert (
-        oracle.check(str(path), rendered + f"\nprecise: Text = {helper.name}([Text('a')])\n")
+        oracle.check(
+            str(path),
+            rendered
+            + f"\nprecise: Text = {helper.name}([Text('a')]{ownership_argument(helper)})\n",
+        )
         == CheckSuccess()
     )

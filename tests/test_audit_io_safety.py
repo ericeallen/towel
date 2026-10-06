@@ -48,6 +48,22 @@ def two(value):
 """
 
 
+# No parameters and only literal local bindings: these fixtures exercise
+# publication and import safety without requiring an unsafe frame split.
+SAFE_DUPLICATES = """def one():
+    x = 1
+    y = 2
+    z = 3
+    return x * y + z
+
+def two():
+    x = 1
+    y = 2
+    z = 3
+    return x * y + z
+"""
+
+
 def _cli(arguments: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-c", "from towel.cli import main; main()", *arguments],
@@ -139,7 +155,19 @@ def test_dry_with_types_disabled_never_executes_project_ruff(tmp_path: Path) -> 
         "sys.stdout.write(sys.stdin.read())\n"
     )
     source = tmp_path / "input.py"
-    source.write_text(DUPLICATES)
+    # Literal-only locals and no parameters make this extraction lifetime-safe.
+    source.write_text("""def one():
+    x = 1
+    y = 2
+    z = 3
+    return x * y + z
+
+def two():
+    x = 1
+    y = 2
+    z = 3
+    return x * y + z
+""")
     output = tmp_path / "output.py"
     run = _cli(
         [
@@ -154,7 +182,7 @@ def test_dry_with_types_disabled_never_executes_project_ruff(tmp_path: Path) -> 
     )
     assert not (tmp_path / "executed.txt").exists()
     assert run.returncode == 0, run.stderr
-    assert output.read_text().count("y = x * 2") == 1
+    assert output.read_text().count("y = 2") == 1
 
 
 @pytest.mark.parametrize(
@@ -170,11 +198,11 @@ def test_dry_import_sorting_preserves_last_imported_binding(
     source = tmp_path / "input.py"
     source.write_text(
         "import math as numeric\nimport cmath as numeric\n\n"
-        + DUPLICATES
-        + "\nprint(numeric.sqrt(-1), one(3), two(4))\n"
+        + SAFE_DUPLICATES
+        + "\nprint(numeric.sqrt(-1), one(), two())\n"
     )
     expected = _behavior(source)
-    assert expected == (0, "1j 5 14\n", "")
+    assert expected == (0, "1j 5 5\n", "")
     output = tmp_path / "output.py"
     run = _cli(
         [
@@ -188,7 +216,7 @@ def test_dry_import_sorting_preserves_last_imported_binding(
         ]
     )
     assert run.returncode == 0, run.stderr
-    assert output.read_text().count("y = x * 2") == 1
+    assert output.read_text().count("y = 2") == 1
     assert _behavior(output) == expected
 
 
@@ -284,9 +312,9 @@ def test_r9p2_a_hard_linked_file_is_left_alone_and_the_rest_refactored_in_place(
     target = tmp_path / "project"
     target.mkdir()
     source = target / "program.py"
-    source.write_text(DUPLICATES)
+    source.write_text(SAFE_DUPLICATES)
     other = target / "other.py"
-    other.write_text(DUPLICATES)
+    other.write_text(SAFE_DUPLICATES)
     outside = tmp_path / "outside-link.py"
     os.link(source, outside)
     # Files the run never writes are not reported: data, and an excluded module.
@@ -313,7 +341,7 @@ def test_r9p2_a_hard_linked_file_is_left_alone_and_the_rest_refactored_in_place(
     assert f"{source.resolve()} has 2 hard links" in run.stderr
     assert run.stderr.count("hard links") == 1, run.stderr
     assert "not writable in place: its file is hard-linked 1" in run.stdout + run.stderr
-    assert source.read_text() == outside.read_text() == DUPLICATES
+    assert source.read_text() == outside.read_text() == SAFE_DUPLICATES
     assert source.stat().st_ino == outside.stat().st_ino
     assert "__extracted_func" in other.read_text()
 
@@ -323,12 +351,12 @@ def test_r9p2_a_hard_linked_file_refactored_in_place_is_refused_before_the_run(
 ) -> None:
     """Refused up front with a remedy, which then works, rather than after the whole run."""
     source = tmp_path / "program.py"
-    source.write_text(DUPLICATES)
+    source.write_text(SAFE_DUPLICATES)
     os.link(source, tmp_path / "link.py")
     refused = _cli(["dry", str(source), str(source), "--no-types", "--no-interactive"])
     assert refused.returncode == 1
     assert "has 2 hard links" in refused.stderr and "OUTPUT.py" in refused.stderr
-    assert source.read_text() == DUPLICATES
+    assert source.read_text() == SAFE_DUPLICATES
     written = tmp_path / "OUTPUT.py"
     remedy = _cli(["dry", str(source), str(written), "--no-types", "--no-interactive"])
     assert remedy.returncode == 0, remedy.stderr
@@ -339,7 +367,7 @@ def test_directory_does_not_retry_a_permanent_change_conflict(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = tmp_path / "program.py"
-    source.write_text(DUPLICATES)
+    source.write_text(SAFE_DUPLICATES)
     attempts = 0
 
     def refuse(self: UnificationRefactorEngine, proposal: RefactoringProposal) -> dict[str, str]:
@@ -355,4 +383,4 @@ def test_directory_does_not_retry_a_permanent_change_conflict(
             str(tmp_path), str(tmp_path), progress="none"
         )
     assert attempts == 1
-    assert source.read_text() == DUPLICATES
+    assert source.read_text() == SAFE_DUPLICATES

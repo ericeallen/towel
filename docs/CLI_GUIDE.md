@@ -140,7 +140,8 @@ towel dry path/to/project path/to/cleaned --no-interactive --no-types --no-forma
 ```
 
 - `--min-lines` raises the smallest candidate block size.
-- `--max-parameters` limits helper parameters.
+- `--max-parameters` limits helper parameters. A certified whole-body
+  ownership transfer also counts its final holder argument against this limit.
 - `--max-pairs` caps the candidate pairs considered in one analysis; groups
   omitted to meet the cap are reported.
 - `TOWEL_WORKERS=1` keeps analysis on one worker; `TOWEL_WORKERS=N` caps it at N.

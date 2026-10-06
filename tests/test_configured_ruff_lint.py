@@ -25,7 +25,7 @@ from tests.test_cli_integration import invoke
 from towel.formatting import LintRejected, file_finisher_for_project
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-DUPLICATED_LABELS = 'def first(label, pos):\n    if len(label) > 100:\n        raise ValueError("too long")\n    cp = ord(label[pos])\n    return cp\n\ndef second(label, pos):\n    if len(label) > 100:\n        raise ValueError("too long")\n    cp = ord(label[pos])\n    return cp + 1\n'
+DUPLICATED_LABELS = 'def first(label, pos):\n    if len(label) > 100:\n        raise ValueError("too long")\n    cp = ord(label[pos])\n    return cp\n\ndef second(label, pos):\n    if len(label) > 100:\n        raise ValueError("too long")\n    cp = ord(label[pos])\n    return cp\n'
 
 
 def _module(root: Path, source: str, rules: str) -> Path:
@@ -212,7 +212,7 @@ def test_cli_preserves_lint_baseline_with_and_without_formatting(
         DUPLICATED_LABELS,
         '"RET504"',
     )
-    # The original first warning must not pay for a new warning in the helper.
+    # The original warnings must not pay for a new warning in the helper.
     original = module.read_text()
     destination = tmp_path / "out.py"
     result = invoke(

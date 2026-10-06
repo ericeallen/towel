@@ -47,8 +47,10 @@ import towel
 from tests.test_import_model import _installed, requires_uv
 
 _WITHIN = """
-def {name}(values):
-    print({tag!r})
+from builtins import print as emit
+
+def {name}(values, tag={tag!r}):
+    emit(tag)
     total = 0
     for value in values:
         if value > 1:
@@ -61,8 +63,10 @@ def {name}(values):
 """A block two modules of one package share: their helper is imported relatively."""
 
 _ACROSS = """
-def {name}(words):
-    print({tag!r})
+from builtins import print as emit
+
+def {name}(words, tag={tag!r}):
+    emit(tag)
     seen = []
     for word in words:
         cleaned = word.strip().lower()

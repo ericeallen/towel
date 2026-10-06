@@ -49,6 +49,10 @@ from .annotation_imports import (
     words_of,
 )
 from .block_comments import excluded_lines, weave_comments
+from .argument_ownership import render_argument_handoff, verify_argument_handoff
+from .function_scope import identifiers
+from ..formatting import checked, formatting_repeatability
+from ..canonical_ast import canonical_dump
 from .class_private import is_class_private, mangled, mangling_classes, mangling_prefix
 from .engine_state import HelperNameClaims
 from .exceptions import ProjectScanLimitError, RefactoringError, UntypeableExtraction
@@ -163,12 +167,18 @@ class Materialization(
         finally:
             self._helper_name_counters = counters
 
-    def _render(self, node: ast.AST, prefix: str = "") -> str:
+    def _render(self, node: ast.AST, prefix: str = "", *, preserve_ast: bool = False) -> str:
         """The source text inserted for a generated node, formatted when a formatter is set."""
         source = ast.unparse(node)
-        if self.snippet_formatter is None:
+        return self._format_snippet(source, prefix, preserve_ast=preserve_ast)
+
+    def _format_snippet(self, source: str, prefix: str, *, preserve_ast: bool) -> str:
+        formatter = self.snippet_formatter
+        if formatter is None:
             return source
-        return format_at_indentation(self.snippet_formatter, source, prefix)
+        if preserve_ast and formatting_repeatability(formatter) is None:
+            formatter = checked(formatter)
+        return format_at_indentation(formatter, source, prefix)
 
     def _helper_text(self, proposal: RefactoringProposal, node: ast.AST, prefix: str = "") -> str:
         """The helper's text: ``node`` rendered with the comments its sites' blocks carried.
@@ -179,13 +189,14 @@ class Materialization(
         not used: the helper is then inserted as rendered, where each
         directive stands beside the code it was written for.
         """
+        preserve_ast = any(r.argument_handoff is not None for r in proposal.replacements)
         if not proposal.helper_comments.carried:
-            return self._render(node, prefix)
+            return self._render(node, prefix, preserve_ast=preserve_ast)
         helper = node.body[-1] if isinstance(node, ast.Module) else node
         woven = weave_comments(node, helper, proposal.helper_comments)
         if self.snippet_formatter is None:
             return woven.text
-        formatted = format_at_indentation(self.snippet_formatter, woven.text, prefix)
+        formatted = self._format_snippet(woven.text, prefix, preserve_ast=preserve_ast)
         return formatted if woven.keeps_directives(formatted) else woven.text
 
     def _materialize_refactoring(self, proposal: RefactoringProposal) -> Dict[str, str]:
@@ -235,6 +246,7 @@ class Materialization(
         # from the original helper name.
         rendered = copy.deepcopy(variant)
         try:
+            self._append_argument_holder(rendered)
             files = self._materialize_once(rendered)
             errors = (
                 self._project_errors(
@@ -255,6 +267,49 @@ class Materialization(
             rendered.extracted_function.name,
             files[rendered.file_path],
             files,
+        )
+
+    def _append_argument_holder(self, proposal: RefactoringProposal) -> None:
+        """Extend only the owned rendering copy, after signature inference/ladder selection."""
+        if not any(
+            replacement.argument_handoff is not None for replacement in proposal.replacements
+        ):
+            return
+        if proposal.reused_function is not None:
+            raise RefactoringError("An existing function cannot receive an ownership holder")
+        helper = proposal.extracted_function
+        for replacement in proposal.replacements:
+            if replacement.argument_handoff is not None:
+                original = "".join(self._source_lines(replacement.file_path or proposal.file_path))
+                if not verify_argument_handoff(
+                    replacement.argument_handoff, original, replacement.node, helper
+                ):
+                    raise RefactoringError(
+                        "Argument ownership certificate does not match the original source"
+                    )
+        arguments = helper.args
+        if (
+            arguments.kwonlyargs
+            or arguments.defaults
+            or arguments.vararg
+            or arguments.kwarg
+            or getattr(helper, "type_comment", None) is not None
+            or len(arguments.posonlyargs) + len(arguments.args) + 1 > self.unifier.max_parameters
+        ):
+            raise RefactoringError("The helper cannot add a final ownership parameter")
+        taken = identifiers((helper,))
+        name = "_towel_owner"
+        index = 0
+        while name in taken:
+            index += 1
+            name = f"_towel_owner_{index}"
+        annotated = helper.returns is not None or any(
+            parameter.annotation is not None
+            for parameter in (*arguments.posonlyargs, *arguments.args)
+        )
+        # Adding the only annotation would change which untyped bodies mypy checks.
+        arguments.args.append(
+            ast.arg(arg=name, annotation=ast.Constant(value="object") if annotated else None)
         )
 
     def _materialize_once(self, proposal: RefactoringProposal) -> Dict[str, str]:
@@ -542,7 +597,19 @@ class Materialization(
             )
         assembled = "".join(lines)
         if self.file_finisher is not None:
+            handoff = any(r.argument_handoff is not None for r in proposal.replacements)
+            prove_ast = handoff and formatting_repeatability(self.file_finisher) is None
+            before_ast = canonical_dump(ast.parse(assembled)) if prove_ast else None
             assembled = self.file_finisher(file_path, assembled)
+            if prove_ast:
+                try:
+                    after = canonical_dump(ast.parse(assembled))
+                except SyntaxError as error:
+                    raise RefactoringError(
+                        "File finisher changed the argument handoff AST"
+                    ) from error
+                if before_ast != after:
+                    raise RefactoringError("File finisher changed the argument handoff AST")
         require_protected_definitions_unchanged(original, assembled)
         return assembled
 
@@ -573,7 +640,11 @@ class Materialization(
             block_lines = lines[start_line - 1 : end_line]
             first = block_lines[0]
             indentation = first[: len(first) - len(first.lstrip())]
-            replacement_code = self._render(self._call_site(proposal, naming, repl), indentation)
+            replacement_code = self._render(
+                self._call_site(proposal, naming, repl),
+                indentation,
+                preserve_ast=any(r.argument_handoff is not None for r in proposal.replacements),
+            )
             spliced = splice_block(
                 block_lines, repl.columns or whole_lines(block_lines), replacement_code
             )
@@ -593,10 +664,13 @@ class Materialization(
     def _call_site(
         self, proposal: RefactoringProposal, naming: _HelperNaming, repl: Replacement
     ) -> ast.AST:
-        """The replacement's call, retargeted to the helper's final name and placement."""
-        node = copy.deepcopy(repl.node)
+        """Retarget first, then transfer certified original argument ownership."""
+        node: ast.AST = copy.deepcopy(repl.node)
+        handed = any(
+            replacement.argument_handoff is not None for replacement in proposal.replacements
+        )
         if proposal.insert_into_class and repl.class_name:
-            return self._rewrite_call_for_method(
+            node = self._rewrite_call_for_method(
                 node,
                 naming.original_name,
                 naming.final_name,
@@ -604,10 +678,21 @@ class Materialization(
                 repl.implicit_param or proposal.method_param_name,
                 repl.class_name,
                 naming.receiver_parameter_index,
-                naming.parameter_count,
+                naming.parameter_count - int(handed),
             )
-        if naming.original_name != naming.final_name:
-            return self._retarget_helper_calls(node, naming.original_name, naming.final_name)
+        elif naming.original_name != naming.final_name:
+            node = self._retarget_helper_calls(node, naming.original_name, naming.final_name)
+        if repl.argument_handoff is not None:
+            return render_argument_handoff(node, repl.argument_handoff, naming.final_name)
+        if handed:
+            for call in ast.walk(node):
+                if isinstance(call, ast.Call) and (
+                    isinstance(call.func, ast.Name)
+                    and call.func.id == naming.final_name
+                    or isinstance(call.func, ast.Attribute)
+                    and call.func.attr == naming.final_name
+                ):
+                    call.args.append(ast.Constant(value=None))
         return node
 
     def _insert_helper(

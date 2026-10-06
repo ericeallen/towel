@@ -32,17 +32,17 @@ import pytest
 from towel.formatting import BlackSettings, black_formatter
 from towel.project_tools import IsolatedFormatTool, ToolFailure
 
-DUPLICATES = """def one(value):
-    x = value + 1
-    y = x * 2
-    z = y - 3
-    return x, y, z
+DUPLICATES = """def one():
+    x = 1
+    y = 2
+    z = 3
+    return x * y + z
 
-def two(value):
-    x = value + 1
-    y = x * 2
-    z = y - 3
-    return x, y, z + 7
+def two():
+    x = 1
+    y = 2
+    z = 3
+    return x * y + z
 """
 
 
@@ -109,7 +109,7 @@ def test_fresh_entry_ignores_project_tools_and_their_dependencies(
     for name in ("one", "two"):
         original, refactored = before[name], after[name]
         assert callable(original) and callable(refactored)
-        assert original(5) == refactored(5)
+        assert original() == refactored()
 
 
 def test_preloaded_rogue_tools_do_not_change_or_leak_to_concurrent_calls(

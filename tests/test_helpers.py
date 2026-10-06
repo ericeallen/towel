@@ -280,3 +280,59 @@ def refactor_to_fixed_point_silently(
     with contextlib.redirect_stdout(io.StringIO()):
         final, applied, _descriptions = engine.refactor_to_fixed_point(path, max_iterations=0)
     return final, applied
+
+
+def original_argument_name(function: ast.FunctionDef, expression: ast.expr) -> str:
+    """Resolve a direct parameter read or an indexed generated ownership-box read.
+
+    Validate the literal box and index, rather than accepting any subscription
+    as receiver dispatch. This lets semantic assertions survive the handoff's
+    changed source spelling.
+    """
+    if isinstance(expression, ast.Name):
+        return expression.id
+    assert isinstance(expression, ast.Subscript), ast.dump(expression)
+    assert isinstance(expression.value, ast.Subscript)
+    inner = expression.value
+    assert isinstance(inner.value, ast.Name)
+    assert isinstance(inner.slice, ast.Constant) and type(inner.slice.value) is int
+    assert inner.slice.value == 0
+    assert isinstance(expression.slice, ast.Constant) and type(expression.slice.value) is int
+    index = expression.slice.value
+    assignments = [
+        node
+        for node in function.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == inner.value.id
+    ]
+    assert len(assignments) == 1
+    value = assignments[0].value
+    assert isinstance(value, ast.List) and len(value.elts) == 1
+    values = value.elts[0]
+    assert isinstance(values, ast.Tuple) and 0 <= index < len(values.elts)
+    parameter = values.elts[index]
+    assert isinstance(parameter, ast.Name)
+    return parameter.id
+
+
+def method_helper_calls(source: str, receiver: str = "self") -> list[ast.Call]:
+    """Private generated dispatches whose receiver resolves to the original parameter."""
+    found: list[ast.Call] = []
+    for function in ast.walk(ast.parse(source)):
+        if not isinstance(function, ast.FunctionDef) or not any(
+            argument.arg == receiver
+            for argument in (*function.args.posonlyargs, *function.args.args)
+        ):
+            continue
+        for call in ast.walk(function):
+            if not (
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr.startswith("__extracted_func")
+            ):
+                continue
+            if original_argument_name(function, call.func.value) == receiver:
+                found.append(call)
+    return found
