@@ -30,6 +30,8 @@ method form and the helper signature to match.
 from __future__ import annotations
 
 import ast
+import copy
+from dataclasses import replace
 
 from weakref import WeakKeyDictionary
 from typing import (
@@ -50,9 +52,15 @@ from .models import (
     FunctionNode,
     MethodInfo,
     MethodKind,
+    RefactoringProposal,
+    Replacement,
 )
-from .class_private import mangling_prefix
+from .class_private import is_class_private, mangling_prefix, rewritten_identifiers
 from .scope_analyzer import ScopeAnalyzer
+from .semantic_safety import needs_class_body
+from .argument_ownership import render_argument_handoff
+from .function_scope import identifiers
+from .exceptions import RefactoringError
 from .module_bindings import ModuleBindings, dotted_name, global_bindings, import_origin
 from .import_graph import module_scope_statements
 from .protocol_bases import bases_allow_private_helpers
@@ -481,6 +489,23 @@ class _CallRenamer(ast.NodeTransformer):
         return updated
 
 
+def _helper_reads_class_private_names(helper: ast.FunctionDef) -> bool:
+    """Private names that still need the original lexical class after substitution.
+
+    Generated formal names can be mangled consistently in either home. An
+    attribute's spelling or a remaining global/local private binding cannot.
+    Reads moved into a caller thunk stay in the caller's lexical class.
+    """
+    parameters = {argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)}
+    return any(
+        is_class_private(name)
+        for statement in helper.body
+        for node in ast.walk(statement)
+        for name in rewritten_identifiers(node)
+        if not isinstance(node, (ast.Name, ast.arg)) or name not in parameters
+    )
+
+
 class HelperPlacement(EngineState):
     """Helper Placement methods of the engine; see the module docstring."""
 
@@ -578,6 +603,71 @@ class HelperPlacement(EngineState):
         if original_name == final_name:
             return node
         return visit_as(_CallRenamer(original_name, final_name), node)
+
+    @staticmethod
+    def _append_holder_parameter(helper: ast.FunctionDef) -> None:
+        """Append the same hygienic holder to an owned signature or interface preview."""
+        arguments = helper.args
+        taken = identifiers((helper,))
+        name = "_towel_owner"
+        index = 0
+        while name in taken:
+            index += 1
+            name = f"_towel_owner_{index}"
+        annotated = helper.returns is not None or any(
+            parameter.annotation is not None
+            for parameter in (*arguments.posonlyargs, *arguments.args)
+        )
+        # Adding the only annotation would change which untyped bodies mypy checks.
+        arguments.args.append(
+            ast.arg(arg=name, annotation=ast.Constant(value="object") if annotated else None)
+        )
+
+    def _prepare_helper_interface(
+        self, proposal: RefactoringProposal, *, reserve_ownership_holder: bool = False
+    ) -> ast.FunctionDef:
+        """The emitted interface, without changing the original call-argument mapping.
+
+        Call sites still address the unplaced parameter order. Class insertion
+        normalizes the rendering after those calls have been rewritten; guards
+        need the same normalization on an owned copy before publication.
+        """
+        helper = copy.deepcopy(proposal.extracted_function)
+        if proposal.reused_function is not None:
+            return helper
+        has_handoff = any(
+            replacement.argument_handoff is not None for replacement in proposal.replacements
+        )
+        if reserve_ownership_holder and has_handoff:
+            self._append_holder_parameter(helper)
+        if proposal.insert_into_class is not None:
+            self._prepare_extracted_method_signature(
+                helper, proposal.method_kind or "instance", proposal.method_param_name
+            )
+        if has_handoff:
+            args = helper.args
+            if len(args.posonlyargs) + len(args.args) > self.unifier.max_parameters:
+                raise RefactoringError("The final helper exceeds the ownership parameter budget")
+        return helper
+
+    @staticmethod
+    def _profitability_sites(proposal: RefactoringProposal) -> List[Replacement]:
+        """Actual ownership capture wrappers, without publishing or changing a proposal."""
+        return [
+            (
+                replace(
+                    replacement,
+                    node=render_argument_handoff(
+                        replacement.node,
+                        replacement.argument_handoff,
+                        proposal.extracted_function.name,
+                    ).body[-1],
+                )
+                if replacement.argument_handoff is not None
+                else replacement
+            )
+            for replacement in proposal.replacements
+        ]
 
     def _prepare_extracted_method_signature(
         self,
@@ -789,6 +879,7 @@ class HelperPlacement(EngineState):
         method_info1: MethodInfo,
         method_info2: MethodInfo,
         class_infos: List[ClassInfo],
+        helper: ast.FunctionDef,
     ) -> Optional[ClassInsertionPlan]:
         """The class whose method the helper becomes, or None for a module-level helper.
 
@@ -833,6 +924,16 @@ class HelperPlacement(EngineState):
             # ordinary argument.
             return None
         if k1 != k2:
+            return None
+        receiver = _implicit_param_for(k1, method_info1, method_info2)
+        # Original receiver reads may now live only in caller-side thunks.
+        # Placement uses the completed helper, not those earlier reads. Do not
+        # memoize its mutable construction AST as an original function.
+        if not (
+            receiver in _dispatched_names(helper)
+            or needs_class_body(helper.body)
+            or _helper_reads_class_private_names(helper)
+        ):
             return None
         if mangling_prefix(class_name) is None:
             # The helper is class-private, ``__extracted_func_0``, so that no

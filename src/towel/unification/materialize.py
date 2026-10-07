@@ -54,7 +54,7 @@ from .argument_ownership import (
     render_argument_handoff,
     verify_argument_handoff,
 )
-from .function_scope import identifiers
+from .profitability import worthwhile_helper
 from ..formatting import checked, formatting_repeatability
 from ..canonical_ast import canonical_dump
 from .class_private import is_class_private, mangled, mangling_classes, mangling_prefix
@@ -297,23 +297,9 @@ class Materialization(
                     raise RefactoringError(
                         "Argument ownership certificate does not match the original source"
                     )
-        arguments = helper.args
         if not argument_handoff_fits(helper, self.unifier.max_parameters):
             raise RefactoringError("The helper cannot add a final ownership parameter")
-        taken = identifiers((helper,))
-        name = "_towel_owner"
-        index = 0
-        while name in taken:
-            index += 1
-            name = f"_towel_owner_{index}"
-        annotated = helper.returns is not None or any(
-            parameter.annotation is not None
-            for parameter in (*arguments.posonlyargs, *arguments.args)
-        )
-        # Adding the only annotation would change which untyped bodies mypy checks.
-        arguments.args.append(
-            ast.arg(arg=name, annotation=ast.Constant(value="object") if annotated else None)
-        )
+        self._append_holder_parameter(helper)
 
     def _materialize_once(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render one proposal into modified sources (see ``_materialize_refactoring``)."""
@@ -342,6 +328,13 @@ class Materialization(
             proposal.reused_function is not None or proposal.insert_into_function is not None
         ):
             raise RefactoringError("Type declarations require a fresh module or class helper")
+        helper = self._prepare_helper_interface(proposal)
+        if (
+            self.skip_trivial_helpers
+            and proposal.reused_function is None
+            and not worthwhile_helper(helper, self._profitability_sites(proposal))
+        ):
+            raise RefactoringError("The helper interface outweighs its shared logic")
         replacements_by_file: Dict[str, List[Replacement]] = {}
         for repl in proposal.replacements:
             file_path = repl.file_path or proposal.file_path

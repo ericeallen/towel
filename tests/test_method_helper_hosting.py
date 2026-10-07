@@ -349,3 +349,86 @@ def test_the_module_function_siblings_share_passes_mypy_strict_and_pyright_stric
     assert _run(tmp_path, driver, tmp_path) == before
     for tool in ("mypy", "pyright"):
         assert _strict_errors(tool, path) == [], (tool, source)
+
+
+CAPTURED_RECEIVER = """events=[]
+class C:
+    def __del__(self): events.append("del:self")
+    @property
+    def alpha(self): events.append("alpha"); return 2
+    @property
+    def beta(self): events.append("beta"); return 3
+    def first(self,x,y):
+        events.append("head")
+        data = self.alpha
+        result = x + y
+        return data + result
+    def second(self,x,y):
+        events.append("head")
+        data = self.beta
+        result = x + y
+        return data + result
+"""
+
+
+@pytest.mark.parametrize("private", [False, True])
+def test_capture_only_receiver_does_not_restore_an_unused_method_parameter(
+    tmp_path: Path, private: bool
+) -> None:
+    """The callable captures the receiver; private reads stay in that caller's class."""
+    source = CAPTURED_RECEIVER
+    if private:
+        source = source.replace("alpha", "__alpha").replace("beta", "__beta")
+    path = tmp_path / "subject.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(
+        min_lines=3, max_parameters=4, reuse_existing_functions=False
+    )
+    proposals = engine.analyze_file(str(path))
+    assert proposals
+    proposal = proposals[0]
+    assert proposal.insert_into_class is None
+    assert all(replacement.argument_handoff is not None for replacement in proposal.replacements)
+    output = engine.apply_refactoring(str(path), proposal)
+    helper = next(
+        node
+        for node in ast.parse(output).body
+        if isinstance(node, ast.FunctionDef) and is_generated_helper_name(node.name)
+    )
+    parameters = [argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)]
+    assert len(parameters) == 4 and "self" not in parameters
+    assert any(name.startswith("_towel_owner") for name in parameters)
+    driver = "import subject as s; print(s.C().first(1,2),s.C().second(1,2),s.events)"
+    before = _run(tmp_path, driver)
+    path.write_text(output)
+    assert _run(tmp_path, driver) == before
+
+
+def test_remaining_private_receiver_reads_keep_the_class_host(
+    tmp_path: Path,
+) -> None:
+    """A surviving private member read still compiles under its original class."""
+    source = """events=[]
+class C:
+    __offset = 3
+    def first(self,value,extra=1):
+        total = value + self.__offset
+        events.append(total)
+        return total + extra
+    def second(self,value,extra=2):
+        total = value + self.__offset
+        events.append(total)
+        return total + extra
+"""
+    path = tmp_path / "subject.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(
+        min_lines=3, max_parameters=5, reuse_existing_functions=False
+    )
+    proposals = engine.analyze_file(str(path))
+    assert proposals and proposals[0].insert_into_class == "C"
+    output = engine.apply_refactoring(str(path), proposals[0])
+    driver = "import subject as s; print(s.C().first(2),s.C().second(4),s.events)"
+    before = _run(tmp_path, driver)
+    path.write_text(output)
+    assert _run(tmp_path, driver) == before

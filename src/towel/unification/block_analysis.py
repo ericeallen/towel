@@ -910,22 +910,6 @@ class BlockAnalysis(EngineState):
         return aug_assign_vars
 
     @staticmethod
-    def _strip_fstring_params(substitution: Substitution) -> None:
-        """Drop parameters that map to a whole f-string in the template block.
-
-        Parameterizing an entire ``JoinedStr`` would replace the f-string with a
-        single argument and lose its structure, so those parameters are removed.
-        """
-        fstring_params = []
-        for param_name, exprs in substitution.param_expressions.items():
-            for block_idx, expr in exprs:
-                if block_idx == 0 and isinstance(expr, ast.JoinedStr):
-                    fstring_params.append(param_name)
-                    break
-        for param_name in fstring_params:
-            del substitution.param_expressions[param_name]
-
-    @staticmethod
     def _working_free_vars(
         substitution: Substitution, aug_assign_vars: Set[str], free_vars1: Set[str]
     ) -> Set[str]:

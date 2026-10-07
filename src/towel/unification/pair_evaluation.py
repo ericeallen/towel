@@ -87,7 +87,8 @@ from .semantic_safety import (
 from .clustering import Clustering
 from .reuse import ExistingFunctionReuse
 from .annotation_wiring import HelperAnnotationWiring
-from .placement import HelperPlacement
+from .placement import HelperPlacement, _helper_reads_class_private_names
+from .profitability import worthwhile_helper
 from .block_analysis import BlockAnalysis
 from .engine_state import BlockSite
 from .extractor import UnsupportedExtraction, has_complete_return_coverage
@@ -103,7 +104,6 @@ from .narrowing import (
 from .models import (
     HelperHome,
     proposal_identity,
-    span_contains,
     BlockBindingSnapshot,
     ClassInfo,
     ClusterContext,
@@ -128,7 +128,6 @@ from .semantic_safety import (
     frame_read_outside_block,
     needs_class_body,
     unbinds_external_name,
-    uses_class_private_names,
 )
 from .import_graph import (
     ImportChange,
@@ -340,27 +339,6 @@ def _touches_nonlocal(function: FunctionNode, block: Sequence[ast.stmt]) -> bool
         return False
     names = code_names(block)
     return bool(declared & (names.references.keys() | names.bound.keys() | names.declared_nonlocal))
-
-
-def _replacement_statements(function: FunctionNode, replacement: Replacement) -> List[ast.stmt]:
-    """The original statements that move, including exact semicolon boundaries."""
-    first, last = replacement.line_range
-    columns = replacement.columns
-    start = (first, columns.start if columns is not None else 0)
-    end = (last, columns.end if columns is not None else float("inf"))
-    pending: List[ast.AST] = list(reversed(function.body))
-    found: List[ast.stmt] = []
-    while pending:
-        node = pending.pop()
-        if (
-            isinstance(node, ast.stmt)
-            and start <= (node.lineno, node.col_offset)
-            and (node.end_lineno or node.lineno, node.end_col_offset or 0) <= end
-        ):
-            found.append(node)
-        else:
-            pending.extend(reversed(list(ast.iter_child_nodes(node))))
-    return found
 
 
 @dataclass(frozen=True)
@@ -608,7 +586,9 @@ class PairEvaluation(
         )
         if sites is None:
             return None
-        placement = self._place_helper(pair, setup, scope, sites, functions, class_infos)
+        placement = self._place_helper(
+            pair, setup, scope, sites, rendered.func_def, functions, class_infos
+        )
         if placement is None:
             return None
         reads = self._host_namespace_reads(placement, rendered.func_def)
@@ -1073,7 +1053,6 @@ class PairEvaluation(
 
         substitution = unified.substitution
         aug_assign_vars = self._reserve_augassign_params(pair, substitution)
-        self._strip_fstring_params(substitution)
         spellings = self._builtin_spellings(pair, ctx, free_vars1 | free_vars2)
         if spellings is None:
             return None
@@ -1528,12 +1507,13 @@ class PairEvaluation(
         setup: _PairSetup,
         scope: _HelperScope,
         sites: _CallSites,
+        helper: ast.FunctionDef,
         functions: FunctionIndex,
         class_infos: List[ClassInfo],
     ) -> Optional[_Placement]:
         """Where the helper lives: a unique enclosing function, a class, or a module that closes no cycle."""
         ctx = setup.ctx
-        home = self._helper_home(pair, setup, scope, functions, class_infos)
+        home = self._helper_home(pair, setup, scope, helper, functions, class_infos)
         if setup.needs_class_body and home.insert_into_class is None:
             # Zero-argument ``super()`` means what it meant only in a helper
             # compiled in the class body that holds both blocks; a module or
@@ -1541,6 +1521,15 @@ class PairEvaluation(
             self._debug_reject(RejectReason.NEEDS_CLASS_BODY, pair)
             return None
         replacements = sites.replacements
+        if any(replacement.argument_handoff is not None for replacement in replacements):
+            placed_helper = copy.deepcopy(helper)
+            if home.insert_into_class is not None:
+                self._prepare_extracted_method_signature(
+                    placed_helper, home.method_kind or "instance", home.method_param_name
+                )
+            if not argument_handoff_fits(placed_helper, self.unifier.max_parameters):
+                self._debug_reject(RejectReason.OWNERSHIP_PARAMETER_BUDGET, pair)
+                return None
         if home.insert_into_class is not None and sites.cluster_contexts:
             # The helper is a method called through the receiver. A clustered
             # block in another class, in a module-level function, or in a
@@ -1570,19 +1559,14 @@ class PairEvaluation(
                 a.class_name for a in functions.named(canonical_file, home.insert_into_function)
             }
             destination_class = next(iter(destinations)) if len(destinations) == 1 else None
-        # A site's block lies somewhere in its function's body, and moves out
-        # of its class; the function's own name and signature stay behind.
-        for replacement in replacements:
-            if replacement.class_name and replacement.class_name != destination_class:
-                source_path = replacement.file_path or canonical_file
-                for a in functions.in_file(source_path):
-                    if (
-                        a.class_name == replacement.class_name
-                        and span_contains(a.node, replacement.line_range)
-                        and uses_class_private_names(_replacement_statements(a.node, replacement))
-                    ):
-                        self._debug_reject(RejectReason.PRIVATE_NAME_LEXICAL_CLASS, pair)
-                        return None
+        # Only the helper's remaining private reads move. A substituted
+        # receiver expression in a caller thunk keeps the caller's mangling.
+        if _helper_reads_class_private_names(helper) and any(
+            replacement.class_name and replacement.class_name != destination_class
+            for replacement in replacements
+        ):
+            self._debug_reject(RejectReason.PRIVATE_NAME_LEXICAL_CLASS, pair)
+            return None
         # The cross-module check may move the helper to another file.
         return _Placement(dataclasses.replace(home, file_path=canonical_file), replacements)
 
@@ -1591,6 +1575,7 @@ class PairEvaluation(
         pair: CodeBlockPair,
         setup: _PairSetup,
         scope: _HelperScope,
+        helper: ast.FunctionDef,
         functions: FunctionIndex,
         class_infos: List[ClassInfo],
     ) -> "HelperHome":
@@ -1608,7 +1593,7 @@ class PairEvaluation(
             if len(functions.named(canonical_file, scope.dce_insert_func)) == 1:
                 return HelperHome(canonical_file, None, scope.dce_insert_func, None, None)
         class_plan = self._choose_class_insertion(
-            pair, setup.method_info1, setup.method_info2, class_infos
+            pair, setup.method_info1, setup.method_info2, class_infos, helper
         )
         if class_plan is not None:
             return HelperHome(
@@ -1807,6 +1792,11 @@ class PairEvaluation(
                 self._debug_reject(
                     RejectReason.EXISTING_HELPER_BECOMES_FORWARDER, pair, detail=forwarder
                 )
+                return None
+        if self.skip_trivial_helpers and proposal.reused_function is None:
+            helper = self._prepare_helper_interface(proposal, reserve_ownership_holder=True)
+            if not worthwhile_helper(helper, self._profitability_sites(proposal)):
+                self._debug_reject(RejectReason.UNPROFITABLE_HELPER, pair)
                 return None
         if self.annotate_helpers:
             proposal = self._with_helper_annotations(proposal, functions)

@@ -544,3 +544,60 @@ def test_analysis_reserves_the_final_holder_in_the_parameter_budget(tmp_path: Pa
         assert _effects(SOURCE, "f") == _effects(output, "f")
         assert _effects(SOURCE, "g") == _effects(output, "g")
     assert path.read_text() == SOURCE
+
+
+SUPER_CAPTURED_RECEIVER = """events=[]
+class Base:
+    def label(self,n): return str(n)
+class C(Base):
+    @property
+    def alpha(self): return "A"
+    @property
+    def beta(self): return "B"
+    def first(self,n,transform=str.upper):
+        events.append('head')
+        text=super().label(n)
+        events.append(self.alpha)
+        return transform(text)
+    def second(self,n,transform=str.lower):
+        events.append('head')
+        text=super().label(n)
+        events.append(self.beta)
+        return transform(text)
+"""
+
+
+def test_method_budget_includes_implicit_super_receiver_and_holder(tmp_path: Path) -> None:
+    """Receiver-free syntax still requires the original frame's first argument for super()."""
+    path = tmp_path / "p.py"
+    path.write_text(SUPER_CAPTURED_RECEIVER)
+    refused = UnificationRefactorEngine(
+        min_lines=3, max_parameters=4, reuse_existing_functions=False
+    )
+    assert refused.analyze_file(str(path)) == []
+    assert "ownership_parameter_budget" in refused.declined_pairs
+    engine, proposal = _proposal(tmp_path, SUPER_CAPTURED_RECEIVER, budget=5)
+    assert proposal.insert_into_class == "C"
+    output = engine.apply_refactoring(str(path), proposal)
+    helper = next(
+        node
+        for node in ast.walk(ast.parse(output))
+        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+    )
+    parameters = [argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)]
+    assert parameters[0] == "self" and len(parameters) == 5
+    assert any(name.startswith("_towel_owner") for name in parameters)
+
+    def observe(text: str) -> tuple[object, object, object]:
+        namespace: dict[str, object] = {}
+        exec(text, namespace)
+        klass = cast(Callable[[], object], namespace["C"])
+        first = getattr(klass(), "first")
+        second = getattr(klass(), "second")
+        return first(1), second(2), namespace["events"]
+
+    assert observe(output) == observe(SUPER_CAPTURED_RECEIVER)
+    # A proposal prepared under a larger budget cannot bypass the final guard.
+    engine.unifier.max_parameters = 4
+    with pytest.raises(RefactoringError, match="final helper.*ownership parameter"):
+        engine.apply_refactoring(str(path), proposal)
