@@ -202,6 +202,12 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   (`hostile_execution.ScopeWatch`): a name a kept function still reads must
   keep its scope, which a program's output shows only on the path that
   reads it.
+  Fresh unread retention slots are exempt only after an independent AST
+  comparison pairs the original removed block with its generated helper,
+  including caller inputs, local binders, nested shadowing and every return
+  slot. CPython supplies the original function-local names. Retention-name
+  prefixes alone never exempt a binding; changed producers, redirected helpers
+  and unproved syntax remain visible as scope changes.
 - **Property-based tests** — `test_properties.py` generates programs from
   small grammars with Hypothesis (300 deterministic examples for the pure
   properties, 60 for each engine property, no deadline). The pure properties:

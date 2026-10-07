@@ -408,8 +408,336 @@ def _ownership_box(old: ast.AST, new: ast.AST, original: ast.Module) -> frozense
     return frozenset((box,))
 
 
+def _bind_pair(old: str, new: str, names: Dict[str, str]) -> bool:
+    """Extend an injective binder correspondence, never equate unrelated names."""
+    if old in names:
+        return names[old] == new
+    if new in names.values():
+        return False
+    names[old] = new
+    return True
+
+
+def _paired_bindings(
+    old: object,
+    new: object,
+    names: Dict[str, str],
+    old_locals: frozenset[str],
+    literals: Mapping[str, ast.Constant],
+) -> bool:
+    """Register own-frame binders before reads, including reads preceding a store."""
+    if isinstance(old, ast.Constant) and isinstance(new, ast.Name):
+        provided = literals.get(new.id)
+        return (
+            isinstance(new.ctx, ast.Load)
+            and provided is not None
+            and type(old.value) is type(provided.value)
+            and old.value == provided.value
+        )
+    if type(old) is not type(new):
+        return False
+    if isinstance(old, ast.Name) and isinstance(new, ast.Name):
+        if isinstance(new.ctx, (ast.Store, ast.Del)) and new.id in literals:
+            return False
+        return not isinstance(old.ctx, ast.Store) or (
+            old.id in old_locals and _bind_pair(old.id, new.id, names)
+        )
+    if isinstance(old, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        return True  # child scope binders are registered in _paired_syntax
+    if isinstance(old, ast.alias) and isinstance(new, ast.alias):
+        left, right = old.asname or old.name.split(".")[0], new.asname or new.name.split(".")[0]
+        return left in old_locals and _bind_pair(left, right, names)
+    if isinstance(old, ast.ExceptHandler) and isinstance(new, ast.ExceptHandler):
+        if (old.name is None) != (new.name is None):
+            return False
+        if (
+            old.name is not None
+            and new.name is not None
+            and not (old.name in old_locals and _bind_pair(old.name, new.name, names))
+        ):
+            return False
+    if isinstance(old, ast.AST) and isinstance(new, ast.AST):
+        return all(
+            _paired_bindings(getattr(old, field), getattr(new, field), names, old_locals, literals)
+            for field in old._fields
+        )
+    if isinstance(old, list) and isinstance(new, list):
+        return len(old) == len(new) and all(
+            _paired_bindings(a, b, names, old_locals, literals) for a, b in zip(old, new)
+        )
+    return True  # scalar values are checked by the full syntax correspondence
+
+
+def _paired_syntax(
+    old: object,
+    new: object,
+    names: Dict[str, str],
+    old_locals: frozenset[str],
+    literals: Mapping[str, ast.Constant],
+) -> bool:
+    """Independent alpha correspondence for a bounded, lexical AST subset.
+
+    Parameter defaults and first comprehension iterables run in their outer
+    scope. Child binders shadow both sides of the enclosing correspondence.
+    Unproved definitions, declarations and assignment expressions stay visible
+    to the scope oracle rather than gaining an exemption.
+    """
+    if isinstance(old, ast.Constant) and isinstance(new, ast.Name):
+        provided = literals.get(new.id)
+        return (
+            isinstance(new.ctx, ast.Load)
+            and provided is not None
+            and type(old.value) is type(provided.value)
+            and old.value == provided.value
+        )
+    if type(old) is not type(new):
+        return False
+    if isinstance(old, ast.Name) and isinstance(new, ast.Name):
+        if isinstance(new.ctx, (ast.Store, ast.Del)) and new.id in literals:
+            return False
+        if type(old.ctx) is not type(new.ctx):
+            return False
+        if isinstance(old.ctx, ast.Store):
+            return old.id in old_locals and _bind_pair(old.id, new.id, names)
+        if old.id in names:
+            return names[old.id] == new.id
+        return old.id == new.id and new.id not in names.values() and new.id not in literals
+    if isinstance(old, ast.Lambda) and isinstance(new, ast.Lambda):
+        left, right = old.args, new.args
+        for kind in ("posonlyargs", "args", "kwonlyargs"):
+            if len(getattr(left, kind)) != len(getattr(right, kind)):
+                return False
+        if (left.vararg is None) != (right.vararg is None) or (left.kwarg is None) != (
+            right.kwarg is None
+        ):
+            return False
+        if not _paired_syntax(left.defaults, right.defaults, names, old_locals, literals) or not (
+            _paired_syntax(left.kw_defaults, right.kw_defaults, names, old_locals, literals)
+        ):
+            return False
+
+        def parameters(args: ast.arguments) -> List[str]:
+            return [arg.arg for arg in args.posonlyargs + args.args + args.kwonlyargs] + [
+                arg.arg for arg in (args.vararg, args.kwarg) if arg is not None
+            ]
+
+        old_parameters, new_parameters = parameters(left), parameters(right)
+        child = {key: value for key, value in names.items() if key not in old_parameters}
+        child_literals = {
+            key: value for key, value in literals.items() if key not in new_parameters
+        }
+        if not all(_bind_pair(a, b, child) for a, b in zip(old_parameters, new_parameters)):
+            return False
+        return _paired_syntax(
+            old.body, new.body, child, old_locals | frozenset(old_parameters), child_literals
+        )
+    comprehensions = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+    if isinstance(old, comprehensions) and isinstance(new, comprehensions):
+        if len(old.generators) != len(new.generators) or not old.generators:
+            return False
+        old_targets = {
+            n.id for g in old.generators for n in ast.walk(g.target) if isinstance(n, ast.Name)
+        }
+        new_targets = {
+            n.id for g in new.generators for n in ast.walk(g.target) if isinstance(n, ast.Name)
+        }
+        child = {key: value for key, value in names.items() if key not in old_targets}
+        child_literals = {key: value for key, value in literals.items() if key not in new_targets}
+        for first, second in zip(old.generators, new.generators):
+            if first.is_async != second.is_async or not _paired_syntax(
+                first.target,
+                second.target,
+                child,
+                old_locals | frozenset(old_targets),
+                child_literals,
+            ):
+                return False
+        for index, (first, second) in enumerate(zip(old.generators, new.generators)):
+            scope = names if index == 0 else child
+            scope_literals = literals if index == 0 else child_literals
+            if not _paired_syntax(
+                first.iter, second.iter, scope, old_locals, scope_literals
+            ) or not (
+                _paired_syntax(
+                    first.ifs,
+                    second.ifs,
+                    child,
+                    old_locals | frozenset(old_targets),
+                    child_literals,
+                )
+            ):
+                return False
+        if isinstance(old, ast.DictComp) and isinstance(new, ast.DictComp):
+            return _paired_syntax(
+                old.key, new.key, child, old_locals, child_literals
+            ) and _paired_syntax(old.value, new.value, child, old_locals, child_literals)
+        if isinstance(old, (ast.ListComp, ast.SetComp, ast.GeneratorExp)) and isinstance(
+            new, (ast.ListComp, ast.SetComp, ast.GeneratorExp)
+        ):
+            return _paired_syntax(old.elt, new.elt, child, old_locals, child_literals)
+        return False
+    if isinstance(
+        old,
+        (
+            ast.FunctionDef,
+            ast.AsyncFunctionDef,
+            ast.ClassDef,
+            ast.Global,
+            ast.Nonlocal,
+            ast.NamedExpr,
+            ast.Yield,
+            ast.YieldFrom,
+            ast.Await,
+        ),
+    ):
+        return False
+    if isinstance(old, ast.AST) and isinstance(new, ast.AST):
+        return all(
+            _paired_syntax(getattr(old, field), getattr(new, field), names, old_locals, literals)
+            for field in old._fields
+        )
+    if isinstance(old, list) and isinstance(new, list):
+        return len(old) == len(new) and all(
+            _paired_syntax(a, b, names, old_locals, literals) for a, b in zip(old, new)
+        )
+    return old == new
+
+
+def _retained_correspondence(
+    old: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    new: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    assignment: ast.Assign,
+    helper: ast.FunctionDef,
+    old_locals: frozenset[str],
+    old_free: frozenset[str],
+) -> Dict[str, str]:
+    """Match the actual removed block and helper body, preserving all surrounding syntax."""
+    call = assignment.value
+    old_type_parameters: object = getattr(old, "type_params", None)
+    helper_type_parameters: object = getattr(helper, "type_params", None)
+    if (
+        ast.dump(old.args) != ast.dump(new.args)
+        or bool(old_type_parameters)
+        or bool(helper_type_parameters)
+        or isinstance(old, ast.AsyncFunctionDef)
+    ):
+        return {}
+    if not isinstance(call, ast.Call) or call.keywords or assignment not in new.body:
+        return {}
+    args = helper.args
+    parameters = args.posonlyargs + args.args
+    if (
+        helper.decorator_list
+        or args.defaults
+        or args.kw_defaults
+        or args.vararg
+        or args.kwarg
+        or args.kwonlyargs
+        or len(parameters) != len(call.args)
+    ):
+        return {}
+    if not all(isinstance(argument, (ast.Name, ast.Constant)) for argument in call.args):
+        return {}
+    parameter_names = {parameter.arg for parameter in parameters}
+    if any(
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and node.id in parameter_names
+        or isinstance(node, ast.arg)
+        and node.arg in parameter_names
+        or isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and node.name in parameter_names
+        or isinstance(node, ast.alias)
+        and (node.asname or node.name.split(".")[0]) in parameter_names
+        or isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar))
+        and node.name in parameter_names
+        or isinstance(node, ast.MatchMapping)
+        and node.rest in parameter_names
+        for statement in helper.body
+        for node in ast.walk(statement)
+    ):
+        return {}  # readonly inputs; nested masking of an input is conservatively unproved
+    index = new.body.index(assignment)
+    moved = helper.body[:-1]
+    if not moved or len(old.body) != len(new.body) + len(moved) - 1:
+        return {}
+    if ast.dump(ast.Module(body=old.body[:index], type_ignores=[])) != ast.dump(
+        ast.Module(body=new.body[:index], type_ignores=[])
+    ) or ast.dump(ast.Module(body=old.body[index + len(moved) :], type_ignores=[])) != ast.dump(
+        ast.Module(body=new.body[index + 1 :], type_ignores=[])
+    ):
+        return {}
+    names: Dict[str, str] = {}
+    literals: Dict[str, ast.Constant] = {}
+    for argument, parameter in zip(call.args, parameters):
+        if isinstance(argument, ast.Constant):
+            if type(argument.value) not in (
+                str,
+                bytes,
+                int,
+                float,
+                complex,
+                bool,
+                type(None),
+                type(Ellipsis),
+            ):
+                return {}
+            literals[parameter.arg] = argument
+        elif not isinstance(argument, ast.Name) or not _bind_pair(
+            argument.id, parameter.arg, names
+        ):
+            return {}
+    inputs = frozenset(names)
+    bindable = (
+        old_locals - inputs
+    )  # reading caller locals/parameters is safe; rebinding them is not
+    block = old.body[index : index + len(moved)]
+    if (old_free - inputs) & _spelled_names(ast.Module(body=block, type_ignores=[])):
+        return {}  # an unpassed enclosing binding cannot become a module lookup
+    if not _paired_bindings(block, moved, names, bindable, literals) or not _paired_syntax(
+        block, moved, names, bindable, literals
+    ):
+        return {}
+    return {key: value for key, value in names.items() if key in bindable}
+
+
+def _unique_helper_binding(helper: ast.FunctionDef, module: ast.Module) -> bool:
+    """No second definition, import, argument or explicit write redirects this fresh helper."""
+    helper_index = module.body.index(helper)
+    for index, statement in enumerate(module.body):
+        for node in ast.walk(statement):
+            if isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names):
+                if node is not statement or index > helper_index:
+                    return False  # conditional or later wildcard lookup is unproved
+    for node in ast.walk(module):
+        if node is helper:
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == helper.name:
+                return False
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            if node.id == helper.name:
+                return False
+        elif isinstance(node, ast.arg) and node.arg == helper.name:
+            return False
+        elif isinstance(node, ast.alias):
+            if (node.asname or node.name.split(".")[0]) == helper.name:
+                return False
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            if node.name == helper.name:
+                return False
+        elif isinstance(node, ast.MatchMapping) and node.rest == helper.name:
+            return False
+    return True
+
+
 def _retained_locals(
-    old: ast.AST, new: ast.AST, original: ast.Module, rewritten: ast.Module
+    old: ast.AST,
+    new: ast.AST,
+    original: ast.Module,
+    rewritten: ast.Module,
+    old_locals: frozenset[str],
+    old_free: frozenset[str],
 ) -> frozenset[str]:
     """Recognize fresh, unread tuple slots that keep a moved original local alive.
 
@@ -421,18 +749,21 @@ def _retained_locals(
     ):
         return frozenset()
     original_names = _spelled_names(original)
-    old_locals = {
-        node.id
-        for node in ast.walk(old)
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
-    }
+    candidates = [
+        node
+        for node in rewritten.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name.startswith(_GENERATED_HELPER_PREFIXES)
+        and node.name not in original_names
+    ]
     helpers = {
         node.name: node
-        for node in ast.walk(rewritten)
-        if isinstance(node, ast.FunctionDef) and node.name.startswith(_GENERATED_HELPER_PREFIXES)
+        for node in candidates
+        if sum(candidate.name == node.name for candidate in candidates) == 1
+        and _unique_helper_binding(node, rewritten)
     }
     accepted: set[str] = set()
-    for assignment in ast.walk(new):
+    for assignment in new.body:
         if not (
             isinstance(assignment, ast.Assign)
             and len(assignment.targets) == 1
@@ -444,20 +775,43 @@ def _retained_locals(
         helper = helpers.get(assignment.value.func.id)
         if helper is None or not helper.body or not isinstance(helper.body[-1], ast.Return):
             continue
+        correspondence = _retained_correspondence(
+            old, new, assignment, helper, old_locals, old_free
+        )
         returned = helper.body[-1].value
         target_root = assignment.targets[0]
         targets = target_root.elts if isinstance(target_root, ast.Tuple) else [target_root]
         values = returned.elts if isinstance(returned, ast.Tuple) else [returned]
         if len(values) != len(targets):
             continue
+        original_slots = {mapped: name for name, mapped in correspondence.items()}
+        paired_slots = True
         for target, value in zip(targets, values):
-            if not (
-                isinstance(target, ast.Name)
-                and target.id not in original_names
-                and isinstance(value, ast.Name)
-                and value.id in old_locals
-            ):
+            if not isinstance(target, ast.Name) or not isinstance(value, ast.Name):
+                paired_slots = False
+                break
+            original_name = original_slots.get(value.id)
+            if original_name is None:
+                paired_slots = False
+                break
+            if target.id in original_names:
+                if target.id != original_name:
+                    paired_slots = False
+                    break
+            else:
+                stem = "_towel_keep_" + original_name
+                if target.id != stem and not (
+                    target.id.startswith(stem + "_") and target.id[len(stem) + 1 :].isdigit()
+                ):
+                    paired_slots = False
+                    break
+        if not paired_slots:
+            continue
+        for target, value in zip(targets, values):
+            assert isinstance(target, ast.Name) and isinstance(value, ast.Name)
+            if target.id in original_names:
                 continue
+            original_name = original_slots[value.id]
             # Exactly one Store and no Load, nested capture, or string binder.
             occurrences = [
                 node
@@ -467,7 +821,7 @@ def _retained_locals(
             if occurrences != [target]:
                 continue
             if any(
-                {value.id, target.id} & _spelled_names(statement)
+                {original_name, target.id} & _spelled_names(statement)
                 for statement in new.body
                 if statement is not assignment
             ):
@@ -508,7 +862,14 @@ def scope_changes(before: Union[bytes, str], after: Union[bytes, str]) -> Dict[s
         )
         old_locals, new_locals = _locals(old) - set_aside, _locals(new) - set_aside
         handoff = _ownership_box(definitions[0][key], definitions[1][key], trees[0])
-        retained = _retained_locals(definitions[0][key], definitions[1][key], trees[0], trees[1])
+        retained = _retained_locals(
+            definitions[0][key],
+            definitions[1][key],
+            trees[0],
+            trees[1],
+            old_locals,
+            frozenset(s.get_name() for s in old.get_symbols() if s.is_free() or s.is_nonlocal()),
+        )
         found = [
             f"gains local {name}"
             for name in sorted(new_locals - old_locals)
