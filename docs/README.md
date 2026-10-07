@@ -32,6 +32,8 @@ artifact identities; they do not establish results for a later release.
 
 ## Contribute and release
 
+- [Agent work log](agent_log.md): current development hypotheses and pending checks; not release approval.
+
 - [Contributing](../CONTRIBUTING.md): setup, coding standards, tests and documentation maintenance.
 - [Release procedure](RELEASING.md): frozen source, exact artifacts, evidence gate and CI.
 - [Security policy](../SECURITY.md): private reporting and supported-release policy.

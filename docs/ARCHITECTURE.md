@@ -245,8 +245,21 @@ Each parameter is passed in the way that preserves the original evaluation:
 - **Lifted.** An expression that reads a name bound *inside* the block is
   lambda-lifted [Johnsson 1985]: the lambda takes those names as arguments so it still refers
   to the block-local values, not to whatever the helper's scope binds.
-- **Receiver.** When the helper becomes a method, the instance or class is
-  passed as the receiver (see *Helper placement*).
+- **Receiver.** The completed helper's runtime receiver or class-frame needs
+  determine whether it becomes a method. An original `self` or `cls` read moved
+  into a caller-side supplier does not require an unread method receiver. Real
+  receiver reads and `super()` retain their class-context checks (see *Helper
+  placement*). The final ownership budget includes any actual receiver and holder.
+
+Parameter identity is a substitution proof, not printed-name or initial-value
+comparison. In particular, class aliases in separate caller namespaces keep
+caller-side suppliers and repeated reads. An ownership holder is a physical
+lifetime argument, even when no helper expression loads its name. Equal
+higher-order factory literals stay fixed unless the explicit API promotion
+option is enabled. Lambda constant differences and deferred expressions can
+produce different kinds of arguments in one substitution; downstream guards
+still determine whether a complete candidate is emitted. See
+[the argument guide](GENERATED_CODE.md#equal-looking-and-unused-arguments).
 
 The result is a `Substitution` (in `substitution.py`): the template, the ordered
 parameters, and, per parameter, the argument expression at each call site and
@@ -259,6 +272,15 @@ what a checker reads of a typing form, such as `cast`'s type or a
 object, however it is imported (`typing_forms.py`), so `t.cast(Alpha, v)`
 after `import typing as t` is one and sqlglot's own `exp.cast(column, to)`
 is not.
+
+The output-quality rule in `profitability.py` is separate from that soundness
+proof. For at most two meaningful straight-line statements, it compares the
+complete interface (receiver/holder included) and rendered call-site lambda cost
+after ownership rewriting
+with work shared by all sites. Control flow and nested computation are outside
+this narrow calibration. [The decision](DECISIONS.md#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
+records its exact formula and API compatibility switch; physical wrapping does
+not add benefit.
 
 ## The soundness invariant
 
@@ -898,11 +920,18 @@ read off the proposal and cost no check. Known caller-narrowing boundaries
 are filtered during discovery; the remaining cases need the checker's verdict
 and cost the one refusal that shows them. Each rung is rendered with the
 comments of the moved code woven in, and with only the imports its own
-annotations name. A variant rendered again with nothing it could depend on
-changed -- its files as rendered, comments and imports included, but for the
-helper's generated name; those files as they stood, the files its errors lie
-in, and everything those import; and the errors the run already counts as the
-project's own there -- has its refusal replayed rather than checked again.
+annotations name. Every rendered variant submitted to project checking calls
+`_new_type_errors` again. Towel keeps no inner rendered-variant refusal memo:
+matching configuration, known errors and the files those errors name does not
+certify all checker inputs. A changed `.pyi`, a previously absent provider or an
+external stub root can change an answer while that incomplete key stays equal.
+The checker may still maintain its own incremental session; a fresh request is
+not a promise of a fresh process. Final project confirmation remains required.
+
+The separate outer completed-proposal rehearing cache has its own exact
+candidate, whole-project revision and recognized checker/rendering-context
+requirements (below). That qualified checkpoint optimization is not an inner
+variant cache or a proof that arbitrary checker dependency closure is known.
 
 Checker failure, or a remaining new error, declines the proposal. `close()`
 releases checker resources, and the CLI calls it in a `finally` block. Without
@@ -1217,7 +1246,10 @@ options, naming state, baseline errors, environment and working directory. Custo
 oracles/callbacks and transient or unknown failures are retried. Every accepted
 source application or stale-source recovery advances the whole-project revision;
 no approximate import-dependency subset substitutes for that revision. Installed
-tools remain fixed during a run. Final project verification remains required.
+tools and installed support dependencies remain fixed during a run. An
+unknown or changed context does not justify retaining a completed refusal;
+this outer checkpoint rule does not revive the removed inner variant memo.
+Final project verification remains required.
 
 A global pass after the first re-pairs only functions in files rewritten
 since the previous global pass, together with files of proposals deferred by
@@ -1313,6 +1345,13 @@ measure is exact and changes no proposal.
   rule). The candidate-pair budget itself (`max_candidate_pairs`, the CLI's
   `--max-pairs`, 20,000,000 by default) bounds what one analysis evaluates by
   leaving out the largest statement-sequence buckets with a warning.
+- **One-unification block facts.** Free-variable queries in `parameterization.py`
+  reuse immutable `frozenset` results for the current immutable input blocks.
+  Every caller receives a fresh mutable set. Resetting the unification or
+  releasing its blocks clears these entries, including cached empty results;
+  they do not survive a later rewrite or pin an earlier analysis indefinitely.
+  This lifetime is narrower than the engine's structural caches and makes no
+  whole-command speedup claim.
 - **Instantiation memo.** The verdict of the instantiation check is memoized
   on the helper's dump, the call, and the block's structure, since the same
   helper meets the same block through every pair the block forms

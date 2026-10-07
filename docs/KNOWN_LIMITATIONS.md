@@ -162,7 +162,14 @@ describe belong to that version.
   effect. Module-data cases that cannot preserve lookup timing still decline
   (`module_data_lookup`, `rebound_external_binding`). A clustered occurrence
   does not join an existing eager parameter when its own binding requires a
-  module lookup.
+  module lookup. The same spelling in two modules is not a common binding.
+  Even two aliases initially naming the same class can later diverge, and a
+  callback between repeated constructions can rebind or delete either alias.
+  Their lookup suppliers retain each original read; initial equality is not
+  a reason to replace those suppliers with one eager class value. The unread
+  ownership holder likewise retains a lifetime obligation rather than a
+  redundant computed input. See [the argument guide](GENERATED_CODE.md#equal-looking-and-unused-arguments)
+  for equal literals, higher-order opt-in and mixed deferred substitutions.
 
   By default a cross-module helper may not read a bare builtin from its
   host on another module's behalf (`builtin_may_differ_by_module`). The
@@ -652,8 +659,8 @@ configuration (`mypy_path`, pyright's `stubPath`) are not read.
 
 ## Method insertion
 
-A helper becomes a method only of the class whose methods hold both
-duplicates, one module-level class statement, and nowhere else: a block
+A helper becomes a method only when its completed body needs the receiver
+or class frame, and only of the class whose methods hold both duplicates, one module-level class statement, and nowhere else: a block
 shared by sibling classes, by a parent and its child, or by classes in
 different modules becomes a module-level function that takes the receiver as
 an ordinary argument (docs/DECISIONS.md, "A method helper lives in the class
@@ -661,7 +668,12 @@ that holds both duplicates"). No class gains a member unless the code it
 replaces was already in that class. Whether such a function belongs in a
 class, an existing base, a mixin or a new one, is a design question Towel
 leaves to whoever reviews the change ("Towel does not change externally
-visible class design"). The rule's costs:
+visible class design"). A receiver used only by a deferred expression retained in the caller does not
+make the completed helper a method. Real receiver reads, class-private accesses
+and zero-argument `super()` retain their own class-context checks. These are
+eligibility requirements, not a promise that every such block moves: a
+super-only source method that never originally dispatches through its receiver
+can still decline rather than gain a new dispatch. The rule's costs:
 
 - A block shared across classes is a module function with an explicit
   receiver, which is sound but less idiomatic than a method.
@@ -723,7 +735,8 @@ does use the receiver takes it as an ordinary argument.
 The class holding both duplicates takes the helper only when every
 decorator on the source methods is known to preserve the receiver, the
 methods have a first parameter named `self` (or the method is a
-`classmethod`), and both read an attribute of it. That parameter's
+`classmethod`), and the completed helper needs its receiver dispatch or
+original lexical class frame. That parameter's
 annotation, if it has one, must name only the class: the class itself,
 `Self`, or a type variable bound to the class, or `type[...]` of one of those
 for a class method. `def m(self: HasV)` declares that any object with the
@@ -1437,6 +1450,13 @@ the proposals it built and did not apply, by reason:
   default (`skip_trivial_helpers=False` keeps it). One whose only
   computation is calling helpers Towel generated is declined under this
   reason whatever the setting.
+  The additional tiny-helper interface filter counts final formals (including
+  receiver and ownership holder), replacement-call lambdas and sharing sites.
+  It applies only to at most two meaningful straight-line statements. Actual
+  control flow, nested definitions/scopes and more substantial bodies remain
+  subject to other checks. This output-quality policy does not mean a necessary
+  supplier or holder can be eliminated. See [the calibration](DECISIONS.md#2026-10-06-tiny-helpers-must-repay-their-interface-cost).
+  `skip_trivial_helpers=False` bypasses this optional filter.
 - Orphans. `orphaned_variables`: a name the block binds is read afterwards
   on a path that does not rebind it first, and the helper does not return
   it; an augmented assignment and a `del` read the name as a load does. A

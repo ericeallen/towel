@@ -4,6 +4,10 @@
 
 Use this guide to estimate a run and understand the limits of the published measurements.
 
+The latest parameter, placement and checker-cache audit follow-ups have no new
+complete-command measurements here. Earlier samples retain their source and
+workload identities; they do not establish the performance of the changed source.
+
 On this page:
 
 - [Measurement conditions](#measurement-conditions)
@@ -67,7 +71,10 @@ project change, so revision 19 correctly invalidated them before rehearing. This
 fixture supplies no applicable repeated refusal for the new optimization to skip.
 The [retained evidence](../tests/release_evidence/1.792-performance-optimization/README.md)
 binds all three comparisons to source, wheel, dependencies and output hashes.
-Matrix and corpus reruns remain pending explicit authorization.
+These measurements predate removal of the inner rendered-variant refusal memo.
+That removal makes each submitted variant issue a fresh project-check request;
+no new timing for it is claimed here. The outer completed-proposal rehearing
+cache remains separately qualified. Matrix and corpus reruns remain pending explicit authorization.
 
 ### October 5 repaired candidate comparison
 

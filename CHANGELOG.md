@@ -9,6 +9,25 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Explain why independently mutable class aliases keep lookup suppliers, and
+  why an unread ownership holder preserves original argument lifetimes.
+  Distinguish shared spellings from shared bindings and document equal
+  higher-order literal promotion as an explicit API opt-in.
+- Decline tiny straight-line helpers whose complete interface and call wrappers
+  outweigh their shared work under the documented initial calibration.
+- Place a helper according to its completed runtime receiver/class-frame needs
+  and account for the actual receiver and lifetime holder in its budget.
+- Reuse immutable block free-variable facts only within one unification, copy
+  mutable results for callers and clear the facts on reset or release.
+- Remove the inner rendered-variant checker-refusal memo. Every variant submitted
+  to project checking is checked again; configuration and known-error matches
+  cannot certify changed, absent or external stub providers. The outer exact
+  completed-proposal rehearing cache remains separately qualified by its
+  candidate, revision and recognized context requirements.
+- Refresh CLI defaults, scoped opt-out boundaries and release status. Final
+  validation remains pending after the latest audit follow-up edits; earlier
+  matrix, corpus and performance results retain their original identities.
+
 ## [1.792]
 
 Named for ln 6, approximately 1.791759469. Changes since 1.772.
@@ -186,7 +205,8 @@ The October 6 audit repairs supersede that runtime. Three separate paired
 complete CLI comparisons measured immutable ownership memoization, witnessed
 fixed-Any retry pruning, and exact unchanged-context refusal retention. Each
 produced byte-identical output; none established a complete-command speedup.
-See [the optimization measurements](docs/PERFORMANCE.md#october-6-optimization-experiments).
+Those timings predate removal of the inner rendered-variant refusal memo and
+do not measure that removal. See [the optimization measurements](docs/PERFORMANCE.md#october-6-optimization-experiments).
 
 - Cache pure ownership facts weakly by immutable AST identity, returning fresh
   mutable result sets to callers.

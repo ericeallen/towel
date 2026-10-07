@@ -425,7 +425,9 @@ def _add_tuning_flags(parser: argparse.ArgumentParser) -> None:
         type=_count,
         default=DEFAULT_MAX_PARAMETERS,
         metavar="N",
-        help=f"Most parameters an extracted helper may take (default: {DEFAULT_MAX_PARAMETERS})",
+        help=f"Most newly parameterized differing expressions (default: {DEFAULT_MAX_PARAMETERS}); "
+        "ordinary free inputs may add arguments. Whole-body ownership transfer must fit its "
+        "complete positional signature, including the final lifetime holder, within this limit.",
     )
     parser.add_argument(
         "--max-pairs",

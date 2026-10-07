@@ -13,13 +13,15 @@ leaves meaningful names for you to choose.
 See the [changelog](https://github.com/ericeallen/towel/blob/v1.792/CHANGELOG.md#1792)
 for this version's changes and the
 [readiness report](https://github.com/ericeallen/towel/blob/v1.792/docs/PRODUCTION_READINESS.md)
-for the validation scope.
+for the validation scope. The latest audit follow-up changes are under
+validation; historical passing runs do not validate these edits. Publication
+remains pending.
 
-On the controlled Packaging fixture, 1.792's complete typed, formatted command
-is 11.9% slower than 1.772. The
+On the October 5 controlled Packaging fixture, that 1.792 checkpoint's complete
+typed, formatted command was 11.9% slower than 1.772. The
 [performance guide](https://github.com/ericeallen/towel/blob/v1.792/docs/PERFORMANCE.md#october-5-repaired-candidate-comparison)
 records the workload, samples and limits; earlier development speedups do not
-describe the final candidate.
+describe later audit changes or establish a final candidate speedup.
 
 **Start with the [Quick start](https://github.com/ericeallen/towel/blob/v1.792/docs/QUICKSTART.md),
 or browse the [documentation index](https://github.com/ericeallen/towel/blob/v1.792/docs/README.md).**
@@ -89,7 +91,12 @@ def quote_summary(quote, label="Quote"):
 ```
 
 The argument box and final holder preserve the original argument cleanup
-order when the entire body moves into a helper. Partial extractions whose
+order when the entire body moves into a helper. The holder can be unread in
+the helper: keeping those references alive is its purpose. Equal-looking class
+arguments may instead be lookup suppliers, so a callback or another module can
+change what each original read resolves. See
+[argument evaluation](https://github.com/ericeallen/towel/blob/v1.792/docs/GENERATED_CODE.md#arguments-and-evaluation).
+Partial extractions whose
 owned values would cross frames without this proof are declined.
 
 The shared structure becomes the helper's body; differing expressions become
@@ -151,7 +158,9 @@ protect them; decorators, ordinary calls and hooks have the same boundary.
 Protect sensitive definitions with `# towel: no-extract` immediately after
 the signature's final colon. The
 [function opt-out guide](https://github.com/ericeallen/towel/blob/v1.792/docs/CLI_GUIDE.md#protect-a-function)
-explains its placement and limits.
+explains its placement and limits. Mark the frame whose identity matters,
+including when its callee inspects it. The marker preserves that definition's
+source, not module namespaces, absolute line numbers or unmarked call chains.
 Review the
 [known limitations](https://github.com/ericeallen/towel/blob/v1.792/docs/KNOWN_LIMITATIONS.md)
 and run your tests before adopting changes.

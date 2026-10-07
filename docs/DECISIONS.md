@@ -23,6 +23,8 @@ is a defect to fix, not a limitation to document.
 - [Scoped opt-out](#2026-10-03-users-can-protect-a-function-explicitly)
 - [Caller-side refinements](#2026-09-27-keep-caller-side-refinements-at-the-call-site) · [Typed performance](#2026-09-27-construction-changes-must-speed-up-typed-extraction)
 - [Unreadable input](#2026-09-25-a-file-that-does-not-parse-refuses-the-run) · [Scope constraints](#2026-09-27-recover-valid-blocks-without-moving-unrelated-scope-constraints)
+- [Fresh variant checks](#2026-10-06-rendered-variant-refusals-require-fresh-checker-requests)
+- [Tiny helper interface cost](#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
 - [Complete preview and helper inputs](#complete-preview-and-generated-helper-inputs-september-27-2026) · [Annotation evaluation](#generated-annotations-must-not-add-evaluation-september-27-2026)
 - [Release audits](#2026-09-24-every-release-is-audited-and-every-finding-becomes-a-test) · [Evidence and documentation](#2026-09-27-release-documentation-must-agree-with-its-validation-evidence)
 
@@ -1624,3 +1626,72 @@ outside the extracted block, including nested free references. This keeps
 configured unused-binding lint rules applicable without discarding owned values.
 Assignment and tuple order are unchanged; outside reads, rebindings, deletions,
 parameters and global/nonlocal declarations preserve the original spelling.
+
+## 2026-10-06: Tiny helpers must repay their interface cost
+
+**Status:** focused unit and integration controls pass; final native, artifact
+and release validation of this audit follow-up are pending. This is an output-quality rule, separate from
+the preservation requirement and existing forwarding-only rejections.
+
+A physically long signature or wrapped call does not demonstrate useful shared
+logic. Conversely, repeated suppliers and an unread ownership holder may be
+necessary for soundness. Do not remove them by comparing initial values; assess
+whether the complete abstraction is worth emitting instead.
+
+The initial calibration applies only to a helper with at most two meaningful
+straight-line statements. Ignore global/nonlocal declarations, pass and constant
+expression statements, including docstrings. A helper containing branching,
+loops, exception handling, nested definitions or scopes, comprehensions,
+conditional expressions or boolean short-circuiting is outside this narrow
+filter. Ordinary safety and forwarding checks still apply to those helpers.
+
+Let `a` be the complete formal count, including positional-only, ordinary and
+keyword-only parameters, variadic slots, any real receiver and the ownership
+holder. Let `w` be the number of lambda nodes in the rendered replacement calls,
+after argument-ownership rewriting,
+`s` the number of sharing sites, and `m` the meaningful statement count. The
+first two direct inputs are cheap. Accept this filter only when:
+
+```text
+max(0, a - 2) + ceil(w / s) <= m * (s - 1)
+```
+
+For two simple statements, five direct formals and two sites, the interface
+cost is three and the shared-work budget is two: decline. With three sites the
+budget is four, so this filter permits it, subject to all other guards. The
+calibration runs after clustering and again at materialization. It counts
+complete rendered interfaces and wrapper burden, not source line wrapping. It makes no whole-program optimality or performance claim.
+
+The existing API `skip_trivial_helpers=False` bypasses this filter and the
+optional forwarding policy; it does not disable semantic checks or unconditional
+no-logic rejections. No new CLI opt-out is added. Changes to the calibration
+require behavioral and useful-extraction controls, with the decision updated
+alongside the implementation (`unification/profitability.py`).
+
+## 2026-10-06: Rendered-variant refusals require fresh checker requests
+
+**Status:** the inner memo is removed and focused controls pass; final native,
+artifact and release validation remain pending. This supersedes the proposed
+configuration-context repair to that memo, not the qualified outer rehearing rule.
+
+A refusal is reusable only when its complete checker inputs are known unchanged.
+Matching source rendered by Towel, configuration and the files earlier errors
+name is insufficient: a changed `.pyi` provider made a previously cached error
+disappear under a fresh check. Absent providers and external stub roots likewise
+belong to the source-resolution closure, not merely the known-error locations.
+A configuration guard cannot repair an incomplete dependency sensor.
+
+Remove this inner memo instead of treating that incomplete key as a certificate.
+Every rendered variant submitted to project checking calls `_new_type_errors`.
+The checker can still own incremental state; Towel does not equate a repeated
+request with starting a fresh checker process. Final independent project
+confirmation remains required.
+
+The outer completed-proposal rehearing cache is separate: it retains only a
+completed definitive refusal for the exact candidate at an unchanged full-project
+revision with its supported checker/rendering/configuration context. Custom,
+plugin-dependent or unknown contexts do not qualify. Installed checker tools
+and support dependencies must stay immutable during the run. These prerequisites
+do not certify arbitrary mutable provider roots or enable inner variant replay.
+Historical performance samples retain their original identities and predate
+this removal; no performance benefit or cost is claimed without a new measure.

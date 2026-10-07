@@ -12,6 +12,7 @@ A historical passing result applies to its recorded commit and test environment.
 
 **Contents — release checkpoints**
 
+- [1.792 October 6 parameter audit follow-up](#2026-10-06-1792-parameter-audit-follow-up)
 - [1.792 October 6 audit and optimization validation](#2026-10-06-1792-audit-and-optimization-validation)
 - [1.792 October 5 final corpus and performance](#2026-10-05-1792-final-corpus-and-performance)
 - [1.792 October 5 audit repairs](#2026-10-05-1792-audit-repairs)
@@ -23,6 +24,35 @@ A historical passing result applies to its recorded commit and test environment.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-10-06: 1.792 parameter audit follow-up
+
+The fresh audit exercised same-class aliases, repeated reads, independent
+module namespaces, ordinary callback rebinding, monkeypatching, unused argument
+lifetimes and real generated-helper reuse. Equal-looking class suppliers and
+ownership holders are necessary where they preserve those obligations; their
+presence alone is not a redundant-argument defect. Separate breadth checks
+covered degenerate inputs, source encodings, exclusions, symlink inputs,
+read-only inputs with separate outputs, concurrent independent default CLI
+runs and malformed formatter configuration.
+
+The initial tiny-helper policy weighs complete formal and wrapper cost against
+sharing across actual sites, rather than counting physical line wrapping. Its
+[decision](DECISIONS.md#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
+records the calibration and compatibility boundary.
+
+A later stub-provider control exposed an incomplete source-dependency closure
+in the inner rendered-variant refusal memo. It is removed; matching checker
+configuration and earlier error locations does not certify a current answer.
+Variants submitted to project checking are checked again. The outer exact
+completed-proposal rehearing cache remains separately qualified. Earlier timing
+records below predate this removal and do not measure it.
+
+The resulting parameter, helper-placement and checker-cache corrections are
+under validation. Completed audit fixtures and focused checks are development
+evidence; final validation of the changed source and release contents remains
+pending. No new matrix, corpus, published-version timing or publication is
+claimed. Earlier observations below retain their original source identities.
 
 ## 2026-10-06: 1.792 audit and optimization validation
 

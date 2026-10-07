@@ -61,7 +61,13 @@ original source, wheel, logs and dispositions as historical evidence; they do
 not validate the changed runtime. Performance and exact-commit remote CI
 remain required before publication.
 
-For the repaired 1.792 runtime, that fresh corpus and the complete production
+The latest October 6 audit follow-ups change the source again. Final validation
+for those edits is pending; no matrix or corpus repeat is authorized or claimed.
+Historical successes retain their exact source identities. Before publication,
+complete the required gates for the final frozen source under the maintainer's
+run authorization.
+
+For the October 5 repaired 1.792 runtime, that fresh corpus and the complete production
 comparison have now finished at source snapshot `00b4f4f`. The corpus retained
 five reviewed reflection differences and five unchanged import refusals;
 the Packaging comparison was 11.9% slower than published 1.772. See the

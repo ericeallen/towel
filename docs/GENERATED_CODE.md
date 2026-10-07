@@ -11,6 +11,8 @@ On this page:
 - [Comments and formatting](#comments-and-formatting)
 - [Where helpers live](#where-helpers-live)
 - [Arguments and evaluation](#arguments-and-evaluation)
+- [Choosing a worthwhile helper](#choosing-a-worthwhile-helper)
+- [Equal-looking and unused arguments](#equal-looking-and-unused-arguments)
 - [Why some arguments are wrapped in lambda](#why-some-arguments-are-wrapped-in-lambda)
 - [What verification establishes](#what-verification-establishes)
 - [Decorators, instrumentation and reflection](#decorators-instrumentation-and-reflection)
@@ -73,7 +75,9 @@ transfer all original arguments to a final helper holder. Generated code
 first stores a reversed argument tuple in a fresh list, deletes the original
 argument bindings, evaluates the generated call arguments through that box,
 and passes `box.pop()` last. The holder keeps the original argument cleanup
-order ahead of helper locals. Only internal generated thunks may gain fresh
+order ahead of helper locals. Its body need not read `_towel_owner`: that
+argument exists to retain the references until the correct cleanup point,
+including arguments that the original body never used. Only internal generated thunks may gain fresh
 capture factories, whose inner callable still takes no arguments;
 user-written lambda signatures stay intact. Unsupported
 captures, runtime type-parameter cells, parameter rebinding and unavailable
@@ -87,7 +91,8 @@ Python floor or existing syntax establishes Python 3.8 or newer, synthetic
 `__param_N` arguments are positional-only: for example,
 `def __extracted_func_0(__param_0, /):`. Leading arguments before a synthetic
 parameter join that positional-only group. Older or undeclared targets keep
-ordinary parameters. Reusing an existing function preserves its signature.
+ordinary parameters. Reusing a helper introduced during this run preserves
+its existing signature.
 
 ## Protect a definition
 
@@ -99,8 +104,10 @@ def frame_sensitive(value):  # towel: no-extract
     return inspect_caller(value)
 ```
 
-Its definition and body, including nested bodies, stay intact. Other functions
-remain eligible. The [scope guide](CLI_GUIDE.md#protect-a-function) explains
+Its definition and body, including decorators and nested bodies, stay intact.
+Its line position can change and its module can gain a helper. Unmarked callers
+and callees remain eligible, so mark each frame whose identity matters. Other
+functions remain eligible. The [scope guide](CLI_GUIDE.md#protect-a-function) explains
 multiline signatures, methods, caller frames and whole-file exclusions.
 
 ## Comments and formatting
@@ -137,7 +144,10 @@ Helper annotations are described in the [typing guide](TYPING.md).
 ## Where helpers live
 
 A block shared by methods of one class can become a class-private helper,
-called as `self.__extracted_func_0(...)`. Name mangling protects it from
+called as `self.__extracted_func_0(...)` when the completed helper needs that
+receiver or its class frame. A reference to `self` used only in a caller-side
+lookup supplier does not justify adding an unread receiver to the helper.
+Name mangling protects it from
 accidental overrides by ordinary differently named subclasses. Towel adds
 such a method only to the class that already held the duplicated code.
 
@@ -190,6 +200,57 @@ another caller's behalf, apart from the interpreter constant `__debug__`.
 Only the existing first-effect, single-use proof permits an eager argument.
 Same-module builtin reads stay bare. The option does not permit blocks that
 differ in which builtin they use.
+
+## Choosing a worthwhile helper
+
+Correctness does not imply that a tiny abstraction is useful. Towel's initial
+interface-cost rule declines some helpers with at most two simple straight-line
+statements when their complete signature and call wrappers outweigh the work
+shared across their sites. It counts the actual receiver, lifetime holder and
+rendered wrappers after ownership rewriting;
+wrapping a long signature over more source lines adds no benefit. Three or more
+meaningful statements, real control flow and nested computations stay outside
+this narrow filter, subject to the other guards.
+
+The [recorded calibration](DECISIONS.md#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
+gives the exact cost and sharing rule. The existing Python API
+`skip_trivial_helpers=False` bypasses this output-quality filter, while semantic
+and unconditional no-logic checks remain active. The CLI has no new opt-out.
+
+## Equal-looking and unused arguments
+
+Names with the same spelling need not denote the same value. `Row` in two
+modules has two independently mutable bindings; two imported aliases can also
+start as the very same class and later be rebound independently. A supplier
+such as `lambda: Row` reads that caller's binding where the original code did.
+If the helper constructs two objects, it calls the supplier twice. A callback
+between those constructions may rebind or delete `Row`, so replacing the
+supplier with the initially equal class changes ordinary behavior. Class
+method monkeypatches must remain visible too. This is independent of reflection.
+
+In one module, a shared free class name can stay a bare lookup. A differing
+module-data alias may instead cause a conservative refusal when the lookup
+cannot be represented safely. A signature is therefore not minimized by
+comparing its arguments' printed names or initial object identities.
+
+A parameter used only inside a caller-side thunk is omitted from the helper's
+ordinary free inputs. Repeated differing expressions can share a parameter
+only when the substitution still reconstructs every original occurrence with
+its evaluation timing and binding. The ownership holder described above is a
+separate, necessary reference owner even though the helper body does not read it.
+
+Equal literal arguments of higher-order factories normally remain literals.
+The Python API's `promote_equal_hof_literals=True` explicitly permits their
+promotion after all sites pass its checks; the default is `False` and the CLI
+has no corresponding promotion flag. It does not generalize literals that a
+translation or typing tool requires at their original location.
+
+Constant differences inside lambdas and deferred outer expressions are distinct
+parts of the substitution. A candidate can therefore involve eager literal
+parameters alongside deferred callable parameters; ordinary user-written lambda
+signatures must stay intact. This describes the representation, not a claim that
+every such candidate is emitted: binding, lifetime, signature, profitability and
+project-checker guards still decide whether it is usable.
 
 ## Why some arguments are wrapped in lambda
 

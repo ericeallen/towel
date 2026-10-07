@@ -337,8 +337,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         Initialize the refactoring engine.
 
         Args:
-            max_parameters: Maximum parameters an extracted helper may take; a
-                candidate needing more is rejected (default: 5).
+            max_parameters: Maximum newly parameterized differing expressions
+                (default: 5); ordinary free inputs may add arguments. A certified
+                whole-body ownership transfer must fit its complete positional
+                signature, including the final lifetime holder, within this limit.
             min_lines: Minimum number of source lines a duplicated block must span
                 to be considered (default: 3).
             max_candidate_pairs: Most block pairs one analysis evaluates. Blocks
@@ -361,14 +363,14 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 package is read from the imports that use it.
             promote_equal_hof_literals: Expose literal arguments of higher-order
                 factory calls as parameters even when they are equal across blocks
-                (Option B policy); default False.
-            parameterize_builtins: Where a builtin the duplicated code reads may
-                differ between its sites -- one site's function binds ``len`` and
-                the other reads the builtin, or, across modules, the program shows
-                a participating module may hold the name -- pass it to the helper
-                as a parameter, each site giving its own, instead of declining
-                the pair (default: False). A builtin every site reads alike is
-                still read bare.
+                (Option B policy); default False. This explicit API opt-in does not
+                merge independent bindings or change deferred lookup timing.
+            parameterize_builtins: Permit caller-side builtin lookup suppliers
+                across modules, or where sites otherwise resolve the builtin
+                differently, instead of declining the pair (default: False).
+                Each original use reads that caller's current binding. The same
+                spelling across modules does not prove equal bindings; same-module
+                builtin reads stay bare. Other binding checks still apply.
             excluded_directories: Names of directories, or of files, to leave
                 unchanged, matched at any depth, such as a package's own test
                 suite. The checks that read the whole program still read them,
@@ -385,16 +387,19 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 written: an extraction then changes nothing about how the
                 project's modules depend on each other at run time. A helper
                 whose annotations need a type another module defines still
-                gets a type-only import under ``TYPE_CHECKING``, which never
+                gets a type-only import under ``if 0 > 1:``, which never
                 runs (docs/DECISIONS.md, *Cross-module extraction is opt-in*).
-            skip_trivial_helpers: Skip proposing a helper whose body is a single
-                forwarding statement -- a lone ``raise``, a ``return`` of one
-                call, or a bare call -- which adds indirection without sharing any
-                logic (default: True).
+            skip_trivial_helpers: Apply optional forwarding and tiny straight-line
+                interface-cost filters (default: True). The latter compares the
+                complete signature and call-wrapper burden with work shared by
+                at most two simple statements across the sites. False bypasses
+                those output-quality filters, not semantic checks or unconditional
+                no-logic refusals (docs/DECISIONS.md, "Tiny helpers must repay
+                their interface cost").
             reuse_existing_functions: Deprecated, and has no effect. It chose
                 whether a site that is the whole body of a plain module-level
                 function was left alone and the other sites rewritten to call
-                it; since 1.772 every whole-body site calls a new helper
+                it; since 1.772 an extracted input function calls a fresh helper
                 instead, because such a call looked the other function up in
                 its module each time, so patching or rebinding it changed both.
                 Still accepted so existing callers keep working; it will be

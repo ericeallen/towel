@@ -22,6 +22,17 @@ Start with the current release preparation. The later sections retain the eviden
 
 ## 1.792 release preparation
 
+The latest October 6 parameter, placement and checker-cache audit follow-ups
+are being validated. Their focused checks do not clear final native, artifact,
+interpreter-matrix, corpus or source-bound release gates. No new matrix or
+corpus run is authorized or claimed here.
+
+The inner rendered-variant checker-refusal memo is removed after a changed
+stub provider exposed incomplete checker-input closure. Every submitted variant
+gets a new project-check request. The separately qualified outer completed-
+proposal rehearing cache remains; earlier timing and validation records predate
+this removal and do not measure or validate it.
+
 The October 6 audit and performance changes alter runtime behavior after the
 October 5 validation. Their native checks and bounded performance experiments
 are development evidence. The full matrix and corpus have not been rerun for
@@ -34,7 +45,7 @@ mypy and Bandit passed. The before/after full source inventories matched;
 the run changed no source, fixture, test or documentation bytes. The
 [retained native evidence](../tests/release_evidence/1.792-october6-native/README.md)
 binds the runtime tree `87bd254a7948b5611b334e85856c2aec94d13207`, identical
-to the final installed-wheel optimization comparison at `8626d50`.
+to the October 6 installed-wheel optimization comparison at `8626d50`.
 
 Version **1.792** carries the [post-1.772 changes](../CHANGELOG.md#1792):
 checked fixed-point preview, caller-narrowing preservation, Pyright reveal
@@ -119,7 +130,8 @@ versus 41.59 seconds for published 1.772, about 13% faster. It used runtime
 commit `000d751`, applied one more refactoring than 1.772 and preserved the
 preceding candidate's output bytes. Two fresh-process samples per arm establish
 that checkpoint's improvement, not a whole-corpus speedup or a claim about the
-repaired release candidate. The October 5 comparison above is the current result.
+repaired release candidate. The October 5 comparison above is the latest recorded published-version
+comparison; it does not measure the later audit follow-ups.
 
 The [completed development validation](proposals/next-validation-final.md)
 identifies its exact frozen source, three Linux interpreter runs, native

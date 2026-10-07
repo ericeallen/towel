@@ -31,7 +31,10 @@ towel dry path/to/project path/to/cleaned --no-interactive
 towel dry path/to/project path/to/project --no-interactive
 ```
 
-`dry` asks for confirmation unless `--no-interactive` is given. Typed `dry`
+`dry` asks for confirmation unless `--no-interactive` is given. The command
+defaults are `--min-lines 3`, `--max-parameters 5`, typing and formatting on,
+cross-module sharing off, and an unlimited fixed-point run (`--max-refactorings
+0`). Typed `dry`
 runs first describe the verification work. `preview` never prompts.
 
 A complete preview uses the same pipeline as `dry`. The `--quick` listing is
@@ -105,7 +108,8 @@ Put an explanation on a separate line: preceding comments, comments on a
 parameter line, extra text after the directive, strings, and comments after
 an inline function body are not this directive.
 
-This protects the marked definition, not its module or every frame in its
+This preserves the complete marked definition, including decorators and its
+source text; it does not preserve its module namespace or every frame in its
 call chain. Its absolute line position can change. Mark the functions whose
 frames must remain intact, even when reflection happens in a callee. When
 refactoring a directory, use `--exclude filename.py` when that file’s entire
@@ -144,6 +148,9 @@ towel dry path/to/project path/to/cleaned --no-interactive --no-types --no-forma
   Unchanged free inputs can also appear in an ordinary helper signature. A
   certified whole-body ownership transfer additionally requires its complete
   positional signature, including the final holder argument, to fit this limit.
+- Increasing these limits does not require Towel to emit every candidate. Its
+  [tiny-helper interface policy](GENERATED_CODE.md#choosing-a-worthwhile-helper)
+  also considers the complete signature, call wrappers and sharing sites.
 - `--max-pairs` caps the candidate pairs considered in one analysis; groups
   omitted to meet the cap are reported.
 - `TOWEL_WORKERS=1` keeps analysis on one worker; `TOWEL_WORKERS=N` caps it at N.
@@ -159,6 +166,11 @@ Progress is written to stderr so stdout can be redirected. Optional `tqdm`
 adds progress bars that name the proposal being evaluated and refresh on a
 heartbeat. There is no elapsed-time budget; see [performance and timing](PERFORMANCE.md)
 for workload limits and measurements.
+
+The Python API separately offers `promote_equal_hof_literals=True`; the CLI
+does not promote equal higher-order factory literals by default. Repeated class
+lookup suppliers and unread ownership holders are explained in
+[the argument guide](GENERATED_CODE.md#equal-looking-and-unused-arguments).
 
 Run `towel dry --help` for all current options and defaults. Boolean options
 have `--x` and `--no-x` forms.
