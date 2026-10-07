@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The ladder spends no check a project's own configuration, or an earlier check, already answered.
+"""The ladder follows current checker policy without losing required fresh checks.
 
 From the corpus study: the unannotated rung was tried where the project
 requires annotations; a helper inference left bare got no fallback at all
@@ -21,6 +21,8 @@ requires annotations; a helper inference left bare got no fallback at all
 checked again from scratch (packaging: 28 of 68 checks were exact repeats);
 and a site's declared annotation was copied even where the block saw a
 narrower type (packaging's comparisons, rich's ``append``/``append_text``).
+Repeated candidate checks deliberately stay fresh: source and configuration
+dependencies cannot safely be approximated by an inner refusal memo.
 """
 
 from __future__ import annotations
@@ -187,12 +189,12 @@ def _validation_proposal(
 ) -> RefactoringProposal:
     """Supply a legacy invalid proposal to test the validation backstop independently.
 
-    These tests protect refusal replay and dependency invalidation, not
+    These tests protect fresh refusal checks and dependency changes, not
     discovery's willingness to emit the packaging defect. The approved
     caller-narrowing boundary now prevents that emission, tested separately
     in test_narrowing_boundaries.py. Bypass only that discovery filter while
     building the fixture; every materialization/type check remains real and
-    all cache/reachability expectations remain unchanged.
+    the current checker/reachability backstops remain real.
     """
 
     def keep(function: FunctionNode, block: List[ast.stmt]) -> bool:
@@ -206,7 +208,7 @@ def _validation_proposal(
 
 
 @requires_mypy
-def test_a_refusal_is_replayed_until_something_it_read_changes(
+def test_a_prior_refusal_is_checked_again_before_and_after_dependency_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from towel.unification.exceptions import RefactoringError
@@ -227,23 +229,26 @@ def test_a_refusal_is_replayed_until_something_it_read_changes(
         proposal = _validation_proposal(engine, path, monkeypatch)
 
         def hear() -> str:
+            checked_before = len(oracle.checked)
             try:
                 engine.apply_refactoring(str(path), proposal)
             except RefactoringError as error:
+                assert len(oracle.checked) > checked_before, "Every attempt needs a fresh check"
+                assert path.read_text() == VERSIONS.lstrip(), "A refused change must not be written"
                 return str(error)
             raise AssertionError("the proposal was applied")
 
         first = hear()
-        heard_once = len(oracle.checked)
+        assert "it narrows what its caller reads after the call" in first, first
+        assert "Unsupported operand types for <" in first, first
         assert hear() == first
         (tmp_path / "unrelated.py").write_text("VALUE = 2\n")
         assert hear() == first
-        assert len(oracle.checked) == heard_once, "Nothing the refusal read had changed"
-        (tmp_path / "helpers.py").write_text(
-            "def key(a: int, b: int) -> tuple[int, int]:\n    return (b, a)\n"
-        )
-        hear()
-        assert len(oracle.checked) == heard_once + 1, "A module the variant imports changed"
+        assert (tmp_path / "unrelated.py").read_text() == "VALUE = 2\n"
+        changed_helper = "def key(a: int, b: int) -> tuple[int, int]:\n    return (b, a)\n"
+        (tmp_path / "helpers.py").write_text(changed_helper)
+        assert hear() == first, "The implementation changed but its invalid interface did not"
+        assert (tmp_path / "helpers.py").read_text() == changed_helper
     finally:
         oracle.close()
 

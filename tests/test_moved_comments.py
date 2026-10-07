@@ -36,7 +36,7 @@ import subprocess
 import sys
 import textwrap
 import tokenize
-from typing import Dict, Mapping, Sequence
+from typing import Callable, Dict, Mapping, Sequence, cast
 
 import pytest
 
@@ -273,24 +273,26 @@ def test_comments_on_clause_headers_stay_on_their_headers(tmp_path: Path, format
 _CALLS = """
     def first(numerator, denominator):
         ratio = numerator / denominator
-        return format_ratio(
+        formatted = format_ratio(
             numerator,
             denominator,
             product_fmt="*",  # TODO: should this be ''?
             power_fmt="{{}}**{{}}",  # the power, with no spaces
             parentheses_fmt=r"({{}})",
         )
+        return ratio, formatted
 
 
     def second(numerator, denominator):
         ratio = numerator / denominator
-        return format_ratio(
+        formatted = format_ratio(
             numerator,
             denominator,
             product_fmt="{{}} * {{}}",
             power_fmt="{{}} ** {{}}",  # the power, with no spaces
             parentheses_fmt=r"({{}})",
         )
+        return ratio, formatted
     """
 
 
@@ -312,6 +314,39 @@ def test_a_comment_inside_brackets_stays_beside_its_argument(
     assert "power_fmt=" in _line_holding(helper, "# the power, with no spaces")
     assert result.count("# the power, with no spaces") == 1
     _assert_same_refactoring_without_comments(path, result, **options)
+
+    # Both computations contribute to the result; sharing is useful under the
+    # normal tiny-helper policy rather than enabled by a test-only bypass.
+    def observe(source: str) -> tuple[list[object], list[tuple[float, float, str, str, str]]]:
+        calls: list[tuple[float, float, str, str, str]] = []
+
+        def format_ratio(
+            numerator: float,
+            denominator: float,
+            *,
+            product_fmt: str,
+            power_fmt: str,
+            parentheses_fmt: str,
+        ) -> str:
+            calls.append((numerator, denominator, product_fmt, power_fmt, parentheses_fmt))
+            return f"{numerator}/{denominator}: {product_fmt}:{power_fmt}:{parentheses_fmt}"
+
+        namespace: Dict[str, object] = {"format_ratio": format_ratio}
+        exec(compile(source, "comment-fixture", "exec"), namespace)
+        values: list[object] = []
+        for name in ("first", "second"):
+            function = cast(Callable[[float, float], object], namespace[name])
+            values.extend(
+                function(numerator, denominator) for numerator, denominator in ((6, 2), (7, 3))
+            )
+            with pytest.raises(ZeroDivisionError):
+                function(1, 0)
+        return values, calls
+
+    before = observe(path.read_text())
+    after = observe(result)
+    assert len(before[1]) == 4
+    assert after == before
 
 
 _GROUPED = """

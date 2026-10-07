@@ -27,7 +27,10 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
+import sys
 import textwrap
 
 import pytest
@@ -542,6 +545,7 @@ def test_the_callable_a_signature_writes_is_imported_end_to_end(tmp_path: Path) 
         },
     )
     path = tmp_path / "shapes" / "groups.py"
+    original = path.read_text()
     oracle = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(
@@ -562,28 +566,83 @@ def test_the_callable_a_signature_writes_is_imported_end_to_end(tmp_path: Path) 
         if parameter.annotation is not None
     ]
     assert "_typing.Callable[[], dict[str, tuple[_TowelT0, ...]]]" in kinds, changed
-    assert [parameter.arg for parameter in helper.args.posonlyargs] == ["self", "__param_0"]
-    assert helper.args.posonlyargs[0].annotation is None
+    # The caller's thunk reads the receiver; the helper does not. Its precise
+    # callable/result relationship survives without an implicit method input.
+    assert any(
+        isinstance(node, ast.FunctionDef) and node.name == helper.name
+        for node in ast.parse(changed).body
+    )
+    assert not helper.decorator_list
+    assert [parameter.arg for parameter in helper.args.posonlyargs] == ["__param_0"]
     assert [parameter.arg for parameter in helper.args.args] == ["found", "group"]
+    assert [_annotation(parameter.annotation) for parameter in helper.args.args] == [
+        "list[_TowelT0]",
+        "str",
+    ]
     calls = [
         node
         for node in ast.walk(ast.parse(changed))
         if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == helper.name
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper.name
     ]
     assert [tuple(ast.unparse(argument) for argument in call.args) for call in calls] == [
         ("lambda: self._versions", "found", "group"),
         ("lambda: self._names", "found", "group"),
     ]
     assert all(
-        isinstance(call.func, ast.Attribute)
-        and ast.unparse(call.func.value) == "self"
+        isinstance(call.func, ast.Name)
+        and call.func.id == helper.name
         and not call.keywords
-        and len(call.args) + 1 == len(helper.args.posonlyargs + helper.args.args)
+        and len(call.args) == len(helper.args.posonlyargs + helper.args.args)
         for call in calls
     )
     assert _annotation(helper.returns) == "tuple[_TowelT0, ...]"
+    generated = tmp_path / "generated_groups.py"
+    generated.write_text(changed)
+    runtime_probe = textwrap.dedent("""\
+        import json
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, sys.argv[1])
+        source = Path(sys.argv[2])
+        namespace = {"__name__": "shapes.groups", "__package__": "shapes"}
+        exec(compile(source.read_text(), str(source), "exec"), namespace)
+        resolver = namespace["Resolver"]()
+        Version = namespace["Version"]
+        found = [Version("1"), Version("2")]
+        versions = resolver.versions("latest", found)
+        names = resolver.names("latest", ["alice", "bob"])
+        print(json.dumps({
+            "versions": [value.text for value in versions],
+            "names": list(names),
+            "empty": [list(resolver.versions("empty", [])), list(resolver.names("empty", []))],
+            "stored_versions": {key: [value.text for value in values] for key, values in resolver._versions.items()},
+            "stored_names": {key: list(values) for key, values in resolver._names.items()},
+            "version_identity": all(value is found[index] for index, value in enumerate(versions)),
+            "stored_identity": [versions is resolver._versions["latest"], names is resolver._names["latest"]],
+        }))
+        """)
+    observed = []
+    for source in (path, generated):
+        completed = subprocess.run(
+            [sys.executable, "-I", "-c", runtime_probe, str(tmp_path), str(source)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        observed.append(json.loads(completed.stdout))
+    expected = {
+        "versions": ["1", "2"],
+        "names": ["alice", "bob"],
+        "empty": [[], []],
+        "stored_versions": {"latest": ["1", "2"]},
+        "stored_names": {"latest": ["alice", "bob"]},
+        "version_identity": True,
+        "stored_identity": [True, True],
+    }
+    assert observed == [expected, expected]
+    assert path.read_text() == original
 
 
 @requires_mypy

@@ -9,6 +9,12 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+## [1.792]
+
+Named for ln 6, approximately 1.791759469. Changes since 1.772.
+The measurements below retain their original development-source identities;
+release verification binds the final versioned source to its own evidence.
+
 - Explain why independently mutable class aliases keep lookup suppliers, and
   why an unread ownership holder preserves original argument lifetimes.
   Distinguish shared spellings from shared bindings and document equal
@@ -27,13 +33,6 @@ ecosystem evidence behind each claim. The format follows
 - Refresh CLI defaults, scoped opt-out boundaries and release status. Final
   validation remains pending after the latest audit follow-up edits; earlier
   matrix, corpus and performance results retain their original identities.
-
-## [1.792]
-
-Named for ln 6, approximately 1.791759469. Changes since 1.772.
-The measurements below retain their original development-source identities;
-release verification binds the final versioned source to its own evidence.
-
 - Add `# towel: no-extract` immediately after a function signature's final
   colon to protect that definition and its nested bodies on every pass.
   Unmarked code remains eligible. This protects the definition, not its
