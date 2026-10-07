@@ -33,8 +33,15 @@ The complete typed/formatted block-memo comparison measures 56.72s without the
 memo and 56.70s with it, with identical outputs. No wall-clock improvement is
 established. [Retained evidence](../tests/release_evidence/1.792-parameter-audit-fixes/README.md)
 records scope and failed attempts. This does not clear interpreter-matrix,
-corpus, final source-bound artifact/evidence or exact-commit CI gates. No new
-matrix or corpus run is authorized or claimed here.
+corpus, final source-bound artifact/evidence or exact-commit CI gates. A fresh
+validation campaign is authorized; completed results must bind its final source.
+
+The campaign's Python 3.11 checks exposed two test assumptions: a starred call
+can retain a temporary argument tuple past function return, and a nested list
+comprehension can capture a parameter in a cell. Cleanup tests now distinguish
+direct and starred calls, retaining original-versus-transformed effects in both;
+the comprehension test checks the compiled cell requirement and preserves the
+ownership refusal. These corrections leave the runtime guards unchanged.
 
 The inner rendered-variant checker-refusal memo is removed after a changed
 stub provider exposed incomplete checker-input closure. Every submitted variant
@@ -44,9 +51,9 @@ this removal and do not measure or validate it.
 
 The October 6 audit and performance changes alter runtime behavior after the
 October 5 validation. Their native checks and bounded performance experiments
-are development evidence. The full matrix and corpus have not been rerun for
-this source, at the maintainer's explicit instruction; they remain release
-gates. The dated results below do not clear the changed source for release.
+are development evidence. The full matrix and corpus remain release gates for
+the final candidate. The dated results below do not clear the changed source
+for release.
 
 At `1e87842`, the complete native Python 3.13 suite passed **9,671 tests and
 26 subtests**, with 20 skips and **93% combined coverage**. Black, Flake8,

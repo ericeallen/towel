@@ -65,9 +65,9 @@ The latest audit follow-ups pass the native Python 3.13 suite and local static
 checks; their source and bounded timing records are in the
 [remediation evidence](../tests/release_evidence/1.792-parameter-audit-fixes/README.md).
 Their matrix, corpus, final artifact/evidence verification and exact-commit CI
-remain required. No matrix or corpus repeat is authorized or claimed. Before
-publication, complete the required gates for the final frozen source under
-the maintainer's run authorization. Historical successes retain their identities.
+remain required. The maintainer has authorized a fresh validation campaign.
+Before publication, complete the required gates for its final frozen source.
+Historical successes retain their identities and do not clear a changed candidate.
 
 For the October 5 repaired 1.792 runtime, that fresh corpus and the complete production
 comparison have now finished at source snapshot `00b4f4f`. The corpus retained

@@ -75,8 +75,10 @@ For certified whole-body extraction on CPython, the caller can instead
 transfer all original arguments to a final helper holder. Generated code
 first stores a reversed argument tuple in a fresh list, deletes the original
 argument bindings, evaluates the generated call arguments through that box,
-and passes `box.pop()` last. The holder keeps the original argument cleanup
-order ahead of helper locals. Its body need not read `_towel_owner`: that
+and passes `box.pop()` last. The holder releases the original frame's argument
+references in their original order ahead of helper locals. Other references,
+including a temporary tuple used by a starred call, can keep the objects alive
+longer. Its body need not read `_towel_owner`: that
 argument exists to retain the references until the correct cleanup point,
 including arguments that the original body never used. Only internal generated thunks may gain fresh
 capture factories, whose inner callable still takes no arguments;
@@ -86,6 +88,12 @@ cleanup evidence cause refusal. Annotation-only native type parameters remain
 on the original function. Custom formatters must preserve the generated AST.
 The final holder counts against the helper parameter budget. See the
 [ownership implementation](ARCHITECTURE.md).
+
+Eligibility can differ across Python versions. In
+`[(x, y) for x in xs for y in ys]`, Python 3.11 captures the parameter `ys`
+in a closure cell. The ownership proof refuses that whole-body extraction.
+Python 3.12 and later inline list comprehensions, so this particular cell
+requirement disappears; the remaining guards still apply.
 
 Generated calls pass helper arguments by position. For projects whose declared
 Python floor or existing syntax establishes Python 3.8 or newer, synthetic

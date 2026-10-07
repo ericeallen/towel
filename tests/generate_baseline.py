@@ -35,6 +35,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.compiler_golden_profiles import require_cell_free_baseline_generation
 import tempfile
 
 
@@ -47,6 +48,7 @@ def generate_single_file_baseline(engine, test_examples_dir: Path, output_dir: P
         test_examples_dir: Directory containing test example files
         output_dir: Directory to save refactored output
     """
+    require_cell_free_baseline_generation(test_examples_dir)
     print(f"\nGenerating single-file baseline from {test_examples_dir}...")
 
     # Get all Python files
@@ -167,6 +169,9 @@ def main():
 
     output_single = project_root / "test_examples_expected_output"
     output_crossfile = project_root / "test_examples_crossfile_expected_output"
+
+    # Check compiler eligibility before creating or writing any output.
+    require_cell_free_baseline_generation(test_examples)
 
     # Create output directories
     output_single.mkdir(exist_ok=True)

@@ -257,6 +257,18 @@ second module repeating its base class's method body),
 verifying the new output (`just regenerate-baseline`) and review the diff,
 since regeneration is not validation.
 
+Four single-file examples also have reviewed `parameter_cells/` goldens. Their
+original parameter cell sets determine selection independently of interpreter
+version: comprehensions compiled as separate scopes retain twelve original
+functions, while cell-free compilation permits their whole-body extraction.
+The selector requires the exact reviewed sets (or uniformly cell-free sets)
+and fails for unknown or mixed facts. Existing useful/unchanged classifications
+and AST comparisons still apply. Broad baseline generation refuses a
+parameter-cell compiler before any writes, so it cannot overwrite the
+cell-free goldens. Generate affected outputs externally and review exact
+original-body restoration, remaining helper changes, and concrete return/effect
+equivalence before adopting a compiler-profile golden.
+
 The September 27 helper cleanup changes three goldens intentionally: the
 class example drops `self` once its only uses are captured by a caller-side
 thunk; the functional example similarly drops the unused `result` argument;

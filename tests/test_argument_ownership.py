@@ -47,13 +47,37 @@ def g(a):
 """
 
 
-def _effects(source: str, name: str, count: int = 1, fail: bool = False) -> List[str]:
+def _argument_source(count: int, fail: bool) -> str:
+    parameters = ",".join(chr(97 + index) for index in range(count))
+    source = SOURCE.replace("f(a)", "f(" + parameters + ")").replace(
+        "g(a)", "g(" + parameters + ")"
+    )
+    if fail:
+        source = source.replace("return 11", 'raise ValueError("f")').replace(
+            "return 12", 'raise ValueError("g")'
+        )
+    return source
+
+
+def _effects(
+    source: str, name: str, count: int = 1, fail: bool = False, *, starred: bool = False
+) -> List[str]:
     namespace: dict[str, object] = {}
     exec(source, namespace)
     resource = cast(Callable[[str], object], namespace["R"])
     function = cast(Callable[..., object], namespace[name])
+    # A starred call may retain its temporary argument tuple in the caller
+    # through normal return (CPython 3.11). Direct calls isolate frame cleanup.
+    assert 1 <= count <= 3
     try:
-        function(*(resource(chr(97 + index)) for index in range(count)))
+        if starred:
+            function(*(resource(chr(97 + index)) for index in range(count)))
+        elif count == 1:
+            function(resource("a"))
+        elif count == 2:
+            function(resource("a"), resource("b"))
+        else:
+            function(resource("a"), resource("b"), resource("c"))
     except ValueError:
         assert fail
     return cast(List[str], namespace["events"])
@@ -81,14 +105,7 @@ def _proposal(
 def test_unused_arguments_release_in_original_order_before_helper_locals(
     tmp_path: Path, count: int, fail: bool
 ) -> None:
-    parameters = ",".join(chr(97 + index) for index in range(count))
-    source = SOURCE.replace("f(a)", "f(" + parameters + ")").replace(
-        "g(a)", "g(" + parameters + ")"
-    )
-    if fail:
-        source = source.replace("return 11", 'raise ValueError("f")').replace(
-            "return 12", 'raise ValueError("g")'
-        )
+    source = _argument_source(count, fail)
     engine, proposal = _proposal(tmp_path, source)
     before = canonical_dump(proposal.extracted_function)
     calls = tuple(canonical_dump(replacement.node) for replacement in proposal.replacements)
@@ -111,6 +128,23 @@ def test_unused_arguments_release_in_original_order_before_helper_locals(
     )
     assert holder.args.args[-1].arg.startswith("_towel_owner")
     assert holder.args.args[-1].annotation is None
+
+
+@pytest.mark.parametrize("count", [1, 2, 3])
+@pytest.mark.parametrize("fail", [False, True])
+def test_starred_arguments_preserve_the_original_caller_owned_tuple_cleanup(
+    tmp_path: Path, count: int, fail: bool
+) -> None:
+    source = _argument_source(count, fail)
+    engine, proposal = _proposal(tmp_path, source)
+    output = engine.apply_refactoring(str(tmp_path / "p.py"), proposal)
+    for name in ("f", "g"):
+        # Preserve the real invocation's effects, including any references
+        # owned by its temporary argument tuple; do not impose a frame-only order.
+        assert _effects(source, name, count, fail, starred=True) == _effects(
+            output, name, count, fail, starred=True
+        )
+    assert (tmp_path / "p.py").read_text() == source
 
 
 @pytest.mark.parametrize(

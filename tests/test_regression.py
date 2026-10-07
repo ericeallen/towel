@@ -32,6 +32,7 @@ import re
 import subprocess
 from pathlib import Path
 from typing import Dict
+from unittest.mock import patch
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -40,6 +41,13 @@ sys.path.insert(0, str(project_root))
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
 from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
+from tests.compiler_golden_profiles import (
+    PARAMETER_CELL_GOLDENS,
+    _compiled_parameter_cells,
+    _compiler_baseline,
+    _uses_parameter_cell_golden,
+)
+from tests.generate_baseline import generate_single_file_baseline
 
 
 def normalize_generated_names(code: str) -> str:
@@ -183,6 +191,90 @@ EXPECTED_UNCHANGED_CROSSFILE_PROJECTS = frozenset(
 )
 
 
+class TestCompilerGoldenSelection(unittest.TestCase):
+    def test_exact_cells_and_cell_free_profiles_have_distinct_goldens(self) -> None:
+        for expected in PARAMETER_CELL_GOLDENS.values():
+            with self.subTest(definitions=tuple(expected)):
+                self.assertTrue(_uses_parameter_cell_golden(expected, expected))
+                self.assertFalse(
+                    _uses_parameter_cell_golden({name: frozenset() for name in expected}, expected)
+                )
+
+    def test_unknown_mixed_and_missing_profiles_are_rejected(self) -> None:
+        expected = PARAMETER_CELL_GOLDENS["nested_structures.py"]
+        first = next(iter(expected))
+        for actual in (
+            {**expected, first: frozenset()},
+            {**expected, first: frozenset({"unexpected"})},
+            {name: cells for name, cells in expected.items() if name != first},
+        ):
+            with self.subTest(actual=actual), self.assertRaises(AssertionError):
+                _uses_parameter_cell_golden(actual, expected)
+
+    def test_original_definition_inventory_must_be_exact(self) -> None:
+        with self.assertRaises(AssertionError):
+            _compiled_parameter_cells("def other(): pass", {"missing"})
+        with self.assertRaises(AssertionError):
+            _compiled_parameter_cells("def f(): pass\ndef f(): pass", {"f"})
+
+    def test_generation_refuses_cell_profile_before_any_output_write(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="towel-golden-generator-") as directory:
+            root = Path(directory)
+            examples = root / "examples"
+            outputs = root / "outputs"
+            examples.mkdir()
+            outputs.mkdir()
+            (examples / "aaa.py").write_text("value = 1\n")
+            name = "edge_cases_stress_test.py"
+            (examples / name).write_bytes((project_root / "test_examples" / name).read_bytes())
+            marker = outputs / "keep.py"
+            marker.write_text("untouched\n")
+            engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+            with (
+                patch(
+                    "tests.compiler_golden_profiles._compiled_parameter_cells",
+                    return_value=PARAMETER_CELL_GOLDENS[name],
+                ),
+                patch.object(engine, "refactor_to_fixed_point") as refactor,
+                self.assertRaisesRegex(RuntimeError, "Broad regeneration"),
+            ):
+                generate_single_file_baseline(engine, examples, outputs)
+            refactor.assert_not_called()
+            self.assertEqual({p.name for p in outputs.iterdir()}, {"keep.py"})
+            self.assertEqual(marker.read_text(), "untouched\n")
+
+    def test_reviewed_cell_goldens_restore_original_definitions_and_still_extract(self) -> None:
+        examples = project_root / "test_examples"
+        goldens = project_root / "test_examples_expected_output"
+        self.assertEqual(
+            {path.name for path in (goldens / "parameter_cells").glob("*.py")},
+            set(PARAMETER_CELL_GOLDENS),
+        )
+        for file, names in PARAMETER_CELL_GOLDENS.items():
+            original = ast.parse((examples / file).read_text())
+            native = ast.parse((goldens / file).read_text())
+            retained = ast.parse((goldens / "parameter_cells" / file).read_text())
+            original_defs = {
+                n.name: n for n in ast.walk(original) if isinstance(n, ast.FunctionDef)
+            }
+            native_defs = {n.name: n for n in ast.walk(native) if isinstance(n, ast.FunctionDef)}
+            retained_defs = {
+                n.name: n for n in ast.walk(retained) if isinstance(n, ast.FunctionDef)
+            }
+            for name in names:
+                with self.subTest(file=file, definition=name):
+                    self.assertEqual(
+                        ast.dump(original_defs[name], include_attributes=False),
+                        ast.dump(retained_defs[name], include_attributes=False),
+                    )
+                    self.assertNotEqual(
+                        ast.dump(original_defs[name], include_attributes=False),
+                        ast.dump(native_defs[name], include_attributes=False),
+                    )
+            self.assertNotEqual(ast.dump(original), ast.dump(retained))
+            self.assertTrue(any(name.startswith("__extracted_func_") for name in retained_defs))
+
+
 class TestSingleFileRegression(unittest.TestCase):
     """
     Regression tests for single-file refactorings.
@@ -302,7 +394,7 @@ class TestSingleFileRegression(unittest.TestCase):
                 f"[Stability {idx}/{total_files}] Comparing {py_file.name}...", end=" ", flush=True
             )
             # Check if baseline exists for this file
-            baseline_file = self.expected_output / py_file.name
+            baseline_file = _compiler_baseline(py_file, self.expected_output)
 
             if not baseline_file.exists():
                 # No baseline for this file (skip)

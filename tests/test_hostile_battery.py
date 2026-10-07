@@ -39,6 +39,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import tempfile
+from types import CodeType
 from typing import Dict
 
 import pytest
@@ -551,6 +552,31 @@ REFLECTION_CASES: Dict[str, str] = {
 }
 
 
+def _r102_transforms_on_this_compiler(fixture: Path) -> bool:
+    """Only this fixture's comprehension parameter cells vary across compilers."""
+    parameters = {
+        "scale": ("items", "factor"),
+        "rescale": ("values", "k"),
+        "summarize": ("data", "weight", "label"),
+        "render": ("self", "data", "weight"),
+    }
+    pending = [compile(fixture.read_text(), str(fixture), "exec", dont_inherit=True)]
+    functions: list[CodeType] = []
+    while pending:
+        code = pending.pop()
+        pending.extend(value for value in code.co_consts if isinstance(value, CodeType))
+        if code.co_name in parameters:
+            functions.append(code)
+    assert len(functions) == 4 and {code.co_name for code in functions} == set(parameters)
+    captures = []
+    for code in functions:
+        actual_parameters = code.co_varnames[: code.co_argcount + code.co_kwonlyargcount]
+        assert actual_parameters == parameters[code.co_name]
+        captures.append(bool(set(actual_parameters).intersection(code.co_cellvars)))
+    assert all(captures) or not any(captures), "Unknown mixed r102 parameter-cell facts"
+    return not any(captures)
+
+
 def _run(script: Path) -> tuple[int, str, list[str]]:
     return observe(script.name, script.parent)
 
@@ -586,9 +612,12 @@ def test_refactoring_preserves_program_output(case: str) -> None:
             # No public name of the module appears, disappears, or changes meaning.
             assert module_faces(after.parent, ["m"]) == module_faces(before.parent, ["m"])
         if case not in KNOWN_DEFECTS:
-            assert transformed == (case in TRANSFORMED), (
-                "rejected" if not transformed else "transformed"
+            expected = (
+                _r102_transforms_on_this_compiler(fixture)
+                if case == "r102_whole_body_reuse"
+                else case in TRANSFORMED
             )
+            assert transformed == expected, "rejected" if not transformed else "transformed"
 
 
 @pytest.mark.parametrize("case", sorted(REFLECTION_CASES))

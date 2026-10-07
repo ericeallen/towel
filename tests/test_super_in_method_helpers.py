@@ -37,6 +37,7 @@ import io
 import logging
 from pathlib import Path
 import textwrap
+from types import CodeType
 from typing import List
 
 import pytest
@@ -408,6 +409,14 @@ def main():
 """
 
 
+# Keep nested super()/class-cell behavior without capturing an original
+# parameter on compilers where comprehensions have a separate frame. The
+# plain class marker has the same value when read before this comprehension.
+NESTED_SCOPES_LOCAL_MARKER = NESTED_SCOPES.replace(
+    "tail = (lambda obj:", "marker = self.marker\n        tail = (lambda obj:"
+).replace("super().who() + self.marker", "super().who() + marker")
+
+
 @pytest.mark.parametrize(
     "source, host",
     [
@@ -416,6 +425,7 @@ def main():
         (COOPERATIVE_INIT, "Both"),
         (CLASSMETHODS, "Square"),
         (NESTED_SCOPES, "Child"),
+        (NESTED_SCOPES_LOCAL_MARKER, "Child"),
     ],
     ids=[
         "single-inheritance",
@@ -423,6 +433,7 @@ def main():
         "cooperative-init",
         "classmethod",
         "nested-scopes",
+        "nested-scopes-local-marker",
     ],
 )
 def test_super_moves_into_a_helper_of_the_class_holding_both_duplicates(
@@ -435,7 +446,35 @@ def test_super_moves_into_a_helper_of_the_class_holding_both_duplicates(
     diamond still resolves ``B``, ``C``, ``A`` in order; a helper in any other
     class would have started the search elsewhere.
     """
+    if source == NESTED_SCOPES_LOCAL_MARKER:
+        original = _project(
+            tmp_path / "receiver-original", {"pkg/__init__.py": "", "pkg/lib.py": NESTED_SCOPES}
+        )
+        companion = _project(
+            tmp_path / "class-cell-original", {"pkg/__init__.py": "", "pkg/lib.py": source}
+        )
+        assert _run(original, DRIVER, original) == _run(companion, DRIVER, companion)
     outcome = _refactored(tmp_path, source, caplog, whole_body=True)
+    if source == NESTED_SCOPES:
+        module_code = compile(textwrap.dedent(source), "<nested-super-fixture>", "exec")
+        class_code = next(
+            code
+            for code in module_code.co_consts
+            if isinstance(code, CodeType) and code.co_name == host
+        )
+        method_code = next(
+            code
+            for code in class_code.co_consts
+            if isinstance(code, CodeType) and code.co_name == "first"
+        )
+        if "self" in method_code.co_cellvars:
+            # Separate comprehension frames retain the original receiver cell;
+            # the ownership handoff deliberately does not transfer such cells.
+            assert outcome.applied == 0
+            assert "owned_binding_frame_boundary" in outcome.reasons
+            assert not _helpers_in(outcome.source, host)
+            assert not _module_helpers(outcome.source)
+            return
     assert outcome.applied == 1
     text = outcome.source
     helpers = _class_helpers(text)

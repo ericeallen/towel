@@ -18,6 +18,7 @@ import ast
 import contextlib
 import io
 from pathlib import Path
+from types import FunctionType
 from typing import Callable, cast
 
 import pytest
@@ -60,6 +61,13 @@ def test_comprehension_iterable_uses_containing_scope(tmp_path: Path, comprehens
     exec(source, original)
     expected = cast(Callable[..., object], original["first"])([1, 2], [3, 4])
     outputs = _rewrites(tmp_path, source)
+    function = original["first"]
+    assert isinstance(function, FunctionType)
+    if set(function.__code__.co_cellvars) & {"xs", "ys"}:
+        # On Python 3.11, the inner iterable of a nested comprehension
+        # captures ys. Whole-body ownership transfer cannot certify cells.
+        assert not outputs, "Cell-bound parameters must retain their ownership refusal"
+        return
     assert outputs, "Self-contained comprehension extraction should remain useful"
     for output in outputs:
         namespace: dict[str, object] = {}
