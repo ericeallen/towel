@@ -10,42 +10,37 @@ Combines multiple challenging patterns to really stress test the unifier:
 """
 
 
-def __extracted_func_7(e, errors, fallback, i, logger, results):
+def __extracted_func_6(e, errors, fallback, i, logger, results):
     logger.error(f'Unexpected error at index {i}: {e}')
     errors['other'].append((i, str(e)))
     results.append(fallback.get_generic_default())
 
 
-def __extracted_func_6(e, errors, fallback, i, logger, results):
+def __extracted_func_5(e, errors, fallback, i, logger, results):
     logger.error(f'RuntimeError at index {i}: {e}')
     errors['runtime'].append((i, str(e)))
     results.append(fallback.get_runtime_default())
 
 
-def __extracted_func_5(e, errors, fallback, i, logger, results):
+def __extracted_func_4(e, errors, fallback, i, logger, results):
     logger.error(f'TypeError at index {i}: {e}')
     errors['type'].append((i, str(e)))
     results.append(fallback.get_type_default())
 
 
-def __extracted_func_4(e, errors, fallback, i, logger, results):
+def __extracted_func_3(e, errors, fallback, i, logger, results):
     logger.error(f'ValueError at index {i}: {e}')
     errors['value'].append((i, str(e)))
     results.append(fallback.get_value_default())
 
 
-def __extracted_func_3(handlers, transformed):
+def __extracted_func_2(handlers, transformed):
     if transformed > 100:
         handlers['high'].handle(transformed)
     elif transformed > 50:
         handlers['medium'].handle(transformed)
     else:
         handlers['low'].handle(transformed)
-
-
-def __extracted_func_2(__param_0, action_result, current_state, event, history, old_state, outputs):
-    outputs.append(action_result * __param_0)
-    history.append({'from': old_state, 'to': current_state, 'event': event['type'], 'result': action_result})
 
 
 def __extracted_func_1(computed, inner_item, logger, metrics, normalized, results, validated):
@@ -144,11 +139,11 @@ def complex_control_flow_a(data, validators, transformers, handlers):
         if item.get("type") == "A":
             if validators["A"].validate(item):
                 transformed = transformers["A"].transform(item["value"])
-                __extracted_func_3(handlers, transformed)
+                __extracted_func_2(handlers, transformed)
         elif item.get("type") == "B":
             if validators["B"].validate(item):
                 transformed = transformers["B"].transform(item["data"])
-                __extracted_func_3(handlers, transformed)
+                __extracted_func_2(handlers, transformed)
 
 
 def complex_control_flow_b(data, validators, transformers, handlers):
@@ -157,11 +152,11 @@ def complex_control_flow_b(data, validators, transformers, handlers):
         if item.get("category") == "A":
             if validators["A"].validate(item):
                 transformed = transformers["A"].transform(item["amount"])
-                __extracted_func_3(handlers, transformed)
+                __extracted_func_2(handlers, transformed)
         elif item.get("category") == "B":
             if validators["B"].validate(item):
                 transformed = transformers["B"].transform(item["total"])
-                __extracted_func_3(handlers, transformed)
+                __extracted_func_2(handlers, transformed)
 
 
 def mixed_comprehensions_v1(data, filters, mappers):
@@ -200,16 +195,16 @@ def exception_heavy_processing_a(items, processor, logger, fallback):
             results.append(normalized)
 
         except ValueError as e:
-            __extracted_func_4(e, errors, fallback, i, logger, results)
+            __extracted_func_3(e, errors, fallback, i, logger, results)
 
         except TypeError as e:
-            __extracted_func_5(e, errors, fallback, i, logger, results)
+            __extracted_func_4(e, errors, fallback, i, logger, results)
 
         except RuntimeError as e:
-            __extracted_func_6(e, errors, fallback, i, logger, results)
+            __extracted_func_5(e, errors, fallback, i, logger, results)
 
         except Exception as e:
-            __extracted_func_7(e, errors, fallback, i, logger, results)
+            __extracted_func_6(e, errors, fallback, i, logger, results)
 
     return {"results": results, "errors": errors}
 
@@ -230,16 +225,16 @@ def exception_heavy_processing_b(items, processor, logger, fallback):
             results.append(normalized)
 
         except ValueError as e:
-            __extracted_func_4(e, errors, fallback, i, logger, results)
+            __extracted_func_3(e, errors, fallback, i, logger, results)
 
         except TypeError as e:
-            __extracted_func_5(e, errors, fallback, i, logger, results)
+            __extracted_func_4(e, errors, fallback, i, logger, results)
 
         except RuntimeError as e:
-            __extracted_func_6(e, errors, fallback, i, logger, results)
+            __extracted_func_5(e, errors, fallback, i, logger, results)
 
         except Exception as e:
-            __extracted_func_7(e, errors, fallback, i, logger, results)
+            __extracted_func_6(e, errors, fallback, i, logger, results)
 
     return {"results": results, "errors": errors}
 
@@ -265,7 +260,16 @@ def state_machine_pattern_v1(events, states, transitions, handlers):
 
                             # Execute actions
                             action_result = handlers[transition["action"]](event, current_state)
-                            __extracted_func_2(2, action_result, current_state, event, history, old_state, outputs)
+                            outputs.append(action_result * 2)
+
+                            history.append(
+                                {
+                                    "from": old_state,
+                                    "to": current_state,
+                                    "event": event["type"],
+                                    "result": action_result,
+                                }
+                            )
 
     return {"final_state": current_state, "history": history, "outputs": outputs}
 
@@ -291,6 +295,15 @@ def state_machine_pattern_v2(events, states, transitions, handlers):
 
                             # Different multiplier
                             action_result = handlers[transition["action"]](event, current_state)
-                            __extracted_func_2(3, action_result, current_state, event, history, old_state, outputs)
+                            outputs.append(action_result * 3)
+
+                            history.append(
+                                {
+                                    "from": old_state,
+                                    "to": current_state,
+                                    "event": event["type"],
+                                    "result": action_result,
+                                }
+                            )
 
     return {"final_state": current_state, "history": history, "outputs": outputs}

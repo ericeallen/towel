@@ -24,12 +24,16 @@ checks pass, including class-frame/private-name/generic behavior. The shared
 closed-context policy passes custom/plugin/configuration retry checks. New
 per-unification block caching passes result isolation and lifetime tests;
 whole f-string parameterization remains rejected before the removed scan.
-Native/static final gates and bounded performance measurement are pending.
+Black, flake8, strict mypy, Bandit and the pinned dependency advisory check pass.
+Final native validation and bounded performance measurement are pending.
 Historical release evidence does not validate this edited source.
 
-The first complete native attempt exposed legacy cache/receiver expectations
+The interrupted native attempt exposed legacy cache/receiver expectations
 and a comment fixture made unprofitable by the new quality policy. Those
-tests are being repaired with fresh-check, AST-interface and before/after
-behavior assertions. A watchdog test needs process observation; an isolated
-run passes when that access is enabled. The interrupted attempt is retained
-as failed evidence, and a clean native rerun is required.
+tests now preserve coverage with fresh-check, AST-interface and before/after
+behavior assertions. A watchdog test needs process observation; it passes
+when that access is enabled. The subsequent unchanged-source full run recorded
+9,679 passes and 18 failures: one-site manual materialization fixtures, obsolete
+refusal-count expectations and one state-machine golden. They are being
+repaired while preserving their original feature checks. Both failed attempts
+are retained as failed evidence. A final complete native rerun is required.

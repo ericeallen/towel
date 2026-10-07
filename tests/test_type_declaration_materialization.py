@@ -42,11 +42,18 @@ def _proposal(
     function = source_function or next(
         node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == "first"
     )
-    statement = function.body[0]
+    second = next(
+        node
+        for node in ast.walk(source)
+        if isinstance(node, ast.FunctionDef) and node.name == "second"
+    )
+    statements = [function.body[0], second.body[0]]
     helper = ast.parse(
         f"def __extracted_func(value: {parameter_name}) -> {parameter_name}:\n    return value\n"
     ).body[0]
     assert isinstance(helper, ast.FunctionDef)
+    # Both real callers exercise declaration materialization under the normal
+    # sharing guard rather than bypassing the output-quality policy.
     return RefactoringProposal(
         file_path=str(path),
         extracted_function=helper,
@@ -55,6 +62,7 @@ def _proposal(
                 (statement.lineno, statement.end_lineno or statement.lineno),
                 ast.parse("return __extracted_func(value)").body[0],
             )
+            for statement in statements
         ],
         description="Share the identity computation",
         parameters_count=1,
@@ -83,7 +91,8 @@ def test_type_declarations_follow_runtime_dependencies_and_preserve_source_bindi
         '"""Module docstring."""\n'
         "from __future__ import annotations\n\n"
         "TypeVar = 'existing binding'\n\n"
-        "def first(value):\n    return value\n\n" + definition
+        "def first(value):\n    return value\n\ndef second(value):\n    return value\n\n"
+        + definition
     )
     path.write_text(original)
     proposal = _proposal(
@@ -110,7 +119,7 @@ def test_type_declarations_follow_runtime_dependencies_and_preserve_source_bindi
     exec(
         compile(
             rendered
-            + f"\nvalue = {expression}\nassert first(value) is value\n"
+            + f"\nvalue = {expression}\nassert first(value) is value\nassert second(value) is value\n"
             + "assert TypeVar == 'existing binding'\n"
             + "assert __doc__ == 'Module docstring.'\n",
             str(path),
@@ -123,8 +132,8 @@ def test_type_declarations_follow_runtime_dependencies_and_preserve_source_bindi
 def test_quoted_type_bounds_do_not_require_eager_project_bindings(tmp_path: Path) -> None:
     path = tmp_path / "module.py"
     path.write_text(
-        "def first(value):\n    return value\n\n"
-        "assert first(7) == 7\n\n"
+        "def first(value):\n    return value\n\ndef second(value):\n    return value\n\n"
+        "assert first(7) == 7 and second(7) == 7\n\n"
         "class Later:\n    pass\n"
     )
     proposal = _proposal(
@@ -148,7 +157,10 @@ def test_unavailable_eager_type_binding_refuses_without_writing(
     tmp_path: Path, definition: str
 ) -> None:
     path = tmp_path / "module.py"
-    original = "def first(value):\n    return value\n\n" + definition
+    original = (
+        "def first(value):\n    return value\n\ndef second(value):\n    return value\n\n"
+        + definition
+    )
     path.write_text(original)
     proposal = _proposal(
         path,
@@ -165,7 +177,7 @@ def test_type_declarations_require_a_fresh_module_or_class_helper(
     tmp_path: Path, placement: str
 ) -> None:
     path = tmp_path / "module.py"
-    original = "def first(value):\n    return value\n"
+    original = "def first(value):\n    return value\n\ndef second(value):\n    return value\n"
     path.write_text(original)
     proposal = _proposal(path, "from typing import TypeVar\n_T = TypeVar('_T')\n")
     if placement == "function":
@@ -189,19 +201,14 @@ def _host_proposal(path: Path, declarations: str) -> RefactoringProposal:
         if isinstance(node, ast.ClassDef) and node.name == "Host"
     )
     first = next(node for node in host.body if isinstance(node, ast.FunctionDef))
-    statement = first.body[0]
     proposal = _proposal(path, declarations, source_function=first)
     return replace(
         proposal,
         insert_into_class="Host",
         method_kind="staticmethod",
         replacements=[
-            Replacement(
-                (statement.lineno, statement.end_lineno or statement.lineno),
-                ast.parse("return __extracted_func(value)").body[0],
-                class_name="Host",
-                method_kind="staticmethod",
-            )
+            replace(item, class_name="Host", method_kind="staticmethod")
+            for item in proposal.replacements
         ],
     )
 
@@ -214,7 +221,7 @@ def test_method_declarations_respect_module_dependencies_and_host_decorators(
     bound = "class Bound:\n    pass\n\n"
     source = '"""Example."""\nfrom __future__ import annotations\n\n' "def decorate(cls):\n    return cls\n\n" + (
         bound if bound_before_host else ""
-    ) + "@decorate\nclass Host:\n    @staticmethod\n    def first(value):\n        return value\n\n" + (
+    ) + "@decorate\nclass Host:\n    @staticmethod\n    def first(value):\n        return value\n\n    @staticmethod\n    def second(value):\n        return value\n\n" + (
         "" if bound_before_host else bound
     )
     path.write_text(source)
@@ -230,7 +237,8 @@ def test_method_declarations_respect_module_dependencies_and_host_decorators(
         namespace: dict[str, object] = {}
         exec(
             compile(
-                rendered + "\nvalue = Bound()\nassert Host.first(value) is value\n",
+                rendered
+                + "\nvalue = Bound()\nassert Host.first(value) is value\nassert Host.second(value) is value\n",
                 str(path),
                 "exec",
             ),
@@ -254,7 +262,7 @@ def test_a_method_helper_called_outside_its_class_is_refused(tmp_path: Path) -> 
     calls it from anywhere else would write code raising ``AttributeError``.
     """
     path = tmp_path / "module.py"
-    original = "def first(value):\n    return value\n\n\nclass Host:\n    pass\n"
+    original = "def first(value):\n    return value\n\ndef second(value):\n    return value\n\n\nclass Host:\n    pass\n"
     path.write_text(original)
     proposal = _proposal(path, "")
     proposal = replace(
@@ -273,7 +281,7 @@ def test_a_method_helper_called_outside_its_class_is_refused(tmp_path: Path) -> 
 
 def test_helper_name_allocation_avoids_its_own_type_declarations(tmp_path: Path) -> None:
     path = tmp_path / "module.py"
-    path.write_text("def first(value):\n    return value\n")
+    path.write_text("def first(value):\n    return value\n\ndef second(value):\n    return value\n")
     proposal = _proposal(
         path,
         "from typing import TypeVar as _GenericTypeVar\n"
@@ -283,7 +291,7 @@ def test_helper_name_allocation_avoids_its_own_type_declarations(tmp_path: Path)
     rendered = _engine().apply_refactoring(str(path), proposal)
     assert "def __extracted_func_1" in rendered
     assert "return __extracted_func_1(value)" in rendered
-    exec(compile(rendered + "\nassert first(7) == 7\n", str(path), "exec"), {})
+    exec(compile(rendered + "\nassert first(7) == 7 and second(7) == 7\n", str(path), "exec"), {})
 
 
 @pytest.mark.parametrize("quoted", [False, True])
@@ -291,7 +299,7 @@ def test_generic_helper_inventory_and_rename_keep_type_variable_bindings(
     tmp_path: Path, quoted: bool
 ) -> None:
     path = tmp_path / "module.py"
-    path.write_text("def first(value):\n    return value\n")
+    path.write_text("def first(value):\n    return value\n\ndef second(value):\n    return value\n")
     proposal = _proposal(
         path,
         "from typing import TypeVar as _GenericTypeVar\n" "_T = _GenericTypeVar('_T', int, str)\n",
@@ -306,7 +314,7 @@ def test_generic_helper_inventory_and_rename_keep_type_variable_bindings(
     assert record["renameable"] and record["scope"] == "module"
     assert "_T" in record["source"]
     assert record["parameters"][0]["name"] == "value"
-    assert len(record["calls"]) == 1
+    assert len(record["calls"]) == 2
     declaration_before = ast.dump(ast.parse(path.read_text()).body[1])
     changes = _apply_rename_mappings(
         tmp_path,
@@ -326,7 +334,8 @@ def test_generic_helper_inventory_and_rename_keep_type_variable_bindings(
             renamed
             + "\nfrom typing import get_type_hints\n"
             + "assert get_type_hints(preserve) == {'item': _T, 'return': _T}\n"
-            + "assert first(7) == 7 and first('ok') == 'ok'\n",
+            + "assert first(7) == 7 and first('ok') == 'ok'\n"
+            + "assert second(7) == 7 and second('ok') == 'ok'\n",
             str(path),
             "exec",
         ),
@@ -337,7 +346,7 @@ def test_generic_helper_inventory_and_rename_keep_type_variable_bindings(
 @pytest.mark.parametrize("target", ["_T", "_GenericTypeVar"])
 def test_helper_rename_cannot_capture_its_type_declarations(tmp_path: Path, target: str) -> None:
     path = tmp_path / "module.py"
-    path.write_text("def first(value):\n    return value\n")
+    path.write_text("def first(value):\n    return value\n\ndef second(value):\n    return value\n")
     proposal = _proposal(
         path,
         "from typing import TypeVar as _GenericTypeVar\n" "_T = _GenericTypeVar('_T', int, str)\n",
@@ -353,7 +362,7 @@ def test_cross_file_rollback_removes_declarations_imports_and_calls_together(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     host, caller = tmp_path / "a.py", tmp_path / "b.py"
-    original = "def first(value):\n    return value\n"
+    original = "def first(value):\n    return value\n\ndef second(value):\n    return value\n"
     # The caller imports the host, so the program's own imports show it can.
     borrowing = "import a\n\n\n" + original
     host.write_text(original)
@@ -362,15 +371,23 @@ def test_cross_file_rollback_removes_declarations_imports_and_calls_together(
     proposal = _proposal(
         host, "from typing import TypeVar as _GenericTypeVar\n_T = _GenericTypeVar('_T')\n"
     )
-    site = proposal.replacements[0]
-    shifted = (site.line_range[0] + 3, site.line_range[1] + 3)  # below the caller's import
+    # Both useful call sites are below the caller's three-line import prefix.
     proposal = replace(
-        proposal, replacements=[replace(site, file_path=str(caller), line_range=shifted)]
+        proposal,
+        replacements=[
+            replace(
+                site,
+                file_path=str(caller),
+                line_range=(site.line_range[0] + 3, site.line_range[1] + 3),
+            )
+            for site in proposal.replacements
+        ],
     )
     plan = _engine().plan_refactoring(proposal)
     assert len(plan.changes) == 2
     assert b"TypeVar" in plan.changes[0].after
     assert b"from a import __extracted_func_0" in plan.changes[1].after
+    assert plan.changes[1].after.count(b"return __extracted_func_0(value)") == 2
     original_replace = os.replace
     failed = False
 
