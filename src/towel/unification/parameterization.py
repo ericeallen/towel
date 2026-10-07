@@ -39,6 +39,7 @@ from .static_positions import is_statically_read
 from .statement_facts import loaded_names
 from .statement_facts import memoized_per_node
 from .unifier_state import UnifierState
+from .bounded_cache import memoizing
 
 
 def _named_expr_targets(statement: ast.AST) -> Tuple[ast.AST, ...]:
@@ -189,10 +190,22 @@ class Parameterization(UnifierState):
         return None
 
     def _block_free_variables(self, idx: int) -> Set[str]:
-        """The free variables of block ``idx``: the names its call site can supply."""
+        """Names its call site supplies, copied from facts owned by this unification.
+
+        The default analyzer's result depends only on the block's AST. Input
+        blocks stay immutable while a unification runs. Resetting the run
+        drops all facts, so callers may rewrite and reuse nodes in a later
+        run. Each returned set is a copy; an empty result is cached too.
+        """
         if self.current_blocks is None or idx >= len(self.current_blocks):
             return set()
-        return ScopeAnalyzer().free_variables(self.current_blocks[idx])
+        nodes = tuple(self.current_blocks[idx])
+        cached = self._block_free_variables_cache.get(nodes) if memoizing() else None
+        if cached is None:
+            cached = frozenset(ScopeAnalyzer().free_variables(nodes))
+            if memoizing():
+                self._block_free_variables_cache[nodes] = cached
+        return set(cached)
 
     def _setup_bound_variable_alpha_renamings(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
         """

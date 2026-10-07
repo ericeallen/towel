@@ -91,7 +91,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         Initialize unifier.
 
         Args:
-            max_parameters: Maximum number of parameters to extract
+            max_parameters: Most differing expressions to replace by parameters
             parameterize_constants: Whether to parameterize differing constants
             promote_equal_hof_literals: Thread equal literals in higher-order
                 factory calls as parameters too, instead of leaving them inline
@@ -103,6 +103,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self.param_counter = 0
         self.alpha_renamings: Dict[Tuple[int, str], str] = {}
         self.current_blocks: Optional[Sequence[Sequence[ast.AST]]] = None
+        self._block_free_variables_cache = {}
         self.constant_positions = {}
         self._pattern_depth = 0
         self._pattern_parameters_allowed = False
@@ -1161,6 +1162,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self.param_counter = 0
         self._pattern_depth = 0
         self._pattern_parameters_allowed = False
+        self._block_free_variables_cache.clear()
         self.current_blocks = blocks
         forms = typing_forms if typing_forms is not None else [TYPING_FORMS_BY_NAME] * len(blocks)
         # What each block's statements pin, looked up by node id.
@@ -1181,6 +1183,11 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         for block in blocks:
             for statement in block:
                 self._reserved_parameter_names |= mentioned_names(statement)
+
+    def release_blocks(self) -> None:
+        """Release the previous pair's ASTs, including any memoized block facts."""
+        self.current_blocks = None
+        self._block_free_variables_cache.clear()
 
     # A construct that binds names is unified by a method of its own, chosen by
     # the node's type; each takes the nodes, the substitution and the block indices.

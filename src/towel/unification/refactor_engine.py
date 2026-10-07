@@ -730,7 +730,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # The index and last unification's inputs belong to one analysis.
         # Release them even when the next analysis has no candidate pairs.
         self._function_index_cache = None
-        self.unifier.current_blocks = None
+        self.unifier.release_blocks()
         # Every file of the analysis must fit, or each pass re-parses them all.
         self.analysis_session.hold_at_least(
             len(file_paths), sum(_size_or_zero(path) for path in file_paths)

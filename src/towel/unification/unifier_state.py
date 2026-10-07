@@ -25,7 +25,19 @@ another mixin implements each stub.
 from __future__ import annotations
 
 import ast
-from typing import Any, Dict, Hashable, Iterator, List, Mapping, Optional, Set, Tuple, Sequence
+from typing import (
+    Any,
+    Dict,
+    FrozenSet,
+    Hashable,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Set,
+    Tuple,
+    Sequence,
+)
 
 from .static_positions import Pin
 
@@ -37,7 +49,7 @@ class UnifierState:
     """Attributes and operations shared across the unifier's mixins (declarations only)."""
 
     max_parameters: int
-    """The most parameters a helper may take; a pair needing more is declined."""
+    """The most differing expressions a unification may replace by parameters."""
 
     param_counter: int
     """The next ``__param_N`` index within one unification."""
@@ -47,6 +59,9 @@ class UnifierState:
 
     current_blocks: Optional[Sequence[Sequence[ast.AST]]]
     """The blocks being unified, for checks that need the whole block."""
+
+    _block_free_variables_cache: Dict[Tuple[ast.AST, ...], FrozenSet[str]]
+    """Immutable facts for at most the current unification's input blocks."""
 
     parameterize_constants: bool
     """Whether differing constants become parameters."""
