@@ -37,7 +37,7 @@ from towel.unification.annotation_ladder import (
     used_imports,
     without_quoted_none,
 )
-from towel.unification.annotation_wiring import _variant_key, mypy_ladder_flags
+from towel.unification.annotation_wiring import mypy_ladder_flags
 from towel.unification.exceptions import Untypeable
 from towel.unification.placement import method_helper_position
 
@@ -334,14 +334,6 @@ def test_no_self_in_a_parameter_makes_no_variable() -> None:
 # -- What the ladder knows before checking -------------------------------------------
 
 
-def test_a_variant_is_known_by_its_text_apart_from_its_helpers_generated_name() -> None:
-    first = {"/p/m.py": "def __extracted_func_6():\n    pass\n\n__extracted_func_6()\n"}
-    again = {"/p/m.py": "def __extracted_func_9():\n    pass\n\n__extracted_func_9()\n"}
-    other = {"/p/m.py": "def __extracted_func_9():\n    return 1\n\n__extracted_func_9()\n"}
-    assert _variant_key(first, "__extracted_func_6") == _variant_key(again, "__extracted_func_9")
-    assert _variant_key(first, "__extracted_func_6") != _variant_key(other, "__extracted_func_9")
-
-
 def test_the_ladder_reads_strict_and_the_flags_it_sets_per_module(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         "[tool.mypy]\nstrict = true\n\n"
@@ -424,14 +416,3 @@ def test_an_import_a_rung_no_longer_spells_is_dropped() -> None:
         ("pkg.tags", "Tag"),
         ("typing", "Any"),
     )
-
-
-def test_a_variants_key_holds_its_comments_and_imports() -> None:
-    plain = {"/p/m.py": "def __extracted_func_1(a: int) -> int:\n    return a\n"}
-    commented = {"/p/m.py": "def __extracted_func_1(a: int) -> int:\n    return a  # why\n"}
-    imported = {
-        "/p/m.py": "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n"
-        "    from pkg import A\n\ndef __extracted_func_1(a: int) -> int:\n    return a\n"
-    }
-    keys = {_variant_key(files, "__extracted_func_1") for files in (plain, commented, imported)}
-    assert len(keys) == 3

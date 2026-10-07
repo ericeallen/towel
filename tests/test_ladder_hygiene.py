@@ -295,12 +295,12 @@ def test_the_type_the_block_saw_replaces_a_wider_declared_one(tmp_path: Path) ->
 
 
 @requires_mypy
-def test_a_variant_accepted_after_a_replayed_refusal_is_still_probed_for_reachability(
+def test_a_variant_accepted_after_a_prior_refusal_is_still_probed_for_reachability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only refusals are replayed: a variant the checker accepts always has its lines probed.
+    """A variant accepted after prior refusals still has its lines probed.
 
-    The same variant is refused, heard again and refused by replay, and then,
+    The same variant is refused and checked again, and then,
     once the module it imports is fixed, checked afresh and accepted, at which
     point the check of code the checker does not look at runs for it.
     """

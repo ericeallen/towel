@@ -95,7 +95,7 @@ from ..formatting import formatting_repeatability
 from ..mypy_ci_policy import UnsupportedMypyPolicy, mypy_policy
 from ..checker_project import _read_json_config
 from ..declared_python import declared_requirement, python_lower_bound
-from ..project_layout import find_project_root, load_pyproject, package_chain
+from ..project_layout import find_project_root, load_pyproject
 from ..type_baseline import (
     NO_SHAPE,
     ChangeShape,
@@ -468,95 +468,8 @@ class _LadderPolicy:
     """An explicit readable configuration has no plugin that could refine a helper call."""
 
 
-@dataclasses.dataclass(frozen=True)
-class _RefusedCheck:
-    """A project check that refused a variant, and what its verdict depended on."""
-
-    errors: Tuple[TypeDiagnostic, ...]
-    helper_name: str
-    depends_on: Tuple[Tuple[str, str], ...]
-    """(path, digest) of every file the refusal could depend on, the variant's own as they stand."""
-    known: str
-    """What the run already counted as the project's own errors in those files (``type_baseline``)."""
-
-
-_REFUSED_CHECKS_KEPT = 512
-"""Refusals a run remembers; a variant refused earlier is heard at a rehearing, not before."""
-_DEPENDENCIES_FOLLOWED = 4096
-"""Past this many files a refusal's dependencies are not followed and it is not remembered."""
-
-
 def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
-
-
-def _variant_key(files: Mapping[str, str], helper_name: str) -> str:
-    """What a rendered variant is, apart from the name its helper was given this time.
-
-    A helper's generated name is allocated per attempt and advances with every
-    application, so a variant rendered again after unrelated changes differs
-    only there (packaging: ``__extracted_func_6`` heard first, ``_9`` again).
-    """
-    name = re.compile(rf"(?<!\w){re.escape(helper_name)}(?!\w)")
-    parts: List[str] = []
-    for path in sorted(files):
-        parts.extend((os.path.realpath(path), name.sub(_HELPER_PLACEHOLDER, files[path])))
-    return _digest(_SEPARATOR.join(parts))
-
-
-_HELPER_PLACEHOLDER = "<helper>"
-"""Stands for the helper's name in a variant's key; no identifier can be spelled so."""
-_SEPARATOR = "\0"
-
-
-def _module_imports(tree: ast.Module) -> List[Tuple[int, str, Tuple[str, ...]]]:
-    """``(level, module, names)`` for every import anywhere in ``tree``, conditional or not."""
-    found: List[Tuple[int, str, Tuple[str, ...]]] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            found.extend((0, alias.name, ()) for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            found.append((node.level, node.module or "", tuple(a.name for a in node.names)))
-    return found
-
-
-def _imported_files(path: Path, tree: ast.Module, roots: Sequence[Path]) -> Set[Path]:
-    """The source files under ``roots`` that ``tree``'s imports may read, package initializers included.
-
-    Resolved generously -- every candidate location of every name, submodule
-    or not -- because a missed dependency could only make a remembered refusal
-    outlive the change that answers it, and an extra one only makes it
-    forgotten sooner.
-    """
-    found: Set[Path] = set()
-
-    def modules(base: Path, dotted: str) -> None:
-        directory = base
-        for part in [part for part in dotted.split(".") if part]:
-            initializer = directory / "__init__.py"
-            if initializer.is_file():
-                found.add(initializer)
-            candidate = directory / f"{part}.py"
-            if candidate.is_file():
-                found.add(candidate)
-            directory = directory / part
-        initializer = directory / "__init__.py"
-        if initializer.is_file():
-            found.add(initializer)
-
-    for level, module, names in _module_imports(tree):
-        if level:
-            base = path.parent
-            for _ in range(level - 1):
-                base = base.parent
-            bases = [base]
-        else:
-            bases = list(roots)
-        for base in bases:
-            modules(base, module)
-            for name in names:
-                modules(base, f"{module}.{name}" if module else name)
-    return found
 
 
 class HelperAnnotationWiring(EngineState):
@@ -566,9 +479,6 @@ class HelperAnnotationWiring(EngineState):
     _declared_pythons: Mapping[str, Optional[PythonVersion]] = {}
     # What the project's mypy settles about the fallback rungs, per module, once per run.
     _ladder_policies: Mapping[str, _LadderPolicy] = {}
-    # Project checks that refused a variant this run, by what the variant renders
-    # to (``_variant_key``); see ``_project_errors``.
-    _refused_checks: Mapping[str, _RefusedCheck] = {}
 
     def begin_refactoring_run(self, file_paths: Sequence[str]) -> None:
         """Establish a new run's original project before inference or changes.
@@ -584,7 +494,6 @@ class HelperAnnotationWiring(EngineState):
         self._declared_pythons = {}
         self._forget_run_lookups()
         self._ladder_policies = {}
-        self._refused_checks = {}
         self._type_known = KnownErrors()
         self._type_checked = None
         self._type_names_any = {}
@@ -1605,135 +1514,18 @@ class HelperAnnotationWiring(EngineState):
         return tuple(error for error in unseen if id(error) in brought)
 
     def _project_errors(
-        self, modified_files: Dict[str, str], helper_name: str, shape: ChangeShape = NO_SHAPE
+        self, modified_files: Dict[str, str], shape: ChangeShape = NO_SHAPE
     ) -> Tuple[TypeDiagnostic, ...]:
-        """What the project check says of a variant, without asking again when nothing it read changed.
+        """Check every rendered variant against the current project and original baseline.
 
-        A declined proposal is heard again at a rehearing, once something has
-        been applied since, and each of its rungs is rendered and checked
-        again. Rendered again it is often the same text, but for the number in
-        its helper's generated name (packaging: 28 of 68 checks repeated an
-        earlier one exactly, errors and all). A refusal is kept with the files
-        it could have depended on: those its errors lie in and every project
-        file they import, followed through their imports, the variant's own
-        files aside, which the key already holds. When a variant renders to a
-        kept key and none of those files has changed, the check would answer
-        as it did, and its answer is replayed under the helper's new name.
-
-        Only refusals are kept; an accepted variant is applied and changes the
-        project. The run forgets them all when it begins, and a refusal whose
-        dependencies cannot be followed (an error in no file, too many files)
-        is not kept at all. ``shape`` says where the variant wrote what
-        (:meth:`_change_shape`); what the variant renders to settles it, so
-        the key needs nothing more.
+        A dependency approximation cannot certify a prior refusal: a new
+        project stub may supersede an unchanged implementation, configured
+        stub roots may hold other interfaces, or a custom oracle may answer
+        differently without any source change. No inner result is retained,
+        accepted or refused. The outer fixed-point proposal cache separately
+        requires its exact unchanged run revision and closed execution context.
         """
-        key = _variant_key(modified_files, helper_name)
-        known = self._refused_checks.get(key)
-        if (
-            known is not None
-            and self._dependencies_unchanged(known)
-            and self._known_errors_in(known.depends_on) == known.known
-        ):
-            self._checker_refusals += 1
-            renamed = re.compile(rf"(?<!\w){re.escape(known.helper_name)}(?!\w)")
-            TYPES.debug(
-                "replaying the refusal of an identical variant: %d error(s)", len(known.errors)
-            )
-            return tuple(
-                dataclasses.replace(error, message=renamed.sub(helper_name, error.message))
-                for error in known.errors
-            )
-        errors = self._new_type_errors(modified_files, shape)
-        if errors:
-            depends_on = self._refusal_dependencies(modified_files, errors)
-            if depends_on is not None:
-                kept = dict(self._refused_checks)
-                kept[key] = _RefusedCheck(
-                    errors, helper_name, depends_on, self._known_errors_in(depends_on)
-                )
-                while len(kept) > _REFUSED_CHECKS_KEPT:
-                    kept.pop(next(iter(kept)))
-                self._refused_checks = kept
-        return errors
-
-    @staticmethod
-    def _refusal_dependencies(
-        modified_files: Mapping[str, str], errors: Sequence[TypeDiagnostic]
-    ) -> Optional[Tuple[Tuple[str, str], ...]]:
-        """(path, digest) of the files a refusal could depend on, outside the variant; None if unknown."""
-        variant = {os.path.realpath(path) for path in modified_files}
-        pending: List[Path] = []
-        for error in errors:
-            path = Path(os.path.realpath(error.path))
-            if not path.is_file():
-                return None
-            pending.append(path)
-        roots = sorted(
-            {
-                (packages[-1].parent if packages else Path(path).parent)
-                for path in [*modified_files, *(error.path for error in errors)]
-                for packages in [package_chain(Path(path))]
-            }
-        )
-        seen: Set[Path] = set()
-        while pending:
-            path = pending.pop()
-            if path in seen:
-                continue
-            seen.add(path)
-            if len(seen) > _DEPENDENCIES_FOLLOWED:
-                return None
-            text = modified_files.get(str(path))
-            if text is None:
-                text = next(
-                    (t for p, t in modified_files.items() if os.path.realpath(p) == str(path)),
-                    None,
-                )
-            if text is None:
-                text = try_read_source(str(path))
-            if text is None:
-                return None
-            try:
-                tree = ast.parse(text)
-            except SyntaxError:
-                return None
-            pending.extend(_imported_files(path, tree, roots) - seen)
-        # The variant's own files count as they stand before the change: the
-        # key holds what the change makes of them, and what the run counts as
-        # their existing errors is read against this text.
-        seen |= {Path(path) for path in variant}
-        depends_on: List[Tuple[str, str]] = []
-        for path in sorted(seen):
-            text = try_read_source(str(path))
-            if text is None:
-                return None
-            depends_on.append((str(path), _digest(text)))
-        return tuple(depends_on)
-
-    def _known_errors_in(self, depends_on: Sequence[Tuple[str, str]]) -> str:
-        """A digest of the errors the run counts as the project's own in these files, and which moved.
-
-        A change is refused only for an error the project did not already
-        report (``towel.type_baseline``), and what it already reports is
-        brought up to date after every applied change. A refusal replayed must
-        have been judged against the same account of these files.
-        """
-        places = {self._where_checked(path) for path, _ in depends_on}
-        known = self._type_known
-        errors = sorted(
-            (error.path, error.line or 0, error.message)
-            for error in known.errors
-            if error.path in places
-        )
-        return _digest(repr((errors, sorted(known.moved & places))))
-
-    @staticmethod
-    def _dependencies_unchanged(known: _RefusedCheck) -> bool:
-        for path, digest in known.depends_on:
-            text = try_read_source(path)
-            if text is None or _digest(text) != digest:
-                return False
-        return True
+        return self._new_type_errors(modified_files, shape)
 
     def _new_type_errors(
         self, modified_files: Dict[str, str], shape: ChangeShape = NO_SHAPE
