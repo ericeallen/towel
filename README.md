@@ -13,9 +13,9 @@ leaves meaningful names for you to choose.
 See the [changelog](https://github.com/ericeallen/towel/blob/v1.792/CHANGELOG.md#1792)
 for this version's changes and the
 [readiness report](https://github.com/ericeallen/towel/blob/v1.792/docs/PRODUCTION_READINESS.md)
-for the validation scope. The latest audit follow-up changes are under
-validation; historical passing runs do not validate these edits. Publication
-remains pending.
+for the validation scope. The latest audit follow-ups pass native tests and
+local static checks. Their interpreter matrix, corpus, final source-bound
+release evidence and exact-commit CI remain pending. Publication remains pending.
 
 On the October 5 controlled Packaging fixture, that 1.792 checkpoint's complete
 typed, formatted command was 11.9% slower than 1.772. The

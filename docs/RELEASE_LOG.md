@@ -48,11 +48,22 @@ Variants submitted to project checking are checked again. The outer exact
 completed-proposal rehearing cache remains separately qualified. Earlier timing
 records below predate this removal and do not measure it.
 
-The resulting parameter, helper-placement and checker-cache corrections are
-under validation. Completed audit fixtures and focused checks are development
-evidence; final validation of the changed source and release contents remains
-pending. No new matrix, corpus, published-version timing or publication is
-claimed. Earlier observations below retain their original source identities.
+October 7 native validation at `04d2710` passes 9,697 tests, with 20 skips,
+26 passing subtests, four warnings and 93% combined line coverage. All declared
+local static checks and the pinned dependency advisory check pass. Source
+bytes remain unchanged. The earlier failed attempts are retained separately;
+fixture repairs preserve fresh-check, declaration, private-method and runtime
+behavior coverage. One seven-input/two-statement golden tail is now inline,
+with original/old/new values and effects equal in the retained controls.
+
+The block memo halves repeated computations in its work-count control. Four
+complete typed/formatted CLI runs measure 56.72s uncached versus 56.70s cached,
+with byte-identical outputs and no established wall benefit. The
+[retained evidence](../tests/release_evidence/1.792-parameter-audit-fixes/README.md)
+binds those observations to the runtime and drivers. Documentation updates
+preserve the validated runtime and executable-test bytes. Matrix, corpus,
+final release evidence and exact-commit CI remain pending. No new published-
+version comparison or publication is claimed.
 
 ## 2026-10-06: 1.792 audit and optimization validation
 

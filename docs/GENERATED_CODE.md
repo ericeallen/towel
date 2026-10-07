@@ -8,6 +8,7 @@ For precise supported boundaries, see [Known limitations](KNOWN_LIMITATIONS.md).
 On this page:
 
 - [Extracting a shared helper](#extracting-a-shared-helper)
+- [Protect a definition](#protect-a-definition)
 - [Comments and formatting](#comments-and-formatting)
 - [Where helpers live](#where-helpers-live)
 - [Arguments and evaluation](#arguments-and-evaluation)

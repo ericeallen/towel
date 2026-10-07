@@ -30,9 +30,11 @@ release verification binds the final versioned source to its own evidence.
   cannot certify changed, absent or external stub providers. The outer exact
   completed-proposal rehearing cache remains separately qualified by its
   candidate, revision and recognized context requirements.
-- Refresh CLI defaults, scoped opt-out boundaries and release status. Final
-  validation remains pending after the latest audit follow-up edits; earlier
-  matrix, corpus and performance results retain their original identities.
+- Refresh CLI defaults, scoped opt-out boundaries and release status. The latest
+  audit follow-ups pass 9,697 native tests and the 93% coverage gate. Matrix,
+  corpus and final release gates remain pending; earlier results retain their
+  original identities. The block memo halves repeated work in its bounded
+  control, with no measured complete-command wall benefit.
 - Add `# towel: no-extract` immediately after a function signature's final
   colon to protect that definition and its nested bodies on every pass.
   Unmarked code remains eligible. This protects the definition, not its

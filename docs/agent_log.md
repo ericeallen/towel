@@ -37,3 +37,12 @@ when that access is enabled. The subsequent unchanged-source full run recorded
 refusal-count expectations and one state-machine golden. They are being
 repaired while preserving their original feature checks. Both failed attempts
 are retained as failed evidence. A final complete native rerun is required.
+
+All reproduced fixture failures are repaired without changing the runtime.
+Final native validation at `04d2710` passes 9,697 tests, 20 skips and 26 subtests
+with 93% combined line coverage; every non-ignored source byte stays unchanged.
+Black, flake8, strict mypy and Bandit pass. Four serial complete typed/formatted
+CLI observations yield byte-identical output; the new memo halves repeated
+work in its bounded control but establishes no wall-clock benefit. Raw source,
+driver, result and failure records are retained in the remediation evidence.
+Final documentation/artifact refresh follows; matrix/corpus remain unauthorized.

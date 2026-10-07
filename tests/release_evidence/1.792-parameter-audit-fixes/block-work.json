@@ -1,0 +1,22 @@
+{
+  "rows": [
+    {
+      "mode": "uncached",
+      "queries": 160,
+      "fresh_scope_computations": 160,
+      "distinct_retained_inputs": 12,
+      "applications": 1,
+      "output_sha256": "2a7746ffb081697765c7aea1ad9fc0a1a32a82d6121f43eb0286462af3c3bbb1"
+    },
+    {
+      "mode": "cached",
+      "queries": 160,
+      "fresh_scope_computations": 80,
+      "distinct_retained_inputs": 12,
+      "applications": 1,
+      "output_sha256": "2a7746ffb081697765c7aea1ad9fc0a1a32a82d6121f43eb0286462af3c3bbb1"
+    }
+  ],
+  "outputs_identical": true,
+  "scope": "Instrumented untyped public fixed-point path on same six-function fixture as audit; work counts only, no timing or release performance claim."
+}

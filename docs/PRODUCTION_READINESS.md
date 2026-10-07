@@ -22,10 +22,19 @@ Start with the current release preparation. The later sections retain the eviden
 
 ## 1.792 release preparation
 
-The latest October 6 parameter, placement and checker-cache audit follow-ups
-are being validated. Their focused checks do not clear final native, artifact,
-interpreter-matrix, corpus or source-bound release gates. No new matrix or
-corpus run is authorized or claimed here.
+The latest parameter, placement and checker-cache audit follow-ups pass the
+complete native Python 3.13.7/macOS suite at `04d2710`: **9,697 passed**, 20 skipped
+and 26 passing subtests, with **93%** combined line coverage. Black, flake8,
+strict mypy, Bandit and the pinned third-party dependency audit pass. Every
+source byte stayed unchanged throughout the native run. Documentation/evidence
+updates preserve its runtime and executable-test bytes.
+
+The complete typed/formatted block-memo comparison measures 56.72s without the
+memo and 56.70s with it, with identical outputs. No wall-clock improvement is
+established. [Retained evidence](../tests/release_evidence/1.792-parameter-audit-fixes/README.md)
+records scope and failed attempts. This does not clear interpreter-matrix,
+corpus, final source-bound artifact/evidence or exact-commit CI gates. No new
+matrix or corpus run is authorized or claimed here.
 
 The inner rendered-variant checker-refusal memo is removed after a changed
 stub provider exposed incomplete checker-input closure. Every submitted variant

@@ -4,13 +4,15 @@
 
 Use this guide to estimate a run and understand the limits of the published measurements.
 
-The latest parameter, placement and checker-cache audit follow-ups have no new
-complete-command measurements here. Earlier samples retain their source and
-workload identities; they do not establish the performance of the changed source.
+The latest parameter, placement and checker-cache follow-ups are measured below.
+The new block memo reduces repeated work, but its complete-command comparison
+establishes no wall-clock benefit. Earlier samples retain their source identities
+and do not establish current performance relative to published 1.772.
 
 On this page:
 
 - [Measurement conditions](#measurement-conditions)
+- [October 7 block-fact memo](#october-7-block-fact-memo)
 - [October 6 optimization experiments](#october-6-optimization-experiments)
 - [October 5 repaired candidate comparison](#october-5-repaired-candidate-comparison)
 - [October 2 complete CLI comparison](#october-2-complete-cli-comparison)
@@ -35,6 +37,32 @@ whole-corpus speedup is established. The
 [comparison report](proposals/published-1772-comparison.md)
 records the precise source/artifact identities, alternating runs and ordinary
 background activity. The older timings below retain their historical scope.
+
+### October 7 block-fact memo
+
+The parameter-audit remediation uses source `04d2710`, runtime tree
+`792623860332f187d72fa263a9e2aeb6976d930c`, after the complete native suite finished.
+Both arms use the same corrected source; the control restores only the previous
+fresh free-variable query. Each of four real CLI commands uses a fresh process,
+input/output copy and checker workers, typing and formatting enabled,
+`TOWEL_WORKERS=1`, and ABBA order on the same 22-module Packaging 26.3 fixture.
+Input Python/configuration bytes remain unchanged. All Python outputs are
+byte-identical: 18 refactorings across eight changed files.
+
+| Block-query memo | Mean complete-command seconds | Samples |
+| --- | ---: | ---: |
+| Disabled control | 56.72 | 2 |
+| Enabled | 56.70 | 2 |
+
+No wall-clock improvement is established. Ordinary background activity varied;
+retained per-arm CPU snapshots do not describe a dedicated idle machine.
+A separate instrumented six-function public fixed-point control makes 160
+queries in both arms; fresh computations fall from 160 to 80 with identical
+output and observed results/effects. That work reduction is scoped to a single
+unification's immutable inputs, rather than a cross-run cache or CLI speed claim.
+The [retained evidence](../tests/release_evidence/1.792-parameter-audit-fixes/README.md)
+binds drivers, raw observations, source, configuration and outputs. This is no
+new comparison with published 1.772 and does not clear matrix/corpus gates.
 
 ### October 6 optimization experiments
 
