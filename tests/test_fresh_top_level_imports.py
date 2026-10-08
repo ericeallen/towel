@@ -28,14 +28,14 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 def _write_project(root: Path, prefix: str, *, independent_import: bool) -> None:
     (root / "pyproject.toml").write_text('[project]\nname="fresh-host"\nversion="0"\n')
     body = """def {name}(seed):
-    total = seed + 1
-    result = total * 2
-    added = result + 3
-    return added * {factor}
+    total = seed + {offset}
+    result = total * {offset}
+    added = result + {offset}
+    return added
 """
-    (root / "a.py").write_text(prefix + body.format(name="first", factor=5))
+    (root / "a.py").write_text(prefix + body.format(name="first", offset=5))
     (root / "b.py").write_text(
-        "def unused():\n    import a\n\n" + body.format(name="second", factor=7)
+        "def unused():\n    import a\n\n" + body.format(name="second", offset=7)
     )
     if independent_import:
         # This import is unconditional in its own module, but the driver's

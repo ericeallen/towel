@@ -140,6 +140,7 @@ from .import_graph import (
 from .splicing import BlockColumns
 from .thunk_inlining import inline_leading_thunks
 from .typing_forms import ModuleText
+from .compiler_literals import retained_literal_pool
 from .substitution import Substitution
 from .visitors import FreeNameCollector, body_without_docstring
 
@@ -1552,6 +1553,13 @@ class PairEvaluation(
             return None
         canonical_file = self._safe_home_across_modules(pair, home, replacements, functions)
         if canonical_file is None:
+            return None
+        if retained_literal_pool(helper.body) and any(
+            os.path.abspath(replacement.file_path or home.file_path)
+            != os.path.abspath(canonical_file)
+            for replacement in replacements
+        ):
+            self._debug_reject(RejectReason.LITERAL_POOL_BOUNDARY, pair)
             return None
         destination_class = home.insert_into_class
         if home.insert_into_function:

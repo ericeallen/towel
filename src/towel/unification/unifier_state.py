@@ -81,6 +81,9 @@ class UnifierState:
     _pattern_parameters_allowed: bool
     """Whether a parameter may stand where the pattern being unified is (see ``Unifier._unify_pattern``)."""
 
+    _pooled_literal_parts: Sequence[FrozenSet[str]]
+    """Structural keys whose substitution would rebuild compiler-pooled objects."""
+
     _read_in_place: Sequence[Mapping[int, Pin]]
     """Per block, the nodes a tool reads where they stand (see ``static_positions``), by ``id``."""
 

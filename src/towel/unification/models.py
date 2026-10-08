@@ -368,6 +368,7 @@ class RejectReason(StrEnum):
     FORWARDED_CALLEE = "forwarded_callee"
     THUNK_OF_POSSIBLY_UNBOUND_LOCAL = "thunk_of_possibly_unbound_local"
     UNDEFINED_NAMES_IN_CALL = "undefined_names_in_call"
+    LITERAL_POOL_BOUNDARY = "literal_pool_boundary"
     UNIFICATION_FAILED = "unification_failed"
     UNPROFITABLE_HELPER = "unprofitable_helper"
     UNPROVEN_IMPORT = "unproven_import"

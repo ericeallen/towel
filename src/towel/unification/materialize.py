@@ -154,6 +154,11 @@ class Materialization(
     def apply_refactoring_multi_file(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render without writing or mutating caller-owned proposal ASTs.
 
+        Consume a proposal accepted by this implementation's analysis. This
+        API does not validate arbitrary proposal bodies or provide serialized
+        interchange between implementations; reanalyze with the implementation
+        that will apply the result. Source digests detect project-byte changes.
+
         The first application establishes the run's complete original type
         baseline before inference or materialization. Later applications keep
         that policy until ``begin_refactoring_run`` starts another run. A

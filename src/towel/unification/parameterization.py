@@ -33,7 +33,7 @@ from .parameters import fresh_parameter_name
 from .scope_analyzer import ScopeAnalyzer
 from ..diagnostics import UNIFIER
 
-from .substitution import Substitution
+from .substitution import Substitution, structural_text
 from .binding_context import bound_variables_in_block
 from .static_positions import is_statically_read
 from .statement_facts import loaded_names
@@ -157,11 +157,18 @@ class Parameterization(UnifierState):
         return True
 
     def _read_where_it_stands(self, exprs: Sequence[ast.AST], block_indices: Sequence[int]) -> bool:
-        """Whether a tool reads any of the differing expressions from the source text.
+        """Whether syntax is pinned or substitution would rebuild a pooled literal.
 
         Then the blocks are not duplicates: a parameter would move the
-        literal out of the call that extraction or a checker looks in.
+        literal out of the call that extraction or a checker looks in, or
+        replace part of a compiler constant with a runtime computation.
         """
+        if any(
+            idx < len(self._pooled_literal_parts)
+            and structural_text(expr) in self._pooled_literal_parts[idx]
+            for idx, expr in zip(block_indices, exprs)
+        ):
+            return True
         read_in_place = getattr(self, "_read_in_place", ())
         return any(
             idx < len(read_in_place) and is_statically_read(expr, read_in_place[idx])

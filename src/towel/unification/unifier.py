@@ -29,6 +29,7 @@ import ast
 from typing import Callable, Dict, Optional, List, Tuple, Any, Sequence, Type, Union, Iterator
 
 from .constant_consistency import ConstantConsistency, constant_identity
+from .compiler_literals import pooled_literal_parts
 from .parameterization import Parameterization
 from .hof_promotion import LiteralPromotion
 from .statement_facts import mentioned_names
@@ -107,6 +108,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self.constant_positions = {}
         self._pattern_depth = 0
         self._pattern_parameters_allowed = False
+        self._pooled_literal_parts = ()
         self._read_in_place = ()
 
     def unify_blocks(
@@ -1164,6 +1166,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self._pattern_parameters_allowed = False
         self._block_free_variables_cache.clear()
         self.current_blocks = blocks
+        self._pooled_literal_parts = tuple(pooled_literal_parts(block) for block in blocks)
         forms = typing_forms if typing_forms is not None else [TYPING_FORMS_BY_NAME] * len(blocks)
         # What each block's statements pin, looked up by node id.
         self._read_in_place = [
@@ -1187,6 +1190,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
     def release_blocks(self) -> None:
         """Release the previous pair's ASTs, including any memoized block facts."""
         self.current_blocks = None
+        self._pooled_literal_parts = ()
         self._block_free_variables_cache.clear()
 
     # A construct that binds names is unified by a method of its own, chosen by

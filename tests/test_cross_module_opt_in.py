@@ -49,13 +49,13 @@ from builtins import print as emit
 
 def {name}(values):
     emit({tag!r})
-    total = 0
+    total = {offset}
     for value in values:
-        if value > 1:
-            total += value * 2
+        if value > {offset}:
+            total += value * {offset}
         else:
             total -= value
-    total = total + 1
+    total = total + {offset}
     return total
 """
 
@@ -74,9 +74,9 @@ def _package(root: Path) -> Path:
         root,
         {
             "zzshared/__init__.py": "",
-            "zzshared/first.py": _BLOCK.format(name="total_first", tag="first"),
+            "zzshared/first.py": _BLOCK.format(name="total_first", tag="first", offset=2),
             "zzshared/second.py": "import zzshared.first\n"
-            + _BLOCK.format(name="total_second", tag="second"),
+            + _BLOCK.format(name="total_second", tag="second", offset=3),
         },
     )
 
