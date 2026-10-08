@@ -183,14 +183,17 @@ def test_forked_caller_cannot_use_or_stop_the_parents_tool() -> None:
         tool.close()
 
 
-def test_eof_and_timeout_cannot_return_unchanged_text() -> None:
-    tool = IsolatedFormatTool("black", timeout=0.2)
+def test_eof_and_timeout_cannot_return_unchanged_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = IsolatedFormatTool("black")
     tool._process.kill()
     tool._process.wait()
     with pytest.raises(ToolFailure):
         tool.render({"source": "value=1", "line_length": 88, "string_normalization": True})
     assert tool._closed
-    stalled = IsolatedFormatTool("black", timeout=0.2)
+    stalled = IsolatedFormatTool("black")
+    monkeypatch.setattr(stalled, "_timeout", 0.2)
     os.kill(stalled._process.pid, signal.SIGSTOP)
     with pytest.raises(ToolFailure, match="timed out"):
         stalled.render({"source": "value=1", "line_length": 88, "string_normalization": True})
