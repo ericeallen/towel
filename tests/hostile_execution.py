@@ -34,6 +34,7 @@ print.
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass
 import importlib.util
 import json
 from pathlib import Path
@@ -418,26 +419,138 @@ def _bind_pair(old: str, new: str, names: Dict[str, str]) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class _RetainedThunk:
+    """A zero-argument supplier evaluated only at corresponding helper expressions."""
+
+    expression: ast.expr
+
+
+_RetainedInput = Union[ast.Constant, _RetainedThunk]
+
+
+def _retained_thunk(argument: ast.expr) -> Union[_RetainedThunk, None]:
+    """Certify only binding-free supplier bodies, with no defaults or parameters."""
+    if not isinstance(argument, ast.Lambda):
+        return None
+    args = argument.args
+    if (
+        args.posonlyargs
+        or args.args
+        or args.kwonlyargs
+        or args.vararg
+        or args.kwarg
+        or args.defaults
+        or args.kw_defaults
+    ):
+        return None
+    if any(
+        isinstance(node, ast.Name)
+        and node.id == "super"
+        or isinstance(node, ast.Attribute)
+        and node.attr == "super"
+        or isinstance(
+            node,
+            (
+                ast.Lambda,
+                ast.ListComp,
+                ast.SetComp,
+                ast.DictComp,
+                ast.GeneratorExp,
+                ast.NamedExpr,
+                ast.Yield,
+                ast.YieldFrom,
+                ast.Await,
+            ),
+        )
+        for node in ast.walk(argument.body)
+    ):
+        return None  # implicit class/receiver cells and child binders remain unproved
+    return _RetainedThunk(argument.body)
+
+
+def _immediate_thunk_calls(helper: ast.FunctionDef, names: frozenset[str]) -> bool:
+    """Every supplier use is a direct zero-argument call in the helper's own frame."""
+    parents = {
+        child: node
+        for statement in helper.body
+        for node in ast.walk(statement)
+        for child in ast.iter_child_nodes(node)
+    }
+    observed: set[str] = set()
+    for statement in helper.body:
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Name) or node.id not in names:
+                continue
+            parent = parents.get(node)
+            if not (
+                isinstance(node.ctx, ast.Load)
+                and isinstance(parent, ast.Call)
+                and parent.func is node
+                and not parent.args
+                and not parent.keywords
+            ):
+                return False
+            ancestor: Union[ast.AST, None] = parent
+            while ancestor is not None:
+                if isinstance(
+                    ancestor,
+                    (
+                        ast.Lambda,
+                        ast.ListComp,
+                        ast.SetComp,
+                        ast.DictComp,
+                        ast.GeneratorExp,
+                        ast.FunctionDef,
+                        ast.AsyncFunctionDef,
+                        ast.ClassDef,
+                    ),
+                ):
+                    return False
+                ancestor = parents.get(ancestor)
+            observed.add(node.id)
+    return observed == names
+
+
+def _supplied_thunk(
+    expression: object, substitutions: Mapping[str, _RetainedInput]
+) -> Union[ast.expr, None]:
+    if not (
+        isinstance(expression, ast.Call)
+        and isinstance(expression.func, ast.Name)
+        and not expression.args
+        and not expression.keywords
+    ):
+        return None
+    supplied = substitutions.get(expression.func.id)
+    return supplied.expression if isinstance(supplied, _RetainedThunk) else None
+
+
 def _paired_bindings(
     old: object,
     new: object,
     names: Dict[str, str],
     old_locals: frozenset[str],
-    literals: Mapping[str, ast.Constant],
+    substitutions: Mapping[str, _RetainedInput],
 ) -> bool:
     """Register own-frame binders before reads, including reads preceding a store."""
+    thunk = _supplied_thunk(new, substitutions)
+    if thunk is not None:
+        # The supplier body lives in the caller's namespace, rather than the
+        # helper's alpha-renamed namespace. Its complete syntax must correspond.
+        return _paired_syntax(old, thunk, {}, old_locals, {})
     if isinstance(old, ast.Constant) and isinstance(new, ast.Name):
-        provided = literals.get(new.id)
+        provided = substitutions.get(new.id)
         return (
             isinstance(new.ctx, ast.Load)
-            and provided is not None
+            and isinstance(provided, ast.Constant)
             and type(old.value) is type(provided.value)
             and old.value == provided.value
         )
     if type(old) is not type(new):
         return False
     if isinstance(old, ast.Name) and isinstance(new, ast.Name):
-        if isinstance(new.ctx, (ast.Store, ast.Del)) and new.id in literals:
+        if isinstance(new.ctx, (ast.Store, ast.Del)) and new.id in substitutions:
             return False
         return not isinstance(old.ctx, ast.Store) or (
             old.id in old_locals and _bind_pair(old.id, new.id, names)
@@ -458,12 +571,14 @@ def _paired_bindings(
             return False
     if isinstance(old, ast.AST) and isinstance(new, ast.AST):
         return all(
-            _paired_bindings(getattr(old, field), getattr(new, field), names, old_locals, literals)
+            _paired_bindings(
+                getattr(old, field), getattr(new, field), names, old_locals, substitutions
+            )
             for field in old._fields
         )
     if isinstance(old, list) and isinstance(new, list):
         return len(old) == len(new) and all(
-            _paired_bindings(a, b, names, old_locals, literals) for a, b in zip(old, new)
+            _paired_bindings(a, b, names, old_locals, substitutions) for a, b in zip(old, new)
         )
     return True  # scalar values are checked by the full syntax correspondence
 
@@ -473,7 +588,7 @@ def _paired_syntax(
     new: object,
     names: Dict[str, str],
     old_locals: frozenset[str],
-    literals: Mapping[str, ast.Constant],
+    substitutions: Mapping[str, _RetainedInput],
 ) -> bool:
     """Independent alpha correspondence for a bounded, lexical AST subset.
 
@@ -482,18 +597,21 @@ def _paired_syntax(
     Unproved definitions, declarations and assignment expressions stay visible
     to the scope oracle rather than gaining an exemption.
     """
+    thunk = _supplied_thunk(new, substitutions)
+    if thunk is not None:
+        return _paired_syntax(old, thunk, {}, old_locals, {})
     if isinstance(old, ast.Constant) and isinstance(new, ast.Name):
-        provided = literals.get(new.id)
+        provided = substitutions.get(new.id)
         return (
             isinstance(new.ctx, ast.Load)
-            and provided is not None
+            and isinstance(provided, ast.Constant)
             and type(old.value) is type(provided.value)
             and old.value == provided.value
         )
     if type(old) is not type(new):
         return False
     if isinstance(old, ast.Name) and isinstance(new, ast.Name):
-        if isinstance(new.ctx, (ast.Store, ast.Del)) and new.id in literals:
+        if isinstance(new.ctx, (ast.Store, ast.Del)) and new.id in substitutions:
             return False
         if type(old.ctx) is not type(new.ctx):
             return False
@@ -501,7 +619,12 @@ def _paired_syntax(
             return old.id in old_locals and _bind_pair(old.id, new.id, names)
         if old.id in names:
             return names[old.id] == new.id
-        return old.id == new.id and new.id not in names.values() and new.id not in literals
+        return (
+            old.id == new.id
+            and old.id not in old_locals
+            and new.id not in names.values()
+            and new.id not in substitutions
+        )
     if isinstance(old, ast.Lambda) and isinstance(new, ast.Lambda):
         left, right = old.args, new.args
         for kind in ("posonlyargs", "args", "kwonlyargs"):
@@ -511,8 +634,10 @@ def _paired_syntax(
             right.kwarg is None
         ):
             return False
-        if not _paired_syntax(left.defaults, right.defaults, names, old_locals, literals) or not (
-            _paired_syntax(left.kw_defaults, right.kw_defaults, names, old_locals, literals)
+        if not _paired_syntax(
+            left.defaults, right.defaults, names, old_locals, substitutions
+        ) or not (
+            _paired_syntax(left.kw_defaults, right.kw_defaults, names, old_locals, substitutions)
         ):
             return False
 
@@ -523,13 +648,13 @@ def _paired_syntax(
 
         old_parameters, new_parameters = parameters(left), parameters(right)
         child = {key: value for key, value in names.items() if key not in old_parameters}
-        child_literals = {
-            key: value for key, value in literals.items() if key not in new_parameters
+        child_substitutions = {
+            key: value for key, value in substitutions.items() if key not in new_parameters
         }
         if not all(_bind_pair(a, b, child) for a, b in zip(old_parameters, new_parameters)):
             return False
         return _paired_syntax(
-            old.body, new.body, child, old_locals | frozenset(old_parameters), child_literals
+            old.body, new.body, child, old_locals | frozenset(old_parameters), child_substitutions
         )
     comprehensions = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
     if isinstance(old, comprehensions) and isinstance(new, comprehensions):
@@ -542,39 +667,41 @@ def _paired_syntax(
             n.id for g in new.generators for n in ast.walk(g.target) if isinstance(n, ast.Name)
         }
         child = {key: value for key, value in names.items() if key not in old_targets}
-        child_literals = {key: value for key, value in literals.items() if key not in new_targets}
+        child_substitutions = {
+            key: value for key, value in substitutions.items() if key not in new_targets
+        }
         for first, second in zip(old.generators, new.generators):
             if first.is_async != second.is_async or not _paired_syntax(
                 first.target,
                 second.target,
                 child,
                 old_locals | frozenset(old_targets),
-                child_literals,
+                child_substitutions,
             ):
                 return False
         for index, (first, second) in enumerate(zip(old.generators, new.generators)):
             scope = names if index == 0 else child
-            scope_literals = literals if index == 0 else child_literals
+            scope_substitutions = substitutions if index == 0 else child_substitutions
             if not _paired_syntax(
-                first.iter, second.iter, scope, old_locals, scope_literals
+                first.iter, second.iter, scope, old_locals, scope_substitutions
             ) or not (
                 _paired_syntax(
                     first.ifs,
                     second.ifs,
                     child,
                     old_locals | frozenset(old_targets),
-                    child_literals,
+                    child_substitutions,
                 )
             ):
                 return False
         if isinstance(old, ast.DictComp) and isinstance(new, ast.DictComp):
             return _paired_syntax(
-                old.key, new.key, child, old_locals, child_literals
-            ) and _paired_syntax(old.value, new.value, child, old_locals, child_literals)
+                old.key, new.key, child, old_locals, child_substitutions
+            ) and _paired_syntax(old.value, new.value, child, old_locals, child_substitutions)
         if isinstance(old, (ast.ListComp, ast.SetComp, ast.GeneratorExp)) and isinstance(
             new, (ast.ListComp, ast.SetComp, ast.GeneratorExp)
         ):
-            return _paired_syntax(old.elt, new.elt, child, old_locals, child_literals)
+            return _paired_syntax(old.elt, new.elt, child, old_locals, child_substitutions)
         return False
     if isinstance(
         old,
@@ -593,12 +720,14 @@ def _paired_syntax(
         return False
     if isinstance(old, ast.AST) and isinstance(new, ast.AST):
         return all(
-            _paired_syntax(getattr(old, field), getattr(new, field), names, old_locals, literals)
+            _paired_syntax(
+                getattr(old, field), getattr(new, field), names, old_locals, substitutions
+            )
             for field in old._fields
         )
     if isinstance(old, list) and isinstance(new, list):
         return len(old) == len(new) and all(
-            _paired_syntax(a, b, names, old_locals, literals) for a, b in zip(old, new)
+            _paired_syntax(a, b, names, old_locals, substitutions) for a, b in zip(old, new)
         )
     return old == new
 
@@ -636,7 +765,10 @@ def _retained_correspondence(
         or len(parameters) != len(call.args)
     ):
         return {}
-    if not all(isinstance(argument, (ast.Name, ast.Constant)) for argument in call.args):
+    if not all(
+        isinstance(argument, (ast.Name, ast.Constant)) or _retained_thunk(argument) is not None
+        for argument in call.args
+    ):
         return {}
     parameter_names = {parameter.arg for parameter in parameters}
     if any(
@@ -668,7 +800,8 @@ def _retained_correspondence(
     ):
         return {}
     names: Dict[str, str] = {}
-    literals: Dict[str, ast.Constant] = {}
+    substitutions: Dict[str, _RetainedInput] = {}
+    captured: set[str] = set()
     for argument, parameter in zip(call.args, parameters):
         if isinstance(argument, ast.Constant):
             if type(argument.value) not in (
@@ -682,20 +815,31 @@ def _retained_correspondence(
                 type(Ellipsis),
             ):
                 return {}
-            literals[parameter.arg] = argument
+            substitutions[parameter.arg] = argument
+        elif (thunk := _retained_thunk(argument)) is not None:
+            substitutions[parameter.arg] = thunk
+            captured.update(_spelled_names(thunk.expression))
         elif not isinstance(argument, ast.Name) or not _bind_pair(
             argument.id, parameter.arg, names
         ):
             return {}
-    inputs = frozenset(names)
+    thunk_names = frozenset(
+        name for name, value in substitutions.items() if isinstance(value, _RetainedThunk)
+    )
+    if not _immediate_thunk_calls(helper, thunk_names):
+        return {}
+    inputs = frozenset(names) | captured
     bindable = (
         old_locals - inputs
     )  # reading caller locals/parameters is safe; rebinding them is not
     block = old.body[index : index + len(moved)]
-    if (old_free - inputs) & _spelled_names(ast.Module(body=block, type_ignores=[])):
-        return {}  # an unpassed enclosing binding cannot become a module lookup
-    if not _paired_bindings(block, moved, names, bindable, literals) or not _paired_syntax(
-        block, moved, names, bindable, literals
+    caller_only = (old_free | (captured & old_locals)) - frozenset(names)
+    if caller_only & _spelled_names(ast.Module(body=moved, type_ignores=[])):
+        # A supplier certifies only its own substituted expression, not a
+        # separate bare helper lookup of the caller binding it captures.
+        return {}
+    if not _paired_bindings(block, moved, names, bindable, substitutions) or not _paired_syntax(
+        block, moved, names, bindable, substitutions
     ):
         return {}
     return {key: value for key, value in names.items() if key in bindable}

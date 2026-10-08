@@ -339,3 +339,149 @@ def test_string_binders_cannot_rebind_a_literal_helper_input(binding: str) -> No
         "    owner_1 = make(supplied)", statements + "    owner_1 = make(supplied)"
     )
     assert "gains local _towel_keep_owner" in scope_changes(before, after)["f#0"]
+
+
+THUNK_BEFORE = """def f(source):
+    owner = make(source)
+    result = inspect(owner)
+    return result
+"""
+THUNK_AFTER = """def __extracted_func_0(supplier):
+    owner_1 = supplier()
+    result_1 = inspect(owner_1)
+    return owner_1, result_1
+def f(source):
+    _towel_keep_owner, result = __extracted_func_0(lambda: make(source))
+    return result
+"""
+
+
+def test_caller_supplier_keeps_expression_binding_effects_and_cleanup(tmp_path: Path) -> None:
+    assert scope_changes(THUNK_BEFORE, THUNK_AFTER) == {}
+    prefix = """LOG=[]
+class Owner:
+    def __init__(self, source):
+        self.source = source
+        LOG.append(('make', source))
+    def __del__(self): LOG.append(('drop', self.source))
+def make(source): return Owner(source)
+def inspect(owner):
+    LOG.append(('inspect', owner.source))
+    return owner.source + 1
+"""
+    outputs = []
+    for name, body in (("before", THUNK_BEFORE), ("after", THUNK_AFTER)):
+        script = tmp_path / (name + ".py")
+        script.write_text(prefix + body + "print(f(7), LOG)\n")
+        outputs.append(observe(str(script), tmp_path))
+    assert (
+        outputs[0]
+        == outputs[1]
+        == (
+            0,
+            "8 [('make', 7), ('inspect', 7), ('drop', 7)]\n",
+            [],
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "after",
+    [
+        THUNK_AFTER.replace("lambda: make(source)", "lambda: other_make(source)"),
+        THUNK_AFTER.replace("lambda: make(source)", "lambda: make(9)"),
+        THUNK_AFTER.replace("lambda: make(source)", "lambda source=effect(): make(source)"),
+        THUNK_AFTER.replace("lambda: make(source)", "lambda source: make(source)"),
+        THUNK_AFTER.replace("supplier()", "supplier(9)"),
+        THUNK_AFTER.replace("supplier()", "supplier(source=9)"),
+        THUNK_AFTER.replace("owner_1 = supplier()", "owner_1 = supplier"),
+        THUNK_AFTER.replace("owner_1 = supplier()", "supplier = other\n    owner_1 = supplier()"),
+        THUNK_AFTER.replace("owner_1 = supplier()", "owner_1 = (lambda: supplier())()"),
+        THUNK_AFTER.replace("owner_1 = supplier()", "owner_1 = [supplier() for supplier in other]"),
+        THUNK_AFTER.replace("lambda: make(source)", "lambda: (source := 9)"),
+        THUNK_AFTER.replace("lambda: make(source)", "lambda: (lambda: make(source))()"),
+        THUNK_AFTER.replace("return owner_1, result_1", "return result_1, owner_1"),
+        THUNK_AFTER.replace("    return result\n", "    return _towel_keep_owner\n"),
+    ],
+)
+def test_unproved_or_escaping_supplier_cannot_certify_retention(after: str) -> None:
+    assert "gains local _towel_keep_owner" in scope_changes(THUNK_BEFORE, after)["f#0"]
+
+
+def test_supplier_cannot_capture_a_binding_that_moved_into_the_helper() -> None:
+    before = THUNK_BEFORE.replace("    owner =", "    source = 7\n    owner =")
+    after = THUNK_AFTER.replace("    owner_1 =", "    source = 7\n    owner_1 =")
+    assert "gains local _towel_keep_owner" in scope_changes(before, after)["f#0"]
+
+
+@pytest.mark.parametrize("enclosing", [False, True], ids=["parameter", "closure"])
+def test_supplier_capture_does_not_certify_a_separate_helper_global_read(
+    tmp_path: Path, enclosing: bool
+) -> None:
+    before = THUNK_BEFORE.replace("result = inspect(owner)", "result = source + inspect(owner)")
+    after = THUNK_AFTER.replace(
+        "result_1 = inspect(owner_1)", "result_1 = source + inspect(owner_1)"
+    )
+    call = "f(7)"
+    if enclosing:
+        before = "def outer():\n    source = 7\n" + "".join(
+            "    " + line + "\n"
+            for line in before.replace("def f(source):", "def f():").splitlines()
+        )
+        before += "    return f\n"
+        helper, caller = after.split("def f(source):", 1)
+        after = (
+            helper
+            + "def outer():\n    source = 7\n    def f():"
+            + "".join("    " + line + "\n" for line in caller.splitlines())
+        )
+        after += "    return f\n"
+        call = "outer()()"
+    changes = scope_changes(before, after)
+    assert any("gains local _towel_keep_owner" in values for values in changes.values())
+    prefix = "source=20\ndef make(value): return value\ndef inspect(value): return value\n"
+    outputs = []
+    for name, body in (("before", before), ("after", after)):
+        script = tmp_path / (name + ".py")
+        script.write_text(prefix + body + "print(" + call + ")\n")
+        outputs.append(observe(str(script), tmp_path))
+    assert outputs == [(0, "14\n", []), (0, "27\n", [])]
+
+
+def test_an_unpassed_caller_parameter_cannot_become_a_helper_global() -> None:
+    before = THUNK_BEFORE
+    after = THUNK_AFTER.replace("def __extracted_func_0(supplier):", "def __extracted_func_0():")
+    after = after.replace("owner_1 = supplier()", "owner_1 = make(source)")
+    after = after.replace("__extracted_func_0(lambda: make(source))", "__extracted_func_0()")
+    assert "gains local _towel_keep_owner" in scope_changes(before, after)["f#0"]
+
+
+def test_supplier_cannot_relocate_an_implicit_class_receiver(tmp_path: Path) -> None:
+    prefix = """class Base:
+    def make(self): return 7
+def inspect(value): return value
+"""
+    before = prefix + """class C(Base):
+    def f(self):
+        owner = super().make()
+        result = inspect(owner)
+        return result
+"""
+    after = prefix + """def _extracted_func_0(supplier):
+    owner_1 = supplier()
+    result_1 = inspect(owner_1)
+    return owner_1, result_1
+class C(Base):
+    def f(self):
+        _towel_keep_owner, result = _extracted_func_0(lambda: super().make())
+        return result
+"""
+    changes = scope_changes(before, after)
+    assert any("gains local _towel_keep_owner" in values for values in changes.values())
+    outputs = []
+    for name, body in (("before", before), ("after", after)):
+        script = tmp_path / (name + ".py")
+        script.write_text(body + "print(C().f())\n")
+        outputs.append(observe(str(script), tmp_path))
+    assert outputs[0] == (0, "7\n", [])
+    assert outputs[1] == (1, "", ["RuntimeError: super(): no arguments"])

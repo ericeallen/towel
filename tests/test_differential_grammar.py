@@ -116,6 +116,19 @@ KNOWN_DEFECTS: Dict[Mode, Dict[int, str]] = {DEFAULT: {}, CROSS_MODULE: {}, TYPE
 ``tests/audit_defects.py``. None is open."""
 
 
+@pytest.mark.parametrize("bindings", [False, True], ids=["grammar", "bindings"])
+@pytest.mark.parametrize("mode", [DEFAULT, CROSS_MODULE], ids=["default", "cross-module"])
+def test_thunk_retention_audit_seed_keeps_its_behavior(
+    bindings: bool, mode: Mode, tmp_path: Path
+) -> None:
+    # October 8: valid lookup suppliers and unread retention slots used to
+    # trigger four structural false positives despite equivalent observations.
+    case = generate_case(2026100801792001000000000000000270, bindings=bindings)
+    outcome = run_case(case, mode, tmp_path)
+    assert outcome.status == "equivalent", outcome.report()
+    assert outcome.applied > 0
+
+
 def _seeds(mode: Mode, seeds: Iterable[int]) -> List[ParameterSet]:
     """``seeds`` and the mode's regression seeds, each named ``seed<N>``, known defects expected."""
     return with_known_defects(
