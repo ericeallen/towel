@@ -146,7 +146,7 @@ def test_r9xh_a_latin1_borrower_keeps_its_declaration(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'pkg'\nversion = '0'\n")
     (package / "__init__.py").write_text("")
     body = (
-        "def f{n}(values, offset):\n    total = sum(values) + offset\n    doubled = total * 2\n"
+        "def f{n}(values, offset):\n    total = values[0] + offset\n    doubled = total * 2\n"
         "    label = '\u00c3\u00a9 {{}} {{}}'.format(total, doubled)\n    print(label)\n"
         "    return label\n"
     )
@@ -158,7 +158,21 @@ def test_r9xh_a_latin1_borrower_keeps_its_declaration(tmp_path: Path) -> None:
     with (package / "b.py").open("ab") as handle:
         handle.write("\n\ndef stays():\n    return '\u00c3\u00a9 stays'\n".encode("latin-1"))
     (package / "c.py").write_text("from pkg import a, b\n")
+    calls = "from pkg import a,b; assert a.fa([1,3],2)==b.fb([1,3],2)=='\u00c3\u00a9 3 6'"
+
+    def run_calls() -> str:
+        return subprocess.run(
+            [sys.executable, "-c", calls],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(tmp_path)},
+        ).stdout
+
+    before = run_calls()
     assert _refactor(package, cross_module_helpers=True, parameterize_builtins=True) == 2
+    assert run_calls() == before
     borrower = (package / "b.py").read_bytes()
     assert borrower.startswith(
         b"# -*- coding: latin-1 -*-\nimport pkg.a\nfrom pkg.a import __extracted_func_0\n"
@@ -225,3 +239,62 @@ def test_r9xh_the_borrowers_own_patch_still_runs_before_the_host(tmp_path: Path)
         "time.sleep = lambda s: print('patched sleep', s)"
     )
     assert run() == before == "patched sleep 0\nBN=41\n"
+
+
+def test_latin1_literal_carrier_respects_the_complete_default_holder_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The original sum/print shape needs six physical arguments after safe pooling.
+
+    Its encoding/import capability test uses values[0] instead; this control
+    preserves the original source and proves the declared five-argument limit.
+    """
+    from towel.unification import pair_evaluation
+    from towel.unification.argument_ownership import argument_handoff_fits
+
+    observed: List[tuple[int, int, bool]] = []
+    original_fits = argument_handoff_fits
+
+    def record_budget(helper: ast.FunctionDef, max_parameters: int) -> bool:
+        fits = original_fits(helper, max_parameters)
+        observed.append((len(helper.args.posonlyargs + helper.args.args) + 1, max_parameters, fits))
+        return fits
+
+    monkeypatch.setattr(pair_evaluation, "argument_handoff_fits", record_budget)
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='pkg'\nversion='0'\n")
+    (package / "__init__.py").write_text("")
+    body = (
+        "def f{n}(values, offset):\n    total = sum(values) + offset\n    doubled = total * 2\n"
+        "    label = '\u00c3\u00a9 {{}} {{}}'.format(total, doubled)\n    print(label)\n"
+        "    return label\n"
+    )
+    for name in ("a", "b"):
+        imports = "import pkg.a\n" if name == "b" else ""
+        (package / f"{name}.py").write_bytes(
+            f"# -*- coding: latin-1 -*-\n{imports}\n\n{body.format(n=name)}".encode("latin-1")
+        )
+    with (package / "b.py").open("ab") as handle:
+        handle.write("\n\ndef stays():\n    return '\u00c3\u00a9 stays'\n".encode("latin-1"))
+    original = {path: path.read_bytes() for path in package.glob("*.py")}
+    program = (
+        "from pkg import a,b; print(ascii(a.fa([1,3],2)),ascii(b.fb([1,3],2)),ascii(b.stays()))"
+    )
+
+    def run() -> str:
+        ran = subprocess.run(
+            [sys.executable, "-c", program],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(tmp_path)},
+        )
+        return ran.stdout
+
+    before = run()
+    assert _refactor(package, cross_module_helpers=True, parameterize_builtins=True) == 0
+    assert (6, 5, False) in observed
+    assert {path: path.read_bytes() for path in package.glob("*.py")} == original
+    assert run() == before

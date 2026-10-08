@@ -9,6 +9,9 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Preserve useful shared f-string helpers by passing common exact-string
+  fragments from their original callers; retain formatting effects, literal
+  identities and the complete helper argument budget.
 - Preserve compiler-pooled literal identities: pass complete literal expressions
   when replacing their parts would rebuild objects, and pass shared non-global
   literals from their original callers within the existing interface budget.

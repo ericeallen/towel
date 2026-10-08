@@ -1028,10 +1028,12 @@ def test_a_constraint_from_another_module_is_imported_for_the_checker_end_to_end
     direct = sources[str(tmp_path / "pkg" / "direct.py")]
     # The checker's import is private, so no star-importer of direct.py sees it.
     helper = _helper(direct)
-    assert (
-        _annotation((helper.args.posonlyargs + helper.args.args)[0].annotation)
-        == "DirectError | _LockError"
-    ), direct
+    parameters = helper.args.posonlyargs + helper.args.args
+    assert len(parameters) == 2 and len(parameters) <= 5, direct
+    receiver = next(parameter for parameter in parameters if parameter.arg == "self")
+    carrier = next(parameter for parameter in parameters if parameter.arg != "self")
+    assert _annotation(receiver.annotation) == "DirectError | _LockError", direct
+    assert _annotation(carrier.annotation) == "tuple[str]", direct
     assert _annotation(helper.returns) == "str", direct
     guarded = direct.split("if 0 > 1:", 1)[1].splitlines()[1]
     assert guarded.strip() == "from .lock import LockError as _LockError", direct

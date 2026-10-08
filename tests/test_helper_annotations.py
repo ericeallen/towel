@@ -419,9 +419,42 @@ def test_cross_file_helper_keeps_only_builtin_annotations(tmp_path: Path) -> Non
     )
     proposals = engine.analyze_directory(str(package))
     assert proposals
-    header = ast.unparse(proposals[0].extracted_function).split("\n", 1)[0]
+    helper = proposals[0].extracted_function
+    parameters = helper.args.posonlyargs + helper.args.args
+    assert len(parameters) == 3 and len(parameters) <= 5
+    assert len(helper.args.posonlyargs) == 1
+    carrier = helper.args.posonlyargs[0]
+    assert carrier.arg.startswith("__param_") and carrier.annotation is None
     # ``Optional[str]`` needs typing; its members ``str | None`` are builtins.
-    assert header == "def __extracted_func(label: 'str | None', value: int) -> None:"
+    declared = {
+        parameter.arg: ast.unparse(parameter.annotation)
+        for parameter in helper.args.args
+        if parameter.annotation is not None
+    }
+    assert declared == {"label": "'str | None'", "value": "int"}
+    assert isinstance(helper.returns, ast.Constant) and helper.returns.value is None
+    slots = {
+        node.slice.value
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == carrier.arg
+        and isinstance(node.slice, ast.Constant)
+    }
+    assert slots == {0}
+    arguments = [
+        replacement.node.value.args[0]
+        for replacement in proposals[0].replacements
+        if isinstance(replacement.node, ast.Expr) and isinstance(replacement.node.value, ast.Call)
+    ]
+    assert len(arguments) == 2
+    assert all(
+        isinstance(argument, ast.Tuple)
+        and len(argument.elts) == 1
+        and isinstance(argument.elts[0], ast.Constant)
+        and argument.elts[0].value == "{}"
+        for argument in arguments
+    )
 
 
 def test_subscripted_annotations_are_quoted_even_with_familiar_names(

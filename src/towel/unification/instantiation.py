@@ -61,7 +61,7 @@ from typing import (
 
 from ..canonical_ast import canonical_dump
 from .bounded_cache import BoundedCache
-from .compiler_literals import immutable_literal_value
+from .compiler_literals import immutable_literal_value, literal_fragment_transfer_supported
 from .lexical_scopes import (
     Comprehension,
     NestedScope,
@@ -128,6 +128,7 @@ def instantiation_mismatch(
         tuple(sorted(site_names)),
         preamble_length,
         returns_variables,
+        literal_fragment_transfer_supported(),
     )
     known = _VERDICTS.get(key)
     if known is not None:
@@ -161,6 +162,7 @@ _VERDICTS: BoundedCache[
         Tuple[Tuple[str, str], ...],
         Tuple[str, ...],
         int,
+        bool,
         bool,
     ],
     _Verdict,
@@ -249,7 +251,9 @@ class _BindingForm(NamedTuple):
     binders: Mapping[str, str]
 
 
-_EXPECTED_FORMS: "BoundedCache[Tuple[str, Tuple[str, ...]], _BindingForm]" = BoundedCache(16_384)
+_EXPECTED_FORMS: "BoundedCache[Tuple[str, Tuple[str, ...], bool], _BindingForm]" = BoundedCache(
+    16_384
+)
 """The binding form of a block, by structural id and its site's function-scope names.
 
 A block is checked against every call that reproduces it, once per pair it
@@ -264,7 +268,11 @@ def _expected_binding_form(
     block: Sequence[ast.stmt], site_function_names: FrozenSet[str]
 ) -> _BindingForm:
     """``_binding_form`` of a copy of ``block``, memoized on its structure and its site's names."""
-    key = (structural_id(block), tuple(sorted(site_function_names)))
+    key = (
+        structural_id(block),
+        tuple(sorted(site_function_names)),
+        literal_fragment_transfer_supported(),
+    )
     cached = _EXPECTED_FORMS.get(key)
     if cached is None:
         copied = [copy.deepcopy(statement) for statement in block]
@@ -287,7 +295,34 @@ def _binding_form(
     speller = _BindingSpeller(site_function_names, fragment_is_site=fragment_is_site)
     speller.fragment(statements)
     module = ast.Module(body=statements, type_ignores=[])
+    if literal_fragment_transfer_supported():
+        _ConstantStringFormats().visit(module)
     return _BindingForm(module, canonical_dump(module), dict(speller.binders))
+
+
+class _ConstantStringFormats(ast.NodeTransformer):
+    """No-spec formatting of an exact literal string keeps that same object.
+
+    Normalize only copied proof syntax, preserving individual JoinedStr
+    chunks and their order. Conversions, format specs and dynamic values
+    remain intact; no user-defined formatting operation is erased.
+    """
+
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
+        self.generic_visit(node)
+        node.values = [
+            (
+                value.value
+                if isinstance(value, ast.FormattedValue)
+                and value.conversion == -1
+                and value.format_spec is None
+                and isinstance(value.value, ast.Constant)
+                and type(value.value.value) is str
+                else value
+            )
+            for value in node.values
+        ]
+        return node
 
 
 def _alpha_normalize(module: ast.Module) -> ast.Module:

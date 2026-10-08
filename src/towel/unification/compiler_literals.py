@@ -179,11 +179,18 @@ def immutable_literal_value(node: ast.AST) -> bool:
     )
 
 
+def literal_fragment_transfer_supported() -> bool:
+    """Exact-string formatting/join identity on the reviewed CPython compilers."""
+    return sys.implementation.name == "cpython" and (3, 9) <= sys.version_info[:2] <= (3, 13)
+
+
 def common_literal_candidates(block: Sequence[ast.AST]) -> Iterator[ast.expr]:
     """Threadable literal roots, excluding grammar and definition metadata.
 
-    F-string text, patterns, annotations and nested definitions retain their
-    syntax. A same-key runtime literal elsewhere cannot bypass these pins.
+    Common exact-string f-string parts may travel in the literal carrier;
+    their helper spelling uses no-spec exact-string formatting. Patterns,
+    annotations and nested definitions retain their syntax. A same-key
+    runtime literal elsewhere cannot bypass these pins.
     """
     runtime = frozenset(_runtime_nodes(block))
     paths = path_map(block)
@@ -209,6 +216,21 @@ def common_literal_candidates(block: Sequence[ast.AST]) -> Iterator[ast.expr]:
                 isinstance(current, ast.JoinedStr)
                 and isinstance(node, ast.Constant)
                 and field == "values"
+                and index >= 0
+                and isinstance(current.values[index], ast.Constant)
+                and not (
+                    index >= 0
+                    and current.values[index] is node
+                    and type(node.value) is str
+                    and literal_fragment_transfer_supported()
+                )
+            ):
+                metadata = True
+                break
+            if (
+                isinstance(current, ast.FormattedValue)
+                and field == "value"
+                and isinstance(node, ast.Constant)
             ):
                 metadata = True
                 break

@@ -215,16 +215,46 @@ class ParameterSubstituter(ast.NodeTransformer):
 
     def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
         # JoinedStr (f-string) can only have Constant or FormattedValue as direct children
-        # We must NEVER parameterize Constant nodes inside f-strings
-        # But we CAN parameterize expressions inside FormattedValue nodes
+        # Ordinary substitutions never replace f-string text; certified
+        # caller literal slots retain its exact object through formatting.
         new_values: List[ast.expr] = []
         previous_state = self.in_joinedstr
         self.in_joinedstr = True
         try:
             for value in node.values:
                 if isinstance(value, ast.Constant):
-                    # String literal parts of f-string must stay as constants
-                    new_values.append(value)
+                    # Only a certified exact-string carrier slot may replace
+                    # raw text. No-spec formatting preserves that exact string
+                    # object; the JoinedStr keeps its original chunk order.
+                    pool = self.subst.literal_pool
+                    parameter = self.subst.get_param_for_expr(self.block_idx, value)
+                    if (
+                        pool is not None
+                        and parameter == pool.parameter
+                        and parameter in self.param_names
+                        and type(value.value) is str
+                    ):
+                        index = pool.keys.index(structural_text(value))
+                        assert all(
+                            isinstance(element, ast.Constant) and type(element.value) is str
+                            for element in (row[index] for row in pool.rows)
+                        )
+                        new_values.append(
+                            ast.copy_location(
+                                ast.FormattedValue(
+                                    value=ast.Subscript(
+                                        value=ast.Name(id=parameter, ctx=ast.Load()),
+                                        slice=ast.Constant(index),
+                                        ctx=ast.Load(),
+                                    ),
+                                    conversion=-1,
+                                    format_spec=None,
+                                ),
+                                value,
+                            )
+                        )
+                    else:
+                        new_values.append(value)
                 else:
                     new_values.append(visit_as(self, value))
         finally:

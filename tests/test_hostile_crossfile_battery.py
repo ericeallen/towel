@@ -271,7 +271,6 @@ OWNERSHIP_REFUSALS: Dict[str, str] = {
     "xf7fz_extra_typed_binder_message_mypy": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "xf7fz_extra_typed_binder_message_pyright": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "xf7fz_grammar_t11094_semicolon": "owned bindings straddle a partial or uncertified whole-body frame boundary",
-    "xf7fz_misc_typed_for_prebound_mypy": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "xf7fz_modules_init_hosts": "retained local is not definitely bound on every block exit",
     "xf7fz_modules_script_main_guard": "retained local is not definitely bound on every block exit",
     "xf7fz_typeguard2_from_compat_true_both": "owned bindings straddle a partial or uncertified whole-body frame boundary",
