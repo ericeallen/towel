@@ -380,6 +380,8 @@ class BlockAnalysis(EngineState):
         blocks: Sequence[Sequence[ast.stmt]],
         hygienic_renames: List[Dict[str, str]],
         modules: Optional[Sequence[ModuleText]] = None,
+        *,
+        thread_literal_pools: bool = False,
     ) -> Optional[Substitution]:
         """Unify two blocks, reusing the result for any pair with the same structure.
 
@@ -396,9 +398,15 @@ class BlockAnalysis(EngineState):
         )
         if len(blocks) != 2:
             return self.unifier.unify_blocks(
-                blocks, hygienic_renames, translation_keywords=keywords, typing_forms=forms
+                blocks,
+                hygienic_renames,
+                translation_keywords=keywords,
+                typing_forms=forms,
+                thread_literal_pools=thread_literal_pools,
             )
-        key = UnifyKey(self._sid(blocks[0]), self._sid(blocks[1]), forms[0], forms[1])
+        key = UnifyKey(
+            self._sid(blocks[0]), self._sid(blocks[1]), forms[0], forms[1], thread_literal_pools
+        )
         if key in self._unify_cache:
             stored = self._unify_cache[key]
             if stored is None:
@@ -409,7 +417,11 @@ class BlockAnalysis(EngineState):
                 target.update(source)
             return substitution
         result = self.unifier.unify_blocks(
-            blocks, hygienic_renames, translation_keywords=keywords, typing_forms=forms
+            blocks,
+            hygienic_renames,
+            translation_keywords=keywords,
+            typing_forms=forms,
+            thread_literal_pools=thread_literal_pools,
         )
         self._unify_cache[key] = (
             None if result is None else store_substitution(result, blocks, hygienic_renames)

@@ -29,7 +29,14 @@ import ast
 from typing import Callable, Dict, Optional, List, Tuple, Any, Sequence, Type, Union, Iterator
 
 from .constant_consistency import ConstantConsistency, constant_identity
-from .compiler_literals import pooled_literal_parts
+from .compiler_literals import (
+    common_literal_candidates,
+    immutable_literal_value,
+    is_pooled_expression,
+    pooled_expression_positions,
+    pooled_literal_parts,
+    unstable_literal_pool,
+)
 from .parameterization import Parameterization
 from .hof_promotion import LiteralPromotion
 from .statement_facts import mentioned_names
@@ -40,7 +47,7 @@ from .static_positions import (
     TypingForms,
     statically_read,
 )
-from .substitution import Substitution, structural_text
+from .substitution import LiteralPool, Substitution, structural_text
 from .unifier_state import ConstantIdentity
 from .visitors import all_instances
 
@@ -118,6 +125,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         *,
         translation_keywords: TranslationKeywords = DEFAULT_TRANSLATION_KEYWORDS,
         typing_forms: Optional[Sequence[TypingForms]] = None,
+        thread_literal_pools: bool = False,
     ) -> Optional[Substitution]:
         """
         Unify multiple code blocks.
@@ -139,6 +147,8 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             return None
 
         if not all(len(b) == len(blocks[0]) for b in blocks):
+            return None
+        if any(unstable_literal_pool(block) for block in blocks):
             return None
 
         # Reset per-unification state to avoid cross-pair contamination
@@ -162,6 +172,8 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             if not self._unify_nodes(stmts, substitution, list(range(len(blocks)))):
                 return None
 
+        if thread_literal_pools and self.parameterize_constants:
+            self._thread_common_literal_pool(blocks, substitution)
         if len(substitution.param_expressions) > self.max_parameters:
             return None
 
@@ -182,6 +194,65 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
             self._promote_hof_literals(blocks, substitution)
 
         return substitution
+
+    def _thread_common_literal_pool(
+        self, blocks: Sequence[Sequence[ast.AST]], substitution: Substitution
+    ) -> None:
+        """Keep common non-global literal objects at their original compiler sites.
+
+        Only immutable literal values qualify. Each global structural key
+        must occur at identical runtime paths across every site, and syntax
+        pins plus protected pooled descendants remain authoritative.
+        """
+        from .structural_memo import path_map, resolve_path
+
+        keys: list[str] = []
+        rows: list[list[ast.expr]] = [[] for _ in blocks]
+        indices = range(len(blocks))
+        eligible = [
+            {node: paths[node] for node in common_literal_candidates(block)}
+            for block in blocks
+            for paths in [path_map(block)]
+        ]
+        for expression in eligible[0]:
+            key = structural_text(expression)
+            if key in keys or substitution.get_param_for_expr(0, expression) is not None:
+                continue
+            positions = [pooled_expression_positions(block, expression) for block in blocks]
+            if not positions[0] or len(set(positions)) != 1:
+                continue
+            if any(
+                tuple(
+                    sorted(path for node, path in allowed.items() if structural_text(node) == key)
+                )
+                != present
+                for allowed, present in zip(eligible, positions)
+            ):
+                # A global mapping cannot affect pinned grammar or metadata
+                # occurrences of the same structural key elsewhere either.
+                continue
+            expressions: list[ast.AST] = [resolve_path(block, positions[0][0]) for block in blocks]
+            if self._read_where_it_stands(expressions, indices):
+                continue
+            if not all(isinstance(node, ast.expr) for node in expressions):
+                continue
+            keys.append(key)
+            for row, node in zip(rows, expressions):
+                assert isinstance(node, ast.expr)
+                row.append(node)
+        if not keys:
+            return
+        first = [row[0] for row in rows]
+        if not self._try_parameterize(first, substitution, indices):
+            return
+        parameter = substitution.get_param_for_expr(0, first[0])
+        assert parameter is not None
+        for column in range(1, len(keys)):
+            for index, row in enumerate(rows):
+                substitution.mappings[index, keys[column]] = parameter
+        substitution.literal_pool = LiteralPool(
+            parameter, tuple(keys), tuple(tuple(row) for row in rows)
+        )
 
     def _unify_nodes(
         self, nodes: Sequence[ast.AST], substitution: Substitution, block_indices: Sequence[int]
@@ -248,6 +319,32 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
             # Now parameterize
             return self._try_parameterize(nodes, substitution, block_indices)
+
+        if (
+            all(is_pooled_expression(node) for node in nodes)
+            and len({structural_text(node) for node in nodes}) > 1
+        ):
+            # Descending would turn a compiler-pooled object into a runtime
+            # construction. Thread each whole original expression instead,
+            # only when every occurrence of the global key corresponds.
+            if not self.parameterize_constants or self.current_blocks is None:
+                return False
+            positions = [
+                pooled_expression_positions(self.current_blocks[index], node)
+                for index, node in zip(block_indices, nodes)
+            ]
+            if len(set(positions)) != 1 or not self._try_parameterize(
+                nodes, substitution, block_indices
+            ):
+                return False
+            # Potential folding is not a totality proof. Only raw immutable
+            # literal values may move eagerly; operators keep their original
+            # conditional execution/exception timing through a fresh thunk.
+            if not all(immutable_literal_value(node) for node in nodes):
+                parameter = substitution.get_param_for_expr(block_indices[0], nodes[0])
+                assert parameter is not None
+                substitution.function_params[parameter] = []
+            return True
 
         # For compound nodes, recursively unify all fields
         return self._unify_compound_node(nodes, substitution, block_indices)

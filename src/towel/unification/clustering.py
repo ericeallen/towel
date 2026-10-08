@@ -35,6 +35,7 @@ downstream mutates a replacement's node without deep-copying it first.
 from __future__ import annotations
 
 import ast
+import os
 
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
@@ -52,6 +53,7 @@ from .extractor import HygienicExtractor, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
 from .retained_bindings import spell_retained_bindings
 from .argument_ownership import argument_handoff_fits
+from .compiler_literals import unsafe_byte_literal_moves, unstable_literal_pool
 from .models import ArgumentHandoff, FunctionArtifact, FunctionNode, RejectReason, Replacement
 from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
@@ -143,7 +145,11 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         # Clustering scans the pair's own file, so both blocks are in its module.
         module = ModuleText(pair.file_path, pair.source1)
         subst2 = self._unify_memoized(
-            [pair.block1_nodes, candidate.nodes], cluster_renames, (module, module)
+            [pair.block1_nodes, candidate.nodes],
+            cluster_renames,
+            (module, module),
+            thread_literal_pools=os.path.abspath(pair.file_path)
+            != os.path.abspath(pair.file_path2),
         )
         if not subst2:
             return None
@@ -534,6 +540,11 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         did not bind, and unbinding of a name bound before it.
         """
         fn, fpath, analyzer = entry.node, entry.file_path, entry.scope_analyzer
+        module = analyzer.analyzed_tree
+        if unstable_literal_pool(cand_nodes) or unsafe_byte_literal_moves(
+            cand_nodes, module if isinstance(module, ast.Module) else None
+        ):
+            return None
         for frame_guard in (
             block_requires_original_frame,
             frame_read_outside_block,

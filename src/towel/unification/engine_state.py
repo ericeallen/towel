@@ -124,6 +124,7 @@ class UnifyKey(NamedTuple):
     block2_id: str
     forms1: TypingForms
     forms2: TypingForms
+    thread_literal_pools: bool = False
 
 
 class TemplateKey(NamedTuple):

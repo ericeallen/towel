@@ -54,9 +54,8 @@ def test_unify_set_literals():
 
 
 def test_unify_tuple_literals():
-    # A dynamic element keeps this a runtime tuple; pooled literals have semantic controls.
-    code1 = "point = (item, 1, 2)"
-    code2 = "point = (item, 3, 4)"
+    code1 = "point = (1, 2)"
+    code2 = "point = (3, 4)"
     blocks = [parse_block(code1), parse_block(code2)]
     u = Unifier(max_parameters=5, parameterize_constants=True)
     subst = u.unify_blocks(blocks, [{}, {}])

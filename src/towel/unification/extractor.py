@@ -39,7 +39,7 @@ from typing import (
     Union,
     cast,
 )
-from .substitution import Substitution
+from .substitution import Substitution, structural_text
 from .visitors import all_instances, visit_as
 from .definite_assignment import definitely_bound_after
 from .function_scope import code_names
@@ -188,6 +188,18 @@ class ParameterSubstituter(ast.NodeTransformer):
         # Don't replace FormattedValue nodes themselves; recurse into their value instead
         if isinstance(node, ast.FormattedValue):
             return None
+
+        pool = self.subst.literal_pool
+        if pool is not None and pool.parameter == maybe_param_name:
+            index = pool.keys.index(structural_text(node))
+            return ast.copy_location(
+                ast.Subscript(
+                    value=ast.Name(id=maybe_param_name, ctx=ast.Load()),
+                    slice=ast.Constant(index),
+                    ctx=ast.Load(),
+                ),
+                node,
+            )
 
         if self.subst.is_function_param(maybe_param_name):
             bound_vars = self.subst.get_function_param_vars(maybe_param_name)
@@ -690,6 +702,11 @@ def _unified_argument(
     function parameter and as a forwarding lambda when the helper calls it;
     None when the substitution records no expression for this block.
     """
+    pool = substitution.literal_pool
+    if pool is not None and pool.parameter == param_name:
+        return ast.Tuple(
+            elts=[copy.deepcopy(node) for node in pool.rows[block_idx]], ctx=ast.Load()
+        )
     for expr_block_idx, expr in substitution.param_expressions[param_name]:
         if expr_block_idx != block_idx:
             continue

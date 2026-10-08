@@ -9,9 +9,11 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
-- Preserve compiler-pooled literal identities: keep literal-only expressions
-  intact when parameterizing their parts would rebuild objects, and decline
-  cross-module helpers that would merge or split caller literal pools.
+- Preserve compiler-pooled literal identities: pass complete literal expressions
+  when replacing their parts would rebuild objects, and pass shared non-global
+  literals from their original callers within the existing interface budget.
+  Keep unproved folded floating arithmetic and lexically private single-byte
+  literals at their original sites; retain safe shared helpers.
 - Reuse whole-body ownership certificates and immutable source/compiler facts
   under exact source, syntax, location and parser-context keys; preserve runtime
   guards and independently reprove each certificate during materialization.

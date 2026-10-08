@@ -61,6 +61,7 @@ from typing import (
 
 from ..canonical_ast import canonical_dump
 from .bounded_cache import BoundedCache
+from .compiler_literals import immutable_literal_value
 from .lexical_scopes import (
     Comprehension,
     NestedScope,
@@ -803,6 +804,21 @@ class _Reducer(ast.NodeTransformer):
     def visit_Name(self, node: ast.Name) -> ast.AST:
         argument = self._argument_for(node.id)
         return node if argument is None else self._copied(argument)
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
+        # A certified literal carrier has only immutable compiler literals;
+        # selecting its fixed slot has no effects or discarded computations.
+        if isinstance(node.value, ast.Name) and isinstance(node.ctx, ast.Load):
+            argument = self._argument_for(node.value.id)
+            if (
+                isinstance(argument, ast.Tuple)
+                and immutable_literal_value(argument)
+                and isinstance(node.slice, ast.Constant)
+                and type(node.slice.value) is int
+                and 0 <= node.slice.value < len(argument.elts)
+            ):
+                return self._copied(argument.elts[node.slice.value])
+        return self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         function = node.func

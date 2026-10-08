@@ -48,6 +48,19 @@ def structural_text(node: ast.AST) -> str:
     return cached
 
 
+@dataclass(frozen=True)
+class LiteralPool:
+    """One immutable caller row of common compiler literals, selected by fixed indices.
+
+    Each row retains original expression nodes, so structural memoization can
+    freeze their source paths rather than a synthetic tuple that has no path.
+    """
+
+    parameter: str
+    keys: Tuple[str, ...]
+    rows: Tuple[Tuple[ast.expr, ...], ...]
+
+
 @dataclass
 class Substitution:
     """
@@ -84,6 +97,7 @@ class Substitution:
     # has no effect on behavior until a promotion pass populates it.
     promoted_literal_args: Dict[str, Dict[int, ast.AST]] = field(default_factory=dict)
     aug_assign_mappings: Dict[str, Dict[int, str]] = field(default_factory=dict)
+    literal_pool: Optional[LiteralPool] = None
 
     def add_mapping(
         self, block_idx: int, expr: ast.AST, param_name: str, bound_vars: Optional[List[str]] = None
@@ -120,6 +134,8 @@ class Substitution:
 
     def remove_parameter(self, param_name: str) -> None:
         """Forget ``param_name``: its expressions, the mappings to it, and its thunk variables."""
+        if self.literal_pool is not None and self.literal_pool.parameter == param_name:
+            self.literal_pool = None
         self.param_expressions.pop(param_name, None)
         self.function_params.pop(param_name, None)
         for key in [key for key, name in self.mappings.items() if name == param_name]:

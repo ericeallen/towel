@@ -140,8 +140,12 @@ from .import_graph import (
 from .splicing import BlockColumns
 from .thunk_inlining import inline_leading_thunks
 from .typing_forms import ModuleText
-from .compiler_literals import retained_literal_pool
-from .substitution import Substitution
+from .compiler_literals import (
+    retained_literal_pool,
+    unsafe_byte_literal_moves,
+    unstable_literal_pool,
+)
+from .substitution import LiteralPool, Substitution
 from .visitors import FreeNameCollector, body_without_docstring
 
 
@@ -588,7 +592,14 @@ class PairEvaluation(
         if sites is None:
             return None
         placement = self._place_helper(
-            pair, setup, scope, sites, rendered.func_def, functions, class_infos
+            pair,
+            setup,
+            scope,
+            sites,
+            rendered.func_def,
+            functions,
+            class_infos,
+            literal_pool=unified.substitution.literal_pool,
         )
         if placement is None:
             return None
@@ -650,6 +661,11 @@ class PairEvaluation(
             (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, ctx.site2),
         )
         for nodes, function, analyzer, site in blocks:
+            if unstable_literal_pool(nodes) or unsafe_byte_literal_moves(
+                nodes, _analyzed_module(analyzer)
+            ):
+                self._debug_reject(RejectReason.LITERAL_POOL_BOUNDARY, pair)
+                return None
             if self._block_rejected(
                 owned_binding_crosses_exception_boundary, nodes, function, site=site
             ):
@@ -880,6 +896,8 @@ class PairEvaluation(
             blocks,
             hygienic_renames,
             (ModuleText(pair.file_path, pair.source1), ModuleText(pair.file_path2, pair.source2)),
+            thread_literal_pools=os.path.abspath(pair.file_path)
+            != os.path.abspath(pair.file_path2),
         )
         if not substitution:
             self._reject(
@@ -1511,6 +1529,8 @@ class PairEvaluation(
         helper: ast.FunctionDef,
         functions: FunctionIndex,
         class_infos: List[ClassInfo],
+        *,
+        literal_pool: Optional[LiteralPool] = None,
     ) -> Optional[_Placement]:
         """Where the helper lives: a unique enclosing function, a class, or a module that closes no cycle."""
         ctx = setup.ctx
@@ -1554,7 +1574,10 @@ class PairEvaluation(
         canonical_file = self._safe_home_across_modules(pair, home, replacements, functions)
         if canonical_file is None:
             return None
-        if retained_literal_pool(helper.body) and any(
+        projection = (
+            None if literal_pool is None else (literal_pool.parameter, len(literal_pool.keys))
+        )
+        if retained_literal_pool(helper.body, trusted_projection=projection) and any(
             os.path.abspath(replacement.file_path or home.file_path)
             != os.path.abspath(canonical_file)
             for replacement in replacements

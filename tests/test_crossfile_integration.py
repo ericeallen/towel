@@ -25,6 +25,7 @@ refactoring workflows beyond just observational equivalence, focusing on:
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import shutil
@@ -34,6 +35,7 @@ from typing import List
 
 import pytest
 
+from towel.canonical_ast import canonical_dump
 from towel.unification.models import RefactoringProposal
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.pipeline import run_pipeline
@@ -459,16 +461,40 @@ class TestExampleThreeCrossFile:
         }
         regular = (out / "example3_file1.py").read_text()
         premium = (out / "example3_file2.py").read_text()
-        assert "def __extracted_func_0(customer, price, _towel_owner):\n" in regular
+        helper = next(
+            node
+            for node in ast.parse(regular).body
+            if isinstance(node, ast.FunctionDef) and node.name == "__extracted_func_0"
+        )
+        parameters = [arg.arg for arg in helper.args.posonlyargs + helper.args.args]
+        assert parameters == ["__param_0", "customer", "price", "_towel_owner"]
+        assert len(parameters) <= 5
+        projections = [
+            node.slice.value
+            for node in ast.walk(helper)
+            if isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == parameters[0]
+            and isinstance(node.slice, ast.Constant)
+        ]
+        assert set(projections) == {0, 1, 2}
         assert "from example3_file1 import __extracted_func_0\n" in premium
         for text, kind in ((regular, "regular"), (premium, "premium")):
-            assert (
-                f"def calculate_discount_for_{kind}_customer(price, customer):\n"
-                f'    """Calculate discount for {kind} customer."""\n'
-                "    # Calculate discount (DUPLICATE across files!)\n"
-                "    _towel_arguments = [(customer, price)]\n"
-                "    del price\n"
-                "    del customer\n"
-                "    return __extracted_func_0(_towel_arguments[0][0], "
-                "_towel_arguments[0][1], _towel_arguments.pop())\n"
-            ) in text
+            function = next(
+                node
+                for node in ast.parse(text).body
+                if isinstance(node, ast.FunctionDef)
+                and node.name == f"calculate_discount_for_{kind}_customer"
+            )
+            assert [arg.arg for arg in function.args.args] == ["price", "customer"]
+            assert ast.get_docstring(function) == f"Calculate discount for {kind} customer."
+            assert "# Calculate discount (DUPLICATE across files!)" in text
+            expected = ast.parse(
+                "_towel_arguments = [(customer, price)]\n"
+                "del price\ndel customer\n"
+                "return __extracted_func_0((0.1, 0.05, 1000), _towel_arguments[0][0], "
+                "_towel_arguments[0][1], _towel_arguments.pop())"
+            ).body
+            assert [canonical_dump(node) for node in function.body[1:]] == [
+                canonical_dump(node) for node in expected
+            ]

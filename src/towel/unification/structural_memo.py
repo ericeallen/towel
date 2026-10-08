@@ -29,13 +29,13 @@ from __future__ import annotations
 import ast
 import hashlib
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 from weakref import WeakKeyDictionary
 
 from .statement_facts import memoized_per_node
 from ..canonical_ast import canonical_dump
-from .substitution import Substitution
+from .substitution import LiteralPool, Substitution
 
 # A path names a node inside a block: the statement index, then (field, index)
 # steps; ``index`` is -1 for a single-valued field.
@@ -93,6 +93,13 @@ def resolve_path(block: Sequence[ast.AST], path: Path) -> ast.AST:
 
 
 @dataclass(frozen=True)
+class StoredLiteralPool:
+    parameter: str
+    keys: Tuple[str, ...]
+    rows: Tuple[Tuple[Path, ...], ...]
+
+
+@dataclass(frozen=True)
 class StoredSubstitution:
     """A substitution with every node reference replaced by its position."""
 
@@ -104,6 +111,7 @@ class StoredSubstitution:
     inlined_parameters: Tuple[str, ...]
     promoted_literal_args: Tuple[Tuple[str, Tuple[Tuple[int, Path], ...]], ...]
     renames: Tuple[Tuple[Tuple[str, str], ...], ...]
+    literal_pool: Optional[StoredLiteralPool] = None
 
 
 def store_substitution(
@@ -136,6 +144,18 @@ def store_substitution(
             for name, by_block in substitution.promoted_literal_args.items()
         ),
         renames=tuple(tuple(sorted(mapping.items())) for mapping in renames),
+        literal_pool=(
+            None
+            if substitution.literal_pool is None
+            else StoredLiteralPool(
+                substitution.literal_pool.parameter,
+                substitution.literal_pool.keys,
+                tuple(
+                    tuple(located(index, node) for node in row)
+                    for index, row in enumerate(substitution.literal_pool.rows)
+                ),
+            )
+        ),
     )
 
 
@@ -158,4 +178,15 @@ def load_substitution(
             for name, by_block in stored.promoted_literal_args
         },
     )
+    if stored.literal_pool is not None:
+        rows = tuple(
+            tuple(resolve_path(blocks[index], path) for path in row)
+            for index, row in enumerate(stored.literal_pool.rows)
+        )
+        assert all(isinstance(node, ast.expr) for row in rows for node in row)
+        substitution.literal_pool = LiteralPool(
+            stored.literal_pool.parameter,
+            stored.literal_pool.keys,
+            tuple(tuple(cast(ast.expr, node) for node in row) for row in rows),
+        )
     return substitution, [dict(mapping) for mapping in stored.renames]
