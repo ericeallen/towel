@@ -25,12 +25,15 @@ import ast
 import copy
 import inspect
 import sys
+from dataclasses import dataclass
 from types import CodeType
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import AbstractSet, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 from weakref import WeakKeyDictionary
 
-from ..canonical_ast import canonical_dump
+from ..canonical_ast import canonical_dump, exact_dump
+from ..analysis_sources import ParserConfiguration, parser_configuration
 from .assignment_analyzer import own_scope_bindings
+from .bounded_cache import BoundedCache, memoizing
 from .function_scope import function_names, identifiers
 from .models import ArgumentHandoff, FunctionNode
 from .parameters import parameter_names
@@ -42,6 +45,164 @@ from .visitors import body_without_docstring
 def _supported_runtime() -> bool:
     """The transfer proof uses CPython reference-count/local-slot cleanup."""
     return sys.implementation.name == "cpython"
+
+
+def _compilation_cannot_warn(helper: ast.FunctionDef) -> bool:
+    """Conservative warning freedom for reviewed CPython 3.11--3.13 AST compilers.
+
+    Identity tests, assertions, inversion, finally clauses, and statically inferable
+    callees/subscriptions can warn, including after constant folding. Keep
+    them on the uncached compiler path without changing any warning filters.
+    Unknown compiler versions are likewise never assumed warning-free.
+    """
+    if sys.implementation.name != "cpython" or sys.version_info[:2] not in {
+        (3, 11),
+        (3, 12),
+        (3, 13),
+    }:
+        return False
+    dynamic = (ast.Name, ast.Attribute, ast.Call)
+    for node in ast.walk(helper):
+        if isinstance(node, ast.Assert):
+            return False
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Invert):
+            return False
+        if isinstance(node, ast.Compare) and any(
+            isinstance(operator, (ast.Is, ast.IsNot)) for operator in node.ops
+        ):
+            return False
+        if isinstance(node, (ast.Try, ast.TryStar)) and node.finalbody:
+            return False
+        if isinstance(node, ast.Name) and node.id == "__debug__":
+            return False
+        if isinstance(node, ast.Call) and not isinstance(
+            node.func, (ast.Name, ast.Attribute, ast.Lambda)
+        ):
+            return False
+        if isinstance(node, ast.Subscript) and not isinstance(node.value, dynamic):
+            return False
+    return True
+
+
+@dataclass(frozen=True)
+class _HandoffKey:
+    """Exact original site, generated syntax including locations, and compiler limits."""
+
+    source_digest: str
+    function: str
+    call: str
+    helper: str
+    configuration: ParserConfiguration
+
+
+@dataclass(frozen=True)
+class _ModuleFacts:
+    """Source-only names and syntax; no AST or mutable result is retained."""
+
+    taken: FrozenSet[str]
+    dump: str
+
+
+@dataclass(frozen=True)
+class _StoredModuleFacts:
+    source_digest: str
+    configuration: ParserConfiguration
+    facts: _ModuleFacts
+
+
+@dataclass(frozen=True)
+class _StoredPlan:
+    key_bytes: int
+    plan: ArgumentHandoff
+
+
+@dataclass(frozen=True)
+class _StoredHelperCode:
+    key_bytes: int
+    code: Optional[CodeType]
+
+
+class ArgumentHandoffMemo:
+    """One engine's immutable certificates, weakly scoped to original source trees.
+
+    Source digests and parser limits identify the source/compiler context;
+    keys retain every original function, call and helper AST field and location.
+    The caller must supply its observed source digest and immutable analyzed
+    graph. Every runtime/scope/body guard still runs before a certificate lookup.
+    Module facts and certificates vanish with their source tree. Each module
+    keeps at most ``limit`` certificates and 8 MiB of their syntax keys;
+    exact generated-helper compiler facts have the same engine-wide bounds.
+    Oversized syntax keys are not retained. Original module-name inventories
+    are queried by membership rather than copied into every certificate.
+    Materialization uses independent, uncached reproof.
+    """
+
+    _MAX_KEY_BYTES = 8 * 1024 * 1024
+
+    def __init__(self, limit: int = 512) -> None:
+        if limit < 0:
+            raise ValueError("Ownership memo limit must be nonnegative")
+        self._limit = limit
+        self._plans: WeakKeyDictionary[ast.AST, BoundedCache[_HandoffKey, _StoredPlan]] = (
+            WeakKeyDictionary()
+        )
+        self._facts: WeakKeyDictionary[ast.AST, _StoredModuleFacts] = WeakKeyDictionary()
+        self._helper_codes: BoundedCache[Tuple[str, ParserConfiguration], _StoredHelperCode] = (
+            BoundedCache(
+                limit, weight=lambda entry: entry.key_bytes, weight_limit=self._MAX_KEY_BYTES
+            )
+        )
+
+    def _lookup(self, module: ast.Module, key: _HandoffKey) -> Optional[ArgumentHandoff]:
+        plans = self._plans.get(module)
+        known = None if plans is None else plans.get(key)
+        return None if known is None else known.plan
+
+    def _remember(self, module: ast.Module, key: _HandoffKey, plan: ArgumentHandoff) -> None:
+        if not memoizing() or not self._limit:
+            return
+        key_bytes = sum(sys.getsizeof(text) for text in (key.function, key.call, key.helper))
+        if key_bytes > self._MAX_KEY_BYTES:
+            return
+        plans = self._plans.get(module)
+        if plans is None:
+            plans = self._plans[module] = BoundedCache(
+                self._limit, weight=lambda entry: entry.key_bytes, weight_limit=self._MAX_KEY_BYTES
+            )
+        plans[key] = _StoredPlan(key_bytes, plan)
+
+    def _module_facts(
+        self, module: ast.Module, source_digest: str, configuration: ParserConfiguration
+    ) -> _ModuleFacts:
+        known = self._facts.get(module) if memoizing() and self._limit else None
+        if known is not None and (
+            known.source_digest == source_digest and known.configuration == configuration
+        ):
+            return known.facts
+        facts = _module_facts(module)
+        if memoizing() and self._limit:
+            self._facts[module] = _StoredModuleFacts(source_digest, configuration, facts)
+        return facts
+
+    def _helper_code(self, helper: ast.FunctionDef, key: _HandoffKey) -> Optional[CodeType]:
+        """Compiler facts for the exact generated helper, including every location."""
+        if not _compilation_cannot_warn(helper):
+            return _helper_code(helper)
+        helper_key = (key.helper, key.configuration)
+        known = self._helper_codes.get(helper_key)
+        if known is not None:
+            return known.code
+        code = _helper_code(helper)
+        key_bytes = sys.getsizeof(key.helper)
+        if key_bytes <= self._MAX_KEY_BYTES:
+            self._helper_codes[helper_key] = _StoredHelperCode(key_bytes, code)
+        return code
+
+
+def _module_facts(module: ast.Module) -> _ModuleFacts:
+    taken = set(identifiers((module,)))
+    taken.update(name for node in ast.walk(module) for name in type_parameter_names(node))
+    return _ModuleFacts(frozenset(taken), canonical_dump(module))
 
 
 _COMPILED_CODES: "WeakKeyDictionary[ast.AST, Tuple[CodeType, ...]]" = WeakKeyDictionary()
@@ -82,14 +243,23 @@ def _code(module: ast.Module, function: FunctionNode) -> Optional[CodeType]:
     )
 
 
-def _fresh(stem: str, taken: Set[str]) -> str:
+def _fresh(stem: str, *taken: AbstractSet[str]) -> str:
+    """Choose a fresh spelling without copying or mutating any name inventory."""
     name = stem
     index = 0
-    while name in taken:
+    while any(name in names for names in taken):
         index += 1
         name = f"{stem}_{index}"
-    taken.add(name)
     return name
+
+
+def _helper_code(helper_ast: ast.FunctionDef) -> Optional[CodeType]:
+    helper_module = ast.fix_missing_locations(
+        ast.Module(body=[copy.deepcopy(helper_ast)], type_ignores=[])
+    )
+    helper = helper_module.body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    return _code(helper_module, helper)
 
 
 def _scoped_expression(
@@ -145,6 +315,9 @@ def argument_handoff_plan(
     analyzer: ScopeAnalyzer,
     call_node: ast.stmt,
     helper_ast: ast.FunctionDef,
+    *,
+    memo: Optional[ArgumentHandoffMemo] = None,
+    source_digest: Optional[str] = None,
 ) -> Optional[ArgumentHandoff]:
     """Certify one complete body with immutable original parameters and fresh internal thunks."""
     module = analyzer.analyzed_tree
@@ -161,6 +334,41 @@ def argument_handoff_plan(
         or scope.lookup("object") is not None
     ):
         return None
+    key = (
+        _HandoffKey(
+            source_digest,
+            exact_dump(function),
+            exact_dump(call_node),
+            exact_dump(helper_ast),
+            parser_configuration(),
+        )
+        if memo is not None
+        and memo._limit
+        and source_digest is not None
+        and memoizing()
+        and _compilation_cannot_warn(helper_ast)
+        else None
+    )
+    if key is not None and memo is not None:
+        known = memo._lookup(module, key)
+        if known is not None:
+            return known
+    plan = _certify_argument_handoff(function, module, call_node, helper_ast, memo, key)
+    if plan is not None and key is not None and memo is not None:
+        memo._remember(module, key, plan)
+    return plan
+
+
+def _certify_argument_handoff(
+    function: ast.FunctionDef,
+    module: ast.Module,
+    call_node: ast.stmt,
+    helper_ast: ast.FunctionDef,
+    memo: Optional[ArgumentHandoffMemo],
+    key: Optional[_HandoffKey],
+) -> Optional[ArgumentHandoff]:
+    """The certificate from validated inputs; all results are immutable."""
+    body = body_without_docstring(function.body)
     names = set(parameter_names(function.args))
     if not names or any(name.startswith("__") and not name.endswith("__") for name in names):
         return None
@@ -210,12 +418,11 @@ def argument_handoff_plan(
         or any(isinstance(value, ast.Starred) for value in call.args)
     ):
         return None
-    helper_module = ast.fix_missing_locations(
-        ast.Module(body=[copy.deepcopy(helper_ast)], type_ignores=[])
+    helper_code = (
+        memo._helper_code(helper_ast, key)
+        if memo is not None and key is not None
+        else _helper_code(helper_ast)
     )
-    helper = helper_module.body[0]
-    assert isinstance(helper, ast.FunctionDef)
-    helper_code = _code(helper_module, helper)
     if helper_code is None:
         return None
     original_lambdas = {
@@ -253,15 +460,24 @@ def argument_handoff_plan(
                 parent = parents.get(node)
                 if not isinstance(parent, ast.Call) or parent.func is not node:
                     return None
-    taken = set(identifiers((module, helper_ast)))
-    taken.update(
-        name
-        for tree in (module, helper_ast)
-        for node in ast.walk(tree)
-        for name in type_parameter_names(node)
+    facts = (
+        memo._module_facts(module, key.source_digest, key.configuration)
+        if memo is not None and key is not None
+        else _module_facts(module)
     )
-    box = _fresh("_towel_arguments", taken)
-    captures = tuple((name, _fresh("_towel_argument", taken)) for name in order)
+    helper_names = set(identifiers((helper_ast,)))
+    helper_names.update(
+        name for node in ast.walk(helper_ast) for name in type_parameter_names(node)
+    )
+    claimed: Set[str] = set()
+
+    def claim(stem: str) -> str:
+        name = _fresh(stem, facts.taken, helper_names, claimed)
+        claimed.add(name)
+        return name
+
+    box = claim("_towel_arguments")
+    captures = tuple((name, claim("_towel_argument")) for name in order)
     return ArgumentHandoff(
         order,
         box,
@@ -271,7 +487,7 @@ def argument_handoff_plan(
         canonical_dump(function),
         canonical_dump(call_node),
         helper_ast.name,
-        canonical_dump(module),
+        facts.dump,
     )
 
 

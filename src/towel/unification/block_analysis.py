@@ -56,6 +56,7 @@ from .assignment_analyzer import (
     _collect_block_binding_stats,
     analyze_assignments,
 )
+from .argument_ownership import argument_handoff_plan
 from .extraction_policy import overlaps_protected
 from .block_signature import BlockSignature, extract_block_signature
 from .extractor import has_complete_return_coverage, is_value_producing
@@ -63,6 +64,7 @@ from .function_scope import code_names, function_names, identifiers, scope_movin
 from .frame_ownership import FrameOwnership, frame_ownership
 from .models import (
     BlockBindingSnapshot,
+    ArgumentHandoff,
     CodeBlockPair,
     FunctionNode,
     RejectReason,
@@ -679,6 +681,25 @@ class BlockAnalysis(EngineState):
         """Immutable caller/block ownership facts once per original block site."""
         return self._per_block(
             "frame_ownership", lambda: frame_ownership(function, nodes), site=site
+        )
+
+    def _argument_handoff_plan(
+        self,
+        function: FunctionNode,
+        nodes: Sequence[ast.stmt],
+        analyzer: ScopeAnalyzer,
+        call_node: ast.stmt,
+        helper_ast: ast.FunctionDef,
+    ) -> Optional[ArgumentHandoff]:
+        """Certify the current site, sharing only exact immutable ownership results."""
+        return argument_handoff_plan(
+            function,
+            nodes,
+            analyzer,
+            call_node,
+            helper_ast,
+            memo=self._argument_handoff_memo,
+            source_digest=self._module_digest(function),
         )
 
     def _own_scope_locals(

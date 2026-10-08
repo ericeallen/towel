@@ -55,6 +55,7 @@ from ..type_baseline import CheckedChange, KnownErrors
 from ..type_inference import CheckResult, TypeDiagnostic, TypeOracle
 from .block_signature import BlockSignature
 from .bounded_cache import BoundedCache, memoizing
+from .argument_ownership import ArgumentHandoffMemo
 from .extractor import HygienicExtractor
 from .function_index import FunctionIndex
 from .models import (
@@ -318,6 +319,8 @@ class EngineState:
     _unify_cache: BoundedCache[UnifyKey, Optional[StoredSubstitution]]
     # Per-block analyses of several result types; ``_per_block`` narrows each.
     _per_block_cache: BoundedCache[PerBlockKey, object]
+    _argument_handoff_memo: ArgumentHandoffMemo
+    """Exact immutable ownership certificates and compiler facts, scoped to this engine."""
     # The last few parsed sources of the apply path, which parses each modified
     # file several times per proposal.
     _parse_cache: BoundedCache[Tuple[str, ParserConfiguration], ast.Module]

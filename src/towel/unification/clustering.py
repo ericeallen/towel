@@ -51,7 +51,7 @@ from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signatu
 from .extractor import HygienicExtractor, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
 from .retained_bindings import spell_retained_bindings
-from .argument_ownership import argument_handoff_fits, argument_handoff_plan
+from .argument_ownership import argument_handoff_fits
 from .models import ArgumentHandoff, FunctionArtifact, FunctionNode, RejectReason, Replacement
 from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
@@ -328,7 +328,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         safe_call = spell_retained_bindings(candidate.function, candidate.nodes, call_node2)
         ownership = self._frame_ownership(candidate.function, candidate.nodes, site=candidate.site)
         handoff = (
-            argument_handoff_plan(
+            self._argument_handoff_plan(
                 candidate.function,
                 candidate.nodes,
                 candidate.analyzer,

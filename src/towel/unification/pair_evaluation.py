@@ -95,7 +95,7 @@ from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
 from .retained_bindings import spell_retained_bindings
-from .argument_ownership import argument_handoff_fits, argument_handoff_plan
+from .argument_ownership import argument_handoff_fits
 from .narrowing import (
     caller_narrowing_leaves_with_block,
     narrowing_lost_at_call_site,
@@ -1468,7 +1468,7 @@ class PairEvaluation(
         safe_call = spell_retained_bindings(function, nodes, call_node)
         ownership = self._frame_ownership(function, nodes, site=site)
         handoff = (
-            argument_handoff_plan(function, nodes, analyzer, safe_call, func_def)
+            self._argument_handoff_plan(function, nodes, analyzer, safe_call, func_def)
             if ownership.split and ownership.whole_body
             else None
         )

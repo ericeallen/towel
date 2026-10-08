@@ -67,6 +67,7 @@ from .progress import (
 )
 from .parallel import ParallelEvaluation
 from .bounded_cache import BoundedCache
+from .argument_ownership import ArgumentHandoffMemo
 from .engine_state import (
     BlockSite,
     ClusteredSite,
@@ -536,6 +537,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._per_block_cache: BoundedCache[PerBlockKey, object] = BoundedCache(
             self.STRUCTURAL_CACHE_LIMIT
         )
+        self._argument_handoff_memo = ArgumentHandoffMemo()
         self._parse_cache: BoundedCache[Tuple[str, ParserConfiguration], ast.Module] = BoundedCache(
             64
         )

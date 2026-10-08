@@ -9,6 +9,9 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Reuse whole-body ownership certificates and immutable source/compiler facts
+  under exact source, syntax, location and parser-context keys; preserve runtime
+  guards and independently reprove each certificate during materialization.
 - Handle malformed non-table Poetry configuration during cross-module import
   analysis without losing valid PEP 621 dependency restrictions.
 - Certify readonly lookup suppliers in the independent scope oracle without

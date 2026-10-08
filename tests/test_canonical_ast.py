@@ -33,7 +33,7 @@ from typing import Callable, List, Sequence, Type, TypeVar
 import pytest
 
 from tests.hostile_execution import fixture_sources
-from towel.canonical_ast import canonical_dump
+from towel.canonical_ast import canonical_dump, exact_dump
 from towel.type_inference import Subtyping
 from towel.unification.annotations import _joined, _unknown_subtypes, normalize_union
 from towel.unification.block_comments import HelperComments, weave_comments
@@ -243,6 +243,32 @@ def test_an_int_too_wide_for_repr_has_a_distinct_spelling() -> None:
     assert canonical_dump(_statement("x = 1")) == (
         "Assign(targets=[Name(id='x', ctx=Store())], value=Constant(value=1))"
     )
+
+
+def test_exact_compiler_spelling_preserves_empty_missing_and_position_fields() -> None:
+    name = ast.Name(id="x", ctx=ast.Load())
+    missing = copy.deepcopy(name)
+    del missing.ctx
+    assert canonical_dump(name) == canonical_dump(missing)
+    assert exact_dump(name) != exact_dump(missing)
+    setattr(missing, "ctx", None)
+    assert exact_dump(name) != exact_dump(missing)
+    present = exact_dump(missing)
+    del missing.ctx
+    assert exact_dump(missing) != present
+    function = _statement("def f(): pass")
+    moved = copy.deepcopy(function)
+    ast.increment_lineno(moved, 10)
+    assert canonical_dump(function) == canonical_dump(moved)
+    assert exact_dump(function) != exact_dump(moved)
+    assert "decorator_list=[]" in exact_dump(function)
+
+
+def test_exact_compiler_spelling_retains_wide_integers_without_decimal_conversion() -> None:
+    wide, wider = _wide_int(), _wide_int(4)
+    assert exact_dump(wide) == exact_dump(copy.deepcopy(wide))
+    assert exact_dump(wide) != exact_dump(wider)
+    assert "int(0x" in exact_dump(wide)
 
 
 # The comparisons Towel makes, each between a node it built and one it parsed.
