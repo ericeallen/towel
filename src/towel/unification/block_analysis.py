@@ -83,6 +83,7 @@ from .static_positions import (
     configured_translation_keywords,
 )
 from .structural_memo import load_substitution, store_substitution
+from .ast_paths import has_shared_expressions
 from .typing_forms import ModuleText, typing_forms_of
 from .substitution import Substitution
 from .visitors import (
@@ -389,6 +390,8 @@ class BlockAnalysis(EngineState):
         to the typing forms they denote; the same structure calling other
         objects is another pair, so the forms are part of the key.
         """
+        if any(has_shared_expressions(block) for block in blocks):
+            return None
         keywords = self._translation_keywords()
         forms = tuple(
             self._typing_forms(block, module)

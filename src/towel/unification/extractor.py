@@ -39,7 +39,8 @@ from typing import (
     Union,
     cast,
 )
-from .substitution import Substitution, structural_text
+from .substitution import Substitution
+from .ast_paths import Path, path_map
 from .visitors import all_instances, visit_as
 from .definite_assignment import definitely_bound_after
 from .function_scope import code_names
@@ -81,9 +82,14 @@ class ParameterSubstituter(ast.NodeTransformer):
     """
 
     def __init__(
-        self, subst: Substitution, param_names: List[str], rename_mapping: Dict[str, str]
+        self,
+        subst: Substitution,
+        param_names: List[str],
+        rename_mapping: Dict[str, str],
+        template_paths: Optional[Dict[ast.AST, Path]] = None,
     ) -> None:
         self.subst = subst
+        self._template_paths = template_paths if template_paths is not None else {}
         self.param_names = param_names
         self.rename_mapping = rename_mapping
         self.block_idx = 0
@@ -168,7 +174,9 @@ class ParameterSubstituter(ast.NodeTransformer):
         if not isinstance(node, ast.expr):
             return None
 
-        maybe_param_name: Optional[str] = self.subst.get_param_for_expr(self.block_idx, node)
+        maybe_param_name: Optional[str] = self.subst.get_param_for_expr(
+            self.block_idx, node, path=self._template_paths.get(node)
+        )
         if not maybe_param_name or maybe_param_name not in self.param_names:
             return None
 
@@ -191,7 +199,9 @@ class ParameterSubstituter(ast.NodeTransformer):
 
         pool = self.subst.literal_pool
         if pool is not None and pool.parameter == maybe_param_name:
-            index = pool.keys.index(structural_text(node))
+            index = pool.index_at(self.block_idx, self._template_paths.get(node))
+            if index is None:
+                return None
             return ast.copy_location(
                 ast.Subscript(
                     value=ast.Name(id=maybe_param_name, ctx=ast.Load()),
@@ -227,14 +237,17 @@ class ParameterSubstituter(ast.NodeTransformer):
                     # raw text. No-spec formatting preserves that exact string
                     # object; the JoinedStr keeps its original chunk order.
                     pool = self.subst.literal_pool
-                    parameter = self.subst.get_param_for_expr(self.block_idx, value)
+                    path = self._template_paths.get(value)
+                    parameter = self.subst.get_param_for_expr(self.block_idx, value, path=path)
+                    slot = None if pool is None else pool.index_at(self.block_idx, path)
                     if (
                         pool is not None
                         and parameter == pool.parameter
                         and parameter in self.param_names
                         and type(value.value) is str
+                        and slot is not None
                     ):
-                        index = pool.keys.index(structural_text(value))
+                        index = slot
                         assert all(
                             isinstance(element, ast.Constant) and type(element.value) is str
                             for element in (row[index] for row in pool.rows)
@@ -263,8 +276,15 @@ class ParameterSubstituter(ast.NodeTransformer):
 
     def visit_FormattedValue(self, node: ast.FormattedValue) -> ast.FormattedValue:
         """The value and the format specification: ``f"{v:>{width}}"`` evaluates ``width`` too."""
+        # The value is evaluated Python, unlike JoinedStr's raw text chunks.
+        previous_state = self.in_joinedstr
+        self.in_joinedstr = False
+        try:
+            value = visit_as(self, node.value)
+        finally:
+            self.in_joinedstr = previous_state
         return ast.FormattedValue(
-            value=visit_as(self, node.value),
+            value=value,
             conversion=node.conversion,
             format_spec=visit_as(self, node.format_spec) if node.format_spec is not None else None,
         )
@@ -1000,7 +1020,9 @@ class HygienicExtractor:
             Transformed AST nodes
         """
 
-        substituter = ParameterSubstituter(substitution, param_names, rename_mapping)
+        substituter = ParameterSubstituter(
+            substitution, param_names, rename_mapping, path_map(nodes)
+        )
         return [visit_as(substituter, node) for node in nodes]
 
     def _ensure_unique_name(self, name: str, enclosing_names: Set[str]) -> str:

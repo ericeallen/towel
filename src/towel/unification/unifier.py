@@ -28,13 +28,14 @@ for a substitution making two terms equal.
 import ast
 from typing import Callable, Dict, Optional, List, Tuple, Any, Sequence, Type, Union, Iterator
 
-from .constant_consistency import ConstantConsistency, constant_identity
+from .constant_consistency import constant_identity
+from .ast_paths import Path, has_shared_expressions, path_map, resolve_path
 from .compiler_literals import (
     common_literal_candidates,
     immutable_literal_value,
     is_pooled_expression,
     pooled_expression_positions,
-    pooled_literal_parts,
+    pooled_literal_nodes,
     unstable_literal_pool,
 )
 from .parameterization import Parameterization
@@ -48,7 +49,6 @@ from .static_positions import (
     statically_read,
 )
 from .substitution import LiteralPool, Substitution, structural_text
-from .unifier_state import ConstantIdentity
 from .visitors import all_instances
 
 _REPEATING = (
@@ -76,7 +76,7 @@ def _dotted_chain(expression: ast.AST) -> Optional[Tuple[ast.Name, List[str]]]:
     return expression, attributes[::-1]
 
 
-class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
+class Unifier(Parameterization, LiteralPromotion):
     """
     Unify AST blocks to find parameterizable differences.
 
@@ -85,8 +85,6 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
     Implements alpha-renaming for bound variables (loop vars, etc.).
     """
-
-    constant_positions: Dict[Tuple[int, ConstantIdentity], List[Tuple[object, ...]]]
 
     def __init__(
         self,
@@ -112,10 +110,10 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self.alpha_renamings: Dict[Tuple[int, str], str] = {}
         self.current_blocks: Optional[Sequence[Sequence[ast.AST]]] = None
         self._block_free_variables_cache = {}
-        self.constant_positions = {}
         self._pattern_depth = 0
         self._pattern_parameters_allowed = False
         self._pooled_literal_parts = ()
+        self._pooled_literal_nodes = ()
         self._read_in_place = ()
 
     def unify_blocks(
@@ -148,7 +146,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
 
         if not all(len(b) == len(blocks[0]) for b in blocks):
             return None
-        if any(unstable_literal_pool(block) for block in blocks):
+        if any(has_shared_expressions(block) or unstable_literal_pool(block) for block in blocks):
             return None
 
         # Reset per-unification state to avoid cross-pair contamination
@@ -156,13 +154,12 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self.alpha_renamings = {}
         self._reset_unification_state(blocks, translation_keywords, typing_forms)
 
-        self._collect_constant_positions(blocks)
-
         # Detect and map block-level bound variables for hygienic renaming
         # This allows unification of blocks with structurally identical code but different variable names
         self._setup_bound_variable_alpha_renamings(blocks)
 
         substitution = Substitution()
+        substitution.bind_source_paths(blocks)
 
         # Unify statement by statement
         for stmt_idx in range(len(blocks[0])):
@@ -200,58 +197,69 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
     ) -> None:
         """Keep common non-global literal objects at their original compiler sites.
 
-        Only immutable literal values qualify. Each global structural key
-        must occur at identical runtime paths across every site, and syntax
-        pins plus protected pooled descendants remain authoritative.
+        Only immutable literal values qualify. Each selected runtime path
+        must retain the same expression across every site; differing paths
+        and syntax pins never join the carrier by sharing a literal value.
         """
-        from .structural_memo import path_map, resolve_path
-
+        if len(substitution.param_expressions) >= self.max_parameters:
+            return
         keys: list[str] = []
         rows: list[list[ast.expr]] = [[] for _ in blocks]
+        selectors: list[list[Tuple[Path, int]]] = [[] for _ in blocks]
         indices = range(len(blocks))
         eligible = [
-            {node: paths[node] for node in common_literal_candidates(block)}
+            {paths[node]: node for node in common_literal_candidates(block)}
             for block in blocks
             for paths in [path_map(block)]
         ]
-        for expression in eligible[0]:
-            key = structural_text(expression)
-            if key in keys or substitution.get_param_for_expr(0, expression) is not None:
+        selected: set[Path] = set()
+        for path, expression in eligible[0].items():
+            if any((path[0], path[1][:length]) in selected for length in range(len(path[1]))):
                 continue
-            positions = [pooled_expression_positions(block, expression) for block in blocks]
-            if not positions[0] or len(set(positions)) != 1:
+            expressions = [allowed.get(path) for allowed in eligible]
+            if any(node is None for node in expressions):
+                continue
+            candidates = [node for node in expressions if node is not None]
+            key = structural_text(expression)
+            if any(structural_text(node) != key for node in candidates):
                 continue
             if any(
-                tuple(
-                    sorted(path for node, path in allowed.items() if structural_text(node) == key)
+                substitution.get_param_for_expr(index, node, path=path) is not None
+                or any(
+                    substitution.get_param_for_expr(
+                        index,
+                        resolve_path(blocks[index], (path[0], path[1][:length])),
+                        path=(path[0], path[1][:length]),
+                    )
+                    is not None
+                    for length in range(len(path[1]))
                 )
-                != present
-                for allowed, present in zip(eligible, positions)
+                for index, node in enumerate(candidates)
             ):
-                # A global mapping cannot affect pinned grammar or metadata
-                # occurrences of the same structural key elsewhere either.
                 continue
-            expressions: list[ast.AST] = [resolve_path(block, positions[0][0]) for block in blocks]
-            if self._read_where_it_stands(expressions, indices):
+            if self._read_where_it_stands(candidates, indices, occurrences=True):
                 continue
-            if not all(isinstance(node, ast.expr) for node in expressions):
-                continue
-            keys.append(key)
-            for row, node in zip(rows, expressions):
-                assert isinstance(node, ast.expr)
-                row.append(node)
+            column = keys.index(key) if key in keys else len(keys)
+            if column == len(keys):
+                keys.append(key)
+                for row, node in zip(rows, candidates):
+                    row.append(node)
+            for slots in selectors:
+                slots.append((path, column))
+            selected.add(path)
         if not keys:
             return
-        first = [row[0] for row in rows]
-        if not self._try_parameterize(first, substitution, indices):
-            return
-        parameter = substitution.get_param_for_expr(0, first[0])
-        assert parameter is not None
-        for column in range(1, len(keys)):
-            for index, row in enumerate(rows):
-                substitution.mappings[index, keys[column]] = parameter
+        parameter = self._fresh_parameter_name()
+        for index, slots in enumerate(selectors):
+            for path, _ in slots:
+                substitution.add_occurrence_mapping(
+                    index, path, resolve_path(blocks[index], path), parameter
+                )
         substitution.literal_pool = LiteralPool(
-            parameter, tuple(keys), tuple(tuple(row) for row in rows)
+            parameter,
+            tuple(keys),
+            tuple(tuple(row) for row in rows),
+            tuple(tuple(slots) for slots in selectors),
         )
 
     def _unify_nodes(
@@ -283,12 +291,7 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
                 return True  # All same constant
 
             if self.parameterize_constants:
-                # Invariant: a constant value is parameterized at every position
-                # it occupies or at none. With ``x = item * 2`` against
-                # ``x = item * 3`` and ``z = y ** 2`` in both, the 2 differs at one
-                # position and agrees at the other, so it cannot become a parameter.
-                if not self._check_constant_consistency(values, block_indices):
-                    return False
+                # Only this occurrence changes; equal leaves at other paths stay fixed.
                 return self._try_parameterize(nodes, substitution, block_indices)
             else:
                 # Cannot unify - constants must be identical
@@ -1263,7 +1266,11 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         self._pattern_parameters_allowed = False
         self._block_free_variables_cache.clear()
         self.current_blocks = blocks
-        self._pooled_literal_parts = tuple(pooled_literal_parts(block) for block in blocks)
+        self._pooled_literal_nodes = tuple(pooled_literal_nodes(block) for block in blocks)
+        self._pooled_literal_parts = tuple(
+            frozenset(structural_text(node) for node in nodes)
+            for nodes in self._pooled_literal_nodes
+        )
         forms = typing_forms if typing_forms is not None else [TYPING_FORMS_BY_NAME] * len(blocks)
         # What each block's statements pin, looked up by node id.
         self._read_in_place = [
@@ -1288,6 +1295,8 @@ class Unifier(ConstantConsistency, Parameterization, LiteralPromotion):
         """Release the previous pair's ASTs, including any memoized block facts."""
         self.current_blocks = None
         self._pooled_literal_parts = ()
+        self._pooled_literal_nodes = ()
+        self._read_in_place = ()
         self._block_free_variables_cache.clear()
 
     # A construct that binds names is unified by a method of its own, chosen by

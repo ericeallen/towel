@@ -26,7 +26,7 @@ from typing import FrozenSet, Iterator, Optional, Sequence, Tuple
 from weakref import WeakKeyDictionary
 
 from .statement_facts import memoized_per_node
-from .structural_memo import Path, path_map
+from .ast_paths import Path, path_map
 from .substitution import structural_text
 
 _LITERAL_INPUT: "WeakKeyDictionary[ast.AST, bool]" = WeakKeyDictionary()
@@ -130,14 +130,8 @@ def _runtime_nodes(block: Sequence[ast.AST]) -> Iterator[ast.AST]:
     return (node for node, _ in _runtime_walk(block))
 
 
-def pooled_literal_parts(block: Sequence[ast.AST]) -> FrozenSet[str]:
-    """Structural keys substitution must not replace inside a pooled expression.
-
-    Substitution is keyed by expression text, so a mapping created for a
-    different occurrence of the same expression would replace this one too.
-    Protect all matching descendant keys, not just these node identities.
-    Entire expression roots may still be passed from the original caller.
-    """
+def pooled_literal_nodes(block: Sequence[ast.AST]) -> FrozenSet[ast.AST]:
+    """Occurrence nodes whose replacement would rebuild a compiler-pooled object."""
     roots: set[ast.AST] = set()
     membership: set[ast.AST] = set()
     for node in _runtime_nodes(block):
@@ -153,10 +147,15 @@ def pooled_literal_parts(block: Sequence[ast.AST]) -> FrozenSet[str]:
                 ):
                     membership.add(comparator)
     return frozenset(
-        structural_text(node)
+        node
         for node, protected in _runtime_walk(block, frozenset(roots | membership))
         if isinstance(node, ast.expr) and (protected or node in membership)
     )
+
+
+def pooled_literal_parts(block: Sequence[ast.AST]) -> FrozenSet[str]:
+    """Structural keys protected against substitutions that replace every equal expression."""
+    return frozenset(structural_text(node) for node in pooled_literal_nodes(block))
 
 
 def immutable_literal_value(node: ast.AST) -> bool:

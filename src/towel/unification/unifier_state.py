@@ -15,8 +15,8 @@
 """The state and operations the unifier's mixins rely on.
 
 ``Unifier`` is assembled from the node-type unification core and mixins for
-constant consistency, parameterization with alpha renaming, and literal
-promotion, each in its own module. Every attribute and operation a mixin
+parameterization with alpha renaming and literal promotion, each in its
+own module. Every attribute and operation a mixin
 reaches is declared here, so each module states its dependencies and mypy
 checks the seams; the constructor assigns the attributes and the core or
 another mixin implements each stub.
@@ -31,7 +31,6 @@ from typing import (
     FrozenSet,
     Hashable,
     Iterator,
-    List,
     Mapping,
     Optional,
     Set,
@@ -69,9 +68,6 @@ class UnifierState:
     promote_equal_hof_literals: bool
     """Whether equal literal arguments of higher-order factory calls become parameters."""
 
-    constant_positions: Dict[Tuple[int, ConstantIdentity], List[Tuple[object, ...]]]
-    """Where each constant occurs in each block, by block and identity, as field paths."""
-
     _reserved_parameter_names: Set[str]
     """Identifiers the blocks mention; a fresh parameter must not alias one."""
 
@@ -80,6 +76,9 @@ class UnifierState:
 
     _pattern_parameters_allowed: bool
     """Whether a parameter may stand where the pattern being unified is (see ``Unifier._unify_pattern``)."""
+
+    _pooled_literal_nodes: Sequence[FrozenSet[ast.AST]]
+    """Source occurrences protected inside compiler-pooled literal expressions."""
 
     _pooled_literal_parts: Sequence[FrozenSet[str]]
     """Structural keys whose substitution would rebuild compiler-pooled objects."""
@@ -96,6 +95,8 @@ class UnifierState:
         """Provided by Parameterization."""
         raise NotImplementedError
 
-    def _read_where_it_stands(self, exprs: Sequence[ast.AST], block_indices: Sequence[int]) -> bool:
+    def _read_where_it_stands(
+        self, exprs: Sequence[ast.AST], block_indices: Sequence[int], *, occurrences: bool = False
+    ) -> bool:
         """Provided by Parameterization."""
         raise NotImplementedError

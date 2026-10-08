@@ -213,11 +213,21 @@ class LiteralPromotion(UnifierState):
             for bidx, expr in enumerate(per_block_exprs)
         ):
             return
-        if self._read_where_it_stands(per_block_exprs, range(len(per_block_exprs))):
+        if len(substitution.param_expressions) >= self.max_parameters:
+            return
+        paths = [
+            substitution.source_path(index, expr) for index, expr in enumerate(per_block_exprs)
+        ]
+        if any(path is None for path in paths):
+            return
+        if self._read_where_it_stands(
+            per_block_exprs, range(len(per_block_exprs)), occurrences=True
+        ):
             return
         param_name = self._fresh_parameter_name()
-        for bidx, expr in enumerate(per_block_exprs):
-            substitution.add_mapping(bidx, expr, param_name, bound_vars=None)
+        for bidx, (expr, path) in enumerate(zip(per_block_exprs, paths)):
+            assert path is not None
+            substitution.add_occurrence_mapping(bidx, path, expr, param_name)
         promoted = substitution.promoted_literal_args.setdefault(param_name, {})
         for bidx, expr in enumerate(per_block_exprs):
             promoted[bidx] = expr

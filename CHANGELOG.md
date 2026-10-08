@@ -9,6 +9,9 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Unify differing constant occurrences without changing equal literals at other
+  positions. Reuse a parameter only when its complete typed column agrees across
+  callers; preserve caller literal pools, syntax pins and the existing budget.
 - Preserve useful shared f-string helpers by passing common exact-string
   fragments from their original callers; retain formatting effects, literal
   identities and the complete helper argument budget.

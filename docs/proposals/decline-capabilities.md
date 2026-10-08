@@ -18,7 +18,12 @@ block an unrelated extraction. Local-variable annotation names are no longer
 treated as runtime module lookups. The historical tables below retain what
 the audits measured; `tests/test_candidate_recovery.py` and
 `tests/test_scope_guard_boundaries.py` protect these recovered capabilities
-with positive extraction and runtime controls. Store/delete targets, pattern
+with positive extraction and runtime controls. The Unreleased follow-up also
+recovers differing raw constant occurrences by AST field/index path, preserving
+equal literals at other positions, exact types and common caller literal pools.
+It retains whole pooled compound roots, grammar pins and the existing budget;
+the value-wide consistency row below records the historical refusal.
+Store/delete targets, pattern
 headers, escaping captured bindings and real evaluated annotations keep their
 existing safety checks. Broader nested-block liveness remains deferred.
 

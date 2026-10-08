@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 from weakref import WeakKeyDictionary
 
 from ..canonical_ast import canonical_dump
+from .ast_paths import Path, path_map
 
 _STRUCTURAL_TEXT: "WeakKeyDictionary[ast.AST, str]" = WeakKeyDictionary()
 
@@ -59,6 +60,15 @@ class LiteralPool:
     parameter: str
     keys: Tuple[str, ...]
     rows: Tuple[Tuple[ast.expr, ...], ...]
+    selectors: Tuple[Tuple[Tuple[Path, int], ...], ...] = ()
+
+    def index_at(self, block_idx: int, path: Optional[Path]) -> Optional[int]:
+        """The certified carrier slot at this occurrence, if any."""
+        if path is None or block_idx >= len(self.selectors):
+            return None
+        return next(
+            (index for selected, index in self.selectors[block_idx] if selected == path), None
+        )
 
 
 @dataclass
@@ -66,10 +76,13 @@ class Substitution:
     """
     Represents a substitution mapping from sub-expressions to parameter names.
 
-    Each entry maps a (block_index, sub_expression) to a parameter name.
+    Ordinary expressions use structural keys; selected literal occurrences
+    use field/index paths so equal values elsewhere remain untouched.
     """
 
     mappings: Dict[Tuple[int, str], str] = field(default_factory=dict)
+    occurrence_mappings: Dict[Tuple[int, Path], str] = field(default_factory=dict)
+    _source_paths: Tuple[Dict[ast.AST, Path], ...] = field(default=(), repr=False, compare=False)
     # Maps parameter names to the list of expressions they replace
     param_expressions: Dict[str, List[Tuple[int, ast.AST]]] = field(default_factory=dict)
     # Maps parameter names to list of bound variables they should take as function args
@@ -128,8 +141,44 @@ class Substitution:
                 new_vars = set(bound_vars)
                 self.function_params[param_name] = sorted(existing | new_vars)
 
-    def get_param_for_expr(self, block_idx: int, expr: ast.AST) -> Optional[str]:
-        """Get the parameter name for an expression."""
+    def bind_source_paths(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
+        """Bind immutable source nodes without affecting copied-template lookups."""
+        self._source_paths = tuple(path_map(block) for block in blocks)
+
+    def source_path(self, block_idx: int, expr: ast.AST) -> Optional[Path]:
+        """This source expression's occurrence; copied nodes have no source path."""
+        return (
+            self._source_paths[block_idx].get(expr) if block_idx < len(self._source_paths) else None
+        )
+
+    def add_occurrence_mapping(
+        self,
+        block_idx: int,
+        path: Path,
+        expr: ast.AST,
+        param_name: str,
+        bound_vars: Optional[List[str]] = None,
+    ) -> None:
+        """Map one selected occurrence, retaining one argument per caller."""
+        key = (block_idx, path)
+        if key in self.occurrence_mappings and self.occurrence_mappings[key] != param_name:
+            raise ValueError("An occurrence already belongs to another parameter")
+        self.occurrence_mappings[key] = param_name
+        expressions = self.param_expressions.setdefault(param_name, [])
+        if not any(index == block_idx for index, _ in expressions):
+            expressions.append((block_idx, expr))
+        if bound_vars:
+            self.function_params[param_name] = list(bound_vars)
+
+    def get_param_for_expr(
+        self, block_idx: int, expr: ast.AST, *, path: Optional[Path] = None
+    ) -> Optional[str]:
+        """An exact occurrence first, then an explicitly recorded structural mapping."""
+        located = path if path is not None else self.source_path(block_idx, expr)
+        if located is not None:
+            parameter = self.occurrence_mappings.get((block_idx, located))
+            if parameter is not None:
+                return parameter
         return self.mappings.get((block_idx, structural_text(expr)))
 
     def remove_parameter(self, param_name: str) -> None:
@@ -138,6 +187,9 @@ class Substitution:
             self.literal_pool = None
         self.param_expressions.pop(param_name, None)
         self.function_params.pop(param_name, None)
+        self.occurrence_mappings = {
+            key: name for key, name in self.occurrence_mappings.items() if name != param_name
+        }
         for key in [key for key, name in self.mappings.items() if name == param_name]:
             del self.mappings[key]
 

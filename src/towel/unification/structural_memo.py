@@ -20,8 +20,9 @@ untouched. A block's *structure*, the dump of its statements without
 positions, survives re-parsing and the line shifts an edit elsewhere in the
 file causes. Values that reference nodes are stored as positions within the
 block and resolved against whichever block matches the structure later; the
-extractor matches expressions by their dump, so a node at the same position
-in a structurally identical block behaves identically.
+extractor matches constant occurrences by their field/index paths and other
+expressions by their dump, so structurally identical blocks reuse the same
+selection without retaining the original nodes.
 """
 
 from __future__ import annotations
@@ -36,11 +37,24 @@ from weakref import WeakKeyDictionary
 from .statement_facts import memoized_per_node
 from ..canonical_ast import canonical_dump
 from .substitution import LiteralPool, Substitution
+from .ast_paths import (
+    Path as Path,
+    Step as Step,
+    path_map as path_map,
+    resolve_path as resolve_path,
+)
 
-# A path names a node inside a block: the statement index, then (field, index)
-# steps; ``index`` is -1 for a single-valued field.
-Step = Tuple[str, int]
-Path = Tuple[int, Tuple[Step, ...]]
+__all__ = [
+    "Path",
+    "Step",
+    "path_map",
+    "resolve_path",
+    "structural_id",
+    "StoredLiteralPool",
+    "StoredSubstitution",
+    "store_substitution",
+    "load_substitution",
+]
 
 
 def _node_digest(node: ast.AST) -> bytes:
@@ -64,39 +78,12 @@ def structural_id(nodes: Sequence[ast.AST]) -> str:
     return digest.hexdigest()
 
 
-def path_map(block: Sequence[ast.AST]) -> Dict[ast.AST, Path]:
-    """The position of every node in ``block``."""
-    paths: Dict[ast.AST, Path] = {}
-    for statement_index, statement in enumerate(block):
-        stack: List[Tuple[ast.AST, Tuple[Step, ...]]] = [(statement, ())]
-        while stack:
-            node, steps = stack.pop()
-            paths[node] = (statement_index, steps)
-            for field, value in ast.iter_fields(node):
-                if isinstance(value, ast.AST):
-                    stack.append((value, steps + ((field, -1),)))
-                elif isinstance(value, list):
-                    for index, item in enumerate(value):
-                        if isinstance(item, ast.AST):
-                            stack.append((item, steps + ((field, index),)))
-    return paths
-
-
-def resolve_path(block: Sequence[ast.AST], path: Path) -> ast.AST:
-    """The node at ``path`` in ``block``."""
-    statement_index, steps = path
-    node: ast.AST = block[statement_index]
-    for field, index in steps:
-        value = getattr(node, field)
-        node = value if index < 0 else value[index]
-    return node
-
-
 @dataclass(frozen=True)
 class StoredLiteralPool:
     parameter: str
     keys: Tuple[str, ...]
     rows: Tuple[Tuple[Path, ...], ...]
+    selectors: Tuple[Tuple[Tuple[Path, int], ...], ...]
 
 
 @dataclass(frozen=True)
@@ -104,6 +91,7 @@ class StoredSubstitution:
     """A substitution with every node reference replaced by its position."""
 
     mappings: Tuple[Tuple[Tuple[int, str], str], ...]
+    occurrence_mappings: Tuple[Tuple[Tuple[int, Path], str], ...]
     param_expressions: Tuple[Tuple[str, Tuple[Tuple[int, Path], ...]], ...]
     function_params: Tuple[Tuple[str, Tuple[str, ...]], ...]
     hygienic_renames: Tuple[Tuple[Tuple[str, str], ...], ...]
@@ -127,6 +115,7 @@ def store_substitution(
 
     return StoredSubstitution(
         mappings=tuple(sorted(substitution.mappings.items())),
+        occurrence_mappings=tuple(sorted(substitution.occurrence_mappings.items())),
         param_expressions=tuple(
             (name, tuple((index, located(index, node)) for index, node in expressions))
             for name, expressions in substitution.param_expressions.items()
@@ -154,6 +143,7 @@ def store_substitution(
                     tuple(located(index, node) for node in row)
                     for index, row in enumerate(substitution.literal_pool.rows)
                 ),
+                substitution.literal_pool.selectors,
             )
         ),
     )
@@ -165,6 +155,7 @@ def load_substitution(
     """A fresh substitution over ``blocks``, plus the hygienic renames to hand back."""
     substitution = Substitution(
         mappings=dict(stored.mappings),
+        occurrence_mappings=dict(stored.occurrence_mappings),
         param_expressions={
             name: [(index, resolve_path(blocks[index], path)) for index, path in expressions]
             for name, expressions in stored.param_expressions
@@ -188,5 +179,7 @@ def load_substitution(
             stored.literal_pool.parameter,
             stored.literal_pool.keys,
             tuple(tuple(cast(ast.expr, node) for node in row) for row in rows),
+            stored.literal_pool.selectors,
         )
+    substitution.bind_source_paths(blocks)
     return substitution, [dict(mapping) for mapping in stored.renames]

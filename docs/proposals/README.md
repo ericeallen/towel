@@ -13,6 +13,16 @@ Development checkpoints do not become current validation results, and their
 artifacts numbered 1.772 must not be published. Current behavior is in the guides
 linked from the documentation index.
 
+The current Unreleased work implements exact ownership-fact reuse and
+occurrence-specific constant substitution. Ownership materialization keeps its
+independent uncached proof. Constant differences no longer replace equal literals
+at unrelated paths, and common caller literals use exact carrier selectors.
+These are development changes, not a new publication. Complete default CLI
+latency remains unestablished: shared-host contention prevented acceptance of the
+balanced comparison; observed repetitive-input CPU reductions are separately
+qualified. Thunk ordering and nested-block liveness remain the next steps in the
+authorized implementation sequence.
+
 ## Retained work and research
 
 | Document | Current direction |

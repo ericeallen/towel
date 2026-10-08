@@ -26,7 +26,7 @@ class TestUnifierBatch5(unittest.TestCase):
         self.assertIsNone(uni.unify_blocks([b0, b1], [{}, {}]))
 
     def test_three_block_constant_parameterization(self) -> None:
-        # 3 blocks; _check_constant_consistency len(values)!=2 early True path
+        # One corresponding constant column across all three callers.
         b0 = parse_block("x = a * 2")
         b1 = parse_block("x = a * 3")
         b2 = parse_block("x = a * 4")

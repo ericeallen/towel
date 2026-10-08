@@ -14,16 +14,18 @@
 
 import ast
 import unittest
+from typing import Callable, cast
 
 import pytest
 
 from tests.test_helpers import parse_block
+from towel.unification.extractor import HygienicExtractor
 from towel.unification.unifier import Unifier
 
 
 class TestUnifierCore(unittest.TestCase):
-    def test_constant_inconsistency_rejection(self) -> None:
-        # Inconsistent constants: 2 appears twice in block0, but only once differs in block1
+    def test_constant_occurrences_leave_the_shared_exponent_fixed(self) -> None:
+        # Only the multiplier differs; the other occurrence of 2 stays fixed.
         b0 = parse_block("""
             x = a * 2
             z = y ** 2
@@ -34,7 +36,34 @@ class TestUnifierCore(unittest.TestCase):
             """)
         uni = Unifier()
         hr: list[dict[str, str]] = [{}, {}]
-        self.assertIsNone(uni.unify_blocks([b0, b1], hr))
+        before = [ast.dump(ast.Module(body=block, type_ignores=[])) for block in (b0, b1)]
+        subst = uni.unify_blocks([b0, b1], hr)
+        self.assertIsNotNone(subst)
+        assert subst is not None
+        self.assertEqual(len(subst.param_expressions), 1)
+        helper, order = HygienicExtractor().extract_function(
+            template_block=b0,
+            substitution=subst,
+            free_variables={"a", "y"},
+            enclosing_names=set(),
+            is_value_producing=False,
+            return_variables=["x", "z"],
+            function_name="helper",
+        )
+        exponent_assignment = helper.body[1]
+        assert isinstance(exponent_assignment, ast.Assign)
+        assert isinstance(exponent_assignment.value, ast.BinOp)
+        assert isinstance(exponent_assignment.value.right, ast.Constant)
+        self.assertEqual(exponent_assignment.value.right.value, 2)
+        self.assertEqual(len(order), 3)
+        namespace: dict[str, object] = {}
+        exec(compile(ast.Module(body=[helper], type_ignores=[]), "<helper>", "exec"), namespace)
+        function = cast(Callable[[int, int, int], tuple[int, int]], namespace["helper"])
+        self.assertEqual(function(2, 3, 5), (6, 25))
+        self.assertEqual(function(3, 3, 5), (9, 25))
+        self.assertEqual(
+            [ast.dump(ast.Module(body=block, type_ignores=[])) for block in (b0, b1)], before
+        )
 
     def test_constant_parameterization_consistent(self) -> None:
         # Consistent differing constants at matching positions -> parameterize as one param

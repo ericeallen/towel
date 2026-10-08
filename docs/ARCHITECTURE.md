@@ -205,6 +205,20 @@ that can be abstracted safely. Binder names (loop variables, comprehension
 targets, `with`/`except` names) are matched up to consistent renaming rather
 than turned into parameters.
 
+Differing constants use the AST field/index path of each occurrence, rather than
+replacing every literal with the same value. For `x + 1 + x * 2` against
+`x + 2 + x * 2`, one parameter replaces the offset while the multiplier stays
+`2`. Differing columns share a parameter only when their complete ordered
+vectors agree in both type and value across all callers. `False`, `0` and `0.0`
+remain distinct; signed floating zero retains its sign.
+
+Source nodes and the copied helper have separate transient path indexes. The
+structural memo stores immutable occurrence paths and rebinds its argument nodes
+to each newly parsed block. Common caller literals likewise have exact occurrence
+selectors into their immutable carrier. Compiler-pooled compound literals stay
+whole, and grammar/type metadata remains pinned. This precision preserves the
+existing parameter budget and independent materialization proof.
+
 Each parameter is passed in the way that preserves the original evaluation:
 
 - **Value.** A literal, a signed or negated literal (`-1`, `not True`), a
