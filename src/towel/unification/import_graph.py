@@ -282,7 +282,9 @@ def _installed_everywhere(root: Path) -> FrozenSet[str]:
         for requirement in declared_requirements(root)
         if requirement.with_the_project and ";" in requirement.declared
     }
-    dependencies = load_pyproject(root).get("tool", {}).get("poetry", {}).get("dependencies", {})
+    dependencies: object = load_pyproject(root)
+    for field in ("tool", "poetry", "dependencies"):
+        dependencies = dependencies.get(field) if isinstance(dependencies, dict) else None
     if isinstance(dependencies, dict):
         for name, specification in dependencies.items():
             tables = specification if isinstance(specification, list) else [specification]

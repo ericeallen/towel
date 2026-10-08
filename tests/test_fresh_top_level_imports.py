@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -86,3 +87,46 @@ def test_literal_top_level_host_requires_unconditional_import_evidence(
     changed = _refactor(tmp_path)
     assert _run(tmp_path) == "77\n"
     assert changed == (2 if independent_import else 0)
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    [
+        "",
+        "tool = 1\n",
+        "tool = ['poetry']\n",
+        "[tool]\npoetry = 1\n",
+        "[tool]\npoetry = ['dependencies']\n",
+    ],
+    ids=["valid", "tool-integer", "tool-list", "poetry-integer", "poetry-list"],
+)
+def test_complete_cross_module_preview_handles_non_table_tool_settings(
+    tmp_path: Path, configuration: str
+) -> None:
+    _write_project(tmp_path, "value = 7\n", independent_import=True)
+    metadata = (tmp_path / "pyproject.toml").read_text()
+    (tmp_path / "pyproject.toml").write_text(configuration + metadata)
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-m",
+            "towel.cli",
+            "preview",
+            str(tmp_path),
+            "--cross-module",
+            "--no-types",
+            "--no-format",
+            "--progress",
+            "none",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "TOWEL_WORKERS": "1"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "COMPLETE PREVIEW" in result.stdout
+    assert "2 refactoring" in result.stdout
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before

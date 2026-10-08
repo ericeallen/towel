@@ -42,6 +42,7 @@ import pytest
 from towel.unification.import_graph import (
     ImportChange,
     ImportGraphCache,
+    _installed_everywhere,
     _new_requirements,
     conditionally_imported,
     import_change,
@@ -165,6 +166,54 @@ def test_a_dependency_a_marker_limits_is_not_installed_everywhere(
         import_change(str(package / "p.py"), str(package / "b.py"), ImportGraphCache())
         is ImportChange.PACKAGE_BINDING
     )
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        "tool = 1\n",
+        "tool = ['poetry']\n",
+        "[tool]\npoetry = 1\n",
+        "[tool]\npoetry = ['dependencies']\n",
+        "[tool.poetry]\ndependencies = 1\n",
+        "[tool.poetry]\ndependencies = ['plain']\n",
+    ],
+    ids=[
+        "tool-integer",
+        "tool-list",
+        "poetry-integer",
+        "poetry-list",
+        "dependencies-integer",
+        "dependencies-list",
+    ],
+)
+def test_non_table_poetry_settings_preserve_pep621_dependencies(
+    tmp_path: Path, malformed: str
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        malformed + _PROJECT + "dependencies = ['plain>=1', \"limited; sys_platform == 'win32'\"]\n"
+    )
+    assert _installed_everywhere(tmp_path) == {"plain"}
+
+
+@pytest.mark.parametrize(
+    "limited",
+    [
+        '{version = "*", markers = "sys_platform == \'win32\'"}',
+        '{version = "*", platform = "win32"}',
+        '{version = "*", python = "<3.12"}',
+        '[{version = "1", python = "<3.12"}, {version = "2", python = ">=3.12"}]',
+    ],
+    ids=["markers", "platform", "python", "alternatives"],
+)
+def test_valid_poetry_tables_keep_only_dependencies_installed_everywhere(
+    tmp_path: Path, limited: str
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.poetry.dependencies]\npython = '^3.11'\nplain = '^1'\n"
+        f"limited = {limited}\noptional = {{version = '*', optional = true}}\n"
+    )
+    assert _installed_everywhere(tmp_path) == {"plain"}
 
 
 def _conditional(tmp_path: Path, files: Dict[str, str]) -> set[str]:
