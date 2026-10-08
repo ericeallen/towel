@@ -335,9 +335,9 @@ def test_boolean_inversion_preserves_compiler_deprecations_and_error_policy(oper
                     sum(issubclass(item.category, DeprecationWarning) for item in emitted)
                 )
         counts.append(repeated)
-    expected = [1, 1] if sys.version_info >= (3, 13) else [0, 0]
+    expected = [1, 1] if sys.version_info >= (3, 12) else [0, 0]
     assert counts == [expected, expected, expected]
-    if sys.version_info >= (3, 13):
+    if sys.version_info >= (3, 12):
         with warnings.catch_warnings():
             warnings.simplefilter("error", DeprecationWarning)
             assert _plan(inputs, memo) == _plan(inputs, ArgumentHandoffMemo(limit=0))
