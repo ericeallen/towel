@@ -9,6 +9,16 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Handle malformed non-table Poetry configuration during cross-module import
+  analysis without losing valid PEP 621 dependency restrictions.
+- Certify readonly lookup suppliers in the independent scope oracle without
+  exempting generated names or unrelated caller bindings; retain the exact
+  grammar/binding regressions and adversarial negative controls.
+- Review the proposal backlog against the released implementation and separate
+  remaining research from completed, superseded and retired ideas.
+- Clarify completed 1.792 release validation separately from its historical
+  preparation records.
+
 ## [1.792]
 
 Named for ln 6, approximately 1.791759469. Changes since 1.772.
@@ -31,8 +41,8 @@ release verification binds the final versioned source to its own evidence.
   completed-proposal rehearing cache remains separately qualified by its
   candidate, revision and recognized context requirements.
 - Refresh CLI defaults, scoped opt-out boundaries and release status. The latest
-  audit follow-ups pass 9,697 native tests and the 93% coverage gate. Matrix,
-  corpus and final release gates remain pending; earlier results retain their
+  development audit follow-ups passed 9,697 native tests and the 93% coverage gate.
+  Matrix, corpus and final release gates were pending at that checkpoint; earlier results retain their
   original identities. The block memo halves repeated work in its bounded
   control, with no measured complete-command wall benefit.
 - Add `# towel: no-extract` immediately after a function signature's final

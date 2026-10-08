@@ -2,33 +2,47 @@
 
 [Documentation index](../README.md)
 
-These records explain designs, decisions and measurements. Their presence here
-does not mean a feature is implemented or scheduled. Read each document's
-status and date; historical validation is bound to the source and artifacts
-it names. Current user-facing behavior is in the guides linked from the index.
+The [October 8 review](REVIEW_2026-10-08.md) examines all 15 original documents
+and their individual ideas against the released 1.792 code and newest frozen
+release evidence. It separates retained work, completed designs, retired policies
+and historical measurements. Priorities are recommendations, not a schedule.
+
+Older proposal bodies preserve their dates, measurements and contracts; current
+decisions and code take precedence. The 1.792 release from `44d7795` is complete.
+Development checkpoints do not become current validation results, and their
+artifacts numbered 1.772 must not be published. Current behavior is in the guides
+linked from the documentation index.
+
+## Retained work and research
+
+| Document | Current direction |
+| --- | --- |
+| [Declines needing wider analysis](decline-capabilities.md) | Narrow capability recovery; list expressions, match/except-star suites and unrelated scope guards are already recovered. Refresh current refusals before choosing work. |
+| [Dethunking](dethunking.md) | Small exact parameter-order and definite-assignment improvements; its census is historical and attribute-purity assumptions are not recommended. |
+| [Performance roadmap](performance-roadmap.md) | Most fixes are complete. Profile full default runs, preserve exhaustive discovery and site-specific safety proofs. Skeleton-only search and Rust remain deferred. |
+| [Project's own type-check invocation](project-own-check.md) | Literal GitHub mypy strict policy exists. General invocation/environment integration remains deferred, preferably starting with explicit structured policy. |
+| [Shared helper module](shared-helper-module.md) | Retain opt-in design research with installed-package, shipping, import-effect and caller-binding gates. Old counts are upper bounds. |
+| [Template Method](template-method.md) | Retain visitor-readability research and paired-agent work; automatic base/MRO changes remain outside Towel's mechanical role. |
+| [Type parameters](type-parameters.md) | Core inference is shipped; receiver contracts, local generics, richer domains and optional syntax remain bounded research. |
 
 ## Implemented designs and development history
 
 | Document | How to read it |
 | --- | --- |
-| [Work leading to 1.792](next-release.md) | Approved scope, implementation sequence and dated progress; final release validation remains a separate step. |
+| [Work leading to 1.792](next-release.md) | Completed implementation history; old pending-release statements and intermediate comparisons are superseded by the final release record. |
 | [Preview that shows what dry would do](preview-what-dry-would-do.md) | Implemented complete-preview design; proposed presentation extensions remain unimplemented. |
-| [Type parameters](type-parameters.md) | Design shipped in 1.772, including inference order and declined cases. |
-| [Declines needing wider analysis](decline-capabilities.md) | Partially implemented in 1.792; distinguishes completed work from remaining capability gaps. |
-| [Performance roadmap](performance-roadmap.md) | Historical profiles and the subsequent work recorded under “Done since.” |
-| [Dethunking](dethunking.md) | Historical analysis of lambda arguments, resolved cases and remaining ideas. |
 
-## Deferred, unscheduled or withdrawn designs
+## Retired and withdrawn designs
 
 | Document | Status |
 | --- | --- |
-| [Project's own type-check invocation](project-own-check.md) | Unscheduled proposal extending the existing differential baseline. |
-| [Shared helper module](shared-helper-module.md) | Unscheduled design for sharing across otherwise unrelated directories. |
 | [Trusted decorators](trusted-decorators.md) | Retired October 2 with the body-instrumentation guarantee; not an available configuration option. |
-| [Template Method](template-method.md) | Idea constrained by the decision that Towel does not change externally visible class design. |
 | [Reuse an input function](reuse-existing-function.md) | Earlier implementation withdrawn because rebinding could change other callers. This differs from sharing helpers generated during one run. |
 
-## Dated validation and performance evidence
+## Historical validation and comparison archive
+
+These reports are evidence for their exact sources and artifacts, not feature
+requests or a queue of validation work to repeat.
 
 | Report | Scope |
 | --- | --- |

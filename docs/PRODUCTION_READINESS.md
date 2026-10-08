@@ -7,11 +7,11 @@ removes reflection and self-instrumentation guarantees. Validation and repair
 records below retain the source, contract and results of their dated runs;
 they are not evidence of those retired protections in the current code.
 
-Start with the current release preparation. The later sections retain the evidence for earlier releases and candidates.
+Start with the completed release record. The later sections retain the evidence for earlier releases and candidates.
 
 **Contents**
 
-- [1.792 preparation](#1792-release-preparation) · [Previous published release](#previous-published-release)
+- [1.792 published release](#1792-published-release-october-8-2026) · [1.792 preparation](#1792-release-preparation) · [Previous published release](#previous-published-release)
 - [1.772 release validation](#1772-release-validation-september-26-2026) · [Earlier 1.772 candidate](#earlier-1772-candidate-validation-september-19-2026)
 - [1.732 validation](#historical-1732-validation-september-19-2026) · [1.732 candidate](#historical-1732-candidate-run-september-19-2026)
 - [September 17–18 corpus](#historical-141-project-corpus-september-1718-2026)
@@ -20,7 +20,30 @@ Start with the current release preparation. The later sections retain the eviden
 - [1.414 verification gates](#verification-gates-on-the-1414-tree) · [Historical limitations](#historical-1414-limitations-and-outstanding-work)
 - [Measurement environment](#measurement-environment)
 
+## 1.792 published release, October 8, 2026
+
+Version 1.792 was published from `44d779563578a32e24f8213fba96f43c6698ab43`.
+The [public release record](https://github.com/ericeallen/towel/releases/tag/v1.792)
+retains the completed gate results and reviewed artifact hashes. Exact-commit
+CI passed all four jobs; the Python 3.11–3.13 matrix passed with 93% line
+coverage on each interpreter. The completed 141-project corpus contains 88
+matching PASS outcomes, 46 NO_CHANGE outcomes, two known reflection differences
+and five controlled zero-write refusals. PASS means matching observed outcomes,
+including selected-environment baseline failures, rather than uniformly green
+consumer suites. Runtime-only typing fallbacks do not certify typing parity.
+
+The final complete default typed/formatted Packaging comparison used four
+samples per version: 39.356 seconds mean for published 1.772 and 39.714 seconds
+for 1.792. The 0.91% difference is within approximately 2.8% sample variation;
+neither a meaningful speedup nor slowdown is established on this workload.
+The dated preparation results below retain their original identities and do
+not describe this final release. Subsequent source fixes and proposal review
+are Unreleased and require their own validation before publication.
+
 ## 1.792 release preparation
+
+This section preserves historical preparation checkpoints. Its pending-stage
+statements apply at those checkpoints; the completed release is recorded above.
 
 The latest parameter, placement and checker-cache audit follow-ups pass the
 complete native Python 3.13.7/macOS suite at `04d2710`: **9,697 passed**, 20 skipped
@@ -128,7 +151,8 @@ their source and archive identities. It is a subset of the external raw
 release evidence, not a complete publication bundle. Final source-bound
 evidence assembly, verification by the unmodified repository release gate,
 exact-commit remote CI, the maintainer's performance disposition and
-publication remain pending. No `just release` success is claimed. Updating
+publication remained pending at this preparation checkpoint. No `just release`
+success was claimed for it. Updating
 these documents requires release archives containing the updated text and
 successful archive documentation checks; existing observations keep their
 original identities.
@@ -146,8 +170,9 @@ versus 41.59 seconds for published 1.772, about 13% faster. It used runtime
 commit `000d751`, applied one more refactoring than 1.772 and preserved the
 preceding candidate's output bytes. Two fresh-process samples per arm establish
 that checkpoint's improvement, not a whole-corpus speedup or a claim about the
-repaired release candidate. The October 5 comparison above is the latest recorded published-version
-comparison; it does not measure the later audit follow-ups.
+repaired release candidate. The October 5 comparison above was the latest
+recorded published-version comparison at that preparation checkpoint; it does
+not measure the later audit follow-ups or the final release comparison above.
 
 The [completed development validation](proposals/next-validation-final.md)
 identifies its exact frozen source, three Linux interpreter runs, native
@@ -160,7 +185,7 @@ conditions below do not override them.
 
 That earlier validation belongs to development artifacts still numbered 1.772;
 it does not validate the October 2 runtime changes. Release
-1.792 must be built and validated at its own frozen commit, with the full raw
+1.792 therefore required building and validation at its own frozen commit, with the full raw
 results, review and exact-commit CI retained alongside its distributions.
 The [release procedure](RELEASING.md) and repository-owned verifier enforce the
 local evidence boundary. No pending run or historical success establishes

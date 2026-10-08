@@ -13,15 +13,20 @@ leaves meaningful names for you to choose.
 See the [changelog](https://github.com/ericeallen/towel/blob/v1.792/CHANGELOG.md#1792)
 for this version's changes and the
 [readiness report](https://github.com/ericeallen/towel/blob/v1.792/docs/PRODUCTION_READINESS.md)
-for the validation scope. The latest audit follow-ups pass native tests and
-local static checks. Their interpreter matrix, corpus, final source-bound
-release evidence and exact-commit CI remain pending. Publication remains pending.
+for the validation scope. The October 8 release at `44d7795` completed the
+Python 3.11–3.13 matrix, 141-project corpus review, local artifact/evidence
+verification and exact-commit CI. The
+[release notes](https://github.com/ericeallen/towel/releases/tag/v1.792)
+record the completed gates, reviewed limitations and final performance comparison.
+Later changes in this checkout are recorded separately under Unreleased.
 
 On the October 5 controlled Packaging fixture, that 1.792 checkpoint's complete
 typed, formatted command was 11.9% slower than 1.772. The
 [performance guide](https://github.com/ericeallen/towel/blob/v1.792/docs/PERFORMANCE.md#october-5-repaired-candidate-comparison)
 records the workload, samples and limits; earlier development speedups do not
-describe later audit changes or establish a final candidate speedup.
+describe later audit changes or establish a final candidate speedup. The final
+published-source comparison recorded in the release notes was effectively flat:
+0.91% higher mean time, within approximately 2.8% sample variation, on Packaging.
 
 **Start with the [Quick start](https://github.com/ericeallen/towel/blob/v1.792/docs/QUICKSTART.md),
 or browse the [documentation index](https://github.com/ericeallen/towel/blob/v1.792/docs/README.md).**
