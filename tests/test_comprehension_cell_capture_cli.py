@@ -31,6 +31,7 @@ import towel
 
 from tests.differential.grammar import generate_case
 from tests.differential.runner import Mode, run_case
+from towel.type_inference import _configured_root
 
 _FIXTURE = Path(__file__).parent / "fixtures/comprehension_captured_cell_original.py.txt"
 _RUN = """
@@ -54,6 +55,12 @@ _VARIANTS = (
     ("lambda-default", "o"),
     ("lambda-default", "r"),
 )
+_CLI_VARIANTS = (
+    *((kind, target, True) for kind, target in _VARIANTS),
+    ("lambda-default-argument", "o", True),
+    ("lambda-default-argument", "r", True),
+    ("lambda-default", "r", False),
+)
 
 
 def _source(kind: str, target: str) -> str:
@@ -61,8 +68,12 @@ def _source(kind: str, target: str) -> str:
         expression = f"[next({target} + q for q in (1,)) for {target} in b]"
     elif kind == "outer-generator":
         expression = f"tuple((lambda: {target} + 1)() for {target} in b)"
-    elif kind == "lambda-default":
-        expression = f"(lambda ignored=[(lambda: {target} + 1)() for {target} in b]: ignored)()"
+    elif kind in ("lambda-default", "lambda-default-argument"):
+        argument = "[1]" if kind == "lambda-default-argument" else ""
+        expression = (
+            f"(lambda ignored=[(lambda: {target} + 1)() for {target} in b]: ignored)"
+            f"({argument})"
+        )
     else:
         expression = f"[(lambda: {target} + 1)() for {target} in b]"
     return _FIXTURE.read_text().replace("[(lambda: o + 1)() for o in b]", expression)
@@ -104,16 +115,21 @@ def test_actual_engine_preserves_captured_comprehension_observations(
         assert outcome.applied > 0
 
 
-@pytest.mark.parametrize("kind,target", _VARIANTS)
+@pytest.mark.parametrize("kind,target,configured", _CLI_VARIANTS)
 def test_default_cli_keeps_native_errors_state_and_argument_effects(
-    tmp_path: Path, kind: str, target: str
+    tmp_path: Path, kind: str, target: str, configured: bool
 ) -> None:
     original = tmp_path / "source"
     original.mkdir()
     source = _source(kind, target)
     (original / "case.py").write_text(source)
     config = '[project]\nname="captured-comprehension"\nversion="0.0.0"\nrequires-python=">=3.11"\n'
+    if configured:
+        config += (
+            '\n[tool.mypy]\npython_version="3.11"\nfiles=["case.py"]\n' "check_untyped_defs=true\n"
+        )
     (original / "pyproject.toml").write_text(config)
+    assert _configured_root(original / "case.py", "mypy") == (original if configured else None)
     output = tmp_path / "output"
     runtime = Path(towel.__file__).resolve().parents[1]
     bootstrap = (
@@ -144,8 +160,16 @@ def test_default_cli_keeps_native_errors_state_and_argument_effects(
     assert (original / "case.py").read_text() == source
     assert (original / "pyproject.toml").read_text() == config
     transformed = (output / "case.py").read_text()
-    if target == "r" or kind == "outer-generator":
-        assert sum(map(int, re.findall(r"Applied (\d+) refactoring\(s\)", ran.stdout))) > 0
+    applied = sum(map(int, re.findall(r"Applied (\d+) refactoring\(s\)", ran.stdout)))
+    if kind == "lambda-default" and target == "r":
+        # Mypy infers Never for the unused default parameter and cannot observe
+        # the prospective helper return. The explicit-argument companion below
+        # retains default evaluation while providing a checked useful extraction.
+        assert applied == 0
+        assert "the type checker does not look at the code it changes" in ran.stdout
+        assert ast.dump(ast.parse(source)) == ast.dump(ast.parse(transformed))
+    elif target == "r" or kind == "outer-generator" or kind == "lambda-default-argument":
+        assert applied > 0
         assert ast.dump(ast.parse(source)) != ast.dump(ast.parse(transformed))
     before_path, after_path = tmp_path / "before.py", tmp_path / "after.py"
     before_path.write_text(source + _RUN)
