@@ -1879,3 +1879,24 @@ but the ideas and their names are from the literature.
 | The modules a change can reach: what imports the packages under refactoring | `consumers.py` (at `src/towel/`) |
 | Discovering a project's Python sources under one exclusion policy | `source_files.py` (at `src/towel/`) |
 | A syntax tree's structure as one string, the same for every builder and Python | `canonical_ast.py` (at `src/towel/`) |
+
+### Scheduling fresh IF source proofs
+
+`analyze_files` scopes IF proof scheduling to the engine that owns its read-only
+original source functions. A pair can defer its initial nested-binding proof only
+when both functions, analyzers and source-string identities match their indexed
+artifacts, the artifacts carry the recorded source digests, and parsing both
+sources is pure under the current parser configuration. These checks choose
+when to run a proof; they do not certify correspondence or cache its verdict.
+
+Eligible pairs first pass binding, shape and unification checks. Successful
+unification then runs the same original-source proof before helper construction,
+and the aligned-output proof remains fresh. Direct calls, unmatched ownership
+and warning-capable sources retain the early proof order. The scheduling context
+restores its parent on exit, including exceptions, and forked pair workers inherit
+the owning engine and its read-only sources.
+
+When a deferred pair violates several conditions, its rejection trace can name
+a binding, shape or unification failure before the nested-binding condition.
+Additional rejected pairs can populate existing bounded fact caches; parameter
+counters still reset for each unification, and source trees are never rewritten.

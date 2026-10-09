@@ -66,6 +66,7 @@ from .progress import (
     render_inline_bar,
 )
 from .parallel import ParallelEvaluation
+from .pair_evaluation import deferring_pair_if_proofs
 from .bounded_cache import BoundedCache
 from .argument_ownership import ArgumentHandoffMemo
 from .engine_state import (
@@ -725,6 +726,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
             sharing_if_transfer_sources(),
             sharing_compiler_literal_facts(),
             sharing_return_source_uses(self),
+            deferring_pair_if_proofs(self),
         ):
             return self._analyze_files(
                 file_paths,

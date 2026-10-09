@@ -46,10 +46,13 @@ import dataclasses
 import os
 import symtable
 from dataclasses import dataclass
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, FrozenSet
+from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, FrozenSet, Iterator
 
 from ..canonical_ast import canonical_dump
+from ..analysis_sources import parsing_is_pure
 from ..diagnostics import VALIDATION, debugging
 from .definite_assignment import definitely_bound_after
 from .function_scope import code_names, function_names
@@ -149,6 +152,18 @@ from .compiler_literals import (
 from .substitution import LiteralPool, Substitution
 from .visitors import FreeNameCollector, body_without_docstring
 
+_IF_PROOF_OWNER: ContextVar[Optional[object]] = ContextVar("pair_if_proof_owner", default=None)
+
+
+@contextmanager
+def deferring_pair_if_proofs(owner: object) -> Iterator[None]:
+    """Schedule proofs later only inside the engine's read-only original-source analysis."""
+    token = _IF_PROOF_OWNER.set(owner)
+    try:
+        yield
+    finally:
+        _IF_PROOF_OWNER.reset(token)
+
 
 @dataclass(frozen=True)
 class _PairSetup:
@@ -160,6 +175,7 @@ class _PairSetup:
     # A block uses zero-argument ``super()`` (``needs_class_body``): the helper
     # must be a method of the class holding both blocks, or nothing.
     needs_class_body: bool = False
+    defer_nested_binding_proof: bool = False
 
 
 @dataclass(frozen=True)
@@ -568,7 +584,11 @@ class PairEvaluation(
     ) -> Optional[_Placed]:
         """Stages 4 to 10; every name in ``forced_parameters`` the template reads is a parameter."""
         ctx = setup.ctx
-        unified = self._unify_pair(pair, analysis, ctx)
+        unified = (
+            self._unify_pair(pair, analysis, ctx, defer_nested_binding_proof=True)
+            if setup.defer_nested_binding_proof
+            else self._unify_pair(pair, analysis, ctx)
+        )
         if unified is None:
             return None
         scope = self._helper_scope(pair, ctx, functions)
@@ -738,22 +758,53 @@ class PairEvaluation(
             ):
                 self._debug_reject(reason, pair)
                 return None
-        for function, nodes, source, analyzer, site in (
-            (func1, pair.block1_nodes, pair.source1, scope_analyzer, ctx.site1),
-            (func2, pair.block2_nodes, pair.source2, scope_analyzer2, ctx.site2),
-        ):
-            if self._nested_bindings_rejected(
-                function, nodes, source, analyzer, site=site, allow_if_transfer=True
-            ):
-                self._debug_reject(RejectReason.NESTED_BINDING_ESCAPES, pair)
-                return None
+        defer_binding_proof = self._can_defer_nested_binding_proof(pair, ctx, functions)
+        if not defer_binding_proof and self._nested_pair_binding_rejected(pair, ctx):
+            return None
         return _PairSetup(
             ctx=ctx,
             method_info1=method_info1,
             method_info2=method_info2,
             needs_class_body=needs_class_body(pair.block1_nodes)
             or needs_class_body(pair.block2_nodes),
+            defer_nested_binding_proof=defer_binding_proof,
         )
+
+    def _can_defer_nested_binding_proof(
+        self, pair: CodeBlockPair, ctx: "_PairContext", functions: FunctionIndex
+    ) -> bool:
+        """Scheduling only: source ownership never replaces a fresh admission certificate."""
+        if _IF_PROOF_OWNER.get() is not self:
+            return False
+        for function, source, analyzer, site, path in (
+            (ctx.func1, pair.source1, ctx.scope_analyzer, ctx.site1, pair.file_path),
+            (ctx.func2, pair.source2, ctx.scope_analyzer2, ctx.site2, pair.file_path2),
+        ):
+            if site is None or not parsing_is_pure(source):
+                return False
+            name = getattr(function, "name", None)
+            if not isinstance(name, str) or not any(
+                artifact.node is function
+                and artifact.scope_analyzer is analyzer
+                and artifact.source is source
+                and bool(artifact.source_digest)
+                and artifact.source_digest == site.module_digest
+                for artifact in functions.named(path, name)
+            ):
+                return False
+        return True
+
+    def _nested_pair_binding_rejected(self, pair: CodeBlockPair, ctx: "_PairContext") -> bool:
+        for function, nodes, source, analyzer, site in (
+            (ctx.func1, pair.block1_nodes, pair.source1, ctx.scope_analyzer, ctx.site1),
+            (ctx.func2, pair.block2_nodes, pair.source2, ctx.scope_analyzer2, ctx.site2),
+        ):
+            if self._nested_bindings_rejected(
+                function, nodes, source, analyzer, site=site, allow_if_transfer=True
+            ):
+                self._debug_reject(RejectReason.NESTED_BINDING_ESCAPES, pair)
+                return True
+        return False
 
     # -- 2 ---------------------------------------------------------------------
 
@@ -898,7 +949,12 @@ class PairEvaluation(
     # -- 4 ---------------------------------------------------------------------
 
     def _unify_pair(
-        self, pair: CodeBlockPair, analysis: _BindingAnalysis, ctx: _PairContext
+        self,
+        pair: CodeBlockPair,
+        analysis: _BindingAnalysis,
+        ctx: _PairContext,
+        *,
+        defer_nested_binding_proof: bool = False,
     ) -> Optional[_Unified]:
         """Anti-unify the blocks and align the variables each must return."""
         debug_enabled = debugging(VALIDATION)
@@ -919,6 +975,8 @@ class PairEvaluation(
                 RejectReason.UNIFICATION_FAILED,
                 trace="  REJECTED: Unification failed (no substitution)",
             )
+            return None
+        if defer_nested_binding_proof and self._nested_pair_binding_rejected(pair, ctx):
             return None
         if debug_enabled:
             VALIDATION.debug("  ✓ Unification successful")

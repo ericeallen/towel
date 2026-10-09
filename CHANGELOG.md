@@ -9,6 +9,11 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Postpone fresh IF source proofs until binding, shape and unification checks
+  pass within an engine-owned analysis of ordinary original source. Keep
+  both the initial admission and aligned-output proofs before helper construction,
+  with the existing early order for direct and warning-capable calls.
+
 - Release bounded-cache entries and weight bookkeeping on explicit cleanup
   even while memoization is disabled, so analysis scopes can always drop owners.
 
