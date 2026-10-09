@@ -34,6 +34,7 @@ print.
 from __future__ import annotations
 
 import ast
+import copy
 from dataclasses import dataclass
 import importlib.util
 import json
@@ -42,7 +43,7 @@ import shutil
 import subprocess
 import symtable
 import sys
-from typing import Dict, Iterator, List, Mapping, Sequence, Tuple, Union
+from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, Union, cast
 
 import pytest
 
@@ -875,6 +876,88 @@ def _unique_helper_binding(helper: ast.FunctionDef, module: ast.Module) -> bool:
     return True
 
 
+_SuitePath = Tuple[Tuple[str, int], ...]
+
+
+def _retained_suite_paths(node: ast.AST, path: _SuitePath = ()) -> Iterator[_SuitePath]:
+    """Statement suites in one function's acyclic if/match branches only."""
+    fields = ("body", "orelse") if isinstance(node, ast.If) else ("body",)
+    for field in fields:
+        suite: object = getattr(node, field, None)
+        if not isinstance(suite, list) or not all(isinstance(item, ast.stmt) for item in suite):
+            continue
+        yield path + ((field, -1),)
+        for index, statement in enumerate(suite):
+            child_path = path + ((field, index),)
+            if isinstance(statement, ast.If):
+                yield from _retained_suite_paths(statement, child_path)
+            elif isinstance(statement, ast.Match):
+                for case_index, case in enumerate(statement.cases):
+                    yield from _retained_suite_paths(case, child_path + (("cases", case_index),))
+
+
+def _retained_suite(node: ast.AST, path: _SuitePath) -> Optional[List[ast.stmt]]:
+    """Resolve a checked branch path; its final step denotes an entire suite."""
+    current: object = node
+    for position, (field, index) in enumerate(path):
+        if not isinstance(current, ast.AST):
+            return None
+        value: object = getattr(current, field, None)
+        if not isinstance(value, list):
+            return None
+        if index == -1:
+            if position != len(path) - 1 or not all(isinstance(item, ast.stmt) for item in value):
+                return None
+            return cast(List[ast.stmt], value)
+        if not 0 <= index < len(value):
+            return None
+        current = value[index]
+    return None
+
+
+def _retained_branch_contexts(
+    old: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    new: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+) -> Iterator[
+    Tuple[
+        Union[ast.FunctionDef, ast.AsyncFunctionDef],
+        Union[ast.FunctionDef, ast.AsyncFunctionDef],
+        ast.Assign,
+        ast.Module,
+    ]
+]:
+    """One changed suite with every enclosing field and other suite identical.
+
+    The existing block/input/producer proof still checks the selected suite.
+    No loop, handler, manager, nested definition or unrelated change is hidden.
+    """
+    for path in _retained_suite_paths(new):
+        original = _retained_suite(old, path)
+        rewritten = _retained_suite(new, path)
+        if original is None or rewritten is None:
+            continue
+        candidates = [node for node in rewritten if isinstance(node, ast.Assign)]
+        if not candidates:
+            continue
+        old_skeleton, new_skeleton = copy.deepcopy(old), copy.deepcopy(new)
+        old_suite = _retained_suite(old_skeleton, path)
+        new_suite = _retained_suite(new_skeleton, path)
+        if old_suite is None or new_suite is None:
+            continue
+        old_suite.clear()
+        new_suite.clear()
+        if ast.dump(old_skeleton) != ast.dump(new_skeleton):
+            continue
+        old_view, new_view = copy.copy(old), copy.copy(new)
+        old_view.body, new_view.body = original, rewritten
+        for assignment in candidates:
+            remainder = copy.deepcopy(new)
+            suite = _retained_suite(remainder, path)
+            assert suite is not None
+            suite[rewritten.index(assignment)] = ast.Pass()
+            yield old_view, new_view, assignment, ast.Module(body=remainder.body, type_ignores=[])
+
+
 def _retained_locals(
     old: ast.AST,
     new: ast.AST,
@@ -907,7 +990,7 @@ def _retained_locals(
         and _unique_helper_binding(node, rewritten)
     }
     accepted: set[str] = set()
-    for assignment in new.body:
+    for old_view, new_view, assignment, remainder in _retained_branch_contexts(old, new):
         if not (
             isinstance(assignment, ast.Assign)
             and len(assignment.targets) == 1
@@ -920,7 +1003,7 @@ def _retained_locals(
         if helper is None or not helper.body or not isinstance(helper.body[-1], ast.Return):
             continue
         correspondence = _retained_correspondence(
-            old, new, assignment, helper, old_locals, old_free
+            old_view, new_view, assignment, helper, old_locals, old_free
         )
         returned = helper.body[-1].value
         target_root = assignment.targets[0]
@@ -964,11 +1047,7 @@ def _retained_locals(
             ]
             if occurrences != [target]:
                 continue
-            if any(
-                {original_name, target.id} & _spelled_names(statement)
-                for statement in new.body
-                if statement is not assignment
-            ):
+            if {original_name, target.id} & _spelled_names(remainder):
                 continue
             accepted.add(target.id)
     return frozenset(accepted)

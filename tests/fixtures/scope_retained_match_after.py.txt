@@ -1,0 +1,108 @@
+LOG = []
+G = 5
+
+
+def __extracted_func_0(__param_0, __param_1, /):
+    v1 = len(__param_0)
+    with Ctx('b5') as __param_1.v:
+        print('wa', __param_1.v)
+    __param_1.v = len(__param_1.v)
+    return v1
+
+
+def tr(tag, v):
+    print("tr", tag, repr(v))
+    LOG.append(tag)
+    return v
+
+
+class Box:
+    def __init__(self, v):
+        self.v = v
+
+    def __repr__(self):
+        return f"Box({self.v!r})"
+
+    def __eq__(self, other):
+        return isinstance(other, Box) and self.v == other.v
+
+
+class Ctx:
+    def __init__(self, tag):
+        self.tag = tag
+
+    def __enter__(self):
+        print("enter", self.tag)
+        return self.tag
+
+    def __exit__(self, et, ev, tb):
+        print("exit", self.tag, et.__name__ if et else None)
+        return False
+
+
+def bump():
+    global G
+    G += 1
+    return G
+
+
+def f1(a, b, c, o):
+    k0 = 2
+    def inner():
+        print("cell", k0)
+        if (a if (len(b) > 0 and c.get('k', 0) < 5) else 4) != 0:
+            LOG.append(str(((a if (1 > 0 and len(b) < 5) else G) if c.get('k', 0) == 0 else 2)))
+            print("p3", c.get('k', 0), (bump() if a != 0 else (a + G)))
+        else:
+            LOG.append(str(c.get('k', 0)))
+            c['j'] = a
+        for o.v in range(0):
+            print("fo", o.v)
+        print("fo-after", o.v)
+        o.v = ((lambda q=len(b): q + 1)() or max(o.v, c.get('k', 0)))
+        if not (1 if a < a <= a else 0):
+            raise ValueError("bad " + str(c.get('k', 0)))
+        match (c.get('k', 0) + o.v):
+            case 0:
+                LOG.append(str(b[sum(q for q in b if q > c.get('k', 0)) % 4]))
+            case 1 | 2:
+                _towel_keep_v1 = __extracted_func_0(b, o)
+            case _:
+                if 2 in b:
+                    raise ValueError("bad " + str(bump()))
+                print("ld", (lambda a=o.v: a + 1)(), (lambda *b: len(b))(1, 2), (lambda **c: len(c))(k=1), (lambda *, o=3: o)())
+        LOG.append(str((1 if a < a <= (c.get('k', 0) and c.get('k', 0)) else 0)))
+        print("fs", f"[{o.v:>{abs(a) % 6}}]")
+        return c['k']
+    return inner()
+
+
+def f2(x, y, z, w):
+    k1 = 3
+    def inner():
+        print("cell", k1)
+        if (x if (len(y) > 0 and z.get('k', 0) < 5) else 4) != 0:
+            LOG.append(str((lambda q: q * 2 + 1)(z['k'])))
+            print("p3", z.get('k', 0), (lambda q: q * 2 + 1)(x))
+        else:
+            LOG.append(str(abs(8)))
+            z['j'] = x
+        for w.v in range(0):
+            print("fo", w.v)
+        print("fo-after", w.v)
+        w.v = ((lambda q=len(y): q + 1)() or max(w.v, z.get('k', 0)))
+        if not (1 if x < x <= x else 0):
+            raise ValueError("bad " + str(z.get('k', 0)))
+        match (z.get('k', 0) + w.v):
+            case 0:
+                LOG.append(str(y[sum(q for q in y if q > z.get('k', 0)) % 4]))
+            case 1 | 2:
+                _towel_keep_v1 = __extracted_func_0(y, w)
+            case _:
+                if 2 in y:
+                    raise ValueError("bad " + str(bump()))
+                print("ld", (lambda x=w.v: x + 1)(), (lambda *y: len(y))(1, 2), (lambda **z: len(z))(k=1), (lambda *, w=3: w)())
+        LOG.append(str((1 if x < x <= (z.get('k', 0) and z.get('k', 0)) else 0)))
+        print("fs", f"[{w.v:>{abs(x) % 6}}]")
+        return z['k']
+    return inner()
