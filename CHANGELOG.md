@@ -9,6 +9,10 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Keep captured comprehension targets that share an outer free binding at
+  their original sites. Moving the comprehension can change compiler cell
+  restoration on Python 3.12 and 3.13, altering later reads and exceptions.
+  Preserve ordinary uncaptured and independently bound comprehension cases.
 - Recover fresh local outputs from contiguous blocks inside IF-only suites.
   Certify the original source, branch location and definite initialization;
   return every later-read or lifetime-required value in the existing cleanup

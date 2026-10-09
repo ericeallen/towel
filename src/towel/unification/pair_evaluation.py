@@ -75,6 +75,7 @@ from .block_comments import (
 )
 from .builtins import BUILTIN_NAMES, CALL_ARGUMENT_BUILTINS
 from .semantic_safety import (
+    captured_comprehension_changes_enclosing_cell,
     available_argument_names,
     builtins_passed,
     function_scope_names,
@@ -661,6 +662,11 @@ class PairEvaluation(
             (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, ctx.site2),
         )
         for nodes, function, analyzer, site in blocks:
+            if self._block_rejected(
+                captured_comprehension_changes_enclosing_cell, nodes, function, analyzer, site=site
+            ):
+                self._debug_reject(RejectReason.CLOSURE_CROSSES_BLOCK_BOUNDARY, pair)
+                return None
             if unstable_literal_pool(nodes) or unsafe_byte_literal_moves(
                 nodes, _analyzed_module(analyzer)
             ):

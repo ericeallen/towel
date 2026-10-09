@@ -397,6 +397,13 @@ slots, including cell variables. The original module AST is compiled without
 executing it, and that immutable evidence is shared for the AST's lifetime.
 Incompatible orders or insufficient compiler evidence decline the occurrence.
 
+An inlined comprehension target captured by a nested scope can share a
+same-named outer free binding in CPython's compiler cell layout. Moving that
+comprehension into a helper changes restoration of the original cell and can
+alter reads in unchanged continuation code, including its exceptions. Pair
+and cluster reconstruction keep such sites in the original function. Ordinary
+uncaptured targets and independently bound names retain their existing proofs.
+
 All `with` and `async with` managers are treated as potentially suppressing
 exceptions. Their bodies therefore establish no new definite bindings after
 the statement: suppression can skip an assignment, and an earlier manager can

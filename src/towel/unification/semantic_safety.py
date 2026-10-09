@@ -60,10 +60,16 @@ from .definite_assignment import (
     definitely_bound_before,
     locally_bound_names,
 )
-from .lexical_scopes import comprehension_targets, free_reads
+from .lexical_scopes import (
+    comprehension_results,
+    comprehension_targets,
+    free_reads,
+    nested_scope_names,
+)
+from .function_scope import function_names
 from .models import FunctionNode
 from .bounded_cache import BoundedCache
-from .scope_analyzer import ScopeAnalyzer, type_parameter_names
+from .scope_analyzer import ScopeAnalyzer, _postpones_annotations, type_parameter_names
 from .parameters import parameter_names
 from .statement_facts import (
     bindings_of,
@@ -73,7 +79,13 @@ from .statement_facts import (
     pattern_capture_names,
 )
 from .structural_memo import structural_id
-from .visitors import FreeNameCollector, OwnScopeVisitor, type_parameter_expressions
+from .visitors import (
+    FreeNameCollector,
+    OwnScopeVisitor,
+    annotation_expressions,
+    evaluated_before_definition,
+    type_parameter_expressions,
+)
 
 if TYPE_CHECKING:
     from .substitution import Substitution
@@ -1448,6 +1460,77 @@ def thunk_reads_possibly_unbound_local(
             reader.visit(node)
             if (reader.used & local) - available:
                 return True
+    return False
+
+
+def captured_comprehension_changes_enclosing_cell(
+    analyzer: "ScopeAnalyzer", function: FunctionNode, nodes: Sequence[ast.stmt]
+) -> bool:
+    """Keep an inlined comprehension's captured target in its original free-cell frame.
+
+    On Python 3.12/3.13 a target captured by a lambda or generator can be both a local
+    cell and an enclosing free cell of its containing function. Moving
+    the comprehension to a helper removes that topology and changes the
+    caller's ordinary reads, including its errors. Refuse on every host
+    version so generated projects preserve the supported interpreters.
+    """
+    references = frozenset(function_names(function).references)
+    outer = references - own_scope_locals(function)
+    outer -= module_resolved_names(function, analyzer, outer, exact=True)
+    if not outer:
+        return False
+    pending: List[ast.AST] = list(nodes)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            pending.extend(evaluated_before_definition(node))
+            if isinstance(node, ast.ClassDef):
+                pending.extend([*node.bases, *(keyword.value for keyword in node.keywords)])
+            elif isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ) and not _postpones_annotations(analyzer.analyzed_tree):
+                pending.extend(annotation_expressions(node))
+            continue
+        if isinstance(node, ast.GeneratorExp):
+            # Its body has a separate frame; the first iterable runs here.
+            if node.generators:
+                pending.append(node.generators[0].iter)
+            continue
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp)):
+            targets = comprehension_targets(node) & outer
+            if targets:
+                scope = analyzer.node_scopes.get(node)
+                for closure in ast.walk(node):
+                    if isinstance(closure, ast.Lambda):
+                        parts: List[ast.AST] = [closure.body]
+                    elif isinstance(closure, ast.GeneratorExp):
+                        # The first iterable is evaluated before this closure exists.
+                        parts = [
+                            *comprehension_results(closure),
+                            *(generator.iter for generator in closure.generators[1:]),
+                            *(
+                                condition
+                                for generator in closure.generators
+                                for condition in generator.ifs
+                            ),
+                        ]
+                    else:
+                        continue
+                    own = nested_scope_names(closure).local
+                    captured = {name for part in parts for name in free_reads(part, own)} & targets
+                    if not captured:
+                        continue
+                    for read in (read for part in parts for read in ast.walk(part)):
+                        if (
+                            not isinstance(read, ast.Name)
+                            or not isinstance(read.ctx, ast.Load)
+                            or read.id not in captured
+                        ):
+                            continue
+                        binding = analyzer.identifier_bindings.get(read)
+                        if scope is None or binding is None or binding.scope_id == scope.scope_id:
+                            return True
+        pending.extend(ast.iter_child_nodes(node))
     return False
 
 

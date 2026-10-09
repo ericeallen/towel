@@ -60,6 +60,7 @@ from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import bindings_of, statement_shape
 from .substitution import Substitution
 from .semantic_safety import (
+    captured_comprehension_changes_enclosing_cell,
     available_argument_names,
     builtins_passed,
     free_variable_positions,
@@ -548,6 +549,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         ):
             return None
         for frame_guard in (
+            captured_comprehension_changes_enclosing_cell,
             block_requires_original_frame,
             frame_read_outside_block,
             created_object_escapes,
