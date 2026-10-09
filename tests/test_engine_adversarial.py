@@ -1393,7 +1393,8 @@ class TestCrossFileImports(unittest.TestCase):
             return r
 
         def f2(x):
-            r = 1  # different initial binding to force the engine to consider only the if-block
+            r = 1
+            r += 0  # keep whole bodies structurally distinct
             if x > 0:
                 r = r + 1
             return r
@@ -1403,8 +1404,76 @@ class TestCrossFileImports(unittest.TestCase):
             p.write_text(textwrap.dedent(code).strip() + "\n", encoding="utf-8")
             engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
             proposals = engine.analyze_file(str(p))
-            # The candidate block would be inside the if; engine should reject due to unsafe reassignment
+            # Only partial blocks match; their initial binding is outside the block.
             self.assertEqual(proposals, [])
+
+    def test_whole_body_constant_difference_keeps_initial_binding(self):
+        source = textwrap.dedent("""
+            def f1(x):
+                r = 0
+                if x > 0:
+                    r = r + 1
+                return r
+
+            def f2(x):
+                r = 1
+                if x > 0:
+                    r = r + 1
+                return r
+            """).strip() + "\n"
+        driver = textwrap.dedent("""
+            EVENTS = []
+            class Truth:
+                def __init__(self, mode): self.mode = mode
+                def __bool__(self):
+                    EVENTS.append('truth')
+                    if self.mode == 'truth-error': raise ValueError('truth failed')
+                    return self.mode != 'false'
+                def __del__(self): EVENTS.append('drop-truth')
+            class Value:
+                def __init__(self, mode): self.mode = mode
+                def __gt__(self, other):
+                    EVENTS.append(('compare', other))
+                    if self.mode == 'compare-error': raise ValueError('compare failed')
+                    return Truth(self.mode)
+                def __del__(self): EVENTS.append('drop-input')
+            for function in (f1, f2):
+                for value in (-2, 0, 1, 3):
+                    print(function.__name__, value, function(value))
+                for mode in ('true', 'false', 'truth-error', 'compare-error'):
+                    EVENTS.clear()
+                    try:
+                        print(function.__name__, mode, function(Value(mode)))
+                    except ValueError as error:
+                        print(function.__name__, mode, type(error).__name__, str(error))
+                    print(EVENTS)
+            """)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mod.py"
+            path.write_text(source, encoding="utf-8")
+            engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
+            proposals = engine.analyze_file(str(path))
+            self.assertEqual(len(proposals), 1)
+            functions = [
+                node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+            ]
+            self.assertEqual(
+                {replacement.line_range for replacement in proposals[0].replacements},
+                {(node.body[0].lineno, node.body[-1].end_lineno) for node in functions},
+            )
+            transformed = engine.apply_refactoring_multi_file(proposals[0])[str(path)]
+            observations = []
+            for program in (source, transformed):
+                completed = subprocess.run(
+                    [sys.executable, "-c", program + driver],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=True,
+                )
+                self.assertEqual(completed.stderr, "")
+                observations.append(completed.stdout)
+            self.assertEqual(observations[0], observations[1])
 
     def test_global_declaration_injected_in_extracted_function(self):
         code = """

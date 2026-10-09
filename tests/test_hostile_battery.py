@@ -244,10 +244,10 @@ HISTORICAL_EXTRACTIONS = {
     "r7bi_loop_capture_def_rebind_prebound",
     # The helper returns what a later += or del of it needs.
     "r7bi_augassign_and_del_after_block",
-    # (r7bi_read_before_own_binding is declined: its block reads a local
+    # r7bi_read_before_own_binding is declined: its block reads a local
     # before binding it, which only the original's UnboundLocalError shows.
-    # r7bi_loop_del_before_eager_read is declined: a del later in the loop
-    # leaves the name unbound on the next iteration.)
+    # r7bi_loop_del_before_eager_read can move its complete body: the loop's
+    # read and later del remain together, including the next unbound read.
     # A binder that may be read unbound keeps its spelling: the deletion and
     # the handler stay with each site, and only what follows them moves.
     "r7bi_renamed_binder_named_by_unbound_error",
@@ -444,7 +444,6 @@ OWNERSHIP_REFUSALS: Dict[str, str] = {
     "r1792_aliased_suppress_conditional_read": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r1792_factory_finalizer_continuation": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r1792_factory_finalizer_order": "owned bindings straddle a partial or uncertified whole-body frame boundary",
-    "r27_del_subscript": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r39_cluster_alpha": "ordered retained-value slots do not align across sites",
     "r45_async_no_await": "retained local is not definitely bound on every block exit",
     "r46_nonlocal_counter": "retained local is not definitely bound on every block exit",
@@ -468,7 +467,6 @@ OWNERSHIP_REFUSALS: Dict[str, str] = {
     "r7fz_classhost_underscore_class_names": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_classhost_zero_arg_super": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_directives_fmt_off_region": "owned bindings straddle a partial or uncertified whole-body frame boundary",
-    "r7fz_directives_type_ignore_line": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_grammar_u0417_augassign_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_late_after_block_augassign": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_late_after_block_del": "owned bindings straddle a partial or uncertified whole-body frame boundary",
@@ -485,13 +483,9 @@ OWNERSHIP_REFUSALS: Dict[str, str] = {
     "r7fz_misc_super_inside_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_prebound_class_conditional_rebind": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_prebound_def_conditional_rebind": "owned bindings straddle a partial or uncertified whole-body frame boundary",
-    "r7fz_srctext_form_feed": "owned bindings straddle a partial or uncertified whole-body frame boundary",
-    "r7fz_srctext_semicolons_continuations": "owned bindings straddle a partial or uncertified whole-body frame boundary",
-    "r7fz_srctext_tabs_indent": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_thunks2_lambda_kwdefault": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_thunks_conditional": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_thunks_lambda_default_first": "owned bindings straddle a partial or uncertified whole-body frame boundary",
-    "r7fz_thunks_match_guard": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_thunks_short_circuit_and": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7sp_block_ends_before_a_semicolon": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r87_nested_function_in_method": "physical helper parameters plus ownership holder exceed max5",
@@ -510,6 +504,14 @@ REFLECTION_OWNERSHIP_REFUSALS: Dict[str, str] = {
     "r7fz_classhost_metaclass_registry": "owned bindings straddle a partial or uncertified whole-body frame boundary",
 }
 TRANSFORMED = (HISTORICAL_EXTRACTIONS - OWNERSHIP_REFUSALS.keys()) | {
+    # Occurrence-specific constants recover complete-body ownership handoffs.
+    # Conditional bindings and loop deletion move with their unbound reads;
+    # no eager argument or partial helper changes the exception or lifetime.
+    "p19_thunk_of_possibly_unbound_local",
+    "p20_thunk_of_loop_variable",
+    "r7bi_loop_del_before_eager_read",
+    # The recovered historical deletion, directive, source-text and match
+    # cases likewise no longer straddle a partial ownership boundary.
     # Certified complete-body handoff, or a binding-free inner effect block.
     "r1792_protocol_context_target",
     "r1792_protocol_iteration_target",
