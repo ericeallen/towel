@@ -1198,7 +1198,9 @@ def declarations_leave_their_class(
     return None
 
 
-def _governed_thunks(helper: FunctionNode) -> Dict[Tuple[str, bool], Set[str]]:
+def _governed_thunks(
+    helper: FunctionNode, within: Optional[ast.AST] = None
+) -> Dict[Tuple[str, bool], Set[str]]:
     """For each parameter the helper tests, the parameters it calls only where that test governs.
 
     ``a() if p else b()``, ``if p: ... a() ... else: ... b()``, ``while p:
@@ -1212,6 +1214,7 @@ def _governed_thunks(helper: FunctionNode) -> Dict[Tuple[str, bool], Set[str]]:
     """
     parameters = {argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)}
     governed: Dict[Tuple[str, bool], Set[str]] = {}
+    selected = None if within is None else {id(node) for node in ast.walk(within)}
 
     def called_in(nodes: Sequence[ast.AST]) -> Set[str]:
         return {
@@ -1221,6 +1224,7 @@ def _governed_thunks(helper: FunctionNode) -> Dict[Tuple[str, bool], Set[str]]:
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id in parameters
+            and (selected is None or id(node) in selected)
         }
 
     def tested(test: ast.expr) -> Set[Tuple[str, bool]]:
@@ -1281,18 +1285,6 @@ def _predicate_argument(
     return argument.body
 
 
-def _narrowing_test(argument: ast.expr) -> Set[str]:
-    """What an argument narrows wherever it is tested, whatever the declared types.
-
-    Only a narrowing call or an identity test: those change a type whenever
-    they change anything, since ``x is not None`` is written only where ``x``
-    may be ``None``. A value tested for truth narrows an optional one but not
-    an ``int`` or a ``str``, which only the checker can tell apart
-    (``narrowing_refused_in_thunk``).
-    """
-    return _tested(argument, truthiness=False)
-
-
 def _read_in_lambda(thunk: ast.Lambda) -> Set[str]:
     """Names and attribute chains a lambda's body reads from the scope around it."""
     own = {
@@ -1310,98 +1302,281 @@ def _read_in_lambda(thunk: ast.Lambda) -> Set[str]:
     return found
 
 
-def narrowing_needed_in_thunk(
-    helper: FunctionNode, calls: Sequence[ast.Call]
-) -> Optional[Unanswerable]:
-    """Why no signature can type the extraction: a lambda at a call needs the narrowing a test gave it.
+@dataclass(frozen=True)
+class _ThunkRefinement:
+    """An original caller's predicate and deferred result read the same subject."""
 
-    Where two blocks differ in a test and in what it guards, both become
-    arguments: ``task.total is not None`` and ``lambda: int(task.total)``
-    (rich's progress columns). In the block the test narrowed ``task.total``
-    for the expression it guarded. The helper instead receives that test as
-    either a Boolean or a deferred predicate; neither can refine the separately
-    passed result thunk. Its lambda is checked in the caller, where
-    ``task.total`` is still ``float | None``. No signature of the helper reaches
-    the lambda's body.
+    predicate: Tuple[str, bool]
+    parameter: str
+    test: ast.expr
+    thunk: ast.Lambda
+    reference: str
 
-    Decided from the proposal alone, as :mod:`narrowing` decides its sibling
-    case, because both halves are Towel's own construction: the helper calls
-    the thunk only where it tests the test's parameter
-    (:func:`_governed_thunks`), and the lambda reads what the test narrows.
+
+def _thunk_refinements(
+    governed: Mapping[Tuple[str, bool], Set[str]], arguments: Mapping[str, ast.expr]
+) -> Iterator[_ThunkRefinement]:
+    for predicate, parameters in governed.items():
+        test = _predicate_argument(arguments, predicate)
+        if test is None:
+            continue
+        for parameter in sorted(parameters):
+            thunk = arguments.get(parameter)
+            if not isinstance(thunk, ast.Lambda):
+                continue
+            read = _read_in_lambda(thunk)
+            for reference in sorted(_tested(test)):
+                if _reads(read, reference):
+                    yield _ThunkRefinement(predicate, parameter, test, thunk, reference)
+
+
+_NULLABLE_ARGUMENT = re.compile(
+    r'^Argument (?P<index>\d+) to "(?P<callee>[^"]+)" has incompatible type "(?P<actual>[^"]+)"'
+    r'; expected "(?P<expected>[^"]+)"'
+)
+_PYRIGHT_NULLABLE_ARGUMENT = re.compile(
+    r'^pyright: reportArgumentType: Argument of type "(?P<actual>[^"]+)" '
+    r'cannot be assigned to parameter "(?P<parameter>[^"]+)" of type "(?P<expected>[^"]+)" '
+    r'in function "(?P<callee>[^"]+)"'
+)
+
+
+def _pyright_rejects_none(argument: re.Match[str], message: str) -> bool:
+    """Pyright's explicit None incompatibility, including constrained-type star markers."""
+    expected = re.escape(argument["expected"])
+    concrete = re.search(r'Type "([^"]+)" is not assignable to type "' + expected + '"', message)
+    actual_types = [argument["actual"]]
+    if concrete is not None:
+        actual_types.append(concrete[1])
+    if _nullable_type(argument["expected"]) or not any(
+        _nullable_type(re.sub(r"(?<=[\w\]])\*", "", actual)) for actual in actual_types
+    ):
+        return False
+    detail = r'Type "None\*?" is not assignable to type "' + expected + '"'
+    return re.search(detail, message) is not None
+
+
+_NULLABLE_BINARY = re.compile(
+    r"^Unsupported operand types for (?P<operator>\S+) "
+    r'\("(?P<left>[^"]+)" and "(?P<right>[^"]+)"\)'
+)
+_BINARY_OPERATORS = {
+    ast.Add: "+",
+    ast.Sub: "-",
+    ast.Mult: "*",
+    ast.Div: "/",
+    ast.FloorDiv: "//",
+    ast.Mod: "%",
+    ast.Pow: "**",
+    ast.BitOr: "|",
+    ast.BitAnd: "&",
+    ast.BitXor: "^",
+    ast.LShift: "<<",
+    ast.RShift: ">>",
+    ast.MatMult: "@",
+}
+
+
+def _nullable_type(spelling: str) -> bool:
+    """Whether the checker's actual operand type includes None, rather than merely its expected type."""
+    try:
+        annotation = ast.parse(spelling, mode="eval").body
+    except SyntaxError:
+        return False
+
+    def includes_none(expression: ast.expr) -> bool:
+        if isinstance(expression, ast.Constant):
+            return expression.value is None
+        if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.BitOr):
+            return includes_none(expression.left) or includes_none(expression.right)
+        if isinstance(expression, ast.Subscript):
+            return _dotted(expression.value) in {"Optional", "typing.Optional"}
+        return False
+
+    return includes_none(annotation)
+
+
+def _nullable_operand(scope: ast.AST, error: TypeDiagnostic) -> Optional[ast.expr]:
+    """The unique operand the nullable diagnostic identifies; ambiguity retains the ladder.
+
+    Diagnostic lines alone cannot distinguish two calls on one line. Associate
+    an argument's index and callee, or a binary operator's named operand types,
+    with the rendered syntax. Pyright names a constructor's implementation
+    rather than its rendered callee, so its operand requires a unique single
+    argument call or a matching keyword across the diagnostic's line. No callee's meaning or purity
+    is assumed.
     """
-    governed = _governed_thunks(helper)
-    if not governed:
+    if error.line is None:
         return None
-    parameters = [argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)]
-    for call in calls:
-        arguments = dict(zip(parameters, call.args))
-        for predicate, thunk_parameters in governed.items():
-            test = _predicate_argument(arguments, predicate)
-            if test is None:
+    argument = _NULLABLE_ARGUMENT.match(error.message)
+    binary = _NULLABLE_BINARY.match(error.message)
+    pyright = _PYRIGHT_NULLABLE_ARGUMENT.match(error.message)
+    pyright_nullable = pyright is not None and _pyright_rejects_none(pyright, error.message)
+    operands: List[ast.expr] = []
+    roots = scope.body if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) else [scope]
+    for node in (node for root in roots for node in walk_own_scope(root)):
+        if not isinstance(node, ast.expr) or not (
+            node.lineno <= error.line <= (node.end_lineno or node.lineno)
+        ):
+            continue
+        if (
+            argument is not None
+            and _nullable_type(argument["actual"])
+            and not _nullable_type(argument["expected"])
+        ):
+            if not isinstance(node, ast.Call):
                 continue
-            narrowed = _narrowing_test(test)
-            if not narrowed:
+            callee = _dotted(node.func)
+            index = int(argument["index"]) - 1
+            if (
+                callee is not None
+                and callee.rsplit(".", 1)[-1] == argument["callee"].rsplit(".", 1)[-1]
+                and 0 <= index < len(node.args)
+            ):
+                operands.append(node.args[index])
+        elif pyright is not None and pyright_nullable and isinstance(node, ast.Call):
+            candidates = [
+                keyword.value for keyword in node.keywords if keyword.arg == pyright["parameter"]
+            ]
+            if not node.keywords and len(node.args) == 1:
+                candidates.append(node.args[0])
+            operands.extend(candidates)
+        elif binary is not None and isinstance(node, ast.BinOp):
+            if _BINARY_OPERATORS.get(type(node.op)) != binary["operator"]:
                 continue
-            for thunk_parameter in sorted(thunk_parameters):
-                thunk = arguments.get(thunk_parameter)
-                if not isinstance(thunk, ast.Lambda):
+            for side, operand in (("left", node.left), ("right", node.right)):
+                if _nullable_type(binary[side]):
+                    operands.append(operand)
+    return operands[0] if len(operands) == 1 else None
+
+
+def _statement_suites(body: Sequence[ast.stmt]) -> Iterator[Sequence[ast.stmt]]:
+    """Own-scope statement sequences, preserving each branch's assignment order."""
+    yield body
+    for statement in body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        for name in ("body", "orelse", "finalbody"):
+            inner = getattr(statement, name, None)
+            if isinstance(inner, list) and inner and isinstance(inner[0], ast.stmt):
+                yield from _statement_suites(inner)
+        for clause in (*getattr(statement, "handlers", ()), *getattr(statement, "cases", ())):
+            yield from _statement_suites(clause.body)
+
+
+def _thunk_result_operand(helper: FunctionNode, operand: ast.expr) -> Optional[ast.Call]:
+    """A direct thunk result, optionally through simple same-suite local assignments.
+
+    Only the nearest preceding binding in the operand's own statement sequence
+    can define an alias. Compound or transformed definitions remain unresolved;
+    a rebinding in any intervening nested branch invalidates the earlier one.
+    Following aliases strictly decreases their statement index, so no cycle or
+    loop-carried inference is needed. No callee's effects are assumed.
+    """
+    if isinstance(operand, ast.Name):
+        for suite in _statement_suites(helper.body):
+            for index, statement in enumerate(suite):
+                if not any(node is operand for node in _own_nodes(statement)):
                     continue
-                read = _read_in_lambda(thunk)
-                for reference in sorted(narrowed):
-                    if _reads(read, reference):
-                        return Unanswerable(
-                            Untypeable.NARROWING_READ_IN_THUNK,
-                            f"{ast.unparse(thunk)} reads {reference}, which"
-                            f" {ast.unparse(test)} narrowed where the block evaluated it",
-                        )
+                reference = operand.id
+                for previous in reversed(suite[:index]):
+                    if reference not in bound_names((previous,)):
+                        continue
+                    value: Optional[ast.expr] = None
+                    if (
+                        isinstance(previous, ast.Assign)
+                        and len(previous.targets) == 1
+                        and isinstance(previous.targets[0], ast.Name)
+                        and previous.targets[0].id == reference
+                    ):
+                        value = previous.value
+                    elif (
+                        isinstance(previous, ast.AnnAssign)
+                        and isinstance(previous.target, ast.Name)
+                        and previous.target.id == reference
+                    ):
+                        value = previous.value
+                    if isinstance(value, ast.Name):
+                        reference = value.id
+                        continue
+                    operand = value if value is not None else operand
+                    break
+                else:
+                    return None
+                break
+            else:
+                continue
+            break
+    if (
+        isinstance(operand, ast.Call)
+        and isinstance(operand.func, ast.Name)
+        and not operand.args
+        and not operand.keywords
+    ):
+        return operand
     return None
 
 
-def narrowing_refused_in_thunk(
-    helper: FunctionNode, rejection: Rejection
-) -> Optional[Unanswerable]:
-    """Why no signature can answer ``rejection``: a lambda at a call lost a narrowing a truth test gave it.
+def _refinement_refusal(refinement: _ThunkRefinement, error: TypeDiagnostic) -> Unanswerable:
+    return Unanswerable(
+        Untypeable.NARROWING_READ_IN_THUNK,
+        f"{ast.unparse(refinement.thunk)} reads {refinement.reference}, which"
+        f" {ast.unparse(refinement.test)} narrowed where the block evaluated it"
+        f" ({os.path.basename(error.path)}:{error.line}: {error.message})",
+    )
 
-    The same case as :func:`narrowing_needed_in_thunk` for a test that only
-    narrows some types: ``self.total / 2 if self.total else 0`` narrows an
-    optional ``total`` and leaves an ``int`` one alone, so only the checker can
-    say the lambda needed it. It says so with an error on the lambda's own
-    lines, other than one about the call's arguments or its value, which a
-    signature could still correct.
+
+def narrowing_refused_in_thunk(
+    helper: FunctionNode,
+    rejection: Rejection,
+    original_calls: Sequence[ast.Call] = (),
+) -> Optional[Unanswerable]:
+    """A witnessed nullable operand lost a predicate's refinement of a deferred result.
+
+    Reading a tested subject does not imply needing its refinement:
+    ``str(subject)`` accepts None. The checker must reject an actual operand
+    reading that subject in the caller lambda, or consuming its deferred result
+    under the predicate in the helper. Original caller arguments precede the
+    generated ownership wrappers; they supply the predicate/result relationship
+    when the diagnostic lies inside the helper. Only a direct read of the
+    tested subject and consumption of its thunk result, directly or through
+    simple local aliases, establish that relationship: a nested arbitrary call may introduce None independently.
+    This refusal precedes any signature weakening that operand to Any.
     """
     governed = _governed_thunks(helper)
     if not governed:
         return None
     project = _RenderedProject(rejection)
     for call in project.calls():
-        for predicate, thunk_parameters in governed.items():
-            test = _predicate_argument(call.arguments, predicate)
-            if test is None:
-                continue
-            narrowed = _tested(test)
-            for thunk_parameter in sorted(thunk_parameters):
-                thunk = call.arguments.get(thunk_parameter)
-                if not isinstance(thunk, ast.Lambda):
+        for refinement in _thunk_refinements(governed, call.arguments):
+            for error in rejection.errors:
+                if not _same_file(error.path, call.path):
                     continue
-                read = {r for r in narrowed if _reads(_read_in_lambda(thunk), r)}
-                if not read:
-                    continue
-                first, last = thunk.lineno, thunk.end_lineno or thunk.lineno
-                for error in rejection.errors:
-                    if (
-                        error.line is None
-                        or not _same_file(error.path, call.path)
-                        or not first <= error.line <= last
-                        or _ARGUMENT.match(error.message)
-                        or error.message.startswith((_RETURNING_ANY, *_VALUE_REFUSED))
-                    ):
-                        continue
-                    return Unanswerable(
-                        Untypeable.NARROWING_READ_IN_THUNK,
-                        f"{ast.unparse(thunk)} reads {sorted(read)[0]}, which"
-                        f" {ast.unparse(test)} narrowed where the block evaluated it"
-                        f" ({os.path.basename(error.path)}:{error.line}: {error.message})",
-                    )
+                operand = _nullable_operand(refinement.thunk.body, error)
+                if operand is not None and _dotted(operand) == refinement.reference:
+                    return _refinement_refusal(refinement, error)
+    definition = project.definition
+    if definition is None:
+        return None
+    parameters = [argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)]
+    for error in rejection.errors:
+        if not project.in_helper(error):
+            continue
+        operand = _nullable_operand(definition, error)
+        result = _thunk_result_operand(definition, operand) if operand is not None else None
+        if result is None:
+            continue
+        consumed = _governed_thunks(definition, within=result)
+        for original in original_calls:
+            arguments = dict(zip(parameters, original.args))
+            arguments.update(
+                (keyword.arg, keyword.value)
+                for keyword in original.keywords
+                if keyword.arg is not None
+            )
+            for refinement in _thunk_refinements(consumed, arguments):
+                if _dotted(refinement.thunk.body) == refinement.reference:
+                    return _refinement_refusal(refinement, error)
     return None
 
 

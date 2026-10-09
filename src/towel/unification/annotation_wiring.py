@@ -49,7 +49,6 @@ from .annotation_ladder import (
     declarations_leave_their_class,
     drop_unbound_variables,
     method_at,
-    narrowing_needed_in_thunk,
     narrowing_refused_in_thunk,
     narrowing_the_call_cannot_carry,
     partial_type_passed,
@@ -1203,18 +1202,13 @@ class HelperAnnotationWiring(EngineState):
     def _untypeable_as_proposed(self, proposal: RefactoringProposal) -> Optional[Unanswerable]:
         """Why no signature can type ``proposal``, when the proposal alone shows it; else None.
 
-        A lambda at a call that needs a test's narrowing
-        (``narrowing_needed_in_thunk``), and, where mypy verifies, a
-        collection whose partial type the block would have completed
-        (``partial_type_passed``). Both are the proposal's own construction,
-        so no check is spent learning them; the other two reasons need the
-        checker's verdict (``_judge_for``).
+        Under mypy, a collection whose partial type the block would have
+        completed (``partial_type_passed``). Narrowing refusals instead need
+        the checker's actual operand diagnostic (``_judge_for``).
         """
         sites = self._annotation_sites(proposal)
-        verdict = narrowing_needed_in_thunk(
-            proposal.extracted_function, [site.call for site in sites]
-        )
-        if verdict is None and self._ladder_policy(proposal.file_path).mypy:
+        verdict = None
+        if self._ladder_policy(proposal.file_path).mypy:
             verdict = partial_type_passed(
                 [(site.file_path, site.source, site.start_line, site.call) for site in sites],
                 lambda path: self._ladder_policy(path).untyped_bodies_checked,
@@ -1230,11 +1224,12 @@ class HelperAnnotationWiring(EngineState):
         their class with the block (``declarations_leave_their_class``).
         """
         receivers = self._site_receivers(proposal)
+        original_calls = tuple(site.call for site in self._annotation_sites(proposal))
 
         def judge(helper: ast.FunctionDef, rejection: Rejection) -> Optional[Unanswerable]:
             reason = narrowing_the_call_cannot_carry(helper, rejection)
             if reason is None:
-                reason = narrowing_refused_in_thunk(helper, rejection)
+                reason = narrowing_refused_in_thunk(helper, rejection, original_calls)
             if reason is None and receivers:
                 reason = declarations_leave_their_class(helper, rejection, receivers)
             return reason

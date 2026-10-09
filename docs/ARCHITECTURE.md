@@ -933,13 +933,15 @@ after the call; a lambda at the call needed a test's narrowing; the block's
 assignments declared its class's attributes; the block completed its caller's
 partial type (mypy only); or only the unannotated helper is left in a module
 whose every function is annotated, which a stricter check than the
-configuration Towel reads would refuse. The lambda and partial-type cases are
-read off the proposal and cost no check. A generated zero-argument predicate
-call has the same narrowing obligation as a direct predicate parameter; the
-proof reads only its exact default-free caller lambda and preserves the
-checker fallback for other constructions. Known caller-narrowing boundaries
-are filtered during discovery; the remaining cases need the checker's verdict
-and cost the one refusal that shows them. Each rung is rendered with the
+configuration Towel reads would refuse. The partial-type case is read off the
+proposal and costs no check. Reading a predicate's subject does not establish
+that a lambda needs its refinement: Optional-aware consumers may remain fully
+precise. The checker must witness a rejected nullable operand, tied to the
+original caller expression or the helper's predicate-governed result, before
+this judgment ends the ladder. Generated zero-argument predicates use only
+exact default-free caller lambdas for that correspondence. Known caller
+narrowing boundaries are filtered during discovery; the remaining cases cost
+the checker refusals needed to establish them. Each rung is rendered with the
 comments of the moved code woven in, and with only the imports its own
 annotations name. Every rendered variant submitted to project checking calls
 `_new_type_errors` again. Towel keeps no inner rendered-variant refusal memo:

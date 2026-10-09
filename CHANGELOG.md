@@ -13,7 +13,9 @@ ecosystem evidence behind each claim. The format follows
   decline helpers whose separate values or thunks lose those proofs before
   annotation fallback. Keep proven return types when an unannotated caller
   adds no declared constraint.
-
+- Keep Optional-aware result thunks eligible. A read of a tested subject does
+  not itself require narrowing; use the checker's rejected operand and original
+  caller correspondence before weakening helper annotations.
 - Keep thunks deferred when their result lifetime is unknown. Eager evaluation
   requires an immutable result proof from every caller as well as the existing
   evaluation-order proof; preserve temporary release and exception cleanup.
