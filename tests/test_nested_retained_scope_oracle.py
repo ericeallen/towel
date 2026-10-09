@@ -210,3 +210,131 @@ def test_uncertified_nested_suites_remain_visible(boundary: str) -> None:
     )
     changes = scope_changes(original, after)
     assert "gains local _towel_keep_owner" in changes["f#0"]
+
+
+def _comprehension_shadow() -> tuple[str, str]:
+    return (
+        (_FIXTURES / "scope_retained_comprehension_shadow_before.py.txt").read_text(),
+        (_FIXTURES / "scope_retained_comprehension_shadow_after.py.txt").read_text(),
+    )
+
+
+def _shadow_observation(tmp_path: Path, source: str, label: str) -> str:
+    path = tmp_path / (label + ".py")
+    path.write_text(
+        source
+        + "\nfor function in (f1, f2):\n"
+        + "    for arguments in ((0, [], {}, Box(0)), (1, [1, 2, 3], {'k': 1}, Box(1))):\n"
+        + "        try:\n"
+        + "            print('returned', function(*arguments))\n"
+        + "        except Exception as error:\n"
+        + "            print('raised', type(error).__name__, str(error))\n"
+        + "print('state', LOG, G)\n"
+    )
+    ran = subprocess.run(
+        [sys.executable, "-B", str(path)], capture_output=True, text=True, timeout=20
+    )
+    assert ran.returncode == 0 and not ran.stderr, ran.stderr
+    return ran.stdout
+
+
+def test_actual_nested_comprehension_shadow_has_complete_retained_correspondence(
+    tmp_path: Path,
+) -> None:
+    before, after = _comprehension_shadow()
+    assert scope_changes(before, after) == {}
+    assert _shadow_observation(tmp_path, before, "before") == _shadow_observation(
+        tmp_path, after, "after"
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    (
+        "[(o + q) for q in b for o in range(q)]",
+        "[(o + q) for q in b for o in range(o)]",
+        "(lambda o: o + 1)(2)",
+    ),
+)
+def test_nested_local_reads_and_later_iterables_keep_their_actual_binding(
+    tmp_path: Path, expression: str
+) -> None:
+    before, after = (
+        source.replace("[o + 1 for o in b]", expression) for source in _comprehension_shadow()
+    )
+    assert scope_changes(before, after) == {}
+    assert _shadow_observation(tmp_path, before, "before") == _shadow_observation(
+        tmp_path, after, "after"
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    (
+        "[o + 1 for o in (o.v,)]",
+        "[o + 1 for o in (lambda: (o.v,))()]",
+        "[o + 1 for o in (lambda o=o.v: (o,))()]",
+        "[(lambda: o.v)() for q in b]",
+    ),
+)
+def test_real_outer_reads_in_iterables_defaults_and_lambdas_are_not_exempt(
+    expression: str,
+) -> None:
+    before, after = (
+        source.replace("[o + 1 for o in b]", expression) for source in _comprehension_shadow()
+    )
+    changes = scope_changes(before, after)
+    assert changes["f1#0.inner#0"] == ["gains local _towel_keep_v1"]
+    assert changes["f2#0.inner#0"] == ["gains local _towel_keep_v1"]
+
+
+def test_captured_comprehension_target_uses_the_native_compiler_binding(
+    tmp_path: Path,
+) -> None:
+    before, after = (
+        source.replace("[o + 1 for o in b]", "[(lambda: o + 1)() for o in b]")
+        for source in _comprehension_shadow()
+    )
+    changes = scope_changes(before, after)
+    if sys.version_info >= (3, 12):
+        assert changes["f1#0.inner#0"] == ["gains local _towel_keep_v1"]
+        assert changes["f2#0.inner#0"] == ["gains local _towel_keep_v1"]
+    else:
+        assert changes == {}
+        assert _shadow_observation(tmp_path, before, "before") == _shadow_observation(
+            tmp_path, after, "after"
+        )
+
+
+def test_shadowed_binding_does_not_certify_changed_evaluation_order() -> None:
+    before, after = _comprehension_shadow()
+    module = ast.parse(after)
+    helper = _helper(module)
+    helper.body[0], helper.body[1] = helper.body[1], helper.body[0]
+    changes = scope_changes(before, ast.unparse(module))
+    assert changes["f1#0.inner#0"] == ["gains local _towel_keep_v1"]
+    assert changes["f2#0.inner#0"] == ["gains local _towel_keep_v1"]
+
+
+def test_uncompilable_standalone_nonlocal_helper_declines_correspondence() -> None:
+    from tests.hostile_execution import _retained_correspondence
+
+    before, after = (ast.parse(source) for source in _comprehension_shadow())
+    original = _inner(before)
+    rewritten = _inner(after)
+    helper = _helper(after)
+    original.body.insert(0, ast.Nonlocal(names=["outside"]))
+    helper.body.insert(0, ast.Nonlocal(names=["outside"]))
+    assignment = rewritten.body[0]
+    assert isinstance(assignment, ast.Assign)
+    assert (
+        _retained_correspondence(
+            original,
+            rewritten,
+            assignment,
+            helper,
+            frozenset({"v1"}),
+            frozenset({"a", "b", "c", "k0", "o", "outside"}),
+        )
+        == {}
+    )

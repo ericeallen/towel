@@ -835,10 +835,21 @@ def _retained_correspondence(
     )  # reading caller locals/parameters is safe; rebinding them is not
     block = old.body[index : index + len(moved)]
     caller_only = (old_free | (captured & old_locals)) - frozenset(names)
-    if caller_only & _spelled_names(ast.Module(body=moved, type_ignores=[])):
-        # A supplier certifies only its own substituted expression, not a
-        # separate bare helper lookup of the caller binding it captures.
-        return {}
+    if caller_only:
+        try:
+            helper_table = symtable.symtable(ast.unparse(helper), "<retained-helper>", "exec")
+        except (SyntaxError, ValueError):
+            return {}  # a standalone helper scope could not be certified
+        function_table = next(
+            (child for child in helper_table.get_children() if child.get_name() == helper.name),
+            None,
+        )
+        if function_table is None:
+            return {}
+        if any(_reads_through(function_table, name) for name in caller_only):
+            # A supplier certifies only its substituted expression, not a
+            # separate helper lookup of the caller binding it captures.
+            return {}
     if not _paired_bindings(block, moved, names, bindable, substitutions) or not _paired_syntax(
         block, moved, names, bindable, substitutions
     ):
