@@ -53,18 +53,28 @@ class IfBindingTransfer:
     returned_names: Tuple[str, ...]
 
 
-def _source_corresponds(module: ast.Module, source: str) -> bool:
+def _unique_tree(tree: ast.AST) -> bool:
+    """A fresh graph check before local visitors; marker sharing alone is harmless."""
     seen: Set[int] = set()
-    pending: list[ast.AST] = [module]
+    pending: list[ast.AST] = [tree]
     markers = (ast.operator, ast.unaryop, ast.boolop, ast.cmpop, ast.expr_context)
     while pending:
         node = pending.pop()
+        children = tuple(ast.iter_child_nodes(node))
         if isinstance(node, markers):
+            if children:
+                return False
             continue
         if id(node) in seen:
             return False
         seen.add(id(node))
-        pending.extend(ast.iter_child_nodes(node))
+        pending.extend(children)
+    return True
+
+
+def _source_corresponds(module: ast.Module, source: str) -> bool:
+    if not _unique_tree(module):
+        return False
     try:
         actual = exact_dump(module)
         return any(
@@ -73,6 +83,37 @@ def _source_corresponds(module: ast.Module, source: str) -> bool:
         )
     except (SyntaxError, ValueError, RecursionError):
         return False
+
+
+def _selected_node_ids(nodes: Sequence[ast.stmt]) -> Optional[FrozenSet[int]]:
+    """Only an early refusal: safely scan the selected tree before source proof."""
+    forbidden = (
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.ClassDef,
+        ast.Lambda,
+        ast.Global,
+        ast.Nonlocal,
+        ast.NamedExpr,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+    )
+    markers = (ast.operator, ast.unaryop, ast.boolop, ast.cmpop, ast.expr_context)
+    seen: Set[int] = set()
+    pending: list[ast.AST] = list(nodes)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, forbidden):
+            return None
+        if isinstance(node, markers):
+            continue
+        if id(node) in seen:
+            return None
+        seen.add(id(node))
+        pending.extend(ast.iter_child_nodes(node))
+    return frozenset(seen)
 
 
 def _suite_location(
@@ -174,71 +215,67 @@ def certify_if_binding_transfer(
     site: IfTransferSite,
     returned_names: Tuple[str, ...],
 ) -> Optional[IfBindingTransfer]:
-    """Prove a contiguous original IF-suite slice and all of its required fresh outputs."""
+    """Local facts only refuse early; every admission still reproves exact original source."""
     if not nodes:
         return None
-    location = _suite_location(function.body, nodes)
-    if location is None:
+    try:
+        if not _unique_tree(function):
+            return None
+        location = _suite_location(function.body, nodes)
+        if location is None:
+            return None
+        selected = _selected_node_ids(nodes)
+        if selected is None:
+            return None
+        if (
+            site.module_digest != source_digest_of(source)
+            or site.function_position != (function.lineno, function.col_offset)
+            or site.block_position != (nodes[0].lineno, nodes[0].col_offset, len(nodes))
+        ):
+            return None
+        names = frozenset(binding.name for binding in own_scope_bindings(nodes))
+        if not names or names & frozenset(parameter_names(function.args)):
+            return None
+        if any(
+            binding.name in names and binding.node_id not in selected
+            for binding in own_scope_bindings(function.body)
+        ):
+            return None
+        start_position = (nodes[0].lineno, nodes[0].col_offset)
+        for node in ast.walk(function):
+            if node is not function and isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+            ):
+                if any(
+                    isinstance(child, ast.Name) and child.id in names for child in ast.walk(node)
+                ):
+                    return None
+            if isinstance(node, (ast.Global, ast.Nonlocal)) and names & set(node.names):
+                return None
+            if isinstance(node, ast.Name) and node.id in names:
+                if (
+                    isinstance(node.ctx, ast.Del)
+                    or id(node) not in selected
+                    and isinstance(node.ctx, ast.Load)
+                    and (node.lineno, node.col_offset) < start_position
+                ):
+                    return None
+        exit_bound = definitely_bound_after(nodes)
+        if (
+            exit_bound is None
+            or not names <= exit_bound
+            or not set(returned_names) <= names
+            or len(set(returned_names)) != len(returned_names)
+        ):
+            return None
+        if _fresh_flow(nodes, names) is None:
+            return None
+    except (AttributeError, TypeError, ValueError, RecursionError):
         return None
-    if site.module_digest != source_digest_of(source) or not _source_corresponds(module, source):
+    if not _source_corresponds(module, source):
         return None
     function_path = path_map(module.body).get(function)
-    if (
-        function_path is None
-        or site.function_position != (function.lineno, function.col_offset)
-        or site.block_position != (nodes[0].lineno, nodes[0].col_offset, len(nodes))
-    ):
-        return None
-    selected = {id(node) for statement in nodes for node in ast.walk(statement)}
-    forbidden = (
-        ast.FunctionDef,
-        ast.AsyncFunctionDef,
-        ast.ClassDef,
-        ast.Lambda,
-        ast.Global,
-        ast.Nonlocal,
-        ast.NamedExpr,
-        ast.ListComp,
-        ast.SetComp,
-        ast.DictComp,
-        ast.GeneratorExp,
-    )
-    if any(isinstance(node, forbidden) for statement in nodes for node in ast.walk(statement)):
-        return None
-    names = frozenset(binding.name for binding in own_scope_bindings(nodes))
-    if not names or names & frozenset(parameter_names(function.args)):
-        return None
-    if any(
-        binding.name in names and binding.node_id not in selected
-        for binding in own_scope_bindings(function.body)
-    ):
-        return None
-    start_position = (nodes[0].lineno, nodes[0].col_offset)
-    for node in ast.walk(function):
-        if node is not function and isinstance(
-            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
-        ):
-            if any(isinstance(child, ast.Name) and child.id in names for child in ast.walk(node)):
-                return None
-        if isinstance(node, (ast.Global, ast.Nonlocal)) and names & set(node.names):
-            return None
-        if isinstance(node, ast.Name) and node.id in names:
-            if (
-                isinstance(node.ctx, ast.Del)
-                or id(node) not in selected
-                and isinstance(node.ctx, ast.Load)
-                and (node.lineno, node.col_offset) < start_position
-            ):
-                return None
-    exit_bound = definitely_bound_after(nodes)
-    if (
-        exit_bound is None
-        or not names <= exit_bound
-        or not set(returned_names) <= names
-        or len(set(returned_names)) != len(returned_names)
-    ):
-        return None
-    if _fresh_flow(nodes, names) is None:
+    if function_path is None:
         return None
     path, field, index = location
     return IfBindingTransfer(

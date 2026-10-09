@@ -371,7 +371,11 @@ alignment, the engine independently reproves the complete output tuple; a cached
 block verdict cannot replace this proof. Loop, handler, manager and match
 ancestry remain ineligible, as do additional nested callers during initial
 cluster extension. Existing reuse paths retain their ordinary safety checks.
-Cheap, cycle-safe IF-suite eligibility runs before full source validation.
+Cycle-safe function and selected-tree checks precede local binding and flow
+analysis. Those facts can only refuse a candidate; refusals do not parse,
+compare or map unrelated module syntax. Every admission still requires fresh
+exact whole-module correspondence and original function membership. The
+verification path performs the same proof without caching an AST verdict.
 All frame, exception, lifetime and eager-evaluation guards still apply, so a
 binding certificate alone does not establish that a block can move.
 

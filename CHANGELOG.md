@@ -9,6 +9,10 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Reject impossible IF binding transfers from local syntax, binding and flow
+  facts before parsing, comparing or mapping the whole module. Keep graph
+  checks cycle-safe and require fresh exact module identity and ownership
+  for every admitted certificate and aligned-output reproof.
 - Keep captured comprehension targets that share an outer free binding at
   their original sites. Moving the comprehension can change compiler cell
   restoration on Python 3.12 and 3.13, altering later reads and exceptions.

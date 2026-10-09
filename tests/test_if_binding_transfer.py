@@ -323,6 +323,84 @@ def test_every_admitted_certificate_and_reproof_checks_whole_source_once() -> No
         assert checked.call_count == 3
 
 
+@pytest.mark.parametrize(
+    ("parameters", "before", "body", "after"),
+    [
+        ("flag", "", "answer = 3\nf = lambda: answer", "return answer"),
+        ("flag, answer", "", "answer = 3", "return answer"),
+        ("flag", "answer = 2", "answer = 3", "return answer"),
+        ("flag", "", "answer = 3", "answer = 4\nreturn answer"),
+        ("flag", "", "observe(answer)\nanswer = 3", "return answer"),
+        ("flag", "", "if active:\n    answer = 3", "return answer"),
+        ("flag", "", "answer = 3\nreturn answer", "return answer"),
+        ("flag", "", "answer = 3\ndef capture():\n    return answer", "return answer"),
+        ("flag", "", "observe()", "return answer"),
+    ],
+)
+@pytest.mark.parametrize("module_padding", [0, 2048])
+def test_local_refusals_do_no_whole_module_work(
+    parameters: str, before: str, body: str, after: str, module_padding: int
+) -> None:
+    """Impossible branch moves cost no parsing/dumping/path mapping of unrelated code."""
+    padding = "".join(f"padding_{index} = {index}\n" for index in range(module_padding))
+    prefix = indent(before + "\n", "    ") if before else ""
+    source = (
+        padding
+        + f"def f({parameters}):\n"
+        + prefix
+        + "    if flag:\n"
+        + indent(body, "        ")
+        + "\n"
+        + indent(after, "    ")
+        + "\n"
+    )
+    module, function, nodes = _parts(source)
+    original = exact_dump(module)
+    with (
+        patch.object(if_binding_transfer, "_source_corresponds", side_effect=AssertionError),
+        patch.object(if_binding_transfer, "path_map", side_effect=AssertionError),
+    ):
+        assert _certify(source, module, function, nodes) is None
+    assert exact_dump(module) == original
+
+
+@pytest.mark.parametrize("mutation", ["outside-value", "outside-shared", "outside-cycle"])
+def test_local_admission_cannot_bypass_original_module_proof(mutation: str) -> None:
+    source = "outside = 1\n" + SIMPLE
+    module, function, nodes = _parts(source)
+    certificate = _certify(source, module, function, nodes)
+    assert certificate is not None
+    outside = cast(ast.Assign, module.body[0])
+    if mutation == "outside-value":
+        outside.value = ast.copy_location(ast.Constant(value=2), outside.value)
+    elif mutation == "outside-shared":
+        module.body.append(outside)
+    else:
+        outside.value = cast(ast.expr, outside)
+    with patch.object(
+        if_binding_transfer, "_source_corresponds", wraps=if_binding_transfer._source_corresponds
+    ) as checked:
+        assert not verify_if_binding_transfer(certificate, source, module)
+        assert checked.call_count == 1
+
+
+@pytest.mark.parametrize("mutation", ["missing-args", "missing-body", "cyclic-marker"])
+def test_malformed_local_tree_fails_closed_before_whole_module_work(mutation: str) -> None:
+    module, function, nodes = _parts(SIMPLE)
+    if mutation == "missing-args":
+        del function.args
+    elif mutation == "missing-body":
+        del function.body
+    else:
+        expression = cast(ast.BinOp, cast(ast.Assign, nodes[1]).value)
+        operator = type(expression.op)()
+        expression.op = operator
+        setattr(operator, "_fields", ("cycle",))
+        setattr(operator, "cycle", operator)
+    with patch.object(if_binding_transfer, "_source_corresponds", side_effect=AssertionError):
+        assert _certify(SIMPLE, module, function, nodes) is None
+
+
 @pytest.mark.parametrize("warm_cache", [False, True])
 def test_shared_gate_keeps_lifetime_outputs_and_reproves_cached_sites(
     tmp_path: Path, warm_cache: bool
