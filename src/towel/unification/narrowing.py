@@ -769,17 +769,26 @@ def parameterized_narrowing_lost(
     """An erased None predicate whose separately passed subject needs its proof.
 
     This deliberately recognizes a bounded construction, not arbitrary Python
-    typing. A direct parameter replaces an original top-level None test, the
-    caller's subject is provably optional, and the helper consumes that subject
+    typing. A direct or zero-argument deferred parameter replaces a top-level
+    None test, the caller's subject is provably optional, and the helper consumes it
     without another test or assignment. Bare reads and Optional-aware consumers
     are valid; unknown callees and type aliases retain the checker fallback.
     """
-    predicates = {
-        node.test.id
-        for statement in helper.body
-        for node in _own_scope(statement)
-        if isinstance(node, ast.If) and isinstance(node.test, ast.Name)
-    }
+    predicates = set()
+    for statement in helper.body:
+        for node in _own_scope(statement):
+            if not isinstance(node, ast.If):
+                continue
+            predicate_test = node.test
+            if isinstance(predicate_test, ast.Name):
+                predicates.add((predicate_test.id, False))
+            elif (
+                isinstance(predicate_test, ast.Call)
+                and isinstance(predicate_test.func, ast.Name)
+                and not predicate_test.args
+                and not predicate_test.keywords
+            ):
+                predicates.add((predicate_test.func.id, True))
     if not predicates:
         return None
     parameters = _parameters(helper)
@@ -804,8 +813,23 @@ def parameterized_narrowing_lost(
         if call is None or function is None or function.enclosing_function is not None:
             continue
         arguments = _arguments_by_parameter(call, parameters, helper)
-        for predicate in predicates:
+        for predicate, deferred in predicates:
             test = arguments.get(predicate)
+            if deferred:
+                if not isinstance(test, ast.Lambda):
+                    continue
+                args = test.args
+                if (
+                    args.posonlyargs
+                    or args.args
+                    or args.kwonlyargs
+                    or args.vararg is not None
+                    or args.kwarg is not None
+                    or args.defaults
+                    or args.kw_defaults
+                ):
+                    continue
+                test = test.body
             if not isinstance(test, ast.Compare):
                 continue
             subjects = _non_none_test(test) | _non_none_test(test, False)

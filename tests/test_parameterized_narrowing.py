@@ -333,3 +333,110 @@ def test_class_thunks_keep_isinstance_refinement(tmp_path: Path) -> None:
 def test_bare_optional_reads_and_none_attributes_remain_eligible(consumer: str) -> None:
     """A use is not itself proof that the erased refinement was required."""
     assert _reason(consumer) is None
+
+
+@pytest.mark.parametrize(
+    "helper_test, argument, consumer, refused",
+    [
+        ("condition()", "lambda: value is None", "return value.upper()", True),
+        ("condition()", "lambda: value is None", "return value", False),
+        ("condition(0)", "lambda: value is None", "return value.upper()", False),
+        ("condition(unused=0)", "lambda: value is None", "return value.upper()", False),
+        ("condition", "lambda: value is None", "return value.upper()", False),
+        (
+            "condition()",
+            "lambda unused=value: value is None",
+            "return value.upper()",
+            False,
+        ),
+        ("condition()", "lambda unused: value is None", "return value.upper()", False),
+        ("condition()", "lambda: value == 1", "return value.upper()", False),
+        (
+            "condition.__call__()",
+            "lambda: value is None",
+            "return value.upper()",
+            False,
+        ),
+    ],
+)
+def test_deferred_none_predicate_has_an_exact_construction_proof(
+    helper_test: str, argument: str, consumer: str, refused: bool
+) -> None:
+    """Recognize only the generated deferred predicate, including after an effect."""
+    source = textwrap.dedent(OPERATIONS)
+    tree = ast.parse(source)
+    function = tree.body[0]
+    assert isinstance(function, ast.FunctionDef)
+    guard = function.body[0]
+    assert isinstance(guard, ast.If)
+    helper = ast.parse(
+        f"def extracted(condition, value):\n    record()\n    if {helper_test}:\n        return None\n    {consumer}"
+    ).body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    from towel.unification.substitution import Substitution
+    from towel.unification.thunk_inlining import inline_leading_thunks
+
+    substitution = Substitution()
+    substitution.function_params["condition"] = []
+    substitution.param_expressions["condition"] = [(0, ast.Constant(value=True))]
+    original_helper = ast.dump(helper)
+    assert inline_leading_thunks(helper, substitution, {"condition": 0}) == set()
+    assert ast.dump(helper) == original_helper
+    call = ast.parse(f"extracted({argument}, value)").body[0]
+    assert isinstance(call, ast.Expr) and isinstance(call.value, ast.Call)
+    deferred = call.value.args[0]
+    if (
+        isinstance(deferred, ast.Lambda)
+        and isinstance(deferred.body, ast.Compare)
+        and any(
+            isinstance(node, ast.Constant) and node.value is None
+            for node in deferred.body.comparators
+        )
+    ):
+        deferred.body = guard.test
+    analyzer = ScopeAnalyzer()
+    scope = analyzer.analyze(tree)
+    index = FunctionIndex.build(
+        [FunctionArtifact("module.py", function, source, analyzer, scope, None, None, [])]
+    )
+    site = Replacement(line_range=(guard.lineno, function.end_lineno or guard.lineno), node=call)
+    reason = parameterized_narrowing_lost(
+        helper, [site], index, "module.py", ast.parse, ImportGraphCache()
+    )
+    assert (reason is not None) is refused
+
+
+@requires_mypy
+def test_none_refinement_after_an_effect_is_rejected_before_checker_fallback(
+    tmp_path: Path,
+) -> None:
+    """A deferred predicate cannot refine a separately passed optional value."""
+    source = (
+        textwrap.dedent(MATCHES)
+        .replace(
+            "    def _arbitrary(self) -> bool:",
+            "    def _effect(self) -> None:\n        pass\n    def _arbitrary(self) -> bool:",
+        )
+        .replace(
+            "        if parsed is None:",
+            "        self._effect()\n        if parsed is None:",
+        )
+        .replace(
+            "        if pre and item.major == 0:",
+            "        self._effect()\n        if pre and item.major == 0:",
+        )
+    )
+    path = tmp_path / "module.py"
+    path.write_text(source)
+    (tmp_path / "pyproject.toml").write_text(STRICT)
+    checker = CountingMypy()
+    try:
+        assert checker.check_project({str(path): source}) == CheckSuccess()
+        engine = UnificationRefactorEngine(
+            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+        )
+        assert engine.analyze_file(str(path)) == []
+        assert len(checker.checked) == 1
+        assert path.read_text() == source
+    finally:
+        checker.close()
