@@ -153,7 +153,7 @@ def test_external_callee_can_change_lookup_between_reads(
     assert _run(after, "check.py", pythonpath=str(vendor)) == expected
 
 
-def test_a_single_leading_builtin_lookup_can_be_passed_eagerly(tmp_path: Path) -> None:
+def test_a_single_leading_builtin_lookup_keeps_its_supplier(tmp_path: Path) -> None:
     body = (
         "    size = len(values) + 1\n"
         "    result = size * 2\n"
@@ -173,11 +173,47 @@ def test_a_single_leading_builtin_lookup_can_be_passed_eagerly(tmp_path: Path) -
     applied, _ = _refactor(after / "pkg", True)
     assert applied > 0
     assert _run(after, "check.py") == _run(before, "check.py") == "45 63\n"
-    assert not any(
-        isinstance(node, ast.Lambda)
+    suppliers = [
+        node
         for path in (after / "pkg").glob("*.py")
         for node in ast.walk(ast.parse(path.read_text()))
+        if isinstance(node, ast.Lambda)
+        and isinstance(node.body, ast.Name)
+        and node.body.id == "len"
+    ]
+    assert suppliers
+    assert all(not supplier.args.args and not supplier.args.defaults for supplier in suppliers)
+
+
+@pytest.mark.parametrize("mode", ["ok", "add-error", "mul-error"])
+def test_builtin_supplier_preserves_displaced_callable_and_result_lifetimes(
+    tmp_path: Path, mode: str
+) -> None:
+    body = (
+        "    size = len(values) + 1\n"
+        "    result = size * 2\n"
+        "    total = result + 3\n"
+        "    return total * FACTOR\n"
     )
+    driver = "from pkg import a,b\nimport gc,sys\nEVENTS=[]\nMODE=MODE_VALUE\nclass Number:\n def __init__(self,value):self.value=value\n def __add__(self,value):\n  EVENTS.append(('add',self.value,value))\n  if MODE=='add-error':raise ArithmeticError('add')\n  return Number(self.value+value)\n def __mul__(self,value):\n  EVENTS.append(('mul',self.value,value))\n  if MODE=='mul-error':raise ArithmeticError('mul')\n  return Number(self.value*value)\n def __del__(self):EVENTS.append(('drop-number',self.value))\nclass Length:\n def __init__(self,module):self.module=module\n def __call__(self,values):\n  EVENTS.append('length')\n  del self.module.len\n  return Number(4)\n def __del__(self):EVENTS.append('drop-callee')\nfor module,name in((a,'first'),(b,'second')):\n EVENTS.clear();module.len=Length(module)\n try:\n  result=getattr(module,name)([1,2]);EVENTS.append(('result',result.value));del result\n except ArithmeticError as error:EVENTS.append(('error',str(error)))\n gc.collect();print(name,EVENTS)\n".replace(
+        "MODE_VALUE", repr(mode)
+    )
+    files = {
+        "pyproject.toml": '[project]\nname="probe"\nversion="0"\n',
+        "pkg/__init__.py": "",
+        "pkg/a.py": "def first(values):\n" + body.replace("FACTOR", "5"),
+        "pkg/b.py": "import pkg.a\ndef second(values):\n" + body.replace("FACTOR", "7"),
+        "observe.py": driver,
+    }
+    before, after = tmp_path / "before", tmp_path / "after"
+    for root in (before, after):
+        _write(root, files)
+    expected = _run(before, "observe.py")
+    applied, _ = _refactor(after / "pkg", True)
+    assert applied > 0
+    assert _run(after, "observe.py") == expected
+    assert "drop-callee" in expected and "drop-number" in expected
+    assert ("'error'" in expected) is (mode != "ok")
 
 
 @pytest.mark.parametrize("parameterize", [False, True])
