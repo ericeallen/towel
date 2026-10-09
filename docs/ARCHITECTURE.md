@@ -1388,6 +1388,13 @@ reference behavior.
 
 ## Performance architecture
 
+Warning eligibility also checks its existing bounded lexical cache before
+searching source text. Cache misses and disabled or oversized inputs use the
+same lexical predicate. Answers are immutable booleans; warning-capable answers
+continue to force native parsing under the caller's current warning policy.
+The existing character, entry and source-storage bounds, synchronized updates
+and process-local reset after a fork also cover warning-impossible text.
+
 An analysis also owns the IF-transfer source facts and compiler-literal summaries.
 The IF memo holds private syntax freshly parsed from original source, exact
 spellings and frozen local facts; it never borrows a caller's mutable tree. Its

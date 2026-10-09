@@ -9,6 +9,10 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Consult the bounded lexical eligibility cache before searching repeated
+  warning-free source text; preserve native diagnostics, disabled and oversized
+  bypasses, source storage limits and fork-safe bookkeeping.
+
 - Reuse IF binding and flow facts from private original-source syntax within
   one bounded analysis context. Keep every accepted current-module comparison,
   function identity and selected-suite ownership check fresh; preserve native

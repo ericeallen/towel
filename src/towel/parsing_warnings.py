@@ -166,7 +166,9 @@ class _LexicalCache:
         # native parser reads a non-ASCII string. Reserve its maximum size
         # now, including the terminator; ASCII shares its existing buffer.
         source_bytes = sys.getsizeof(source) + (0 if source.isascii() else 4 * len(source) + 1)
-        answer = _Eligibility(_tokens_cannot_warn(source), source_bytes)
+        answer = _Eligibility(
+            _POSSIBLE_WARNING.search(source) is None or _tokens_cannot_warn(source), source_bytes
+        )
         if answer.source_bytes <= self._max_source_bytes:
             with self.lock:
                 self.entries.put(source, answer)
@@ -197,8 +199,6 @@ def parsing_cannot_warn(source: str) -> bool:
     admitted source; larger sources are classified without retention. No AST
     is held here. The bounded cache is process-local and resets after fork.
     """
-    if _POSSIBLE_WARNING.search(source) is None:
-        return True
     if not memoizing() or len(source) > _MAX_SOURCE_CHARACTERS:
-        return _tokens_cannot_warn(source)
+        return _POSSIBLE_WARNING.search(source) is None or _tokens_cannot_warn(source)
     return _cached_tokens_cannot_warn(source)
