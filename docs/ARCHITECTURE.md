@@ -259,6 +259,14 @@ Each parameter is passed in the way that preserves the original evaluation:
   step only for a helper parameter or a name the helper already bound, and
   hashing an element that is not a constant, `*`, `**` and target unpacking
   are effects.
+  The complete eligible prefix is discovered independently of parameter
+  discovery order. Before inlining, contiguous eligible thunk slots are ordered
+  by that evaluation sequence within each positional signature segment. Other
+  parameters keep their positions, as does the positional-only boundary; the
+  argument nodes retain their annotations and locations. Reordering leaves
+  defaulted, variadic and keyword-only signatures alone. The complete position
+  map includes free variables, and pair and cluster reconstruction use the same
+  pass before the existing increasing-order inliner and final safety checks.
 - **Lifted.** An expression that reads a name bound *inside* the block is
   lambda-lifted [Johnsson 1985]: the lambda takes those names as arguments so it still refers
   to the block-local values, not to whatever the helper's scope binds.

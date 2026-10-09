@@ -2,9 +2,10 @@
 
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
-Status: evidence gathered 2026-09-17 on the 1.618 outputs; item 2 was
-resolved differently on 2026-09-18 (see below); items 1, 3 and 4 remain
-open. The exact, meaning-preserving improvements left are small; the large
+Status: the census below was gathered 2026-09-17 on the 1.618 outputs.
+Item 1 is implemented in the current Unreleased development change, with its
+full audit pending. Item 2 was resolved differently on 2026-09-18 (see below);
+items 3 and 4 remain research. The exact improvements are small; the large
 buckets need an assumption the engine does not make today.
 
 ## What a thunk is for
@@ -15,7 +16,10 @@ calls it where the original expression stood (`semantic_safety.is_eagerly_
 evaluable`, `defer_impure_parameters`). Evaluating it eagerly at the call
 would change *when*, *whether*, and *how often* it runs. A thunk the helper
 evaluates first, once, and unconditionally, before any effect, is already
-inlined back into a plain argument (`thunk_inlining.inline_leading_thunks`).
+inlined back into a plain argument only when every caller also proves an
+immutable result (`thunk_inlining.inline_leading_thunks`). Unknown results stay
+deferred because an eager parameter can change temporary release and exception
+cleanup even when evaluation order agrees.
 
 ## Census of the 1.618 ecosystem outputs (91 projects)
 
@@ -54,12 +58,19 @@ helpers):
 
 ## Exact improvements still available (small)
 
-1. **Parameter order equals evaluation order** (open). The extractor lists
+1. **Eligible parameter order equals evaluation order** (Unreleased development).
+   The extractor lists
    unified parameters in discovery order, then free variables alphabetically.
    When two leading thunks are evaluated in the opposite order, inlining
    stops (11 parameters). The helper's parameter order is Towel's to choose,
-   so ordering parameters by first evaluation in the template would remove
-   this case.
+   so ordering certified eligible thunk slots removes the avoidable ordering
+   stop. The implementation permutes only contiguous eligible slots within the
+   same positional-only or ordinary segment. Other parameters, the slash,
+   annotations and locations stay fixed. Every caller still needs an immutable
+   result proof, and the existing evaluation, single-use and unconditionality
+   guards remain. Pair and cluster reconstruction share the pass. Defaulted,
+   variadic and keyword-only signatures are not reordered. The old count is not
+   a current opportunity census.
 2. **Plain-name callees need no forwarding lambda.** Resolved 2026-09-18 by
    declining the pair by name (`forwarded_callee`) rather than by inlining a
    bare-name callee; the 16 forwarded-callee lambdas in the census are now
@@ -101,7 +112,9 @@ fixtures that violate it so the flag's blast radius stays visible.
 
 ## Recommendation
 
-Implement items 1 and 2 when convenient; they are exact. Investigate the 145
-bare-name thunks for definite-assignment precision. Do not weaken the
+Complete the full audit of item 1's current development change. Item 2's existing
+decline policy is recorded above; direct callee passing remains separate
+research. Investigate the historical bare-name bucket for definite-assignment
+precision. Do not weaken the
 verified default; if readability of `self._x` thunks matters enough, add the
 assumption as a named opt-in and measure it on the corpus.

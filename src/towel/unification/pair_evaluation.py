@@ -138,7 +138,7 @@ from .import_graph import (
     would_create_import_cycle,
 )
 from .splicing import BlockColumns
-from .thunk_inlining import inline_leading_thunks
+from .thunk_inlining import inline_leading_thunks, reorder_eligible_thunk_parameters
 from .typing_forms import ModuleText
 from .compiler_literals import (
     retained_literal_pool,
@@ -1230,6 +1230,7 @@ class PairEvaluation(
         except UnsupportedExtraction as error:
             self._debug_reject(RejectReason.UNSUPPORTED_EXTRACTION, pair, detail=str(error))
             return None
+        param_order = reorder_eligible_thunk_parameters(func_def, unified.substitution, param_order)
         inline_leading_thunks(func_def, unified.substitution, param_order)
         if has_impure_eager_parameters(unified.substitution, free.available_names):
             self._debug_reject(RejectReason.IMPURE_EAGER_PARAMETER, pair)

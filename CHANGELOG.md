@@ -9,6 +9,11 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Order eligible leading thunk parameters by their certified evaluation sequence
+  before eager inlining. Reorder only contiguous eligible slots within each
+  positional signature segment; preserve other parameters, the positional-only
+  boundary and every caller's immutable-result proof. Pair and cluster
+  reconstruction use the same pass.
 - Preserve narrowing obligations when generated predicates stay deferred;
   decline helpers whose separate values or thunks lose those proofs before
   annotation fallback. Keep proven return types when an unannotated caller

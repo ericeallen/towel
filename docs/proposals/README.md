@@ -20,8 +20,11 @@ at unrelated paths, and common caller literals use exact carrier selectors.
 These are development changes, not a new publication. Complete default CLI
 latency remains unestablished: shared-host contention prevented acceptance of the
 balanced comparison; observed repetitive-input CPU reductions are separately
-qualified. Thunk ordering and nested-block liveness remain the next steps in the
-authorized implementation sequence.
+qualified. The current development change also orders contiguous eligible thunk
+slots by their certified evaluation sequence, preserving all-caller immutable
+results and the remaining parameter positions. Its full audit is pending.
+Bounded nested-block liveness is the remaining implementation step after that
+audit completes.
 
 ## Retained work and research
 

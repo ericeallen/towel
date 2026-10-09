@@ -79,7 +79,7 @@ from .semantic_safety import (
     unbinds_external_name,
 )
 from .splicing import BlockColumns
-from .thunk_inlining import inline_leading_thunks
+from .thunk_inlining import inline_leading_thunks, reorder_eligible_thunk_parameters
 from .typing_forms import ModuleText
 from .visitors import body_without_docstring
 
@@ -200,6 +200,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 error,
             )
             return None
+        candidate_order = reorder_eligible_thunk_parameters(
+            candidate_helper, subst2, candidate_order
+        )
         inline_leading_thunks(candidate_helper, subst2, candidate_order)
         if (
             candidate_order != template.param_order
