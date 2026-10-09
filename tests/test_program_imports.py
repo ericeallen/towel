@@ -23,6 +23,7 @@ would start running that module's import-time code.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import os
@@ -113,14 +114,14 @@ def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(
 ) -> None:
     root = _vendoring(tmp_path / "project", safe=safe)
 
-    def imported() -> str:
+    def imported(exercise: str = "import pkg.b_borrower\n") -> str:
         completed = subprocess.run(
             [
                 sys.executable,
                 "-I",
                 "-B",
                 "-c",
-                f"import sys\nsys.path.insert(0, {str(root)!r})\nimport pkg.b_borrower\n",
+                f"import sys\nsys.path.insert(0, {str(root)!r})\n" + exercise,
             ],
             capture_output=True,
             text=True,
@@ -132,6 +133,21 @@ def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(
         return completed.stdout
 
     before = imported()
+    host_observations = textwrap.dedent("""
+        import pkg.a_host as host
+        import pkg.b_borrower as borrower
+        for function in (host.fa, borrower.fb):
+            for values in ([], [0, 1, 2, 3], ['bad'], None):
+                try:
+                    result = function(values)
+                    print(type(result).__name__, repr(result))
+                except Exception as error:
+                    print(type(error).__name__, str(error))
+        """)
+    before_calls = imported(host_observations)
+    assert before_calls.startswith("loading noisy\n")
+    original = ast.parse((root / "pkg/b_borrower.py").read_text()).body[0]
+    assert isinstance(original, ast.FunctionDef)
     engine = UnificationRefactorEngine(
         min_lines=3, cross_module_helpers=True, excluded_directories=["_vendor"]
     )
@@ -139,13 +155,51 @@ def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(
         results, _ = engine.refactor_directory_to_fixed_point(
             str(root / "pkg"), str(root / "pkg"), progress="none"
         )
-    assert bool(results) is safe
-    assert ("def __extracted_func_0(" in (root / "pkg/b_borrower.py").read_text()) is safe
-    if not safe:
-        assert (root / "pkg/b_borrower.py").read_text() == _BLOCK.format(
-            name="fb", offset=2
-        ).lstrip()
+    assert set(results) == {
+        str(root / "pkg/a_host.py"),
+        str(root / "pkg/b_borrower.py"),
+    }
+    host_tree = ast.parse((root / "pkg/a_host.py").read_text())
+    borrower_tree = ast.parse((root / "pkg/b_borrower.py").read_text())
+    helper = next(
+        node
+        for node in borrower_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func_")
+    )
+    # The complete loop body moves to the quiet borrower, never to the noisy host.
+    assert not any(
+        isinstance(node, ast.FunctionDef) and node.name == helper.name for node in host_tree.body
+    )
+    assert [ast.dump(node) for node in helper.body[:-2]] == [
+        ast.dump(node) for node in original.body[:-2]
+    ]
+    assert ast.dump(helper.body[-1]) == ast.dump(original.body[-1])
+    assert any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "pkg.b_borrower"
+        and any(alias.name == helper.name for alias in node.names)
+        for node in host_tree.body
+    )
+    for tree, name in ((host_tree, "fa"), (borrower_tree, "fb")):
+        function = next(
+            node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name
+        )
+        returned = function.body[-1]
+        assert isinstance(returned, ast.Return)
+        assert isinstance(returned.value, ast.Call)
+        assert isinstance(returned.value.func, ast.Name)
+        assert returned.value.func.id == helper.name
+        assert not any(isinstance(node, ast.For) for node in ast.walk(function))
+        # Whole-body parameter handoff ends the wrapper's original ownership.
+        assert {
+            target.id
+            for node in function.body
+            if isinstance(node, ast.Delete)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        } == {argument.arg for argument in function.args.args}
     assert imported() == before == ""
+    assert imported(host_observations) == before_calls
 
 
 def test_a_stage_is_answered_from_the_project_it_copies(tmp_path: Path) -> None:
