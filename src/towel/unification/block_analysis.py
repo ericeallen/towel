@@ -74,7 +74,13 @@ from .models import (
 from .parameters import GENERATED_PARAMETER_PREFIX, parameter_names
 from .narrowing import caller_narrowing_leaves_with_block
 from .scope_analyzer import ScopeAnalyzer
-from .semantic_safety import own_scope_locals, rebound_external_names, walk_own_scope
+from .semantic_safety import (
+    nested_bindings_escape,
+    own_scope_locals,
+    rebound_external_names,
+    walk_own_scope,
+)
+from .if_binding_transfer import IfBindingTransfer, IfTransferSite, certify_if_binding_transfer
 from .statement_facts import memoized_per_node
 from .static_positions import (
     TYPING_FORMS_BY_NAME,
@@ -458,6 +464,62 @@ class BlockAnalysis(EngineState):
         if key is not None:
             self._block_guard_cache[key] = verdict
         return verdict
+
+    def _if_binding_transfer(
+        self,
+        function: FunctionNode,
+        nodes: Sequence[ast.stmt],
+        source: str,
+        analyzer: ScopeAnalyzer,
+        *,
+        site: Optional[BlockSite],
+        returned: Optional[Sequence[str]] = None,
+    ) -> Optional[IfBindingTransfer]:
+        """Reprove original source ownership and the full required output contract, without a memo."""
+        module = analyzer.analyzed_tree
+        block_range = self._block_line_span(nodes)
+        if site is None or not isinstance(module, ast.Module) or block_range is None:
+            return None
+        reassignments = self._get_assignment_reuse(function)
+        snapshot = self._build_block_binding_snapshot(
+            function, nodes, block_range, reassignments, site=site
+        )
+        required = self._find_return_variables(
+            function, block_range, snapshot.initially_bound, nodes
+        )
+        outputs = tuple(sorted(required)) if returned is None else tuple(returned)
+        if not required <= set(outputs):
+            return None
+        return certify_if_binding_transfer(
+            source,
+            module,
+            function,
+            nodes,
+            IfTransferSite(site.module_digest, site.function_position, site.block_position),
+            outputs,
+        )
+
+    def _nested_bindings_rejected(
+        self,
+        function: FunctionNode,
+        nodes: Sequence[ast.stmt],
+        source: str,
+        analyzer: ScopeAnalyzer,
+        *,
+        site: Optional[BlockSite],
+        allow_if_transfer: bool,
+    ) -> bool:
+        """Default nested guard, with only an original-source two-site IF proof as an exception.
+
+        Additional nested clustered callers remain conservative. A construction
+        or snapshot cache hit never discharges the source certificate itself.
+        """
+        if not self._block_rejected(nested_bindings_escape, nodes, function, site=site):
+            return False
+        return (
+            not allow_if_transfer
+            or self._if_binding_transfer(function, nodes, source, analyzer, site=site) is None
+        )
 
     def _is_value_producing(self, block: Sequence[ast.stmt]) -> bool:
         """``is_value_producing`` memoized per block: a block is paired many times."""

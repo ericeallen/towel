@@ -22,16 +22,20 @@ latency remains unestablished: shared-host contention prevented acceptance of th
 balanced comparison; observed repetitive-input CPU reductions are separately
 qualified. The current development change also orders contiguous eligible thunk
 slots by their certified evaluation sequence, preserving all-caller immutable
-results and the remaining parameter positions. Its full audit is pending.
-Bounded nested-block liveness is the remaining implementation step after that
-audit completes.
+results and the remaining parameter positions. Its frozen development audit
+passed on `bf564f2`. The first three stages each passed a full audit of their own
+source. The fourth development change recovers fresh local outputs from
+contiguous IF-only slices, with original-source certificates and independent
+aligned-output reproof. Existing ownership, exception and lifetime guards remain
+restrictive. Each implementation stage requires its own frozen-source full audit
+before acceptance.
 
 ## Retained work and research
 
 | Document | Current direction |
 | --- | --- |
 | [Declines needing wider analysis](decline-capabilities.md) | Narrow capability recovery; list expressions, match/except-star suites and unrelated scope guards are already recovered. Refresh current refusals before choosing work. |
-| [Dethunking](dethunking.md) | Small exact parameter-order and definite-assignment improvements; its census is historical and attribute-purity assumptions are not recommended. |
+| [Dethunking](dethunking.md) | Certified parameter ordering is implemented; bare-name inference remains research. Its census is historical and attribute-purity assumptions are not recommended. |
 | [Performance roadmap](performance-roadmap.md) | Most fixes are complete. Profile full default runs, preserve exhaustive discovery and site-specific safety proofs. Skeleton-only search and Rust remain deferred. |
 | [Project's own type-check invocation](project-own-check.md) | Literal GitHub mypy strict policy exists. General invocation/environment integration remains deferred, preferably starting with explicit structured policy. |
 | [Shared helper module](shared-helper-module.md) | Retain opt-in design research with installed-package, shipping, import-effect and caller-binding gates. Old counts are upper bounds. |

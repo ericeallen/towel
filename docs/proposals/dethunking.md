@@ -3,8 +3,8 @@
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
 Status: the census below was gathered 2026-09-17 on the 1.618 outputs.
-Item 1 is implemented in the current Unreleased development change, with its
-full audit pending. Item 2 was resolved differently on 2026-09-18 (see below);
+Item 1 is implemented in the current Unreleased development change; its frozen
+full development audit passed on `bf564f2`. Item 2 was resolved differently on 2026-09-18 (see below);
 items 3 and 4 remain research. The exact improvements are small; the large
 buckets need an assumption the engine does not make today.
 
@@ -112,7 +112,7 @@ fixtures that violate it so the flag's blast radius stays visible.
 
 ## Recommendation
 
-Complete the full audit of item 1's current development change. Item 2's existing
+Keep item 1's certified-prefix and every-caller result proofs intact. Item 2's existing
 decline policy is recorded above; direct callee passing remains separate
 research. Investigate the historical bare-name bucket for definite-assignment
 precision. Do not weaken the

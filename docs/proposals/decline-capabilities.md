@@ -25,7 +25,14 @@ It retains whole pooled compound roots, grammar pins and the existing budget;
 the value-wide consistency row below records the historical refusal.
 Store/delete targets, pattern
 headers, escaping captured bindings and real evaluated annotations keep their
-existing safety checks. Broader nested-block liveness remains deferred.
+existing safety checks. The Unreleased follow-up also recovers fresh local
+outputs from contiguous IF-only slices in pair reconstruction. It independently
+certifies original source ownership and definite initialization, then reproves
+the complete aligned output tuple, including lifetime-only names. Prior or
+repeated bindings, captures, unsupported ancestry and the existing frame and
+exception guards remain restrictive. Broader nested-block liveness remains
+deferred. The historical nested-binding row below predates this bounded proof;
+definite assignment alone does not establish safe ownership transfer.
 
 ## How the costs were measured
 

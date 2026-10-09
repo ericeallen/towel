@@ -9,6 +9,12 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Recover fresh local outputs from contiguous blocks inside IF-only suites.
+  Certify the original source, branch location and definite initialization;
+  return every later-read or lifetime-required value in the existing cleanup
+  order. Reprove the aligned outputs without caching the verdict. Keep
+  unsupported ancestry, rebinding, captures and existing ownership guards
+  restrictive, and reject ineligible sites before whole-module validation.
 - Order eligible leading thunk parameters by their certified evaluation sequence
   before eager inlining. Reorder only contiguous eligible slots within each
   positional signature segment; preserve other parameters, the positional-only

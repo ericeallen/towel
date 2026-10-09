@@ -360,6 +360,21 @@ folds immutable per-statement ownership facts, weakly memoized for the parsed
 AST's lifetime. It returns a fresh set for each caller. Initial bindings and
 later reads use their actual source positions, including nested compounds.
 
+`if_binding_transfer.py` admits a bounded exception to the nested-binding
+refusal for pair reconstruction: a contiguous slice inside a suite reached only
+through IF statements may initialize fresh local names. The certificate stores
+immutable source locations and binding facts, never AST owners. Each admitted
+site must correspond to the original module source, initialize every output on
+normal exit, and avoid prior reads, other bindings, captures and repeated writes.
+The helper returns every later-read and lifetime-required name. After return
+alignment, the engine independently reproves the complete output tuple; a cached
+block verdict cannot replace this proof. Loop, handler, manager and match
+ancestry remain ineligible, as do additional nested callers during initial
+cluster extension. Existing reuse paths retain their ordinary safety checks.
+Cheap, cycle-safe IF-suite eligibility runs before full source validation.
+All frame, exception, lifetime and eager-evaluation guards still apply, so a
+binding certificate alone does not establish that a block can move.
+
 A helper must also preserve cleanup relative to locals left in the caller.
 `frame_ownership.py` counts every parameter and every opaque outside binding
 as potentially owning a value. Splitting ownership across frames is declined

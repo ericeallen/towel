@@ -724,7 +724,6 @@ class PairEvaluation(
 
         for guard, reason in (
             (caller_narrowing_leaves_with_block, RejectReason.NARROWING_LOST_AT_CALL_SITE),
-            (nested_bindings_escape, RejectReason.NESTED_BINDING_ESCAPES),
             (nested_scopes_cross_block_boundary, RejectReason.CLOSURE_CROSSES_BLOCK_BOUNDARY),
             (moves_scope_declaration, RejectReason.MOVES_SCOPE_DECLARATION),
         ):
@@ -732,6 +731,15 @@ class PairEvaluation(
                 self._block_rejected(guard, pair.block2_nodes, func2, site=ctx.site2)
             ):
                 self._debug_reject(reason, pair)
+                return None
+        for function, nodes, source, analyzer, site in (
+            (func1, pair.block1_nodes, pair.source1, scope_analyzer, ctx.site1),
+            (func2, pair.block2_nodes, pair.source2, scope_analyzer2, ctx.site2),
+        ):
+            if self._nested_bindings_rejected(
+                function, nodes, source, analyzer, site=site, allow_if_transfer=True
+            ):
+                self._debug_reject(RejectReason.NESTED_BINDING_ESCAPES, pair)
                 return None
         return _PairSetup(
             ctx=ctx,
@@ -930,6 +938,31 @@ class PairEvaluation(
         ):
             self._debug_reject(RejectReason.RETURN_VARIABLES_NOT_ALIGNED, pair)
             return None
+        for function, nodes, source, analyzer, site, returned in (
+            (ctx.func1, pair.block1_nodes, pair.source1, ctx.scope_analyzer, ctx.site1, aligned[0]),
+            (
+                ctx.func2,
+                pair.block2_nodes,
+                pair.source2,
+                ctx.scope_analyzer2,
+                ctx.site2,
+                aligned[1],
+            ),
+        ):
+            if (
+                nested_bindings_escape(function, nodes)
+                and self._if_binding_transfer(
+                    function,
+                    nodes,
+                    source,
+                    analyzer,
+                    site=site,
+                    returned=returned,
+                )
+                is None
+            ):
+                self._debug_reject(RejectReason.RETURN_VARIABLES_NOT_ALIGNED, pair)
+                return None
         if aligned[0] and (
             self._is_value_producing(pair.block1_nodes)
             or self._is_value_producing(pair.block2_nodes)

@@ -70,7 +70,6 @@ from .semantic_safety import (
     defer_impure_parameters,
     has_impure_eager_parameters,
     moves_scope_declaration,
-    nested_bindings_escape,
     nested_scopes_cross_block_boundary,
     block_requires_original_frame,
     created_object_escapes,
@@ -557,12 +556,20 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 return None
         for guard in (
             owned_binding_crosses_exception_boundary,
-            nested_bindings_escape,
             nested_scopes_cross_block_boundary,
             moves_scope_declaration,
         ):
             if self._block_rejected(guard, cand_nodes, fn, site=site):
                 return None
+        if self._nested_bindings_rejected(
+            fn,
+            cand_nodes,
+            entry.source,
+            analyzer,
+            site=site,
+            allow_if_transfer=False,
+        ):
+            return None
         reassignments = self._get_assignment_reuse(fn)
         if self._per_block(
             "reassignments",
