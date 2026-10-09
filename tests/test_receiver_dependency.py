@@ -86,7 +86,30 @@ def _refactored(tmp_path: Path, source: str) -> Tuple[str, Any]:
     original_path = tmp_path / "original.py"
     original_path.write_text(source)
     original_engine = UnificationRefactorEngine()
-    assert original_engine.analyze_file(str(original_path)) == []
+    initial_proposals = original_engine.analyze_file(str(original_path))
+    if "self.offset" in source:
+        assert initial_proposals == []
+    else:
+        # Occurrence-specific offsets now recover these complete bodies too.
+        assert len(initial_proposals) == 1
+        proposal = initial_proposals[0]
+        assert proposal.method_kind is None and proposal.method_param_name is None
+        parameters = proposal.extracted_function.args
+        assert all(
+            argument.arg != "self"
+            for argument in [*parameters.posonlyargs, *parameters.args, *parameters.kwonlyargs]
+        )
+        assert not any(
+            isinstance(node, ast.Name) and node.id == "self"
+            for node in ast.walk(proposal.extracted_function)
+        )
+        assert all(
+            isinstance(replacement.node, ast.Return)
+            and isinstance(replacement.node.value, ast.Call)
+            and isinstance(replacement.node.value.func, ast.Name)
+            and replacement.node.value.func.id == proposal.extracted_function.name
+            for replacement in proposal.replacements
+        )
     # Equal complete bodies keep the receiver policy meaningful without moving
     # caller-owned arguments beside newly-owned arithmetic locals.
     source = source.replace("def a(self, value):", "def a(self, value, extra=1):").replace(
