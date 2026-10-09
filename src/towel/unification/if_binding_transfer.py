@@ -20,6 +20,7 @@ import ast
 from dataclasses import dataclass
 from typing import FrozenSet, Literal, Optional, Sequence, Set, Tuple, Union
 
+from ..canonical_ast import exact_dump
 from .assignment_analyzer import own_scope_bindings
 from .ast_paths import Path, path_map, resolve_path
 from .definite_assignment import definitely_bound_after
@@ -65,9 +66,9 @@ def _source_corresponds(module: ast.Module, source: str) -> bool:
         seen.add(id(node))
         pending.extend(ast.iter_child_nodes(node))
     try:
-        actual = ast.dump(module, include_attributes=True)
+        actual = exact_dump(module)
         return any(
-            actual == ast.dump(ast.parse(source, type_comments=comments), include_attributes=True)
+            actual == exact_dump(ast.parse(source, type_comments=comments))
             for comments in (False, True)
         )
     except (SyntaxError, ValueError, RecursionError):

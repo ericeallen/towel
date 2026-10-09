@@ -21,6 +21,7 @@ import copy
 import gc
 import pickle
 import weakref
+import sys
 from dataclasses import FrozenInstanceError, replace
 from textwrap import indent
 from typing import Optional, Sequence, cast
@@ -29,6 +30,7 @@ from unittest.mock import patch
 
 import pytest
 
+from towel.canonical_ast import exact_dump
 from towel.unification.if_binding_transfer import (
     IfBindingTransfer,
     IfTransferSite,
@@ -222,6 +224,28 @@ def test_source_digest_tree_and_coordinates_are_independent_requirements() -> No
     assert _certify(changed, module, function, nodes) is None
     nodes[0].lineno += 1
     assert _certify(SIMPLE, module, function, nodes) is None
+
+
+def test_source_correspondence_preserves_wide_integers_and_present_fields() -> None:
+    digits = max(sys.get_int_max_str_digits(), sys.int_info.default_max_str_digits) + 100
+    source = "WIDE = 0x" + "f" * digits + "\n" + SIMPLE
+    module, function, nodes = _parts(source)
+    before = exact_dump(module)
+    certificate = _certify(source, module, function, nodes)
+    assert certificate is not None
+    assert verify_if_binding_transfer(certificate, source, ast.parse(source))
+    assert exact_dump(module) == before
+    assignment = cast(ast.Assign, module.body[0])
+    constant = cast(ast.Constant, assignment.value)
+    original = constant.value
+    assert isinstance(original, int)
+    constant.value = original + 1
+    assert not verify_if_binding_transfer(certificate, source, module)
+    module, function, nodes = _parts(SIMPLE)
+    certificate = _certify(SIMPLE, module, function, nodes)
+    assert certificate is not None
+    del function.decorator_list
+    assert not verify_if_binding_transfer(certificate, SIMPLE, module)
 
 
 def test_ambiguous_shared_and_cyclic_trees_are_refused() -> None:
