@@ -27,7 +27,9 @@ from pathlib import Path
 
 from towel.type_inference import TypeDiagnostic
 from towel.unification.annotation_ladder import (
+    OriginalThunkCall,
     Rejection,
+    Unanswerable,
     narrowing_refused_in_thunk,
     partial_type_passed,
     self_as_type_variable,
@@ -836,3 +838,268 @@ def test_unknown_pyright_argument_positions_block_other_calls_appearing_unique()
     diagnostic = _pyright_argument_diagnostic()
     expression = "convert(result()) + other(first(), second()) if predicate() else fallback"
     assert _helper_operand_refusal(expression, diagnostic) is None
+
+
+def _value_refusal(
+    body: str,
+    message: str,
+    *,
+    returns: str = "float",
+    fallback: str = "float",
+    original: str = "helper(lambda: task.total is not None, lambda: task.total, fallback)",
+    path: str = "/p/m.py",
+    line: int | None = None,
+    caller_returns: str | None = "float",
+    original_body: str | None = None,
+) -> Unanswerable | None:
+    module = (
+        f"def helper(predicate, result, fallback: {fallback}) -> {returns}:\n"
+        + "\n".join("    " + statement for statement in body.splitlines())
+        + "\n\ndef caller(task, fallback):\n"
+        + "    return helper(wrap_predicate(task), wrap_result(task), fallback)\n"
+    )
+    helper = _function(module)
+    call = _call(original)
+    before = ast.dump(helper), ast.dump(call)
+    rejection = Rejection(
+        (TypeDiagnostic(path, message, line if line is not None else len(body.splitlines()) + 1),),
+        "/p/m.py",
+        "helper",
+        module,
+        {"/p/m.py": module},
+    )
+    original_body = (
+        original_body
+        if original_body is not None
+        else body.replace("result()", "task.total").replace("predicate()", "task.total is not None")
+    )
+    statements = tuple(ast.parse(textwrap.dedent(original_body)).body)
+    context = OriginalThunkCall(
+        call,
+        ast.parse(caller_returns, mode="eval").body if caller_returns is not None else None,
+        statements,
+    )
+    result = narrowing_refused_in_thunk(helper, rejection, [call], [context])
+    assert (ast.dump(helper), ast.dump(call)) == before
+    return result
+
+
+_VALUE_RETURN = 'Incompatible return value type (got "float | None", expected "float")'
+_VALUE_ASSIGNMENT = (
+    'Incompatible types in assignment (expression has type "float | None", '
+    'variable has type "float")'
+)
+
+
+def test_nullable_return_and_assignment_witness_selected_thunk_values() -> None:
+    selected = "result() if predicate() else fallback"
+    for body in (
+        f"value = {selected}\nreturn value",
+        f"value = {selected}\nother = value\nreturn other",
+        f"return {selected}",
+        "if predicate():\n    return result()\nreturn fallback",
+    ):
+        line = 3 if body.startswith("if ") else None
+        assert _value_refusal(body, _VALUE_RETURN, line=line) is not None, body
+    assert _value_refusal(f"value: float = {selected}\nreturn value + 1", _VALUE_ASSIGNMENT, line=2)
+
+
+def test_nullable_value_witness_requires_the_declaration_and_original_call() -> None:
+    body = "value = result() if predicate() else fallback\nreturn value"
+    assert _value_refusal(body, _VALUE_RETURN, returns="str") is None
+    assert _value_refusal(body, _VALUE_RETURN, path="/elsewhere/m.py") is None
+    assert _value_refusal(body, _VALUE_RETURN, line=2) is None
+    assert _value_refusal(body, _VALUE_RETURN, line=99) is None
+    for original in (
+        "helper(lambda: task.other is not None, lambda: task.total, fallback)",
+        "helper(lambda: task.total is not None, lambda: convert(task.total), fallback)",
+        "helper(lambda: task.total is not None, lambda: task.other, fallback)",
+    ):
+        assert _value_refusal(body, _VALUE_RETURN, original=original) is None
+    assert (
+        _value_refusal(body, 'Incompatible return value type (got "_T | float", expected "float")')
+        is None
+    )
+    assert (
+        _value_refusal(
+            body, 'Incompatible return value type (got "list[float | None]", expected "float")'
+        )
+        is None
+    )
+    nullable = 'Incompatible return value type (got "float | None", expected "float | None")'
+    assert _value_refusal(body, nullable, returns="float | None") is None
+    assert (
+        _value_refusal("value: str = result() if predicate() else fallback", _VALUE_ASSIGNMENT)
+        is None
+    )
+
+
+def test_selected_value_alternatives_require_a_nonnullable_proof() -> None:
+    body = "value = result() if predicate() else fallback\nreturn value"
+    for annotation in ("Any", "object", "_T", "Alias", "float | None", "Callable[[], float]"):
+        assert _value_refusal(body, _VALUE_RETURN, fallback=annotation) is None, annotation
+    for body in (
+        "value = result() if predicate() else other()\nreturn value",
+        "value = result() if predicate() else unknown\nreturn value",
+        "value = result() if predicate() else alias\nreturn value",
+        "value = result() if predicate() else None\nreturn value",
+        "fallback = unknown\nvalue = result() if predicate() else fallback\nreturn value",
+        "if condition:\n    fallback = unknown\nvalue = result() if predicate() else fallback\nreturn value",
+        "value = convert(result()) if predicate() else fallback\nreturn value",
+        "value = result() if unrelated() else fallback\nreturn value",
+        "value = result() if predicate() else fallback\nvalue = other()\nreturn value",
+        "value = result() if predicate() else fallback\nif condition:\n    value = other()\nreturn value",
+        "return result(); return other()",
+    ):
+        assert _value_refusal(body, _VALUE_RETURN) is None, body
+
+
+def test_fixed_tuple_return_types_identify_the_exact_nullable_component() -> None:
+    body = "value = result() if predicate() else fallback\nreturn value, 1"
+    message = 'Incompatible return value type (got "tuple[float | None, int]", expected "tuple[float, int]")'
+    assert (
+        _value_refusal(
+            body, message, returns="tuple[float, int]", caller_returns="tuple[float, int]"
+        )
+        is not None
+    )
+    reversed_message = 'Incompatible return value type (got "tuple[int, float | None]", expected "tuple[int, float]")'
+    assert _value_refusal(
+        body.replace("value, 1", "1, value"),
+        reversed_message,
+        returns="tuple[int, float]",
+        caller_returns="tuple[int, float]",
+    )
+    for actual, expected, expression in (
+        ("tuple[int, float | None]", "tuple[float, int]", "value, 1"),
+        ("tuple[float | None, int | None]", "tuple[float, int]", "value, other()"),
+        ("list[float | None]", "list[float]", "[value]"),
+        ("tuple[float | None, ...]", "tuple[float, ...]", "value, 1"),
+        ("tuple[float | None, int]", "tuple[float | None, int]", "value, 1"),
+        ("tuple[float | None, int]", "tuple[float, int]", "other(), value"),
+        ("tuple[float | None, int]", "tuple[float, int]", "convert(value), 1"),
+    ):
+        diagnostic = f'Incompatible return value type (got "{actual}", expected "{expected}")'
+        assert (
+            _value_refusal(
+                body.replace("value, 1", expression),
+                diagnostic,
+                returns=expected,
+                caller_returns=expected,
+            )
+            is None
+        )
+
+
+def test_pyright_nullable_value_details_match_the_exact_tuple_target() -> None:
+    body = "value = result() if predicate() else fallback\nreturn value, 1"
+    message = (
+        'pyright: reportReturnType: Type "tuple[_T@helper | float, Literal[1]]" '
+        'is not assignable to return type "tuple[float, int]"\n'
+        '  Type "float* | float | None" is not assignable to type "float"\n'
+        '    "None*" is not assignable to "float"'
+    )
+    assert (
+        _value_refusal(
+            body, message, returns="tuple[float, int]", caller_returns="tuple[float, int]"
+        )
+        is not None
+    )
+    for diagnostic, annotation in (
+        (message.replace('"float* | float | None"', '"object* | float"'), "tuple[float, int]"),
+        (message.replace('"float* | float | None"', '"list[float* | None]"'), "tuple[float, int]"),
+        (message.replace('type "float"\n', 'type "str"\n'), "tuple[float, int]"),
+        (message.replace('"None*"', '"str*"'), "tuple[float, int]"),
+        (
+            message.replace(
+                "tuple[_T@helper | float, Literal[1]]", "tuple[float, _T@helper | int]"
+            ),
+            "tuple[float, int]",
+        ),
+        (
+            message.replace(
+                "tuple[_T@helper | float, Literal[1]]",
+                "tuple[_T@helper | float, _U@helper | float]",
+            ).replace("tuple[float, int]", "tuple[float, float]"),
+            "tuple[float, float]",
+        ),
+        (
+            message.replace("tuple[float, int]", "tuple[float | None, int]"),
+            "tuple[float | None, int]",
+        ),
+    ):
+        assert (
+            _value_refusal(body, diagnostic, returns=annotation, caller_returns=annotation) is None
+        ), diagnostic
+    assignment = (
+        'pyright: reportAssignmentType: Type "_T@helper | float" '
+        'is not assignable to declared type "float"\n'
+        '  Type "float* | float | None" is not assignable to type "float"\n'
+        '    "None*" is not assignable to "float"'
+    )
+    assert _value_refusal("value: float = result() if predicate() else fallback", assignment)
+
+
+def test_provisional_helper_return_does_not_invent_an_original_nonnullable_obligation() -> None:
+    body = "value = result() if predicate() else fallback\nreturn value"
+    for annotation in (None, "float | None", "object", "Any", "_T", "Alias"):
+        assert _value_refusal(body, _VALUE_RETURN, caller_returns=annotation) is None
+    message = 'Incompatible return value type (got "tuple[float | None, int]", expected "tuple[float, int]")'
+    assert (
+        _value_refusal(
+            body.replace("return value", "return value, 1"),
+            message,
+            returns="tuple[float, int]",
+            caller_returns="tuple[float | None, int]",
+        )
+        is None
+    )
+    # An explicit original annotated assignment still obliges its float target,
+    # even when the enclosing function accepts a nullable return.
+    assert (
+        _value_refusal(
+            "value: float = result() if predicate() else fallback",
+            _VALUE_ASSIGNMENT,
+            caller_returns="float | None",
+        )
+        is not None
+    )
+
+
+def test_original_return_obligation_follows_the_exact_original_output_component() -> None:
+    body = "value = result() if predicate() else fallback\nreturn value"
+    assert (
+        _value_refusal(
+            body,
+            _VALUE_RETURN,
+            original_body="value = task.total if task.total is not None else fallback",
+        )
+        is None
+    )
+    assert (
+        _value_refusal(
+            body,
+            _VALUE_RETURN,
+            original_body="value = task.total if task.total is not None else fallback\nreturn other",
+        )
+        is None
+    )
+    message = 'Incompatible return value type (got "tuple[float | None, int]", expected "tuple[float, int]")'
+    assert (
+        _value_refusal(
+            body.replace("return value", "return value, 1"),
+            message,
+            returns="tuple[float, int]",
+            caller_returns="tuple[float, int]",
+            original_body="value = task.total if task.total is not None else fallback\nreturn 1, value",
+        )
+        is None
+    )
+    assert (
+        _value_refusal(
+            "value: float = result() if predicate() else fallback",
+            _VALUE_ASSIGNMENT,
+            original_body="value: float = other if task.total is not None else fallback",
+        )
+        is None
+    )

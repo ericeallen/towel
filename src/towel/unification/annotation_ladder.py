@@ -1385,15 +1385,7 @@ def _pyright_rejects_none(argument: re.Match[str], message: str) -> bool:
         _pyright_nullable_type(actual) for actual in actual_types
     ):
         return False
-    escaped = re.escape(expected)
-    detail = (
-        r'(?:Type )?"None\*?" (?:is not assignable to (?:type )?"'
-        + escaped
-        + r'"|is incompatible with protocol "'
-        + escaped
-        + '")'
-    )
-    return re.search(detail, message) is not None
+    return _explicit_none_rejection(expected, message)
 
 
 _NULLABLE_BINARY = re.compile(
@@ -1652,8 +1644,8 @@ def _statement_suites(body: Sequence[ast.stmt]) -> Iterator[Sequence[ast.stmt]]:
             yield from _statement_suites(clause.body)
 
 
-def _thunk_result_operand(helper: FunctionNode, operand: ast.expr) -> Optional[ast.Call]:
-    """A direct thunk result, optionally through simple same-suite local assignments.
+def _local_value(helper: FunctionNode, operand: ast.expr) -> Optional[ast.expr]:
+    """An expression followed through simple same-suite local assignments.
 
     Only the nearest preceding binding in the operand's own statement sequence
     can define an alias. Compound or transformed definitions remain unresolved;
@@ -1695,14 +1687,315 @@ def _thunk_result_operand(helper: FunctionNode, operand: ast.expr) -> Optional[a
             else:
                 continue
             break
+    return operand
+
+
+def _thunk_result_operand(helper: FunctionNode, operand: ast.expr) -> Optional[ast.Call]:
+    resolved = _local_value(helper, operand)
     if (
-        isinstance(operand, ast.Call)
-        and isinstance(operand.func, ast.Name)
-        and not operand.args
-        and not operand.keywords
+        isinstance(resolved, ast.Call)
+        and isinstance(resolved.func, ast.Name)
+        and not resolved.args
+        and not resolved.keywords
     ):
-        return operand
+        return resolved
     return None
+
+
+@dataclass(frozen=True)
+class OriginalThunkCall:
+    """A pre-render call and the explicit type obligations of its original replaced block."""
+
+    call: ast.Call
+    declared_return: Optional[ast.expr]
+    statements: Tuple[ast.stmt, ...]
+
+
+def original_thunk_call(
+    call: ast.Call,
+    declared_return: Optional[ast.expr],
+    source: str,
+    first: int,
+    last: int,
+) -> OriginalThunkCall:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        statements: Tuple[ast.stmt, ...] = ()
+    else:
+
+        def selected(node: ast.AST) -> Iterator[ast.stmt]:
+            if (
+                isinstance(node, ast.stmt)
+                and first <= node.lineno
+                and (node.end_lineno or node.lineno) <= last
+            ):
+                yield node
+            else:
+                for child in ast.iter_child_nodes(node):
+                    yield from selected(child)
+
+        statements = tuple(selected(tree))
+    return OriginalThunkCall(call, declared_return, statements)
+
+
+class _ValueContext(Enum):
+    RETURN = "return"
+    ASSIGNMENT = "assignment"
+
+
+@dataclass(frozen=True)
+class _NullableValue:
+    """One diagnosed returned/assigned component and its nonnullable expected type."""
+
+    context: _ValueContext
+    expected: ast.expr
+    path: Tuple[int, ...]
+
+
+_VALUE_MISMATCH = re.compile(
+    r'^Incompatible return value type \(got "(?P<actual>[^"]+)", expected "(?P<expected>[^"]+)"\)'
+)
+_ASSIGNMENT_MISMATCH = re.compile(
+    r'^Incompatible types in assignment \(expression has type "(?P<actual>[^"]+)", '
+    r'variable has type "(?P<expected>[^"]+)"\)'
+)
+_PYRIGHT_VALUE_MISMATCH = re.compile(
+    r'^pyright: report(?P<context>Return|Assignment)Type: Type "(?P<actual>[^"]+)" '
+    r'is not assignable to (?:(?:return|declared) type) "(?P<expected>[^"]+)"'
+)
+
+
+def _tuple_types(expression: ast.expr) -> Optional[Tuple[ast.expr, ...]]:
+    """Fixed tuple type positions, excluding containers and variadic tuples."""
+    if not isinstance(expression, ast.Subscript) or _dotted(expression.value) not in {
+        "tuple",
+        "builtins.tuple",
+        "Tuple",
+        "typing.Tuple",
+    }:
+        return None
+    if not isinstance(expression.slice, ast.Tuple) or any(
+        isinstance(item, ast.Constant) and item.value is Ellipsis for item in expression.slice.elts
+    ):
+        return None
+    return tuple(expression.slice.elts)
+
+
+def _matching_type_positions(
+    actual: ast.expr, expected: ast.expr, path: Tuple[int, ...] = ()
+) -> Iterator[Tuple[Tuple[int, ...], ast.expr, ast.expr]]:
+    """Paired scalar/fixed-tuple positions; no inference about arbitrary generic containers."""
+    first, second = _tuple_types(actual), _tuple_types(expected)
+    if first is not None and second is not None and len(first) == len(second):
+        for index, (left, right) in enumerate(zip(first, second)):
+            yield from _matching_type_positions(left, right, (*path, index))
+    elif first is None and second is None:
+        yield path, actual, expected
+
+
+def _explicit_none_rejection(expected: str, message: str) -> bool:
+    escaped = re.escape(expected)
+    return (
+        re.search(
+            r'(?:Type )?"None\*?" (?:is not assignable to (?:type )?"'
+            + escaped
+            + r'"|is incompatible with protocol "'
+            + escaped
+            + '")',
+            message,
+        )
+        is not None
+    )
+
+
+def _nullable_value(error: TypeDiagnostic) -> Optional[_NullableValue]:
+    """A unique outer nullable scalar/tuple component in an actual value mismatch."""
+    mismatch = _VALUE_MISMATCH.match(error.message)
+    context = _ValueContext.RETURN
+    if mismatch is None:
+        mismatch = _ASSIGNMENT_MISMATCH.match(error.message)
+        context = _ValueContext.ASSIGNMENT
+    pyright = _PYRIGHT_VALUE_MISMATCH.match(error.message)
+    if pyright is not None:
+        mismatch = pyright
+        context = (
+            _ValueContext.RETURN if pyright["context"] == "Return" else _ValueContext.ASSIGNMENT
+        )
+    if mismatch is None:
+        return None
+    actual = _pyright_type_expression(mismatch["actual"])
+    expected = _pyright_type_expression(mismatch["expected"])
+    if actual is None or expected is None:
+        return None
+    concrete = (
+        re.search(
+            r'Type "(?P<actual>[^"]+)" is not assignable to type "(?P<expected>[^"]+)"',
+            error.message,
+        )
+        if pyright is not None
+        else None
+    )
+    candidates: List[Tuple[int, ...]] = []
+    for path, first, second in _matching_type_positions(actual, expected):
+        target = ast.unparse(second)
+        if _nullable_type(target):
+            continue
+        nullable = _nullable_type(ast.unparse(first))
+        if pyright is not None:
+            # A constrained variable's concrete detail must identify one matching
+            # tuple position and the same nonnullable target, not a nested None.
+            if concrete is not None and _pyright_variable_operand(
+                mismatch["actual"]
+                if not path
+                else _diagnostic_tuple_component(mismatch["actual"], path)
+            ):
+                nullable = nullable or (
+                    _same_type_constructor(target, concrete["expected"])
+                    and _pyright_nullable_type(concrete["actual"])
+                )
+            nullable = nullable and _explicit_none_rejection(target, error.message)
+        if nullable:
+            candidates.append(path)
+    return _NullableValue(context, expected, candidates[0]) if len(candidates) == 1 else None
+
+
+def _diagnostic_tuple_component(spelling: str, path: Tuple[int, ...]) -> str:
+    """Preserve scoped variable markers when locating a diagnostic tuple component."""
+    variables = re.findall(r"\w+@[\w.]+", spelling)
+    replacements = {name: f"_DiagnosticVariable{index}" for index, name in enumerate(variables)}
+    rewritten = spelling
+    rewritten = re.sub(r"\w+@[\w.]+", lambda match: replacements[match[0]], rewritten)
+    expression = _pyright_type_expression(rewritten)
+    if expression is None:
+        return ""
+    for index in path:
+        types = _tuple_types(expression)
+        if types is None or index >= len(types):
+            return ""
+        expression = types[index]
+    result = ast.unparse(expression)
+    originals = {replacement: name for name, replacement in replacements.items()}
+    return re.sub(r"\b_DiagnosticVariable\d+\b", lambda match: originals[match[0]], result)
+
+
+def _same_annotation(annotation: Optional[ast.expr], expected: ast.expr) -> bool:
+    return annotation is not None and canonical_dump(_unquoted(annotation)[0]) == canonical_dump(
+        expected
+    )
+
+
+def _diagnosed_value(
+    helper: FunctionNode, error: TypeDiagnostic, witness: _NullableValue
+) -> Optional[ast.expr]:
+    """Unique rendered return/annotated assignment whose declaration matches the diagnostic."""
+    if error.line is None:
+        return None
+    values: List[ast.expr] = []
+    for statement in (node for root in helper.body for node in walk_own_scope(root)):
+        if not isinstance(statement, ast.stmt) or not (
+            statement.lineno <= error.line <= (statement.end_lineno or statement.lineno)
+        ):
+            continue
+        if witness.context is _ValueContext.RETURN and isinstance(statement, ast.Return):
+            if statement.value is not None and _same_annotation(helper.returns, witness.expected):
+                values.append(statement.value)
+        elif witness.context is _ValueContext.ASSIGNMENT and isinstance(statement, ast.AnnAssign):
+            if statement.value is not None and _same_annotation(
+                statement.annotation, witness.expected
+            ):
+                values.append(statement.value)
+    if len(values) != 1:
+        return None
+    value = values[0]
+    for index in witness.path:
+        resolved = _local_value(helper, value)
+        if not isinstance(resolved, ast.Tuple) or index >= len(resolved.elts):
+            return None
+        value = resolved.elts[index]
+    return value
+
+
+def _nonnull_alternative(helper: FunctionNode, value: ast.expr, expected: ast.expr) -> bool:
+    """A literal non-None or explicitly typed helper parameter excludes a nullable alternative."""
+    if isinstance(value, ast.Constant):
+        return value.value is not None
+    if isinstance(value, ast.Name):
+        return any(
+            argument.arg == value.id and _same_annotation(argument.annotation, expected)
+            for argument in (*helper.args.posonlyargs, *helper.args.args, *helper.args.kwonlyargs)
+        ) and not any(value.id in bound_names((statement,)) for statement in helper.body)
+    return False
+
+
+def _original_value_obligation(
+    context: OriginalThunkCall, witness: _NullableValue, reference: str
+) -> bool:
+    """The original block already required this rejected type; helper inference cannot invent it."""
+    if witness.context is _ValueContext.RETURN:
+        if not _same_annotation(context.declared_return, witness.expected):
+            return False
+        original = ast.FunctionDef(
+            name="original_block",
+            args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
+            body=list(context.statements),
+            decorator_list=[],
+        )
+        returned: List[ast.expr] = []
+        for root in context.statements:
+            for statement in walk_own_scope(root):
+                if not isinstance(statement, ast.Return) or statement.value is None:
+                    continue
+                value = _local_value(original, statement.value)
+                for index in witness.path:
+                    if not isinstance(value, ast.Tuple) or index >= len(value.elts):
+                        value = None
+                        break
+                    value = _local_value(original, value.elts[index])
+                if value is not None:
+                    returned.append(value)
+        return len(returned) == 1 and (
+            _dotted(returned[0]) == reference
+            or isinstance(returned[0], ast.IfExp)
+            and any(
+                _dotted(branch) == reference for branch in (returned[0].body, returned[0].orelse)
+            )
+        )
+    return any(
+        isinstance(statement, ast.AnnAssign)
+        and statement.value is not None
+        and _same_annotation(statement.annotation, witness.expected)
+        and (
+            _dotted(statement.value) == reference
+            or isinstance(statement.value, ast.IfExp)
+            and any(
+                _dotted(branch) == reference
+                for branch in (statement.value.body, statement.value.orelse)
+            )
+        )
+        for statement in context.statements
+    )
+
+
+def _value_thunk_result(
+    helper: FunctionNode, value: ast.expr, expected: ast.expr
+) -> Optional[ast.Call]:
+    resolved = _local_value(helper, value)
+    if resolved is None:
+        return None
+    if isinstance(resolved, ast.IfExp):
+        candidates = [
+            result
+            for branch, alternative in (
+                (resolved.body, resolved.orelse),
+                (resolved.orelse, resolved.body),
+            )
+            if _nonnull_alternative(helper, alternative, expected)
+            for result in [_thunk_result_operand(helper, branch)]
+            if result is not None
+        ]
+        return candidates[0] if len(candidates) == 1 else None
+    return _thunk_result_operand(helper, resolved)
 
 
 def _refinement_refusal(refinement: _ThunkRefinement, error: TypeDiagnostic) -> Unanswerable:
@@ -1718,6 +2011,7 @@ def narrowing_refused_in_thunk(
     helper: FunctionNode,
     rejection: Rejection,
     original_calls: Sequence[ast.Call] = (),
+    original_contexts: Sequence[OriginalThunkCall] = (),
 ) -> Optional[Unanswerable]:
     """A witnessed nullable operand lost a predicate's refinement of a deferred result.
 
@@ -1751,7 +2045,19 @@ def narrowing_refused_in_thunk(
         if not project.in_helper(error):
             continue
         operand = _nullable_operand(definition, error)
+        witness: Optional[_NullableValue] = None
         result = _thunk_result_operand(definition, operand) if operand is not None else None
+        if result is None:
+            witness = _nullable_value(error)
+            value = _diagnosed_value(definition, error, witness) if witness is not None else None
+            if value is not None and witness is not None:
+                expected = witness.expected
+                for index in witness.path:
+                    types = _tuple_types(expected)
+                    if types is None:
+                        break
+                    expected = types[index]
+                result = _value_thunk_result(definition, value, expected)
         if result is None:
             continue
         consumed = _governed_thunks(definition, within=result)
@@ -1763,7 +2069,14 @@ def narrowing_refused_in_thunk(
                 if keyword.arg is not None
             )
             for refinement in _thunk_refinements(consumed, arguments):
-                if _dotted(refinement.thunk.body) == refinement.reference:
+                if _dotted(refinement.thunk.body) == refinement.reference and (
+                    witness is None
+                    or any(
+                        context.call is original
+                        and _original_value_obligation(context, witness, refinement.reference)
+                        for context in original_contexts
+                    )
+                ):
                     return _refinement_refusal(refinement, error)
     return None
 

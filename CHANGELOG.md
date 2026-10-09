@@ -18,6 +18,10 @@ ecosystem evidence behind each claim. The format follows
   caller correspondence before weakening helper annotations. Cover named
   arguments, reflected comparisons and Pyright Optional-operand and receiver
   diagnostics while leaving ambiguous operands unresolved.
+- Preserve declared return and assignment refinements, including fixed tuple
+  components, before helper annotations can widen to `Any`. Require the original
+  caller's matching obligation; a provisional helper signature must not reject
+  valid nullable returns.
 - Keep thunks deferred when their result lifetime is unknown. Eager evaluation
   requires an immutable result proof from every caller as well as the existing
   evaluation-order proof; preserve temporary release and exception cleanup.

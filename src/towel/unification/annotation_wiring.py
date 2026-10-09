@@ -50,6 +50,7 @@ from .annotation_ladder import (
     drop_unbound_variables,
     method_at,
     narrowing_refused_in_thunk,
+    original_thunk_call,
     narrowing_the_call_cannot_carry,
     partial_type_passed,
     self_as_type_variable,
@@ -1224,12 +1225,21 @@ class HelperAnnotationWiring(EngineState):
         their class with the block (``declarations_leave_their_class``).
         """
         receivers = self._site_receivers(proposal)
-        original_calls = tuple(site.call for site in self._annotation_sites(proposal))
+        sites = self._annotation_sites(proposal)
+        original_calls = tuple(site.call for site in sites)
+        original_contexts = tuple(
+            original_thunk_call(
+                site.call, site.declared_return, site.source, site.start_line, site.end_line
+            )
+            for site in sites
+        )
 
         def judge(helper: ast.FunctionDef, rejection: Rejection) -> Optional[Unanswerable]:
             reason = narrowing_the_call_cannot_carry(helper, rejection)
             if reason is None:
-                reason = narrowing_refused_in_thunk(helper, rejection, original_calls)
+                reason = narrowing_refused_in_thunk(
+                    helper, rejection, original_calls, original_contexts
+                )
             if reason is None and receivers:
                 reason = declarations_leave_their_class(helper, rejection, receivers)
             return reason

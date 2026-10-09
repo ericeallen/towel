@@ -272,6 +272,33 @@ def _write_project(root: Path, fixture: Fixture) -> Path:
     return path
 
 
+def _uses_any_annotation(helper: ast.FunctionDef) -> bool:
+    """Inspect the expressions inside quoted annotations as well as ordinary syntax."""
+    annotations = [
+        argument.annotation
+        for argument in [*helper.args.posonlyargs, *helper.args.args, *helper.args.kwonlyargs]
+    ]
+    annotations.append(helper.returns)
+    annotations.extend(
+        node.annotation for node in ast.walk(helper) if isinstance(node, ast.AnnAssign)
+    )
+    for annotation in annotations:
+        if annotation is None:
+            continue
+        expression = (
+            ast.parse(annotation.value, mode="eval").body
+            if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str)
+            else annotation
+        )
+        if any(
+            (isinstance(node, ast.Name) and node.id == "Any")
+            or (isinstance(node, ast.Attribute) and node.attr == "Any")
+            for node in ast.walk(expression)
+        ):
+            return True
+    return False
+
+
 def _cli_bootstrap(runtime: Path, telemetry: Path) -> str:
     """Observe production checker selection, then disable the profile before analysis."""
     return (
@@ -661,6 +688,87 @@ def describe_done(task: Task, fallback: str) -> str:
 KEYWORD_AND_OPERATOR_FIXTURES += ADJACENT_FIXTURES
 
 
+RETURN_FIXTURES = (
+    Fixture(
+        "direct-return",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float:
+    value = task.total if task.total is not None else completed
+    return value
+
+
+def describe_done(task: Task, fallback: float) -> float:
+    value = task.completed if task.finished else fallback
+    return value
+""",
+    ),
+    Fixture(
+        "annotated-assignment",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float:
+    value: float = task.total if task.total is not None else completed
+    return value + 1
+
+
+def describe_done(task: Task, fallback: float) -> float:
+    value: float = task.completed if task.finished else fallback
+    return value + 1
+""",
+    ),
+    Fixture(
+        "two-element-tuple",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> tuple[float, int]:
+    value = task.total if task.total is not None else completed
+    return value, 1
+
+
+def describe_done(task: Task, fallback: float) -> tuple[float, int]:
+    value = task.completed if task.finished else fallback
+    return value, 1
+""",
+    ),
+)
+KEYWORD_AND_OPERATOR_FIXTURES += RETURN_FIXTURES
+OPTIONAL_RETURN = Fixture(
+    "optional-return",
+    """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float | None:
+    value = task.total if task.total is not None else completed
+    return value
+
+
+def describe_done(task: Task, fallback: float) -> float | None:
+    value = task.completed if task.finished else fallback
+    return value
+""",
+)
+
+
 class CountingPyright(PyrightOracle):
     """Retain prospective sources so a refusal cannot conceal an Any rung."""
 
@@ -979,3 +1087,131 @@ def test_nullable_consumption_refusal_cannot_fall_through_to_an_accepted_any(
     finally:
         checker.close()
     assert path.read_text() == fixture.source
+
+
+@pytest.mark.parametrize("backend", ["mypy", "pyright"])
+@pytest.mark.parametrize("fixture", RETURN_FIXTURES, ids=lambda fixture: fixture.name)
+def test_return_and_assignment_refinements_are_not_erased_by_any(
+    tmp_path: Path, fixture: Fixture, backend: Literal["mypy", "pyright"]
+) -> None:
+    if backend == "pyright" and importlib.util.find_spec("pyright") is None:
+        pytest.skip("pyright absent")
+    original = _write_project(tmp_path / "source", fixture)
+    if backend == "pyright":
+        (original.parent / "pyproject.toml").write_text(
+            '[tool.pyright]\ntypeCheckingMode="strict"\nstrict=[]\n'
+        )
+    checker = CountingMypy() if backend == "mypy" else CountingPyright()
+    try:
+        assert checker.check_project({str(original): fixture.source}) == CheckSuccess()
+        engine = UnificationRefactorEngine(
+            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+        )
+        proposals = [
+            proposal
+            for proposal in engine.analyze_file(str(original))
+            if "describe_total and describe_done" in proposal.description
+        ]
+        assert len(proposals) == 1
+        with pytest.raises(UntypeableExtraction) as refused:
+            engine.apply_refactoring(str(original), proposals[0])
+        assert refused.value.reason is Untypeable.NARROWING_READ_IN_THUNK
+        helpers = [
+            node
+            for sources in checker.checked
+            for source in sources.values()
+            for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+        ]
+        assert helpers and not any(_uses_any_annotation(helper) for helper in helpers)
+    finally:
+        checker.close()
+    assert original.read_text() == fixture.source
+
+
+@pytest.mark.parametrize("backend", ["mypy", "pyright"])
+@pytest.mark.parametrize("interface", ["api", "cli"])
+def test_optional_aware_return_keeps_precise_annotations_and_owned_lifetimes(
+    tmp_path: Path, backend: Literal["mypy", "pyright"], interface: Literal["api", "cli"]
+) -> None:
+    if backend == "pyright" and importlib.util.find_spec("pyright") is None:
+        pytest.skip("pyright absent")
+    fixture = OPTIONAL_RETURN
+    original = _write_project(tmp_path / "source", fixture)
+    if backend == "pyright":
+        (original.parent / "pyproject.toml").write_text(
+            '[tool.pyright]\ntypeCheckingMode="strict"\nstrict=[]\n'
+        )
+    checker = CountingMypy() if backend == "mypy" else CountingPyright()
+    try:
+        assert checker.check_project({str(original): fixture.source}) == CheckSuccess()
+        if interface == "api":
+            engine = UnificationRefactorEngine(
+                min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            )
+            proposals = [
+                proposal
+                for proposal in engine.analyze_file(str(original))
+                if "describe_total and describe_done" in proposal.description
+            ]
+            assert len(proposals) == 1
+            written = engine.apply_refactoring(str(original), proposals[0])
+            transformed = tmp_path / "after.py"
+            transformed.write_text(written)
+        else:
+            output = tmp_path / "output"
+            runtime = Path(towel.__file__).resolve().parents[1]
+            bootstrap = _cli_bootstrap(runtime, tmp_path / "cli-oracle.txt")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    "-c",
+                    bootstrap,
+                    "dry",
+                    str(original.parent),
+                    str(output),
+                    "--no-interactive",
+                    "--no-format",
+                    "--min-lines",
+                    "2",
+                    "--progress",
+                    "none",
+                ],
+                cwd=tmp_path,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            (tmp_path / "cli.log").write_text(completed.stdout + completed.stderr)
+            assert completed.returncode == 0, completed.stdout + completed.stderr
+            assert (tmp_path / "cli-oracle.txt").read_text() == (
+                "MypyInferrer" if backend == "mypy" else "PyrightOracle"
+            )
+            transformed = output / "subject.py"
+            written = transformed.read_text()
+        assert checker.check_project({str(original): written}) == CheckSuccess()
+    finally:
+        checker.close()
+    helper = next(
+        node
+        for node in ast.parse(written).body
+        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+    )
+    assert not _uses_any_annotation(helper)
+    assert helper.returns is not None
+    annotation = (
+        ast.parse(helper.returns.value, mode="eval").body
+        if isinstance(helper.returns, ast.Constant) and isinstance(helper.returns.value, str)
+        else helper.returns
+    )
+    assert ast.dump(annotation) == ast.dump(ast.parse("float | None", mode="eval").body)
+    assert written != fixture.source and original.read_text() == fixture.source
+    observer = tmp_path / "observe.py"
+    observer.write_text(TASK_OBSERVER)
+    before = _observe(original, observer, fixture)
+    after = _observe(transformed, observer, fixture)
+    (tmp_path / "before-observations.jsonl").write_text(before[1])
+    (tmp_path / "after-observations.jsonl").write_text(after[1])
+    assert len(before[1].splitlines()) == 32
+    assert after == before

@@ -943,6 +943,11 @@ exact default-free caller lambdas for that correspondence. The supported
 diagnostics identify named or positional arguments, operator operands and
 Optional receivers; reflected mypy comparisons map back to source operand
 order. An ambiguous diagnostic location does not establish this judgment.
+Return and annotated-assignment diagnostics also identify scalar or fixed-tuple
+value flows. Their rejected nullable component must correspond to the deferred
+caller expression and to a matching declared obligation in that original caller.
+An interim helper annotation alone cannot establish the obligation: a caller
+whose declared result accepts `None` may need a later precise generic signature.
 Known caller narrowing boundaries are filtered during discovery; the
 remaining cases cost the checker refusals needed to establish them. Each rung is rendered with the
 comments of the moved code woven in, and with only the imports its own
