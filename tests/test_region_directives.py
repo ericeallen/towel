@@ -533,11 +533,25 @@ def test_a_line_fmt_skip_keeps_is_written_as_it_was(tmp_path: Path) -> None:
         print(total)
         return total + 2
     """
-    unchanged, engine = _refactored(
+    result, engine = _refactored(
         tmp_path, source, "black" if importlib.util.find_spec("black") else None
     )
-    assert unchanged == textwrap.dedent(source).lstrip()
+    assert result != textwrap.dedent(source).lstrip()
+    assert "        total += row  *  2  # fmt: skip" in _helper_text(result).split("\n")
+    _assert_behavior_preserved(textwrap.dedent(source).lstrip(), result, ("g1", "g2"))
     assert "conditionally_bound_return" in engine.declined_pairs
+    differing = (
+        textwrap.dedent(source).lstrip().replace("total += row  *  2", "total += row  *  3", 1)
+    )
+    unchanged, refused = _refactored(
+        tmp_path,
+        differing,
+        "black" if importlib.util.find_spec("black") else None,
+        name="differing.py",
+    )
+    assert unchanged == differing
+    assert "layout_not_kept" in refused.declined_pairs
+    _assert_behavior_preserved(differing, unchanged, ("g1", "g2"))
     # Retaining the partial loop's row would return an unbound local for an
     # empty iterable. Keep that refusal; the identical complete body needs no
     # returned row and transfers arguments while exercising the same kept line.
