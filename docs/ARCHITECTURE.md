@@ -250,7 +250,10 @@ Each parameter is passed in the way that preserves the original evaluation:
   original evaluated twice, or not at all on some path, is evaluated the same
   number of times under the same conditions. As an optimization, a thunk the
   helper would evaluate first, once, and unconditionally is passed eagerly
-  instead, because nothing can observe the difference. "First" means that
+  only when every caller also proves an immutable result. An eager parameter
+  owns its value until the helper returns; retaining a factory result, attribute,
+  subscript or unknown name can change temporary release and exception cleanup.
+  Those expressions stay deferred. "First" means that
   every step before it can neither run code nor raise, by an allowlist over
   the expression forms (`thunk_inlining.effect_free`): a name read is such a
   step only for a helper parameter or a name the helper already bound, and

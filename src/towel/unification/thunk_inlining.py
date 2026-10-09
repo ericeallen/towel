@@ -15,11 +15,14 @@
 """Pass a thunk's expression eagerly when doing so is unobservable.
 
 A thunk parameter is evaluated inside the helper at the original position.
-When the helper evaluates that thunk before any other effect, exactly once,
-and on every path, evaluating the expression at the call site instead
+When every caller proves an immutable result, and the helper evaluates that
+thunk before any other effect, exactly once, and on every path, evaluating
+the expression at the call site instead
 changes nothing an observer can see: the call site's own arguments are
 names, literals, tuples of those, lambda creations, or earlier such thunks
-in the same order. This pass detects that situation from the helper body
+in the same order. Unknown results remain deferred because an eager parameter
+would retain a temporary beyond its original last use. This pass detects the
+eligible situation from the original argument expressions and helper body
 and turns the thunk back into an ordinary argument, so the helper reads
 ``__param_0`` rather than ``__param_0()``.
 
@@ -62,6 +65,7 @@ from typing import (
     Union,
 )
 
+from .compiler_literals import immutable_literal_value
 from .substitution import Substitution
 
 
@@ -97,15 +101,20 @@ def inline_leading_thunks(
 ) -> Set[str]:
     """Inline thunks that the helper evaluates first, once, unconditionally.
 
-    Thunks are considered in the helper's evaluation order and must appear in
-    increasing parameter position, because call-site arguments are evaluated
+    Every caller must prove an immutable result. Thunks are considered in the
+    helper's evaluation order and must appear in increasing parameter
+    position, because call-site arguments are evaluated
     left to right. Returns the inlined parameter names; ``helper`` and
     ``substitution`` are updated in place.
     """
     # A thunk is a function parameter with no bound variables. The extractor
     # also lists it under ``params_used_as_callee`` because the body calls it,
     # so that set cannot distinguish thunks from forwarded callees here.
-    candidates = {name for name, bound in substitution.function_params.items() if not bound}
+    candidates = {
+        name
+        for name, bound in substitution.function_params.items()
+        if not bound and _immutable_thunk_results(substitution, name)
+    }
     if not candidates:
         return set()
     inlined: List[str] = []
@@ -129,6 +138,27 @@ def inline_leading_thunks(
         if not complete:
             break
     return _apply(helper, substitution, inlined)
+
+
+def _immutable_thunk_results(substitution: Substitution, name: str) -> bool:
+    """Every caller proves a value whose extra parameter reference cannot affect release.
+
+    Evaluation order alone does not certify lifetime: a temporary consumed
+    inside the helper would otherwise remain owned by its eager parameter.
+    Names, calls, attributes and subscripts have unknown results, regardless
+    of annotations or whether their reads are definitely bound.
+    """
+    expressions = substitution.param_expressions.get(name, ())
+    return bool(expressions) and all(
+        immutable_literal_value(expression)
+        or (
+            isinstance(expression, ast.UnaryOp)
+            and isinstance(expression.op, (ast.UAdd, ast.USub, ast.Invert))
+            and isinstance(expression.operand, ast.Constant)
+            and type(expression.operand.value) in (bool, int, float, complex)
+        )
+        for _, expression in expressions
+    )
 
 
 def effect_free(expression: ast.expr, bound: AbstractSet[str] = frozenset()) -> bool:

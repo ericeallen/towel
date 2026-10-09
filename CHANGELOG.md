@@ -9,6 +9,9 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Keep thunks deferred when their result lifetime is unknown. Eager evaluation
+  requires an immutable result proof from every caller as well as the existing
+  evaluation-order proof; preserve temporary release and exception cleanup.
 - Unify differing constant occurrences without changing equal literals at other
   positions. Reuse a parameter only when its complete typed column agrees across
   callers; preserve caller literal pools, syntax pins and the existing budget.
