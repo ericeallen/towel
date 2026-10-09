@@ -1299,15 +1299,16 @@ def _return_under_declarations(
     same_module: bool,
     subtypes: _Subtypes,
 ) -> Optional[ast.expr]:
-    """The helper's return type given that every site returns it under a declared type.
+    """The helper's return type under the sites' declared return constraints.
 
-    The revealed type is the most precise statement of what the helper
-    returns, and it keeps every site type-checking exactly when it is a
-    subtype of each declared type, which the checker confirms. Otherwise the
+    An unannotated caller imposes no return constraint. The revealed type is
+    the most precise statement of what the helper returns, and it keeps every
+    site type-checking exactly when it is a subtype of each declared type,
+    which the checker confirms. Otherwise the
     declared types' own greatest lower bound, when one of them is it.
     """
     constraints = [d for d in declared if d is not None]
-    if revealed is not None and len(constraints) == len(declared):
+    if revealed is not None:
         verdicts = subtypes([(_unquoted(revealed), _unquoted(d)) for d in constraints])
         if all(verdict is Subtyping.YES for verdict in verdicts):
             return revealed

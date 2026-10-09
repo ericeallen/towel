@@ -467,8 +467,10 @@ BESIDE_AN_UNANNOTATED_FUNCTION = """
 """
 
 
+@pytest.mark.parametrize("summary_return", ["", " -> int", " -> object"])
 def test_a_helper_shared_with_an_unannotated_function_keeps_the_types_probes_find(
     tmp_path: Path,
+    summary_return: str,
 ) -> None:
     """``values`` at the call in ``summary`` is ``Any`` to a probe that skips its body.
 
@@ -480,12 +482,19 @@ def test_a_helper_shared_with_an_unannotated_function_keeps_the_types_probes_fin
     """
     _write(tmp_path, {"pyproject.toml": PACKAGING, "pkg/__init__.py": ""})
     core = tmp_path / "pkg" / "core.py"
-    core.write_text(textwrap.dedent(BESIDE_AN_UNANNOTATED_FUNCTION).lstrip(), encoding="utf-8")
+    original = (
+        textwrap.dedent(BESIDE_AN_UNANNOTATED_FUNCTION)
+        .lstrip()
+        .replace("def summary():", f"def summary(){summary_return}:")
+    )
+    core.write_text(original, encoding="utf-8")
     oracle = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(type_oracle=oracle, reuse_existing_functions=False)
         proposal = engine.analyze_file(str(core))[0]
+        assert oracle.check(str(core), original) == CheckSuccess()
         written = engine.apply_refactoring(str(core), proposal)
+        assert oracle.check(str(core), written) == CheckSuccess()
     finally:
         oracle.close()
     assert (
@@ -493,7 +502,7 @@ def test_a_helper_shared_with_an_unannotated_function_keeps_the_types_probes_fin
         == "def __extracted_func_0(__param_0: int, /, values: 'list[int]') -> int:"
     )
     results = []
-    for text in (OWNED_BESIDE_AN_UNANNOTATED_FUNCTION, BESIDE_AN_UNANNOTATED_FUNCTION, written):
+    for text in (OWNED_BESIDE_AN_UNANNOTATED_FUNCTION, original, written):
         program = textwrap.dedent(text).lstrip() + "\nprint(report(), summary())\n"
         run = subprocess.run([sys.executable, "-c", program], capture_output=True, check=True)
         results.append(run.stdout)
