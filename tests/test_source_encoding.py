@@ -16,9 +16,11 @@
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 from pathlib import Path
+from typing import Callable, cast
 
 import pytest
 
@@ -143,7 +145,25 @@ def test_an_escape_the_rendering_spelled_as_a_character_is_written_back_escaped(
             )
             applied = sum(count for count, _ in results.values())
             written = (out / "m.py").read_bytes()
-    assert applied == 1  # Only the complete body preserves opaque argument lifetime.
+    assert applied == 2
+    assert module.read_bytes() == UNENCODABLE.encode("latin-1")
+    assert written.startswith(b"# -*- coding: latin-1 -*-\n")
+    tree = ast.parse(written.decode("latin-1"))
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    helpers = {name for name in functions if "extracted_func" in name}
+    assert len(helpers) == 2
+    called_helpers: dict[str, str] = {}
+    for name in ("alpha", "beta", "f", "g"):
+        function = functions[name]
+        assert not any(isinstance(node, (ast.For, ast.BinOp)) for node in ast.walk(function))
+        returned = function.body[-1]
+        assert isinstance(returned, ast.Return) and isinstance(returned.value, ast.Call)
+        assert isinstance(returned.value.func, ast.Name)
+        called_helpers[name] = returned.value.func.id
+        assert called_helpers[name] in helpers
+    assert called_helpers["alpha"] == called_helpers["beta"]
+    assert called_helpers["f"] == called_helpers["g"]
+    assert called_helpers["alpha"] != called_helpers["f"]
     assert "cannot represent" not in caplog.text
     text = written.decode("latin-1")
     # The helper spells the escape as the source did, never the character.
@@ -155,7 +175,13 @@ def test_an_escape_the_rendering_spelled_as_a_character_is_written_back_escaped(
         with contextlib.redirect_stdout(buffer):
             exec(compile(program, "m.py", "exec"), namespace)
             for name in ("alpha", "beta"):
-                print(namespace[name]([1, 5, 9]))  # type: ignore[operator]
+                function = namespace[name]
+                assert callable(function)
+                print(cast(Callable[[list[int]], int], function)([1, 5, 9]))
+            for name in ("f", "g"):
+                function = namespace[name]
+                assert callable(function)
+                print(cast(Callable[[int], int], function)(3))
         return buffer.getvalue()
 
     assert observed(text) == observed(UNENCODABLE)
