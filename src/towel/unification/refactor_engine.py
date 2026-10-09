@@ -91,6 +91,7 @@ from .block_signature import (
 from ..coverage_config import CoverageExclusion
 from .if_binding_transfer import sharing_if_transfer_sources
 from .compiler_literals import sharing_compiler_literal_facts
+from .return_source_uses import sharing_return_source_uses
 from .models import (
     CodeBlockPair,
     FunctionArtifact,
@@ -723,6 +724,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
             sharing_analysis_sources(check_ast_immutable=self._settings.check_ast_immutable),
             sharing_if_transfer_sources(),
             sharing_compiler_literal_facts(),
+            sharing_return_source_uses(self),
         ):
             return self._analyze_files(
                 file_paths,

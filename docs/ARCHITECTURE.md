@@ -1388,6 +1388,17 @@ reference behavior.
 
 ## Performance architecture
 
+Return-variable queries reuse immutable statement read facts for an engine's
+original, read-only source functions. One analysis retains at most 2,048 function
+entries, each containing source line numbers, statement class names and frozen
+read-name sets. The internal scope carries the engine owner; queries outside
+that scope, under another owner, with zero entries or with memoization disabled
+keep the original lazy line-filtered traversal. Cached facts do not include a
+returned mutable set or an AST node value. Every query still calculates lifetime
+outputs and emits its requested diagnostic records, and constructs a fresh
+result set. Scope exit clears the function keys and facts, restoring a nested
+parent on normal return or failure.
+
 Warning eligibility also checks its existing bounded lexical cache before
 searching source text. Cache misses and disabled or oversized inputs use the
 same lexical predicate. Answers are immutable booleans; warning-capable answers

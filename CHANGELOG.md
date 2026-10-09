@@ -9,6 +9,14 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Release bounded-cache entries and weight bookkeeping on explicit cleanup
+  even while memoization is disabled, so analysis scopes can always drop owners.
+
+- Reuse immutable later-read statement facts within one engine source-analysis
+  scope. Preserve traversal and diagnostic records, calculate lifetime outputs
+  on every call and return fresh sets; keep direct, disabled and mismatched-owner
+  queries lazy and release the bounded function cache at scope exit.
+
 - Consult the bounded lexical eligibility cache before searching repeated
   warning-free source text; preserve native diagnostics, disabled and oversized
   bypasses, source storage limits and fork-safe bookkeeping.

@@ -81,6 +81,7 @@ from .semantic_safety import (
     walk_own_scope,
 )
 from .if_binding_transfer import IfBindingTransfer, IfTransferSite, certify_if_binding_transfer
+from .return_source_uses import return_statement_usages
 from .statement_facts import memoized_per_node
 from .static_positions import (
     TYPING_FORMS_BY_NAME,
@@ -906,21 +907,10 @@ class BlockAnalysis(EngineState):
             # suite, before its enclosing manager/finally cleanup executes.
             result |= lifetime_bound_names(block, initially_bound)
 
-        statements = (
-            node
-            for statement in func.body
-            for node in walk_own_scope(statement)
-            if isinstance(node, ast.stmt)
-        )
-        for stmt in statements:
-            if not hasattr(stmt, "lineno") or stmt.lineno <= block_end_line:
-                continue
-
-            uses = self._used_names(stmt)
+        for usage in return_statement_usages(self, func, self._used_names, block_end_line):
+            uses = set(usage.names)
             if debug_enabled and debug_label:
-                VALIDATION.debug(
-                    f"  {debug_label}: stmt@{stmt.lineno} ({stmt.__class__.__name__}) uses {uses}"
-                )
+                VALIDATION.debug(f"  {debug_label}: stmt@{usage.lineno} ({usage.kind}) uses {uses}")
 
             overlap = uses & initially_bound
             if overlap:
