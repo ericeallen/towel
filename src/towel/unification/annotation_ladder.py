@@ -1198,7 +1198,7 @@ def declarations_leave_their_class(
     return None
 
 
-def _governed_thunks(helper: FunctionNode) -> Dict[str, Set[str]]:
+def _governed_thunks(helper: FunctionNode) -> Dict[Tuple[str, bool], Set[str]]:
     """For each parameter the helper tests, the parameters it calls only where that test governs.
 
     ``a() if p else b()``, ``if p: ... a() ... else: ... b()``, ``while p:
@@ -1206,10 +1206,12 @@ def _governed_thunks(helper: FunctionNode) -> Dict[str, Set[str]]:
     condition is parameter ``p`` itself, perhaps negated or among the operands
     of ``and``/``or``, is governed by ``p``: the test was passed in as ``p``. A
     condition that merely reads a parameter, ``self.name == other.name``, is
-    the helper's own test and :mod:`narrowing` speaks for it. Own scope only.
+    the helper's own test and :mod:`narrowing` speaks for it. A zero-argument
+    call of a parameter tests its deferred result instead; its caller argument
+    must be an exact generated zero-argument lambda. Own scope only.
     """
     parameters = {argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)}
-    governed: Dict[str, Set[str]] = {}
+    governed: Dict[Tuple[str, bool], Set[str]] = {}
 
     def called_in(nodes: Sequence[ast.AST]) -> Set[str]:
         return {
@@ -1221,12 +1223,22 @@ def _governed_thunks(helper: FunctionNode) -> Dict[str, Set[str]]:
             and node.func.id in parameters
         }
 
-    def tested(test: ast.expr) -> Set[str]:
+    def tested(test: ast.expr) -> Set[Tuple[str, bool]]:
         if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
             return tested(test.operand)
         if isinstance(test, ast.BoolOp):
-            return {name for value in test.values for name in tested(value)}
-        return {test.id} if isinstance(test, ast.Name) and test.id in parameters else set()
+            return {predicate for value in test.values for predicate in tested(value)}
+        if isinstance(test, ast.Name) and test.id in parameters:
+            return {(test.id, False)}
+        if (
+            isinstance(test, ast.Call)
+            and isinstance(test.func, ast.Name)
+            and test.func.id in parameters
+            and not test.args
+            and not test.keywords
+        ):
+            return {(test.func.id, True)}
+        return set()
 
     for statement in helper.body:
         for node in walk_own_scope(statement):
@@ -1241,8 +1253,32 @@ def _governed_thunks(helper: FunctionNode) -> Dict[str, Set[str]]:
             if condition is None:
                 continue
             for test in tested(condition):
-                governed.setdefault(test, set()).update(called_in(branches) - {test})
+                governed.setdefault(test, set()).update(called_in(branches) - {test[0]})
     return {test: thunks for test, thunks in governed.items() if thunks}
+
+
+def _predicate_argument(
+    arguments: Mapping[str, ast.expr], predicate: Tuple[str, bool]
+) -> Optional[ast.expr]:
+    """The original test of a direct or exactly generated deferred parameter."""
+    name, deferred = predicate
+    argument = arguments.get(name)
+    if not deferred:
+        return argument
+    if not isinstance(argument, ast.Lambda):
+        return None
+    args = argument.args
+    if (
+        args.posonlyargs
+        or args.args
+        or args.kwonlyargs
+        or args.vararg is not None
+        or args.kwarg is not None
+        or args.defaults
+        or args.kw_defaults
+    ):
+        return None
+    return argument.body
 
 
 def _narrowing_test(argument: ast.expr) -> Set[str]:
@@ -1282,10 +1318,11 @@ def narrowing_needed_in_thunk(
     Where two blocks differ in a test and in what it guards, both become
     arguments: ``task.total is not None`` and ``lambda: int(task.total)``
     (rich's progress columns). In the block the test narrowed ``task.total``
-    for the expression it guarded; at the call the test is only a ``bool``,
-    evaluated beforehand, and the lambda is checked where it is written, in
-    the caller, where ``task.total`` is ``float | None`` again. No signature
-    of the helper reaches the lambda's body.
+    for the expression it guarded. The helper instead receives that test as
+    either a Boolean or a deferred predicate; neither can refine the separately
+    passed result thunk. Its lambda is checked in the caller, where
+    ``task.total`` is still ``float | None``. No signature of the helper reaches
+    the lambda's body.
 
     Decided from the proposal alone, as :mod:`narrowing` decides its sibling
     case, because both halves are Towel's own construction: the helper calls
@@ -1298,8 +1335,8 @@ def narrowing_needed_in_thunk(
     parameters = [argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)]
     for call in calls:
         arguments = dict(zip(parameters, call.args))
-        for test_parameter, thunk_parameters in governed.items():
-            test = arguments.get(test_parameter)
+        for predicate, thunk_parameters in governed.items():
+            test = _predicate_argument(arguments, predicate)
             if test is None:
                 continue
             narrowed = _narrowing_test(test)
@@ -1337,8 +1374,8 @@ def narrowing_refused_in_thunk(
         return None
     project = _RenderedProject(rejection)
     for call in project.calls():
-        for test_parameter, thunk_parameters in governed.items():
-            test = call.arguments.get(test_parameter)
+        for predicate, thunk_parameters in governed.items():
+            test = _predicate_argument(call.arguments, predicate)
             if test is None:
                 continue
             narrowed = _tested(test)

@@ -754,8 +754,9 @@ lattice ones:
   helper returns their meet: Python has no intersection type, so the meet is
   the declaration that is a subtype of all the others, or, when the oracle
   confirms the helper's revealed return type is a subtype of every
-  declaration, that revealed type. Declarations with no such member leave
-  the return bare.
+  declaration, that revealed type. An unannotated caller adds no declared
+  return constraint and does not discard a proven revealed type. Declarations
+  with no such member leave the return bare.
 - Thunk and lifted parameters take `Callable[[], T]` and
   `Callable[[A, B], T]` from the oracle's callable spelling.
 - A revealed type is written only when every name in it resolves where the
@@ -933,7 +934,10 @@ assignments declared its class's attributes; the block completed its caller's
 partial type (mypy only); or only the unannotated helper is left in a module
 whose every function is annotated, which a stricter check than the
 configuration Towel reads would refuse. The lambda and partial-type cases are
-read off the proposal and cost no check. Known caller-narrowing boundaries
+read off the proposal and cost no check. A generated zero-argument predicate
+call has the same narrowing obligation as a direct predicate parameter; the
+proof reads only its exact default-free caller lambda and preserves the
+checker fallback for other constructions. Known caller-narrowing boundaries
 are filtered during discovery; the remaining cases need the checker's verdict
 and cost the one refusal that shows them. Each rung is rendered with the
 comments of the moved code woven in, and with only the imports its own

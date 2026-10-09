@@ -36,9 +36,19 @@ that shows them.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
+import pytest
+
 from tests.typed_fixtures import apply_one, requires_mypy
+from towel.type_inference import TypeDiagnostic
+from towel.unification.annotation_ladder import (
+    Rejection,
+    narrowing_needed_in_thunk,
+    narrowing_refused_in_thunk,
+)
+from towel.unification.exceptions import Untypeable
 
 
 def _declined(outcome: object, reason: str) -> str:
@@ -188,3 +198,89 @@ def test_an_annotated_collection_is_no_partial_type(tmp_path: Path) -> None:
         pick="image_attributes and figure_attributes",
     )
     assert outcome.error is None, outcome.error
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "return result() if predicate() else fallback",
+        "if predicate():\n    return result()\nreturn fallback",
+        "if not predicate():\n    return fallback\nelse:\n    return result()",
+        "while predicate():\n    return result()\nreturn fallback",
+        "return predicate() and result()",
+    ],
+)
+def test_a_deferred_predicate_still_governs_its_consumed_thunk(body: str) -> None:
+    """Deferring the test must not hide the same constructor-only narrowing proof."""
+    source = "def helper(predicate, result, fallback):\n" + "\n".join(
+        "    " + line for line in body.splitlines()
+    )
+    helper = ast.parse(source).body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    call = ast.parse(
+        "helper(lambda: task.total is not None, lambda: int(task.total), 0)", mode="eval"
+    ).body
+    assert isinstance(call, ast.Call)
+    original = (ast.dump(helper), ast.dump(call))
+    verdict = narrowing_needed_in_thunk(helper, [call])
+    assert verdict is not None
+    assert verdict.reason is Untypeable.NARROWING_READ_IN_THUNK
+    assert "task.total is not None" in verdict.detail
+    assert (ast.dump(helper), ast.dump(call)) == original
+
+
+@pytest.mark.parametrize(
+    "test, predicate, result",
+    [
+        ("predicate(0)", "lambda: task.total is not None", "lambda: int(task.total)"),
+        ("predicate(unused=0)", "lambda: task.total is not None", "lambda: int(task.total)"),
+        ("predicate.__call__()", "lambda: task.total is not None", "lambda: int(task.total)"),
+        ("predicate()", "lambda unused=task: task.total is not None", "lambda: int(task.total)"),
+        ("predicate()", "lambda unused: task.total is not None", "lambda: int(task.total)"),
+        ("predicate()", "lambda *unused: task.total is not None", "lambda: int(task.total)"),
+        ("predicate()", "lambda **unused: task.total is not None", "lambda: int(task.total)"),
+        ("predicate", "lambda: task.total is not None", "lambda: int(task.total)"),
+        ("predicate()", "lambda: task.finished", "lambda: int(task.total)"),
+        ("predicate()", "lambda: task.total >= 0", "lambda: int(task.total)"),
+        ("predicate()", "lambda: task.total is not None", "lambda: int(task.completed)"),
+    ],
+)
+def test_only_the_exact_deferred_predicate_proves_a_lost_refinement(
+    test: str, predicate: str, result: str
+) -> None:
+    """Unsupported calls, binders and unrelated reads retain checker fallback."""
+    helper = ast.parse(
+        f"def helper(predicate, result, fallback):\n    return result() if {test} else fallback"
+    ).body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    call = ast.parse(f"helper({predicate}, {result}, 0)", mode="eval").body
+    assert isinstance(call, ast.Call)
+    assert narrowing_needed_in_thunk(helper, [call]) is None
+
+
+def test_a_deferred_truth_test_keeps_the_checker_refinement_backstop() -> None:
+    """Only an actual operand diagnostic establishes that a truth test was needed."""
+    module = (
+        "def helper(predicate, result):\n"
+        "    return result() if predicate() else 0\n"
+        "\n"
+        "def caller(task):\n"
+        "    return helper(lambda: task.total, lambda: task.total / 2)\n"
+    )
+    helper = ast.parse(module).body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    for diagnostic, expected in (
+        ('Unsupported operand types for / ("None" and "int")', True),
+        ('Argument 1 to "helper" has incompatible type "float | None"; expected "float"', False),
+    ):
+        rejection = Rejection(
+            (TypeDiagnostic("/p/module.py", diagnostic, 5),),
+            "/p/module.py",
+            "helper",
+            module,
+            {"/p/module.py": module},
+        )
+        verdict = narrowing_refused_in_thunk(helper, rejection)
+        assert (verdict is not None) is expected
+        if verdict is not None:
+            assert verdict.reason is Untypeable.NARROWING_READ_IN_THUNK
