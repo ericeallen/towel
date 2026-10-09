@@ -199,6 +199,7 @@ def parsing_cannot_warn(source: str) -> bool:
     admitted source; larger sources are classified without retention. No AST
     is held here. The bounded cache is process-local and resets after fork.
     """
-    if not memoizing() or len(source) > _MAX_SOURCE_CHARACTERS:
+    # Subclasses can override hashing/size operations; only native strings are pure keys.
+    if type(source) is not str or not memoizing() or len(source) > _MAX_SOURCE_CHARACTERS:
         return _POSSIBLE_WARNING.search(source) is None or _tokens_cannot_warn(source)
     return _cached_tokens_cannot_warn(source)

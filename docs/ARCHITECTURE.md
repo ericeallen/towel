@@ -1927,3 +1927,18 @@ table bookkeeping. Every scheduling decision still checks the current owner,
 artifact function, analyzer, source-object identity, and nonempty digest against
 its site. A warm lexical answer provides no source correspondence or AST
 authority; both admission certificates remain fresh.
+
+Lexical and shared parsing eligibility requires native `str`/`bytes` values.
+String and byte subclasses use the native parsing path; their hashing, sizing,
+or encoding methods are not cache-key operations. The lexical predicate itself
+can classify a string subclass without retaining it. The decorated source
+analyses and manual module-binding, typing-form, and namespace syntax tables
+also avoid subclass keys, so user-defined equality cannot alias two source texts.
+
+Typing-form and namespace syntax tables include the current integer-digit and
+recursion limits in their keys. They retain only lexically warning-free source
+results; warning-capable inputs execute their original native parse operations
+on every call, including when warning filters change. Ordinary native cache
+hits, size/entry limits, and memo-disabled behavior remain unchanged. The module
+binding table can reuse immutable facts of an already parsed native source:
+its caller has already performed the native parse and diagnostics.

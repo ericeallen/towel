@@ -34,7 +34,12 @@ from pathlib import Path
 from typing import AbstractSet, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
 from typing import Tuple, Union
 
-from ..analysis_sources import parse_analysis_source
+from ..analysis_sources import (
+    ParserConfiguration,
+    parse_analysis_source,
+    parser_configuration,
+    parsing_is_pure,
+)
 from ..consumers import MAXIMUM_FILES
 from ..program_files import program_directories, refuse_unparsed_file
 from .bounded_cache import BoundedCache
@@ -408,17 +413,19 @@ class _WriteScanner(ast.NodeVisitor):
 
 # -- what a module's own statements bind --------------------------------------
 
-_TREES: BoundedCache[str, Optional[ast.Module]] = BoundedCache(128)
+_TREES: BoundedCache[Tuple[str, ParserConfiguration], Optional[ast.Module]] = BoundedCache(128)
 
 
 def _parsed(source: str) -> Optional[ast.Module]:
-    if source in _TREES:
-        return _TREES[source]
+    key = source, parser_configuration()
+    if type(source) is str and key in _TREES:
+        return _TREES[key]
+    cacheable = parsing_is_pure(source)
     try:
         tree: Optional[ast.Module] = ast.parse(source)
     except (SyntaxError, ValueError):
         tree = None
-    return _TREES.put(source, tree)
+    return _TREES.put(key, tree) if cacheable else tree
 
 
 def _read(path: Path) -> Optional[str]:

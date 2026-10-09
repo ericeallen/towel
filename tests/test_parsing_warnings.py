@@ -17,13 +17,14 @@
 import ast
 import sys
 import warnings
-from typing import Literal
+from typing import Callable, List, Literal, Optional, Tuple, Union
 
 import pytest
 
 from towel import parsing_warnings
-from towel.analysis_sources import AnalysisSources, parsing_is_pure
+from towel.analysis_sources import AnalysisSources, memoized_source_analysis, parsing_is_pure
 from towel.unification.bounded_cache import memoization_disabled
+from towel.unification import module_bindings, namespace_writes, typing_forms
 
 SAFE_SOURCES = [
     "# 3.x and \\d are only a comment\nvalue = 1\n",
@@ -80,6 +81,169 @@ WARNING_SOURCES = [
         ]
     ],
 ]
+
+
+class _CustomText(str):
+    def __hash__(self) -> int:
+        raise RuntimeError("Custom source hashing must not run")
+
+    def __len__(self) -> int:
+        raise RuntimeError("Custom source sizing must not run")
+
+    def isascii(self) -> bool:
+        raise RuntimeError("Custom source storage accounting must not run")
+
+    def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:
+        raise RuntimeError("Custom source encoding must not run")
+
+
+class _CustomBytes(bytes):
+    def __hash__(self) -> int:
+        raise RuntimeError("Custom source hashing must not run")
+
+    def __len__(self) -> int:
+        raise RuntimeError("Custom source sizing must not run")
+
+    def decode(self, encoding: str = "utf-8", errors: str = "strict") -> str:
+        raise RuntimeError("Custom source decoding must not run")
+
+
+@pytest.mark.parametrize("text", ["value = 1\n", "# 1name \\q\nvalue = 1\n"])
+def test_lexical_subclasses_bypass_key_methods_without_touching_global_cache(text: str) -> None:
+    source = _CustomText(text)
+    before = tuple(parsing_warnings._CACHE.entries)
+    for _ in range(2):
+        assert parsing_warnings.parsing_cannot_warn(source)
+        assert isinstance(ast.parse(source), ast.Module)
+    assert tuple(parsing_warnings._CACHE.entries) == before
+
+
+@pytest.mark.parametrize("kind", ["text", "bytes"])
+@pytest.mark.parametrize("policy", ["always", "ignore", "error"])
+@pytest.mark.parametrize(
+    "text", ["value = 1\n", "# 1name \\q\nvalue = 1\n", "value = '\\q'\n", "value = @\n"]
+)
+def test_source_subclasses_preserve_native_trees_diagnostics_and_errors(
+    kind: str, policy: Literal["always", "ignore", "error"], text: str
+) -> None:
+    native: Union[str, bytes] = text if kind == "text" else text.encode()
+    source: Union[str, bytes] = _CustomText(text) if kind == "text" else _CustomBytes(text.encode())
+    assert not parsing_is_pure(source)
+    cache = AnalysisSources()
+
+    def observe(
+        operation: Callable[[], ast.Module],
+    ) -> Tuple[Optional[str], Optional[Tuple[str, str]], List[Tuple[str, str, str, int]]]:
+        with warnings.catch_warnings(record=True) as emitted:
+            warnings.simplefilter(policy)
+            result: Optional[str] = None
+            failure: Optional[Tuple[str, str]] = None
+            try:
+                result = ast.dump(operation(), include_attributes=True)
+            except (SyntaxError, ValueError, UnicodeError) as error:
+                failure = (type(error).__name__, str(error))
+        return (
+            result,
+            failure,
+            [
+                (item.category.__name__, str(item.message), item.filename, item.lineno)
+                for item in emitted
+            ],
+        )
+
+    for _ in range(2):
+        expected = observe(lambda: ast.parse(native, filename="subclass.py"))
+        actual = observe(lambda: cache.parse(source, "subclass.py"))
+        assert actual == expected
+    assert not cache._parsed
+
+
+def test_memoized_analysis_recomputes_custom_text_without_hashing() -> None:
+    calls = 0
+
+    @memoized_source_analysis(4)
+    def summarize(source: str) -> str:
+        nonlocal calls
+        calls += 1
+        return ast.dump(ast.parse(source))
+
+    source = _CustomText("value = 1\n")
+    assert summarize(source) == summarize(source)
+    assert calls == 2
+
+
+def _source_analysis(name: str) -> Callable[[str], object]:
+    return {
+        "bindings": module_bindings.global_bindings,
+        "facts": typing_forms._module_facts,
+        "tree": namespace_writes._parsed,
+    }[name]
+
+
+def _analysis_value(value: object) -> object:
+    return ast.dump(value, include_attributes=True) if isinstance(value, ast.Module) else value
+
+
+@pytest.mark.parametrize("name", ["bindings", "facts", "tree"])
+def test_manual_source_caches_do_not_hash_or_confuse_custom_text(name: str) -> None:
+    class EqualText(str):
+        def __hash__(self) -> int:
+            return 1
+
+        def __eq__(self, other: object) -> bool:
+            return True
+
+    analyze = _source_analysis(name)
+    for source_class in (_CustomText, EqualText):
+        for text in ("first = 1\n", "second = 2\n", "first = 1\n"):
+            actual = analyze(source_class(text))
+            with memoization_disabled():
+                expected = analyze(text)
+            assert _analysis_value(actual) == _analysis_value(expected)
+
+
+@pytest.mark.parametrize("name", ["facts", "tree"])
+@pytest.mark.parametrize("policy", ["always", "ignore", "error"])
+def test_manual_source_cache_warning_hits_match_disabled_diagnostics(
+    name: str, policy: Literal["always", "ignore", "error"]
+) -> None:
+    source = f"value_{name} = '\\q'\n"
+    analyze = _source_analysis(name)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        assert analyze(source) is not None
+    for _ in range(2):
+        with warnings.catch_warnings(record=True) as emitted:
+            warnings.simplefilter(policy)
+            actual = analyze(source)
+        with warnings.catch_warnings(record=True) as expected_emitted:
+            warnings.simplefilter(policy)
+            with memoization_disabled():
+                expected = analyze(source)
+        assert _analysis_value(actual) == _analysis_value(expected)
+        assert [
+            (item.category.__name__, str(item.message), item.filename, item.lineno)
+            for item in emitted
+        ] == [
+            (item.category.__name__, str(item.message), item.filename, item.lineno)
+            for item in expected_emitted
+        ]
+
+
+@pytest.mark.parametrize("name", ["facts", "tree"])
+def test_manual_source_cache_tracks_integer_parser_limits(name: str) -> None:
+    source = f"value_{name} = " + "7" * 700 + "\n"
+    analyze = _source_analysis(name)
+    previous = sys.get_int_max_str_digits()
+    try:
+        sys.set_int_max_str_digits(0)
+        assert analyze(source) is not None
+        sys.set_int_max_str_digits(640)
+        assert analyze(source) is None
+        sys.set_int_max_str_digits(0)
+        assert analyze(source) is not None
+    finally:
+        sys.set_int_max_str_digits(previous)
 
 
 @pytest.mark.parametrize("source", SAFE_SOURCES)

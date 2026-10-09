@@ -9,6 +9,10 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Limit source-cache keys to native strings/bytes so subclass methods cannot
+  change cache behavior. Include parser limits in typing-form and namespace
+  syntax cache keys, and keep warning-capable parses on the native path.
+
 - Reuse immutable lexical warning classifications while scheduling IF proofs
   within one owned analysis, including sources larger than the process cache's
   character limit. Bound retained source storage and keep every ownership

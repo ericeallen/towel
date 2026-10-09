@@ -468,6 +468,8 @@ def global_bindings(source: str) -> Optional[ModuleBindings]:
 
 def bindings_from_tree(source: str, tree: ast.Module) -> ModuleBindings:
     """Immutable bindings of source already parsed into tree, without parsing it again."""
+    if type(source) is not str:
+        return _Collector(source_lines(source)).collect(tree)
     key = source, parser_configuration()
     known = _MODULE_BINDINGS.get(key)
     if known is not None:

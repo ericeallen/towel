@@ -71,7 +71,7 @@ def _cacheable_text(source: Union[str, bytes]) -> Optional[str]:
     own filters. In particular, do not decode arbitrary codecs to form a key:
     decoding itself may warn, or call a user-registered codec.
     """
-    if not _KNOWN_WARNING_SITES:
+    if not _KNOWN_WARNING_SITES or type(source) not in (str, bytes):
         return None
     if isinstance(source, bytes):
         for line in source.split(b"\n", 2)[:2]:
