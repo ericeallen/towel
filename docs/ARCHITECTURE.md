@@ -1900,3 +1900,10 @@ When a deferred pair violates several conditions, its rejection trace can name
 a binding, shape or unification failure before the nested-binding condition.
 Additional rejected pairs can populate existing bounded fact caches; parameter
 counters still reset for each unification, and source trees are never rewritten.
+
+The bounded cache snapshots keys when an iteration starts. Inherited mapping
+item/value views read through `__getitem__`, which promotes each entry in the
+LRU order; a live `OrderedDict` iterator would otherwise fail on that read.
+The snapshot owns only keys, and ordinary lookups still determine values and
+eviction. An iterator retained by a caller can retain its key references until
+it is consumed or released, independently of the analysis cache's cleanup.

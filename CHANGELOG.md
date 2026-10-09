@@ -9,6 +9,10 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Snapshot bounded-cache keys during iteration so standard mapping item and
+  value views tolerate reads that promote entries in the LRU order. Keep
+  ordinary lookups, eviction and explicit ownership release unchanged.
+
 - Postpone fresh IF source proofs until binding, shape and unification checks
   pass within an engine-owned analysis of ordinary original source. Keep
   both the initial admission and aligned-output proofs before helper construction,
