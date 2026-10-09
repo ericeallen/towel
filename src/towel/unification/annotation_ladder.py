@@ -1928,53 +1928,52 @@ def _nonnull_alternative(helper: FunctionNode, value: ast.expr, expected: ast.ex
     return False
 
 
+def _original_component_matches(
+    original: FunctionNode, expression: ast.expr, path: Tuple[int, ...], reference: str
+) -> bool:
+    """The exact original scalar or fixed-tuple component, through unchanged local aliases."""
+    value = _local_value(original, expression)
+    for index in path:
+        if not isinstance(value, ast.Tuple) or index >= len(value.elts):
+            return False
+        value = _local_value(original, value.elts[index])
+    return value is not None and (
+        _dotted(value) == reference
+        or isinstance(value, ast.IfExp)
+        and any(_dotted(branch) == reference for branch in (value.body, value.orelse))
+    )
+
+
 def _original_value_obligation(
     context: OriginalThunkCall, witness: _NullableValue, reference: str
 ) -> bool:
-    """The original block already required this rejected type; helper inference cannot invent it."""
-    if witness.context is _ValueContext.RETURN:
-        if not _same_annotation(context.declared_return, witness.expected):
-            return False
-        original = ast.FunctionDef(
-            name="original_block",
-            args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
-            body=list(context.statements),
-            decorator_list=[],
-        )
-        returned: List[ast.expr] = []
-        for root in context.statements:
-            for statement in walk_own_scope(root):
-                if not isinstance(statement, ast.Return) or statement.value is None:
-                    continue
-                value = _local_value(original, statement.value)
-                for index in witness.path:
-                    if not isinstance(value, ast.Tuple) or index >= len(value.elts):
-                        value = None
-                        break
-                    value = _local_value(original, value.elts[index])
-                if value is not None:
-                    returned.append(value)
-        return len(returned) == 1 and (
-            _dotted(returned[0]) == reference
-            or isinstance(returned[0], ast.IfExp)
-            and any(
-                _dotted(branch) == reference for branch in (returned[0].body, returned[0].orelse)
-            )
-        )
-    return any(
-        isinstance(statement, ast.AnnAssign)
-        and statement.value is not None
-        and _same_annotation(statement.annotation, witness.expected)
-        and (
-            _dotted(statement.value) == reference
-            or isinstance(statement.value, ast.IfExp)
-            and any(
-                _dotted(branch) == reference
-                for branch in (statement.value.body, statement.value.orelse)
-            )
-        )
-        for statement in context.statements
+    """An explicit original declaration requires this exact scalar or fixed-tuple component."""
+    if witness.context is _ValueContext.RETURN and not _same_annotation(
+        context.declared_return, witness.expected
+    ):
+        return False
+    original = ast.FunctionDef(
+        name="original_block",
+        args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
+        body=list(context.statements),
+        decorator_list=[],
     )
+    for root in context.statements:
+        for statement in walk_own_scope(root):
+            expression: Optional[ast.expr] = None
+            if witness.context is _ValueContext.RETURN and isinstance(statement, ast.Return):
+                expression = statement.value
+            elif (
+                witness.context is _ValueContext.ASSIGNMENT
+                and isinstance(statement, ast.AnnAssign)
+                and _same_annotation(statement.annotation, witness.expected)
+            ):
+                expression = statement.value
+            if expression is not None and _original_component_matches(
+                original, expression, witness.path, reference
+            ):
+                return True
+    return False
 
 
 def _value_thunk_result(
@@ -1996,6 +1995,50 @@ def _value_thunk_result(
         ]
         return candidates[0] if len(candidates) == 1 else None
     return _thunk_result_operand(helper, resolved)
+
+
+def _declared_value_refusal(
+    helper: FunctionNode,
+    result: ast.Call,
+    witness: _NullableValue,
+    error: TypeDiagnostic,
+    original_calls: Sequence[ast.Call],
+    original_contexts: Sequence[OriginalThunkCall],
+) -> Optional[Unanswerable]:
+    """An exact deferred getter lost an original positively declared value obligation.
+
+    A return after a guard need not lie inside an explicit predicate branch.
+    Its diagnosed nonnullable type and the original output declaration already
+    establish the obligation; no additional control-flow or callee-effect facts
+    are inferred. Rebound getter parameters are not the original caller thunk.
+    """
+    if not isinstance(result.func, ast.Name) or result.func.id in bound_names(helper.body):
+        return None
+    parameter = result.func.id
+    parameters = [argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)]
+    if parameter not in parameters:
+        return None
+    for context in original_contexts:
+        if not any(context.call is call for call in original_calls):
+            continue
+        arguments = dict(zip(parameters, context.call.args))
+        arguments.update(
+            (keyword.arg, keyword.value)
+            for keyword in context.call.keywords
+            if keyword.arg is not None
+        )
+        body = _predicate_argument(arguments, (parameter, True))
+        reference = _dotted(body) if body is not None else None
+        if reference is None or not _original_value_obligation(context, witness, reference):
+            continue
+        thunk = arguments[parameter]
+        return Unanswerable(
+            Untypeable.NARROWING_READ_IN_THUNK,
+            f"{ast.unparse(thunk)} reads {reference}, whose original "
+            f"{witness.context.value} component must satisfy {ast.unparse(witness.expected)}"
+            f" ({os.path.basename(error.path)}:{error.line}: {error.message})",
+        )
+    return None
 
 
 def _refinement_refusal(refinement: _ThunkRefinement, error: TypeDiagnostic) -> Unanswerable:
@@ -2022,12 +2065,13 @@ def narrowing_refused_in_thunk(
     generated ownership wrappers; they supply the predicate/result relationship
     when the diagnostic lies inside the helper. Only a direct read of the
     tested subject and consumption of its thunk result, directly or through
-    simple local aliases, establish that relationship: a nested arbitrary call may introduce None independently.
+    simple local aliases, establish that relationship. A returned or assigned
+    getter may instead carry an exact original declared output obligation;
+    a provisional helper annotation cannot invent one. A nested arbitrary
+    call may introduce None independently.
     This refusal precedes any signature weakening that operand to Any.
     """
     governed = _governed_thunks(helper)
-    if not governed:
-        return None
     project = _RenderedProject(rejection)
     for call in project.calls():
         for refinement in _thunk_refinements(governed, call.arguments):
@@ -2060,6 +2104,13 @@ def narrowing_refused_in_thunk(
                 result = _value_thunk_result(definition, value, expected)
         if result is None:
             continue
+        if witness is not None:
+            refusal = _declared_value_refusal(
+                definition, result, witness, error, original_calls, original_contexts
+            )
+            if refusal is not None:
+                return refusal
+            continue
         consumed = _governed_thunks(definition, within=result)
         for original in original_calls:
             arguments = dict(zip(parameters, original.args))
@@ -2069,14 +2120,7 @@ def narrowing_refused_in_thunk(
                 if keyword.arg is not None
             )
             for refinement in _thunk_refinements(consumed, arguments):
-                if _dotted(refinement.thunk.body) == refinement.reference and (
-                    witness is None
-                    or any(
-                        context.call is original
-                        and _original_value_obligation(context, witness, refinement.reference)
-                        for context in original_contexts
-                    )
-                ):
+                if _dotted(refinement.thunk.body) == refinement.reference:
                     return _refinement_refusal(refinement, error)
     return None
 

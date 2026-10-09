@@ -948,6 +948,14 @@ value flows. Their rejected nullable component must correspond to the deferred
 caller expression and to a matching declared obligation in that original caller.
 An interim helper annotation alone cannot establish the obligation: a caller
 whose declared result accepts `None` may need a later precise generic signature.
+Original return declarations govern each matching returned component, including
+early returns and repeated branch returns. An annotated assignment supplies its
+own declaration, including inside a conditional suite; its caller's return type
+does not substitute for that declaration. Both use the same exact scalar or
+fixed-tuple projection through unchanged local aliases. The rejected value must
+be a direct generated zero-argument getter matching the original declared
+component. This correspondence does not require a helper predicate branch and
+does not infer additional control flow or effects of arbitrary calls.
 Known caller narrowing boundaries are filtered during discovery; the
 remaining cases cost the checker refusals needed to establish them. Each rung is rendered with the
 comments of the moved code woven in, and with only the imports its own

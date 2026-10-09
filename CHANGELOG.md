@@ -22,6 +22,10 @@ ecosystem evidence behind each claim. The format follows
   components, before helper annotations can widen to `Any`. Require the original
   caller's matching obligation; a provisional helper signature must not reject
   valid nullable returns.
+- Match those declared obligations across early returns, repeated branch returns,
+  nested annotated assignments and fixed tuple assignments. Preserve exact
+  getter correspondence and unchanged local aliases before refusing `Any`
+  fallback; unrelated returns do not erase a matching declaration.
 - Keep thunks deferred when their result lifetime is unknown. Eager evaluation
   requires an immutable result proof from every caller as well as the existing
   evaluation-order proof; preserve temporary release and exception cleanup.

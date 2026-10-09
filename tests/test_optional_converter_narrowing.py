@@ -688,7 +688,7 @@ def describe_done(task: Task, fallback: str) -> str:
 KEYWORD_AND_OPERATOR_FIXTURES += ADJACENT_FIXTURES
 
 
-RETURN_FIXTURES = (
+RETURN_FIXTURES: tuple[Fixture, ...] = (
     Fixture(
         "direct-return",
         """class Task:
@@ -744,6 +744,173 @@ def describe_total(task: Task, completed: float) -> tuple[float, int]:
 def describe_done(task: Task, fallback: float) -> tuple[float, int]:
     value = task.completed if task.finished else fallback
     return value, 1
+""",
+    ),
+)
+RETURN_FIXTURES += (
+    Fixture(
+        "two-return-literal",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float:
+    if task.total is not None:
+        return task.total
+    return 1.0
+
+
+def describe_done(task: Task, fallback: float) -> float:
+    if task.finished:
+        return task.completed
+    return 2.0
+""",
+    ),
+    Fixture(
+        "two-return-variable",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float:
+    if task.total is not None:
+        return task.total
+    return completed
+
+
+def describe_done(task: Task, fallback: float) -> float:
+    if task.finished:
+        return task.completed
+    return fallback
+""",
+    ),
+)
+RETURN_FIXTURES += (
+    Fixture(
+        "two-return-reversed",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float:
+    if task.total is None:
+        return 1.0
+    return task.total
+
+
+def describe_done(task: Task, fallback: float) -> float:
+    if not task.finished:
+        return 2.0
+    return task.completed
+""",
+    ),
+    Fixture(
+        "two-return-nested",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float:
+    if task.total is not None:
+        if task.finished:
+            return task.total
+        return task.total
+    return 1.0
+
+
+def describe_done(task: Task, fallback: float) -> float:
+    if task.finished:
+        if task.completed > 0:
+            return task.completed
+        return task.completed
+    return 2.0
+""",
+    ),
+    Fixture(
+        "two-return-tuple",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> tuple[float, int]:
+    if task.total is not None:
+        return task.total, 1
+    return 1.0, 2
+
+
+def describe_done(task: Task, fallback: float) -> tuple[float, int]:
+    if task.finished:
+        return task.completed, 1
+    return 2.0, 2
+""",
+    ),
+)
+RETURN_FIXTURES += (
+    Fixture(
+        "nested-assignment",
+        """def consume(value: float | None) -> float:
+    return 0.0 if value is None else value + 1
+
+
+class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float:
+    if task.total is not None:
+        value: float = task.total
+    else:
+        value = 1.0
+    return consume(value)
+
+
+def describe_done(task: Task, fallback: float) -> float:
+    if task.finished:
+        value: float = task.completed
+    else:
+        value = 2.0
+    return consume(value)
+""",
+    ),
+    Fixture(
+        "tuple-assignment",
+        """def consume_pair(value: tuple[float | None, int]) -> float:
+    return (0.0 if value[0] is None else value[0]) + value[1]
+
+
+class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float:
+    value: tuple[float, int] = (task.total if task.total is not None else 1.0, 1)
+    return consume_pair(value)
+
+
+def describe_done(task: Task, fallback: float) -> float:
+    value: tuple[float, int] = (task.completed if task.finished else 2.0, 1)
+    return consume_pair(value)
 """,
     ),
 )
@@ -831,6 +998,172 @@ def test_both_checkers_refuse_required_nullable_refinement_before_any(
     finally:
         checker.close()
     assert path.read_text() == fixture.source
+
+
+OPTIONAL_RETURN_FIXTURES = (
+    OPTIONAL_RETURN,
+    Fixture(
+        "optional-nested-assignment",
+        """def consume(value: float | None) -> float:
+    return 0.0 if value is None else value + 1
+
+
+class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float:
+    if task.total is not None:
+        value: float | None = task.total
+    else:
+        value = 1.0
+    return consume(value)
+
+
+def describe_done(task: Task, fallback: float) -> float:
+    if task.finished:
+        value: float | None = task.completed
+    else:
+        value = 2.0
+    return consume(value)
+""",
+    ),
+    Fixture(
+        "optional-tuple-assignment",
+        """def consume_pair(value: tuple[float | None, int]) -> float:
+    return (0.0 if value[0] is None else value[0]) + value[1]
+
+
+class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float:
+    value: tuple[float | None, int] = (task.total if task.total is not None else 1.0, 1)
+    return consume_pair(value)
+
+
+def describe_done(task: Task, fallback: float) -> float:
+    value: tuple[float | None, int] = (task.completed if task.finished else 2.0, 1)
+    return consume_pair(value)
+""",
+    ),
+    Fixture(
+        "optional-two-return-reversed",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float | None:
+    if task.total is None:
+        return 1.0
+    return task.total
+
+
+def describe_done(task: Task, fallback: float) -> float | None:
+    if not task.finished:
+        return 2.0
+    return task.completed
+""",
+    ),
+    Fixture(
+        "optional-two-return-nested",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float | None:
+    if task.total is not None:
+        if task.finished:
+            return task.total
+        return task.total
+    return 1.0
+
+
+def describe_done(task: Task, fallback: float) -> float | None:
+    if task.finished:
+        if task.completed > 0:
+            return task.completed
+        return task.completed
+    return 2.0
+""",
+    ),
+    Fixture(
+        "optional-two-return-tuple",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> tuple[float | None, int]:
+    if task.total is not None:
+        return task.total, 1
+    return 1.0, 2
+
+
+def describe_done(task: Task, fallback: float) -> tuple[float | None, int]:
+    if task.finished:
+        return task.completed, 1
+    return 2.0, 2
+""",
+    ),
+    Fixture(
+        "optional-two-return-literal",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float | None:
+    if task.total is not None:
+        return task.total
+    return 1.0
+
+
+def describe_done(task: Task, fallback: float) -> float | None:
+    if task.finished:
+        return task.completed
+    return 2.0
+""",
+    ),
+    Fixture(
+        "optional-two-return-variable",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float | None:
+    if task.total is not None:
+        return task.total
+    return completed
+
+
+def describe_done(task: Task, fallback: float) -> float | None:
+    if task.finished:
+        return task.completed
+    return fallback
+""",
+    ),
+)
 
 
 TASK_OBSERVER = """import gc
@@ -1131,12 +1464,15 @@ def test_return_and_assignment_refinements_are_not_erased_by_any(
 
 @pytest.mark.parametrize("backend", ["mypy", "pyright"])
 @pytest.mark.parametrize("interface", ["api", "cli"])
+@pytest.mark.parametrize("fixture", OPTIONAL_RETURN_FIXTURES, ids=lambda fixture: fixture.name)
 def test_optional_aware_return_keeps_precise_annotations_and_owned_lifetimes(
-    tmp_path: Path, backend: Literal["mypy", "pyright"], interface: Literal["api", "cli"]
+    tmp_path: Path,
+    backend: Literal["mypy", "pyright"],
+    interface: Literal["api", "cli"],
+    fixture: Fixture,
 ) -> None:
     if backend == "pyright" and importlib.util.find_spec("pyright") is None:
         pytest.skip("pyright absent")
-    fixture = OPTIONAL_RETURN
     original = _write_project(tmp_path / "source", fixture)
     if backend == "pyright":
         (original.parent / "pyproject.toml").write_text(
@@ -1205,7 +1541,13 @@ def test_optional_aware_return_keeps_precise_annotations_and_owned_lifetimes(
         if isinstance(helper.returns, ast.Constant) and isinstance(helper.returns.value, str)
         else helper.returns
     )
-    assert ast.dump(annotation) == ast.dump(ast.parse("float | None", mode="eval").body)
+    original_function = next(
+        node
+        for node in ast.parse(fixture.source).body
+        if isinstance(node, ast.FunctionDef) and node.name == "describe_total"
+    )
+    assert original_function.returns is not None
+    assert ast.dump(annotation) == ast.dump(original_function.returns)
     assert written != fixture.source and original.read_text() == fixture.source
     observer = tmp_path / "observe.py"
     observer.write_text(TASK_OBSERVER)

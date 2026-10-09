@@ -911,7 +911,6 @@ def test_nullable_value_witness_requires_the_declaration_and_original_call() -> 
     assert _value_refusal(body, _VALUE_RETURN, line=2) is None
     assert _value_refusal(body, _VALUE_RETURN, line=99) is None
     for original in (
-        "helper(lambda: task.other is not None, lambda: task.total, fallback)",
         "helper(lambda: task.total is not None, lambda: convert(task.total), fallback)",
         "helper(lambda: task.total is not None, lambda: task.other, fallback)",
     ):
@@ -946,7 +945,6 @@ def test_selected_value_alternatives_require_a_nonnullable_proof() -> None:
         "fallback = unknown\nvalue = result() if predicate() else fallback\nreturn value",
         "if condition:\n    fallback = unknown\nvalue = result() if predicate() else fallback\nreturn value",
         "value = convert(result()) if predicate() else fallback\nreturn value",
-        "value = result() if unrelated() else fallback\nreturn value",
         "value = result() if predicate() else fallback\nvalue = other()\nreturn value",
         "value = result() if predicate() else fallback\nif condition:\n    value = other()\nreturn value",
         "return result(); return other()",
@@ -1103,3 +1101,154 @@ def test_original_return_obligation_follows_the_exact_original_output_component(
         )
         is None
     )
+
+
+def test_original_declared_output_obligation_does_not_require_helper_predicate_governance() -> None:
+    body = "value = result() if unrelated() else fallback\nreturn value"
+    assert _value_refusal(body, _VALUE_RETURN) is not None
+    assert _value_refusal(body, _VALUE_RETURN, caller_returns="float | None") is None
+    original = "helper(lambda: task.other is not None, lambda: task.total, fallback)"
+    assert _value_refusal(body, _VALUE_RETURN, original=original) is not None
+    assert (
+        _value_refusal(body, _VALUE_RETURN, original=original, caller_returns="float | None")
+        is None
+    )
+
+
+def test_declared_return_matches_its_reference_among_unrelated_or_equivalent_returns() -> None:
+    bodies = (
+        "if predicate():\n    return result()\nreturn 1.0",
+        "if predicate():\n    return 1.0\nreturn result()",
+        "if predicate():\n    if condition:\n        return result()\n    return result()\nreturn 1.0",
+    )
+    for body, line in zip(bodies, (3, 4, 5)):
+        assert _value_refusal(body, _VALUE_RETURN, line=line) is not None, body
+        assert _value_refusal(body, _VALUE_RETURN, line=line, caller_returns="float | None") is None
+    tuple_body = "if predicate():\n    return result(), 1\nreturn 1.0, 2"
+    message = 'Incompatible return value type (got "tuple[float | None, int]", expected "tuple[float, int]")'
+    assert (
+        _value_refusal(
+            tuple_body,
+            message,
+            line=3,
+            returns="tuple[float, int]",
+            caller_returns="tuple[float, int]",
+        )
+        is not None
+    )
+    assert (
+        _value_refusal(
+            tuple_body,
+            message,
+            line=3,
+            returns="tuple[float, int]",
+            caller_returns="tuple[float | None, int]",
+        )
+        is None
+    )
+
+
+def test_declared_value_getter_requires_exact_original_generated_arguments_and_binding() -> None:
+    body = "if predicate():\n    return 1.0\nreturn result()"
+    for original in (
+        "helper(lambda: task.total is None, lambda value=task.total: value, fallback)",
+        "helper(lambda: task.total is None, lambda unused: task.total, fallback)",
+        "helper(lambda: task.total is None, other, fallback)",
+        "helper(lambda: task.total is None, lambda: convert(task.total), fallback)",
+        "helper(lambda: task.total is None, lambda: task.other, fallback)",
+    ):
+        assert _value_refusal(body, _VALUE_RETURN, original=original) is None
+    for body in (
+        "result = other\nreturn result()",
+        "if condition:\n    result = other\nreturn result()",
+        "del result\nreturn result()",
+        "return result(1)",
+        "return result(unused=0)",
+        "return result.__call__()",
+        "return unknown()",
+    ):
+        assert _value_refusal(body, _VALUE_RETURN) is None, body
+    assert (
+        _value_refusal(
+            "def result():\n    return other()\nreturn result()",
+            _VALUE_RETURN,
+            original_body="def result():\n    return other()\nreturn task.total",
+        )
+        is None
+    )
+    assert (
+        _value_refusal("return result()", _VALUE_RETURN, original_body="return unknown()") is None
+    )
+    assert (
+        _value_refusal(
+            "return result()",
+            _VALUE_RETURN,
+            original_body="if condition:\n    return unknown()\nreturn 1.0",
+        )
+        is None
+    )
+
+
+def test_nullable_declared_value_aliases_still_require_nearest_unchanged_bindings() -> None:
+    body = "if predicate():\n    return 1.0\nvalue = result()\nother = value\nreturn other"
+    assert _value_refusal(body, _VALUE_RETURN) is not None
+    assert _value_refusal(body, _VALUE_RETURN, caller_returns="float | None") is None
+    for intervening in ("value = unknown", "if condition:\n    value = unknown", "del value"):
+        changed = body.replace("other = value", intervening + "\nother = value")
+        assert _value_refusal(changed, _VALUE_RETURN) is None, changed
+
+
+def test_original_nested_assignment_obligation_uses_its_local_declaration() -> None:
+    body = "if predicate():\n    value: float = result()\nelse:\n    value = fallback\nreturn consume(value)"
+    for parent_return in (None, "float | None", "object", "Any", "Alias"):
+        assert (
+            _value_refusal(body, _VALUE_ASSIGNMENT, line=3, caller_returns=parent_return)
+            is not None
+        )
+    for original in (
+        "if task.total is not None:\n    value: float | None = task.total\nreturn consume(value)",
+        "if task.total is not None:\n    value: object = task.total\nreturn consume(value)",
+        "if task.total is not None:\n    value: float = task.other\nreturn consume(value)",
+        "def nested():\n    value: float = task.total\nreturn consume(value)",
+        "class Nested:\n    value: float = task.total\nreturn consume(value)",
+    ):
+        assert (
+            _value_refusal(body, _VALUE_ASSIGNMENT, line=3, original_body=original) is None
+        ), original
+
+
+def test_original_assignment_projects_the_exact_fixed_tuple_component() -> None:
+    body = "value: tuple[float, int] = (result() if predicate() else fallback, 1)\nreturn consume(value)"
+    diagnostic = (
+        'Incompatible types in assignment (expression has type "tuple[float | None, int]", '
+        'variable has type "tuple[float, int]")'
+    )
+    assert _value_refusal(body, diagnostic, line=2, caller_returns="object") is not None
+    alias = "part = task.total if task.total is not None else fallback\npair = part, 1\nvalue: tuple[float, int] = pair\nreturn consume(value)"
+    assert _value_refusal(body, diagnostic, line=2, original_body=alias) is not None
+    for original in (
+        alias.replace("pair = part, 1", "pair = 1, part"),
+        alias.replace("tuple[float, int]", "tuple[float | None, int]"),
+        alias.replace("pair = part, 1", "pair = convert(part), 1"),
+        alias.replace("value: tuple[float, int] = pair", "value: tuple[float, int] = other"),
+        alias.replace(
+            "value: tuple[float, int] = pair", "pair = unknown\nvalue: tuple[float, int] = pair"
+        ),
+        alias.replace(
+            "value: tuple[float, int] = pair", "del pair\nvalue: tuple[float, int] = pair"
+        ),
+        alias.replace(
+            "value: tuple[float, int] = pair",
+            "if condition:\n    pair = unknown\nvalue: tuple[float, int] = pair",
+        ),
+    ):
+        assert _value_refusal(body, diagnostic, line=2, original_body=original) is None, original
+
+
+def test_original_assignment_alias_requires_the_nearest_unchanged_binding() -> None:
+    body = "value: float = result()\nreturn consume(value)"
+    alias = "part = task.total\nvalue: float = part\nreturn consume(value)"
+    assert _value_refusal(body, _VALUE_ASSIGNMENT, line=2, original_body=alias) is not None
+    for change in ("part = unknown", "del part", "if condition:\n    part = unknown"):
+        original = alias.replace("value: float = part", change + "\nvalue: float = part")
+        assert _value_refusal(body, _VALUE_ASSIGNMENT, line=2, original_body=original) is None
