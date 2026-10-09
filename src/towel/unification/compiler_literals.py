@@ -20,6 +20,8 @@ into a common helper can merge or split ordinary ``is`` correlations.
 from __future__ import annotations
 
 import ast
+from contextlib import contextmanager
+from contextvars import ContextVar
 import math
 import sys
 from typing import FrozenSet, Iterator, Optional, Sequence, Tuple
@@ -28,6 +30,30 @@ from weakref import WeakKeyDictionary
 from .statement_facts import memoized_per_node
 from .ast_paths import Path, path_map
 from .substitution import structural_text
+
+
+class _LiteralSourceFacts:
+    """Weak owners and immutable answers, held only by this analysis context."""
+
+    def __init__(self) -> None:
+        self.unstable: "WeakKeyDictionary[ast.AST, bool]" = WeakKeyDictionary()
+        self.byte_values: "WeakKeyDictionary[ast.AST, FrozenSet[int]]" = WeakKeyDictionary()
+
+
+_SOURCE_FACTS: ContextVar[Optional[_LiteralSourceFacts]] = ContextVar(
+    "compiler_literal_source_facts", default=None
+)
+
+
+@contextmanager
+def sharing_compiler_literal_facts() -> Iterator[None]:
+    """Summaries apply only while the engine analyzes its read-only source trees."""
+    token = _SOURCE_FACTS.set(_LiteralSourceFacts())
+    try:
+        yield
+    finally:
+        _SOURCE_FACTS.reset(token)
+
 
 _LITERAL_INPUT: "WeakKeyDictionary[ast.AST, bool]" = WeakKeyDictionary()
 
@@ -321,7 +347,20 @@ def unstable_literal_pool(block: Sequence[ast.AST]) -> bool:
     Preserve each original compiler site until its object correlations can
     be certified. Ordinary dynamic float('nan') calls are unaffected.
     """
-    for node in _runtime_nodes(block):
+    facts = _SOURCE_FACTS.get()
+    return any(
+        (
+            memoized_per_node(facts.unstable, statement, _unstable_literal_statement)
+            if facts is not None
+            else _unstable_literal_statement(statement)
+        )
+        for statement in block
+    )
+
+
+def _unstable_literal_statement(statement: ast.AST) -> bool:
+    """Read-only source fact; its immutable answer never retains the statement."""
+    for node in _runtime_nodes((statement,)):
         if isinstance(node, ast.Constant):
             value = node.value
             if type(value) is float and math.isnan(value):
@@ -365,6 +404,15 @@ def _unsafe_byte_values(module: ast.AST) -> FrozenSet[int]:
     )
 
 
+def _runtime_byte_values(statement: ast.AST) -> FrozenSet[int]:
+    """Runtime byte atoms, with original local/class annotation execution rules."""
+    return frozenset(
+        node.value[0]
+        for node in _runtime_nodes((statement,))
+        if isinstance(node, ast.Constant) and type(node.value) is bytes and len(node.value) == 1
+    )
+
+
 def unsafe_byte_literal_moves(block: Sequence[ast.AST], module: Optional[ast.Module]) -> bool:
     """Whether rendering moved atoms can normalize an original nonglobal byte.
 
@@ -372,10 +420,16 @@ def unsafe_byte_literal_moves(block: Sequence[ast.AST], module: Optional[ast.Mod
     module; equal structural text from another parsed module is not authority.
     Unknown original compiler contexts remain conservative.
     """
-    values: FrozenSet[int] = frozenset(
-        node.value[0]
-        for node in _runtime_nodes(block)
-        if isinstance(node, ast.Constant) and type(node.value) is bytes and len(node.value) == 1
+    facts = _SOURCE_FACTS.get()
+    values: FrozenSet[int] = frozenset().union(
+        *(
+            (
+                memoized_per_node(facts.byte_values, statement, _runtime_byte_values)
+                if facts is not None
+                else _runtime_byte_values(statement)
+            )
+            for statement in block
+        )
     )
     if not values:
         return False

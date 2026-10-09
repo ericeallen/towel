@@ -18,9 +18,13 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-from typing import FrozenSet, Literal, Optional, Sequence, Set, Tuple, Union
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import FrozenSet, Iterator, Literal, Optional, Sequence, Set, Tuple, Union
 
 from ..canonical_ast import exact_dump
+from ..analysis_sources import ParserConfiguration, parser_configuration, parsing_is_pure
+from .bounded_cache import BoundedCache, memoizing
 from .assignment_analyzer import own_scope_bindings
 from .ast_paths import Path, path_map, resolve_path
 from .definite_assignment import definitely_bound_after
@@ -77,6 +81,11 @@ def _source_corresponds(module: ast.Module, source: str) -> bool:
         return False
     try:
         actual = exact_dump(module)
+        cache = _cache_for(source)
+        if cache is not None:
+            original = cache.original(source)
+            if original is not None:
+                return any(actual == variant.spelling for variant in original.variants)
         return any(
             actual == exact_dump(ast.parse(source, type_comments=comments))
             for comments in (False, True)
@@ -108,6 +117,8 @@ def _selected_node_ids(nodes: Sequence[ast.stmt]) -> Optional[FrozenSet[int]]:
         if isinstance(node, forbidden):
             return None
         if isinstance(node, markers):
+            if tuple(ast.iter_child_nodes(node)):
+                return None
             continue
         if id(node) in seen:
             return None
@@ -207,25 +218,204 @@ def _fresh_flow(
     return possible
 
 
-def certify_if_binding_transfer(
+@dataclass(frozen=True)
+class _LocalTransfer:
+    location: Tuple[Tuple[IfSuiteStep, ...], SuiteField, int]
+    initialized_names: FrozenSet[str]
+    normal_exit_bound: FrozenSet[str]
+
+
+@dataclass(frozen=True)
+class _ParsedVariant:
+    # Private source syntax. Neither this value nor its tree is returned to callers.
+    tree: ast.Module
+    spelling: str
+    functions: Tuple[Tuple[Tuple[int, int], Path], ...]
+
+
+@dataclass(frozen=True)
+class _OriginalSource:
+    token: int
+    variants: Tuple[_ParsedVariant, ...]
+    retained_bytes: int
+
+
+@dataclass(frozen=True)
+class _OriginalLocal:
+    facts: Optional[Tuple[Path, _LocalTransfer]]
+    compatible: bool
+
+
+_Location = Tuple[Tuple[IfSuiteStep, ...], SuiteField, int]
+_LocalKey = Tuple[int, IfTransferSite, Tuple[str, ...], _Location]
+
+
+class _SourceCache:
+    """Only private parsed source and frozen facts, owned by one analyze_files context."""
+
+    def __init__(self, entries: int, source_bytes: int, local_entries: int) -> None:
+        self.maximum_source_bytes = source_bytes
+        self.enabled = entries > 0 and source_bytes > 0 and local_entries > 0
+        self.serial = 0
+        self.sources: BoundedCache[Tuple[str, ParserConfiguration], _OriginalSource] = BoundedCache(
+            entries, weight=lambda item: item.retained_bytes, weight_limit=source_bytes
+        )
+        self.locals: BoundedCache[_LocalKey, _OriginalLocal] = BoundedCache(local_entries)
+
+    def known(self, source: str) -> Optional[_OriginalSource]:
+        return self.sources.get((source, parser_configuration()))
+
+    def original(self, source: str) -> Optional[_OriginalSource]:
+        key = (source, parser_configuration())
+        known = self.sources.get(key)
+        if known is not None:
+            return known
+        variants: list[_ParsedVariant] = []
+        for comments in (False, True):
+            try:
+                tree = ast.parse(source, type_comments=comments)
+                spelling = exact_dump(tree)
+            except (SyntaxError, ValueError, RecursionError):
+                # False failing never reaches True in the baseline proof.
+                if not comments:
+                    break
+                continue
+            if any(variant.spelling == spelling for variant in variants):
+                continue
+            functions = tuple(
+                ((node.lineno, node.col_offset), path)
+                for node, path in path_map(tree.body).items()
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
+            variants.append(_ParsedVariant(tree, spelling, functions))
+        self.serial += 1
+        size = len(source.encode("utf-8", errors="surrogatepass")) + sum(
+            len(variant.spelling.encode("utf-8", errors="surrogatepass")) for variant in variants
+        )
+        original = _OriginalSource(self.serial, tuple(variants), size)
+        # The existing cache keeps a single oversized value; this analysis must not.
+        if size > self.maximum_source_bytes:
+            return None
+        self.sources[key] = original
+        return original
+
+    def local(
+        self,
+        original: _OriginalSource,
+        source: str,
+        site: IfTransferSite,
+        outputs: Tuple[str, ...],
+        location: _Location,
+    ) -> _OriginalLocal:
+        key = (original.token, site, outputs, location)
+        if key in self.locals:
+            return self.locals[key]
+        answers: list[Optional[Tuple[Path, _LocalTransfer]]] = []
+        for variant in original.variants:
+            paths = [
+                path for position, path in variant.functions if position == site.function_position
+            ]
+            answer: Optional[Tuple[Path, _LocalTransfer]] = None
+            if len(paths) == 1:
+                function = resolve_path(variant.tree.body, paths[0])
+                if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    nodes = _selected_suite(function, location, site.block_position[2])
+                    if (
+                        nodes is not None
+                        and nodes
+                        and (nodes[0].lineno, nodes[0].col_offset, len(nodes))
+                        == site.block_position
+                    ):
+                        facts = _local_transfer(source, function, nodes, site, outputs)
+                        if facts is not None:
+                            answer = (paths[0], facts)
+            answers.append(answer)
+        result = _OriginalLocal(
+            answers[0] if answers else None,
+            bool(answers) and all(answer == answers[0] for answer in answers),
+        )
+        self.locals[key] = result
+        return result
+
+
+_SOURCE_CACHE: ContextVar[Optional[_SourceCache]] = ContextVar("if_transfer_sources", default=None)
+
+
+@contextmanager
+def sharing_if_transfer_sources(
+    *, entries: int = 64, source_bytes: int = 8 * 1024 * 1024, local_entries: int = 2048
+) -> Iterator[None]:
+    """Bound private source facts to this analysis; nested scopes restore their parent."""
+    if min(entries, source_bytes, local_entries) < 0:
+        raise ValueError("Source certificate cache limits must be nonnegative")
+    cache = _SourceCache(entries, source_bytes, local_entries)
+    token = _SOURCE_CACHE.set(cache)
+    try:
+        yield
+    finally:
+        _SOURCE_CACHE.reset(token)
+        cache.sources.clear()
+        cache.locals.clear()
+
+
+def _cache_for(source: str) -> Optional[_SourceCache]:
+    cache = _SOURCE_CACHE.get()
+    return (
+        cache
+        if (
+            cache is not None
+            and cache.enabled
+            and memoizing()
+            and len(source.encode("utf-8", errors="surrogatepass")) <= cache.maximum_source_bytes
+            and parsing_is_pure(source)
+        )
+        else None
+    )
+
+
+def _selected_suite(
+    function: FunctionNode, location: _Location, count: int
+) -> Optional[Sequence[ast.stmt]]:
+    path, field, start = location
+    owner: Union[FunctionNode, ast.If] = function
+    try:
+        for step_field, index in path:
+            suite = (
+                owner.body
+                if step_field == "body"
+                else owner.orelse if isinstance(owner, ast.If) else ()
+            )
+            statement = suite[index]
+            if not isinstance(statement, ast.If):
+                return None
+            owner = statement
+        if not isinstance(owner, ast.If):
+            return None
+        suite = owner.body if field == "body" else owner.orelse
+        selected = suite[start : start + count]
+        return selected if len(selected) == count else None
+    except (AttributeError, IndexError, TypeError):
+        return None
+
+
+def _local_transfer(
     source: str,
-    module: ast.Module,
     function: FunctionNode,
     nodes: Sequence[ast.stmt],
     site: IfTransferSite,
     returned_names: Tuple[str, ...],
-) -> Optional[IfBindingTransfer]:
+) -> Optional[_LocalTransfer]:
     """Local facts only refuse early; every admission still reproves exact original source."""
     if not nodes:
         return None
     try:
-        if not _unique_tree(function):
-            return None
         location = _suite_location(function.body, nodes)
         if location is None:
             return None
         selected = _selected_node_ids(nodes)
         if selected is None:
+            return None
+        if not _unique_tree(function):
             return None
         if (
             site.module_digest != source_digest_of(source)
@@ -272,23 +462,108 @@ def certify_if_binding_transfer(
             return None
     except (AttributeError, TypeError, ValueError, RecursionError):
         return None
-    if not _source_corresponds(module, source):
-        return None
-    function_path = path_map(module.body).get(function)
-    if function_path is None:
-        return None
-    path, field, index = location
+    return _LocalTransfer(location, names, frozenset(exit_bound))
+
+
+def _certificate(
+    local: _LocalTransfer,
+    function_path: Path,
+    site: IfTransferSite,
+    count: int,
+    outputs: Tuple[str, ...],
+) -> IfBindingTransfer:
+    path, field, index = local.location
     return IfBindingTransfer(
         site,
         function_path,
         path,
         field,
         index,
-        len(nodes),
-        names,
-        frozenset(exit_bound),
-        returned_names,
+        count,
+        local.initialized_names,
+        local.normal_exit_bound,
+        outputs,
     )
+
+
+def _certify_uncached(
+    source: str,
+    module: ast.Module,
+    function: FunctionNode,
+    nodes: Sequence[ast.stmt],
+    site: IfTransferSite,
+    returned_names: Tuple[str, ...],
+) -> Optional[IfBindingTransfer]:
+    local = _local_transfer(source, function, nodes, site, returned_names)
+    if local is None or not _source_corresponds(module, source):
+        return None
+    function_path = path_map(module.body).get(function)
+    return (
+        None
+        if function_path is None
+        else _certificate(local, function_path, site, len(nodes), returned_names)
+    )
+
+
+def certify_if_binding_transfer(
+    source: str,
+    module: ast.Module,
+    function: FunctionNode,
+    nodes: Sequence[ast.stmt],
+    site: IfTransferSite,
+    returned_names: Tuple[str, ...],
+) -> Optional[IfBindingTransfer]:
+    """Original-source facts never replace fresh mutable-tree correspondence and identity."""
+    cache = _cache_for(source)
+    if cache is None:
+        return _certify_uncached(source, module, function, nodes, site, returned_names)
+    if not nodes:
+        return None
+    try:
+        location = _suite_location(function.body, nodes)
+        if location is None or _selected_node_ids(nodes) is None:
+            return None
+        if (
+            site.function_position != (function.lineno, function.col_offset)
+            or (nodes[0].lineno, nodes[0].col_offset, len(nodes)) != site.block_position
+        ):
+            return None
+        # A cold source must retain the existing zero-whole-module local refusal budget.
+        # This current-tree refusal is never placed in the original-source memo.
+        arguments: object = getattr(function, "args", None)
+        if not isinstance(arguments, ast.arguments):
+            return None
+        tuple(parameter_names(arguments))
+        original = cache.known(source)
+        if original is None:
+            if _local_transfer(source, function, nodes, site, returned_names) is None:
+                return None
+            original = cache.original(source)
+        if original is None:
+            token = _SOURCE_CACHE.set(None)
+            try:
+                return _certify_uncached(source, module, function, nodes, site, returned_names)
+            finally:
+                _SOURCE_CACHE.reset(token)
+        local = cache.local(original, source, site, returned_names, location)
+    except (AttributeError, TypeError, ValueError, RecursionError):
+        return None
+    if not local.compatible:
+        return _certify_uncached(source, module, function, nodes, site, returned_names)
+    if local.facts is None:
+        return None
+    function_path, facts = local.facts
+    if not _source_corresponds(module, source):
+        return None
+    try:
+        if resolve_path(module.body, function_path) is not function:
+            return None
+        selected = _selected_suite(function, facts.location, len(nodes))
+        if selected is None or any(a is not b for a, b in zip(selected, nodes)):
+            return None
+    except (AttributeError, IndexError, TypeError):
+        return None
+    return _certificate(facts, function_path, site, len(nodes), returned_names)
 
 
 def verify_if_binding_transfer(

@@ -89,6 +89,8 @@ from .block_signature import (
     signature_bucket_key,
 )
 from ..coverage_config import CoverageExclusion
+from .if_binding_transfer import sharing_if_transfer_sources
+from .compiler_literals import sharing_compiler_literal_facts
 from .models import (
     CodeBlockPair,
     FunctionArtifact,
@@ -717,7 +719,11 @@ class UnificationRefactorEngine(ParallelEvaluation):
             changed_files: When given, only pairs with a function in one of
                 these files are considered (see ``incremental_global_passes``).
         """
-        with sharing_analysis_sources(check_ast_immutable=self._settings.check_ast_immutable):
+        with (
+            sharing_analysis_sources(check_ast_immutable=self._settings.check_ast_immutable),
+            sharing_if_transfer_sources(),
+            sharing_compiler_literal_facts(),
+        ):
             return self._analyze_files(
                 file_paths,
                 progress=progress,

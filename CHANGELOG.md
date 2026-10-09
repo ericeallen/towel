@@ -9,6 +9,14 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Reuse IF binding and flow facts from private original-source syntax within
+  one bounded analysis context. Keep every accepted current-module comparison,
+  function identity and selected-suite ownership check fresh; preserve native
+  warning behavior and the uncached path when memoization is disabled.
+- Reuse immutable instability and runtime byte-value facts per original source
+  statement during analysis. Release the summaries with that context, recompute
+  direct library calls and keep generated-helper literal checks fresh.
+
 - Reject impossible IF binding transfers from local syntax, binding and flow
   facts before parsing, comparing or mapping the whole module. Keep graph
   checks cycle-safe and require fresh exact module identity and ownership

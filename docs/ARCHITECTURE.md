@@ -1388,6 +1388,30 @@ reference behavior.
 
 ## Performance architecture
 
+An analysis also owns the IF-transfer source facts and compiler-literal summaries.
+The IF memo holds private syntax freshly parsed from original source, exact
+spellings and frozen local facts; it never borrows a caller's mutable tree. Its
+64 source entries retain at most 8 MiB of source and exact spelling bytes (the
+budget does not measure AST heap size), and its 2,048 local entries contain only
+paths, coordinates, names and binding facts. Parser limits are part of each
+source key. A cold locally ineligible candidate does not initialize source
+planning, and a current-tree refusal is never cached. Warning-capable source,
+oversized source, zero budgets and disabled memoization retain the native path.
+Every acceptance still freshly checks current-module uniqueness and exact source
+correspondence, resolves the actual function by identity, and checks the selected
+suite's node identities. Nested analysis scopes restore their parent, and exit
+releases the private syntax and local facts.
+
+Compiler-literal summaries hold weak statement owners and immutable boolean or
+integer-set answers. The engine's original statement trees remain read-only;
+unstable-pool results combine by disjunction and runtime byte values by union,
+retaining the existing local-versus-class annotation execution rules. These new
+summaries last only for the analysis context. Direct library calls recompute
+outside it, and `memoization_disabled` forces recomputation inside it. The final
+byte-provenance and interpreter checks, and literal checks on generated helpers,
+still run afresh.
+
+
 Analysis and verification are separate cost centres, and on an annotated
 project the second dominates. What keeps it bounded is described under *Helper
 annotations* and summarised here: both checkers are kept warm for the run, so
