@@ -272,6 +272,21 @@ def _write_project(root: Path, fixture: Fixture) -> Path:
     return path
 
 
+def _cli_bootstrap(runtime: Path, telemetry: Path) -> str:
+    """Observe production checker selection, then disable the profile before analysis."""
+    return (
+        "import runpy,sys\nfrom pathlib import Path\n"
+        f"sys.path.insert(0,{str(runtime)!r})\n"
+        "sys.argv=['towel',*sys.argv[1:]]\n"
+        "def record_checker(frame,event,result):\n"
+        "    if event == 'return' and frame.f_code.co_name == 'type_oracle_for_project':\n"
+        f"        Path({str(telemetry)!r}).write_text(type(result.tool).__name__)\n"
+        "        sys.setprofile(None)\n"
+        "sys.setprofile(record_checker)\n"
+        "runpy.run_module('towel.cli',run_name='__main__')\n"
+    )
+
+
 def _observe(program: Path, observer: Path, fixture: Fixture) -> tuple[int, str, str]:
     result = subprocess.run(
         [sys.executable, "-B", str(observer), str(program), fixture.input_kind],
@@ -371,12 +386,7 @@ def test_optional_converter_cli_preserves_callbacks_errors_and_finalizers(
     original = _write_project(tmp_path / "source", fixture)
     output = tmp_path / "output"
     runtime = Path(towel.__file__).resolve().parents[1]
-    bootstrap = (
-        "import runpy,sys;"
-        f"sys.path.insert(0,{str(runtime)!r});"
-        "sys.argv=['towel',*sys.argv[1:]];"
-        "runpy.run_module('towel.cli',run_name='__main__')"
-    )
+    bootstrap = _cli_bootstrap(runtime, tmp_path / "cli-oracle.txt")
     completed = subprocess.run(
         [
             sys.executable,
@@ -412,7 +422,7 @@ def test_optional_converter_cli_preserves_callbacks_errors_and_finalizers(
     assert helper.returns is not None and "_TowelT" in ast.unparse(helper.returns)
     checker = CountingMypy()
     try:
-        assert checker.check_project({str(transformed): written}) == CheckSuccess()
+        assert checker.check_project({str(original): written}) == CheckSuccess()
     finally:
         checker.close()
     observer = tmp_path / "observe.py"
@@ -422,7 +432,7 @@ def test_optional_converter_cli_preserves_callbacks_errors_and_finalizers(
     assert _observe(transformed, observer, fixture) == before
 
 
-REFINEMENT_FIXTURES = (
+REFINEMENT_FIXTURES: tuple[Fixture, ...] = (
     Fixture(
         "rich-getter",
         """class Task:
@@ -478,6 +488,179 @@ def describe_done(task: Task, fallback: int) -> int:
 )
 
 
+KEYWORD_AND_OPERATOR_FIXTURES: tuple[Fixture, ...] = (
+    Fixture(
+        "keyword-consumer",
+        """def consume(*, value: float) -> int:
+    return int(value)
+
+
+class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: int) -> int:
+    value = consume(value=task.total) if task.total is not None else completed
+    return value + 1
+
+
+def describe_done(task: Task, fallback: int) -> int:
+    value = consume(value=task.completed) if task.finished else fallback
+    return value + 1
+""",
+    ),
+    Fixture(
+        "division",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float:
+    value = task.total / 2 if task.total is not None else completed
+    return value + 1
+
+
+def describe_done(task: Task, fallback: float) -> float:
+    value = task.completed / 2 if task.finished else fallback
+    return value + 1
+""",
+    ),
+)
+REFINEMENT_FIXTURES += KEYWORD_AND_OPERATOR_FIXTURES
+
+OPTIONAL_KEYWORD = Fixture(
+    "optional-keyword",
+    """def consume(*, value: float | None) -> int:
+    return 0 if value is None else int(value)
+
+
+class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: int) -> int:
+    value = consume(value=task.total) if task.total is not None else completed
+    return value + 1
+
+
+def describe_done(task: Task, fallback: int) -> int:
+    value = consume(value=task.completed) if task.finished else fallback
+    return value + 1
+""",
+)
+
+
+ADJACENT_FIXTURES = (
+    Fixture(
+        "unary-minus",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float:
+    value = -task.total if task.total is not None else completed
+    return value + 1
+
+
+def describe_done(task: Task, fallback: float) -> float:
+    value = -task.completed if task.finished else fallback
+    return value + 1
+""",
+    ),
+    Fixture(
+        "builtin-abs",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: float) -> float:
+    value = abs(task.total) if task.total is not None else completed
+    return value + 1
+
+
+def describe_done(task: Task, fallback: float) -> float:
+    value = abs(task.completed) if task.finished else fallback
+    return value + 1
+""",
+    ),
+    Fixture(
+        "comparison",
+        """class Task:
+    def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: bool) -> bool:
+    value = task.total >= 2 if task.total is not None else completed
+    return not value
+
+
+def describe_done(task: Task, fallback: bool) -> bool:
+    value = task.completed >= 2 if task.finished else fallback
+    return not value
+""",
+    ),
+    Fixture(
+        "tuple-subscript",
+        """class Task:
+    def __init__(
+        self, total: tuple[int, int] | None, completed: tuple[int, int], finished: bool
+    ) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: int) -> int:
+    value = task.total[0] if task.total is not None else completed
+    return value + 1
+
+
+def describe_done(task: Task, fallback: int) -> int:
+    value = task.completed[0] if task.finished else fallback
+    return value + 1
+""",
+    ),
+    Fixture(
+        "str-method",
+        """class Task:
+    def __init__(self, total: str | None, completed: str, finished: bool) -> None:
+        self.total = total
+        self.completed = completed
+        self.finished = finished
+
+
+def describe_total(task: Task, completed: str) -> str:
+    value = task.total.upper() if task.total is not None else completed
+    return value + "!"
+
+
+def describe_done(task: Task, fallback: str) -> str:
+    value = task.completed.upper() if task.finished else fallback
+    return value + "!"
+""",
+    ),
+)
+KEYWORD_AND_OPERATOR_FIXTURES += ADJACENT_FIXTURES
+
+
 class CountingPyright(PyrightOracle):
     """Retain prospective sources so a refusal cannot conceal an Any rung."""
 
@@ -506,7 +689,7 @@ class CountingPyright(PyrightOracle):
     ],
 )
 def test_both_checkers_refuse_required_nullable_refinement_before_any(
-    tmp_path: Path, fixture: Fixture, backend: str
+    tmp_path: Path, fixture: Fixture, backend: Literal["mypy", "pyright"]
 ) -> None:
     path = _write_project(tmp_path / "source", fixture)
     if backend == "pyright":
@@ -537,6 +720,262 @@ def test_both_checkers_refuse_required_nullable_refinement_before_any(
         ]
         assert len(helpers) == (1 if backend == "mypy" else 2)
         assert all("Any" not in source for source in helpers)
+    finally:
+        checker.close()
+    assert path.read_text() == fixture.source
+
+
+TASK_OBSERVER = """import gc
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location("subject", sys.argv[1])
+subject = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(subject)
+EVENTS = []
+NEXT = 0
+MODE = ""
+
+
+class Number(float):
+    def __new__(cls, value):
+        global NEXT
+        result = super().__new__(cls, value)
+        result.serial = NEXT
+        NEXT += 1
+        EVENTS.append(("new-number", result.serial, value))
+        return result
+
+    def __int__(self):
+        EVENTS.append(("convert", self.serial))
+        if MODE == "conversion-error":
+            raise ArithmeticError("convert")
+        return super().__int__()
+
+    def __del__(self):
+        EVENTS.append(("drop-number", self.serial))
+
+
+class Task(subject.Task):
+    def __init__(self, total, completed, finished):
+        super().__init__(total, completed, finished)
+        self.reads = 0
+        EVENTS.append(("new-task",))
+
+    def __getattribute__(self, name):
+        if name in ("total", "completed", "finished"):
+            EVENTS.append(("read", name))
+            if MODE == "attribute-error":
+                raise ArithmeticError("read:" + name)
+            if name == "total":
+                self.reads += 1
+                if MODE == "changed-total" and self.reads > 1:
+                    return None
+        return super().__getattribute__(name)
+
+    def __del__(self):
+        EVENTS.append(("drop-task",))
+
+
+for MODE in ("ok", "attribute-error", "conversion-error", "changed-total"):
+    for absent in (False, True):
+        for finished in (False, True):
+            for name in ("describe_total", "describe_done"):
+                EVENTS.clear()
+                NEXT = 0
+                try:
+                    result = getattr(subject, name)(
+                        Task(None if absent else Number(3.5), Number(5.5), finished), 7
+                    )
+                    EVENTS.append(("answer", type(result).__name__, repr(result)))
+                    del result
+                except Exception as error:
+                    EVENTS.append(("exception", type(error).__name__, str(error)))
+                gc.collect()
+                print(json.dumps([MODE, absent, finished, name, EVENTS]))
+"""
+
+
+@pytest.mark.parametrize("backend", ["mypy", "pyright"])
+@pytest.mark.parametrize("fixture", KEYWORD_AND_OPERATOR_FIXTURES, ids=lambda fixture: fixture.name)
+def test_cli_preserves_required_nullable_refinement_without_erasing_types(
+    tmp_path: Path, fixture: Fixture, backend: Literal["mypy", "pyright"]
+) -> None:
+    if backend == "pyright" and importlib.util.find_spec("pyright") is None:
+        pytest.skip("pyright absent")
+    original = _write_project(tmp_path / "source", fixture)
+    if backend == "pyright":
+        (original.parent / "pyproject.toml").write_text(
+            '[tool.pyright]\ntypeCheckingMode="strict"\nstrict=[]\n'
+        )
+    checker = CountingMypy() if backend == "mypy" else CountingPyright()
+    try:
+        assert checker.check_project({str(original): fixture.source}) == CheckSuccess()
+    finally:
+        checker.close()
+    output = tmp_path / "output"
+    runtime = Path(towel.__file__).resolve().parents[1]
+    bootstrap = _cli_bootstrap(runtime, tmp_path / "cli-oracle.txt")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-c",
+            bootstrap,
+            "dry",
+            str(original.parent),
+            str(output),
+            "--no-interactive",
+            "--no-format",
+            "--min-lines",
+            "2",
+            "--progress",
+            "none",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    (tmp_path / "cli.log").write_text(completed.stdout + completed.stderr)
+    assert (tmp_path / "cli-oracle.txt").read_text() == (
+        "MypyInferrer" if backend == "mypy" else "PyrightOracle"
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert (output / "subject.py").read_text() == fixture.source
+    assert original.read_text() == fixture.source
+
+
+@pytest.mark.parametrize("backend", ["mypy", "pyright"])
+@pytest.mark.parametrize("interface", ["api", "cli"])
+def test_optional_aware_keyword_consumer_stays_precise_and_preserves_owned_effects(
+    tmp_path: Path, backend: Literal["mypy", "pyright"], interface: Literal["api", "cli"]
+) -> None:
+    if backend == "pyright" and importlib.util.find_spec("pyright") is None:
+        pytest.skip("pyright absent")
+    fixture = OPTIONAL_KEYWORD
+    original = _write_project(tmp_path / "source", fixture)
+    if backend == "pyright":
+        (original.parent / "pyproject.toml").write_text(
+            '[tool.pyright]\ntypeCheckingMode="strict"\nstrict=[]\n'
+        )
+    checker = CountingMypy() if backend == "mypy" else CountingPyright()
+    try:
+        assert checker.check_project({str(original): fixture.source}) == CheckSuccess()
+        if interface == "api":
+            engine = UnificationRefactorEngine(
+                min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            )
+            proposals = [
+                p
+                for p in engine.analyze_file(str(original))
+                if "describe_total and describe_done" in p.description
+            ]
+            assert len(proposals) == 1
+            written = engine.apply_refactoring(str(original), proposals[0])
+            transformed = tmp_path / "after.py"
+            transformed.write_text(written)
+        else:
+            output = tmp_path / "output"
+            runtime = Path(towel.__file__).resolve().parents[1]
+            bootstrap = _cli_bootstrap(runtime, tmp_path / "cli-oracle.txt")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    "-c",
+                    bootstrap,
+                    "dry",
+                    str(original.parent),
+                    str(output),
+                    "--no-interactive",
+                    "--no-format",
+                    "--min-lines",
+                    "2",
+                    "--progress",
+                    "none",
+                ],
+                cwd=tmp_path,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            (tmp_path / "cli.log").write_text(completed.stdout + completed.stderr)
+            assert (tmp_path / "cli-oracle.txt").read_text() == (
+                "MypyInferrer" if backend == "mypy" else "PyrightOracle"
+            )
+            assert completed.returncode == 0, completed.stdout + completed.stderr
+            transformed = output / "subject.py"
+            written = transformed.read_text()
+        assert checker.check_project({str(original): written}) == CheckSuccess()
+    finally:
+        checker.close()
+    assert written != fixture.source
+    assert original.read_text() == fixture.source
+    helper = next(
+        node
+        for node in ast.parse(written).body
+        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+    )
+    assert "Any" not in ast.unparse(helper)
+    assert helper.returns is not None and "int" in ast.unparse(helper.returns)
+    assert all(
+        argument.annotation is not None
+        for argument in [*helper.args.posonlyargs, *helper.args.args]
+    )
+    observer = tmp_path / "observe.py"
+    observer.write_text(TASK_OBSERVER)
+    before = _observe(original, observer, fixture)
+    after = _observe(transformed, observer, fixture)
+    (tmp_path / "before-observations.jsonl").write_text(before[1])
+    (tmp_path / "after-observations.jsonl").write_text(after[1])
+    assert len(before[1].splitlines()) == 32
+    assert after == before
+
+
+@pytest.mark.parametrize("backend", ["mypy", "pyright"])
+@pytest.mark.parametrize("fixture", ADJACENT_FIXTURES, ids=lambda fixture: fixture.name)
+def test_nullable_consumption_refusal_cannot_fall_through_to_an_accepted_any(
+    tmp_path: Path, fixture: Fixture, backend: Literal["mypy", "pyright"]
+) -> None:
+    if backend == "pyright" and importlib.util.find_spec("pyright") is None:
+        pytest.skip("pyright absent")
+    path = _write_project(tmp_path / "source", fixture)
+    if backend == "pyright":
+        (path.parent / "pyproject.toml").write_text(
+            '[tool.pyright]\ntypeCheckingMode="strict"\nstrict=[]\n'
+        )
+    checker = CountingMypy() if backend == "mypy" else CountingPyright()
+    try:
+        assert checker.check_project({str(path): fixture.source}) == CheckSuccess()
+        engine = UnificationRefactorEngine(
+            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+        )
+        proposals = [
+            p
+            for p in engine.analyze_file(str(path))
+            if "describe_total and describe_done" in p.description
+        ]
+        assert len(proposals) == 1
+        if backend == "pyright" or fixture.name in ("builtin-abs", "comparison"):
+            with pytest.raises(UntypeableExtraction) as refused:
+                engine.apply_refactoring(str(path), proposals[0])
+            assert refused.value.reason is Untypeable.NARROWING_READ_IN_THUNK
+            helpers = [
+                source
+                for sources in checker.checked
+                for source in sources.values()
+                if "def __extracted_func_" in source
+            ]
+            assert helpers and all("Any" not in source for source in helpers)
+        else:
+            # These mypy cases were already refused by the complete signature ladder.
+            # A precise refinement proof may refuse earlier; accepted Any is forbidden.
+            with pytest.raises((TypeRejectedExtraction, UntypeableExtraction)) as existing_refusal:
+                engine.apply_refactoring(str(path), proposals[0])
+            if isinstance(existing_refusal.value, UntypeableExtraction):
+                assert existing_refusal.value.reason is Untypeable.NARROWING_READ_IN_THUNK
     finally:
         checker.close()
     assert path.read_text() == fixture.source

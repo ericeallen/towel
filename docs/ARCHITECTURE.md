@@ -939,9 +939,12 @@ that a lambda needs its refinement: Optional-aware consumers may remain fully
 precise. The checker must witness a rejected nullable operand, tied to the
 original caller expression or the helper's predicate-governed result, before
 this judgment ends the ladder. Generated zero-argument predicates use only
-exact default-free caller lambdas for that correspondence. Known caller
-narrowing boundaries are filtered during discovery; the remaining cases cost
-the checker refusals needed to establish them. Each rung is rendered with the
+exact default-free caller lambdas for that correspondence. The supported
+diagnostics identify named or positional arguments, operator operands and
+Optional receivers; reflected mypy comparisons map back to source operand
+order. An ambiguous diagnostic location does not establish this judgment.
+Known caller narrowing boundaries are filtered during discovery; the
+remaining cases cost the checker refusals needed to establish them. Each rung is rendered with the
 comments of the moved code woven in, and with only the imports its own
 annotations name. Every rendered variant submitted to project checking calls
 `_new_type_errors` again. Towel keeps no inner rendered-variant refusal memo:

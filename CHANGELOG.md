@@ -15,7 +15,9 @@ ecosystem evidence behind each claim. The format follows
   adds no declared constraint.
 - Keep Optional-aware result thunks eligible. A read of a tested subject does
   not itself require narrowing; use the checker's rejected operand and original
-  caller correspondence before weakening helper annotations.
+  caller correspondence before weakening helper annotations. Cover named
+  arguments, reflected comparisons and Pyright Optional-operand and receiver
+  diagnostics while leaving ambiguous operands unresolved.
 - Keep thunks deferred when their result lifetime is unknown. Eager evaluation
   requires an immutable result proof from every caller as well as the existing
   evaluation-order proof; preserve temporary release and exception cleanup.

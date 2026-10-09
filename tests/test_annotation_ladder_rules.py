@@ -625,3 +625,214 @@ def test_pyrights_implementation_callee_requires_a_unique_argument() -> None:
         _helper_operand_refusal("convert(x=result()) if predicate() else fallback", diagnostic)
         is not None
     )
+
+
+def test_named_mypy_arguments_identify_only_the_matching_keyword_operand() -> None:
+    diagnostic = (
+        'Argument "value" to "consume" has incompatible type "float | None"; expected "float"'
+    )
+    assert (
+        _helper_operand_refusal("consume(value=result()) if predicate() else fallback", diagnostic)
+        is not None
+    )
+    for expression in (
+        "consume(other=result()) if predicate() else fallback",
+        "consume(result()) if predicate() else fallback",
+        "consume(value=other()) + result() if predicate() else fallback",
+        "consume(value=convert(result())) if predicate() else fallback",
+        "consume(value=result()) + consume(value=other()) if predicate() else fallback",
+    ):
+        assert _helper_operand_refusal(expression, diagnostic) is None, expression
+    accepting_none = diagnostic.replace('expected "float"', 'expected "str | None"')
+    assert (
+        _helper_operand_refusal(
+            "consume(value=result()) if predicate() else fallback", accepting_none
+        )
+        is None
+    )
+
+
+def test_pyrights_primitive_none_rejection_is_the_same_nullable_argument_witness() -> None:
+    diagnostic = (
+        'pyright: reportArgumentType: Argument of type "_TowelT0@helper" cannot be assigned '
+        'to parameter "value" of type "float" in function "consume"\n'
+        '  Type "float* | None" is not assignable to type "float"\n'
+        '    "None*" is not assignable to "float"'
+    )
+    expression = "consume(value=result()) if predicate() else fallback"
+    assert _helper_operand_refusal(expression, diagnostic) is not None
+    assert (
+        _helper_operand_refusal(expression, diagnostic.replace('"None*" is', '"str*" is')) is None
+    )
+    assert (
+        _helper_operand_refusal(
+            expression, diagnostic.replace('"float* | None"', '"list[float* | None]"')
+        )
+        is None
+    )
+
+
+def test_pyrights_operator_constraint_identifies_the_actual_nullable_side() -> None:
+    diagnostic = (
+        'pyright: reportOperatorIssue: Operator "/" not supported for types '
+        '"_TowelT0@helper" and "Literal[2]"\n'
+        '  Operator "/" not supported for types "None*" and "Literal[2]"'
+    )
+    expression = "result() / 2 if predicate() else fallback"
+    assert _helper_operand_refusal(expression, diagnostic) is not None
+    for rewritten in (
+        diagnostic.split("\n")[0],
+        diagnostic.replace('"None*"', '"float*"'),
+        diagnostic.replace('"_TowelT0@helper"', '"list[_TowelT0@helper]"'),
+        diagnostic.replace('"_TowelT0@helper"', '"Callable[[], _TowelT0@helper]"'),
+        diagnostic.replace('"None*" and "Literal[2]"', '"None*" and "str"'),
+        diagnostic.replace('  Operator "/"', '  Operator "*"'),
+    ):
+        assert _helper_operand_refusal(expression, rewritten) is None, rewritten
+    assert (
+        _helper_operand_refusal(
+            "result() / 2 + other() / 2 if predicate() else fallback", diagnostic
+        )
+        is None
+    )
+    assert _helper_operand_refusal("2 / result() if predicate() else fallback", diagnostic) is None
+    direct = (
+        'pyright: reportOperatorIssue: Operator "/" not supported for types '
+        '"float | None" and "Literal[2]"'
+    )
+    assert _helper_operand_refusal(expression, direct) is not None
+    assert (
+        _helper_operand_refusal(
+            expression, direct.replace('"float | None"', '"list[float | None]"')
+        )
+        is None
+    )
+
+
+def test_pyrights_optional_operator_needs_a_unique_nonliteral_side() -> None:
+    diagnostic = 'pyright: reportOptionalOperand: Operator "/" not supported for "None"'
+    assert (
+        _helper_operand_refusal("result() / 2 if predicate() else fallback", diagnostic) is not None
+    )
+    assert (
+        _helper_operand_refusal("2 / result() if predicate() else fallback", diagnostic) is not None
+    )
+    for expression in (
+        "result() / other() if predicate() else fallback",
+        "result() / None if predicate() else fallback",
+        "2 / 3 if predicate() else result()",
+        "result() + 2 if predicate() else fallback",
+        "result() / 2 + other() / 2 if predicate() else fallback",
+        "convert(result()) / 2 if predicate() else fallback",
+    ):
+        assert _helper_operand_refusal(expression, diagnostic) is None, expression
+
+
+def test_mypy_reflected_comparisons_reverse_the_diagnosed_operand_order() -> None:
+    reflected = 'Unsupported operand types for <= ("int" and "None")'
+    direct = 'Unsupported operand types for >= ("None" and "int")'
+    expression = "result() >= 2 if predicate() else fallback"
+    assert _helper_operand_refusal(expression, reflected) is not None
+    assert _helper_operand_refusal(expression, direct) is not None
+    wrong_side = 'Unsupported operand types for <= ("None" and "int")'
+    assert _helper_operand_refusal(expression, wrong_side) is None
+    assert _helper_operand_refusal("result() < 2 if predicate() else fallback", reflected) is None
+    assert (
+        _helper_operand_refusal(
+            "result() >= 2 and 2 <= other() if predicate() else fallback", reflected
+        )
+        is None
+    )
+    assert (
+        _helper_operand_refusal("result() >= 2 < other() if predicate() else fallback", reflected)
+        is not None
+    )
+
+
+def test_pyright_comparisons_do_not_use_mypys_reflected_order() -> None:
+    diagnostic = (
+        'pyright: reportOperatorIssue: Operator ">=" not supported for types '
+        '"_TowelT0@helper" and "Literal[2]"\n'
+        '  Operator ">=" not supported for types "None*" and "Literal[2]"'
+    )
+    assert (
+        _helper_operand_refusal("result() >= 2 if predicate() else fallback", diagnostic)
+        is not None
+    )
+    assert _helper_operand_refusal("result() <= 2 if predicate() else fallback", diagnostic) is None
+    assert _helper_operand_refusal("2 >= result() if predicate() else fallback", diagnostic) is None
+
+
+def test_pyright_protocol_rejection_tracks_the_instantiated_target() -> None:
+    diagnostic = (
+        'pyright: reportArgumentType: Argument of type "_TowelT0@helper" cannot be assigned '
+        'to parameter "x" of type "Protocol[_T@consumer]" in function "consumer"\n'
+        '  Type "float* | None" is not assignable to type "Protocol[float]"\n'
+        '    "None*" is incompatible with protocol "Protocol[float]"'
+    )
+    expression = "consumer(result()) if predicate() else fallback"
+    assert _helper_operand_refusal(expression, diagnostic) is not None
+    for rewritten in (
+        diagnostic.replace('"Protocol[float]"\n', '"Different[float]"\n'),
+        diagnostic.replace(
+            'incompatible with protocol "Protocol[float]"',
+            'incompatible with protocol "Different[float]"',
+        ),
+        diagnostic.replace('"Protocol[_T@consumer]"', '"Protocol[_T@consumer] | None"'),
+        diagnostic.replace('"float* | None"', '"list[float* | None]"'),
+        diagnostic.replace('"None*" is incompatible', '"str*" is incompatible'),
+    ):
+        assert _helper_operand_refusal(expression, rewritten) is None, rewritten
+
+
+def test_pyright_optional_unary_operands_are_unique_across_matching_operations() -> None:
+    diagnostic = 'pyright: reportOptionalOperand: Operator "-" not supported for "None"'
+    assert _helper_operand_refusal("-result() if predicate() else fallback", diagnostic) is not None
+    for expression in (
+        "+result() if predicate() else fallback",
+        "-result() + -other() if predicate() else fallback",
+        "-result() + (other() - another()) if predicate() else fallback",
+        "-convert(result()) if predicate() else fallback",
+        "-other() + result() if predicate() else fallback",
+    ):
+        assert _helper_operand_refusal(expression, diagnostic) is None, expression
+    assert (
+        _helper_operand_refusal("-result() + (2 - 3) if predicate() else fallback", diagnostic)
+        is not None
+    )
+
+
+def test_pyright_optional_member_names_select_receiver_operands_without_name_semantics() -> None:
+    diagnostic = 'pyright: reportOptionalMemberAccess: "custom" is not a known attribute of "None"'
+    assert (
+        _helper_operand_refusal("result().custom() if predicate() else fallback", diagnostic)
+        is not None
+    )
+    for expression in (
+        "result().other() if predicate() else fallback",
+        "other().custom() + result() if predicate() else fallback",
+        "convert(result()).custom() if predicate() else fallback",
+        "result().custom() + other().custom() if predicate() else fallback",
+        "result().nested.custom() if predicate() else fallback",
+    ):
+        assert _helper_operand_refusal(expression, diagnostic) is None, expression
+
+
+def test_pyright_optional_subscripts_identify_the_receiver_and_not_the_index() -> None:
+    diagnostic = 'pyright: reportOptionalSubscript: Object of type "None" is not subscriptable'
+    assert (
+        _helper_operand_refusal("result()[0] if predicate() else fallback", diagnostic) is not None
+    )
+    for expression in (
+        "other()[result()] if predicate() else fallback",
+        "result()[0] + other()[0] if predicate() else fallback",
+        "convert(result())[0] if predicate() else fallback",
+        "result()[0][1] if predicate() else fallback",
+    ):
+        assert _helper_operand_refusal(expression, diagnostic) is None, expression
+
+
+def test_unknown_pyright_argument_positions_block_other_calls_appearing_unique() -> None:
+    diagnostic = _pyright_argument_diagnostic()
+    expression = "convert(result()) + other(first(), second()) if predicate() else fallback"
+    assert _helper_operand_refusal(expression, diagnostic) is None

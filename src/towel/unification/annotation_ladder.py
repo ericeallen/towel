@@ -1331,7 +1331,8 @@ def _thunk_refinements(
 
 
 _NULLABLE_ARGUMENT = re.compile(
-    r'^Argument (?P<index>\d+) to "(?P<callee>[^"]+)" has incompatible type "(?P<actual>[^"]+)"'
+    r'^Argument (?:(?P<index>\d+)|"(?P<parameter>[^"]+)") to "(?P<callee>[^"]+)" '
+    r'has incompatible type "(?P<actual>[^"]+)"'
     r'; expected "(?P<expected>[^"]+)"'
 )
 _PYRIGHT_NULLABLE_ARGUMENT = re.compile(
@@ -1341,18 +1342,57 @@ _PYRIGHT_NULLABLE_ARGUMENT = re.compile(
 )
 
 
+def _pyright_type_expression(spelling: str) -> Optional[ast.expr]:
+    """A diagnostic type with scoped variables and constrained-type markers normalized."""
+    normalized = re.sub(r"(\w+)@[\w.]+", r"\1", _without_pyright_stars(spelling))
+    try:
+        return ast.parse(normalized, mode="eval").body
+    except SyntaxError:
+        return None
+
+
+def _pyright_nullable_type(spelling: str) -> bool:
+    expression = _pyright_type_expression(spelling)
+    return expression is not None and _nullable_type(ast.unparse(expression))
+
+
+def _same_type_constructor(left: str, right: str) -> bool:
+    """Whether a diagnostic's concrete generic target instantiates its declared constructor."""
+    if left == right:
+        return True
+    first, second = _pyright_type_expression(left), _pyright_type_expression(right)
+    if not isinstance(first, ast.Subscript) or not isinstance(second, ast.Subscript):
+        return False
+    constructor = _dotted(first.value)
+    return constructor is not None and constructor == _dotted(second.value)
+
+
 def _pyright_rejects_none(argument: re.Match[str], message: str) -> bool:
-    """Pyright's explicit None incompatibility, including constrained-type star markers."""
-    expected = re.escape(argument["expected"])
-    concrete = re.search(r'Type "([^"]+)" is not assignable to type "' + expected + '"', message)
+    """An outer nullable argument plus explicit rejection of None by the same concrete target."""
+    expected = argument["expected"]
+    if _pyright_nullable_type(expected):
+        return False
+    concrete = re.search(
+        r'Type "(?P<actual>[^"]+)" is not assignable to type "(?P<expected>[^"]+)"', message
+    )
     actual_types = [argument["actual"]]
     if concrete is not None:
-        actual_types.append(concrete[1])
-    if _nullable_type(argument["expected"]) or not any(
-        _nullable_type(re.sub(r"(?<=[\w\]])\*", "", actual)) for actual in actual_types
+        if not _same_type_constructor(expected, concrete["expected"]):
+            return False
+        expected = concrete["expected"]
+        actual_types.append(concrete["actual"])
+    if _pyright_nullable_type(expected) or not any(
+        _pyright_nullable_type(actual) for actual in actual_types
     ):
         return False
-    detail = r'Type "None\*?" is not assignable to type "' + expected + '"'
+    escaped = re.escape(expected)
+    detail = (
+        r'(?:Type )?"None\*?" (?:is not assignable to (?:type )?"'
+        + escaped
+        + r'"|is incompatible with protocol "'
+        + escaped
+        + '")'
+    )
     return re.search(detail, message) is not None
 
 
@@ -1360,6 +1400,114 @@ _NULLABLE_BINARY = re.compile(
     r"^Unsupported operand types for (?P<operator>\S+) "
     r'\("(?P<left>[^"]+)" and "(?P<right>[^"]+)"\)'
 )
+_PYRIGHT_BINARY = re.compile(
+    r'^pyright: reportOperatorIssue: Operator "(?P<operator>[^"]+)" '
+    r'not supported for types "(?P<left>[^"]+)" and "(?P<right>[^"]+)"'
+)
+_PYRIGHT_BINARY_DETAIL = re.compile(
+    r'Operator "(?P<operator>[^"]+)" not supported for types '
+    r'"(?P<left>[^"]+)" and "(?P<right>[^"]+)"'
+)
+_PYRIGHT_OPTIONAL_BINARY = re.compile(
+    r'^pyright: reportOptionalOperand: Operator "(?P<operator>[^"]+)" not supported for "None"'
+)
+
+
+def _without_pyright_stars(spelling: str) -> str:
+    """The checker's constrained-type markers removed from a type spelling."""
+    return re.sub(r"(?<=[\w\]])\*", "", spelling)
+
+
+def _pyright_variable_operand(spelling: str) -> bool:
+    """A root type variable, possibly in a union, rather than one inside a container.
+
+    Pyright spells its scoped variables ``T@function``. Only a nullable
+    alternative of that outer variable can establish a nullable operand;
+    a container's nested None is independent of the operand's own type.
+    """
+    variables = set(re.findall(r"(\w+)@[\w.]+", spelling))
+    rewritten = re.sub(r"(\w+)@[\w.]+", r"\1", _without_pyright_stars(spelling))
+    try:
+        expression = ast.parse(rewritten, mode="eval").body
+    except SyntaxError:
+        return False
+
+    def outer_variable(node: ast.expr) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id in variables
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            return outer_variable(node.left) or outer_variable(node.right)
+        return False
+
+    return outer_variable(expression)
+
+
+def _pyright_nullable_sides(message: str) -> Optional[Tuple[str, FrozenSet[str]]]:
+    """The operator and sides with an actual outer nullable type in Pyright's diagnostic."""
+    main = _PYRIGHT_BINARY.match(message)
+    if main is None:
+        return None
+    sides = {
+        side for side in ("left", "right") if _nullable_type(_without_pyright_stars(main[side]))
+    }
+    for detail in _PYRIGHT_BINARY_DETAIL.finditer(message):
+        if detail["operator"] != main["operator"]:
+            continue
+        for side, other in (("left", "right"), ("right", "left")):
+            if (
+                _pyright_variable_operand(main[side])
+                and _nullable_type(_without_pyright_stars(detail[side]))
+                and _without_pyright_stars(detail[other]) == _without_pyright_stars(main[other])
+            ):
+                sides.add(side)
+    return (main["operator"], frozenset(sides)) if sides else None
+
+
+_PYRIGHT_OPTIONAL_MEMBER = re.compile(
+    r'^pyright: reportOptionalMemberAccess: "(?P<member>[^"]+)" '
+    r'is not a known attribute of "None"'
+)
+_PYRIGHT_OPTIONAL_SUBSCRIPT = (
+    'pyright: reportOptionalSubscript: Object of type "None" is not subscriptable'
+)
+_UNARY_OPERATORS = {ast.USub: "-", ast.UAdd: "+", ast.Invert: "~"}
+_COMPARISON_OPERATORS = {
+    ast.Lt: "<",
+    ast.LtE: "<=",
+    ast.Gt: ">",
+    ast.GtE: ">=",
+    ast.Eq: "==",
+    ast.NotEq: "!=",
+}
+_REFLECTED_COMPARISONS = {"<": ">", "<=": ">=", ">": "<", ">=": "<=", "==": "==", "!=": "!="}
+
+
+def _operation_pairs(
+    node: ast.expr, operator: str, *, reflected: bool = False
+) -> Iterator[Tuple[ast.expr, ast.expr]]:
+    """Operand pairs for the diagnosed binary/comparison operation, including mypy reflection.
+
+    Python reflects ``a >= b`` as ``b <= a`` when dispatching the right
+    operand's comparison. Mypy's diagnostic then names that reflected pair.
+    It does not reverse arithmetic operands, and chained comparisons retain
+    their individual operand pairs.
+    """
+    if isinstance(node, ast.BinOp):
+        if _BINARY_OPERATORS.get(type(node.op)) == operator:
+            yield node.left, node.right
+    elif isinstance(node, ast.Compare):
+        for first, second, operation in zip(
+            [node.left, *node.comparators], node.comparators, node.ops
+        ):
+            spelling = _COMPARISON_OPERATORS.get(type(operation))
+            if spelling == operator:
+                yield first, second
+            elif (
+                reflected and spelling is not None and _REFLECTED_COMPARISONS[spelling] == operator
+            ):
+                yield second, first
+
+
 _BINARY_OPERATORS = {
     ast.Add: "+",
     ast.Sub: "-",
@@ -1412,6 +1560,10 @@ def _nullable_operand(scope: ast.AST, error: TypeDiagnostic) -> Optional[ast.exp
     binary = _NULLABLE_BINARY.match(error.message)
     pyright = _PYRIGHT_NULLABLE_ARGUMENT.match(error.message)
     pyright_nullable = pyright is not None and _pyright_rejects_none(pyright, error.message)
+    pyright_binary = _pyright_nullable_sides(error.message)
+    optional_binary = _PYRIGHT_OPTIONAL_BINARY.match(error.message)
+    optional_member = _PYRIGHT_OPTIONAL_MEMBER.match(error.message)
+    optional_subscript = error.message.startswith(_PYRIGHT_OPTIONAL_SUBSCRIPT)
     operands: List[ast.expr] = []
     roots = scope.body if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) else [scope]
     for node in (node for root in roots for node in walk_own_scope(root)):
@@ -1427,26 +1579,62 @@ def _nullable_operand(scope: ast.AST, error: TypeDiagnostic) -> Optional[ast.exp
             if not isinstance(node, ast.Call):
                 continue
             callee = _dotted(node.func)
-            index = int(argument["index"]) - 1
-            if (
-                callee is not None
-                and callee.rsplit(".", 1)[-1] == argument["callee"].rsplit(".", 1)[-1]
-                and 0 <= index < len(node.args)
+            if callee is None or (
+                callee.rsplit(".", 1)[-1] != argument["callee"].rsplit(".", 1)[-1]
             ):
-                operands.append(node.args[index])
+                continue
+            index = argument["index"]
+            if index is not None:
+                position = int(index) - 1
+                if 0 <= position < len(node.args):
+                    operands.append(node.args[position])
+            else:
+                operands.extend(
+                    keyword.value
+                    for keyword in node.keywords
+                    if keyword.arg == argument["parameter"]
+                )
         elif pyright is not None and pyright_nullable and isinstance(node, ast.Call):
             candidates = [
                 keyword.value for keyword in node.keywords if keyword.arg == pyright["parameter"]
             ]
             if not node.keywords and len(node.args) == 1:
                 candidates.append(node.args[0])
+            elif node.args and not candidates:
+                # A diagnostic has no positional index here; multiple or mixed
+                # supplied arguments must not leave another call looking unique.
+                candidates.extend(node.args)
+                candidates.extend(keyword.value for keyword in node.keywords)
             operands.extend(candidates)
-        elif binary is not None and isinstance(node, ast.BinOp):
-            if _BINARY_OPERATORS.get(type(node.op)) != binary["operator"]:
-                continue
-            for side, operand in (("left", node.left), ("right", node.right)):
-                if _nullable_type(binary[side]):
-                    operands.append(operand)
+        elif binary is not None:
+            for left, right in _operation_pairs(node, binary["operator"], reflected=True):
+                for side, operand in (("left", left), ("right", right)):
+                    if _nullable_type(binary[side]):
+                        operands.append(operand)
+        elif pyright_binary is not None:
+            operator, sides = pyright_binary
+            for left, right in _operation_pairs(node, operator):
+                operands.extend(
+                    operand for side, operand in (("left", left), ("right", right)) if side in sides
+                )
+        elif optional_binary is not None:
+            operator = optional_binary["operator"]
+            if isinstance(node, ast.UnaryOp) and _UNARY_OPERATORS.get(type(node.op)) == operator:
+                operands.append(node.operand)
+            for left, right in _operation_pairs(node, operator):
+                # A literal non-None operand cannot cause this diagnostic. Keep
+                # every other possibility, including an unresolved matching
+                # operation, so a separate unary/call cannot appear unique.
+                operands.extend(
+                    operand
+                    for operand in (left, right)
+                    if not (isinstance(operand, ast.Constant) and operand.value is not None)
+                )
+        elif optional_member is not None and isinstance(node, ast.Attribute):
+            if node.attr == optional_member["member"]:
+                operands.append(node.value)
+        elif optional_subscript and isinstance(node, ast.Subscript):
+            operands.append(node.value)
     return operands[0] if len(operands) == 1 else None
 
 
