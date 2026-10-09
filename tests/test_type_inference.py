@@ -319,11 +319,11 @@ def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> Non
 
 @requires_mypy
 def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
-    """Normalize int/float to float without retaining an unread receiver.
+    """Keep precise callable alternatives when attribute results remain deferred.
 
-    The approved unused-input construction leaves ``box`` at each call site.
-    Its removal must not broaden the value parameter to Any or convert the
-    actual int value to float: the two runtime string results still differ.
+    Each thunk retains its caller's box and reads its attribute in the helper.
+    Their result types must remain int and float without an unread receiver
+    parameter or Any; the runtime string results still differ.
     """
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
@@ -353,10 +353,22 @@ def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
         assert oracle.check(str(path), result) == CheckSuccess()
     finally:
         oracle.close()
-    assert (
-        _signature(result)
-        == "def __extracted_func_0(__param_0: float, _towel_owner: 'object') -> str:"
+    helper = next(
+        node
+        for node in ast.parse(result).body
+        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
     )
+    arguments = [*helper.args.posonlyargs, *helper.args.args]
+    assert len(arguments) == 2 and arguments[0].annotation is not None
+    annotation = arguments[0].annotation
+    assert isinstance(annotation, ast.Constant) and isinstance(annotation.value, str)
+    assert ast.dump(ast.parse(annotation.value, mode="eval")) == ast.dump(
+        ast.parse("_typing.Callable[[], int] | _typing.Callable[[], float]", mode="eval")
+    )
+    assert helper.returns is not None and ast.unparse(helper.returns) == "str"
+    assert "Any" not in ast.unparse(helper)
+    assert not any(isinstance(node, ast.Name) and node.id == "box" for node in ast.walk(helper))
+    assert "box" not in {argument.arg for argument in arguments}
     for source in (path.read_text(), result):
         namespace: dict[str, object] = {}
         exec(
