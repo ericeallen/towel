@@ -9,6 +9,11 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Reuse immutable lexical warning classifications while scheduling IF proofs
+  within one owned analysis, including sources larger than the process cache's
+  character limit. Bound retained source storage and keep every ownership
+  check, native diagnostic fallback, and admission proof fresh.
+
 - Snapshot bounded-cache keys during iteration so standard mapping item and
   value views tolerate reads that promote entries in the LRU order. Keep
   ordinary lookups, eviction and explicit ownership release unchanged.

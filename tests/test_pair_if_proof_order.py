@@ -9,6 +9,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, replace
 import os
 import logging
+import sys
 from pathlib import Path
 import traceback
 from typing import Callable, Dict, List, Literal, Optional, Sequence, Tuple, cast
@@ -17,6 +18,7 @@ import warnings
 import pytest
 
 from towel.canonical_ast import exact_dump
+from towel.analysis_sources import parsing_is_pure
 from towel.diagnostics import VALIDATION
 from towel.unification.bounded_cache import memoization_disabled
 from towel.unification.engine_state import BlockSite
@@ -217,10 +219,14 @@ def test_owner_scope_restores_parent_on_nested_exception() -> None:
 def test_fork_inherits_owner_and_child_scope_exit_cannot_change_parent() -> None:
     owner = object()
     with evaluation.deferring_pair_if_proofs(owner):
+        parent = evaluation._IF_SCHEDULING_SOURCES.get()
+        assert parent is not None and evaluation._scheduling_parse_is_pure(owner, SOURCE)
         pid = os.fork()
         if pid == 0:
             try:
                 assert evaluation._IF_PROOF_OWNER.get() is owner
+                assert evaluation._IF_SCHEDULING_SOURCES.get() is parent
+                assert SOURCE in parent.answers
                 with evaluation.deferring_pair_if_proofs(object()):
                     assert evaluation._IF_PROOF_OWNER.get() is not owner
                 assert evaluation._IF_PROOF_OWNER.get() is owner
@@ -230,7 +236,9 @@ def test_fork_inherits_owner_and_child_scope_exit_cannot_change_parent() -> None
             os._exit(0)
         assert os.waitpid(pid, 0)[1] == 0
         assert evaluation._IF_PROOF_OWNER.get() is owner
+        assert SOURCE in parent.answers
     assert evaluation._IF_PROOF_OWNER.get() is None
+    assert not parent.answers
 
 
 @pytest.mark.parametrize("disabled", [False, True])
@@ -390,3 +398,217 @@ def test_actual_analyze_file_owns_the_scheduling_scope_and_releases_it(tmp_path:
     assert proposals and any(engine.schedules)
     assert evaluation._IF_PROOF_OWNER.get() is None
     assert path.read_bytes() == before
+
+
+def test_large_source_reuses_only_lexical_answer_and_keeps_live_proofs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = "# 1candidate " + "x" * (128 * 1024) + "\n" + SOURCE
+    inputs = _inputs(tmp_path, source)
+    calls: List[str] = []
+    original = parsing_is_pure
+
+    def observed(text: str) -> bool:
+        calls.append(text)
+        return original(text)
+
+    monkeypatch.setattr(evaluation, "parsing_is_pure", observed)
+    with evaluation.deferring_pair_if_proofs(inputs.engine):
+        ctx = inputs.engine._resolve_pair_context(inputs.pair, inputs.index)
+        for _ in range(3):
+            assert inputs.engine._can_defer_nested_binding_proof(inputs.pair, ctx, inputs.index)
+        assert calls == [source]
+        # Equal text does not replace the artifact's source-object ownership.
+        inputs.pair.source1 = source.encode().decode()
+        assert not inputs.engine._can_defer_nested_binding_proof(inputs.pair, ctx, inputs.index)
+        inputs.pair.source1 = source
+        assignment = inputs.module.body[0]
+        assert isinstance(assignment, ast.Assign) and isinstance(assignment.value, ast.Constant)
+        assignment.value.value = 1000
+        assert _proposal(inputs) is None
+        assert inputs.engine.proofs == [("f", None, False)]
+        assert calls == [source]
+
+
+@pytest.mark.parametrize("limit", ["outside", "owner", "entries", "bytes", "oversize", "disabled"])
+def test_scheduling_purity_fallbacks_recompute_without_retention(
+    monkeypatch: pytest.MonkeyPatch, limit: str
+) -> None:
+    owner = object()
+    calls = 0
+
+    def observed(source: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return False
+
+    monkeypatch.setattr(evaluation, "parsing_is_pure", observed)
+    with (
+        (
+            nullcontext()
+            if limit == "outside"
+            else evaluation.deferring_pair_if_proofs(
+                object() if limit == "owner" else owner,
+                entries=0 if limit == "entries" else 64,
+                source_bytes=0 if limit == "bytes" else 1 if limit == "oversize" else 1024,
+            )
+        ),
+        memoization_disabled() if limit == "disabled" else nullcontext(),
+    ):
+        assert not evaluation._scheduling_parse_is_pure(owner, SOURCE)
+        assert not evaluation._scheduling_parse_is_pure(owner, SOURCE)
+        assert calls == 2
+        scope = evaluation._IF_SCHEDULING_SOURCES.get()
+        assert scope is None or not scope.answers
+
+
+def test_false_answers_and_disabled_warm_hits_keep_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = object()
+    calls = 0
+
+    def observed(source: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return False
+
+    monkeypatch.setattr(evaluation, "parsing_is_pure", observed)
+    with evaluation.deferring_pair_if_proofs(owner):
+        assert not evaluation._scheduling_parse_is_pure(owner, SOURCE)
+        assert not evaluation._scheduling_parse_is_pure(owner, SOURCE)
+        assert calls == 1
+        with memoization_disabled():
+            assert not evaluation._scheduling_parse_is_pure(owner, SOURCE)
+            assert not evaluation._scheduling_parse_is_pure(owner, SOURCE)
+        assert calls == 3
+        assert not evaluation._scheduling_parse_is_pure(owner, SOURCE)
+        assert calls == 3
+
+
+def test_scheduling_source_limits_evict_and_scope_exit_clears_under_disabled() -> None:
+    owner = object()
+    first, second = "a = 1\n", "b = 2\n"
+    budget = sys.getsizeof(first)
+    with evaluation.deferring_pair_if_proofs(owner, entries=2, source_bytes=budget):
+        scope = evaluation._IF_SCHEDULING_SOURCES.get()
+        assert scope is not None
+        assert evaluation._scheduling_parse_is_pure(owner, first)
+        assert evaluation._scheduling_parse_is_pure(owner, second)
+        assert list(scope.answers) == [second]
+        assert scope.answers._total_weight <= budget
+    assert not scope.answers and scope.answers._total_weight == 0
+    # Explicit cleanup works while disabled reads cannot retrieve retained entries.
+    context = evaluation.deferring_pair_if_proofs(owner)
+    context.__enter__()
+    retained = evaluation._IF_SCHEDULING_SOURCES.get()
+    assert retained is not None and evaluation._scheduling_parse_is_pure(owner, first)
+    with memoization_disabled():
+        context.__exit__(None, None, None)
+    assert not retained.answers and retained.answers._total_weight == 0
+    assert evaluation._IF_SCHEDULING_SOURCES.get() is None
+
+
+def test_nested_source_scope_restores_parent_cache_on_exception() -> None:
+    outer, inner = object(), object()
+    with evaluation.deferring_pair_if_proofs(outer):
+        parent = evaluation._IF_SCHEDULING_SOURCES.get()
+        assert parent is not None and evaluation._scheduling_parse_is_pure(outer, SOURCE)
+        with pytest.raises(RuntimeError), evaluation.deferring_pair_if_proofs(inner):
+            child = evaluation._IF_SCHEDULING_SOURCES.get()
+            assert child is not None and child is not parent
+            assert evaluation._scheduling_parse_is_pure(inner, SOURCE)
+            raise RuntimeError("exit")
+        assert child is not None and not child.answers
+        assert evaluation._IF_SCHEDULING_SOURCES.get() is parent and SOURCE in parent.answers
+    assert not parent.answers and evaluation._IF_SCHEDULING_SOURCES.get() is None
+
+
+@pytest.mark.parametrize("policy", ["always", "error"])
+def test_warm_false_classification_keeps_each_native_warning_or_error(
+    tmp_path: Path, policy: Literal["always", "error"]
+) -> None:
+    source = "WARNING = '\\q'\n" + SOURCE
+    inputs = _inputs(tmp_path, source)
+    observations: List[Tuple[List[Tuple[str, str]], bool]] = []
+    with evaluation.deferring_pair_if_proofs(inputs.engine):
+        for _ in range(2):
+            with warnings.catch_warnings(record=True) as emitted:
+                warnings.simplefilter(policy)
+                result = inputs.engine._guard_pair(inputs.pair, inputs.index)
+            observations.append(
+                (
+                    [(item.category.__name__, str(item.message)) for item in emitted],
+                    result is not None,
+                )
+            )
+        scope = evaluation._IF_SCHEDULING_SOURCES.get()
+        assert scope is not None and not scope.answers[source].pure
+    assert observations[0] == observations[1]
+    if policy == "always":
+        assert observations[0][0] and observations[0][1]
+    else:
+        assert not observations[0][1]
+
+
+@pytest.mark.parametrize("entries,source_bytes", [(-1, 1), (1, -1)])
+def test_invalid_scheduling_limits_leave_context_unchanged(entries: int, source_bytes: int) -> None:
+    with (
+        pytest.raises(ValueError),
+        evaluation.deferring_pair_if_proofs(object(), entries=entries, source_bytes=source_bytes),
+    ):
+        pytest.fail("Invalid limits were admitted")
+    assert evaluation._IF_PROOF_OWNER.get() is None
+    assert evaluation._IF_SCHEDULING_SOURCES.get() is None
+
+
+@pytest.mark.parametrize("reserve", [False, True])
+def test_unicode_source_storage_reserves_native_utf8_before_retention(
+    monkeypatch: pytest.MonkeyPatch, reserve: bool
+) -> None:
+    owner = object()
+    source = "# λ 1candidate\n"
+    storage = sys.getsizeof(source) + 4 * len(source) + 1
+    calls = 0
+    original = parsing_is_pure
+
+    def observed(text: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return original(text)
+
+    monkeypatch.setattr(evaluation, "parsing_is_pure", observed)
+    with evaluation.deferring_pair_if_proofs(
+        owner, source_bytes=storage if reserve else storage - 1
+    ):
+        assert evaluation._scheduling_parse_is_pure(owner, source)
+        assert evaluation._scheduling_parse_is_pure(owner, source)
+        scope = evaluation._IF_SCHEDULING_SOURCES.get()
+        assert scope is not None
+        assert calls == (1 if reserve else 2)
+        assert scope.answers._total_weight == (storage if reserve else 0)
+
+
+def test_source_entry_limit_and_subclass_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Source(str):
+        pass
+
+    calls = 0
+
+    def observed(source: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return True
+
+    owner = object()
+    monkeypatch.setattr(evaluation, "parsing_is_pure", observed)
+    with evaluation.deferring_pair_if_proofs(owner, entries=1):
+        for source in ("a = 1", "b = 2", "a = 1"):
+            assert evaluation._scheduling_parse_is_pure(owner, source)
+        assert calls == 3
+        scope = evaluation._IF_SCHEDULING_SOURCES.get()
+        assert scope is not None and list(scope.answers) == ["a = 1"]
+        subclass_source = Source("a = 1")
+        assert evaluation._scheduling_parse_is_pure(owner, subclass_source)
+        assert evaluation._scheduling_parse_is_pure(owner, subclass_source)
+        assert calls == 5 and list(scope.answers) == ["a = 1"]

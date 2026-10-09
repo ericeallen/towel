@@ -44,6 +44,7 @@ import ast
 import copy
 import dataclasses
 import os
+import sys
 import symtable
 from dataclasses import dataclass
 from contextlib import contextmanager
@@ -54,6 +55,7 @@ from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, Froz
 from ..canonical_ast import canonical_dump
 from ..analysis_sources import parsing_is_pure
 from ..diagnostics import VALIDATION, debugging
+from .bounded_cache import BoundedCache, memoizing
 from .definite_assignment import definitely_bound_after
 from .function_scope import code_names, function_names
 from .statement_facts import bindings_of, loaded_names
@@ -155,14 +157,65 @@ from .visitors import FreeNameCollector, body_without_docstring
 _IF_PROOF_OWNER: ContextVar[Optional[object]] = ContextVar("pair_if_proof_owner", default=None)
 
 
+@dataclass(frozen=True)
+class _ParsePurity:
+    pure: bool
+    source_bytes: int
+
+
+class _SchedulingSources:
+    def __init__(self, owner: object, entries: int, source_bytes: int) -> None:
+        self.owner = owner
+        self.enabled = entries > 0 and source_bytes > 0
+        self.source_bytes = source_bytes
+        self.answers: BoundedCache[str, _ParsePurity] = BoundedCache(
+            entries, weight=lambda answer: answer.source_bytes, weight_limit=source_bytes
+        )
+
+
+_IF_SCHEDULING_SOURCES: ContextVar[Optional[_SchedulingSources]] = ContextVar(
+    "pair_if_scheduling_sources", default=None
+)
+
+
 @contextmanager
-def deferring_pair_if_proofs(owner: object) -> Iterator[None]:
+def deferring_pair_if_proofs(
+    owner: object, *, entries: int = 64, source_bytes: int = 8 * 1024 * 1024
+) -> Iterator[None]:
     """Schedule proofs later only inside the engine's read-only original-source analysis."""
+    if entries < 0 or source_bytes < 0:
+        raise ValueError("Scheduling source cache limits must be nonnegative")
+    sources = _SchedulingSources(owner, entries, source_bytes)
     token = _IF_PROOF_OWNER.set(owner)
+    source_token = _IF_SCHEDULING_SOURCES.set(sources)
     try:
         yield
     finally:
+        _IF_SCHEDULING_SOURCES.reset(source_token)
         _IF_PROOF_OWNER.reset(token)
+        sources.answers.clear()
+
+
+def _scheduling_parse_is_pure(owner: object, source: str) -> bool:
+    """Share only immutable lexical classification, never source ownership or AST proof."""
+    sources = _IF_SCHEDULING_SOURCES.get()
+    if (
+        sources is None
+        or sources.owner is not owner
+        or not sources.enabled
+        or not memoizing()
+        or type(source) is not str
+    ):
+        return parsing_is_pure(source)
+    known = sources.answers.get(source)
+    if known is not None:
+        return known.pure
+    # Match the lexical cache's conservative string/possible UTF-8 storage accounting.
+    weight = sys.getsizeof(source) + (0 if source.isascii() else 4 * len(source) + 1)
+    answer = parsing_is_pure(source)
+    if weight <= sources.source_bytes:
+        sources.answers[source] = _ParsePurity(answer, weight)
+    return answer
 
 
 @dataclass(frozen=True)
@@ -780,7 +833,7 @@ class PairEvaluation(
             (ctx.func1, pair.source1, ctx.scope_analyzer, ctx.site1, pair.file_path),
             (ctx.func2, pair.source2, ctx.scope_analyzer2, ctx.site2, pair.file_path2),
         ):
-            if site is None or not parsing_is_pure(source):
+            if site is None or not _scheduling_parse_is_pure(self, source):
                 return False
             name = getattr(function, "name", None)
             if not isinstance(name, str) or not any(

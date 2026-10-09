@@ -1907,3 +1907,23 @@ LRU order; a live `OrderedDict` iterator would otherwise fail on that read.
 The snapshot owns only keys, and ordinary lookups still determine values and
 eviction. An iterator retained by a caller can retain its key references until
 it is consumed or released, independently of the analysis cache's cleanup.
+
+IF proof scheduling has a separate lexical-answer table scoped to one owned
+analysis: at most 64 native source strings and 8 MiB of counted string storage,
+including the lexical cache's conservative possible UTF-8 reserve. The value
+is only the immutable boolean returned by `parsing_is_pure`, whose lexical
+classification depends on source text and interpreter semantics rather than
+parser limits or warning filters. Both True and False can be reused; False
+still selects the original early proof path and its native diagnostics.
+
+This avoids repeated tokenization of a large original module for each candidate
+pair without enlarging the process-wide lexical cache's 128 KiB character or
+16 MiB storage limits. Source strings above the scoped byte cap, string
+subclasses, disabled memoization, zero limits, and unowned calls use the original
+predicate. Scope exit clears retained answers even while memoization is
+disabled; nested scopes restore their parent's table. Forked processes share
+only the inherited immutable classifications and independently own their
+table bookkeeping. Every scheduling decision still checks the current owner,
+artifact function, analyzer, source-object identity, and nonempty digest against
+its site. A warm lexical answer provides no source correspondence or AST
+authority; both admission certificates remain fresh.
