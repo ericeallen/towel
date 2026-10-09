@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import subprocess
+import sys
 from typing import Tuple
 
 import pytest
@@ -195,9 +197,58 @@ def test_builtin_supplier_preserves_displaced_callable_and_result_lifetimes(
         "    total = result + 3\n"
         "    return total * FACTOR\n"
     )
-    driver = "from pkg import a,b\nimport gc,sys\nEVENTS=[]\nMODE=MODE_VALUE\nclass Number:\n def __init__(self,value):self.value=value\n def __add__(self,value):\n  EVENTS.append(('add',self.value,value))\n  if MODE=='add-error':raise ArithmeticError('add')\n  return Number(self.value+value)\n def __mul__(self,value):\n  EVENTS.append(('mul',self.value,value))\n  if MODE=='mul-error':raise ArithmeticError('mul')\n  return Number(self.value*value)\n def __del__(self):EVENTS.append(('drop-number',self.value))\nclass Length:\n def __init__(self,module):self.module=module\n def __call__(self,values):\n  EVENTS.append('length')\n  del self.module.len\n  return Number(4)\n def __del__(self):EVENTS.append('drop-callee')\nfor module,name in((a,'first'),(b,'second')):\n EVENTS.clear();module.len=Length(module)\n try:\n  result=getattr(module,name)([1,2]);EVENTS.append(('result',result.value));del result\n except ArithmeticError as error:EVENTS.append(('error',str(error)))\n gc.collect();print(name,EVENTS)\n".replace(
-        "MODE_VALUE", repr(mode)
-    )
+    driver = """from pkg import a, b
+import gc, sys
+
+EVENTS = []
+MODE = MODE_VALUE
+
+
+class Number:
+    def __init__(self, value):
+        self.value = value
+
+    def __add__(self, value):
+        EVENTS.append(("add", self.value, value))
+        if MODE == "add-error":
+            raise ArithmeticError("add")
+        return Number(self.value + value)
+
+    def __mul__(self, value):
+        EVENTS.append(("mul", self.value, value))
+        if MODE == "mul-error":
+            raise ArithmeticError("mul")
+        return Number(self.value * value)
+
+    def __del__(self):
+        EVENTS.append(("drop-number", self.value))
+
+
+class Length:
+    def __init__(self, module):
+        self.module = module
+
+    def __call__(self, values):
+        EVENTS.append("length")
+        del self.module.len
+        return Number(4)
+
+    def __del__(self):
+        EVENTS.append("drop-callee")
+
+
+for module, name in ((a, "first"), (b, "second")):
+    EVENTS.clear()
+    module.len = Length(module)
+    try:
+        result = getattr(module, name)([1, 2])
+        EVENTS.append(("result", result.value))
+        del result
+    except ArithmeticError as error:
+        EVENTS.append(("error", str(error)))
+    gc.collect()
+    print(name, EVENTS)
+""".replace("MODE_VALUE", repr(mode))
     files = {
         "pyproject.toml": '[project]\nname="probe"\nversion="0"\n',
         "pkg/__init__.py": "",
@@ -208,10 +259,24 @@ def test_builtin_supplier_preserves_displaced_callable_and_result_lifetimes(
     before, after = tmp_path / "before", tmp_path / "after"
     for root in (before, after):
         _write(root, files)
-    expected = _run(before, "observe.py")
+
+    def observed(root: Path) -> str:
+        completed = subprocess.run(
+            [sys.executable, "-B", "observe.py"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=60,
+            env={"PATH": "", "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        assert completed.stderr == ""
+        return completed.stdout
+
+    expected = observed(before)
     applied, _ = _refactor(after / "pkg", True)
     assert applied > 0
-    assert _run(after, "observe.py") == expected
+    assert observed(after) == expected
     assert "drop-callee" in expected and "drop-number" in expected
     assert ("'error'" in expected) is (mode != "ok")
 
