@@ -1406,6 +1406,15 @@ continue to force native parsing under the caller's current warning policy.
 The existing character, entry and source-storage bounds, synchronized updates
 and process-local reset after a fork also cover warning-impossible text.
 
+Formatted-string warning classification tracks each string's raw prefix and
+OP-brace depth. Literal text, quoted strings and comments do not change that
+depth; nested formatted strings have independent frames. CPython 3.12 decodes
+escapes in raw format specifications, so their middle tokens still require
+escape checks while raw literal text outside replacement fields can be shared.
+Nonraw middle tokens and nested nonraw strings retain their warning checks.
+This classifies lexical warning freedom only: parser-limit keys, native error
+behavior, and current-module admission proofs remain separate.
+
 An analysis also owns the IF-transfer source facts and compiler-literal summaries.
 The IF memo holds private syntax freshly parsed from original source, exact
 spellings and frozen local facts; it never borrows a caller's mutable tree. Its

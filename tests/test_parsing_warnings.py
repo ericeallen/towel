@@ -39,6 +39,16 @@ SAFE_SOURCES = [
     "value = f'object at 0x{id(object):x}'\n",
     "value = f'{1e3} {0xff} {1j}'\n",
     "pattern = r'\\(([^()]*)\\)'\nvalue = f'object at 0x{id(object):x}'\n",
+    r"value = rf'(?<!\w){value}(?!\w)'",
+    r"value = FR'\400{value}\777'",
+    r"value = rf'{{\w}}{value}{{\d}}'",
+    r"value = rf'{value:{width}}\w'",
+    r'''value = rf"\w{ {'key': 1} }\d"''',
+    r'''value = rf"\w{ {1, 2} }\d"''',
+    r'''value = rf"\w{'{'}\d"''',
+    r"value = rf'\w{value=}\d'",
+    r"value = rf'\w{value!r:>{width}}\d'",
+    r"value = rf'\N{value}\w'",
 ]
 
 WARNING_SOURCES = [
@@ -78,6 +88,10 @@ WARNING_SOURCES = [
             r"value = Rf'{value:{width}\777}'",
             "value = fr'{value:\\q}'\nbroken =",
             "value = rf'{value:\\400}'\nbroken =",
+            r"value = rf'\w{value:\q}\d'",
+            r"value = rf'\w{value:{width}\q}\d'",
+            r"""value = rf'\w{ {"key": 1}:\q}\d' """,
+            r'''value = rf"\w{rf'{value:\q}'}\d"''',
         ]
     ],
 ]
@@ -302,6 +316,47 @@ def test_tokenizer_warning_guard_has_no_diagnostics(separator: str, brace: str) 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 701 expression strings")
 def test_raw_formatted_literal_does_not_hide_nonraw_nested_strings() -> None:
     source = "value = rf\"{'\\d'}\""
+    assert not parsing_is_pure(source)
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
+        ast.parse(source)
+    assert len(emitted) == 1
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 701 expression strings")
+@pytest.mark.parametrize(
+    "source",
+    [
+        r'''value = rf"\w{rf'\d{value}'}\q"''',
+        r'''value = f"{rf'\w{value}'}"''',
+        r'''value = rf"\w{ {'key': rf'\d{value}'} }\q"''',
+        'value = rf"\\w{value # comment }\n}\\d"',
+    ],
+)
+def test_nested_raw_literal_frames_preserve_native_parses(source: str) -> None:
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
+        expected = ast.parse(source, filename="nested.py")
+        assert parsing_is_pure(source)
+        cache = AnalysisSources()
+        first = cache.parse(source, "nested.py")
+        assert cache.parse(source, "nested.py") is first
+        assert ast.dump(first, include_attributes=True) == ast.dump(
+            expected, include_attributes=True
+        )
+    assert not emitted
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 701 expression strings")
+@pytest.mark.parametrize(
+    "source",
+    [
+        r'''value = rf"\w{f'{value:\q}'}\d"''',
+        r'''value = rf"\w{'\q'=}\d"''',
+        r'''value = rf"\w{ {'key': '\q'} }\d"''',
+    ],
+)
+def test_raw_literal_frames_do_not_hide_nested_native_warnings(source: str) -> None:
     assert not parsing_is_pure(source)
     with warnings.catch_warnings(record=True) as emitted:
         warnings.simplefilter("always")

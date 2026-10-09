@@ -9,6 +9,10 @@ ecosystem evidence behind each claim. The format follows
 
 ## [Unreleased]
 
+- Share warning-free raw f-string literal analyses on Python 3.12. Distinguish
+  literal text from replacement fields while retaining native warning checks
+  for raw format specifications and nonraw nested strings.
+
 - Limit source-cache keys to native strings/bytes so subclass methods cannot
   change cache behavior. Include parser limits in typing-form and namespace
   syntax cache keys, and keep warning-capable parses on the native path.

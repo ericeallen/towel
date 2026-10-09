@@ -82,10 +82,18 @@ def _safe_escapes(text: str, *, is_bytes: bool = False) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class _FormattedString:
+    """One string's prefix and OP-brace nesting within its replacement fields."""
+
+    raw: bool
+    curly_depth: int = 0
+
+
 def _tokens_cannot_warn(source: str) -> bool:
     if _TOKENIZER_WARNING.search(source):
         return False
-    formatted_raw: list[bool] = []
+    formatted: list[_FormattedString] = []
     previous: tokenize.TokenInfo | None = None
     try:
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
@@ -101,18 +109,27 @@ def _tokens_cannot_warn(source: str) -> bool:
                 start = _STRING_START.match(token.string)
                 if start is None:
                     return False
-                formatted_raw.append("r" in start[1].lower())
+                formatted.append(_FormattedString("r" in start[1].lower()))
             elif kind in {"FSTRING_MIDDLE", "TSTRING_MIDDLE"}:
                 # CPython 3.12 decodes even raw f-string format specifications.
-                # MIDDLE also covers literal text; checking all of it avoids
-                # duplicating the parser just to distinguish those positions.
-                raw = formatted_raw and formatted_raw[-1] and sys.version_info[:2] != (3, 12)
-                if not formatted_raw or (not raw and not _safe_escapes(token.string)):
+                # Only OP braces enter fields: braces within literal text,
+                # quoted strings and comments leave this frame unchanged.
+                if not formatted:
+                    return False
+                frame = formatted[-1]
+                raw = frame.raw and (sys.version_info[:2] != (3, 12) or frame.curly_depth == 0)
+                if not raw and not _safe_escapes(token.string):
                     return False
             elif kind in {"FSTRING_END", "TSTRING_END"}:
-                if not formatted_raw:
+                if not formatted or formatted[-1].curly_depth != 0:
                     return False
-                formatted_raw.pop()
+                formatted.pop()
+            elif token.type == tokenize.OP and formatted and token.string in {"{", "}"}:
+                frame = formatted[-1]
+                depth = frame.curly_depth + (1 if token.string == "{" else -1)
+                if depth < 0:
+                    return False
+                formatted[-1] = _FormattedString(frame.raw, depth)
             elif token.type == tokenize.STRING:
                 start = _STRING_START.match(token.string)
                 if start is None:
@@ -128,7 +145,7 @@ def _tokens_cannot_warn(source: str) -> bool:
             previous = token
     except (SyntaxError, UnicodeError, tokenize.TokenError, RecursionError):
         return False
-    return not formatted_raw
+    return not formatted
 
 
 @dataclass(frozen=True)
