@@ -34,7 +34,8 @@ _POSSIBLE_WARNING = re.compile(r"\\(?:[^\\'\"abfnrtv0-7x\r\n]|[4-7][0-7]{2})|[0-
 # The C tokenizer itself warns for these f/t-string escapes, including its
 # special handling of a carriage return. Ordinary occurrences before every
 # possible formatted prefix are handled by the token escape checks below.
-_TOKENIZER_WARNING = re.compile(r"\\\r?[{}]")
+# Only a complete odd run leaves a brace escaped; paired backslashes are literal.
+_TOKENIZER_WARNING = re.compile(r"(?<!\\)(?:\\\\)*\\\r?[{}]")
 # Identifiers consume ASCII letters/underscores; numeric adjacency stays uncertain.
 _POSSIBLE_FORMATTED_START = re.compile(r"(?i)(?<![A-Za-z_])(?:[ft]r?|r[ft])['\"]")
 _STRING_START = re.compile("(?i)^([rubft]*)(\"\"\"|'''|\"|')")

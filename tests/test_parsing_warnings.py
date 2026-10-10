@@ -287,6 +287,25 @@ def test_safe_lexical_contexts_reuse_the_native_tree(source: str) -> None:
     assert not emitted
 
 
+def _parse_observation(
+    source: str,
+    policy: Literal["always", "error", "ignore"],
+    cache: AnalysisSources | None,
+) -> tuple[object, tuple[object, ...]]:
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter(policy)
+        try:
+            tree = (
+                ast.parse(source, filename="subject.py")
+                if cache is None
+                else cache.parse(source, "subject.py")
+            )
+            result: object = ast.dump(tree, include_attributes=True)
+        except (SyntaxError, Warning) as error:
+            result = (type(error), error.args)
+    return result, tuple((w.category, str(w.message), w.filename, w.lineno) for w in emitted)
+
+
 @pytest.mark.parametrize("source", WARNING_SOURCES)
 @pytest.mark.parametrize("policy", ["always", "error", "ignore"])
 def test_native_warning_sources_are_never_shared(
@@ -297,24 +316,10 @@ def test_native_warning_sources_are_never_shared(
         assert not parsing_is_pure(source)
     assert not emitted
 
-    def observe(cache: AnalysisSources | None) -> tuple[object, tuple[object, ...]]:
-        with warnings.catch_warnings(record=True) as emitted:
-            warnings.simplefilter(policy)
-            try:
-                tree = (
-                    ast.parse(source, filename="subject.py")
-                    if cache is None
-                    else cache.parse(source, "subject.py")
-                )
-                result: object = ast.dump(tree, include_attributes=True)
-            except (SyntaxError, Warning) as error:
-                result = (type(error), error.args)
-        return result, tuple((w.category, str(w.message), w.filename, w.lineno) for w in emitted)
-
-    expected = observe(None)
+    expected = _parse_observation(source, policy, None)
     cache = AnalysisSources()
-    assert observe(cache) == expected
-    assert observe(cache) == expected
+    assert _parse_observation(source, policy, cache) == expected
+    assert _parse_observation(source, policy, cache) == expected
 
 
 @pytest.mark.parametrize("separator", ["", "\r"])
@@ -444,15 +449,119 @@ def test_early_raw_brace_does_not_hide_a_later_template_escape(prefix: str) -> N
     assert not emitted
 
 
-def test_raw_brace_module_reuses_facts_and_recomputes_changed_or_uncached_queries(
-    monkeypatch: pytest.MonkeyPatch,
+FORMATTED_PREFIXES = [
+    "f",
+    "fr",
+    "rf",
+    "F",
+    "Fr",
+    "fR",
+    "FR",
+    "Rf",
+    "rF",
+    "RF",
+    *[
+        pytest.param(
+            prefix,
+            marks=pytest.mark.skipif(sys.version_info < (3, 14), reason="template strings"),
+        )
+        for prefix in ("t", "tr", "rt", "T", "Tr", "tR", "TR", "Rt", "rT", "RT")
+    ],
+]
+
+
+@pytest.mark.parametrize("prefix", FORMATTED_PREFIXES)
+@pytest.mark.parametrize("backslashes", [1, 2, 3, 4])
+@pytest.mark.parametrize("separator", ["", "\r"])
+@pytest.mark.parametrize("closing", [False, True])
+def test_complete_backslash_runs_preserve_native_formatted_diagnostics(
+    prefix: str, backslashes: int, separator: str, closing: bool
 ) -> None:
-    source = (
-        "from typing import Optional\n"
+    run = "\\" * backslashes + separator
+    body = "{1}" + run + "}}" if closing else run + "{1}"
+    # An innocuous numeric-looking comment exercises the lexical proof even
+    # when a carriage return would otherwise take the no-warning fast path.
+    source = "# 1name is only a comment\nvalue = " + prefix + '"""' + body + '"""'
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("error")
+        for _ in range(2):
+            assert parsing_is_pure(source) == (backslashes % 2 == 0)
+    assert not emitted
+    for policy in ("always", "ignore", "error"):
+        expected = _parse_observation(source, policy, None)
+        cache = AnalysisSources()
+        for _ in range(2):
+            assert _parse_observation(source, policy, cache) == expected
+        if backslashes % 2 == 0:
+            assert isinstance(expected[0], str) and not expected[1]
+
+
+@pytest.mark.parametrize("prefix", FORMATTED_PREFIXES)
+@pytest.mark.parametrize("separator", ["", "\r"])
+def test_even_run_does_not_hide_a_later_odd_formatted_escape(prefix: str, separator: str) -> None:
+    source = "value = " + prefix + '"""\\\\{1}""" + ' + prefix + '"""\\' + separator + '{2}"""'
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("error")
+        assert not parsing_is_pure(source)
+    assert not emitted
+    for policy in ("always", "ignore", "error"):
+        expected = _parse_observation(source, policy, None)
+        cache = AnalysisSources()
+        assert _parse_observation(source, policy, cache) == expected
+        assert _parse_observation(source, policy, cache) == expected
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 701 expression strings")
+@pytest.mark.parametrize(
+    "source, pure",
+    [
+        (r'''value = f"\\{f'\\{2}'}"''', True),
+        (r'''value = f"\\{f'\{2}'}"''', False),
+        (r'''value = f"\\{'\q'}"''', False),
+    ],
+)
+def test_paired_backslashes_preserve_nested_native_effects(source: str, pure: bool) -> None:
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("error")
+        assert parsing_is_pure(source) is pure
+    assert not emitted
+    for policy in ("always", "ignore", "error"):
+        expected = _parse_observation(source, policy, None)
+        cache = AnalysisSources()
+        assert _parse_observation(source, policy, cache) == expected
+        assert _parse_observation(source, policy, cache) == expected
+
+
+def test_later_ordinary_raw_braces_remain_conservatively_uncached() -> None:
+    source = "tag = f'{1}'\n" + r'''pattern = r"\{[^{}]*\}"''' + "\n"
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("error")
+        assert not parsing_is_pure(source)
+    assert not emitted
+    for policy in ("always", "ignore", "error"):
+        expected = _parse_observation(source, policy, None)
+        assert isinstance(expected[0], str) and not expected[1]
+        cache = AnalysisSources()
+        assert _parse_observation(source, policy, cache) == expected
+        assert _parse_observation(source, policy, cache) == expected
+
+
+@pytest.mark.parametrize(
+    "literal_source",
+    [
         "literal_word = 'text'\n"
         r'''pattern = r"\{'c': 1\} not match for \{'b': 1\}"''' + "\n"
-        "value = f'{literal_word}'\n"
-    )
+        "value = f'{literal_word}'\n",
+        r'''value = f"{value}\\{text}"''' + "\n",
+        r'''value = f"\x1b]8;id={value};{text}\x1b\\{text}\x1b]8;;\x1b\\"''' + "\n",
+    ],
+    ids=["raw-regex", "markup", "ansi-link"],
+)
+def test_warning_free_module_reuses_facts_and_recomputes_changed_or_uncached_queries(
+    literal_source: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = "from typing import Optional\n" + literal_source
     facts: BoundedCache[Tuple[str, ParserConfiguration], Optional[typing_forms._ModuleFacts]] = (
         BoundedCache(256)
     )
