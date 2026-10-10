@@ -2,6 +2,53 @@
 
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
+## October 10, 2026 preparation and completed comparison
+
+Version 1.946 is prepared and unpublished; the last published release is 1.792.
+The four selected changes—ownership-fact reuse, exact constant occurrences,
+certified leading-thunk ordering and IF-only fresh local outputs—are implemented
+and audited. The final runtime audit used
+`9d57b0d25f3ee743e0ce0035ed13df65b2344164`. Source-only facts and scoped caches
+reduce repeated work; every admitted IF certificate still checks the current
+mutable module and original ownership afresh. These proof obligations were not
+removed to obtain a timing result.
+
+The completed comparison used that source against published 1.792
+`44d779563578a32e24f8213fba96f43c6698ab43`, with two samples per version per
+workload, Click R,F,F,R followed by Rich R,F,F,R:
+
+| Workload | Published mean seconds | Prepared runtime mean seconds | Increase |
+| --- | ---: | ---: | ---: |
+| Click | 46.527008 | 56.692565 | 21.85% |
+| Rich | 99.772523 | 177.698981 | 78.10% |
+
+These measure the complete cold default production CLI, including checkers,
+formatting, materialization and final validation. Setup, settling and original
+before/after tests are outside the CLI timer. All eight samples passed their
+original test-pair, visible diagnostic, output-reference, source, artifact,
+runtime, dependency, resource and closure checks. Existing failures remain:
+24 Click records and eight Rich records, with eight hidden truncated Rich
+portions unverified. Click applied four extractions in the released version and
+five in the prepared runtime; Rich applied 15 in both. Output bytes matched the
+separate reference for each version. Hardware page caches were not flushed.
+
+This was an explicitly observational shared-host protocol. Runtime idle below
+70% was retained and disclosed, not filtered or treated as proof of unrelated
+contention. There was no replacement of an actual sample. Two observations per
+version do not establish a confidence interval, isolated-host performance or a
+corpus-wide result. **The requested restoration target is not met.** Earlier
+rejected, confounded and instrumented runs are preserved separately and excluded
+from this comparison.
+
+The source-bound report and independent readback are retained at
+`~/Knowledge/handoffs/towel/20261009-performance-recovery-01a11b7c/observational-assessments-20261010-rich-r03/`.
+The historical profiles below keep their original dates, source sizes and
+measurements. Their recommendations are not an additional implementation
+sequence: N-way discovery, Rust and other follow-ups remain deferred until new
+profiles and preservation proofs justify them.
+
+## Historical roadmap
+
 Status: measured 2026-09-17 on Towel's own source (16k lines, 28 files) and
 on arrow (10k lines); item 1 applied the same day, items 2 to 5 in the days
 after (see *Done since*, at the end). The Rust question is answered by the

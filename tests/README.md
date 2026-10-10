@@ -27,6 +27,18 @@ functions and unittest methods need no signatures (the `tests.*` override in
 `pyproject.toml`), and every `# type: ignore` must be needed and name its
 error code.
 
+For the prepared 1.946 version, the new focused families cover exact constant
+occurrences and literal pools, eligible thunk ordering and result lifetimes,
+fresh IF-local outputs and original-source certificates, Optional-aware caller
+contracts, captured comprehension cells, and bounded lexical/source caches.
+Representative complete-CLI controls are `test_occurrence_constant_cli.py`,
+`test_thunk_ordering_cli.py`, `test_if_fresh_bindings_cli.py` and
+`test_comprehension_cell_capture_cli.py`. These coexist with the standing
+positive and hostile batteries; no reduced suite replaces the full check.
+See [the 1.946 overview](../docs/RELEASE_1_946.md) and
+[readiness report](../docs/PRODUCTION_READINESS.md) for the distinction between
+the completed development audit and the final versioned release campaign.
+
 ## Test Structure
 
 ### Unit Tests (`tests/`)

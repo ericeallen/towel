@@ -25,6 +25,8 @@ is a defect to fix, not a limitation to document.
 - [Unreadable input](#2026-09-25-a-file-that-does-not-parse-refuses-the-run) · [Scope constraints](#2026-09-27-recover-valid-blocks-without-moving-unrelated-scope-constraints)
 - [Fresh variant checks](#2026-10-06-rendered-variant-refusals-require-fresh-checker-requests)
 - [Tiny helper interface cost](#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
+- [Exact constants, thunk order and IF outputs](#2026-10-08-retained-proposals-need-source-and-lifetime-proofs)
+- [Scoped facts and native warning behavior](#2026-10-10-share-immutable-facts-without-caching-admission)
 - [Complete preview and helper inputs](#complete-preview-and-generated-helper-inputs-september-27-2026) · [Annotation evaluation](#generated-annotations-must-not-add-evaluation-september-27-2026)
 - [Release audits](#2026-09-24-every-release-is-audited-and-every-finding-becomes-a-test) · [Evidence and documentation](#2026-09-27-release-documentation-must-agree-with-its-validation-evidence)
 
@@ -1695,3 +1697,72 @@ and support dependencies must stay immutable during the run. These prerequisites
 do not certify arbitrary mutable provider roots or enable inner variant replay.
 Historical performance samples retain their original identities and predate
 this removal; no performance benefit or cost is claimed without a new measure.
+
+## 2026-10-08: Retained proposals need source and lifetime proofs
+
+Exact constant occurrences, leading-thunk ordering and fresh IF-local outputs
+are useful extensions of the existing transformation rules. Each must preserve
+the independent instantiation, binding, compiler-identity and ownership proofs;
+none is permission to generalize arbitrary expressions or control flow.
+
+Constant substitution uses field/index paths for individual occurrences.
+Equal-value replacement is insufficient, and differing columns share a
+parameter only when their complete type-and-value vectors agree. Literal pools
+need original source and compiler evidence; compound pools remain intact.
+
+The complete eligible leading-thunk prefix may reorder contiguous slots within
+each positional segment before the existing inliner. Fixed arguments and the
+positional-only boundary do not move. Every caller must prove an immutable
+result: first-use timing alone does not justify holding an opaque temporary in
+an eager parameter. Defaulted, keyword-only and variadic signatures retain
+their order.
+
+A contiguous block inside an IF-only suite may initialize fresh locals needed
+by its caller. Calls stay branch-local and return all later-read and lifetime
+outputs in original compiler order. Certificates bind original source, site
+and suite paths, and the aligned complete output tuple receives a fresh proof.
+Prior reads or bindings, captures, deletion and repeated writes remain
+conservative. This does not admit loop, try, with or match ancestry, waive frame
+ownership, or automatically add further nested callers to the initial pair.
+
+Required narrowing must also survive signature construction. A checker-witnessed
+nullable rejection that corresponds to the original caller's operand or
+declared output obligation ends the ladder before `Any` can conceal it.
+Optional-aware consumers and nullable output declarations are positive controls;
+reading a guarded subject alone does not justify refusal. Arbitrary callee names
+and unsupported control-flow correlations supply no proof.
+
+*Status: implemented with API and actual CLI regressions, including both
+configured checkers, errors, finalizers, identity and conservative controls.
+See the October coverage in [Adversarial review](ADVERSARIAL_REVIEW.md#october-proposal-and-cache-regressions).
+The reflection exclusion adopted October 2 is unchanged.*
+
+## 2026-10-10: Share immutable facts without caching admission
+
+Repeated analysis may reuse immutable facts within a verified owner and source
+lifetime. It may not reuse a verdict about a caller's mutable tree or skip the
+fresh source correspondence, function identity, suite identity and aligned
+output proofs that admit an extraction. Cheap local rejection may precede an
+expensive source proof, and an engine-owned native-pure pair may defer that
+proof until unification succeeds. Both original and aligned proofs are still
+required before constructing the helper.
+
+Scoped IF facts, compiler-literal summaries and return-read facts have separate
+bounds and cleanup. Direct calls, unknown owners, warning-capable sources,
+disabled memoization and unsupported source objects retain their native paths.
+Only exact native strings or bytes enter the purity boundary: custom subclasses'
+hash, length, encoding and callback behavior cannot become cache-key work.
+Parser configuration and source bytes remain part of the relevant keys.
+LRU mapping views snapshot keys so normal value promotion cannot invalidate
+their own iterator.
+
+Warning classification is a lexical proof of when parsing can be shared,
+never a change to native warning policy. On CPython 3.12, raw literal text
+outside a formatted-string replacement field differs from a raw format
+specification, whose escapes can warn. Track each string's OP-brace depth;
+quoted or literal braces do not change it. Uncertain escapes, numeric-keyword
+syntax and nested nonraw strings retain native warning/error behavior.
+
+*Status: implemented with bounded-cache, scoped-owner, mutation, fork, disabled
+and native warning-policy regressions. A profile or repeated-input census is
+diagnostic evidence, not a whole-production-path speedup or release approval.*

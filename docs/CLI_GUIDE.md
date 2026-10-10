@@ -41,6 +41,12 @@ A complete preview uses the same pipeline as `dry`. The `--quick` listing is
 partial: it is neither the final result nor an upper bound on what a complete
 run can extract.
 
+Exact constant-occurrence substitution, certified leading-thunk ordering and
+fresh IF-local outputs are part of the normal pipeline; they need no extra
+flags. These capabilities still require the ordinary binding, lifetime,
+parameter-budget and checker proofs. See
+[generated code](GENERATED_CODE.md#arguments-and-evaluation) for their boundaries.
+
 ## Choose the analysis scope
 
 ### Share helpers within or across modules

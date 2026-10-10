@@ -319,6 +319,13 @@ See [the evidence schema and release procedure](docs/RELEASING.md#repository-own
   detailed tasks and explanations in the appropriate guide linked from
   [the documentation index](docs/README.md), and add user-visible changes
   under `[Unreleased]` in CHANGELOG.md
+- The current prepared version is 1.946, named for ln 7. Its
+  [overview](docs/RELEASE_1_946.md) describes the completed capabilities and
+  repairs; [readiness](docs/PRODUCTION_READINESS.md) records the pending release
+  gates and measured performance regressions. Keep 1.792 publication facts
+  and older development timings under their original identities. Follow the
+  [version convention](docs/RELEASING.md#version-number-convention) when choosing
+  the next identifier; mathematical mnemonics do not define compatibility policy.
 - Give each new guide an index entry and a backlink. Longer references should
   have a compact contents list using their existing headings. Prefer relative
   links inside `docs/`; the root README needs release-pinned absolute links

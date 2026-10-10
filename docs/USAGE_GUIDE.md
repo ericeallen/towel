@@ -108,7 +108,11 @@ print("Termination:", reason)
 
 ### Localized Follow-Ups
 
-An extraction that would separate a narrowing test, such as an `isinstance` check, from an expression it leaves at the call site is never proposed, with or without type checking.
+Discovery filters the recognized narrowing boundaries that would separate a
+test from caller code requiring its refinement. Remaining deferred-expression
+cases are judged by the configured checker and source correspondence; a guard
+alone does not forbid an Optional-aware consumer. See
+[preserving narrowing](TYPING.md#preserving-narrowing).
 
 After each applied proposal, the engine re-analyzes only the changed files to enqueue *localized* follow-up proposals immediately. This accelerates chained extractions without rescanning the entire project every iteration. When that queue drains, a *global* pass re-pairs the project for cross-file duplicates; after the first, a global pass re-pairs only the functions in files rewritten since the previous global pass, which is exact (the argument is in [ARCHITECTURE.md](ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact)). Construct the engine with `incremental_global_passes=False` to re-pair everything each time; the output is byte-identical.
 
@@ -157,8 +161,8 @@ and formatting tools, while the bare API defaults for those callbacks are `None`
 
 | Parameter | Default | Effect |
 |---|---|---|
-| `parameterize_constants` | `True` | Differing constants become helper parameters. |
-| `parameterize_builtins` | `False` | Permit each caller's builtin lookup to reach a shared helper, normally as `lambda: len` or `lambda: print`. Without it, cross-module bare builtin reads decline (except `__debug__`); same-module reads stay bare. Only the existing first-effect, single-use proof permits eager evaluation. Typed thunks retain the callable result, e.g. `Callable[[], Callable[..., int]]` for `lambda: len`. Blocks that differ in which builtin they use still decline. |
+| `parameterize_constants` | `True` | Differing constant occurrences become helper parameters, subject to exact caller-column and compiler-pool checks. |
+| `parameterize_builtins` | `False` | Permit each caller's builtin lookup to reach a shared helper, normally as `lambda: len` or `lambda: print`. Without it, cross-module bare builtin reads decline (except `__debug__`); same-module reads stay bare. Lookup results remain deferred under the immutable-result requirement. Typed thunks retain the callable result, e.g. `Callable[[], Callable[..., int]]` for `lambda: len`. Blocks that differ in which builtin they use still decline. |
 | `cross_module_helpers` | `False` | Also share a helper between duplicates in different modules, importing it into the others (`--cross-module/--no-cross-module`). Off, only duplicates within a module are paired and no import of a project module that runs is written. |
 | `excluded_directories` | `()` | Names of directories or files to leave unchanged (`--exclude`), at any depth. The checks that read the whole program still read them, and one that does not parse is taken for no part of the program; the program's import model reads nothing in an excluded directory. |
 | `max_candidate_pairs` | `20_000_000` | Most candidate block pairs one analysis evaluates; past it the largest groups of similar blocks are left out with a warning (`--max-pairs`). |
@@ -716,8 +720,24 @@ simple_proposals = [p for p in proposals if p.parameters_count <= 2]
 
 - Check `min_lines` - code blocks might be too small
 - Check `max_parameters` - duplicates might differ in too many ways
-- Differing constants become parameters by default; with `parameterize_constants=False` they must match
+- Differing constant occurrences become parameters by default; with
+  `parameterize_constants=False` they must match. An equal literal elsewhere
+  in the block remains independent. Reuse of a parameter requires agreement
+  of its complete type-and-value column across callers; compiler literal-pool
+  and source-provenance checks still apply.
 - Check `engine.declined_pairs` for the binding, control-flow or placement constraint that prevented extraction
+
+An IF-local binding is not automatically a refusal. A source-bound proof can
+return fresh, definitely initialized outputs to a call inside the original
+branch, including all values needed to preserve cleanup. Earlier reads,
+rebindings, captures and unsupported ancestry remain conservative, and a
+successful binding proof does not waive frame ownership. See
+[fresh locals inside an IF](GENERATED_CODE.md#fresh-locals-inside-an-if).
+
+Likewise, leading thunk parameters are ordered automatically when their complete
+eligible prefix proves immutable results and preserves evaluation order. No API
+option enables broader eager evaluation. A factory, property or unknown name
+result stays deferred even when its expression is the helper's first use.
 
 ### "Too many proposals"
 

@@ -1,0 +1,439 @@
+{
+  "schema": 1,
+  "purpose": "Historical development performance and correctness observations for 1.946 preparation; not release validation",
+  "readback_utc": "2026-10-10T04:03:17.092976+00:00",
+  "provenance": {
+    "handoff": "20261009-performance-recovery-01a11b7c",
+    "record": "observational-assessments-20261010-rich-r03/combined-independent-final-readback.json",
+    "sha256": "f7a15635628ee59f73dbb1b2624ff2429799708ba7889c62a87f0d176071c1a3"
+  },
+  "source_shas": {
+    "release": "44d779563578a32e24f8213fba96f43c6698ab43",
+    "fixed": "9d57b0d25f3ee743e0ce0035ed13df65b2344164"
+  },
+  "package_metadata_version_both_roles": "1.792",
+  "planned_version_not_measured": "1.946",
+  "command": [
+    "towel",
+    "dry",
+    "--no-interactive",
+    "--progress",
+    "none",
+    "--cross-module"
+  ],
+  "workload_revisions": {
+    "click": "6aabf099bfdd4c1e75fe8d0e0d4241372b988ab1",
+    "rich": "9d8f9a372cc5916fd4781fec207ced7ddac2f08f"
+  },
+  "protocol": "shared-host-observational-continuous-rpc-v2",
+  "sample_order_per_project": [
+    "RELEASE",
+    "FIXED",
+    "FIXED",
+    "RELEASE"
+  ],
+  "samples_per_version_per_project": 2,
+  "resources": {
+    "image_sha256": "47fe32ba90ea4d65f85dd24fb3a93f754e8e3fa922a58930f88e8e0461b6d6d8",
+    "container_CPUs": 2,
+    "memory_bytes": 6442450944,
+    "memory_plus_swap_bytes": 6442450944,
+    "network": "none",
+    "TOWEL_WORKERS": 1,
+    "host": "Apple M5 Max, 18 cores, 128 GiB"
+  },
+  "CLI_scope": "Complete cold production CLI, including checkers, formatting and final cold confirmation; setup, settling and original before/after tests excluded",
+  "CPU_scope": "Waited-child user plus system CPU including waited descendants",
+  "artifacts": [
+    {
+      "variant": "click-release-44d7795",
+      "source_sha": "44d779563578a32e24f8213fba96f43c6698ab43",
+      "tracked": 2612,
+      "runtime": 103,
+      "wheel_sha256": "1ff7d6b874ef88811a84c616916577e8f1c4b4043870fc82d65e83fedd1eaebc",
+      "RECORD_entries": 109
+    },
+    {
+      "variant": "final-9d57b0d-consumers-r04",
+      "source_sha": "9d57b0d25f3ee743e0ce0035ed13df65b2344164",
+      "tracked": 2644,
+      "runtime": 107,
+      "wheel_sha256": "cc1d9383f27b2b07c5c4f0c1c6dca361c808da01f2968243a8cad896a555b56e",
+      "RECORD_entries": 113
+    }
+  ],
+  "runs": [
+    {
+      "project": "click",
+      "ordinal": 1,
+      "role": "RELEASE",
+      "label": "click-balanced-r07-01-release",
+      "CLI_seconds": 45.505823229003,
+      "CLI_waited_child_CPU_seconds": 51.068507999999994,
+      "runtime_idle": {
+        "interval_count": 54,
+        "idle_min_percent": 56.0,
+        "idle_mean_percent": 81.81481481481481,
+        "intervals_under70": 5,
+        "percentage_intervals_under70": 9.25925925925926
+      },
+      "all_source_artifact_runtime_driver_proofs_exact": true,
+      "original_pair_equal": true,
+      "visible_payloads_equal": true,
+      "visible_failure_records": 24,
+      "hidden_truncated_records_unverified": 0,
+      "output_count_exact": 17,
+      "applications": 4,
+      "changed_files": 3,
+      "preflight_min_idle": 89.0,
+      "source_sha": "44d779563578a32e24f8213fba96f43c6698ab43",
+      "original_test_counts": [
+        [
+          "deselected",
+          31000
+        ],
+        [
+          "failed",
+          24
+        ],
+        [
+          "passed",
+          2035
+        ],
+        [
+          "skipped",
+          24
+        ],
+        [
+          "xfailed",
+          1
+        ]
+      ],
+      "CLI_exit_code": 0,
+      "owned_workers_closed": true
+    },
+    {
+      "project": "click",
+      "ordinal": 2,
+      "role": "FIXED",
+      "label": "click-balanced-r07-02-fixed",
+      "CLI_seconds": 55.53531515097711,
+      "CLI_waited_child_CPU_seconds": 61.09114100000001,
+      "runtime_idle": {
+        "interval_count": 65,
+        "idle_min_percent": 50.0,
+        "idle_mean_percent": 75.03076923076924,
+        "intervals_under70": 10,
+        "percentage_intervals_under70": 15.384615384615385
+      },
+      "all_source_artifact_runtime_driver_proofs_exact": true,
+      "original_pair_equal": true,
+      "visible_payloads_equal": true,
+      "visible_failure_records": 24,
+      "hidden_truncated_records_unverified": 0,
+      "output_count_exact": 17,
+      "applications": 5,
+      "changed_files": 3,
+      "preflight_min_idle": 88.0,
+      "source_sha": "9d57b0d25f3ee743e0ce0035ed13df65b2344164",
+      "original_test_counts": [
+        [
+          "deselected",
+          31000
+        ],
+        [
+          "failed",
+          24
+        ],
+        [
+          "passed",
+          2035
+        ],
+        [
+          "skipped",
+          24
+        ],
+        [
+          "xfailed",
+          1
+        ]
+      ],
+      "CLI_exit_code": 0,
+      "owned_workers_closed": true
+    },
+    {
+      "project": "click",
+      "ordinal": 3,
+      "role": "FIXED",
+      "label": "click-balanced-r07-03-fixed",
+      "CLI_seconds": 57.84981544298353,
+      "CLI_waited_child_CPU_seconds": 63.893350000000005,
+      "runtime_idle": {
+        "interval_count": 67,
+        "idle_min_percent": 49.0,
+        "idle_mean_percent": 71.46268656716418,
+        "intervals_under70": 15,
+        "percentage_intervals_under70": 22.388059701492537
+      },
+      "all_source_artifact_runtime_driver_proofs_exact": true,
+      "original_pair_equal": true,
+      "visible_payloads_equal": true,
+      "visible_failure_records": 24,
+      "hidden_truncated_records_unverified": 0,
+      "output_count_exact": 17,
+      "applications": 5,
+      "changed_files": 3,
+      "preflight_min_idle": 83.0,
+      "source_sha": "9d57b0d25f3ee743e0ce0035ed13df65b2344164",
+      "original_test_counts": [
+        [
+          "deselected",
+          31000
+        ],
+        [
+          "failed",
+          24
+        ],
+        [
+          "passed",
+          2035
+        ],
+        [
+          "skipped",
+          24
+        ],
+        [
+          "xfailed",
+          1
+        ]
+      ],
+      "CLI_exit_code": 0,
+      "owned_workers_closed": true
+    },
+    {
+      "project": "click",
+      "ordinal": 4,
+      "role": "RELEASE",
+      "label": "click-balanced-r07-04-release",
+      "CLI_seconds": 47.548193398019066,
+      "CLI_waited_child_CPU_seconds": 53.533186,
+      "runtime_idle": {
+        "interval_count": 57,
+        "idle_min_percent": 44.0,
+        "idle_mean_percent": 68.52631578947368,
+        "intervals_under70": 24,
+        "percentage_intervals_under70": 42.10526315789474
+      },
+      "all_source_artifact_runtime_driver_proofs_exact": true,
+      "original_pair_equal": true,
+      "visible_payloads_equal": true,
+      "visible_failure_records": 24,
+      "hidden_truncated_records_unverified": 0,
+      "output_count_exact": 17,
+      "applications": 4,
+      "changed_files": 3,
+      "preflight_min_idle": 81.0,
+      "source_sha": "44d779563578a32e24f8213fba96f43c6698ab43",
+      "original_test_counts": [
+        [
+          "deselected",
+          31000
+        ],
+        [
+          "failed",
+          24
+        ],
+        [
+          "passed",
+          2035
+        ],
+        [
+          "skipped",
+          24
+        ],
+        [
+          "xfailed",
+          1
+        ]
+      ],
+      "CLI_exit_code": 0,
+      "owned_workers_closed": true
+    },
+    {
+      "project": "rich",
+      "ordinal": 1,
+      "role": "RELEASE",
+      "label": "rich-balanced-r09-01-release",
+      "CLI_seconds": 99.66044383699773,
+      "CLI_waited_child_CPU_seconds": 99.753638,
+      "runtime_idle": {
+        "interval_count": 113,
+        "idle_min_percent": 57.0,
+        "idle_mean_percent": 82.5575221238938,
+        "intervals_under70": 11,
+        "percentage_intervals_under70": 9.734513274336283
+      },
+      "all_source_artifact_runtime_driver_proofs_exact": true,
+      "original_pair_equal": true,
+      "visible_payloads_equal": true,
+      "visible_failure_records": 8,
+      "hidden_truncated_records_unverified": 8,
+      "output_count_exact": 100,
+      "applications": 15,
+      "changed_files": 7,
+      "preflight_min_idle": 96.0,
+      "source_sha": "44d779563578a32e24f8213fba96f43c6698ab43",
+      "original_test_counts": [
+        [
+          "failed",
+          8
+        ],
+        [
+          "passed",
+          948
+        ],
+        [
+          "skipped",
+          25
+        ]
+      ],
+      "CLI_exit_code": 0,
+      "owned_workers_closed": true
+    },
+    {
+      "project": "rich",
+      "ordinal": 2,
+      "role": "FIXED",
+      "label": "rich-balanced-r09-02-fixed",
+      "CLI_seconds": 178.1417314549908,
+      "CLI_waited_child_CPU_seconds": 178.20543600000002,
+      "runtime_idle": {
+        "interval_count": 191,
+        "idle_min_percent": 50.0,
+        "idle_mean_percent": 77.49738219895288,
+        "intervals_under70": 19,
+        "percentage_intervals_under70": 9.947643979057592
+      },
+      "all_source_artifact_runtime_driver_proofs_exact": true,
+      "original_pair_equal": true,
+      "visible_payloads_equal": true,
+      "visible_failure_records": 8,
+      "hidden_truncated_records_unverified": 8,
+      "output_count_exact": 100,
+      "applications": 15,
+      "changed_files": 7,
+      "preflight_min_idle": 89.0,
+      "source_sha": "9d57b0d25f3ee743e0ce0035ed13df65b2344164",
+      "original_test_counts": [
+        [
+          "failed",
+          8
+        ],
+        [
+          "passed",
+          948
+        ],
+        [
+          "skipped",
+          25
+        ]
+      ],
+      "CLI_exit_code": 0,
+      "owned_workers_closed": true
+    },
+    {
+      "project": "rich",
+      "ordinal": 3,
+      "role": "FIXED",
+      "label": "rich-balanced-r09-03-fixed",
+      "CLI_seconds": 177.2562301220023,
+      "CLI_waited_child_CPU_seconds": 177.29696600000003,
+      "runtime_idle": {
+        "interval_count": 190,
+        "idle_min_percent": 53.0,
+        "idle_mean_percent": 82.47894736842105,
+        "intervals_under70": 18,
+        "percentage_intervals_under70": 9.473684210526315
+      },
+      "all_source_artifact_runtime_driver_proofs_exact": true,
+      "original_pair_equal": true,
+      "visible_payloads_equal": true,
+      "visible_failure_records": 8,
+      "hidden_truncated_records_unverified": 8,
+      "output_count_exact": 100,
+      "applications": 15,
+      "changed_files": 7,
+      "preflight_min_idle": 85.0,
+      "source_sha": "9d57b0d25f3ee743e0ce0035ed13df65b2344164",
+      "original_test_counts": [
+        [
+          "failed",
+          8
+        ],
+        [
+          "passed",
+          948
+        ],
+        [
+          "skipped",
+          25
+        ]
+      ],
+      "CLI_exit_code": 0,
+      "owned_workers_closed": true
+    },
+    {
+      "project": "rich",
+      "ordinal": 4,
+      "role": "RELEASE",
+      "label": "rich-balanced-r09-04-release",
+      "CLI_seconds": 99.88460287899943,
+      "CLI_waited_child_CPU_seconds": 99.97045800000001,
+      "runtime_idle": {
+        "interval_count": 114,
+        "idle_min_percent": 55.0,
+        "idle_mean_percent": 82.13157894736842,
+        "intervals_under70": 11,
+        "percentage_intervals_under70": 9.649122807017545
+      },
+      "all_source_artifact_runtime_driver_proofs_exact": true,
+      "original_pair_equal": true,
+      "visible_payloads_equal": true,
+      "visible_failure_records": 8,
+      "hidden_truncated_records_unverified": 8,
+      "output_count_exact": 100,
+      "applications": 15,
+      "changed_files": 7,
+      "preflight_min_idle": 93.0,
+      "source_sha": "44d779563578a32e24f8213fba96f43c6698ab43",
+      "original_test_counts": [
+        [
+          "failed",
+          8
+        ],
+        [
+          "passed",
+          948
+        ],
+        [
+          "skipped",
+          25
+        ]
+      ],
+      "CLI_exit_code": 0,
+      "owned_workers_closed": true
+    }
+  ],
+  "all_owned_workers_closed": true,
+  "active_container_count": 0,
+  "limitations": [
+    "Observed shared-host workload measurements; NOT isolated-host certification or general restoration/publication.",
+    "Exactly2samples perversion perworkload. All runtime idle shortfalls retained including setup and post-wrapper tail.",
+    "ContinuousaggregateCPU includesownedDocker/VM/setup/backgroundload; native10s context cannot attributeallCPU or see everybrief contender/percore scheduling/thermal/disk/memory effects.",
+    "Freshworkvolume/environment/checkerprocess state; no hardwarepagecache flush claim.",
+    "Complete default production CLI measured; setup,settling and originalbefore/after tests excluded from CLIwall. Waited-childCPU includeswaiteddescendants, not Mypy-specific attribution.",
+    "Knownbaseline failures retained: Click24; Rich8. Allvisiblepayloads compared;8Rich hidden truncated parts remain unverified.",
+    "Click capability differs4released vs5fixed localapplications, same3files; Richboth15applications7files. No capability reduction or oracle waiver.",
+    "Allpreviousrejected/confounded/instrumented timings remain historicalexcluded. No actualsample replacement or confirmation/fallback in this assessment."
+  ]
+}

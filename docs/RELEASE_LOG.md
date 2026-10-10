@@ -9,9 +9,13 @@ they are not evidence of those retired protections in the current code.
 
 This log records notable repository states and the scope of their validation.
 A historical passing result applies to its recorded commit and test environment.
+Pending statements in dated checkpoints describe their status at that time;
+the entries below do not transfer approval to a later source or version.
 
 **Contents — release checkpoints**
 
+- [1.946 preparation and latest audit](#2026-10-10-1946-preparation-and-latest-audit)
+- [1.792 completed publication](#2026-10-08-1792-published-release)
 - [1.792 October 6 parameter audit follow-up](#2026-10-06-1792-parameter-audit-follow-up)
 - [1.792 October 6 audit and optimization validation](#2026-10-06-1792-audit-and-optimization-validation)
 - [1.792 October 5 final corpus and performance](#2026-10-05-1792-final-corpus-and-performance)
@@ -24,6 +28,45 @@ A historical passing result applies to its recorded commit and test environment.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-10-10: 1.946 preparation and latest audit
+
+Version 1.946 is named for ln(7) ≈ 1.945910149 and is in local preparation.
+No publication is claimed. The latest audit and eight timing samples belong
+to `9d57b0d25f3ee743e0ce0035ed13df65b2344164`, with metadata and tested
+artifacts still numbered 1.792. The versioned 1.946 candidate needs its own
+source/artifact gates, interpreter matrix, corpus and exact-commit CI.
+
+The canonical suite passed 10,583 tests and 45 subtests, with 32 skips,
+eight warnings and 93.478046% coverage. Scoped static, architecture and
+behavior checks completed. Six fresh default-CLI consumer comparisons matched
+their exact original baselines, including 35 existing failure records;
+nine hidden pytest-truncated portions remain unverified. Their 531 Python
+outputs matched retained references, with 56 local applications across
+30 files. All 2,644 tracked files and 107 runtime payloads stayed bound to
+the freeze, and owned workers closed. The [readiness report](PRODUCTION_READINESS.md#1946-preparation-and-audited-source-october-10-2026)
+records counts, coverage and limits.
+
+Eight serial complete CLI samples compared that source with released
+`44d779563578a32e24f8213fba96f43c6698ab43`, two samples per source for
+Click and Rich. Mean wall time rose 21.85% on Click and 78.10% on Rich.
+These shared-host observations retain every runtime idle shortfall; they do
+not establish isolated-host performance or restoration of the prior level.
+All original test pairs, visible diagnostics and output references passed;
+all measurement workers and containers closed. No actual sample was replaced,
+and no fallback or confirmation substitution was accepted. See
+[performance](PERFORMANCE.md#october-10-click-and-rich-assessment) and the
+[retained source-bound evidence](../tests/release_evidence/1.946-preparation/README.md).
+
+## 2026-10-08: 1.792 published release
+
+Version 1.792 was published from `44d779563578a32e24f8213fba96f43c6698ab43`
+as `v1.792`. Its exact-commit CI, Python 3.11–3.13 matrix, 141-project corpus,
+artifact hashes and fresh-install verification belong to that release.
+[Production readiness](PRODUCTION_READINESS.md#1792-published-release-october-8-2026)
+retains the completed result. The older pending preparation entries below
+were superseded for 1.792 publication; they retain their original observations
+and do not approve 1.946.
 
 ## 2026-10-06: 1.792 parameter audit follow-up
 
@@ -62,7 +105,7 @@ with byte-identical outputs and no established wall benefit. The
 [retained evidence](../tests/release_evidence/1.792-parameter-audit-fixes/README.md)
 binds those observations to the runtime and drivers. Documentation updates
 preserve the validated runtime and executable-test bytes. Matrix, corpus,
-final release evidence and exact-commit CI remain pending. No new published-
+final release evidence and exact-commit CI were pending at that checkpoint. No new published-
 version comparison or publication is claimed.
 
 ## 2026-10-06: 1.792 audit and optimization validation
@@ -91,8 +134,8 @@ gave it no repeated unchanged-revision work to skip.
 retains all arm identities, samples and limits.
 
 No matrix or corpus was rerun, at the maintainer's explicit instruction.
-Their earlier results do not validate this changed source; release remains
-held pending the remaining release gates and performance disposition.
+Their earlier results did not validate that changed source; release remained
+held at this checkpoint pending its remaining gates and performance disposition.
 
 ## 2026-10-05 (1.792 final corpus and performance)
 
@@ -111,14 +154,14 @@ The completed full typed, formatted Packaging comparison averaged
 The earlier 1.792 control averaged 35.38 seconds in the same experiment.
 Four fresh-process observations per version were run in two balanced blocks;
 all 12 commands succeeded, with identical repeated Python output within each
-version. Current 1.792 applied 20 refactorings versus 18 for 1.772. Background
+version. That candidate applied 20 refactorings versus 18 for 1.772. Background
 activity was recorded; this was a capacity/repeatability experiment, not a
 quiet-host preflight pass. The [performance guide](PERFORMANCE.md#october-5-repaired-candidate-comparison)
 records the exact source, runtime, archives, settings and limits.
 
 Final source-bound evidence assembly, the standard repository release gate,
 exact-commit remote CI, the maintainer's performance disposition and
-publication remain pending. This entry records completed local observations,
+publication remained pending at this checkpoint. This entry records completed local observations,
 not a published release or permission to upload. The retained
 [documentation evidence subset](../tests/release_evidence/1.792-audit-fixes/README.md)
 keeps the original records and does not replace the full external bundle.
@@ -165,8 +208,8 @@ before per-module options are copied and remains stable throughout each cache;
 project type rules and incremental caching remain in effect. Same-file and cross-file negative
 controls, useful extraction, reveal and subtype regressions fail against the
 preceding candidate and pass with this correction under actual mypy 2.4.
-The release remains held pending fresh frozen-source gates and performance
-measurements; these focused controls do not approve it.
+The release was held at this checkpoint pending fresh frozen-source gates
+and performance measurements; these focused controls did not approve it.
 
 ## 2026-10-03 (1.792 discovery remediation)
 
@@ -174,8 +217,8 @@ measurements; these focused controls do not approve it.
   `# towel: no-extract` immediately after the signature's final colon protects
   that definition and nested bodies. Unmarked code remains eligible; whole-file
   exclusions remain available. This supplies user control under the existing
-  reflection boundary. Focused checks pass; the release remains held pending
-  independent consumer validation and fresh gates for the new candidate. Earlier
+  reflection boundary. Focused checks passed; release was held at this
+  checkpoint pending independent consumer validation and fresh gates for the new candidate. Earlier
   gates do not approve it.
 - Packaging exposed a false rendering refusal for typed shared helpers carrying
   comments: annotations were safely quoted before rendering, but the roundtrip
@@ -245,7 +288,8 @@ measurements; these focused controls do not approve it.
   augmented assignments still read their targets, and nested targets still
   read the objects needed to reach them. The immutable attribute-read inventory
   is computed once per source and reused across imports. Focused checker
-  regressions cover this correction; final validation is still pending.
+  regressions cover this correction; final validation was still pending at
+  this checkpoint.
   A native checker control also exposed a false refusal when assigning
   `collections.namedtuple` disabled evidence for the separate `collections.abc`
   import. Write paths now distinguish unrelated attributes; root rebinding and
@@ -301,8 +345,8 @@ measurements; these focused controls do not approve it.
   selectors would change the ordered plugin arguments. The pinned failing test
   passes with this change. Synthetic controls also show why enabling the plugin was
   insufficient: copied baseline cache values could hide a changed result.
-  The configured cache directory is preserved. Final corpus validation remains
-  pending under the corrected harness and manifest.
+  The configured cache directory is preserved. Final corpus validation remained
+  pending at this checkpoint under the corrected harness and manifest.
 - The [complete CLI comparison](PERFORMANCE.md#october-2-complete-cli-comparison)
   measured the controlled typed, formatted Packaging fixture at 36.24 seconds
   versus 41.59 seconds for published 1.772, about 13% faster. Runtime commit
@@ -659,7 +703,8 @@ Notes:
 
 Notes:
 - To revert to this exact state: check out the commit recorded above on branch `main`.
-- Changes will be pushed to origin/main on 2025-11-04.
+- The 2025-11-04 entry anticipated a push; it records no completion proof
+  for that anticipated action. Current release work remains local.
 
 ## 2025-11-03
 

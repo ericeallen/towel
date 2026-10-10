@@ -3,8 +3,9 @@
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
 Status: the census below was gathered 2026-09-17 on the 1.618 outputs.
-Item 1 is implemented in the current Unreleased development change; its frozen
-full development audit passed on `bf564f2`. Item 2 was resolved differently on 2026-09-18 (see below);
+Item 1 is implemented in prepared, unpublished 1.946; its stage audit passed on
+`bf564f2`, and the final runtime audit passed on `9d57b0d`. Item 2 was resolved
+differently on 2026-09-18 (see below);
 items 3 and 4 remain research. The exact improvements are small; the large
 buckets need an assumption the engine does not make today.
 
@@ -56,9 +57,9 @@ helpers):
 | 11 | in the prefix, but out of parameter order |
 | ~35 | under a loop, `try`, `with`, or conditional expression; or multi-use elsewhere |
 
-## Exact improvements still available (small)
+## Exact improvements and remaining research
 
-1. **Eligible parameter order equals evaluation order** (Unreleased development).
+1. **Eligible parameter order equals evaluation order** (implemented for 1.946 preparation).
    The extractor lists
    unified parameters in discovery order, then free variables alphabetically.
    When two leading thunks are evaluated in the opposite order, inlining
@@ -89,9 +90,15 @@ helpers):
    bare-name thunks are locals bound on some path, enclosing-function cells,
    and cross-file module names.
 
-Together the exact items are on the order of 2% of the lambdas emitted.
+The historical counts put those exact items on the order of 2% of the lambdas
+emitted by the 1.618 census. This is not a current opportunity count, implemented
+recovery rate or performance gain.
 
 ## The large buckets need an assumption
+
+The opt-in idea below is historical and withdrawn as an implementation
+recommendation. No `--assume-plain-attributes` option exists; ordinary descriptor,
+callback, exception and lifetime semantics remain protected.
 
 Nine of every ten remaining lambdas defer an attribute read, a call, a
 subscript, or an operator that the helper evaluates after some effect,
@@ -112,9 +119,11 @@ fixtures that violate it so the flag's blast radius stays visible.
 
 ## Recommendation
 
-Keep item 1's certified-prefix and every-caller result proofs intact. Item 2's existing
+Keep item 1's certified-prefix and every-caller result proofs intact. Item 2's
+existing
 decline policy is recorded above; direct callee passing remains separate
 research. Investigate the historical bare-name bucket for definite-assignment
-precision. Do not weaken the
-verified default; if readability of `self._x` thunks matters enough, add the
-assumption as a named opt-in and measure it on the corpus.
+precision using fresh examples. Do not weaken the verified default or implement
+the historical arbitrary-attribute assumption. Mixed pure/impure callers and
+bare-name precision remain separate research, not further work promised for
+1.946. See the [current proposal status](README.md).

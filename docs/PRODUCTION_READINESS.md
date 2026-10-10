@@ -7,10 +7,12 @@ removes reflection and self-instrumentation guarantees. Validation and repair
 records below retain the source, contract and results of their dated runs;
 they are not evidence of those retired protections in the current code.
 
-Start with the completed release record. The later sections retain the evidence for earlier releases and candidates.
+Start with the 1.946 preparation boundary and latest source audit. The later
+sections retain completed releases and earlier preparation checkpoints.
 
 **Contents**
 
+- [1.946 preparation and audited source](#1946-preparation-and-audited-source-october-10-2026)
 - [1.792 published release](#1792-published-release-october-8-2026) · [1.792 preparation](#1792-release-preparation) · [Previous published release](#previous-published-release)
 - [1.772 release validation](#1772-release-validation-september-26-2026) · [Earlier 1.772 candidate](#earlier-1772-candidate-validation-september-19-2026)
 - [1.732 validation](#historical-1732-validation-september-19-2026) · [1.732 candidate](#historical-1732-candidate-run-september-19-2026)
@@ -19,6 +21,75 @@ Start with the completed release record. The later sections retain the evidence 
 - [1.414 repairs](#defects-found-and-repaired-in-this-pass) · [Consumer evidence](#consumer-evidence) · [Ecosystem check](#ecosystem-check)
 - [1.414 verification gates](#verification-gates-on-the-1414-tree) · [Historical limitations](#historical-1414-limitations-and-outstanding-work)
 - [Measurement environment](#measurement-environment)
+
+## 1.946 preparation and audited source, October 10, 2026
+
+Version **1.946**, named for ln(7) ≈ 1.945910149, is being prepared locally.
+The latest full audit applies to frozen source
+`9d57b0d25f3ee743e0ce0035ed13df65b2344164`, whose metadata and tested wheel
+still said **1.792**. It does not certify the subsequent versioned 1.946
+source or distributions. Fresh source-bound release gates, the required
+interpreter matrix and corpus, exact-commit CI and publication verification
+remain to be completed under the [release procedure](RELEASING.md). No 1.946
+tag, upload or publication is recorded here.
+
+At that audit freeze, the complete canonical suite passed **10,583 tests and
+45 subtests**, with 32 skips and eight warnings. Coverage was **93.478046%**
+(28,422 of 30,405 statements). Configured strict mypy over 530 files, Black,
+Flake8 and the selected medium/high Bandit checks passed. The bounded
+credential-shape scan reported no matches; it cannot prove that no secret
+exists. The independent behavior lane retained 4,501 equivalent observations,
+57 inconclusive observations and 4,842 unchanged cases, with no observed
+difference or failed case. Inconclusive and unchanged cases do not establish
+transformed-program coverage.
+
+Six fresh pinned Linux consumers used the actual installed default CLI and
+unchanged original before/after test commands. Their environment, full
+dependency maps, input Git bytes, wheel RECORD, 107 runtime payloads and
+531 generated Python outputs matched the retained references. There were
+56 local refactoring applications across 30 files. No typing fallback,
+confirmation substitution, retry-to-green or oracle waiver was accepted.
+These six consumers are a bounded audit, not a new 141-project corpus or
+Sphinx validation.
+
+| Consumer | Matching original and transformed suite | Local applications / changed files | Python outputs |
+| --- | --- | ---: | ---: |
+| attrs | 1,490 passed, one baseline failure, seven skipped, one xfailed | 1 / 1 | 13 |
+| Click | 2,035 passed, 24 baseline failures, 24 skipped, one xfailed, 31,000 deselected | 5 / 3 | 17 |
+| Packaging | 62,435 passed, 427 deselected | 4 / 4 | 22 |
+| Pygments | 5,330 passed, 16 skipped | 26 / 12 | 343 |
+| Rich | 948 passed, eight baseline failures, 25 skipped | 15 / 7 | 100 |
+| Starlette | 1,247 passed, two baseline failures, two xfailed | 5 / 3 | 36 |
+
+Matching outcomes retain **35 known baseline failure records**, not uniformly
+green upstream suites. Failure IDs, reported exception/assertion details and
+all retained visible payloads matched. Nine records contain pytest-truncated
+hidden portions—one attrs record and eight Rich records—which remain
+unverified. The audit independently matched all 2,644 tracked files to Git
+before and after, and its owned workers closed. Installed identity snapshots
+and actual CLI invocation evidence have their recorded process boundaries;
+a separate import probe is not evidence of an import in the CLI process.
+
+The subsequent eight-sample production assessment used the same audited
+source and released source `44d7795`, with wheels still numbered 1.792.
+Mean complete CLI time was 46.527→56.693 seconds on Click (**21.85% slower**)
+and 99.773→177.699 seconds on Rich (**78.10% slower**), with two samples per
+source per workload in release/audited/audited/release order. All original
+pairs, visible payloads and output references matched, with every runtime
+CPU shortfall retained. This is shared-host evidence, not isolated-host
+certification; the performance-restoration target remains unmet. All eight
+owned containers and measurement workers closed, and source and frozen
+instrument bytes stayed unchanged. See [performance details](PERFORMANCE.md#october-10-click-and-rich-assessment),
+the [source-bound evidence guide](../tests/release_evidence/1.946-preparation/README.md)
+and [eight-sample record](../tests/release_evidence/1.946-preparation/measurements.json).
+
+The external raw audit and measurement records are retained under
+`~/Knowledge/handoffs/towel/20261009-performance-recovery-01a11b7c/`, including
+`audit-r04/root-independent-readback.json` and
+`observational-assessments-20261010-rich-r03/combined-independent-final-readback.json`.
+The repository evidence guide records that provenance. Earlier rejected
+source rounds and failed resource/instrument attempts remain historical;
+they were not adopted as acceptance for this freeze.
 
 ## 1.792 published release, October 8, 2026
 
@@ -37,15 +108,17 @@ samples per version: 39.356 seconds mean for published 1.772 and 39.714 seconds
 for 1.792. The 0.91% difference is within approximately 2.8% sample variation;
 neither a meaningful speedup nor slowdown is established on this workload.
 The dated preparation results below retain their original identities and do
-not describe this final release. Subsequent source fixes and proposal review
-are Unreleased and require their own validation before publication.
+not describe this final release. Subsequent source fixes and proposal work
+belong to the prepared 1.946 version and require their own release validation
+before publication.
 
 ## 1.792 release preparation
 
 This section preserves historical preparation checkpoints. Its pending-stage
 statements apply at those checkpoints; the completed release is recorded above.
 
-The latest parameter, placement and checker-cache audit follow-ups pass the
+At the October 7 preparation checkpoint, the parameter, placement and
+checker-cache audit follow-ups passed the
 complete native Python 3.13.7/macOS suite at `04d2710`: **9,697 passed**, 20 skipped
 and 26 passing subtests, with **93%** combined line coverage. Black, flake8,
 strict mypy, Bandit and the pinned third-party dependency audit pass. Every
@@ -57,7 +130,8 @@ memo and 56.70s with it, with identical outputs. No wall-clock improvement is
 established. [Retained evidence](../tests/release_evidence/1.792-parameter-audit-fixes/README.md)
 records scope and failed attempts. This does not clear interpreter-matrix,
 corpus, final source-bound artifact/evidence or exact-commit CI gates. A fresh
-validation campaign is authorized; completed results must bind its final source.
+validation campaign was authorized at that checkpoint; its later completed
+release results are recorded above.
 
 The campaign's Python 3.11 checks exposed two test assumptions: a starred call
 can retain a temporary argument tuple past function return, and a nested list
@@ -205,7 +279,7 @@ their explicit scope in the pinned corpus manifest and review.
 
 ## Previous published release
 
-**1.772 is released on September 26, 2026, from `audit-1772`.** It repays
+**1.772 was released on September 26, 2026, from `audit-1772`.** It repays
 the defects that four audit rounds found in 1.732's design. Helpers are shared
 within one module unless `--cross-module` is given. Import names come only
 from the program's own imports. A typed run is judged against the project's
@@ -629,7 +703,7 @@ one core, the defaults).
 
 The subsequent timing-only changes, through the reviewed `83f4d8a` checkpoint,
 left the exactness baselines byte-identical, and click and jinja2 produced
-identical output with and without the last of them. The current validation
+identical output with and without the last of them. The historical 1.732 validation
 above records the later audit fixes separately from these historical timing checks.
 
 ## Historical 141-project corpus (September 17–18, 2026)
@@ -864,8 +938,8 @@ codebase. The suite at `938d351` was 1,181 tests; at `5ff2458` (September
 19, 2026) it collects 2,182.
 
 ## The 1.414 report (September 12–15, 2026)
-Publication remains a separate maintainer decision; see
-[RELEASING.md](RELEASING.md). Unattended use is not claimed: the first three
+At this historical checkpoint, publication remained a separate maintainer
+decision; see [RELEASING.md](RELEASING.md). Unattended use was not claimed: the first three
 batches of new projects each found new defect classes (see below), but the
 fourth and fifth batches of ten previously unseen projects each passed clean,
 meeting the stopping rule of two consecutive defect-free batches. The failure
@@ -1138,17 +1212,18 @@ projects found no defect and the stopping rule is met.
 
 ## Historical 1.414 limitations and outstanding work
 
-- Hosted Linux CI has not run; the workflow is unchanged and local runs are
-  macOS. Run it against the published commit before citing it.
-- No wheel or source distribution was rebuilt for 1.414; `just release 1.414`
-  prepares them and the maintainer approves hashes.
+- Hosted Linux CI had not run at the 1.414 checkpoint; its local runs were
+  macOS. This historical statement is not the status of later releases.
+- No wheel or source distribution had been rebuilt at that 1.414 checkpoint;
+  preparation and artifact-hash approval were still required.
 - Security support policy, confidential reporting channel, and repository
   visibility remain maintainer decisions recorded in RELEASING.md.
 - Thunked arguments read as `__param_0()`. An inlining pass passes a thunk
   eagerly when the helper evaluates it first, once, and unconditionally,
   which covers the common `x = E` opening; thunks used repeatedly or after
   an effect stay deferred. The `rename-helpers` workflow can name the rest.
-- The ecosystem corpus was 91 projects at 1.414 and is 141 now; the
+- The ecosystem corpus was 91 projects at 1.414 and reached 141 in
+  September 2026; the
   largest, networkx and Sphinx, are refactored within hours-long budgets.
   No measurement yet says how much of each transformed block its suite
   exercises. The stopping rule for calling the pass rate stable was two

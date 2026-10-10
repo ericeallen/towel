@@ -84,10 +84,9 @@ def test_a_blanket_callback_exclusion_is_not_the_preservation_contract() -> None
         _check_preservation_contract(original + "\nUnsupported: arbitrary callbacks.\n")
 
 
-def test_october_changes_belong_to_the_version_being_prepared() -> None:
-    """The pending release cannot promise both retired protections and their removal."""
-    version = str(tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"])
-    changes = (ROOT / "CHANGELOG.md").read_text().split(f"## [{version}]\n", 1)[1]
+def test_historical_1792_changes_keep_the_october_policy_and_measurement() -> None:
+    """A new version must not rewrite the preceding release's policy or evidence."""
+    changes = (ROOT / "CHANGELOG.md").read_text().split("## [1.792]\n", 1)[1]
     changes = changes.split("\n## ", 1)[0]
     assert "self-instrumentation" in changes
     assert "october-2-complete-cli-comparison" in changes
@@ -95,8 +94,8 @@ def test_october_changes_belong_to_the_version_being_prepared() -> None:
     assert "explicit-decorator and import-time checks remain" not in changes
 
 
-def test_current_release_summaries_use_the_completed_october_measurements() -> None:
-    """Recompute the quoted means from samples; earlier comparisons remain historical."""
+def test_historical_release_summaries_retain_the_completed_october_measurements() -> None:
+    """Recompute the historical means without promoting them to current timings."""
     evidence = _table(
         json.loads(
             (ROOT / "tests/release_evidence/post-1772-typed-cli/measurements.json").read_text()
@@ -111,6 +110,42 @@ def test_current_release_summaries_use_the_completed_october_measurements() -> N
     phrase = f"{seconds['candidate']:.2f} seconds versus {seconds['published']:.2f} seconds"
     for name in ("CHANGELOG.md", "docs/PRODUCTION_READINESS.md", "docs/RELEASE_LOG.md"):
         assert phrase in " ".join((ROOT / name).read_text().split())
+
+
+def test_preparation_performance_summaries_match_all_retained_samples() -> None:
+    evidence = _table(
+        json.loads(
+            (ROOT / "tests/release_evidence/1.946-preparation/measurements.json").read_text()
+        )
+    )
+    runs = _rows(evidence["runs"])
+    assert len(runs) == 8
+    assert evidence["planned_version_not_measured"] == "1.946"
+    assert evidence["package_metadata_version_both_roles"] == "1.792"
+    assert evidence["all_owned_workers_closed"] is True
+    assert evidence["active_container_count"] == 0
+    documents = {
+        name: " ".join((ROOT / name).read_text().split())
+        for name in ("README.md", "CHANGELOG.md", "docs/RELEASE_1_946.md", "docs/PERFORMANCE.md")
+    }
+    for project in ("click", "rich"):
+        selected = [row for row in runs if row["project"] == project]
+        assert [row["role"] for row in selected] == ["RELEASE", "FIXED", "FIXED", "RELEASE"]
+        seconds = {
+            role: mean(_number(row["CLI_seconds"]) for row in selected if row["role"] == role)
+            for role in ("RELEASE", "FIXED")
+        }
+        percentage = 100 * (seconds["FIXED"] / seconds["RELEASE"] - 1)
+        for text in documents.values():
+            for value in seconds.values():
+                assert any(f"{value:.{precision}f}" in text for precision in (2, 3))
+            assert f"{percentage:.2f}%" in text
+        for row in selected:
+            assert row["CLI_exit_code"] == 0
+            assert row["original_pair_equal"] is True
+            assert row["visible_payloads_equal"] is True
+            assert row["all_source_artifact_runtime_driver_proofs_exact"] is True
+            assert row["owned_workers_closed"] is True
 
 
 def test_readme_release_document_links_resolve_in_the_source_to_be_tagged() -> None:

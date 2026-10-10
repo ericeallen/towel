@@ -2,6 +2,10 @@
 
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
+**Archive orientation, October 10:** the pending corpus statement below belongs
+to this exact checkpoint. Later validation, published 1.792 and the prepared
+unpublished 1.946 are separate records; use the [current index](README.md).
+
 The completed non-corpus gates below validate commit
 `3f09421f2139508c5c9549b6791eca43f30c5c41`, with runtime tree
 `747008c225808e48bfaf97455e1d808e8800aa59` and test tree

@@ -71,14 +71,29 @@ describe belong to that version.
   Expressions that read names bound inside the block are lambda-lifted with
   those names as arguments.
   A thunk the helper evaluates first, exactly once, and before any other
-  effect is passed eagerly after all, because the call site's evaluation is
-  then indistinguishable from the in-place one (`thunk_inlining.py`). What
+  effect can be passed eagerly only when every caller proves an immutable
+  result (`thunk_inlining.py`). Calls, attributes, subscriptions and unknown
+  name results retain their thunks: an eager parameter would hold an extra
+  reference until the helper returns, changing temporary release or exception
+  cleanup. Contiguous eligible thunk slots can be ordered by evaluation within
+  each positional signature segment, without crossing a fixed parameter or
+  the positional-only boundary. Defaulted, keyword-only and variadic signatures
+  are not reordered. What
   the helper evaluates before it must neither run code nor raise: reading a
   parameter or a name the helper has already bound, building a tuple, list,
   set or dict of constants and such names, creating a lambda whose defaults
   are such, a constant, a negative number. A global or builtin read, a set or
   dict inserting anything but a constant, `*` and `**`, and unpacking a
   target list are effects, so a thunk after them stays a thunk.
+- **Literal occurrences and identity.** Constant differences are tracked by
+  exact AST field/index paths. Equal-valued literals elsewhere in a block are
+  not replaced with the differing occurrence. Parameter reuse requires the
+  complete ordered type-and-value column to agree at every site, preserving
+  `False` versus `0`, `0.0` versus `0`, and signed floating zero. Compiler-pooled
+  compound literals remain whole. Source bytes, compiler behavior and the
+  original occurrence establish literal identity; equal ASTs or equal values
+  alone do not. Unsupported provenance or a pool that cannot be preserved can
+  therefore decline an otherwise similar block.
 - **Binding discipline.** The block may not rebind, delete, or `except ... as`
   a name bound before it, by whatever construct binds it (an assignment, a
   `for` or `with` target, a `match` capture, a nested `def` or `class`, an
@@ -123,6 +138,16 @@ describe belong to that version.
   annotation-only native type parameters can remain on the original function. These conservative
   checks can decline ordinary numeric-looking code: its runtime values are
   not proved to lack finalizers merely by their spelling or annotations.
+  A bounded exception permits fresh local outputs in an IF-only suite. Each
+  site must match its original source, initialize every output on normal exit,
+  and have no prior read, other binding, repeated write, deletion or capture of
+  those outputs. All later-read and lifetime-required names return to the same
+  branch-local caller binding in compiler order. The complete tuple is proved
+  again after alignment. This preserves a later `UnboundLocalError` when the
+  original condition was false. Loop, try, with and match ancestry do not
+  qualify for this certificate, and additional nested cluster sites remain
+  conservative. Frame and exception ownership checks can still refuse a
+  certified binding transfer.
 - **Control flow and class context.** Blocks containing `yield`, `await`,
   async loops, context managers or comprehensions, `break`/`continue` targeting
   an outer loop, or comprehension assignment expressions are rejected where
@@ -158,8 +183,9 @@ describe belong to that version.
   in that module, even when its callers inherit from a class elsewhere.
   Across modules, callable module bindings are passed as lookup thunks, such
   as `lambda: callback`, and the helper performs each original lookup at its
-  use. The existing proof may inline a thunk only for one use at the first
-  effect. Module-data cases that cannot preserve lookup timing still decline
+  use. Inlining additionally requires an immutable result at every caller;
+  unknown lookup results stay deferred even at the first effect. Module-data
+  cases that cannot preserve lookup timing still decline
   (`module_data_lookup`, `rebound_external_binding`). A clustered occurrence
   does not join an existing eager parameter when its own binding requires a
   module lookup. The same spelling in two modules is not a common binding.
@@ -184,8 +210,8 @@ describe belong to that version.
   `--parameterize-builtins` (`parameterize_builtins=True`) explicitly permits
   each caller's binding to reach a shared helper. Module-resolved names use
   lookup thunks such as `lambda: len` and `lambda: print`, preserving repeated
-  reads and intervening ordinary assignments. Only the existing first-effect,
-  single-use proof permits eager evaluation. Local bindings retain their
+  reads and intervening ordinary assignments. First-effect, single-use timing
+  is insufficient to inline an unknown lookup result. Local bindings retain their
   ordinary parameter behavior. The option does not permit blocks that differ
   in which builtin they use; the builtin-argument and other binding checks
   still apply (`tests/test_no_builtin_arguments.py`).
@@ -251,8 +277,10 @@ describe belong to that version.
   check is compared with the project's own as it stood: an error the project
   already had is left as it is, and a change passes only when its check
   reports nothing the project's did not (see *Type annotations on helpers*
-  below). A change that introduces a type error has its annotations replaced
-  by `Any`, and then removed. Every variant must pass; checker failure or a
+  below). The signature ladder tries precise ordinary and generic signatures,
+  then targeted or broad `Any` fallbacks where no semantic refusal has ended
+  the ladder. Removal of annotations is also conditional on the remaining
+  errors and the module's annotation policy. Every variant must pass; checker failure or a
   new error declines the change. A checker that cannot run at all refuses the
   typed run, and `--no-types` is the explicit way on. So does a candidate's
   check that fails where the same check of the project as it stands, with no
@@ -804,7 +832,14 @@ them early, under the reason its summary counts:
   self._key_cache is None`), and the narrowing ends with the helper;
 - *narrows what a call-site lambda reads*: a test that once governed an
   expression now passed as a lambda (rich's `task.total is not None` beside
-  `lambda: int(task.total)`);
+  `lambda: int(task.total)`). A checker diagnostic must establish a rejected
+  nullable operand and its correspondence to the original expression. Merely
+  reading the test's subject is insufficient: Optional-aware consumers and
+  nullable declared outputs can retain precise generic signatures. Supported
+  arguments, operators, receivers, local aliases and scalar/fixed-tuple value
+  flows are checked before `Any` fallback can hide the lost refinement. Return
+  and assignment witnesses also require the original caller's matching
+  declaration; ambiguous diagnostics do not establish this refusal;
 - *declares its class's attributes*: assignments through a method's
   receiver were the class's attribute declarations (nox's
   `self.location_name = location`), and a function outside the class
@@ -1331,7 +1366,9 @@ the proposals it built and did not apply, by reason:
   are not refusal categories.
 - Bindings crossing the block boundary. `nested_binding_escapes`: a block
   nested inside a loop or branch binds a name the rest of the function
-  reads. `closure_crosses_block_boundary`: a nested function or lambda
+  reads and lacks the bounded IF-only fresh-output certificate described
+  above. That certificate does not relax ownership or admit arbitrary nested
+  control flow. `closure_crosses_block_boundary`: a nested function or lambda
   outside the block reads a name the block rebinds, or one inside the
   block reads a name the caller rebinds after it. `moves_scope_declaration`:
   a `global`/`nonlocal` declaration in the block names something the
@@ -1357,6 +1394,14 @@ the proposals it built and did not apply, by reason:
   Python 3.12 (PEP 709) that comprehension shares the function's scope, and
   the thunk would raise `NameError`. It declines on 3.11 too, where the
   thunk would work.
+  A separate source-associated compiler check refuses moving a list, set or
+  dict comprehension whose target is captured by a lambda or nested generator
+  and shares an outer free-cell spelling. On CPython 3.12/3.13, moving it can
+  change cell restoration and unchanged continuation reads. Evaluated defaults,
+  decorators and class heads participate in that containing frame; separate
+  bodies and an outer generator's body do not. Uncaptured and independently
+  bound target names remain eligible. This is an ordinary binding/error proof,
+  not a reflection scan.
 - Type information the move would destroy. `narrowing_lost_at_call_site`: a
   test in the block narrows a name, and an expression the two sites differ in
   reads that name, so extraction would leave the reading outside the region
@@ -1766,8 +1811,8 @@ this unchanged": what it names is read as evidence like the rest, and only a fil
 it names that does not parse is taken for no part of the program. The refusal
 suggests an `--exclude` for each file that clears it, the directory's name when
 two or more of the files share it, else the file's own; only a file given
-explicitly as the target has none, since it is always analyzed. Of the 140 corpus
-projects, 8 hold a file that does not parse on 3.12 and 3.13, all cleared that
+explicitly as the target has none, since it is always analyzed. In the historical
+140-project corpus run, 8 held a file that did not parse on 3.12 and 3.13, all cleared that
 way (black's `tests/data`, parso's `normalizer_issue_files`, unidecode's
 root-level Python 2 `benchmark.py`). On 3.11 sphinx and cattrs join them, and
 django holds five more such files, all written for 3.12, which sphinx and django
@@ -1782,6 +1827,14 @@ require. What remains:
   and the scans say so themselves.
 
 ## Performance
+
+The dated phase and self-refactoring measurements below are historical. The
+latest complete CLI comparison at audited `9d57b0d` measured Click at +21.85%
+and Rich at +78.10% relative to published 1.792, with two samples per arm on a
+shared host. These observations do not establish recovered performance or a
+release timing guarantee. See the [October 10 Click and Rich
+assessment](PERFORMANCE.md#october-10-click-and-rich-assessment) for the exact
+workloads, correctness checks and environment qualifications.
 
 Analysis is quadratic in candidate blocks per file. The measures below keep
 it tractable, all exact: they change no proposal.
@@ -1966,9 +2019,11 @@ command applies 22 refactorings in 35 s without the type checker and
 formatter, and 21 in 138 s with them, mypy being the one checker the
 project configures.
 
-The remaining cost is the pairwise evaluation of structurally distinct
-candidates, which no cache can share; large test modules with hundreds of
-similar methods remain the worst case. Progress is reported per phase.
+In those historical analyses, the remaining cost was pairwise evaluation of
+structurally distinct candidates, and large test modules with hundreds of
+similar methods were the worst case. Current complete-path costs require fresh
+attribution; the older phase measurements do not identify the current bottleneck.
+Progress is reported per phase.
 There is no time budget, but `--max-pairs` (20,000,000 by default) bounds
 the candidate pairs one analysis evaluates by leaving out the largest
 groups of similar blocks with a warning; interrupt with Ctrl-C, which

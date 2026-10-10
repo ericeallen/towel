@@ -8,6 +8,12 @@ This documentation describes the source version you are reading. Dated
 benchmarks, validation reports and proposals retain their original source and
 artifact identities; they do not establish results for a later release.
 
+The prepared version is **1.946**, named for ln 7; **1.792** remains the latest
+published release. The [1.946 overview](RELEASE_1_946.md) describes the new
+capabilities, audit repairs, performance results and deferred work. The
+[readiness report](PRODUCTION_READINESS.md) distinguishes completed development
+checks from the versioned release gates still needed.
+
 ## Start and use Towel
 
 | I want to… | Read |
@@ -42,6 +48,7 @@ artifact identities; they do not establish results for a later release.
 ## Changes and evidence
 
 - [Changelog](../CHANGELOG.md): user-visible changes by version.
+- [1.946 overview](RELEASE_1_946.md): all improvements since 1.792 and their limits.
 - [Production readiness](PRODUCTION_READINESS.md): validation scope, results and qualifications.
 - [Release log](RELEASE_LOG.md): dated engineering and validation checkpoints.
 - [Adversarial review](ADVERSARIAL_REVIEW.md): discovered defects and their regression coverage.

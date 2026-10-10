@@ -9,6 +9,12 @@ baseline has errors, and rejects only a candidate that adds one (see
 project's own. It builds on the differential baseline and does not replace
 it.
 
+**October 10 status:** general checker/environment integration remains deferred
+in prepared, unpublished 1.946. Literal GitHub mypy strict-policy discovery is
+already implemented; it does not reproduce arbitrary tox/nox/pre-commit commands,
+all targets and flags, or CI environments. The study below keeps its original
+source and environment scope. See the [current deferred groups](README.md#deferred-groups).
+
 ## The problem
 
 Typed mode verifies each candidate with the project's checker, against a

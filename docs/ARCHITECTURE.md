@@ -104,8 +104,8 @@ flowchart TD
    against the budget.
 5. **Decide each pair.** `pair_evaluation.py` runs eleven stages, each
    returning a typed result or a traced rejection:
-   1. guards on the blocks themselves (`semantic_safety.py`: frame use in
-      the block or elsewhere in its function, async comprehensions, loop
+   1. guards on the blocks themselves (`semantic_safety.py`: required class
+      context, async comprehensions, loop
       transfers, closures over a rebound name, moved `global`/`nonlocal`
       declarations; see *Guards*);
    2. binding analysis of each block within its function, and the variables
@@ -407,6 +407,11 @@ comprehension into a helper changes restoration of the original cell and can
 alter reads in unchanged continuation code, including its exceptions. Pair
 and cluster reconstruction keep such sites in the original function. Ordinary
 uncaptured targets and independently bound names retain their existing proofs.
+The check follows lambdas and nested generators that capture the inlined target,
+including those in evaluated defaults and decorators. It examines definition
+heads, class bases and keyword values in the containing frame, and annotations
+only when the module evaluates them there. Separate function and lambda bodies
+are not traversed as part of that frame; an outer generator's first iterable is.
 
 All `with` and `async with` managers are treated as potentially suppressing
 exceptions. Their bodies therefore establish no new definite bindings after
@@ -1840,6 +1845,9 @@ but the ideas and their names are from the literature.
 | Pair pre-filter | `block_signature.py` |
 | Per-statement facts and the weak per-node memo | `statement_facts.py` |
 | Verification | `instantiation.py` |
+| Exact occurrence paths and compiler literal pools | `ast_paths.py`, `compiler_literals.py`, `constant_consistency.py` |
+| Source-bound fresh IF outputs and their scoped original-source facts | `if_binding_transfer.py` |
+| Scoped immutable return-read facts | `return_source_uses.py` |
 | Scope and bindings | `scope_analyzer.py`, `binding_detector.py`, `assignment_analyzer.py`, `function_scope.py` |
 | Visitor bases (Template Method) and shared visitors | `visitors.py` |
 | Liveness and orphans | `definite_assignment.py`, `orphan_detector.py` |
@@ -1862,6 +1870,7 @@ but the ideas and their names are from the literature.
 | Engine and CLI defaults (parameters, lines, iterations) | `defaults.py` |
 | Decoding and re-encoding sources (BOM, cookie, newline) | `source_text.py` (at `src/towel/`) |
 | Read-only syntax shared between analyses during one call | `analysis_sources.py` (at `src/towel/`) |
+| Native warning eligibility and bounded lexical booleans | `parsing_warnings.py` (at `src/towel/`) |
 | The names the program's imports give its modules | `import_model.py` (at `src/towel/`); `unification/program_imports.py` asks it in a run's paths |
 | Project root, `pyproject.toml`, package chain | `project_layout.py` (at `src/towel/`); `unification/project_layout.py` re-exports it for the old import path |
 | Data model | `models.py` |

@@ -9,27 +9,35 @@ Towel finds repeated Python code and extracts it into shared helper functions.
 It checks each extraction, preserves the parts that differ as parameters, and
 leaves meaningful names for you to choose.
 
-**Release status: 1.792 (beta).** Named for ln 6, approximately 1.791759469.
-See the [changelog](https://github.com/ericeallen/towel/blob/v1.792/CHANGELOG.md#1792)
-for this version's changes and the
-[readiness report](https://github.com/ericeallen/towel/blob/v1.792/docs/PRODUCTION_READINESS.md)
-for the validation scope. The October 8 release at `44d7795` completed the
-Python 3.11–3.13 matrix, 141-project corpus review, local artifact/evidence
-verification and exact-commit CI. The
-[release notes](https://github.com/ericeallen/towel/releases/tag/v1.792)
-record the completed gates, reviewed limitations and final performance comparison.
-Later changes in this checkout are recorded separately under Unreleased.
+**Release status: 1.946 (beta).** Named for ln 7, approximately 1.945910149.
+This version is prepared but not yet published; the latest published release
+is 1.792. The
+[1.946 overview](https://github.com/ericeallen/towel/blob/v1.946/docs/RELEASE_1_946.md)
+and [changelog](https://github.com/ericeallen/towel/blob/v1.946/CHANGELOG.md#1946)
+describe the changes: extraction of eligible branch-local outputs, precise
+constant substitution, fewer unnecessary lambdas, stronger typing and lifetime
+checks, and bounded reuse of source-analysis facts.
 
-On the October 5 controlled Packaging fixture, that 1.792 checkpoint's complete
-typed, formatted command was 11.9% slower than 1.772. The
-[performance guide](https://github.com/ericeallen/towel/blob/v1.792/docs/PERFORMANCE.md#october-5-repaired-candidate-comparison)
-records the workload, samples and limits; earlier development speedups do not
-describe later audit changes or establish a final candidate speedup. The final
-published-source comparison recorded in the release notes was effectively flat:
-0.91% higher mean time, within approximately 2.8% sample variation, on Packaging.
+The final development audit at `9d57b0d` passed 10,583 tests and 45 subtests,
+with 32 skips and 93.478% coverage. Its six consumer checks preserved their
+original test outcomes and expected generated outputs. These results precede
+the 1.946 metadata and documentation update; they do not certify the final
+versioned artifacts. See the
+[readiness report](https://github.com/ericeallen/towel/blob/v1.946/docs/PRODUCTION_READINESS.md)
+for completed evidence and remaining release gates.
 
-**Start with the [Quick start](https://github.com/ericeallen/towel/blob/v1.792/docs/QUICKSTART.md),
-or browse the [documentation index](https://github.com/ericeallen/towel/blob/v1.792/docs/README.md).**
+Performance restoration remains unresolved. The October 10 shared-host
+comparison of `9d57b0d` with released 1.792 measured the complete cold CLI:
+Click averaged 56.69 versus 46.53 seconds (21.85% slower), and Rich averaged
+177.70 versus 99.77 seconds (78.10% slower), with two samples per version
+per workload. The
+[performance guide](https://github.com/ericeallen/towel/blob/v1.946/docs/PERFORMANCE.md)
+records all samples, CPU time, workload differences and measurement limits.
+README documentation links target the planned `v1.946` tag; their remote
+destinations must be verified before publication.
+
+**Start with the [Quick start](https://github.com/ericeallen/towel/blob/v1.946/docs/QUICKSTART.md),
+or browse the [documentation index](https://github.com/ericeallen/towel/blob/v1.946/docs/README.md).**
 
 ## Install
 
@@ -100,7 +108,7 @@ order when the entire body moves into a helper. The holder can be unread in
 the helper: keeping those references alive is its purpose. Equal-looking class
 arguments may instead be lookup suppliers, so a callback or another module can
 change what each original read resolves. See
-[argument evaluation](https://github.com/ericeallen/towel/blob/v1.792/docs/GENERATED_CODE.md#arguments-and-evaluation).
+[argument evaluation](https://github.com/ericeallen/towel/blob/v1.946/docs/GENERATED_CODE.md#arguments-and-evaluation).
 Partial extractions whose
 owned values would cross frames without this proof are declined.
 
@@ -110,7 +118,7 @@ helper reproduces the block it replaces. It also checks binding, control flow
 and evaluation order, declining transformations that fail those checks.
 
 Generated names are deliberate placeholders. The
-[naming guide](https://github.com/ericeallen/towel/blob/v1.792/docs/NAMING.md)
+[naming guide](https://github.com/ericeallen/towel/blob/v1.946/docs/NAMING.md)
 shows how to rename them as a checked batch, optionally with a coding assistant.
 
 ## Use
@@ -133,7 +141,7 @@ helpers are shared within one module. `--cross-module` also shares them across
 modules, adding imports between them. For a faster partial structural listing,
 use `towel preview path/to/project --quick`.
 
-The [command-line guide](https://github.com/ericeallen/towel/blob/v1.792/docs/CLI_GUIDE.md)
+The [command-line guide](https://github.com/ericeallen/towel/blob/v1.946/docs/CLI_GUIDE.md)
 covers in-place changes, exclusions, limits, diagnostics and recovery.
 
 ## Requirements
@@ -145,8 +153,8 @@ supported or validated release platform.
 
 One core is enough; `TOWEL_WORKERS=1` limits analysis to one worker. Memory,
 disk use and run time depend on the project and enabled tools. See
-[requirements and resources](https://github.com/ericeallen/towel/blob/v1.792/docs/REQUIREMENTS.md)
-and [performance measurements](https://github.com/ericeallen/towel/blob/v1.792/docs/PERFORMANCE.md)
+[requirements and resources](https://github.com/ericeallen/towel/blob/v1.946/docs/REQUIREMENTS.md)
+and [performance measurements](https://github.com/ericeallen/towel/blob/v1.946/docs/PERFORMANCE.md)
 for measured workloads and their conditions.
 
 ## Checks and limitations
@@ -162,32 +170,32 @@ functions or classes. Towel does not scan for these behaviors or refuse code to
 protect them; decorators, ordinary calls and hooks have the same boundary.
 Protect sensitive definitions with `# towel: no-extract` immediately after
 the signature's final colon. The
-[function opt-out guide](https://github.com/ericeallen/towel/blob/v1.792/docs/CLI_GUIDE.md#protect-a-function)
+[function opt-out guide](https://github.com/ericeallen/towel/blob/v1.946/docs/CLI_GUIDE.md#protect-a-function)
 explains its placement and limits. Mark the frame whose identity matters,
 including when its callee inspects it. The marker preserves that definition's
 source, not module namespaces, absolute line numbers or unmarked call chains.
 Review the
-[known limitations](https://github.com/ericeallen/towel/blob/v1.792/docs/KNOWN_LIMITATIONS.md)
+[known limitations](https://github.com/ericeallen/towel/blob/v1.946/docs/KNOWN_LIMITATIONS.md)
 and run your tests before adopting changes.
 
 In annotated projects, Towel uses the configured type checkers when available
 and preserves caller-side narrowing. Existing checker errors are compared
 against a baseline; a checker that cannot run refuses typed extraction.
-The [typing guide](https://github.com/ericeallen/towel/blob/v1.792/docs/TYPING.md)
+The [typing guide](https://github.com/ericeallen/towel/blob/v1.946/docs/TYPING.md)
 explains this policy and the unverified `--no-types` option.
 
 ## Documentation and development
 
-The [documentation index](https://github.com/ericeallen/towel/blob/v1.792/docs/README.md)
+The [documentation index](https://github.com/ericeallen/towel/blob/v1.946/docs/README.md)
 groups tutorials, task guides, technical reference, design decisions and
 release evidence. Contributors can start with
-[development setup and checks](https://github.com/ericeallen/towel/blob/v1.792/CONTRIBUTING.md);
+[development setup and checks](https://github.com/ericeallen/towel/blob/v1.946/CONTRIBUTING.md);
 release maintainers should follow the
-[release procedure](https://github.com/ericeallen/towel/blob/v1.792/docs/RELEASING.md).
+[release procedure](https://github.com/ericeallen/towel/blob/v1.946/docs/RELEASING.md).
 Report security issues through the
-[security policy](https://github.com/ericeallen/towel/blob/v1.792/SECURITY.md).
+[security policy](https://github.com/ericeallen/towel/blob/v1.946/SECURITY.md).
 
 ## License
 
-Towel is licensed under the [Apache License 2.0](https://github.com/ericeallen/towel/blob/v1.792/LICENSE);
+Towel is licensed under the [Apache License 2.0](https://github.com/ericeallen/towel/blob/v1.946/LICENSE);
 its source files carry Eric Allen copyright headers.

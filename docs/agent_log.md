@@ -1,10 +1,39 @@
-# Audit remediation, 2026-10-07 UTC
+# Audit and release preparation log
 
 [Documentation index](README.md)
 
-User authorization: fix every issue in the fresh parameter-focused audit and
-make release documentation complete and current. Matrix and corpus runs remain
-excluded until separately authorized. Work is local; no push or publication.
+## 2026-10-10: upcoming 1.946
+
+Version 1.946, named for ln(7) ≈ 1.945910149, is in local preparation; no
+publication is authorized or recorded. The latest full audit covered
+`9d57b0d25f3ee743e0ce0035ed13df65b2344164`, still packaged as 1.792:
+10,583 passing canonical tests, 45 passing subtests, 32 skips, eight warnings
+and 93.478046% coverage, plus independent static/architecture/behavior and
+six-consumer checks. All six original test pairs and 531 generated Python files
+matched; 35 known baseline failure records remain, with nine hidden
+pytest-truncated portions unverified. The source inventories and owned
+worker closure were independently checked.
+
+Eight complete production CLI observations then compared this source with
+released `44d7795`, in R,F,F,R order for each of Click and Rich. With two
+samples per source and workload, audited-source means were 21.85% slower
+for Click and 78.10% slower for Rich. Every runtime idle shortfall remains
+in the shared-host record. Original pairs, visible payloads and outputs
+matched; all workers and containers closed. The restoration target is
+unmet. The [performance guide](PERFORMANCE.md#october-10-click-and-rich-assessment)
+and [source-bound record](../tests/release_evidence/1.946-preparation/README.md)
+retain the observations and limitations.
+
+These results do not certify newly versioned 1.946 source or archives. Fresh
+release gates, interpreter matrix/corpus and exact-commit CI remain pending.
+The dated checkpoints below are historical; their earlier authorization and
+pending status do not describe current release readiness.
+
+## 2026-10-07: historical audit remediation
+
+At this checkpoint, user authorization covered the parameter-focused audit
+repairs and release documentation. Matrix and corpus runs were excluded until
+separately authorized. Work was local; no push or publication occurred.
 
 Hypotheses established by executable audit evidence:
 
@@ -25,7 +54,8 @@ closed-context policy passes custom/plugin/configuration retry checks. New
 per-unification block caching passes result isolation and lifetime tests;
 whole f-string parameterization remains rejected before the removed scan.
 Black, flake8, strict mypy, Bandit and the pinned dependency advisory check pass.
-Final native validation and bounded performance measurement are pending.
+Final native validation and bounded performance measurement were pending
+at this intermediate checkpoint; their completed result is recorded below.
 Historical release evidence does not validate this edited source.
 
 The interrupted native attempt exposed legacy cache/receiver expectations
@@ -34,9 +64,10 @@ tests now preserve coverage with fresh-check, AST-interface and before/after
 behavior assertions. A watchdog test needs process observation; it passes
 when that access is enabled. The subsequent unchanged-source full run recorded
 9,679 passes and 18 failures: one-site manual materialization fixtures, obsolete
-refusal-count expectations and one state-machine golden. They are being
+refusal-count expectations and one state-machine golden. They were subsequently
 repaired while preserving their original feature checks. Both failed attempts
-are retained as failed evidence. A final complete native rerun is required.
+are retained as failed evidence. A final complete native rerun was required
+and later completed as below.
 
 All reproduced fixture failures are repaired without changing the runtime.
 Final native validation at `04d2710` passes 9,697 tests, 20 skips and 26 subtests
@@ -45,4 +76,6 @@ Black, flake8, strict mypy and Bandit pass. Four serial complete typed/formatted
 CLI observations yield byte-identical output; the new memo halves repeated
 work in its bounded control but establishes no wall-clock benefit. Raw source,
 driver, result and failure records are retained in the remediation evidence.
-Final documentation/artifact refresh follows; matrix/corpus remain unauthorized.
+Final documentation/artifact refresh followed; matrix/corpus were still
+unauthorized at that checkpoint. Later 1.792 publication is recorded in
+[production readiness](PRODUCTION_READINESS.md#1792-published-release-october-8-2026).

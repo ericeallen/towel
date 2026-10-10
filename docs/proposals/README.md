@@ -8,27 +8,54 @@ release evidence. It separates retained work, completed designs, retired policie
 and historical measurements. Priorities are recommendations, not a schedule.
 
 Older proposal bodies preserve their dates, measurements and contracts; current
-decisions and code take precedence. The 1.792 release from `44d7795` is complete.
+decisions and code take precedence. The last published version is 1.792 from
+`44d7795`. Version **1.946 is prepared and unpublished**; this documentation
+refresh does not authorize publication or establish new versioned release gates.
 Development checkpoints do not become current validation results, and their
 artifacts numbered 1.772 must not be published. Current behavior is in the guides
 linked from the documentation index.
 
-The current Unreleased work implements exact ownership-fact reuse and
-occurrence-specific constant substitution. Ownership materialization keeps its
-independent uncached proof. Constant differences no longer replace equal literals
-at unrelated paths, and common caller literals use exact carrier selectors.
-These are development changes, not a new publication. Complete default CLI
-latency remains unestablished: shared-host contention prevented acceptance of the
-balanced comparison; observed repetitive-input CPU reductions are separately
-qualified. The current development change also orders contiguous eligible thunk
-slots by their certified evaluation sequence, preserving all-caller immutable
-results and the remaining parameter positions. Its frozen development audit
-passed on `bf564f2`. The first three stages each passed a full audit of their own
-source. The fourth development change recovers fresh local outputs from
-contiguous IF-only slices, with original-source certificates and independent
-aligned-output reproof. Existing ownership, exception and lifetime guards remain
-restrictive. Each implementation stage requires its own frozen-source full audit
-before acceptance.
+## Current preparation, October 10, 2026
+
+All four selected proposals are implemented. Each stage received its own frozen
+audit; subsequent repairs and performance work received a final fresh audit on
+`9d57b0d25f3ee743e0ce0035ed13df65b2344164`: 10,583 tests and 45 subtests passed,
+32 tests skipped, and line coverage was 93.478%. These results belong to that
+source, not to later documentation or versioned artifacts.
+
+| Implemented change | Preserved boundary |
+| --- | --- |
+| Exact ownership-fact reuse | Materialization still performs an independent uncached proof. |
+| Occurrence-specific constant substitution | AST field/index paths preserve equal literals elsewhere, exact types and common caller literal pools. |
+| Certified leading-thunk parameter ordering | Only contiguous eligible slots in the same positional segment move; every caller must prove immutable results. Other parameters, the slash and existing evaluation guards stay fixed. |
+| IF-only fresh local outputs | Original-source certificates and aligned-output reproof cover contiguous IF suites. Prior bindings, captures, unsupported ancestry, exceptions and lifetime obligations remain restrictive. |
+
+The completed default-CLI comparison observed the fixed source **21.85% slower
+on Click and 78.10% slower on Rich** than published 1.792. There were two samples
+per version per workload, in R,F,F,R order, with complete source and original
+before/after checks. These are disclosed shared-host observations, not isolated
+host certification or a general performance claim. The restoration target is
+not met. See the [current performance evidence](performance-roadmap.md#october-10-2026-preparation-and-completed-comparison)
+for timing boundaries and capability differences. Earlier rejected and profiled
+runs remain separate historical evidence.
+
+## Deferred groups
+
+These remain proposals or research, rather than commitments for 1.946.
+
+| Group | Remaining scope |
+| --- | --- |
+| Broader control flow | Loops, async/suspension, nested definitions and wider binding/control transfer beyond the bounded IF proof. |
+| Dethunk precision | Bare-name binding precision and mixed pure/impure callers; no arbitrary attribute-purity assumption. |
+| Checker and environment integration | General CI invocation, flags, targets, checker selection and environment reproduction. |
+| Shared helper modules | New package hosts, shipping, initialization and import/binding obligations. |
+| Richer type contracts | Receiver/local generics, richer domains and optional PEP 695 output; core generic inference is already shipped. |
+| Further exact performance work | N-way discovery and Rust require fresh profiles and complete-discovery proofs. |
+| Template Method assistance | Research and reviewed agent edits; automatic base/MRO changes remain ruled out. |
+| Preview presentation | Unified JSON/stat extensions; complete preview is already shipped. |
+
+Decorator trust overrides and redirection to user-defined functions are
+withdrawn, not deferred implementations.
 
 ## Retained work and research
 

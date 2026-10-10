@@ -4,10 +4,32 @@ All notable changes to Towel are recorded here. This file summarizes releases;
 [docs/RELEASE_LOG.md](docs/RELEASE_LOG.md) keeps the detailed engineering log,
 and [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) records the
 ecosystem evidence behind each claim. The format follows
-[Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
-[Semantic Versioning](https://semver.org/).
+[Keep a Changelog](https://keepachangelog.com/). Versions use mathematical
+mnemonics with PEP 440 ordering; see the
+[version convention](docs/RELEASING.md#version-number-convention).
 
 ## [Unreleased]
+
+No additional changes beyond the prepared 1.946 version are recorded here.
+
+## [1.946]
+
+Named for ln 7, approximately 1.945910149. Prepared, not yet published.
+Changes since released 1.792 are described together in the
+[1.946 overview](docs/RELEASE_1_946.md).
+
+The completed development audit at `9d57b0d` passed 10,583 tests and 45
+subtests, with 32 skips and 93.478% coverage. Six consumer original-command
+pairs and their 531 generated Python outputs matched the retained references.
+The versioned 1.946 source and artifacts still need their own release gates.
+On the subsequent eight-sample shared-host comparison, complete cold CLI
+means were 46.53 → 56.69 seconds for Click (+21.85%) and 99.77 → 177.70
+seconds for Rich (+78.10%) versus released 1.792. These are two samples per
+version per workload, not an isolated-host or general speed claim. See the
+[performance evidence](docs/PERFORMANCE.md) and
+[readiness report](docs/PRODUCTION_READINESS.md).
+
+### Improvements and repairs
 
 - Share warning-free raw f-string literal analyses on Python 3.12. Distinguish
   literal text from replacement fields while retaining native warning checks
@@ -2451,7 +2473,9 @@ affected project's own tests.
 - The PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and
   are not a recommended installation target.
 
-[Unreleased]: https://github.com/ericeallen/towel/compare/v1.772...HEAD
+[Unreleased]: https://github.com/ericeallen/towel/compare/v1.946...HEAD
+[1.946]: https://github.com/ericeallen/towel/compare/v1.792...v1.946
+[1.792]: https://github.com/ericeallen/towel/compare/v1.772...v1.792
 [1.772]: https://github.com/ericeallen/towel/compare/v1.732.post1...v1.772
 [1.732.post1]: https://github.com/ericeallen/towel/compare/v1.732...v1.732.post1
 [1.732]: https://github.com/ericeallen/towel/compare/v1.618...v1.732

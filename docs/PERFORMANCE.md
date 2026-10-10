@@ -4,13 +4,15 @@
 
 Use this guide to estimate a run and understand the limits of the published measurements.
 
-The latest parameter, placement and checker-cache follow-ups are measured below.
-The new block memo reduces repeated work, but its complete-command comparison
-establishes no wall-clock benefit. Earlier samples retain their source identities
-and do not establish current performance relative to published 1.772.
+The latest complete-command comparison is the October 10 assessment of audited
+source `9d57b0d` against released source `44d7795`. It found slower execution on
+Click and Rich. Version 1.946 is in preparation; these measurements used wheels
+still numbered 1.792 and do not certify versioned 1.946 artifacts. Earlier
+measurements retain their original source identities and conditions.
 
 On this page:
 
+- [October 10 Click and Rich assessment](#october-10-click-and-rich-assessment)
 - [Measurement conditions](#measurement-conditions)
 - [October 7 block-fact memo](#october-7-block-fact-memo)
 - [October 6 optimization experiments](#october-6-optimization-experiments)
@@ -21,6 +23,71 @@ On this page:
 - [Why larger projects take longer](#why-larger-projects-take-longer)
 
 ## How long it takes
+
+### October 10 Click and Rich assessment
+
+Upcoming version **1.946**, named for ln(7) ≈ 1.945910149, has no established
+performance-restoration claim. The completed eight-sample assessment compared
+`9d57b0d25f3ee743e0ce0035ed13df65b2344164` with released source
+`44d779563578a32e24f8213fba96f43c6698ab43`. Each arm used a fresh offline wheel
+built from its named source; both wheels declared **1.792**. The retained
+[measurement record](../tests/release_evidence/1.946-preparation/measurements.json)
+and [evidence guide](../tests/release_evidence/1.946-preparation/README.md) bind
+all samples to their source, artifacts, inputs and external raw observations.
+
+| Workload | Released source mean (range), seconds | Audited source mean (range), seconds | Difference | Samples per source |
+| --- | ---: | ---: | ---: | ---: |
+| Click | 46.527 (45.506–47.548) | 56.693 (55.535–57.850) | 21.85% slower | 2 |
+| Rich | 99.773 (99.660–99.885) | 177.699 (177.256–178.142) | 78.10% slower | 2 |
+
+Order was release, audited, audited, release for Click, then the same order for
+Rich. The predeclared paired wall-time ratios were 1.220400 and 1.216656 for
+Click, and 1.787487 and 1.774610 for Rich. Mean waited-child CPU time rose from
+52.301 to 62.492 seconds on Click and from 99.862 to 177.751 seconds on Rich.
+This accounting includes waited descendants; it does not attribute CPU to a
+particular checker or analysis phase. The restoration target remains unmet.
+
+The actual installed default CLI ran with typing, formatting, cross-module
+extraction and final checking enabled. Each run had a fresh work volume,
+environment and checker process state, one Towel worker, and the same pinned
+Linux image under CPython 3.12.14 with two CPUs, 6 GiB memory and networking
+disabled. Click used its 177 tracked input files at `6aabf099bf`; Rich used
+553 at `9d8f9a372c`. Setup, host settling and the original before/after test
+commands are excluded from CLI time. Dependency caches were reused; hardware
+page caches were not flushed. No profiling or call census ran during timing.
+
+These are **shared-host observations**, with two samples per source and
+workload, not isolated-host certification or a general throughput claim. Every
+preflight required 20 fresh one-second intervals at or above 80% aggregate idle.
+Continuous one-second CPU observations and ten-second native/container context
+covered setup through the final tail. Runtime idle below 70% was retained and
+disclosed, rather than classified automatically as unrelated contention. Native
+snapshots cannot attribute all host CPU or detect every brief contender.
+Across the Click samples, runtime idle minima ranged from 44% to 56%, with
+9.26%–42.11% of intervals below 70%; Rich minima were 50%–57%, with
+9.47%–9.95% below 70%. No interval was filtered out of the report.
+
+The original declared before/after test commands matched exactly in all eight
+samples: Click retained 2,035 passes, 24 baseline failures, 24 skips, one xfail
+and 31,000 deselections; Rich retained 948 passes, eight baseline failures and
+25 skips. All visible failure records matched; the eight pytest-truncated Rich
+portions remain unverified. Generated Python output matched its own source's
+reference and repeated output within each arm: 17 files for Click and 100 for
+Rich. Released Click applied four refactorings versus five under the audited
+source, both across three files; both Rich arms applied 15 across seven files.
+The comparison preserves those capabilities and does not normalize time by
+refactoring count.
+
+A first Rich preflight reported 76% idle and launched no production sample; it
+remains retained. Completion used separately declared Rich labels after bounded
+host settling before each unchanged preflight. Waiting ran no Towel analysis or
+checker and was excluded from CLI time. Previous rejected, confounded and
+instrumented runs remain historical evidence. No actual sample was replaced;
+there was no fallback, confirmation substitution or oracle waiver. All owned
+workers closed, all eight containers exited with code zero and no OOM, and the
+source and frozen measurement files stayed unchanged.
+
+### Historical 1.792 development comparisons
 
 The October 5 repaired 1.792 runtime was **11.9% slower** than published 1.772 on the
 October 5 complete typed, formatted Packaging comparison: 43.43 seconds versus
@@ -102,7 +169,9 @@ binds all three comparisons to source, wheel, dependencies and output hashes.
 These measurements predate removal of the inner rendered-variant refusal memo.
 That removal makes each submitted variant issue a fresh project-check request;
 no new timing for it is claimed here. The outer completed-proposal rehearing
-cache remains separately qualified. Matrix and corpus reruns remain pending explicit authorization.
+cache remains separately qualified. Matrix and corpus reruns were pending
+explicit authorization at that October 6 checkpoint; the completed 1.792
+publication has its own [release record](PRODUCTION_READINESS.md#1792-published-release-october-8-2026).
 
 ### October 5 repaired candidate comparison
 
@@ -162,7 +231,8 @@ workload about 13% faster than the published 1.772 wheel with typing,
 formatting and automatic worker selection enabled:
 
 This is a historical development result. The repaired candidate's completed
-October 5 result above supersedes it for current-release performance.
+October 5 result above superseded it at that preparation checkpoint; neither
+measures the later released 1.792 source or upcoming 1.946 artifacts.
 
 | Complete command settings | Published 1.772 | Candidate `000d751` |
 | --- | ---: | ---: |

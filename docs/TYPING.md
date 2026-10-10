@@ -91,6 +91,24 @@ The intent is both to save typed validation time and to retain useful
 extractions. The [design decisions](DECISIONS.md) record this requirement;
 declining every proposal would not satisfy it.
 
+Narrowing can also be lost when a guarded expression becomes a caller-side
+lambda. The helper's predicate does not refine the captured value in that
+lambda. Towel stops the signature ladder before an `Any` fallback when a mypy
+or Pyright diagnostic establishes that a nullable operand lost a required
+refinement and the operand corresponds to the original caller expression.
+The supported correspondence includes argument and operator diagnostics,
+receivers, bounded unchanged local aliases, and scalar or fixed-tuple return
+and annotated-assignment flows. Return and assignment cases require the
+matching declaration in the original caller; an interim helper annotation
+alone does not establish that obligation.
+
+Reading a nullable value under a guard is insufficient to refuse extraction.
+An Optional-aware conversion or consumer can remain precise, and a caller
+declared to return `float | None` may need a later generic signature rather
+than refusal. The decision uses checker evidence and source correspondence,
+not a whitelist of callee names. Ambiguous diagnostics and arbitrary control
+flow are not covered by this specific proof.
+
 ## Code the checker cannot verify
 
 ### Untyped imports
@@ -193,7 +211,8 @@ and unsupported cases.
 
 Towel tries a precise ordinary signature, then supported generic signatures.
 When those fail, it can try targeted `Any` substitutions and a broad `Any`
-fallback. An unannotated variant is considered only when every remaining
+fallback, except when a semantic refusal such as required narrowing has ended
+the ladder. An unannotated variant is considered only when every remaining
 error from the `Any` variant lies inside the helper itself; errors elsewhere
 still reject it. Every candidate signature must pass the applicable checks.
 

@@ -7,6 +7,17 @@ behavior, its inference order, and the cases it declines; it is no longer a
 proposal, and the path is retained so existing links keep resolving.
 Author: design note from the 2026-09 release audit
 
+**October 10 status:** core generic inference remains shipped. Prepared,
+unpublished 1.946 also repairs nullable thunk refusals: a subject tested by a
+predicate does not by itself require refinement. Recognized checker diagnostics
+must correspond to the actual rejected operand or declared value obligation and
+the original caller before annotation weakening is refused. Valid Optional-aware
+consumers and nullable caller returns retain precise annotations. This is a
+bounded diagnostic/source relation, not a general proof for arbitrary predicates
+or unsupported diagnostics. Receiver/local generics, richer domains and optional
+PEP 695 output remain deferred. The experiments and corpus statements below
+keep their recorded source scope; see the [current proposal index](README.md).
+
 ## Problem
 
 Two blocks can share a computation while requiring a relationship between their

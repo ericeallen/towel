@@ -2,6 +2,11 @@
 
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
+**Archive orientation, October 10:** this is the recorded 1.772 development
+comparison, not the completed 1.946-preparation comparison against published
+1.792. The [current performance evidence](performance-roadmap.md#october-10-2026-preparation-and-completed-comparison)
+keeps those later shared-host measurements separate from the tables below.
+
 The baseline is the published PyPI wheel, not a rebuilt tag. Both artifacts
 report version 1.772; their hashes distinguish them. These are measurements
 of a development candidate; its artifact must not be uploaded as 1.772.

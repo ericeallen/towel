@@ -2,14 +2,19 @@
 
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
-Status: partially implemented for 1.792. The original deferral after 1.772
+Status: several recoveries shipped in 1.792; exact constant occurrences and
+bounded IF-only fresh outputs are implemented in prepared, unpublished 1.946.
+The final runtime audit is source-bound to `9d57b0d`, with current evidence in
+the [proposal index](README.md#current-preparation-october-10-2026). Broader
+control-flow recovery remains deferred. The original deferral after 1.772
 was made by the owner on 2026-09-24
-(see `docs/DECISIONS.md`). Each item below is a defect by the owner's
-standard: a decline that exists only because Towel's analysis cannot yet
-show a sound transformation sound. None is a limitation to document and
-leave. Each would be fixed by making the safety analysis accept code it now
-refuses, so each needs its own soundness argument, tests that fail before
-and pass after, and a from-scratch audit of its own.
+(see `docs/DECISIONS.md`). Each item below was a defect by the owner's
+standard at that checkpoint: a decline caused by analysis that could not yet
+certify a sound transformation. The goal was to strengthen the analysis rather
+than leave the refusal unexplained. That statement does not make every row a current defect or
+restore subsequently withdrawn reflection policies. A new recovery needs its
+own soundness argument, tests that fail before and pass after, and a from-scratch
+audit of its own.
 
 On the post-1.772 branch, list-field expression values of differing kinds,
 match-case suites and except-star handlers/finally are now considered.
@@ -18,16 +23,16 @@ block an unrelated extraction. Local-variable annotation names are no longer
 treated as runtime module lookups. The historical tables below retain what
 the audits measured; `tests/test_candidate_recovery.py` and
 `tests/test_scope_guard_boundaries.py` protect these recovered capabilities
-with positive extraction and runtime controls. The Unreleased follow-up also
+with positive extraction and runtime controls. The 1.946 preparation also
 recovers differing raw constant occurrences by AST field/index path, preserving
 equal literals at other positions, exact types and common caller literal pools.
 It retains whole pooled compound roots, grammar pins and the existing budget;
 the value-wide consistency row below records the historical refusal.
-Store/delete targets, pattern
-headers, escaping captured bindings and real evaluated annotations keep their
-existing safety checks. The Unreleased follow-up also recovers fresh local
-outputs from contiguous IF-only slices in pair reconstruction. It independently
-certifies original source ownership and definite initialization, then reproves
+Store/delete targets, pattern headers, escaping captured bindings and real
+evaluated annotations keep their
+existing safety checks. The 1.946 preparation also recovers fresh local
+outputs from contiguous IF-only slices through the shared pair/cluster gate.
+It independently certifies original source ownership and definite initialization, then reproves
 the complete aligned output tuple, including lifetime-only names. Prior or
 repeated bindings, captures, unsupported ancestry and the existing frame and
 exception guards remain restrictive. Broader nested-block liveness remains

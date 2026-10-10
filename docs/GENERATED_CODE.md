@@ -12,6 +12,7 @@ On this page:
 - [Comments and formatting](#comments-and-formatting)
 - [Where helpers live](#where-helpers-live)
 - [Arguments and evaluation](#arguments-and-evaluation)
+- [Fresh locals inside an IF](#fresh-locals-inside-an-if)
 - [Choosing a worthwhile helper](#choosing-a-worthwhile-helper)
 - [Equal-looking and unused arguments](#equal-looking-and-unused-arguments)
 - [Why some arguments are wrapped in lambda](#why-some-arguments-are-wrapped-in-lambda)
@@ -197,6 +198,23 @@ argument form accordingly:
 - Expressions using names bound inside the extracted block are lambda-lifted:
   the deferred function receives those names as arguments.
 
+Constants are generalized by their exact occurrence, not by replacing every
+equal-looking literal. In `x + 1 + x * 2` versus `x + 2 + x * 2`, the offset
+can become a parameter while the multiplier stays `2`. Shared constant columns
+must agree across every caller in both type and value; `False`, `0` and `0.0`
+are distinct, as are positive and negative floating zero. Compiler-pooled
+literal identities need separate source and interpreter evidence. Towel keeps
+compound literal pools intact or declines a move whose identity it cannot prove.
+
+A deferred expression can become eager only when every caller proves an
+immutable result and the helper evaluates it once, unconditionally, before any
+effect. Contiguous eligible thunk parameters can be reordered within their
+positional-only or ordinary signature segment to follow that evaluation order.
+They never cross a fixed parameter or the `/` boundary. Defaults, keyword-only
+and variadic signatures are left alone. Calls, properties, subscriptions and
+unknown name results stay deferred: an extra parameter reference could delay a
+temporary's finalizer or change cleanup when a later operation raises.
+
 When a same-module helper and all its callers resolve a name at module scope,
 the helper can read it directly. It need not receive a module-level class,
 import or later-defined function as a parameter. Cross-file helpers still
@@ -206,9 +224,28 @@ By default, a cross-file helper cannot read bare builtins from its host on
 another caller's behalf, apart from the interpreter constant `__debug__`.
 `--parameterize-builtins` explicitly permits caller-side lookup thunks such as
 `lambda: len`; each original use then reads the caller's current binding.
-Only the existing first-effect, single-use proof permits an eager argument.
+The first-effect, single-use proof also requires an immutable result at every
+caller; an unknown builtin lookup result remains deferred.
 Same-module builtin reads stay bare. The option does not permit blocks that
 differ in which builtin they use.
+
+## Fresh locals inside an IF
+
+A matching block inside an IF suite can initialize fresh locals that the caller
+reads later. The generated call stays inside that suite and assigns back every
+later-read and lifetime-required output. The original condition remains in the
+caller. Nested IF suites and an internal IF with definite outputs on both arms
+can qualify; the proof covers normal exits and preserves exceptional exits.
+
+If the original outer condition was false, a subsequent read of an uninitialized
+local still raises `UnboundLocalError`, even if a module global has the same
+name. A source-bound certificate checks each original site and rechecks the
+complete ordered output tuple after alignment. Earlier reads, prior bindings,
+repeated writes, deletion and closure capture prevent this exception to the
+nested-binding guard. Loop, try, with and match ancestry are outside this
+IF-only certificate; their existing whole-block extraction rules still apply.
+Additional nested occurrences do not join the initial pair through clustering.
+Ownership and parameter-budget checks remain independent requirements.
 
 ## Choosing a worthwhile helper
 

@@ -21,6 +21,7 @@ Fixture counts below are as of each round; at `5ff2458` (September 19, 2026) `te
 - [Filesystem boundary](#filesystem-boundary) · [Performance and isolation](#performance-and-isolation) · [Final verification](#final-verification)
 - [Second review: September 13](#second-review--production-readiness-september-13-2026)
 - [Third review: September 17–19](#third-review--september-1719-2026)
+- [October proposal and cache regressions](#october-proposal-and-cache-regressions)
 - [Measurement environment](#measurement-environment)
 
 ## Measurement environment
@@ -67,6 +68,33 @@ describe belong to that version.
 | CRLF normalization makes unchanged input appear stale | Capture original bytes independently of rendered source; verify execution and on-disk result. |
 | Copying directly into a new destination leaves a partial tree after failure | Copy into a private sibling before publishing the completed copy; preserve symlinks without following their targets. |
 | Unexpected compiler exceptions become silent candidate rejection | Expected unsupported extraction has a distinct exception; unexpected unifier/extractor/scope failures propagate. Fault-injection tests assert the failure reaches the caller. |
+
+## October proposal and cache regressions
+
+The post-1.792 changes add the following permanent executable coverage. These
+are supported boundaries and regression evidence, rather than a claim that all
+Python programs or a future release have been certified. The earlier review
+results below remain tied to their original sources and environments.
+
+| Boundary | Repair and executable evidence |
+|---|---|
+| Equal-valued constants at different positions were conflated | Substitute exact occurrence paths and reuse only matching complete caller columns. `test_occurrence_constants.py` and `test_occurrence_constant_cli.py` cover useful extraction, type distinctions and independent positions. |
+| Moving literal occurrences changes compiler-pool identity | Verify compiler/source provenance, compound pools and formatted-string parts. `test_compiler_literal_pools.py`, `test_fstring_literal_pools.py` and `test_literal_byte_provenance.py` cover identity and conservative refusals. |
+| Eager thunk parameters retain opaque temporaries longer than the original expression | Require immutable results at every caller before inlining. `test_thunk_result_lifetimes.py` compares callbacks, finalizers and early errors through the actual CLI. |
+| Parameter discovery order prevents safe leading-thunk inlining | Order only contiguous certified slots within each positional segment. `test_thunk_parameter_ordering.py` and `test_thunk_ordering_cli.py` retain signature, effect, ownership and unsafe-extra-caller controls. |
+| A signature fallback hides a required Optional refinement | Associate checker diagnostics with original operands and declared obligations before allowing `Any`. `test_optional_converter_narrowing.py` exercises both checkers, useful nullable controls and actual typed CLI refusals. |
+| A fresh local initialized in an IF cannot reach continuation code through the helper | Certify original sites, normal-exit outputs and aligned return order, keeping calls branch-local. `test_if_binding_transfer.py` and `test_if_fresh_bindings_cli.py` preserve false-path unbound errors and ownership. |
+| An inlined comprehension's captured target changes its containing cell | Keep affected source-associated sites in their original frame, including evaluated defaults and nested generators. `test_captured_comprehension_cells.py` and `test_comprehension_cell_capture_cli.py` exercise native 3.11–3.13 behavior and useful uncaptured companions. |
+| Cached analyses outlive their source or warning policy | Bound immutable facts to their verified owner and context, bypass custom source subclasses, and reprove admissions. `test_if_transfer_source_facts.py`, `test_pair_if_proof_order.py`, `test_lexical_fast_path_memo.py` and `test_return_source_uses.py` cover disabled, mutation, fork and cleanup paths. |
+| Reading mapping values changes LRU order during view iteration | Snapshot iterator keys without suppressing normal value promotion. `test_bounded_cache_views.py` covers keys, values, items and mutation. |
+| A raw f-string literal on CPython 3.12 is conservatively treated like a warning-capable raw format specification | Track per-string OP-brace depth while retaining native warning parsing for uncertain escapes. `test_parsing_warnings.py`, `test_parsing_warning_cache.py` and `test_analysis_sources.py` preserve warning/error/filter behavior. |
+
+The execution oracle also has a measurement boundary. Retained-binding checks
+use lexical correspondence rather than subtracting all same-spelled comprehension
+targets; the first iterable still reads the containing scope. Unsupported scope
+paths and original executions that time out remain uncertified, even when
+completed observations match. An instrument correction does not turn an old raw
+alarm into accepted product evidence.
 
 ## Additional hostile execution battery
 

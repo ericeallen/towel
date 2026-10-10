@@ -2,6 +2,14 @@
 
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
+**Historical implementation record.** Release 1.792 was subsequently published
+from `44d779563578a32e24f8213fba96f43c6698ab43`. The pending-publication statements
+and 11.9% intermediate Packaging comparison below describe their dated
+checkpoints, not the completed release or today's prepared, unpublished 1.946.
+Use the [current proposal index](README.md) for the implemented four-stage
+follow-up and completed October 10 performance evidence. The historical source
+identities, contracts and measurements below remain unchanged.
+
 The owner authorized this scope on September 27, 2026. Development ran on
 `codex/post-1772-performance`; the repaired candidate is prepared on
 `release/1.792-audit-fixes`.
