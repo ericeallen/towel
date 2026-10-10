@@ -37,6 +37,22 @@ to `9d57b0d25f3ee743e0ce0035ed13df65b2344164`, with metadata and tested
 artifacts still numbered 1.792. The versioned 1.946 candidate needs its own
 source/artifact gates, interpreter matrix, corpus and exact-commit CI.
 
+The first versioned candidate, `a53e351`, subsequently completed quality,
+distribution, six clean-install checks, differential behavior, the Linux
+Python 3.11–3.13 matrix and self-dogfood. Its corpus stopped after 31 of 141
+projects when Voluptuous exposed a material performance defect. No complete
+corpus or release acceptance is claimed. Raw evidence and closed-worker
+receipts remain in `20261010T113508Z-codex-1946-release-validation`.
+
+A separate bounded replay observed 994 repeated module-fact queries among
+1,000 calls over six inputs. A warning-free Voluptuous test module repeatedly
+bypassed the fact cache because ordinary raw-regex brace escapes triggered
+an overbroad formatted-string warning guard. The repair admits these escapes
+when they precede every possible formatted-string start, preserving the
+existing diagnostic and cache boundaries. New runtime bytes require fresh
+complete performance assessments and release gates; the old completed gates
+remain bound to `a53e351`. See the [performance investigation](PERFORMANCE.md#october-10-voluptuous-regression-investigation).
+
 The canonical suite passed 10,583 tests and 45 subtests, with 32 skips,
 eight warnings and 93.478046% coverage. Scoped static, architecture and
 behavior checks completed. Six fresh default-CLI consumer comparisons matched

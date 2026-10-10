@@ -33,6 +33,21 @@ interpreter matrix and corpus, exact-commit CI and publication verification
 remain to be completed under the [release procedure](RELEASING.md). No 1.946
 tag, upload or publication is recorded here.
 
+The subsequent versioned candidate `a53e351` completed quality, distribution,
+six clean-install checks, differential behavior, the Linux Python 3.11–3.13
+matrix and self-dogfood gates. Its 141-project corpus stopped after 31 complete
+outcomes (20 PASS, 10 NO_CHANGE and one manifest-listed Pluggy difference)
+when Voluptuous exposed a material performance defect. The campaign is
+incomplete and rejected as release acceptance. All owned workers closed;
+the raw partial observations and exact-source gate results are retained under
+`~/Knowledge/handoffs/towel/20261010T113508Z-codex-1946-release-validation/`.
+
+A separate bounded replay proved repeated native parsing of the same
+warning-free source. The subsequent guard refinement changes runtime bytes,
+so it requires a new source freeze, fresh complete production measurements
+and a fresh full release campaign. Passing checks for `a53e351` cannot certify
+the repaired source. See the [investigation](PERFORMANCE.md#october-10-voluptuous-regression-investigation).
+
 At that audit freeze, the complete canonical suite passed **10,583 tests and
 45 subtests**, with 32 skips and eight warnings. Coverage was **93.478046%**
 (28,422 of 30,405 statements). Configured strict mypy over 530 files, Black,

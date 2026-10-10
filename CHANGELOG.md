@@ -31,6 +31,12 @@ version per workload, not an isolated-host or general speed claim. See the
 
 ### Improvements and repairs
 
+- Admit ordinary raw-regex brace escapes to the existing typing-fact cache
+  when they precede every possible formatted-string start. Repeated queries
+  reuse immutable module facts; warning-capable formatted strings still take
+  the fresh native parsing path. This repairs a reproduced performance defect
+  without changing warning filters, cache bounds or parser-limit keys.
+
 - Share warning-free raw f-string literal analyses on Python 3.12. Distinguish
   literal text from replacement fields while retaining native warning checks
   for raw format specifications and nonraw nested strings.

@@ -32,8 +32,11 @@ from .unification.bounded_cache import BoundedCache, memoizing
 
 _POSSIBLE_WARNING = re.compile(r"\\(?:[^\\'\"abfnrtv0-7x\r\n]|[4-7][0-7]{2})|[0-9]\.?[a-zA-Z_]")
 # The C tokenizer itself warns for these f/t-string escapes, including its
-# special handling of a carriage return. Reject them before tokenization.
+# special handling of a carriage return. Ordinary occurrences before every
+# possible formatted prefix are handled by the token escape checks below.
 _TOKENIZER_WARNING = re.compile(r"\\\r?[{}]")
+# Identifiers consume ASCII letters/underscores; numeric adjacency stays uncertain.
+_POSSIBLE_FORMATTED_START = re.compile(r"(?i)(?<![A-Za-z_])(?:[ft]r?|r[ft])['\"]")
 _STRING_START = re.compile("(?i)^([rubft]*)(\"\"\"|'''|\"|')")
 # Python 3.11 emits one token for a whole f-string. This intentionally also
 # matches literal text and identifiers; it cannot miss a numeric suffix at a
@@ -92,7 +95,9 @@ class _FormattedString:
 
 def _tokens_cannot_warn(source: str) -> bool:
     if _TOKENIZER_WARNING.search(source):
-        return False
+        first = _POSSIBLE_FORMATTED_START.search(source)
+        if first is not None and _TOKENIZER_WARNING.search(source, first.start()):
+            return False
     formatted: list[_FormattedString] = []
     previous: tokenize.TokenInfo | None = None
     try:

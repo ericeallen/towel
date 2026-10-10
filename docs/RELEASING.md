@@ -91,6 +91,12 @@ source-bound evidence verification and exact-commit CI. Historical successes
 remain evidence for their original sources. The detailed completed and pending
 scope is in the [readiness report](PRODUCTION_READINESS.md).
 
+The first versioned freeze, `a53e351`, completed several gates but its corpus
+was stopped at 31 of 141 projects after a reproduced performance defect.
+That campaign does not clear release acceptance. The subsequent warning-guard
+repair requires a new frozen source and archives and fresh complete gates;
+the original raw records retain their original identities.
+
 For an unreleased experiment, use
 `just verify-release-evidence VERSION /path/to/release-evidence.json`.
 This explicitly reports validation only, never permission to upload. The

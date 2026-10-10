@@ -116,6 +116,12 @@ f-string literal text can share a warning-free analysis while raw format
 specifications and nested nonraw strings keep their native warning behavior.
 Mapping item and value views tolerate reads that refresh LRU recency.
 
+Ordinary raw-regex brace escapes before every possible formatted-string start
+can also reuse the existing immutable module facts. A bounded production-path
+replay reproduced repeated parsing of an unchanged, warning-free Voluptuous
+test module; the guard refinement restores its cache eligibility while leaving
+potentially warning-capable formatted strings on the fresh native path.
+
 These are exact analysis changes, not a claim of overall acceleration. The
 [architecture](ARCHITECTURE.md) records their boundaries; the
 [performance guide](PERFORMANCE.md) records complete-command measurements.
@@ -146,8 +152,13 @@ tests and each version's expected generated outputs matched in all eight runs.
 The [retained measurement record](../tests/release_evidence/1.946-preparation/README.md)
 keeps the source identities, raw samples and limits.
 
-The 1.946 metadata and documentation update has not yet passed the full versioned
-release campaign. Final frozen artifacts, the supported interpreter matrix,
+The first versioned candidate, `a53e351`, completed quality, distribution,
+clean-install, differential, interpreter-matrix and self-dogfood checks. Its
+corpus campaign stopped after 31 of 141 projects when Voluptuous exposed a
+material performance defect. That incomplete campaign does not approve a
+release. The guard repair changes runtime bytes and requires a new freeze and
+fresh complete validation; earlier passing gates do not certify the repair.
+Final frozen artifacts, the supported interpreter matrix,
 141-project corpus, exact release-evidence gate and exact-commit CI remain
 required under the [release procedure](RELEASING.md). Performance restoration is
 still unresolved and needs a maintainer disposition before publication.

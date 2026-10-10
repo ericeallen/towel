@@ -12,6 +12,7 @@ measurements retain their original source identities and conditions.
 
 On this page:
 
+- [October 10 Voluptuous regression investigation](#october-10-voluptuous-regression-investigation)
 - [October 10 Click and Rich assessment](#october-10-click-and-rich-assessment)
 - [Measurement conditions](#measurement-conditions)
 - [October 7 block-fact memo](#october-7-block-fact-memo)
@@ -23,6 +24,36 @@ On this page:
 - [Why larger projects take longer](#why-larger-projects-take-longer)
 
 ## How long it takes
+
+### October 10 Voluptuous regression investigation
+
+The first versioned 1.946 candidate, `a53e351`, was stopped during the required
+141-project corpus after 31 completed projects. Voluptuous's complete refactor
+had not returned after approximately 62 minutes of wall and CPU time. The
+released 1.792 run completed in 118.65 seconds on matching pinned source,
+CPython 3.12.14, checker and formatter versions, harness and container settings.
+The stopped run is incomplete negative evidence, not a measured completed-command
+ratio or a corpus pass. Its raw inputs, logs, partial outcomes and closure
+records remain under the external handoff
+`20261010T113508Z-codex-1946-release-validation`.
+
+A separate bounded production-path replay completed 1,000 original module-fact
+queries over six distinct native source/parser-configuration inputs, with 994
+repeated queries. The unchanged Voluptuous test module accounted for 182 queries
+and 364 native parses: all missed the existing fact cache because an overbroad
+warning guard rejected ordinary raw-regex brace escapes. Native parsing of that
+exact text under always, ignore and error warning filters emitted no warnings
+and produced identical syntax trees. The other five inputs produced 813 cache
+hits. The replay stopped deliberately at its bound; it is neither a full
+refactor nor a timing benchmark.
+
+The repair narrows the guard conservatively: escapes before every possible
+formatted-string start proceed to the existing lexical checks. Potentially
+warning-capable formatted strings continue to parse freshly. Cache capacity,
+source ownership, parser limits and diagnostic behavior remain unchanged.
+Fresh complete production-path measurements must establish its benefit and
+reassess Click and Rich; no performance-restoration claim follows from this
+bounded replay or the repair alone.
 
 ### October 10 Click and Rich assessment
 

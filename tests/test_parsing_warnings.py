@@ -17,13 +17,18 @@
 import ast
 import sys
 import warnings
-from typing import Callable, List, Literal, Optional, Tuple, Union
+from typing import Callable, List, Literal, Mapping, Optional, Tuple, Union
 
 import pytest
 
 from towel import parsing_warnings
-from towel.analysis_sources import AnalysisSources, memoized_source_analysis, parsing_is_pure
-from towel.unification.bounded_cache import memoization_disabled
+from towel.analysis_sources import (
+    AnalysisSources,
+    ParserConfiguration,
+    memoized_source_analysis,
+    parsing_is_pure,
+)
+from towel.unification.bounded_cache import BoundedCache, memoization_disabled
 from towel.unification import module_bindings, namespace_writes, typing_forms
 
 SAFE_SOURCES = [
@@ -49,6 +54,12 @@ SAFE_SOURCES = [
     r"value = rf'\w{value=}\d'",
     r"value = rf'\w{value!r:>{width}}\d'",
     r"value = rf'\N{value}\w'",
+    "literal_word = 'text'\n"
+    r'''pattern = r"\{'c': 1\} not match for \{'b': 1\}"''' + "\n"
+    "value = f'{literal_word}'\n",
+    "# \\{ and \\} are only a comment\nvalue = f'{1}'\n",
+    "pattern = r'''\\{\n\\}'''\nvalue = Fr'{1}'\n",
+    r'''pattern = r"quote\"\{"''' + "\nvalue = RF'{1}'\n",
 ]
 
 WARNING_SOURCES = [
@@ -61,6 +72,9 @@ WARNING_SOURCES = [
     r"value = f'\{1}'",
     r"value = f'\d{1}'",
     r"value = f'{1:\d}'",
+    r"value = r'\{' + f'\{1}'",
+    "value = r'\\{' + f'\\\r{1}'",
+    "literal_word = 'text'\nvalue = '\\{'",
     "value = 1if True else 0",
     "value = 1.and 2",
     "value = 1not in ()",
@@ -406,3 +420,72 @@ def test_retained_source_has_both_entry_and_size_limits(monkeypatch: pytest.Monk
     source = "# " + "x" * parsing_warnings._MAX_SOURCE_CHARACTERS + "\nvalue = r'\\d'"
     assert parsing_is_pure(source)
     assert tuple(cache.entries) == before
+
+
+@pytest.mark.parametrize("prefix", ["f", "fr", "rf", "F", "Fr", "fR", "FR", "Rf", "rF", "RF"])
+@pytest.mark.parametrize("separator", ["", "\r"])
+def test_early_raw_brace_does_not_hide_a_later_formatted_escape(
+    prefix: str, separator: str
+) -> None:
+    source = "literal_word = 'text'\nvalue = r'\\{' + " + prefix + "'\\" + separator + "{1}'"
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("error")
+        assert not parsing_is_pure(source)
+    assert not emitted
+
+
+@pytest.mark.skipif(sys.version_info < (3, 14), reason="template strings")
+@pytest.mark.parametrize("prefix", ["t", "tr", "rt", "T", "Tr", "tR", "TR", "Rt", "rT", "RT"])
+def test_early_raw_brace_does_not_hide_a_later_template_escape(prefix: str) -> None:
+    source = "literal_word = 'text'\nvalue = r'\\{' + " + prefix + "'\\{1}'"
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("error")
+        assert not parsing_is_pure(source)
+    assert not emitted
+
+
+def test_raw_brace_module_reuses_facts_and_recomputes_changed_or_uncached_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = (
+        "from typing import Optional\n"
+        "literal_word = 'text'\n"
+        r'''pattern = r"\{'c': 1\} not match for \{'b': 1\}"''' + "\n"
+        "value = f'{literal_word}'\n"
+    )
+    facts: BoundedCache[Tuple[str, ParserConfiguration], Optional[typing_forms._ModuleFacts]] = (
+        BoundedCache(256)
+    )
+    monkeypatch.setattr(typing_forms, "_FACTS", facts)
+    original = typing_forms._scoped_bindings
+    constructions = 0
+
+    def count_constructions(
+        tree: ast.Module,
+    ) -> Tuple[Mapping[str, Tuple[typing_forms._ScopedBinding, ...]], Tuple[Optional[str], ...]]:
+        nonlocal constructions
+        constructions += 1
+        return original(tree)
+
+    monkeypatch.setattr(typing_forms, "_scoped_bindings", count_constructions)
+    spellings = ("Optional", "unrelated")
+    with memoization_disabled():
+        expected = tuple(typing_forms._local_forms(source, spelling) for spelling in spellings)
+    assert constructions == len(spellings)
+
+    constructions = 0
+    for _ in range(4):
+        assert (
+            tuple(typing_forms._local_forms(source, spelling) for spelling in spellings) == expected
+        )
+    assert constructions == 1
+
+    changed = source + "from typing import Optional as renamed_optional\n"
+    assert typing_forms._local_forms(changed, "renamed_optional") == expected[0]
+    assert constructions == 2
+
+    with memoization_disabled():
+        assert (
+            tuple(typing_forms._local_forms(source, spelling) for spelling in spellings) == expected
+        )
+    assert constructions == 2 + len(spellings)
