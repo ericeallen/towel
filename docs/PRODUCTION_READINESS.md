@@ -43,10 +43,23 @@ the raw partial observations and exact-source gate results are retained under
 `~/Knowledge/handoffs/towel/20261010T113508Z-codex-1946-release-validation/`.
 
 A separate bounded replay proved repeated native parsing of the same
-warning-free source. The subsequent guard refinement changes runtime bytes,
-so it requires a new source freeze, fresh complete production measurements
-and a fresh full release campaign. Passing checks for `a53e351` cannot certify
-the repaired source. See the [investigation](PERFORMANCE.md#october-10-voluptuous-regression-investigation).
+warning-free source. The guard repair was frozen as `a6dc6ed` with versioned
+1.946 artifacts. Fresh quality, strict typing, exact archive/RECORD and Twine
+checks passed; the complete Voluptuous canary retained 182/182 passes and
+40 applications across four files. These checks do not complete release
+acceptance or inherit `a53e351`'s matrix/corpus results.
+
+Two completed R,F,F,R cohorts then compared `a6dc6ed` with published `44d7795`:
+Voluptuous averaged 90.984 → 87.569 seconds (−3.75%); Click averaged
+47.165 → 58.195 seconds (+23.39%). There were two shared-host observations
+per source per workload under 2 CPUs, 6 GiB RAM and 12 GiB combined RAM+swap.
+Original pairs, 24 displayed Click failure payloads, repeated per-arm outputs
+and owned-worker closure matched. Per-CLI CPU is unavailable. Rich has zero
+actual samples in this campaign; its fresh cohort and all remaining full
+source-bound release gates are pending. Restoration remains unresolved. The
+[current record](../tests/release_evidence/1.946-warning-guard/README.md)
+preserves all eight samples and telemetry limits; the earlier comparison below
+remains historical. See also the [investigation](PERFORMANCE.md#october-10-voluptuous-regression-investigation).
 
 At that audit freeze, the complete canonical suite passed **10,583 tests and
 45 subtests**, with 32 skips and eight warnings. Coverage was **93.478046%**

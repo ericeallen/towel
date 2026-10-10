@@ -137,8 +137,8 @@ Six consumer original-command pairs preserved their counts and visible failure
 payloads; all 531 generated Python outputs matched their references. Existing
 consumer failures and nine truncated diagnostic portions were retained as limits.
 
-The subsequent cold production comparison retained two samples per version per
-workload in R,F,F,R order:
+The earlier `9d57b0d` cold production comparison retained two samples per version
+per workload in R,F,F,R order:
 
 | Workload | Released 1.792 mean | Development mean | Additional wall time | Additional CPU time |
 | --- | ---: | ---: | ---: | ---: |
@@ -156,8 +156,19 @@ The first versioned candidate, `a53e351`, completed quality, distribution,
 clean-install, differential, interpreter-matrix and self-dogfood checks. Its
 corpus campaign stopped after 31 of 141 projects when Voluptuous exposed a
 material performance defect. That incomplete campaign does not approve a
-release. The guard repair changes runtime bytes and requires a new freeze and
-fresh complete validation; earlier passing gates do not certify the repair.
+release. The guard repair changes runtime bytes; earlier passing gates do not
+certify the repair or replace its fresh complete validation.
+The repaired versioned source `a6dc6ed` now has fresh exact artifacts/static
+checks and a complete 182/182 Voluptuous canary. Eight actual R,F,F,R samples
+across two complete cohorts compared it with published 1.792: Voluptuous means
+were 90.984 → 87.569 seconds (−3.75%) and Click 47.165 → 58.195 seconds
+(+23.39%). These are two shared-host observations per source per workload,
+using 2 CPUs, 6 GiB RAM and 12 GiB combined RAM+swap. Original before/after
+outcomes, all 24 displayed Click failure records and repeated outputs matched;
+per-CLI CPU is unavailable. Rich has zero actual samples in this new campaign
+and remains pending. The [current portable record](../tests/release_evidence/1.946-warning-guard/README.md)
+keeps exact source/wheel identities and telemetry/closure limits.
+
 Final frozen artifacts, the supported interpreter matrix,
 141-project corpus, exact release-evidence gate and exact-commit CI remain
 required under the [release procedure](RELEASING.md). Performance restoration is

@@ -2,6 +2,19 @@
 
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
+## Current versioned warning-guard observations
+
+Source `a6dc6ed`/1.946 versus published `44d7795`/1.792 completed two R,F,F,R
+cohorts: Voluptuous 90.984 → 87.569 seconds (−3.75%) and Click 47.165 →
+58.195 seconds (+23.39%), two shared-host samples per source/workload.
+All original pairs, displayed Click failure records, repeated outputs and owned
+closure matched. Rich has zero actual samples here after preproduct failures;
+its measurements and fresh full release gates remain pending. Per-CLI CPU is
+unavailable. The [portable record](../../tests/release_evidence/1.946-warning-guard/README.md)
+retains all eight observations and the 2 CPU/6 GiB RAM/12 GiB combined caps.
+The restoration target remains unresolved; profiles are diagnostics, not timing
+samples. The earlier complete comparison below keeps its own source and caps.
+
 ## October 10, 2026 preparation and completed comparison
 
 Version 1.946 is prepared and unpublished; the last published release is 1.792.

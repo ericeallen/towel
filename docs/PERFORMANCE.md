@@ -4,14 +4,16 @@
 
 Use this guide to estimate a run and understand the limits of the published measurements.
 
-The latest complete-command comparison is the October 10 assessment of audited
-source `9d57b0d` against released source `44d7795`. It found slower execution on
-Click and Rich. Version 1.946 is in preparation; these measurements used wheels
-still numbered 1.792 and do not certify versioned 1.946 artifacts. Earlier
-measurements retain their original source identities and conditions.
+The latest completed cohorts compare versioned 1.946 source `a6dc6ed` with
+published 1.792 source `44d7795`: Voluptuous was 3.75% lower and Click 23.39%
+slower in two shared-host samples per source per workload. Rich has zero actual
+samples in this campaign and remains pending. These observations do not certify
+the final release or establish general restoration. The earlier `9d57b0d`
+Click/Rich comparison retains its own 1.792 metadata, samples and limits.
 
 On this page:
 
+- [October 10 versioned warning-guard cohorts](#october-10-versioned-warning-guard-cohorts)
 - [October 10 Voluptuous regression investigation](#october-10-voluptuous-regression-investigation)
 - [October 10 Click and Rich assessment](#october-10-click-and-rich-assessment)
 - [Measurement conditions](#measurement-conditions)
@@ -24,6 +26,49 @@ On this page:
 - [Why larger projects take longer](#why-larger-projects-take-longer)
 
 ## How long it takes
+
+### October 10 versioned warning-guard cohorts
+
+The [portable record](../tests/release_evidence/1.946-warning-guard/README.md)
+and [raw samples](../tests/release_evidence/1.946-warning-guard/measurements.json)
+bind eight complete cold default CLI observations to versioned 1.946 source
+`a6dc6ed4c75fa9c1b65aa9029f2a6361ec7dce77` and published 1.792 source
+`44d779563578a32e24f8213fba96f43c6698ab43`.
+
+| Workload | Published mean (range), seconds | 1.946 candidate mean (range), seconds | Change | Samples per source |
+| --- | ---: | ---: | ---: | ---: |
+| Voluptuous | 90.984 (90.572–91.396) | 87.569 (87.522–87.616) | −3.75% | 2 |
+| Click | 47.165 (46.816–47.514) | 58.195 (57.338–59.052) | +23.39% | 2 |
+
+Each cohort ran R,F,F,R. Paired fixed/released ratios were 0.957611/0.967360
+for Voluptuous and 1.206768/1.261359 for Click. The CLI timer includes typing,
+formatting, cross-module extraction, fixed-point materialization and final
+checking; it excludes setup, settling and original before/after tests. No
+profiler or census ran during these samples. Per-CLI waited-child CPU is
+unavailable, and retained whole-container CPU/idle context must not substitute
+for it. Resources were two CPUs, 6 GiB RAM, **12 GiB combined RAM+swap**, one
+worker, CPython 3.12.14 and disabled networking in the same pinned image. These
+caps differ from the earlier 6 GiB combined comparison below; do not pool means.
+
+Voluptuous retained 182 passes in each before/after pair, applying 39 released
+versus 40 candidate refactorings across four files. Click retained its exact
+2,035 passes, 24 existing pager failures, 24 skips, one xfail and 31,000
+deselections. All 24 displayed failure headers and E-lines matched before/after
+in all four Click samples. No hidden object state or upstream CI claim follows.
+Click applied four released versus five candidate refactorings across three
+files. Repeated output matched within each source arm: 10 Python files plus
+`py.typed` and `tests/tests.md` for Voluptuous, 17 Python files plus `py.typed`
+for Click. Capability differences remain explicit.
+
+All eight source, installed artifact, dependency, input, original-pair, output,
+context and physical closure checks passed. Every one-second telemetry row
+was retained, including idle below 70%; whole-container minima were 42–48%
+for Voluptuous and 43–47% for Click. The fresh 20-second preflight required
+at least 80% idle. This is shared-host evidence, not isolated-host certification,
+per-core or full contention attribution. There was no replacement of an actual
+sample. Rich has **zero actual samples** here after strict preproduct settling/
+preflight failures; its complete cohort is pending. The restoration target
+remains unresolved, and fresh full release validation remains required.
 
 ### October 10 Voluptuous regression investigation
 
@@ -51,9 +96,10 @@ The repair narrows the guard conservatively: escapes before every possible
 formatted-string start proceed to the existing lexical checks. Potentially
 warning-capable formatted strings continue to parse freshly. Cache capacity,
 source ownership, parser limits and diagnostic behavior remain unchanged.
-Fresh complete production-path measurements must establish its benefit and
-reassess Click and Rich; no performance-restoration claim follows from this
-bounded replay or the repair alone.
+The complete Voluptuous and Click cohorts above now provide source-bound
+observations of repaired `a6dc6ed`. They do not turn the replay into a timing
+sample. Fresh Rich measurements and full release validation remain pending;
+no general restoration claim follows from the repair or these limited cohorts.
 
 ### October 10 Click and Rich assessment
 

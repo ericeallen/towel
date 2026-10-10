@@ -22,7 +22,15 @@ The completed development audit at `9d57b0d` passed 10,583 tests and 45
 subtests, with 32 skips and 93.478% coverage. Six consumer original-command
 pairs and their 531 generated Python outputs matched the retained references.
 The versioned 1.946 source and artifacts still need their own release gates.
-On the subsequent eight-sample shared-host comparison, complete cold CLI
+The latest completed versioned cohorts use `a6dc6ed` (1.946) versus published
+`44d7795` (1.792): Voluptuous means were 90.984 → 87.569 seconds (−3.75%),
+and Click means were 47.165 → 58.195 seconds (+23.39%), with two shared-host
+samples per source per workload. Rich has zero actual samples in this new
+campaign; its measurements and fresh full release gates remain pending.
+The [current eight-sample record](tests/release_evidence/1.946-warning-guard/README.md)
+retains original pairs, repeated outputs and closure. Restoration is unresolved.
+
+On the earlier `9d57b0d` eight-sample shared-host comparison, complete cold CLI
 means were 46.53 → 56.69 seconds for Click (+21.85%) and 99.77 → 177.70
 seconds for Rich (+78.10%) versus released 1.792. These are two samples per
 version per workload, not an isolated-host or general speed claim. See the

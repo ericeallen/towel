@@ -14,7 +14,19 @@ matched; 35 known baseline failure records remain, with nine hidden
 pytest-truncated portions unverified. The source inventories and owned
 worker closure were independently checked.
 
-Eight complete production CLI observations then compared this source with
+The repaired versioned candidate `a6dc6ed` has fresh package/static checks and
+a complete Voluptuous canary. Eight actual shared-host R,F,F,R samples in two
+completed cohorts measured Voluptuous 90.984 → 87.569 seconds (−3.75%) and
+Click 47.165 → 58.195 seconds (+23.39%) against published `44d7795`, two per
+source/workload. Exact original pairs, all 24 displayed Click failure payloads,
+repeated per-arm outputs and physical closure passed. Resources are now
+2 CPUs/6 GiB RAM/12 GiB combined RAM+swap; per-CLI CPU is unavailable. Rich
+has zero actual samples here after strict preproduct failures. Its cohort and
+fresh full release gates remain pending; restoration is unresolved. The
+[current portable record](../tests/release_evidence/1.946-warning-guard/README.md)
+preserves all raw samples and limits.
+
+The earlier eight complete production CLI observations compared `9d57b0d` with
 released `44d7795`, in R,F,F,R order for each of Click and Rich. With two
 samples per source and workload, audited-source means were 21.85% slower
 for Click and 78.10% slower for Rich. Every runtime idle shortfall remains

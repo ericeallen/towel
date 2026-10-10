@@ -10,6 +10,16 @@ The final versioned release needs its own frozen source, exact prebuilt artifact
 completed local evidence and exact-commit CI. Nothing in this preparation record
 states that 1.946 has been published or that its release gates have passed.
 
+The current warning-guard candidate `a6dc6ed` has source-bound 1.946 artifacts,
+static/package checks and a complete Voluptuous canary. Its two completed
+shared-host R,F,F,R cohorts measured Voluptuous 3.75% lower and Click 23.39%
+slower than published `44d7795`, with two observations per source/workload.
+The [portable record](../tests/release_evidence/1.946-warning-guard/README.md)
+retains all eight actual samples, original pairs, outputs and closure. Rich
+has zero actual samples in this campaign; its cohort and the fresh full release
+gates remain pending. These limited measurements neither approve publication
+nor establish overall restoration. Later source changes require fresh binding.
+
 The preceding **1.792** release was completed October 8, 2026, from `44d7795`,
 with Python 3.11–3.13 validation, the 141-project corpus review, exact artifact
 verification and exact-commit CI. Its records retain that source identity;
@@ -77,10 +87,12 @@ local check does not reserve a version or replace the final maintainer decision.
 
 The completed 1.946 development audit is bound to `9d57b0d`, which still used
 1.792 metadata. That source passed the native suite, static gates, broad behavior
-checks and six pinned consumer comparisons. Subsequent complete-CLI Click/Rich
-measurements found repeatable slowdowns of 21.85% and 78.10%, respectively, with
-two samples per version per workload on a shared host. Performance restoration
-has not been achieved; earlier phase improvements do not override these results.
+checks and six pinned consumer comparisons. The earlier `9d57b0d` complete-CLI
+Click/Rich measurements found slowdowns of 21.85% and 78.10%, respectively, with
+two samples per version per workload on a shared host. These historical
+observations do not certify the later versioned candidate; earlier phase
+improvements do not override them. The current Voluptuous/Click
+cohorts leave restoration unresolved and Rich pending.
 The maintainer must review the measured regression before publication.
 
 The version and documentation update changes release contents. Freeze the final
@@ -94,7 +106,8 @@ scope is in the [readiness report](PRODUCTION_READINESS.md).
 The first versioned freeze, `a53e351`, completed several gates but its corpus
 was stopped at 31 of 141 projects after a reproduced performance defect.
 That campaign does not clear release acceptance. The subsequent warning-guard
-repair requires a new frozen source and archives and fresh complete gates;
+repair was frozen as `a6dc6ed` with fresh artifacts/static checks and completed
+Voluptuous/Click cohorts. Remaining full gates and Rich observations are pending;
 the original raw records retain their original identities.
 
 For an unreleased experiment, use

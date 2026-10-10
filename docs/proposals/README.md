@@ -30,12 +30,20 @@ source, not to later documentation or versioned artifacts.
 | Certified leading-thunk parameter ordering | Only contiguous eligible slots in the same positional segment move; every caller must prove immutable results. Other parameters, the slash and existing evaluation guards stay fixed. |
 | IF-only fresh local outputs | Original-source certificates and aligned-output reproof cover contiguous IF suites. Prior bindings, captures, unsupported ancestry, exceptions and lifetime obligations remain restrictive. |
 
-The completed default-CLI comparison observed the fixed source **21.85% slower
+The latest completed versioned cohorts compare repaired `a6dc6ed`/1.946 with
+published `44d7795`/1.792: Voluptuous was 3.75% lower and Click 23.39% slower,
+with two shared-host observations per source/workload in R,F,F,R order.
+Rich has zero actual samples in this new campaign and remains pending, as do
+fresh full release gates. The [current portable record](../../tests/release_evidence/1.946-warning-guard/README.md)
+retains source/wheel/cap/tool identities, original pairs, outputs and closure;
+restoration remains unresolved.
+
+The earlier default-CLI comparison observed `9d57b0d` **21.85% slower
 on Click and 78.10% slower on Rich** than published 1.792. There were two samples
 per version per workload, in R,F,F,R order, with complete source and original
 before/after checks. These are disclosed shared-host observations, not isolated
 host certification or a general performance claim. The restoration target is
-not met. See the [current performance evidence](performance-roadmap.md#october-10-2026-preparation-and-completed-comparison)
+not met. See the [historical performance evidence](performance-roadmap.md#october-10-2026-preparation-and-completed-comparison)
 for timing boundaries and capability differences. Earlier rejected and profiled
 runs remain separate historical evidence.
 

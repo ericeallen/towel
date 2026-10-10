@@ -26,8 +26,17 @@ versioned artifacts. See the
 [readiness report](https://github.com/ericeallen/towel/blob/v1.946/docs/PRODUCTION_READINESS.md)
 for completed evidence and remaining release gates.
 
-Performance restoration remains unresolved. The October 10 shared-host
-comparison of `9d57b0d` with released 1.792 measured the complete cold CLI:
+Performance restoration remains unresolved. The latest completed cohorts use
+versioned 1.946 source `a6dc6ed`: Voluptuous averaged 87.57 versus 90.98 seconds
+(3.75% lower), while Click averaged 58.19 versus 47.16 seconds (23.39% slower).
+These are two shared-host samples per source per workload; Rich has no actual
+sample in this new campaign and remains pending. Fresh full release gates and
+exact-commit CI remain pending. The
+[portable current record](https://github.com/ericeallen/towel/blob/v1.946/tests/release_evidence/1.946-warning-guard/README.md)
+binds all eight actual samples, identities, outputs and limits.
+
+The earlier October 10 shared-host comparison of `9d57b0d` with released 1.792
+measured the complete cold CLI:
 Click averaged 56.69 versus 46.53 seconds (21.85% slower), and Rich averaged
 177.70 versus 99.77 seconds (78.10% slower), with two samples per version
 per workload. The
