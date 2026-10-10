@@ -43,8 +43,9 @@ the raw partial observations and exact-source gate results are retained under
 `~/Knowledge/handoffs/towel/20261010T113508Z-codex-1946-release-validation/`.
 
 A separate bounded replay proved repeated native parsing of the same
-warning-free source. The guard repair was frozen as `a6dc6ed` with versioned
-1.946 artifacts. Fresh quality, strict typing, exact archive/RECORD and Twine
+warning-free source. The preceding raw-regex guard repair was frozen as
+`a6dc6ed` with versioned 1.946 artifacts. Fresh quality, strict typing, exact
+archive/RECORD and Twine
 checks passed; the complete Voluptuous canary retained 182/182 passes and
 40 applications across four files. These checks do not complete release
 acceptance or inherit `a53e351`'s matrix/corpus results.
@@ -59,7 +60,12 @@ actual samples in this campaign; its fresh cohort and all remaining full
 source-bound release gates are pending. Restoration remains unresolved. The
 [current record](../tests/release_evidence/1.946-warning-guard/README.md)
 preserves all eight samples and telemetry limits; the earlier comparison below
-remains historical. See also the [investigation](PERFORMANCE.md#october-10-voluptuous-regression-investigation).
+remains historical. A subsequent backslash-parity repair changes runtime bytes
+again: complete paired backslashes no longer cause the guard refusal, while
+native diagnostic and cache boundaries remain fixed. Its scoped checks do not
+inherit the `a6dc6ed` timings or certify a release. A new final freeze, fresh
+complete gates and new source-bound timing evidence remain pending. See the
+[parity addendum](PERFORMANCE.md#october-10-backslash-parity-repair) and the [investigation](PERFORMANCE.md#october-10-voluptuous-regression-investigation).
 
 At that audit freeze, the complete canonical suite passed **10,583 tests and
 45 subtests**, with 32 skips and eight warnings. Coverage was **93.478046%**

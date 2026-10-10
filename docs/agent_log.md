@@ -14,7 +14,7 @@ matched; 35 known baseline failure records remain, with nine hidden
 pytest-truncated portions unverified. The source inventories and owned
 worker closure were independently checked.
 
-The repaired versioned candidate `a6dc6ed` has fresh package/static checks and
+The earlier raw-regex repair source `a6dc6ed` has fresh package/static checks and
 a complete Voluptuous canary. Eight actual shared-host R,F,F,R samples in two
 completed cohorts measured Voluptuous 90.984 → 87.569 seconds (−3.75%) and
 Click 47.165 → 58.195 seconds (+23.39%) against published `44d7795`, two per
@@ -25,6 +25,18 @@ has zero actual samples here after strict preproduct failures. Its cohort and
 fresh full release gates remain pending; restoration is unresolved. The
 [current portable record](../tests/release_evidence/1.946-warning-guard/README.md)
 preserves all raw samples and limits.
+
+A later parity-only repair distinguishes complete paired backslashes from
+unmatched odd escapes before formatted-string braces, preserving native
+warnings/errors and immutable fact reuse under the existing guards. Focused
+integration passed 479 tests with 221 version-conditioned skips on Python 3.13;
+3,719 finite external controls per native Python 3.11–3.14 passed. The unchanged
+native always/ignore/error oracle and repeated/change/disabled construction
+fixtures are scoped correctness/cost evidence. They do not establish timing
+improvement or full acceptance, and the earlier `a6dc6ed` cohorts remain
+source-bound. A new freeze and fresh final gates are pending; publication remains
+unauthorized. See the
+[parity repair](PERFORMANCE.md#october-10-backslash-parity-repair).
 
 The earlier eight complete production CLI observations compared `9d57b0d` with
 released `44d7795`, in R,F,F,R order for each of Click and Rich. With two

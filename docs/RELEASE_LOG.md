@@ -53,7 +53,7 @@ existing diagnostic and cache boundaries. New runtime bytes require fresh
 complete performance assessments and release gates; the old completed gates
 remain bound to `a53e351`. See the [performance investigation](PERFORMANCE.md#october-10-voluptuous-regression-investigation).
 
-The repaired versioned source `a6dc6ed` completed fresh quality, strict typing,
+The preceding raw-regex repair source `a6dc6ed` completed fresh quality, strict typing,
 archive/RECORD and Twine checks plus a complete Voluptuous canary (182/182,
 40 applications/four files). Its two completed R,F,F,R shared-host cohorts
 retained all eight actual samples: Voluptuous 90.984 → 87.569 seconds
@@ -64,7 +64,13 @@ closure. Current caps are 2 CPUs/6 GiB RAM/12 GiB combined RAM+swap; per-CLI
 CPU is unavailable. Rich has zero actual samples in this new campaign after
 preproduct settling/preflight failures. Its measurements and fresh full gates
 remain pending, and restoration is unresolved. See the
-[current portable record](../tests/release_evidence/1.946-warning-guard/README.md).
+[source-bound portable record](../tests/release_evidence/1.946-warning-guard/README.md).
+
+The later paired-backslash parity repair has scoped native diagnostic and
+fact-reuse evidence; it is outside those `a6dc6ed` samples. The latest prepared
+runtime requires a new final source freeze, fresh full release gates and new
+source-bound timing evidence. No completed campaign or timing benefit for that
+later runtime is claimed. See the [parity addendum](PERFORMANCE.md#october-10-backslash-parity-repair).
 
 At the earlier `9d57b0d` full audit, the canonical suite passed 10,583 tests and
 45 subtests, with 32 skips,

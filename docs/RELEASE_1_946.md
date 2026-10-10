@@ -122,6 +122,22 @@ replay reproduced repeated parsing of an unchanged, warning-free Voluptuous
 test module; the guard refinement restores its cache eligibility while leaving
 potentially warning-capable formatted strings on the fresh native path.
 
+A subsequent guard repair distinguishes complete paired backslashes from an
+unmatched odd escape before a formatted-string brace. Even runs do not themselves
+escape that brace; all existing token, prefix, nesting and native warning checks
+still apply. The measured Markup/ANSI-like source shapes can reuse immutable
+facts when admitted, while uncertain inputs retain fresh native parsing. There
+is no new cache or change to diagnostic filters, capacity or parser-limit keys.
+
+The integrated seven-file focused battery passed 479 tests with 221
+version-conditioned skips on Python 3.13. Independent external classifier/native
+AST, error and warning comparisons covered 3,719 finite inputs on each native
+Python 3.11–3.14. Permanent fixtures preserve always/ignore/error behavior,
+repeated queries, source changes and disabled-cache recomputation. Neither the
+finite controls nor construction counts establish a wall-time benefit or full
+release acceptance. This later runtime repair is outside the earlier `a6dc6ed`
+measurements and requires a new freeze and fresh final gates.
+
 These are exact analysis changes, not a claim of overall acceleration. The
 [architecture](ARCHITECTURE.md) records their boundaries; the
 [performance guide](PERFORMANCE.md) records complete-command measurements.

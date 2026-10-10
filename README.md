@@ -33,7 +33,10 @@ These are two shared-host samples per source per workload; Rich has no actual
 sample in this new campaign and remains pending. Fresh full release gates and
 exact-commit CI remain pending. The
 [portable current record](https://github.com/ericeallen/towel/blob/v1.946/tests/release_evidence/1.946-warning-guard/README.md)
-binds all eight actual samples, identities, outputs and limits.
+binds all eight actual samples, identities, outputs and limits. These results
+predate the subsequent backslash-parity repair. The latest prepared runtime
+needs a new source freeze, fresh final release gates and new timing evidence;
+the earlier source-bound cohorts do not certify it.
 
 The earlier October 10 shared-host comparison of `9d57b0d` with released 1.792
 measured the complete cold CLI:

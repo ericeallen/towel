@@ -45,6 +45,16 @@ version per workload, not an isolated-host or general speed claim. See the
   the fresh native parsing path. This repairs a reproduced performance defect
   without changing warning filters, cache bounds or parser-limit keys.
 
+- Distinguish complete even backslash runs from unmatched odd escapes before
+  formatted-string braces. Paired literal backslashes no longer cause this
+  warning-guard refusal; potentially warning-capable odd escapes keep the
+  native diagnostic path and all existing token checks. Repeated eligible
+  queries reuse the existing immutable facts without new caches or bounds.
+  The seven-file focused battery passed 479 tests with 221 version skips;
+  3,719 external controls per native Python 3.11–3.14 passed. These are scoped
+  correctness/cost controls, not timing or full-release evidence. Fresh final
+  gates remain pending; the earlier numeric measurements retain their sources.
+
 - Share warning-free raw f-string literal analyses on Python 3.12. Distinguish
   literal text from replacement fields while retaining native warning checks
   for raw format specifications and nonraw nested strings.

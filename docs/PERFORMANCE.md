@@ -15,6 +15,7 @@ On this page:
 
 - [October 10 versioned warning-guard cohorts](#october-10-versioned-warning-guard-cohorts)
 - [October 10 Voluptuous regression investigation](#october-10-voluptuous-regression-investigation)
+- [October 10 backslash-parity repair](#october-10-backslash-parity-repair)
 - [October 10 Click and Rich assessment](#october-10-click-and-rich-assessment)
 - [Measurement conditions](#measurement-conditions)
 - [October 7 block-fact memo](#october-7-block-fact-memo)
@@ -100,6 +101,37 @@ The complete Voluptuous and Click cohorts above now provide source-bound
 observations of repaired `a6dc6ed`. They do not turn the replay into a timing
 sample. Fresh Rich measurements and full release validation remain pending;
 no general restoration claim follows from the repair or these limited cohorts.
+
+### October 10 backslash-parity repair
+
+A separately bounded Rich replay established repeated exact source/configuration
+queries that missed immutable facts because the warning guard matched the last
+backslash of a complete even run. Exact native source observations were
+warning-free under always, ignore and error filters. The parity-only refinement
+matches complete odd runs, including the existing carriage-return case; paired
+literal backslashes no longer cause this guard refusal. Existing prefix/token/
+nesting checks remain authoritative, including conservative refusal of an
+ordinary raw brace regex after an earlier possible formatted prefix. No cache,
+warning filter, source budget or parser-limit policy was changed.
+
+The integrated seven-file battery passed **479 tests**, with **221
+version-conditioned skips**, on native Python 3.13. The generic native AST/
+warning/error oracle is unchanged. Permanent fixtures cover complete even/odd
+runs, later odd escapes, carriage returns, mixed/raw prefixes, conditional
+templates and nested strings. Shared fact-construction fixtures cover ordinary
+raw regexes and Markup/ANSI-like paired escapes; identical queries reuse one
+construction, while changed sources and disabled memoization recompute with
+identical semantic results. Separately, **3,719 finite external controls per
+native Python 3.11–3.14** passed; these do not replace the integrated matrix.
+
+No complete-command timing result for this later repair is claimed. The
+completed Voluptuous/Click measurements above remain bound to pre-parity
+`a6dc6ed` and their exact wheels; no sample is relabelled. A new frozen source,
+fresh final release gates and source-bound performance assessments remain
+pending. Raw scoped evidence is retained in
+`20261010T161505Z-codex-1946-warning-guard-validation`, under
+`parity-controls-r01` and `parity-integration-r01`. Construction counts and
+finite native parity are not full cost attribution or release approval.
 
 ### October 10 Click and Rich assessment
 

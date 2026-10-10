@@ -10,7 +10,7 @@ The final versioned release needs its own frozen source, exact prebuilt artifact
 completed local evidence and exact-commit CI. Nothing in this preparation record
 states that 1.946 has been published or that its release gates have passed.
 
-The current warning-guard candidate `a6dc6ed` has source-bound 1.946 artifacts,
+The earlier raw-regex guard source `a6dc6ed` has source-bound 1.946 artifacts,
 static/package checks and a complete Voluptuous canary. Its two completed
 shared-host R,F,F,R cohorts measured Voluptuous 3.75% lower and Click 23.39%
 slower than published `44d7795`, with two observations per source/workload.
@@ -18,7 +18,10 @@ The [portable record](../tests/release_evidence/1.946-warning-guard/README.md)
 retains all eight actual samples, original pairs, outputs and closure. Rich
 has zero actual samples in this campaign; its cohort and the fresh full release
 gates remain pending. These limited measurements neither approve publication
-nor establish overall restoration. Later source changes require fresh binding.
+nor establish overall restoration. The latest prepared runtime includes a
+subsequent backslash-parity repair and requires a new final freeze, fresh full
+gates and new timing evidence. The older cohorts remain bound to `a6dc6ed`;
+later source changes cannot inherit those checks or measurements.
 
 The preceding **1.792** release was completed October 8, 2026, from `44d7795`,
 with Python 3.11–3.13 validation, the 141-project corpus review, exact artifact
@@ -107,8 +110,9 @@ The first versioned freeze, `a53e351`, completed several gates but its corpus
 was stopped at 31 of 141 projects after a reproduced performance defect.
 That campaign does not clear release acceptance. The subsequent warning-guard
 repair was frozen as `a6dc6ed` with fresh artifacts/static checks and completed
-Voluptuous/Click cohorts. Remaining full gates and Rich observations are pending;
-the original raw records retain their original identities.
+Voluptuous/Click cohorts. The subsequent backslash-parity repair has scoped
+native/fixture evidence, but its fresh full gates and timing observations remain
+pending. The original raw records retain their original identities.
 
 For an unreleased experiment, use
 `just verify-release-evidence VERSION /path/to/release-evidence.json`.
