@@ -27,6 +27,7 @@ is a defect to fix, not a limitation to document.
 - [Tiny helper interface cost](#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
 - [Exact constants, thunk order and IF outputs](#2026-10-08-retained-proposals-need-source-and-lifetime-proofs)
 - [Scoped facts and native warning behavior](#2026-10-10-share-immutable-facts-without-caching-admission)
+- [Per-analysis source-correspondence proof (from the release after 1.946)](#2026-10-18-one-analysis-may-reuse-its-source-correspondence-proof)
 - [Complete preview and helper inputs](#complete-preview-and-generated-helper-inputs-september-27-2026) · [Annotation evaluation](#generated-annotations-must-not-add-evaluation-september-27-2026)
 - [Release audits](#2026-09-24-every-release-is-audited-and-every-finding-becomes-a-test) · [Evidence and documentation](#2026-09-27-release-documentation-must-agree-with-its-validation-evidence)
 
@@ -1739,6 +1740,10 @@ The reflection exclusion adopted October 2 is unchanged.*
 
 ## 2026-10-10: Share immutable facts without caching admission
 
+*Amended on 2026-10-18 by the entry below: from the release after 1.946, one
+analysis may reuse its own source-correspondence proof. This entry still
+governs 1.946 unchanged.*
+
 Repeated analysis may reuse immutable facts within a verified owner and source
 lifetime. It may not reuse a verdict about a caller's mutable tree or skip the
 fresh source correspondence, function identity, suite identity and aligned
@@ -1766,3 +1771,46 @@ syntax and nested nonraw strings retain native warning/error behavior.
 *Status: implemented with bounded-cache, scoped-owner, mutation, fork, disabled
 and native warning-policy regressions. A profile or repeated-input census is
 diagnostic evidence, not a whole-production-path speedup or release approval.*
+
+## 2026-10-18: One analysis may reuse its source-correspondence proof
+
+From the release after 1.946, the proof that a module still corresponds to its
+source (`if_binding_transfer._source_corresponds`, which admits each fresh
+output from an `if` block) may be memoized within one whole analysis. The memo
+is keyed on the exact inputs: the module object, its source and its exact tree.
+It applies only to trees the engine owns, whose analysis never mutates them
+(`memoized_per_node`; `TOWEL_CHECK_AST_IMMUTABLE` checks this), and it ends
+with the analysis. It is bypassed under `memoization_disabled`, and a caller's
+tree, or a call outside an analysis, is still proved afresh every time. The
+other admission proofs of the 2026-10-10 entry (function identity, suite
+identity and aligned outputs) are unchanged; reusing any of them needs its own
+decision.
+
+The reason is measured, not assumed. On 2026-10-18 the frozen candidate
+`0b3494c` was profiled against published 1.792 (`44d7795`) on Rich
+(`9d8f9a3`), with one Towel worker, on a shared macOS host running Python 3.12.
+Interleaved R,F,F,R wall times were 90.5 s and 90.7 s for 1.792 and 97.4 s and
+97.6 s for 1.946, which is 6.9 s or 7.6% slower, with both versions applying 15
+extractions. In an unprofiled instrumented run, `_source_corresponds` was
+called 1,964 times and took 10.5 s, more than the whole difference. 1,947 of
+those calls (99.1%) repeated the module object, source and exact tree of an
+earlier call. There were 17 distinct inputs, every call ran inside one
+analysis, no tree changed between calls, and every result was true. A memo of
+this shape would remove about 10 s. That would make 1.946 about 4% faster than
+1.792 on Rich, an estimate that has not been measured. A byte-identical faster
+serializer, which the 2026-10-10 rule allows, saved only about a quarter of the
+dump time (roughly 2 s), so it does not answer the regression.
+
+The memo is exact: under the engine's invariant that analysis never mutates its
+trees, a repeated call can only return the earlier answer. It is deferred
+rather than shipped because changing a correctness rule during the 1.946
+release would void that release's validation freeze; 1.946 ships with the
+regression documented in [RELEASE_1_946.md](RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
+When the memo is implemented, `test_scoped_repeated_admissions_reprove_actual_tree`
+and `test_warmed_source_fact_never_validates_mutated_owner` change from
+"reprove every call" to "reprove after a detected mutation, and outside an
+analysis", and the change must leave proposals and output byte-identical on
+Click, Rich, Voluptuous and Towel's own source.
+
+*Status: decided 2026-10-18 (maintainer decision on review item 7, option a);
+not implemented in 1.946.*
