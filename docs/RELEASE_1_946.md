@@ -199,8 +199,46 @@ keeps exact source/wheel identities and telemetry/closure limits.
 
 Final frozen artifacts, the supported interpreter matrix,
 141-project corpus, exact release-evidence gate and exact-commit CI remain
-required under the [release procedure](RELEASING.md). Performance restoration is
-still unresolved and needs a maintainer disposition before publication.
+required under the [release procedure](RELEASING.md).
+
+### Where the remaining time goes (profiled on `0b3494c`)
+
+On 2026-10-18 the frozen candidate `0b3494c` was profiled against published
+1.792 (`44d7795`) on the same pinned Rich and Click revisions. The runs used the
+same command, one Towel worker, and environments built by the corpus harness.
+The host was a shared native macOS machine with Python 3.12, not the release
+container, so these are attribution and relative timings, not release
+measurements. Interleaved R,F,F,R wall times:
+
+| Workload | 1.792 samples | 1.946 samples | Difference | Applied (1.792 / 1.946) |
+| --- | --- | --- | ---: | --- |
+| Rich | 90.5 s, 90.7 s | 97.4 s, 97.6 s | +7.6% | 15 / 15 |
+| Click | 41.4 s, 68.0 s | 60.6 s, 89.2 s | +37% (noisy) | 4 / 5 |
+
+Host load changed during the Click series, so only Rich's difference is
+precise. The earlier +78% on Rich was measured on `9d57b0d`, before the later
+warning-guard and parity repairs.
+
+- **Rich.** The whole difference is in pair evaluation. One proof explains it:
+  the fresh whole-module source correspondence that admits each fresh output
+  from an `if` block (`if_binding_transfer._source_corresponds`). It ran
+  1,964 times, for 10.5 s unprofiled, which is more than the 6.9 s
+  difference; the rest of 1.946's analysis is slightly faster than 1.792's.
+  In 99% of those calls the inputs (module, source and tree) repeat an
+  earlier call, so a per-analysis memo would remove nearly all of the cost.
+  The [2026-10-10 decision](DECISIONS.md) requires a fresh proof for every
+  admission and forbids reusing a verdict about the tree, so the proof is not
+  cached. A byte-identical faster serializer saved only about a quarter of
+  the dump time and was not adopted.
+- **Click.** Most of the extra time pays for the fifth extraction: one more
+  whole analysis, one more materialization, and almost twice as many
+  type-checker runs (11 against 6). The same `if` proof adds about 3 s under
+  the profiler.
+
+Disposition (maintainer decision D1, 2026-10-18): the regression was
+profiled. Its single hot spot cannot be removed without relaxing the
+2026-10-10 proof rule, so 1.946 is published with the regression documented
+here.
 
 ## Deferred work
 

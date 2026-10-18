@@ -28,7 +28,12 @@ and Click means were 47.165 → 58.195 seconds (+23.39%), with two shared-host
 samples per source per workload. Rich has zero actual samples in this new
 campaign; its measurements and fresh full release gates remain pending.
 The [current eight-sample record](tests/release_evidence/1.946-warning-guard/README.md)
-retains original pairs, repeated outputs and closure. Restoration is unresolved.
+retains original pairs, repeated outputs and closure. Profiling `0b3494c`
+on 2026-10-18 (shared native host, interleaved samples) measured Rich at
++7.6% and attributed it to the fresh source-correspondence proof for `if`
+outputs, which the 2026-10-10 decision keeps uncached. Click's larger
+difference mostly pays for its fifth extraction. The regression ships
+documented; see [where the remaining time goes](docs/RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
 
 On the earlier `9d57b0d` eight-sample shared-host comparison, complete cold CLI
 means were 46.53 → 56.69 seconds for Click (+21.85%) and 99.77 → 177.70
