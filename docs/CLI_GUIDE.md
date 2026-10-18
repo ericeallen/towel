@@ -252,6 +252,30 @@ a caller-narrowing boundary, class-attribute declarations, or text that cannot
 be represented in the file's encoding. If nothing was applied, it also
 summarizes candidate-pair declines.
 
+`--stats` (for `dry` and the complete `preview`) adds an account of where the
+duplicates went. Each candidate pair of the run's last whole analysis is
+counted exactly once: declined, a duplicate of an earlier pair's proposal,
+dropped for overlapping a proposal kept in its place, or emitted. At a fixed
+point, nothing that analysis emitted could be applied. Over the whole run,
+`--stats` also counts the helper signatures the type checker verified and
+refused, one attempt per rung of a proposal's annotation ladder, and the
+proposals not applied. It changes no output file:
+
+```text
+Statistics (the last whole analysis; signatures over the whole run):
+  3 candidate pair(s): 3 declined, 0 duplicate, 0 overlapping, 0 emitted
+  1 signature attempt(s): 1 verified, 0 refused by the type checker
+  0 proposal(s) not applied
+```
+
+That is a module of three similar functions after the run extracted one
+helper. The pairs its final analysis found were all declined, and the single
+signature attempt was the extracted helper's.
+
+The same counts are on `engine.run_report` (`candidate_pairs`,
+`duplicate_pairs`, `overlapping_proposals`, `emitted_proposals`,
+`signatures_verified`, `signatures_refused`).
+
 | Environment setting | What it shows |
 | --- | --- |
 | `DEBUG_PROPOSAL_REJECTIONS=1` | Reasons for individual candidate-pair declines. |

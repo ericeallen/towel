@@ -66,7 +66,7 @@ from .exceptions import (
     UntypeableExtraction,
     UnverifiableChangeError,
 )
-from .models import RefactoringProposal, TerminationReason
+from .models import PairTally, RefactoringProposal, TerminationReason
 from .overlap import filter_overlapping_proposals
 from .progress import (
     DEFAULT_PROGRESS,
@@ -141,13 +141,28 @@ class RunReport:
 
     ``declined_pairs`` counts the candidate pairs the run's last whole analysis
     declined, by ``RejectReason``; a pair that only repeated another pair's
-    proposal is not counted, since nothing was lost. ``declined_proposals``
+    proposal is not counted there, since nothing was lost. ``declined_proposals``
     counts the proposals built but not applied, by ``DeclineReason``, each
     heard once however often the run reconsidered it.
+
+    The same last whole analysis accounts for each of its ``candidate_pairs``
+    exactly once: declined, a duplicate of an earlier pair's proposal
+    (``duplicate_pairs``), dropped for overlapping a proposal kept in its place
+    (``overlapping_proposals``), or emitted (``emitted_proposals``). At a fixed
+    point nothing emitted could be applied. ``signatures_verified`` and
+    ``signatures_refused`` count, over the whole run, the helper signatures the
+    project's type checker accepted and refused, each rung of a proposal's
+    annotation ladder one attempt.
     """
 
     declined_pairs: Mapping[str, int] = field(default_factory=dict)
     declined_proposals: Mapping[DeclineReason, int] = field(default_factory=dict)
+    candidate_pairs: int = 0
+    duplicate_pairs: int = 0
+    overlapping_proposals: int = 0
+    emitted_proposals: int = 0
+    signatures_verified: int = 0
+    signatures_refused: int = 0
 
 
 _Reason = TypeVar("_Reason", bound=str)
@@ -172,6 +187,9 @@ class FixedPointDrivers(Materialization):
     # the latest reason; and what its last whole analysis declined.
     _declined: Dict[str, DeclineReason] = {}
     _last_declined_pairs: Dict[str, int] = {}
+    # How the last whole analysis's pairs ended, and how many proposals it emitted.
+    _last_pair_tally: PairTally = PairTally()
+    _last_emitted: int = 0
     # The stage copies of the files an in-place run must not write, since
     # the project holds them under more than one link.
     _unwritable_in_place: FrozenSet[Path] = frozenset()
@@ -182,11 +200,24 @@ class FixedPointDrivers(Materialization):
         proposals: Dict[DeclineReason, int] = {}
         for reason in self._declined.values():
             proposals[reason] = proposals.get(reason, 0) + 1
-        return RunReport(dict(self._last_declined_pairs), proposals)
+        tally = self._last_pair_tally
+        return RunReport(
+            dict(self._last_declined_pairs),
+            proposals,
+            candidate_pairs=tally.candidate_pairs,
+            duplicate_pairs=tally.duplicate_pairs,
+            overlapping_proposals=tally.distinct_proposals - self._last_emitted,
+            emitted_proposals=self._last_emitted,
+            signatures_verified=self._signatures_verified,
+            signatures_refused=self._signatures_refused,
+        )
 
-    def _note_analysis(self, analyzed: Path, reporter: Optional["_ApplyProgress"] = None) -> None:
-        """Keep what a whole analysis of ``analyzed`` declined, for the run's report."""
+    def _note_analysis(
+        self, analyzed: Path, emitted: int, reporter: Optional["_ApplyProgress"] = None
+    ) -> None:
+        """Keep what a whole analysis of ``analyzed`` declined and emitted, for the run's report."""
         self._last_declined_pairs = dict(self._pair_rejections)
+        self._last_pair_tally, self._last_emitted = self._pair_tally, emitted
         if reporter is not None and self._last_declined_pairs:
             reporter.detail(
                 f"Declined {sum(self._last_declined_pairs.values())} candidate pair(s): "
@@ -215,6 +246,8 @@ class FixedPointDrivers(Materialization):
     def _begin_counting_checker_failures(self) -> None:
         self._unchecked, self._unchecked_reason = frozenset(), ""
         self._declined, self._last_declined_pairs = {}, {}
+        self._pair_tally = self._last_pair_tally = PairTally()
+        self._last_emitted = self._signatures_verified = self._signatures_refused = 0
 
     def _refuse_a_run_the_checker_emptied(self, applied: int) -> None:
         """Raise when nothing was applied and the checker failed on some proposal.
@@ -357,7 +390,7 @@ class FixedPointDrivers(Materialization):
             proposals = self.analyze_files(
                 [file_path], invalidate_paths=[file_path], progress=analysis_progress
             )
-            self._note_analysis(Path(file_path))
+            self._note_analysis(Path(file_path), len(proposals))
 
             if not proposals:
                 # Fixed point reached - no more refactorings found
@@ -837,7 +870,7 @@ class FixedPointDrivers(Materialization):
             progress=reporter.analysis_mode,
             changed_files=restrict,
         )
-        self._note_analysis(output_path, reporter)
+        self._note_analysis(output_path, len(proposals), reporter)
         run.global_revision = run.revision
         run.changed_since_global.clear()
         if not proposals:

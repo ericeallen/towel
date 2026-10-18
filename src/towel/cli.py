@@ -409,6 +409,15 @@ def _add_execution_flags(parser: argparse.ArgumentParser) -> None:
         "and sort inserted imports the way the project does (ruff's I rules or isort). "
         "--no-format inserts code as rendered. Configured Ruff lint checks remain active.",
     )
+    parser.add_argument(
+        "--stats",
+        dest="stats",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="After the run, account for every candidate pair of its last whole analysis "
+        "(declined, duplicated, overlapped or emitted) and count the helper signatures the "
+        "type checker verified and refused. Output files are the same with or without it.",
+    )
 
 
 def _add_tuning_flags(parser: argparse.ArgumentParser) -> None:
@@ -898,6 +907,7 @@ class DryOptions:
     format: bool
     exclude: Tuple[str, ...]
     cross_module: bool = False
+    stats: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -915,6 +925,7 @@ class DryOptions:
             format=bool(args.format),
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
+            stats=bool(args.stats),
         )
 
 
@@ -934,6 +945,7 @@ class PreviewOptions:
     quick: bool
     exclude: Tuple[str, ...] = ()
     cross_module: bool = False
+    stats: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -950,6 +962,7 @@ class PreviewOptions:
             quick=bool(args.quick),
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
+            stats=bool(args.stats),
         )
 
     def dry_options(self, output: str) -> DryOptions:
@@ -968,6 +981,7 @@ class PreviewOptions:
             format=self.format,
             exclude=self.exclude,
             cross_module=self.cross_module,
+            stats=self.stats,
         )
 
 
@@ -1157,6 +1171,8 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
                 " could not run for them (see the warnings above); they were not judged."
             )
         _print_declined(engine.run_report, applied)
+        if options.stats:
+            _print_statistics(engine.run_report)
         if not preview:
             # Publication has succeeded. This optional naming aid cannot
             # retroactively make that source transaction a failed command.
@@ -1409,6 +1425,30 @@ def _print_declined(report: "RunReport", applied: int) -> None:
             print(line)
 
 
+def _print_statistics(report: "RunReport") -> None:
+    """Account for every candidate pair of the last whole analysis, and the run's signatures.
+
+    The pair line adds up: each pair is declined, a duplicate, dropped for an
+    overlap, or emitted, so a reader sees where the duplicates went. A run
+    whose checker judged no signature leaves the signature line out.
+    """
+    declined = sum(report.declined_pairs.values())
+    print("\nStatistics (the last whole analysis; signatures over the whole run):")
+    print(
+        f"  {report.candidate_pairs} candidate pair(s): {declined} declined, "
+        f"{report.duplicate_pairs} duplicate, {report.overlapping_proposals} overlapping, "
+        f"{report.emitted_proposals} emitted"
+    )
+    signatures = report.signatures_verified + report.signatures_refused
+    if signatures:
+        print(
+            f"  {signatures} signature attempt(s): {report.signatures_verified} verified, "
+            f"{report.signatures_refused} refused by the type checker"
+        )
+    not_applied = sum(report.declined_proposals.values())
+    print(f"  {not_applied} proposal(s) not applied")
+
+
 def _print_proposal(
     index: int,
     prop: "RefactoringProposal",
@@ -1500,6 +1540,8 @@ def _run_preview(args: argparse.Namespace) -> None:
     options = PreviewOptions.from_namespace(args)
     _warn_about_retired_flags(args)
     if options.quick:
+        if options.stats:
+            print("--stats accounts for a complete run; a --quick list has no statistics.")
         _run_quick_preview(options)
         return
     _existing_target(options.target)

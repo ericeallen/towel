@@ -476,6 +476,20 @@ def identity_digest(identity: Hashable) -> str:
 
 
 @dataclass(frozen=True)
+class PairTally:
+    """How one analysis's candidate pairs ended, apart from those it declined.
+
+    Every candidate pair is declined (counted by reason in ``declined_pairs``),
+    only repeats a proposal an earlier pair made (``duplicate_pairs``), or is
+    the first to make one of the analysis's ``distinct_proposals``.
+    """
+
+    candidate_pairs: int = 0
+    duplicate_pairs: int = 0
+    distinct_proposals: int = 0
+
+
+@dataclass(frozen=True)
 class PairVerdict:
     """One candidate pair judged, with what its judgement would trace and count held back.
 

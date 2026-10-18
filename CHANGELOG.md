@@ -39,6 +39,14 @@ version per workload, not an isolated-host or general speed claim. See the
 
 ### Improvements and repairs
 
+- Account for every candidate pair with `--stats` (`dry` and the complete
+  `preview`). Each pair of the run's last whole analysis is counted once:
+  declined, a duplicate of an earlier pair's proposal, dropped for overlapping
+  a kept proposal, or emitted. The run's helper signatures are counted as
+  verified or refused by the type checker. `RunReport` carries the same counts.
+  The flag only reports, so output files are identical with and without it.
+  This completes the user-facing part of the post-1.772 loss statistics.
+
 - Admit ordinary raw-regex brace escapes to the existing typing-fact cache
   when they precede every possible formatted-string start. Repeated queries
   reuse immutable module facts; warning-capable formatted strings still take

@@ -125,6 +125,10 @@ class Materialization(
 ):
     """Materialization methods of the engine; see the module docstring."""
 
+    # Helper signatures the type checker accepted and refused since the run began.
+    _signatures_verified: int = 0
+    _signatures_refused: int = 0
+
     def apply_refactoring(self, file_path: str, proposal: RefactoringProposal) -> str:
         """
         Apply a refactoring proposal to a file.
@@ -239,6 +243,8 @@ class Materialization(
         fully_judged = check_types
         for variant in self._annotation_ladder(proposal, check_types, hearing):
             outcome = self._attempt(variant, counters, check_types)
+            if check_types:
+                self._count_signature(outcome)
             if isinstance(outcome, Verified):
                 return outcome.files
             offered = True
@@ -251,6 +257,13 @@ class Materialization(
         if proposal.reused_function is not None:
             raise refusal("Reusing the existing function introduces project type errors")
         raise refusal("Every helper annotation variant introduces project type errors")
+
+    def _count_signature(self, outcome: "Verified | Rejection") -> None:
+        """Count one helper signature the type checker judged, for the run's report."""
+        if isinstance(outcome, Verified):
+            self._signatures_verified += 1
+        else:
+            self._signatures_refused += 1
 
     def _attempt(
         self, variant: RefactoringProposal, counters: Dict[str, int], check_types: bool

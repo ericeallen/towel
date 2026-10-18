@@ -97,6 +97,7 @@ from .models import (
     CodeBlockPair,
     FunctionArtifact,
     ClassInfo,
+    PairTally,
     PairVerdict,
     RefactoringProposal,
     RejectReason,
@@ -568,6 +569,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._pair_rejection: Optional[RejectReason] = None
         self._pair_rejection_subject: Optional[str] = None
         self._pair_rejections: Dict[str, int] = {}
+        self._duplicate_pairs = 0
+        self._proposing_pairs = 0
+        self._pair_tally = PairTally()
         self._pair_identity: Optional[Hashable] = None
         self._trace_at_identity = 0
         self._captured_trace: Optional[List[str]] = None
@@ -907,6 +911,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
         progress: ProgressMode,
     ) -> List[RefactoringProposal]:
         self._pair_rejections = {}
+        self._duplicate_pairs = self._proposing_pairs = 0
+        self._pair_tally = PairTally()
         if not block_pairs:
             return []
 
@@ -914,15 +920,23 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._settled_identities = set()
         self._record_function_paths(all_functions)
         if self._should_use_parallel(len(block_pairs)):
-            return self._evaluate_pairs_parallel(
+            proposals = self._evaluate_pairs_parallel(
                 block_pairs, all_functions, class_infos, progress=progress
             )
-        return self._evaluate_pairs_serial(
-            block_pairs,
-            all_functions,
-            class_infos,
-            progress=progress,
+        else:
+            proposals = self._evaluate_pairs_serial(
+                block_pairs,
+                all_functions,
+                class_infos,
+                progress=progress,
+            )
+        # A settled proposal that repeats an earlier one is dropped when the
+        # proposals are made distinct, so its pair is a duplicate too.
+        repeats = self._proposing_pairs - len(proposals)
+        self._pair_tally = PairTally(
+            len(block_pairs), self._duplicate_pairs + repeats, len(proposals)
         )
+        return proposals
 
     def _judge_pair(
         self,
@@ -982,6 +996,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
             self._trace_rejection(line)
         if duplicate:
             self._debug_reject(RejectReason.DUPLICATE_PROPOSAL, pair)
+            self._duplicate_pairs += 1
             return None
         for line in verdict.after_identity:
             self._trace_rejection(line)
@@ -989,6 +1004,11 @@ class UnificationRefactorEngine(ParallelEvaluation):
             self._pair_rejections[verdict.counted] = (
                 self._pair_rejections.get(verdict.counted, 0) + 1
             )
+        elif verdict.proposal is None:
+            # Its own judgement found the duplicate (``_finish_proposal``).
+            self._duplicate_pairs += 1
+        else:
+            self._proposing_pairs += 1
         return verdict.proposal
 
     def _rejection_key(self) -> str:

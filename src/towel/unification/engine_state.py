@@ -65,6 +65,7 @@ from .models import (
     CodeBlockPair,
     FunctionArtifact,
     FunctionNode,
+    PairTally,
     PairVerdict,
     RefactoringProposal,
     RejectReason,
@@ -218,6 +219,12 @@ class EngineState:
     """What that reason names, counted with it (``builtin_may_differ_by_module[len]``)."""
     _pair_rejections: Dict[str, int]
     """How many candidate pairs the latest analysis declined, by reason."""
+    _duplicate_pairs: int
+    """How many of the latest analysis's pairs only repeated an earlier pair's proposal."""
+    _proposing_pairs: int
+    """How many of the latest analysis's pairs settled with a proposal, repeats included."""
+    _pair_tally: PairTally
+    """How the latest analysis's candidate pairs ended, apart from the declined ones."""
     _pair_identity: Optional[Hashable]
     """What the pair being decided proposed, once it reached the duplicate check; else None."""
     _trace_at_identity: int

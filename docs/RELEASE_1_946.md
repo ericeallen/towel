@@ -96,6 +96,18 @@ The [typing guide](TYPING.md), [limitations](KNOWN_LIMITATIONS.md) and
 conservative refusals. Reflection and self-instrumentation were already outside
 the preservation guarantee in 1.792; this release does not introduce that policy.
 
+## Statistics that explain losses
+
+`towel dry --stats` (and the complete `preview --stats`) accounts for every
+candidate pair of the run's last whole analysis: declined, a duplicate of an
+earlier pair's proposal, dropped for overlapping a kept proposal, or emitted.
+It also counts the run's helper signatures as verified or refused by the type
+checker, and the proposals not applied. `RunReport` carries the same counts.
+Before this, the report gave only declined pairs and unapplied proposals, so a
+reader could not tell where a project's duplicates went. The flag only reports,
+and output files are identical with and without it. See the
+[CLI guide](CLI_GUIDE.md#diagnostics).
+
 ## Bounded reuse of analysis facts
 
 Repeated analysis can reuse immutable whole-body ownership facts, IF binding and
