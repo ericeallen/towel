@@ -321,24 +321,49 @@ class _Edits:
             raise ValueError("a parsed node carries its end position")
         self.add(node.lineno, node.col_offset, node.end_lineno, node.end_col_offset, replacement)
 
-    def identifier(self, node: FunctionNode | ast.Global, old: str, new: str) -> None:
+    def identifier(
+        self,
+        node: FunctionNode | ast.Global | ast.arg | ast.keyword | ast.Attribute,
+        old: str,
+        new: str,
+    ) -> None:
+        """Edit normalized NAME identities using their original UTF-8 source spans."""
         source = self.module.raw.decode("utf-8")
+        found = False
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
             if token.start[0] < node.lineno:
                 continue
             if token.start[0] > (node.end_lineno or node.lineno):
                 break
-            if token.type == tokenize.NAME and token.string == old:
+            if token.type == tokenize.NAME and unicodedata.normalize("NFKC", token.string) == old:
                 line = self.lines[token.start[0] - 1].decode("utf-8")
+                column = len(line[: token.start[1]].encode("utf-8"))
+                end_column = len(line[: token.end[1]].encode("utf-8"))
+                if (token.start[0], column) < (node.lineno, node.col_offset):
+                    continue
+                if (
+                    node.end_lineno is not None
+                    and node.end_col_offset is not None
+                    and (token.end[0], end_column) > (node.end_lineno, node.end_col_offset)
+                ):
+                    continue
+                if isinstance(node, ast.Attribute) and (token.end[0], end_column) != (
+                    node.end_lineno,
+                    node.end_col_offset,
+                ):
+                    continue
                 self.add(
                     token.start[0],
-                    len(line[: token.start[1]].encode("utf-8")),
+                    column,
                     token.end[0],
-                    len(line[: token.end[1]].encode("utf-8")),
+                    end_column,
                     new,
                 )
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found = True
+                if not isinstance(node, ast.Global):
                     return
+        if not found:
+            raise ValueError(f"Missing identifier {old} at {self.module.path}:{node.lineno}")
 
     def render(self) -> bytes:
         result = self.module.raw
@@ -702,13 +727,7 @@ def _plan_private_renames(
             ):
                 if node.end_lineno is None or node.end_col_offset is None:
                     raise ValueError("a parsed node carries its end position")
-                edits.add(
-                    node.end_lineno,
-                    node.end_col_offset - len(node.attr.encode("utf-8")),
-                    node.end_lineno,
-                    node.end_col_offset,
-                    new,
-                )
+                edits.identifier(node, node.attr, new)
 
 
 def _load_rename_modules(target: Path) -> list[_Module]:
@@ -938,13 +957,7 @@ def _plan_method_renames(module: _Module, renames: dict[str, str], edits: _Edits
         elif isinstance(node, ast.Attribute) and node.attr in renames:
             if node.end_lineno is None or node.end_col_offset is None:
                 raise ValueError("a parsed node carries its end position")
-            edits.add(
-                node.end_lineno,
-                node.end_col_offset - len(node.attr.encode("utf-8")),
-                node.end_lineno,
-                node.end_col_offset,
-                renames[node.attr],
-            )
+            edits.identifier(node, node.attr, renames[node.attr])
 
 
 def _plan_parameter_renames(
@@ -1007,13 +1020,7 @@ def _plan_parameter_renames(
             for arg in matching:
                 if arg.end_lineno is None or arg.end_col_offset is None:
                     raise ValueError("a parsed node carries its end position")
-                edits.add(
-                    arg.lineno,
-                    arg.col_offset,
-                    arg.end_lineno,
-                    arg.col_offset + len(parameter.encode("utf-8")),
-                    new,
-                )
+                edits.identifier(arg, parameter, new)
             for node in ast.walk(function):
                 if (
                     isinstance(node, ast.Name)
@@ -1269,13 +1276,7 @@ class _ParameterCallsites:
                     f"Dynamic keyword arguments prevent safe parameter rename: {edits.module.path}"
                 )
             if argument.arg in replacements:
-                edits.add(
-                    argument.lineno,
-                    argument.col_offset,
-                    argument.lineno,
-                    argument.col_offset + len(argument.arg.encode("utf-8")),
-                    replacements[argument.arg],
-                )
+                edits.identifier(argument, argument.arg, replacements[argument.arg])
 
 
 class _ModulePlanner:
@@ -1511,13 +1512,7 @@ class _ModulePlanner:
             raise ValueError(
                 f"Class-private attribute mangling prevents safe rename: {self.module.path}"
             )
-        self.edits.add(
-            node.end_lineno,
-            node.end_col_offset - len(node.attr.encode("utf-8")),
-            node.end_lineno,
-            node.end_col_offset,
-            new,
-        )
+        self.edits.identifier(node, node.attr, new)
 
     def _check_module_escape(self, node: ast.AST) -> None:
         """A renamed module used other than as the object of an attribute access escapes."""

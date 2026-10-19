@@ -12,6 +12,8 @@ mnemonics with PEP 440 ordering; see the
 
 - Parameter renaming follows Python's class-private binding identity through
   nested classes, methods and closures, preserving unrelated private references.
+- Helper renaming matches Unicode identifiers by Python's normalized identity
+  and edits their original token spans, including definitions and keyword calls.
 
 ## [1.946]
 
