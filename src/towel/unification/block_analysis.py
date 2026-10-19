@@ -30,6 +30,7 @@ not the block's structure, because the answers read the block's context.
 from __future__ import annotations
 
 import ast
+from itertools import accumulate
 import sys
 from types import CodeType
 from weakref import WeakKeyDictionary
@@ -58,7 +59,7 @@ from .assignment_analyzer import (
 )
 from .argument_ownership import argument_handoff_plan
 from .extraction_policy import overlaps_protected
-from .block_signature import BlockSignature, extract_block_signature
+from .block_signature import BlockSignature, BlockSignatureIndex, extract_block_signature
 from .extractor import has_complete_return_coverage, is_value_producing
 from .function_scope import code_names, function_names, identifiers, scope_moving_names
 from .frame_ownership import FrameOwnership, frame_ownership
@@ -72,7 +73,7 @@ from .models import (
     is_generated_helper_name,
 )
 from .parameters import GENERATED_PARAMETER_PREFIX, parameter_names
-from .narrowing import caller_narrowing_leaves_with_block
+from .narrowing import caller_narrowing_leaves_with_block, may_establish_caller_narrowing
 from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import (
     nested_bindings_escape,
@@ -82,7 +83,7 @@ from .semantic_safety import (
 )
 from .if_binding_transfer import IfBindingTransfer, IfTransferSite, certify_if_binding_transfer
 from .return_source_uses import return_statement_usages
-from .statement_facts import memoized_per_node
+from .statement_facts import memoized_per_node, statement_facts
 from .static_positions import (
     TYPING_FORMS_BY_NAME,
     TranslationKeywords,
@@ -552,8 +553,9 @@ class BlockAnalysis(EngineState):
         """Share one block/signature enumeration across pairing and clustering."""
         cached = self._signed_block_cache.get(function)
         if cached is None:
+            signatures = BlockSignatureIndex(function)
             cached = [
-                (span, nodes, extract_block_signature(nodes))
+                (span, nodes, extract_block_signature(nodes, index=signatures))
                 for span, nodes in self._extract_code_blocks(function)
                 if span[1] - span[0] + 1 >= self.min_lines
             ]
@@ -602,45 +604,57 @@ class BlockAnalysis(EngineState):
                 and body[0].col_offset == parent.col_offset
             )
 
+            # A statement contributes to many overlapping intervals. Compute
+            # the exact, additive rejection facts once for this suite, and
+            # materialize a statement slice only when a remaining guard or
+            # accepted candidate needs one. Caller-dependent guards retain
+            # their complete implementation after their necessary-condition
+            # gate; these prefixes never discharge a positive guard.
+            definitions = tuple(
+                accumulate(
+                    (
+                        int(isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))
+                        for stmt in body
+                    ),
+                    initial=0,
+                )
+            )
+            unspellable = tuple(
+                accumulate((int(holds_unspellable_int(s)) for s in body), initial=0)
+            )
+            returns = tuple(
+                accumulate((int(statement_facts(s).contains_return) for s in body), initial=0)
+            )
+            narrowing = tuple(
+                accumulate((int(may_establish_caller_narrowing(s)) for s in body), initial=0)
+            )
             for length in range(0 if is_elif else len(body), 0, -1):
                 for start in range(len(body) - length + 1):
-                    block = body[start : start + length]
-
-                    # Do not extract blocks that contain nested function/class definitions.
-                    # These statements establish new scopes whose bindings must remain in the
-                    # original function so later statements can reference them.
-                    if any(
-                        isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-                        for stmt in block
-                    ):
+                    stop = start + length
+                    if definitions[stop] != definitions[start]:
                         continue
-
-                    if any(holds_unspellable_int(stmt) for stmt in block):
+                    if unspellable[stop] != unspellable[start]:
                         continue
-
-                    span = self._block_line_span(block)
+                    # The original span reads only the interval's endpoints.
+                    span = self._block_line_span((body[start], body[stop - 1]))
                     if span is None or (protected and overlaps_protected(span, protected)):
                         continue
                     start_line, end_line = span
-                    line_count = end_line - start_line + 1
-
-                    # A block that returns on some path but not on every path
-                    # (a conditional return, or a lone expression statement,
-                    # which counts as value-producing) is never accepted: a
-                    # value-producing helper needs complete return coverage,
-                    # and one that also binds live variables is rejected as
-                    # mixed. Leaving such blocks out spares every pair they
-                    # would have formed; on pyflakes' test_other.py that is
-                    # 32,857 of 44,826 rejected pairs.
-                    if is_value_producing(block) and not has_complete_return_coverage(block):
+                    if end_line - start_line + 1 < self.min_lines:
                         continue
-
-                    if line_count >= self.min_lines:
-                        # Filter before maximal-block pairing, so an invalid
-                        # large window cannot hide a smaller valid extraction.
-                        if caller_narrowing_leaves_with_block(function, block):
-                            continue
-                        results.append(((start_line, end_line), block))
+                    produces_value = returns[stop] != returns[start] or (
+                        length == 1 and isinstance(body[start], ast.Expr)
+                    )
+                    block = body[start:stop]
+                    if produces_value and not has_complete_return_coverage(block):
+                        continue
+                    # Filter before maximal-block pairing, so an invalid
+                    # large window cannot hide a smaller valid extraction.
+                    if narrowing[stop] != narrowing[start] and caller_narrowing_leaves_with_block(
+                        function, block
+                    ):
+                        continue
+                    results.append(((start_line, end_line), block))
 
             # Recurse into nested bodies for control-flow/container statements
             for stmt in body:

@@ -76,7 +76,12 @@ def test_incremental_filtering_preserves_the_preexisting_budget_order(
     assert Counter(call.args[0].name for call in signed.call_args_list) == Counter(
         {"first": 1, "second": 1}
     )
-    assert "candidate pairs exceed the budget of 1" in caplog.text
+    # Ineligible singleton blocks used to inflate the warning's block count
+    # (15 rather than 10 here), although they contribute zero possible pairs.
+    assert (
+        "8 candidate pairs exceed the budget of 1; leaving out 4 bucket(s) "
+        "holding 10 similar blocks" in caplog.text
+    )
     assert bool(pairs) == ("a.py" in changed_names)
 
 

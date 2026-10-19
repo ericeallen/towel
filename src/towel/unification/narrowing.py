@@ -298,6 +298,17 @@ def _statement_narrowing_facts(statement: ast.stmt) -> _StatementNarrowingFacts:
     )
 
 
+def may_establish_caller_narrowing(statement: ast.stmt) -> bool:
+    """A necessary condition for a block containing this statement to lose narrowing.
+
+    A block without an assertion or an attribute store takes the caller guard's
+    immediate False branch. This fact can therefore be counted over intervals;
+    a positive answer still requires the complete caller-sensitive guard.
+    """
+    facts = _statement_narrowing_facts(statement)
+    return bool(facts.asserted) or any("." in name for name in facts.stored)
+
+
 _NONE_ATTRIBUTES = frozenset(dir(None))
 
 
