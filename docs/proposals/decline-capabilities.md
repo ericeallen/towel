@@ -3,8 +3,9 @@
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
 Status: several recoveries shipped in 1.792; exact constant occurrences and
-bounded IF-only fresh outputs are implemented in prepared, unpublished 1.946.
-The final runtime audit is source-bound to `9d57b0d`, with current evidence in
+bounded IF-only fresh outputs were implemented during 1.946 preparation.
+Publication of 1.946 was verified on October 19; this source targets 1.947.
+The final runtime audit cited here is source-bound to `9d57b0d`, with its evidence in
 the [proposal index](README.md#preparation-checkpoint-october-10-2026). Broader
 control-flow recovery remains deferred. The original deferral after 1.772
 was made by the owner on 2026-09-24

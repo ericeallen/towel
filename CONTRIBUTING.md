@@ -319,7 +319,7 @@ See [the evidence schema and release procedure](docs/RELEASING.md#repository-own
   detailed tasks and explanations in the appropriate guide linked from
   [the documentation index](docs/README.md), and add user-visible changes
   under `[Unreleased]` in CHANGELOG.md
-- The current prepared version is 1.947. Its
+- This source targets 1.947. Its
   [overview](docs/RELEASE_1_947.md) describes the post-1.946 audit repairs;
   [readiness](docs/PRODUCTION_READINESS.md) and the
   [release procedure](docs/RELEASING.md) record completed and outstanding

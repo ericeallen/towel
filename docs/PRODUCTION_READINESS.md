@@ -7,9 +7,49 @@ removes reflection and self-instrumentation guarantees. Validation and repair
 records below retain the source, contract and results of their dated runs;
 they are not evidence of those retired protections in the current code.
 
-Start with the 1.947 preparation checkpoint below. Later sections retain
+Start with the 1.947 candidate corpus-stop checkpoint below. Later sections retain
 completed releases and earlier preparation checkpoints, with their original
 source identities and historical measurements.
+
+## 1.947 candidate 59aafb1: corpus stop
+
+Frozen source `59aafb189f1d3feb2f97c433dabbf77815bb5a36`, numbered **1.947**,
+completed the following Linux checks before its corpus exposed a runtime
+performance defect:
+
+| Python | Passed | Skipped | Passing subtests | Line coverage |
+| --- | ---: | ---: | ---: | ---: |
+| 3.11.17 | 10,735 | 318 | 45 | 93% |
+| 3.12.15 | 10,919 | 205 | 45 | 94% |
+| 3.13.16 | 10,902 | 225 | 45 | 94% |
+
+That source also completed 9,400 differential runs with zero failures: 4,471
+transformed/equivalent, 4,890 unchanged and 39 inconclusive. It passed six
+bare/extras wheel smoke checks and 126 sdist documentation checks. Self-dogfood
+applied 28 refactorings across 19 files; the generated source passed strict
+mypy and 10,902 tests. These results retain their exact source identity; they
+do not transfer to the runtime repair described below.
+
+The 141-project corpus was intentionally stopped after **eight completed
+project results**. Its exit status 143 is an intentional termination, not an
+out-of-memory result. More-itertools's completed refactor took 474.037 seconds
+and retained all 914 consumer tests. Diagnostics traced repeated lexical scans
+to the definition-time builtin-mapping guard: 2,988 calls over five exact
+source strings, 99.8327% repeated. The independently verified published 1.946
+wheel completed the same case with byte-identical Python output. Partial
+profiles identify the cause but do not establish a production speed ratio.
+See the [performance investigation](PERFORMANCE.md#1947-large-module-builtin-guard-repair).
+
+The repair reuses only the immutable source/parser-dependent builtin-mapping
+verdict within a weakly owned scope analyzer, with one source and an 8 MiB
+source-storage budget per analyzer. Warning-capable sources and disabled
+memoization retain ordinary computation; no AST or block fact is retained.
+The global lexical cache limits and behavioral contract are unchanged. At
+this repair-preparation checkpoint, the changed runtime still required a fresh
+freeze and complete release validation. All `59aafb1` results and stopped-corpus
+diagnostics remain in `/private/tmp/towel-release-1947-final-validation/`,
+separate from final
+source/artifact acceptance and publication outcomes recorded externally.
 
 ## 1.947 preparation checkpoint, October 19, 2026
 
@@ -135,6 +175,7 @@ see the [publication checkpoint](RELEASING.md#1946-publication-checkpoint-octobe
 
 **Contents**
 
+- [1.947 candidate 59aafb1 corpus stop](#1947-candidate-59aafb1-corpus-stop)
 - [1.947 preparation and prior-source repair checks](#1947-preparation-checkpoint-october-19-2026)
 - [1.946 preparation and audited source](#1946-preparation-and-audited-source-october-10-2026)
 - [1.792 published release](#1792-published-release-october-8-2026) · [1.792 preparation](#1792-release-preparation) · [Previous published release](#previous-published-release)

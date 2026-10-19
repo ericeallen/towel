@@ -29,7 +29,11 @@ findings:
 3. **Definition-time builtin lookup.** An extraction reading builtin spellings
    declines when module-level replacement of `__builtins__` prevents proving
    that the helper and original functions use the same mapping. The conservative
-   guard also applies with `--parameterize-builtins`.
+   guard also applies with `--parameterize-builtins`. Its source-only verdict
+   is reused within an analysis for warning-free inputs, avoiding repeated
+   large-module lexical scans while retaining fresh handling of warning-capable
+   sources. This reuse does not retain AST or block facts or change the
+   preservation contract. See the [performance limits](PERFORMANCE.md#1947-large-module-builtin-guard-repair).
 4. **Each file's formatting policy.** Generated helpers, declarations and calls
    use their actual destination file's configuration. Ruff import sorting
    recognizes standalone, dotfile, extended and nested configurations through
@@ -61,6 +65,19 @@ project-wide reflection scans or broaden that exclusion. See
 [known limitations](KNOWN_LIMITATIONS.md).
 
 ## Prior repair evidence and remaining release gates
+
+The later frozen candidate `59aafb1` completed its Linux Python 3.11–3.13
+matrix, 9,400 differential runs with zero failures, six clean-install smoke
+checks, 126 sdist documentation checks and self-dogfood checks. Its corpus was
+intentionally stopped after eight completed project results when More-itertools
+exposed repeated lexical scans by the builtin-mapping guard. The published
+1.946 wheel completed the same case with byte-identical Python output. The
+source-only verdict reuse above addresses that repeated-input path; neither
+these prior-source results nor the partial diagnostic profiles validate the
+subsequent repair or establish its performance. See the
+[source-bound checkpoint](PRODUCTION_READINESS.md#1947-candidate-59aafb1-corpus-stop)
+for exact counts and limits. The changed runtime requires its own complete
+release gates, with final outcomes recorded externally.
 
 The preceding repair source, `2027689`, still carried **1.946 metadata**. Its
 Linux Python 3.13 `just ci` run passed 10,901 tests and 45 subtests, skipped

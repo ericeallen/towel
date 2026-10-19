@@ -30,6 +30,25 @@ complete Python 3.11–3.13 suites and coverage, all other local evidence below,
 the corpus, consumer/performance review and source-bound evidence verification
 remained pending for that final candidate.
 
+The first versioned candidate, `59aafb1`, subsequently completed the full local
+matrix, differential families, clean-wheel and source-archive checks, and
+self-dogfood. Its corpus was stopped after eight completed project results when
+profiling confirmed that the builtin-mapping safety guard repeatedly rescanned
+warning-free modules above the lexical cache's per-source size limit. A separate
+diagnostic using the verified published 1.946 wheel produced byte-identical
+consumer output. The profiler records identify the repeated work; their elapsed
+times are not an unprofiled production benchmark. This candidate's retained
+results do not certify the subsequent runtime fix.
+
+The repair memoizes only the source-derived builtin-mapping predicate, with one
+warning-free source/configuration fact per weakly held analyzer and an 8 MiB
+source-storage admission limit. Native warning replay, parser-limit changes,
+disabled memoization and fresh block/AST checks remain in force. Finalize and
+review all version metadata, documentation and container prerequisites before
+the replacement freeze; then build and validate its exact archives. Keep final
+outcomes external to the frozen shipped files so recording them does not itself
+change the release contents.
+
 Exact-commit remote CI, the release tag and its README destinations, and
 publication also remained pending. The standing **never push** instruction
 blocked an agent from completing the remote sequence below. Local preparation
@@ -482,7 +501,7 @@ evidence about the other.
 #### Running the corpus in a container
 
 The harness clones and executes third-party code, so it belongs in a container.
-Six details matter, and none of them is obvious from the failure it produces:
+Seven details matter, and none of them is obvious from the failure it produces:
 
 - **Install `uv` in the image.** The harness builds a per-project environment
   with it, and its absence surfaces as `FileNotFoundError` on every project.
@@ -498,6 +517,10 @@ Six details matter, and none of them is obvious from the failure it produces:
 - **Put `node` on the image's `PATH`.** Without one, pyright's wrapper
   downloads a Node of about 460 MB into `HOME` on first use, and the harness
   gives every worker a scratch `HOME`.
+- **Install `procps` for process-observing suites.** Towel's watchdog tests
+  invoke `ps` to check real child processes. A missing or failed observer is an
+  environment failure, not evidence that no workers remain. The image includes
+  it; verify an owned child's PID is visible when checking a new environment.
 - **Give the harness a standalone clone detached at the release commit**, not a
   git worktree. A worktree's `.git` is a file pointing outside the mount, so
   the harness cannot read the revision and aborts. With a real clone it records

@@ -27,12 +27,13 @@ functions and unittest methods need no signatures (the `tests.*` override in
 `pyproject.toml`), and every `# type: ignore` must be needed and name its
 error code.
 
-For the prepared 1.947 version, the audit-repair families include
+For version 1.947, the audit-repair families include
 `test_rename_audit_regressions.py`, `test_rename_unicode_identifiers.py` and
 `test_rename_consumer_scope.py` for stored binding identity, token spans and
 consumer boundaries; `test_pair_partner_eligibility.py` and
 `test_interval_prefix_facts.py` for bounded enumeration work;
-`test_definition_time_builtins.py` for captured builtin mappings; and
+`test_definition_time_builtins.py` for captured builtin mappings and
+`test_builtin_mapping_memo.py` for bounded source-only verdict reuse; and
 `test_formatter_file_context.py`/`test_ruff_effective_configuration.py` for
 per-file policies and retry after unresolved Ruff queries. These supplement
 the adversarial renaming and robustness suites, not replace them.

@@ -4,7 +4,7 @@
 
 Support requirements are separate from resource measurements. The measurements below describe specific workloads and machines, not minimum hardware.
 
-Version **1.947** is being prepared with the post-1.946 audit repairs.
+This source targets **1.947** with the post-1.946 audit repairs.
 [Readiness](PRODUCTION_READINESS.md) and the [release procedure](RELEASING.md)
 record the exact source, artifact and validation status. Python 3.11–3.13
 remains the supported range. Dated audit and performance observations retain

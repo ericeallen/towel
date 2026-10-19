@@ -3,19 +3,22 @@
 [Documentation index](../README.md)
 
 The [October 8 review](REVIEW_2026-10-08.md) examines all 15 original documents
-and their individual ideas against the released 1.792 code and newest frozen
-release evidence. It separates retained work, completed designs, retired policies
+and their individual ideas against the released 1.792 code and the frozen
+release evidence available at that review. It separates retained work, completed designs, retired policies
 and historical measurements. Priorities are recommendations, not a schedule.
 
 Older proposal bodies preserve their dates, measurements and contracts; current
-decisions and code take precedence. The last published version recorded here is
-1.792 from `44d7795`. Version **1.946 is prepared for publication**; its upload
-remains unverified. Documentation changes do not establish new release-gate results.
+decisions and code take precedence. This source targets **1.947**, following
+published 1.946, whose publication was independently verified on October 19.
+The [1.947 overview](../RELEASE_1_947.md) describes the audit repairs; the
+[readiness report](../PRODUCTION_READINESS.md) separates each source's checks
+from final validation and publication outcomes recorded externally.
+Documentation changes do not establish new release-gate results.
 Development checkpoints do not become current validation results, and their
 artifacts numbered 1.772 must not be published. Current behavior is in the guides
 linked from the documentation index.
 
-## Current disposition, October 18, 2026
+## Disposition checkpoint, October 18, 2026
 
 The maintainer extended 1.946 to implement source-correspondence proof reuse
 within one owned analysis, preserving caller-tree and materialization checks,
@@ -23,7 +26,8 @@ and requested fresh Python 3.11–3.13 suites and cache-on/off output comparison
 The October 18 Rich profile (+7.6% at `0b3494c`) predates this implementation. See the
 [decision](../DECISIONS.md#2026-10-18-one-analysis-may-reuse-its-source-correspondence-proof)
 and [publication checkpoint](../RELEASING.md#1946-publication-checkpoint-october-18-2026).
-Remote publication is not verified. The October 10 records below remain historical.
+Remote publication was unverified at that checkpoint. The October 10 records
+below remain historical.
 
 ## Preparation checkpoint, October 10, 2026
 

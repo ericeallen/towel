@@ -3,8 +3,10 @@
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
 Status: the census below was gathered 2026-09-17 on the 1.618 outputs.
-Item 1 is implemented in prepared, unpublished 1.946; its stage audit passed on
-`bf564f2`, and the final runtime audit passed on `9d57b0d`. Item 2 was resolved
+Item 1 was implemented during 1.946 preparation; its stage audit passed on
+`bf564f2`, and the final runtime audit passed on `9d57b0d`. Publication of 1.946
+was verified on October 19; this source targets 1.947. Those later sources retain
+their own validation requirements. Item 2 was resolved
 differently on 2026-09-18 (see below);
 items 3 and 4 remain research. The exact improvements are small; the large
 buckets need an assumption the engine does not make today.

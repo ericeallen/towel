@@ -14,6 +14,7 @@ the entries below do not transfer approval to a later source or version.
 
 **Contents — release checkpoints**
 
+- [1.947 candidate 59aafb1 corpus stop](#1947-candidate-59aafb1-corpus-stop)
 - [1.947 preparation after audit repairs](#2026-10-19-1947-preparation-after-audit-repairs)
 - [1.946 preparation and latest audit](#2026-10-10-1946-preparation-and-latest-audit)
 - [1.792 completed publication](#2026-10-08-1792-published-release)
@@ -29,6 +30,36 @@ the entries below do not transfer approval to a later source or version.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 1.947 candidate 59aafb1: corpus stop
+
+Frozen `59aafb189f1d3feb2f97c433dabbf77815bb5a36` passed its Linux matrix:
+Python 3.11 had 10,735 passes, 318 skips and 93% coverage; Python 3.12 had
+10,919 passes, 205 skips and 94%; Python 3.13 had 10,902 passes, 225 skips
+and 94%. All three passed 45 subtests. That source also completed 9,400
+zero-failure differential runs, six wheel smokes and 126 sdist documentation
+checks. Self-dogfood applied 28 refactorings in 19 files, with generated-source
+strict mypy and 10,902 passing tests.
+
+Its corpus was intentionally stopped after eight completed project results
+(exit 143, not an out-of-memory failure). More-itertools retained 914 passing
+consumer tests but needed 474.037 seconds for the refactor. The new builtin
+mapping guard repeatedly checked lexical warning eligibility before looking
+up module bindings: 2,988 calls over five exact strings, 99.8327% repeats.
+The published 1.946 wheel completed the same case and produced byte-identical
+Python files. Partial diagnostic profiles identify repeated tokenization,
+not an unprofiled production speed ratio. The [performance guide](PERFORMANCE.md#1947-large-module-builtin-guard-repair)
+retains the measurement conditions and limits.
+
+The subsequent repair memoizes the source/parser-dependent builtin-mapping
+boolean for warning-free inputs, with weak analyzer ownership and one source
+per analyzer under an 8 MiB storage budget. It retains no AST or block facts,
+preserves fresh warning-capable parsing and bypasses reuse when memoization is
+disabled. Global lexical-cache limits remain unchanged. At this checkpoint,
+the changed runtime required a new freeze and complete release gates; the
+earlier successful checks and incomplete corpus do not validate it. The retained
+evidence root is `/private/tmp/towel-release-1947-final-validation/`. Final outcomes remain
+external to the shipped preparation record.
 
 ## 2026-10-19: 1.947 preparation after audit repairs
 

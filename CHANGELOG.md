@@ -27,7 +27,10 @@ release validation and publication; no publication date is assigned here.
   no longer inflate the budget warning's block count.
 - Extractions that read builtin spellings decline when the module may replace
   `__builtins__`, preserving the mapping captured at function creation even
-  when `--parameterize-builtins` is requested.
+  when `--parameterize-builtins` is requested. Warning-free inputs reuse the
+  source-only guard verdict within an analysis, avoiding repeated lexical
+  scans of large unchanged modules while preserving native warning replay
+  and parser-limit checks.
 - Generated code uses each modified file's formatter and configuration. Ruff
   import sorting recognizes standalone, extended and nested configurations
   through native effective settings and honors disabled/per-file rules.

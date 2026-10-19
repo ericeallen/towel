@@ -4,6 +4,11 @@
 
 Use this guide to estimate a run and understand the limits of the published measurements.
 
+The 1.947 builtin-mapping guard exposed a repeated large-module scan in candidate
+`59aafb1`. The [repair and its limits](#1947-large-module-builtin-guard-repair)
+below distinguish the completed corpus observation from partial diagnostic
+profiles. No complete-command speedup is claimed for the subsequent repair.
+
 The October 18 whole-command profile at `0b3494c` measured Rich +7.6% versus
 1.792 on a shared native macOS/Python 3.12 host. Click's noisier difference
 includes one more extraction. The maintainer subsequently requested scoped source-correspondence memoization
@@ -19,6 +24,7 @@ Click/Rich comparison retains its own 1.792 metadata, samples and limits.
 
 On this page:
 
+- [1.947 large-module builtin guard repair](#1947-large-module-builtin-guard-repair)
 - [Partner eligibility and interval-analysis limits](#partner-eligibility-and-interval-analysis-limits)
 - [October 10 versioned warning-guard cohorts](#october-10-versioned-warning-guard-cohorts)
 - [October 10 Voluptuous regression investigation](#october-10-voluptuous-regression-investigation)
@@ -34,6 +40,50 @@ On this page:
 - [Why larger projects take longer](#why-larger-projects-take-longer)
 
 ## How long it takes
+
+### 1.947 large-module builtin guard repair
+
+Frozen candidate `59aafb189f1d3feb2f97c433dabbf77815bb5a36` completed the
+More-itertools corpus refactor in 474.037 seconds. Its original and generated
+consumer suites both passed all 914 tests. The new definition-time builtin
+mapping guard queried module bindings per candidate pair. Each query checked
+warning eligibility before consulting the binding cache. The unchanged
+174,732-character `more.py` exceeded the global lexical cache's
+131,072-character admission cap, so these checks repeatedly tokenized it.
+
+A separate transparent diagnostic observed 2,988 warning-eligibility calls over
+five distinct complete source strings: 2,983 repeated calls, or 99.8327%.
+The 174,732-character input alone accounted for 2,983 calls. Every call still
+performed its original computation. A partial 44.947-second cProfile observation
+attributed 39.921 seconds, about 89%, to lexical token scanning; it was interrupted
+and is not a completed CLI measurement. The independently verified published
+1.946 wheel, SHA-256
+`090c158f8dbd6795dbbe7e18d0bcffbbb884141f16d04100663c8d4ccc45c0cd`,
+completed a separate diagnostic run with the same consumer Python bytes and
+third-party distribution versions. All three resulting Python files matched
+the candidate's completed corpus output byte for byte. These observations
+identify the repeated-input cause; differing profiling and concurrent-work
+conditions do not establish an unprofiled speed ratio.
+
+The repair retains one immutable builtin-mapping verdict per live scope
+analyzer, keyed by the exact source and parser configuration. Only sources
+proven warning-free by the native parsing policy are admitted. Each analyzer
+retains at most one source with an 8 MiB storage budget, including a conservative
+reserve for a separately cached UTF-8 representation; weak ownership bounds
+its lifetime. This is a per-analyzer bound, not a process-wide memory bound.
+The memo retains no AST or block facts. Source or parser-limit changes invalidate
+the entry; warning-capable sources, over-budget inputs and disabled memoization
+retain the ordinary computation. The global lexical cache's 131,072-character
+admission cap and 16 MiB budget are unchanged.
+
+The `59aafb1` corpus was intentionally stopped after eight completed project
+results because the changed runtime needs fresh validation. Exit status 143
+records that stop, not an out-of-memory failure. Its completed checks and
+partial diagnostics remain source-bound evidence under
+`/private/tmp/towel-release-1947-final-validation/`; they are not release
+acceptance for the later repair. Final source/artifact checks and complete
+CLI comparisons belong to the external release record. No production timing
+or performance-restoration claim follows from these profiles.
 
 ### Partner eligibility and interval-analysis limits
 

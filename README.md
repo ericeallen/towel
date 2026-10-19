@@ -15,14 +15,20 @@ repair release after published 1.946. The
 and [changelog](https://github.com/ericeallen/towel/blob/v1.947/CHANGELOG.md#1947)
 describe binding-safe renaming, lower candidate-enumeration costs, preservation
 of definition-time builtin lookup, each file's formatting policy and explicit
-rename consumer scope. Narrow or unmarked rename targets may now require a
-project-root rerun or an explicit `--complete-scope` declaration.
+rename consumer scope. The builtin-mapping guard also avoids repeated scans of
+large unchanged modules within an analysis. Narrow or unmarked rename targets
+may now require a project-root rerun or an explicit `--complete-scope` declaration.
 
 At the **October 19, 2026 preparation checkpoint**, 1.947 had not been published.
 The preceding repair source `2027689`, still numbered 1.946, passed its Linux
 Python 3.13 `just ci` run: 10,901 tests and 45 subtests, 226 skips and 94%
 coverage. Those are prior-source repair checks. The final 1.947 source and
 artifacts still required their own complete release gates at that checkpoint.
+A subsequent candidate, `59aafb1`, passed its interpreter matrix and other
+scoped release checks, but its corpus exposed repeated large-module scanning.
+That corpus was stopped intentionally; its results do not validate the later
+runtime repair. The [performance guide](https://github.com/ericeallen/towel/blob/v1.947/docs/PERFORMANCE.md#1947-large-module-builtin-guard-repair)
+records the finding without claiming a measured speedup for the fix.
 Final validation and publication outcomes belong to the external release record
 and [PyPI](https://pypi.org/project/code-towel/). See the
 [readiness report](https://github.com/ericeallen/towel/blob/v1.947/docs/PRODUCTION_READINESS.md)
