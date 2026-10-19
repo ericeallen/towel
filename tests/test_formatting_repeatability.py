@@ -63,8 +63,9 @@ def test_checked_and_sorted_wrappers_do_not_certify_custom_functions() -> None:
     assert formatting.formatting_repeatability(custom) is None
 
 
+@pytest.mark.parametrize("directory", [False, True])
 def test_sorter_tool_failure_invalidates_all_composite_capabilities(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory: bool
 ) -> None:
     pytest.importorskip("ruff")
     path = tmp_path / "m.py"
@@ -72,17 +73,21 @@ def test_sorter_tool_failure_invalidates_all_composite_capabilities(
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname="fixture"\nversion="0"\n[tool.ruff.lint]\nselect=["F","I"]\n'
     )
-    finisher = formatting.file_finisher_for_project(path).tool
+    finisher = formatting.file_finisher_for_project(tmp_path if directory else path).tool
     assert finisher is not None and formatting.formatting_repeatability(finisher) is not None
+    if directory:
+        # Resolve the modified file's real policy before the tool fails.
+        assert finisher(str(path), path.read_text()) == path.read_text()
 
     def run(argv: Sequence[str], **kwargs: object) -> subprocess.CompletedProcess[Sequence[str]]:
         # The sort fails; the subsequent configured lint check completes cleanly.
         return subprocess.CompletedProcess(
-            argv, 1 if "--select" in argv else 0, "" if "--select" in argv else "[]", ""
+            argv, 1 if "--fix-only" in argv else 0, "" if "--fix-only" in argv else "[]", ""
         )
 
     monkeypatch.setattr(subprocess, "run", run)
-    assert finisher(str(path), path.read_text()) == path.read_text()
+    changed = path.read_text() + "VALUE += 1\n"
+    assert finisher(str(path), changed) == changed
     assert formatting.formatting_repeatability(finisher) is None
 
 

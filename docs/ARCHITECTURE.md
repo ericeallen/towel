@@ -1026,7 +1026,8 @@ restore narrowing lost by moving a guard away from a captured lambda.
 `ast.unparse` renders a helper on one line per statement with single-quoted
 strings. [`formatting.py`](../src/towel/formatting.py) supplies a
 `SnippetFormatter` from the project's own configuration: `ruff format` when
-the project has `[tool.ruff]` or `ruff.toml` and ruff is installed, else
+the file has an enclosing `[tool.ruff]`, `ruff.toml` or `.ruff.toml`
+configuration and ruff is installed, else
 Black, at the line length the project declares anywhere (`[tool.black]`,
 `[tool.ruff]`, `[tool.pycodestyle]`, or a `[flake8]`/`[pycodestyle]`
 section of `setup.cfg`, `tox.ini`, or `.flake8`). Only the generated helper
@@ -1035,8 +1036,28 @@ file, and every formatter is wrapped by `checked`, which compares each
 snippet's syntax tree before and after and raises if formatting changed
 it. The proposal is then declined, under "the formatter changed its code or
 failed", and the run goes on: Black normalizing a moved string that becomes
-the helper's docstring is enough. A `FileFinisher` sorts the imports of each modified file the way the
-project does, with ruff's `I` rules when selected or isort when configured.
+the helper's docstring is enough.
+
+The CLI supplies `snippet_formatter_for_file`, a narrow factory from an
+original source-file path to its `SnippetFormatter` or `None`. Materialization
+passes the destination of every helper, declaration and rewritten call;
+`_origin_of` translates staged paths back to their original project paths.
+Nested configuration and exclusions therefore apply separately to each
+modified file. Library callers can continue supplying one `snippet_formatter`
+for all snippets; the two options are mutually exclusive. Built-in factories
+retain their selected workers for one run and propagate their repeatability;
+unregistered factories cannot justify cached annotation refusals.
+
+A `FileFinisher` selects import sorting separately for each modified file,
+with ruff's `I` rules when selected or isort when configured. Ruff chooses
+the nearest configuration, preferring `.ruff.toml`, then `ruff.toml`, then
+an enclosing `pyproject.toml` with a Ruff table; a pyproject without that
+table does not stop discovery. Towel reads enabled rules through
+`ruff check --show-settings`, leaving `extend`, rule selection and ignores
+to Ruff. Sorting uses `--fix-only --fixable I` without overriding selected
+rules; Ruff's per-file ignores and exclusions still govern the actual
+source path. An unavailable or unrecognized settings query logs the failure and supplies
+no Ruff import sorter.
 An import runs its module where it stands, so the order of a file's own
 imports is the order of their import-time effects, which no binding check
 can show to commute; the finisher therefore moves only the imports Towel
@@ -1051,7 +1072,7 @@ ordered providers, with wildcard imports, future imports and other
 statements as barriers, and must bind the file's own imports in their
 original order; otherwise the file stays as Towel assembled it, and a file
 left unsorted is logged once. The formatters leave the code they are given
-unformatted where their configuration excludes the path the run was given
+unformatted where their configuration excludes the modified source file
 (`--force-exclude` for `ruff format`; Black's `exclude`, `extend-exclude`,
 `force-exclude`). The tools are optional (`code-towel[format]`);
 without them code is inserted as rendered, and the CLI says so.

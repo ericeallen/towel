@@ -130,7 +130,11 @@ def test_ruff_ignores_inherited_project_pythonpath(
     monkeypatch.setenv("PYTHONPATH", str(project))
     if fallback:
         wrapper = tmp_path / "trusted_ruff.py"
-        wrapper.write_text("import sys\nsys.stdout.write(sys.stdin.read())\n")
+        wrapper.write_text(
+            "import sys\n"
+            "sys.stdout.write('linter.rules.enabled = [\\nunsorted-imports (I001),\\n]\\n' "
+            "if '--show-settings' in sys.argv else sys.stdin.read())\n"
+        )
         monkeypatch.setattr(formatting, "_ruff_executable", lambda: [sys.executable, str(wrapper)])
     module = project / "source.py"
     source = "import os\nimport sys\n"

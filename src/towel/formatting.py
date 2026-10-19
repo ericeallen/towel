@@ -40,6 +40,7 @@ import configparser
 from dataclasses import dataclass
 import copy
 import json
+import re
 from enum import Enum
 from pathlib import Path
 import sys
@@ -251,23 +252,14 @@ def _ruff_lint_guard(command: List[str], root: Path) -> FileFinisher:
         finish,
         FormattingRepeatability(
             ("ruff-lint", *command),
-            (root,),
+            _ruff_configuration_roots(root),
         ),
     )
 
 
 def _ruff_configures_file(path: Path, root: Path) -> bool:
-    """Whether Ruff can find a project configuration above this exact source file."""
-    folder = _counterpart(root, path).parent
-    while folder.is_relative_to(root):
-        if _tool_section(folder, "ruff") or any(
-            (folder / name).is_file() for name in ("ruff.toml", ".ruff.toml")
-        ):
-            return True
-        if folder == root:
-            break
-        folder = folder.parent
-    return False
+    """Whether Ruff finds configuration above the original source file."""
+    return project_configures_ruff(_counterpart(root, path))
 
 
 def file_finisher_for_project(path: Path, *, sort_imports: bool = True) -> ToolChoice[FileFinisher]:
@@ -287,6 +279,7 @@ def file_finisher_for_project(path: Path, *, sort_imports: bool = True) -> ToolC
 
     def finish(file_path: str, source: str) -> str:
         finished = sorting.tool(file_path, source) if sorting.tool else source
+        _propagate_repeatability(finish, sorting.tool, guard)
         return (
             guard(file_path, finished) if _ruff_configures_file(Path(file_path), root) else finished
         )
@@ -504,28 +497,96 @@ def _tool_section(root: Path, name: str) -> Mapping[str, object]:
     return section if isinstance(section, Mapping) else {}
 
 
-def project_configures_ruff(path: Path) -> bool:
-    """Whether the project configures ruff (``[tool.ruff]``, ``ruff.toml`` or ``.ruff.toml``)."""
-    root = _root(path)
-    return bool(_tool_section(root, "ruff")) or any(
-        (root / name).is_file() for name in ("ruff.toml", ".ruff.toml")
+def _ruff_configuration(path: Path) -> Optional[Path]:
+    """Discover Ruff's nearest project configuration; Ruff resolves its settings.
+
+    A packaging file without a Ruff table is not a Ruff boundary. At the same
+    directory Ruff prefers .ruff.toml, then ruff.toml, then pyproject.toml.
+    Everything inside that selected configuration, including extend, is left
+    to Ruff's supported CLI instead of reimplemented here.
+    """
+    absolute = path.resolve()
+    folder = absolute if absolute.is_dir() else absolute.parent
+    for directory in (folder, *folder.parents):
+        for name in (".ruff.toml", "ruff.toml"):
+            candidate = directory / name
+            if candidate.is_file():
+                return candidate
+        tool = load_pyproject(directory).get("tool", {})
+        if isinstance(tool, Mapping) and isinstance(tool.get("ruff"), Mapping):
+            return directory / "pyproject.toml"
+    return None
+
+
+def _ruff_configuration_roots(path: Path) -> Tuple[Path, ...]:
+    configuration = _ruff_configuration(path)
+    return (
+        tuple(dict.fromkeys((_root(path), configuration.parent)))
+        if configuration
+        else (_root(path),)
     )
 
 
+def project_configures_ruff(path: Path) -> bool:
+    """Whether Ruff finds a project configuration above this exact path."""
+    return _ruff_configuration(path) is not None
+
+
+def _ruff_import_rules(command: List[str], path: Path, configuration: Path) -> bool:
+    """Read enabled rules from Ruff's supported effective-settings interface.
+
+    --show-settings requires an existing file. For a directory or a not-yet
+    existing module, an explicit configuration and Towel's own existing file
+    query that configuration's rule selection. The actual sort still uses
+    the destination path, so native per-file ignores/exclusions remain in force.
+    """
+    target = path.resolve() if path.is_file() else Path(__file__).resolve()
+    try:
+        result = subprocess.run(
+            [
+                *command,
+                "check",
+                "--show-settings",
+                "--config",
+                str(configuration),
+                str(target),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(configuration.parent),
+            env=python_tool_environment(),
+            check=False,
+            timeout=TOOL_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        LOG.warning("Could not resolve Ruff import sorting for %s: %s", path, error)
+        return False
+    match = re.search(
+        r"^linter\.rules\.enabled = \[\n(.*?)^\]",
+        result.stdout,
+        re.MULTILINE | re.DOTALL,
+    )
+    if result.returncode != 0 or match is None:
+        LOG.warning(
+            "Could not resolve Ruff import sorting for %s; imports left as assembled: %s",
+            path,
+            result.stderr.strip() or "unrecognized effective-settings output",
+        )
+        return False
+    return re.search(r"\(I[0-9]+\)", match.group(1)) is not None
+
+
 def project_configures_ruff_import_sorting(path: Path) -> bool:
-    """Whether ruff's import-sorting rules (``I``) are selected in the project's configuration."""
-    root = _root(path)
-    ruff = _tool_section(root, "ruff")
-    lint = ruff.get("lint", {}) if isinstance(ruff.get("lint", {}), Mapping) else {}
-    selected: List[str] = []
-    for section in (ruff, lint):
-        if not isinstance(section, Mapping):
-            continue
-        for key in ("select", "extend-select"):
-            value = section.get(key)
-            if isinstance(value, list):
-                selected.extend(str(item) for item in value)
-    return any(rule == "ALL" or rule == "I" or rule.startswith("I0") for rule in selected)
+    """Whether this path's effective Ruff configuration selects import rules.
+
+    Ruff resolves config precedence, extend, select and ignore. Its sorter
+    subsequently applies file-level exclusions and per-file ignores itself.
+    """
+    configuration = _ruff_configuration(path)
+    if configuration is None:
+        return False
+    command = _ruff_executable()
+    return command is not None and _ruff_import_rules(command, path, configuration)
 
 
 def project_configures_isort(path: Path) -> bool:
@@ -620,7 +681,7 @@ def ruff_formatter(path: Path) -> SnippetFormatter:
         run_ruff,
         FormattingRepeatability(
             ("ruff-format", *command, target),
-            (root,),
+            _ruff_configuration_roots(path),
         ),
     )
     return checked(run_ruff)
@@ -749,14 +810,21 @@ def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
     tool sorts only a file its own configuration selects, and only one whose
     imports it already leaves as they are (``sorted_where_already_sorted``).
     """
-    if project_configures_ruff_import_sorting(path):
+    if path.is_dir():
+        return _import_sorter_for_directory(path)
+    configuration = _ruff_configuration(path)
+    if configuration is not None:
         command = _ruff_executable()
         if command is None:
-            return ToolChoice(None, "ruff import sorting is configured but ruff is not installed")
-        note = "ruff import sorting"
-        return ToolChoice(
-            sorted_where_already_sorted(_ruff_sorter(command, _root(path)), note), note
-        )
+            return ToolChoice(
+                None, "ruff is configured but not installed; imports left as assembled"
+            )
+        if _ruff_import_rules(command, path, configuration):
+            note = "ruff import sorting"
+            return ToolChoice(
+                sorted_where_already_sorted(_ruff_sorter(command, _root(path)), note),
+                note,
+            )
     if project_configures_isort(path):
         try:
             sorter = _isort_sorter(_root(path))
@@ -764,6 +832,33 @@ def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
             return ToolChoice(None, "isort is configured but not installed")
         return ToolChoice(sorted_where_already_sorted(sorter, "isort"), "isort")
     return ToolChoice(None, "")
+
+
+def _import_sorter_for_directory(path: Path) -> ToolChoice[FileFinisher]:
+    """Resolve each modified file's import policy, including nested configurations."""
+    root = _root(path)
+    selected: dict[str, Optional[FileFinisher]] = {}
+
+    def finish(file_path: str, source: str) -> str:
+        target = str(_counterpart(root, Path(file_path)))
+        if target not in selected:
+            choice = import_sorter_for_project(Path(target))
+            selected[target] = choice.tool
+            if "not installed" in choice.note:
+                LOG.warning("%s: %s", target, choice.note)
+            _propagate_repeatability(finish, base, *selected.values())
+        sorter = selected[target]
+        result = sorter(file_path, source) if sorter is not None else source
+        if sorter is not None and formatting_repeatability(sorter) is None:
+            _invalidate_repeatability(context)
+        return result
+
+    def base(file_path: str, source: str) -> str:
+        return source
+
+    context = FormattingRepeatability(("per-file-import-sort",), (root,))
+    _register_repeatable(base, context)
+    return ToolChoice(_propagate_repeatability(finish, base), "per-file configured import sorting")
 
 
 def _counterpart(root: Path, path: Path) -> Path:
@@ -796,7 +891,7 @@ def _ruff_sorter(command: List[str], root: Path) -> ImportSorter:
     """
 
     command = list(tuple(command))
-    context = FormattingRepeatability(("ruff-sort", *command), (root,))
+    context = FormattingRepeatability(("ruff-sort", *command), _ruff_configuration_roots(root))
 
     def sort(file_path: str, source: str) -> Optional[str]:
         try:
@@ -804,10 +899,9 @@ def _ruff_sorter(command: List[str], root: Path) -> ImportSorter:
                 [
                     *command,
                     "check",
-                    "--select",
+                    "--fix-only",
+                    "--fixable",
                     "I",
-                    "--fix",
-                    "--exit-zero",
                     "--quiet",
                     "--force-exclude",
                     "--stdin-filename",

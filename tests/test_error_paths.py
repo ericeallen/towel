@@ -158,7 +158,7 @@ def test_ruff_configured_but_not_installed_falls_back_to_black_with_a_note(
     assert choice.tool is not None and choice.tool("x=1\n") == "x = 1"
     sorter = formatting.import_sorter_for_project(tmp_path / "m.py")
     assert sorter.tool is None
-    assert sorter.note == "ruff import sorting is configured but ruff is not installed"
+    assert sorter.note == "ruff is configured but not installed; imports left as assembled"
 
 
 @pytest.mark.parametrize("filename", ["setup.cfg", "tox.ini"])
