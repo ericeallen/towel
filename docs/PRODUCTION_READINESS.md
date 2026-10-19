@@ -7,10 +7,65 @@ removes reflection and self-instrumentation guarantees. Validation and repair
 records below retain the source, contract and results of their dated runs;
 they are not evidence of those retired protections in the current code.
 
-Start with the 1.946 preparation boundary and latest source audit. The later
-sections retain completed releases and earlier preparation checkpoints.
+Start with the 1.947 preparation checkpoint below. Later sections retain
+completed releases and earlier preparation checkpoints, with their original
+source identities and historical measurements.
+
+## 1.947 preparation checkpoint, October 19, 2026
+
+This source targets **1.947**, selected for the seven audit repairs after
+published 1.946. At this preparation checkpoint the final versioned candidate
+had not been frozen, its release gates remained pending, and no 1.947 tag or
+publication was claimed. Final outcomes are recorded externally with the exact
+artifacts, CI and PyPI. See the [release procedure](RELEASING.md#1947-preparation-checkpoint-october-19-2026).
+
+The preceding repair source was
+`2027689f263ff781a9172320a3afa9f6080d0911`, with **1.946 metadata**:
+
+| Repair check | Source-bound result | Scope limit |
+| --- | --- | --- |
+| Linux Python 3.13.16 `just ci` | 10,901 passed, 226 skipped, 45 passing subtests; 94% line coverage; quality, installed-pins audit and wheel/sdist build passed | Not the final 1.947 source or its complete interpreter matrix |
+| Native macOS focused regression matrix | 194 passed, zero skips each on Python 3.11.14, 3.12.12 and 3.13.7 | Scoped regressions, not full native suites |
+| Fresh bare repair wheel | 33 cases passed, 11 per interpreter; all 107 tracked runtime files matched `2027689` byte for byte | Local wheel still numbered 1.946; no extras or publication claim |
+| Seeded differential sample | Seeds 20261019–20261118; 370 runs: 114 transformed/equivalent, 254 unchanged, two inconclusive, zero failures | Unchanged/inconclusive runs are not transformed-program coverage; not the required full release fuzz campaigns |
+
+The complete Linux suite included the watchdog tests with a functioning process
+observer. Native macOS watchdog observation remained blocked by the environment's
+`ps` permission; the assertion was retained. Coverage was 30,723 statements with
+1,982 missed, above the unconditional 85% floor. No known dependency
+vulnerabilities were reported by that source's installed-pins audit.
+
+The local repair wheel comparison above is distinct from publication identity:
+the independently downloaded **published 1.946** wheel has SHA-256
+`090c158f8dbd6795dbbe7e18d0bcffbbb884141f16d04100663c8d4ccc45c0cd`,
+and its 107 runtime files match **`a1355ab`**. Its runtime is not `2027689`.
+GitHub's `v1.946` ref resolves to
+`4b95c0ae1bef211574f747775b49e3422b08e5ce`; runtime-file matching alone does
+not identify all packaging and documentation bytes with the audited source.
+
+Repair-session native singleton measurements (Python 3.13.7, one worker,
+pair budget one) were 0.00527, 0.01021 and 0.01768 seconds for 160, 320 and
+640 statements, with zero proposals. Eligible two-function observations improved
+1.657 → 0.226 seconds at 160 and 11.092 → 1.116 seconds at 320. These are host
+observations, not portable thresholds or new full-command release benchmarks.
+Ten eligible comparisons and the retained Rich 15.0.0 `rich/panel.py` fixture
+preserved ordered pairs, proposals and rendered bytes at engine source
+`631b6fd`; later repair commits changed renaming, headers and Ruff recovery.
+The Rich fixture had 86 ordered pairs, one proposal and two replacements; it
+stayed serial even with the workers setting at two.
+
+The final 1.947 full Python 3.11–3.13 matrix and coverage, complete corpus,
+consumer/performance review, exact artifact checks and completed release
+verification remained pending at this checkpoint. Earlier 1.946/1.792 evidence
+below cannot satisfy those gates for changed release contents. The standing
+never-push rule also blocked exact-commit remote CI, remote tagging and the
+publication sequence; local preparation did not bypass those steps.
 
 ## Current publication status, October 18, 2026
+
+This dated checkpoint retains its historical preparation status. The October 19
+verification above establishes publication of 1.946, without relabelling these
+older source-bound measurements as final 1.947 results.
 
 The maintainer extended 1.946 to include per-analysis source-correspondence
 memoization and requested fresh Python 3.11–3.13 suites and cache-on/off output
@@ -80,6 +135,7 @@ see the [publication checkpoint](RELEASING.md#1946-publication-checkpoint-octobe
 
 **Contents**
 
+- [1.947 preparation and prior-source repair checks](#1947-preparation-checkpoint-october-19-2026)
 - [1.946 preparation and audited source](#1946-preparation-and-audited-source-october-10-2026)
 - [1.792 published release](#1792-published-release-october-8-2026) · [1.792 preparation](#1792-release-preparation) · [Previous published release](#previous-published-release)
 - [1.772 release validation](#1772-release-validation-september-26-2026) · [Earlier 1.772 candidate](#earlier-1772-candidate-validation-september-19-2026)

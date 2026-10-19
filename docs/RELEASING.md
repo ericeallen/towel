@@ -2,15 +2,45 @@
 
 [Documentation index](README.md)
 
-The prepared version is **1.946**, named for ln 7, approximately 1.945910149.
-Its [overview](RELEASE_1_946.md) and [changelog](../CHANGELOG.md#1946) describe
-all changes since released 1.792. The [readiness report](PRODUCTION_READINESS.md)
-records source-bound development results and historical performance measurements.
-The final versioned release needs its own frozen source, exact prebuilt artifacts,
-completed local evidence and exact-commit CI under the standard procedure. The
-[current publication checkpoint](#1946-publication-checkpoint-october-18-2026)
-records the maintainer's implementation and fresh-validation instruction and the
-remaining remote verification. Publication has not been verified here.
+This source targets **1.947**, the maintainer-selected audit repair release
+after published 1.946. Its [overview](RELEASE_1_947.md) and
+[changelog](../CHANGELOG.md#1947) describe the repair scope and the explicit
+rename consumer-scope requirement. The [readiness report](PRODUCTION_READINESS.md)
+separates completed repair checks from final release evidence. Final validation
+and publication outcomes are retained externally with the exact artifacts and
+CI records, and on PyPI.
+
+## 1.947 preparation checkpoint, October 19, 2026
+
+At this preparation checkpoint, 1.947 was unpublished and live PyPI metadata
+showed the version unused. That observation does not reserve it. Published
+1.946 was independently verified: its October 19 wheel has SHA-256
+`090c158f8dbd6795dbbe7e18d0bcffbbb884141f16d04100663c8d4ccc45c0cd`,
+and all 107 runtime files match audited source `a1355ab`. GitHub's `v1.946` ref
+resolves to `4b95c0ae1bef211574f747775b49e3422b08e5ce`; matching the runtime
+files does not identify every packaging or documentation file with that source.
+Neither the published version nor its artifacts may be replaced.
+
+The preceding repair source `2027689` still used 1.946 metadata. Its Linux
+Python 3.13 full `just ci`, native scoped regressions, bare-wheel checks and
+focused differential sample passed as recorded in the readiness report. Those
+are prior-source repair results. Version, lock metadata and documentation
+changes for 1.947 require a new final freeze and exact distributions. The
+complete Python 3.11–3.13 suites and coverage, all other local evidence below,
+the corpus, consumer/performance review and source-bound evidence verification
+remained pending for that final candidate.
+
+Exact-commit remote CI, the release tag and its README destinations, and
+publication also remained pending. The standing **never push** instruction
+blocked an agent from completing the remote sequence below. Local preparation
+cannot stand in for exact-commit remote CI or authorize an upload while that
+barrier remains. No tag, push, upload or publication is performed by preparing
+this source.
+
+### Historical 1.946 preparation context
+
+The following records retain their original dates and source identities; they
+do not certify 1.947 or override the verified 1.946 publication above.
 
 The earlier raw-regex guard source `a6dc6ed` has source-bound 1.946 artifacts,
 static/package checks and a complete Voluptuous canary. Its two completed
@@ -18,11 +48,11 @@ shared-host R,F,F,R cohorts measured Voluptuous 3.75% lower and Click 23.39%
 slower than published `44d7795`, with two observations per source/workload.
 The [portable record](../tests/release_evidence/1.946-warning-guard/README.md)
 retains all eight actual samples, original pairs, outputs and closure. Rich
-has zero actual samples in this campaign; its cohort and the fresh full release
-gates remain pending. These limited measurements neither approve publication
-nor establish overall restoration. The latest prepared runtime includes a
-subsequent backslash-parity repair and requires a new final freeze, fresh full
-gates and new timing evidence. The older cohorts remain bound to `a6dc6ed`;
+had zero actual samples in that campaign; its cohort and fresh full release
+gates remained pending for that source. These limited measurements neither
+approve publication nor establish overall restoration. The subsequent prepared
+1.946 runtime included a backslash-parity repair and required a new final freeze,
+fresh full gates and new timing evidence. The older cohorts remain bound to `a6dc6ed`;
 later source changes cannot inherit those checks or measurements.
 
 The preceding **1.792** release was completed October 8, 2026, from `44d7795`,
@@ -35,6 +65,10 @@ separate maintainer decision.
 
 ## 1.946 publication checkpoint, October 18, 2026
 
+This is the historical October 18 checkpoint. The October 19 verification above
+supersedes its then-unverified remote status; its validation records remain
+bound to their original sources.
+
 The maintainer extended the 1.946 scope to implement the per-analysis
 source-correspondence memo, preserve mutation protections, rerun the complete
 Python 3.11–3.13 suites and compare generated output with the cache enabled and
@@ -43,16 +77,17 @@ and the earlier decision to defer the memo. The [local results](PRODUCTION_READI
 record completed runs, corrected navigation links and the remaining blocked
 watchdog observer. Historical results retain their original sources.
 
-The runtime includes `--stats` and now reuses source correspondence only for
+The October 18 runtime included `--stats` and reused source correspondence only for
 explicitly owned immutable trees within one analysis. Caller trees and
 materialization retain fresh proofs; disabled memoization and warning-capable
 sources bypass reuse. The October 18 profile predates this implementation and
 does not establish its performance. No new speedup is claimed.
 
-Publication is authorized but unverified. This environment cannot resolve
-PyPI or GitHub, and the web tool returned no current release metadata. Local
-records identify 1.792 as the last published version and contain no `v1.946`
-tag. Those records cannot establish today's remote state. Before uploading,
+At that checkpoint, publication was authorized but unverified. The environment
+could not resolve PyPI or GitHub, and the web tool returned no live release
+metadata. Local records identified 1.792 as the last published version and
+contained no `v1.946` tag. Those records could not establish the remote state.
+The remaining instructions at that checkpoint were: before uploading,
 check live version availability and the existing remote commit, CI and tag;
 verify the release-pinned README destinations. After uploading the exact wheel
 and sdist, compare PyPI's artifact hashes and embedded README with them. Do not
@@ -61,7 +96,8 @@ No Git push is permitted under the standing repository instructions.
 
 **Contents**
 
-- [Current publication checkpoint](#1946-publication-checkpoint-october-18-2026)
+- [1.947 preparation checkpoint](#1947-preparation-checkpoint-october-19-2026)
+- [Historical 1.946 checkpoint](#1946-publication-checkpoint-october-18-2026)
 - [Version convention](#version-number-convention) · [Recorded history](#recorded-release-history)
 - [Evidence gate](#repository-owned-evidence-gate) · [Schema](#evidence-schema-1) · [Changes after freezing](#changes-after-a-validation-freeze)
 - [Required local evidence](#local-evidence-required) · [Automation](#configured-automation)
@@ -74,11 +110,12 @@ No Git push is permitted under the standing repository instructions.
 Towel uses increasing, normalized PEP 440 identifiers with mathematical
 mnemonics: 1.772 names the square root of pi, 1.792 names ln 6, and 1.946 names
 ln 7. These two-component versions are not a strict Semantic Versioning scheme.
-The 1.946 changes extend the existing extraction model and introduce no intended
-public API or CLI incompatibility. A future 2.0 should accompany a deliberate
+The maintainer explicitly selected 1.947 for audit repairs after 1.946; no new
+mathematical mnemonic is assigned. Its rename CLI enforces the complete-consumer
+scope requirement; see the [1.947 overview](RELEASE_1_947.md). A future 2.0 should accompany a deliberate
 major transition, rather than the size of a patch or a nearby mathematical value.
 
-At three decimal places, 1.946 leaves 53 larger labels below 2.000, from 1.947
+At three decimal places, 1.947 leaves 52 larger labels below 2.000, from 1.948
 through 1.999. Choose each future mnemonic and identifier explicitly; the current
 choice does not schedule 2.0. Version tools compare integer components, not real
 numbers: `1.9461` sorts after `1.999`, so adding decimal precision is not a way to
@@ -87,7 +124,7 @@ and check live availability before reserving any future release identifier.
 
 ## Recorded release history
 
-Recorded through the October 8, 2026 release; verify current remote state before publication:
+Updated with the October 19, 2026 publication verification; recheck remote state before any later publication:
 
 The September 26, 2026 **1.772** corpus gave 90 `PASS`, 45 `NO_CHANGE` and six
 import-problem refusals among 141 projects. Its completed results remain in the
@@ -95,7 +132,7 @@ import-problem refusals among 141 projects. Its completed results remain in the
 under their original source and environment identities. They do not describe
 the later 1.792 release or the prepared 1.946 version.
 
-- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` (September 15, 2026), `1.618` (September 17, 2026), and `1.732` and `1.732.post1` (September 19, 2026) are published and not yanked. Version `1.772` is also published (release dated September 26; PyPI upload September 27 UTC). The verified 1.792 release followed on October 8 from `44d7795`. None may be rebuilt or replaced. Publish 1.946 as a new version after its gates pass.
+- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` (September 15, 2026), `1.618` (September 17, 2026), and `1.732` and `1.732.post1` (September 19, 2026) are published and not yanked. Version `1.772` is also published (release dated September 26; PyPI upload September 27 UTC). The verified 1.792 release followed on October 8 from `44d7795`. The published 1.946 release was verified on October 19, 2026, as recorded above. None may be rebuilt or replaced. Prepare 1.947 as a new version under the same release gates.
 - The GitHub repository was made public on September 15, 2026, and its default branch is `main`. Earlier authenticated inspection (while private) found historical releases `v0.5.0` and `v0.5.1`, an active CI workflow, and an unprotected `main` branch. Verify the actual remote settings before relying on any of them.
 - PyPI embeds each uploaded distribution's README. A new distribution must carry the current version's documentation links, known limitations and Python requirement; editing GitHub afterward does not update an uploaded description.
 
@@ -123,12 +160,12 @@ checks and six pinned consumer comparisons. The earlier `9d57b0d` complete-CLI
 Click/Rich measurements found slowdowns of 21.85% and 78.10%, respectively, with
 two samples per version per workload on a shared host. These historical
 observations do not certify the later versioned candidate; earlier phase
-improvements do not override them. The current Voluptuous/Click
-cohorts leave restoration unresolved and Rich pending.
+improvements do not override them. Those Voluptuous/Click
+cohorts left restoration unresolved and Rich pending for that source.
 The maintainer must review the measured regression before publication.
 
 The version and documentation update changes release contents. Freeze the final
-1.946 source, rebuild its artifacts, and run the full declared release campaign:
+1.947 source, rebuild its artifacts, and run the full declared release campaign:
 Python 3.11–3.13, coverage and quality, differential families, clean-wheel and
 sdist checks, self-dogfood, dependency/diagram checks, the 141-project corpus,
 source-bound evidence verification and exact-commit CI. Historical successes

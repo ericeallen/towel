@@ -9,33 +9,49 @@ Towel finds repeated Python code and extracts it into shared helper functions.
 It checks each extraction, preserves the parts that differ as parameters, and
 leaves meaningful names for you to choose.
 
-**Release status: 1.946 (beta).** Named for ln 7, approximately 1.945910149.
-The
-[1.946 overview](https://github.com/ericeallen/towel/blob/v1.946/docs/RELEASE_1_946.md)
-and [changelog](https://github.com/ericeallen/towel/blob/v1.946/CHANGELOG.md#1946)
-describe the changes: extraction of eligible branch-local outputs, precise
-constant substitution, fewer unnecessary lambdas, stronger typing and lifetime
-checks, and bounded reuse of source-analysis facts.
+**This source targets 1.947 (beta).** The maintainer selected
+1.947 for the completed audit repairs after published 1.946. The
+[1.947 overview](https://github.com/ericeallen/towel/blob/v1.947/docs/RELEASE_1_947.md)
+and [changelog](https://github.com/ericeallen/towel/blob/v1.947/CHANGELOG.md#1947)
+describe binding-safe renaming, lower candidate-enumeration costs, preservation
+of definition-time builtin lookup, each file's formatting policy and explicit
+rename consumer scope. Narrow or unmarked rename targets may now require a
+project-root rerun or an explicit `--complete-scope` declaration.
+
+At the **October 19, 2026 preparation checkpoint**, 1.947 had not been published.
+The preceding repair source `2027689`, still numbered 1.946, passed its Linux
+Python 3.13 `just ci` run: 10,901 tests and 45 subtests, 226 skips and 94%
+coverage. Those are prior-source repair checks. The final 1.947 source and
+artifacts still required their own complete release gates at that checkpoint.
+Final validation and publication outcomes belong to the external release record
+and [PyPI](https://pypi.org/project/code-towel/). See the
+[readiness report](https://github.com/ericeallen/towel/blob/v1.947/docs/PRODUCTION_READINESS.md)
+and [release checkpoint](https://github.com/ericeallen/towel/blob/v1.947/docs/RELEASING.md#1947-preparation-checkpoint-october-19-2026).
+
+### Historical evidence from 1.946 preparation
+
+The following measurements retain their original sources and environments;
+they do not validate 1.947.
 
 An earlier development audit at `9d57b0d` passed 10,583 tests and 45 subtests,
 with 32 skips and 93.478% coverage. Its six consumer checks preserved their
 original test outcomes and expected generated outputs. These results precede
 the 1.946 metadata and documentation update; they do not certify the final
 versioned artifacts. See the
-[readiness report](https://github.com/ericeallen/towel/blob/v1.946/docs/PRODUCTION_READINESS.md)
-for source-bound evidence and its limits. The latest
-[local validation](https://github.com/ericeallen/towel/blob/v1.946/docs/PRODUCTION_READINESS.md#scoped-source-proof-memo-local-validation-october-18-2026)
+[readiness report](https://github.com/ericeallen/towel/blob/v1.947/docs/PRODUCTION_READINESS.md)
+for source-bound evidence and its limits. The October 18
+[local validation](https://github.com/ericeallen/towel/blob/v1.947/docs/PRODUCTION_READINESS.md#scoped-source-proof-memo-local-validation-october-18-2026)
 records the full Python 3.11–3.13 runs, 93–94% coverage, byte-identical CLI
 outputs and the remaining process-observer limitation.
 
 The October 18 profile of `0b3494c` measured Rich 7.6% slower than 1.792
 (97.4/97.6 versus 90.5/90.7 seconds, shared macOS host, Python 3.12).
 Click's noisier difference includes a fifth extraction where 1.792 made four.
-That profile predates scoped source-correspondence memoization, now implemented
-for this release. It reuses a proof only for an owned immutable tree within one
+That profile predates scoped source-correspondence memoization, implemented
+in subsequent 1.946 source. It reuses a proof only for an owned immutable tree within one
 analysis; caller trees and materialization retain fresh checks. No new timing
 benefit is claimed. See
-[where the remaining time goes](https://github.com/ericeallen/towel/blob/v1.946/docs/RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
+[where the remaining time goes](https://github.com/ericeallen/towel/blob/v1.947/docs/RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
 
 The earlier October 10 container cohorts use
 versioned 1.946 source `a6dc6ed`: Voluptuous averaged 87.57 versus 90.98 seconds
@@ -43,9 +59,9 @@ versioned 1.946 source `a6dc6ed`: Voluptuous averaged 87.57 versus 90.98 seconds
 These are two shared-host samples per source per workload; Rich has no actual
 sample in that container campaign. Its full release gates and exact-commit CI
 were incomplete; the October 18 native profile above is a separate measurement.
-The [portable record](https://github.com/ericeallen/towel/blob/v1.946/tests/release_evidence/1.946-warning-guard/README.md)
+The [portable record](https://github.com/ericeallen/towel/blob/v1.947/tests/release_evidence/1.946-warning-guard/README.md)
 binds all eight actual samples, identities, outputs and limits. These results
-predate the subsequent backslash-parity repair. The latest prepared runtime
+predate the subsequent backslash-parity repair. The later prepared 1.946 runtime
 is not certified by those earlier source-bound cohorts.
 
 The earlier October 10 shared-host comparison of `9d57b0d` with released 1.792
@@ -53,13 +69,13 @@ measured the complete cold CLI:
 Click averaged 56.69 versus 46.53 seconds (21.85% slower), and Rich averaged
 177.70 versus 99.77 seconds (78.10% slower), with two samples per version
 per workload. The
-[performance guide](https://github.com/ericeallen/towel/blob/v1.946/docs/PERFORMANCE.md)
+[performance guide](https://github.com/ericeallen/towel/blob/v1.947/docs/PERFORMANCE.md)
 records all samples, CPU time, workload differences and measurement limits.
-README documentation links target the planned `v1.946` tag; their remote
-destinations must be verified before publication.
+README documentation links target `v1.947`; verify their remote destinations
+as part of release publication.
 
-**Start with the [Quick start](https://github.com/ericeallen/towel/blob/v1.946/docs/QUICKSTART.md),
-or browse the [documentation index](https://github.com/ericeallen/towel/blob/v1.946/docs/README.md).**
+**Start with the [Quick start](https://github.com/ericeallen/towel/blob/v1.947/docs/QUICKSTART.md),
+or browse the [documentation index](https://github.com/ericeallen/towel/blob/v1.947/docs/README.md).**
 
 ## Install
 
@@ -130,7 +146,7 @@ order when the entire body moves into a helper. The holder can be unread in
 the helper: keeping those references alive is its purpose. Equal-looking class
 arguments may instead be lookup suppliers, so a callback or another module can
 change what each original read resolves. See
-[argument evaluation](https://github.com/ericeallen/towel/blob/v1.946/docs/GENERATED_CODE.md#arguments-and-evaluation).
+[argument evaluation](https://github.com/ericeallen/towel/blob/v1.947/docs/GENERATED_CODE.md#arguments-and-evaluation).
 Partial extractions whose
 owned values would cross frames without this proof are declined.
 
@@ -140,7 +156,7 @@ helper reproduces the block it replaces. It also checks binding, control flow
 and evaluation order, declining transformations that fail those checks.
 
 Generated names are deliberate placeholders. The
-[naming guide](https://github.com/ericeallen/towel/blob/v1.946/docs/NAMING.md)
+[naming guide](https://github.com/ericeallen/towel/blob/v1.947/docs/NAMING.md)
 shows how to rename them as a checked batch, optionally with a coding assistant.
 
 ## Use
@@ -163,7 +179,7 @@ helpers are shared within one module. `--cross-module` also shares them across
 modules, adding imports between them. For a faster partial structural listing,
 use `towel preview path/to/project --quick`.
 
-The [command-line guide](https://github.com/ericeallen/towel/blob/v1.946/docs/CLI_GUIDE.md)
+The [command-line guide](https://github.com/ericeallen/towel/blob/v1.947/docs/CLI_GUIDE.md)
 covers in-place changes, exclusions, limits, diagnostics and recovery.
 
 ## Requirements
@@ -175,8 +191,8 @@ supported or validated release platform.
 
 One core is enough; `TOWEL_WORKERS=1` limits analysis to one worker. Memory,
 disk use and run time depend on the project and enabled tools. See
-[requirements and resources](https://github.com/ericeallen/towel/blob/v1.946/docs/REQUIREMENTS.md)
-and [performance measurements](https://github.com/ericeallen/towel/blob/v1.946/docs/PERFORMANCE.md)
+[requirements and resources](https://github.com/ericeallen/towel/blob/v1.947/docs/REQUIREMENTS.md)
+and [performance measurements](https://github.com/ericeallen/towel/blob/v1.947/docs/PERFORMANCE.md)
 for measured workloads and their conditions.
 
 ## Checks and limitations
@@ -192,32 +208,32 @@ functions or classes. Towel does not scan for these behaviors or refuse code to
 protect them; decorators, ordinary calls and hooks have the same boundary.
 Protect sensitive definitions with `# towel: no-extract` immediately after
 the signature's final colon. The
-[function opt-out guide](https://github.com/ericeallen/towel/blob/v1.946/docs/CLI_GUIDE.md#protect-a-function)
+[function opt-out guide](https://github.com/ericeallen/towel/blob/v1.947/docs/CLI_GUIDE.md#protect-a-function)
 explains its placement and limits. Mark the frame whose identity matters,
 including when its callee inspects it. The marker preserves that definition's
 source, not module namespaces, absolute line numbers or unmarked call chains.
 Review the
-[known limitations](https://github.com/ericeallen/towel/blob/v1.946/docs/KNOWN_LIMITATIONS.md)
+[known limitations](https://github.com/ericeallen/towel/blob/v1.947/docs/KNOWN_LIMITATIONS.md)
 and run your tests before adopting changes.
 
 In annotated projects, Towel uses the configured type checkers when available
 and preserves caller-side narrowing. Existing checker errors are compared
 against a baseline; a checker that cannot run refuses typed extraction.
-The [typing guide](https://github.com/ericeallen/towel/blob/v1.946/docs/TYPING.md)
+The [typing guide](https://github.com/ericeallen/towel/blob/v1.947/docs/TYPING.md)
 explains this policy and the unverified `--no-types` option.
 
 ## Documentation and development
 
-The [documentation index](https://github.com/ericeallen/towel/blob/v1.946/docs/README.md)
+The [documentation index](https://github.com/ericeallen/towel/blob/v1.947/docs/README.md)
 groups tutorials, task guides, technical reference, design decisions and
 release evidence. Contributors can start with
-[development setup and checks](https://github.com/ericeallen/towel/blob/v1.946/CONTRIBUTING.md);
+[development setup and checks](https://github.com/ericeallen/towel/blob/v1.947/CONTRIBUTING.md);
 release maintainers should follow the
-[release procedure](https://github.com/ericeallen/towel/blob/v1.946/docs/RELEASING.md).
+[release procedure](https://github.com/ericeallen/towel/blob/v1.947/docs/RELEASING.md).
 Report security issues through the
-[security policy](https://github.com/ericeallen/towel/blob/v1.946/SECURITY.md).
+[security policy](https://github.com/ericeallen/towel/blob/v1.947/SECURITY.md).
 
 ## License
 
-Towel is licensed under the [Apache License 2.0](https://github.com/ericeallen/towel/blob/v1.946/LICENSE);
+Towel is licensed under the [Apache License 2.0](https://github.com/ericeallen/towel/blob/v1.947/LICENSE);
 its source files carry Eric Allen copyright headers.

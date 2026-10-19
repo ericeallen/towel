@@ -10,6 +10,12 @@ mnemonics with PEP 440 ordering; see the
 
 ## [Unreleased]
 
+## [1.947]
+
+Audit repairs after published 1.946; see the [1.947 overview](docs/RELEASE_1_947.md).
+The October 19, 2026 preparation checkpoint precedes this version's final
+release validation and publication; no publication date is assigned here.
+
 - Parameter renaming follows Python's class-private binding identity through
   nested classes, methods and closures, preserving unrelated private references
   and rejecting destinations that would capture a mangled binding.
@@ -25,15 +31,19 @@ mnemonics with PEP 440 ordering; see the
 - Generated code uses each modified file's formatter and configuration. Ruff
   import sorting recognizes standalone, extended and nested configurations
   through native effective settings and honors disabled/per-file rules.
+  Transient configuration-query failures are reported and retried rather than
+  cached as disabled sorting.
 - Rename definition selection is separate from project-wide consumer analysis.
   Batches needing edits outside the target refuse atomically; unmarked CLI
   projects require an explicit `--complete-scope` declaration.
 
 ## [1.946]
 
-Named for ln 7, approximately 1.945910149. Publication requested; upload not
-verified. The maintainer subsequently requested scoped source-proof reuse and
-fresh supported-interpreter suites and cache-on/off output comparisons. See the
+Named for ln 7, approximately 1.945910149. PyPI publication was verified on
+October 19, 2026. The historical preparation record below retains its original
+sources, measurements and incomplete candidate gates. The maintainer had
+requested scoped source-proof reuse, fresh supported-interpreter suites and
+cache-on/off output comparisons; see the dated
 [publication checkpoint](docs/RELEASING.md#1946-publication-checkpoint-october-18-2026).
 Changes since released 1.792 are described together in the
 [1.946 overview](docs/RELEASE_1_946.md).
@@ -41,7 +51,8 @@ Changes since released 1.792 are described together in the
 The completed development audit at `9d57b0d` passed 10,583 tests and 45
 subtests, with 32 skips and 93.478% coverage. Six consumer original-command
 pairs and their 531 generated Python outputs matched the retained references.
-The versioned 1.946 source and artifacts still need their own release gates.
+At that preparation checkpoint, the versioned 1.946 source and artifacts still
+needed their own release gates.
 The latest completed versioned cohorts use `a6dc6ed` (1.946) versus published
 `44d7795` (1.792): Voluptuous means were 90.984 → 87.569 seconds (−3.75%),
 and Click means were 47.165 → 58.195 seconds (+23.39%), with two shared-host
@@ -2536,7 +2547,8 @@ affected project's own tests.
 - The PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and
   are not a recommended installation target.
 
-[Unreleased]: https://github.com/ericeallen/towel/compare/v1.946...HEAD
+[Unreleased]: https://github.com/ericeallen/towel/compare/v1.947...HEAD
+[1.947]: https://github.com/ericeallen/towel/compare/v1.946...v1.947
 [1.946]: https://github.com/ericeallen/towel/compare/v1.792...v1.946
 [1.792]: https://github.com/ericeallen/towel/compare/v1.772...v1.792
 [1.772]: https://github.com/ericeallen/towel/compare/v1.732.post1...v1.772

@@ -8,14 +8,13 @@ This documentation describes the source version you are reading. Dated
 benchmarks, validation reports and proposals retain their original source and
 artifact identities; they do not establish results for a later release.
 
-The prepared version is **1.946**, named for ln 7; **1.792** is the last
-published release recorded here. The [1.946 overview](RELEASE_1_946.md) describes the new
-capabilities, audit repairs, performance results and deferred work. The
-[readiness report](PRODUCTION_READINESS.md) distinguishes completed development
-checks from incomplete versioned gates. The
-[October 18 publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026)
-records the current implementation, fresh-validation request and outstanding
-remote verification; no successful upload is claimed.
+This source targets **1.947**. The [1.947 overview](RELEASE_1_947.md) describes
+the audit repairs after published 1.946 and the rename-scope requirement. The
+[readiness report](PRODUCTION_READINESS.md) separates prior-source repair
+checks from final versioned release evidence. At the
+[October 19 preparation checkpoint](RELEASING.md#1947-preparation-checkpoint-october-19-2026),
+1.947 was unpublished and its complete release gates remained pending. Final
+outcomes belong to the external artifact/CI records and PyPI.
 
 ## Start and use Towel
 
@@ -51,7 +50,8 @@ remote verification; no successful upload is claimed.
 ## Changes and evidence
 
 - [Changelog](../CHANGELOG.md): user-visible changes by version.
-- [1.946 overview](RELEASE_1_946.md): all improvements since 1.792 and their limits.
+- [1.947 overview](RELEASE_1_947.md): the seven audit repairs, scope changes and validation boundary.
+- [1.946 overview](RELEASE_1_946.md): historical improvements since 1.792 and their limits.
 - [Production readiness](PRODUCTION_READINESS.md): validation scope, results and qualifications.
 - [Release log](RELEASE_LOG.md): dated engineering and validation checkpoints.
 - [Adversarial review](ADVERSARIAL_REVIEW.md): discovered defects and their regression coverage.

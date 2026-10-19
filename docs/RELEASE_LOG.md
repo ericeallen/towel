@@ -14,6 +14,7 @@ the entries below do not transfer approval to a later source or version.
 
 **Contents — release checkpoints**
 
+- [1.947 preparation after audit repairs](#2026-10-19-1947-preparation-after-audit-repairs)
 - [1.946 preparation and latest audit](#2026-10-10-1946-preparation-and-latest-audit)
 - [1.792 completed publication](#2026-10-08-1792-published-release)
 - [1.792 October 6 parameter audit follow-up](#2026-10-06-1792-parameter-audit-follow-up)
@@ -28,6 +29,41 @@ the entries below do not transfer approval to a later source or version.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-10-19: 1.947 preparation after audit repairs
+
+The maintainer selected **1.947** for the seven confirmed audit repairs after
+published 1.946. The [overview](RELEASE_1_947.md) describes binding identity,
+partner/interval work, captured builtin mappings, per-file formatting and
+complete rename consumer scope. The repair branch deliberately retained audited
+source `a1355ab` and integrated the separate annotation-import placement and
+editable-build corpus discovery repairs; stale local `main` was not the base.
+
+Live checks confirmed that PyPI's 1.946 wheel was uploaded October 19 and has
+SHA-256 `090c158f8dbd6795dbbe7e18d0bcffbbb884141f16d04100663c8d4ccc45c0cd`;
+all 107 runtime files match `a1355ab`. GitHub's `v1.946` ref resolves to
+`4b95c0ae1bef211574f747775b49e3422b08e5ce`. This runtime comparison does not
+identify every packaging/documentation byte with that audited source. PyPI
+showed 1.947 unused at this preparation checkpoint, not reserved.
+
+The preceding repair source `2027689`, still numbered 1.946, passed Linux
+Python 3.13.16 `just ci`: 10,901 tests and 45 subtests, 226 skips, 94% coverage,
+all declared quality/dependency gates and a wheel/sdist build. Its native
+macOS focused checks passed 194 cases each on Python 3.11.14, 3.12.12 and
+3.13.7. Three bare-wheel environments passed 33 cases in total, and the local
+repair wheel matched all 107 tracked runtime files to that repaired source.
+The 370-run differential sample retained 114 equivalent transformed runs,
+254 unchanged and two inconclusive cases, with zero failures. These are
+prior-source repair checks; the [readiness report](PRODUCTION_READINESS.md#1947-preparation-checkpoint-october-19-2026)
+records their scope and the observer/performance limits.
+
+At this checkpoint, version/lock metadata and documentation were being prepared
+for a new final freeze. The final 1.947 interpreter matrix, corpus and all other
+standard release gates remained pending. No final artifact hashes, exact-commit
+remote CI, tag or publication were claimed. The standing never-push instruction
+blocked an agent from completing the remote publication sequence. Final outcomes
+belong to the external frozen-source/artifact evidence and live publication
+records, not an edit to this shipped checkpoint after validation.
 
 ## 2026-10-18: scoped proof memo implemented; fresh validation requested
 

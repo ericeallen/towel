@@ -2,9 +2,18 @@
 
 [Documentation index](README.md) · [Changelog](../CHANGELOG.md#1946)
 
-**1.946 is prepared for publication; its upload is unverified.** The number
-names ln 7, approximately 1.945910149. Version 1.792 is the last published
-release recorded here.
+**Publication verification, October 19, 2026:** PyPI contains 1.946, uploaded
+that day; the number names ln 7, approximately 1.945910149. The independently
+downloaded wheel's SHA-256 is
+`090c158f8dbd6795dbbe7e18d0bcffbbb884141f16d04100663c8d4ccc45c0cd`;
+its 107 runtime files match `a1355ab`. GitHub's `v1.946` ref resolves to
+`4b95c0ae1bef211574f747775b49e3422b08e5ce`. Runtime-file equality does not
+identify every packaging or documentation byte with that audited source.
+The [1.947 overview](RELEASE_1_947.md) describes the subsequent audit repairs.
+
+The preparation measurements and source-bound validation below retain their
+historical identities. Statements that a candidate gate was pending describe
+its recorded preparation state, not the current publication status.
 These changes extend the existing extraction model and have no intended public
 API or CLI incompatibility. The [version convention](RELEASING.md#version-number-convention)
 records the limited remaining three-decimal labels below 2.0.
@@ -163,11 +172,11 @@ These are exact analysis changes, not a claim of overall acceleration. The
 
 ## Completed development evidence and remaining release work
 
-The [latest local validation](PRODUCTION_READINESS.md#scoped-source-proof-memo-local-validation-october-18-2026)
+The [October 18 local validation](PRODUCTION_READINESS.md#scoped-source-proof-memo-local-validation-october-18-2026)
 records complete Python 3.11–3.13 runs and 93–94% coverage. Each full run had a
 navigation failure, since corrected and rechecked, and one watchdog observer
-failure because this environment blocks `ps`. That unchanged test remains
-unverified; the full matrix is not claimed all green. The complete example
+failure because that environment blocked `ps`. That unchanged observer was
+unverified in those runs; the full matrix was not claimed all green. The complete example
 corpus produced identical Python bytes with the new memo enabled and disabled
 (28 files, 23 changed), and four branch cases compare identical bytes with all
 memoization disabled on each supported interpreter.
@@ -175,9 +184,10 @@ memoization disabled on each supported interpreter.
 The [October 18 publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026)
 records the maintainer's request to implement scoped source-proof reuse and
 validate it on Python 3.11–3.13 and with cache-on/off output comparisons. The
-source now includes that memo alongside `--stats`. Remote
-publication has not been verified. The development results and incomplete
-campaigns below retain their original scope and do not claim a newly passed gate.
+October 18 source included that memo alongside `--stats`; publication was
+unverified at that checkpoint. The October 19 publication identity is recorded
+at the start of this overview. The development results and incomplete campaigns
+below retain their original scope and do not claim a newly passed gate.
 
 The final full development audit completed on `9d57b0d`, with metadata still
 numbered 1.792: 10,583 tests and 45 subtests passed, 32 skipped, and coverage
@@ -209,22 +219,23 @@ corpus campaign stopped after 31 of 141 projects when Voluptuous exposed a
 material performance defect. That incomplete campaign does not approve a
 release. The guard repair changes runtime bytes; earlier passing gates do not
 certify the repair or replace its fresh complete validation.
-The repaired versioned source `a6dc6ed` now has fresh exact artifacts/static
+The repaired versioned source `a6dc6ed` had fresh exact artifacts/static
 checks and a complete 182/182 Voluptuous canary. Eight actual R,F,F,R samples
 across two complete cohorts compared it with published 1.792: Voluptuous means
 were 90.984 → 87.569 seconds (−3.75%) and Click 47.165 → 58.195 seconds
 (+23.39%). These are two shared-host observations per source per workload,
 using 2 CPUs, 6 GiB RAM and 12 GiB combined RAM+swap. Original before/after
 outcomes, all 24 displayed Click failure records and repeated outputs matched;
-per-CLI CPU is unavailable. Rich has zero actual samples in this new campaign
-and remains pending. The [current portable record](../tests/release_evidence/1.946-warning-guard/README.md)
+per-CLI CPU is unavailable. Rich had zero actual samples in that campaign
+and remained pending for that source. The [portable record](../tests/release_evidence/1.946-warning-guard/README.md)
 keeps exact source/wheel identities and telemetry/closure limits.
 
 The standard [release procedure](RELEASING.md) calls for final frozen artifacts,
 the supported interpreter matrix, the 141-project corpus, the exact release-evidence
-gate and exact-commit CI. The current instruction requests fresh supported-interpreter suites and
-cache-on/off output comparisons; missing results remain unclaimed. Live remote and artifact verification
-are still outstanding.
+gate and exact-commit CI. The October 18 instruction requested fresh supported-interpreter
+suites and cache-on/off output comparisons; missing results remain unclaimed
+for those recorded sources. Remote and artifact verification were outstanding
+at that checkpoint; the later publication identity is recorded above.
 
 ### Where the remaining time goes (profiled on `0b3494c`)
 
