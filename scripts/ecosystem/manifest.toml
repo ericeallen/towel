@@ -793,6 +793,8 @@ url = "https://github.com/agronholm/anyio.git"
 rev = "9e2b5924e54ce5fa6aacc0640846c1a360a45178"
 package = "src/anyio"
 pythonpath = "src"
+# The editable build leaves a second anyio package here; it is not source.
+exclude = ["build"]
 deps = [
     "blockbuster>=1.5.23; python_version < \"3.15\"",
     "coverage[toml]>=7",

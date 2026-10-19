@@ -279,3 +279,9 @@ def test_new_weak_tool_requirements_retain_the_actual_upstream_tool_selection(na
                 and str(requirement.specifier) == "==" + version
                 for requirement in declared
             ), (name, tool, version)
+
+
+def test_anyio_build_artifacts_are_excluded_from_the_source_model() -> None:
+    project = _project("anyio")
+    assert project.rev == "9e2b5924e54ce5fa6aacc0640846c1a360a45178"
+    assert project.exclude == ("build",)
