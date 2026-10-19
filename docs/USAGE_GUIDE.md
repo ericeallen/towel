@@ -146,8 +146,8 @@ See the [command-line guide](CLI_GUIDE.md) for CLI options and the [Quick start]
 
 ```python
 engine = UnificationRefactorEngine(
-    max_parameters=5,  # Maximum parameters for extracted functions
-                       # (prevents over-parameterization)
+    max_parameters=5,  # Maximum newly parameterized differing expressions.
+                       # Ordinary free inputs may add arguments.
 
     min_lines=3        # Minimum lines for a code block
                        # (smaller blocks are ignored)
