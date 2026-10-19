@@ -158,6 +158,7 @@ class _Scope:
     globals: frozenset[str]
     nonlocals: frozenset[str]
     parameters: frozenset[str] = frozenset()
+    private_class: str | None = None
 
 
 def _scope(
@@ -165,7 +166,11 @@ def _scope(
     kind: ScopeKind,
     nodes: Iterable[ast.AST],
     args: ast.arguments | None = None,
+    *,
+    private_class: str | None = None,
 ) -> _Scope:
+    if kind != "class" and parent is not None:
+        private_class = parent.private_class
     collector = _Bindings()
     for node in nodes:
         collector.visit(node)
@@ -175,13 +180,18 @@ def _scope(
         collector.local.update(parameters)
         parameters.update(arg.arg for arg in (args.vararg, args.kwarg) if arg is not None)
         collector.local.update(parameters)
+
+    def stored(names: Iterable[str]) -> frozenset[str]:
+        return frozenset(mangled(name, private_class) for name in names)
+
     return _Scope(
         parent,
         kind,
-        frozenset(collector.local - collector.global_names - collector.nonlocal_names),
-        frozenset(collector.global_names),
-        frozenset(collector.nonlocal_names),
-        frozenset(parameters),
+        stored(collector.local) - stored(collector.global_names) - stored(collector.nonlocal_names),
+        stored(collector.global_names),
+        stored(collector.nonlocal_names),
+        stored(parameters),
+        private_class,
     )
 
 
@@ -215,14 +225,19 @@ class _Scopes(ScopeVisitor):
         elif isinstance(node, ast.Lambda):
             self.current = _scope(self.current, "function", [node.body], node.args)
         elif isinstance(node, ast.ClassDef):
-            self.current = _scope(self.current, "class", node.body)
+            self.current = _scope(self.current, "class", node.body, private_class=node.name)
         else:
             comprehension = cast(ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp, node)
             collector = _Bindings()
             for generator in comprehension.generators:
                 collector.visit(generator.target)
             self.current = _Scope(
-                self.current, "comprehension", frozenset(collector.local), frozenset(), frozenset()
+                self.current,
+                "comprehension",
+                frozenset(mangled(name, self.current.private_class) for name in collector.local),
+                frozenset(),
+                frozenset(),
+                private_class=self.current.private_class,
             )
 
     def _leave_scope(self, node: ast.AST) -> None:
@@ -257,6 +272,7 @@ def _module_scope(scope: _Scope) -> _Scope:
 
 
 def _resolve(scope: _Scope, name: str) -> _Scope:
+    name = mangled(name, scope.private_class)
     current = scope
     while (parent := current.parent) is not None:
         if name in current.globals:
@@ -979,8 +995,12 @@ def _plan_parameter_renames(
             if not function.body:
                 continue
             own_scope = scopes.nodes[function.body[0]]
+            parameter_binding = mangled(parameter, own_scope.private_class)
             for node in ast.walk(function):
-                if isinstance(node, (ast.Global, ast.Nonlocal)) and parameter in node.names:
+                if isinstance(node, (ast.Global, ast.Nonlocal)) and any(
+                    mangled(name, scopes.nodes[node].private_class) == parameter_binding
+                    for name in node.names
+                ):
                     raise ValueError(
                         f"Parameter {parameter} is redeclared in a nested scope: {module.path}"
                     )
@@ -997,8 +1017,8 @@ def _plan_parameter_renames(
             for node in ast.walk(function):
                 if (
                     isinstance(node, ast.Name)
-                    and node.id == parameter
-                    and _resolve(scopes.nodes[node], parameter) is own_scope
+                    and mangled(node.id, scopes.nodes[node].private_class) == parameter_binding
+                    and _resolve(scopes.nodes[node], node.id) is own_scope
                 ):
                     edits.node(node, new)
     return found

@@ -17,6 +17,7 @@
 from pathlib import Path
 import subprocess
 import sys
+import textwrap
 
 import pytest
 
@@ -39,6 +40,79 @@ def _run(root: Path) -> str:
     )
     assert result.returncode == 0, result.stderr
     return result.stdout
+
+
+def test_nested_class_private_name_is_not_an_outer_parameter(tmp_path: Path) -> None:
+    """The compiler resolves the class's private spelling to a module binding."""
+    _project(
+        tmp_path,
+        {
+            "main.py": "_C__param_0 = 100\n"
+            "def __extracted_func_0(__param_0):\n"
+            "    class C:\n"
+            "        answer = __param_0\n"
+            "    return C.answer, __param_0\n"
+            "print(__extracted_func_0(__param_0=3))\n"
+        },
+    )
+    before = _run(tmp_path)
+    assert before == "(100, 3)\n"
+    plan, _ = plan_renames(tmp_path, [("__extracted_func_0.__param_0", "value", None)])
+    apply_changes(plan)
+    assert _run(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "class C:\n    def answer(self):\n        return __param_0\n"
+        "return C().answer(), __param_0",
+        "class _C:\n    answer = __param_0\nreturn _C.answer, __param_0",
+        "class Outer:\n    class C:\n        answer = __param_0\n"
+        "return Outer.C.answer, __param_0",
+        "class C:\n    global __param_0\n    answer = __param_0\n" "return C.answer, __param_0",
+        "class C:\n    __param_0 = 7\n    answer = __param_0\n" "return C.answer, __param_0",
+        "class C:\n    def answer(self, value=__param_0):\n        return value\n"
+        "return C().answer(), __param_0",
+        "class C:\n    answer = [__param_0 for _ in (1,)]\n" "return C.answer, __param_0",
+        "class ___:\n    answer = __param_0\nreturn ___.answer, __param_0",
+        "def closure():\n    return __param_0\nreturn closure(), __param_0",
+        "class C((lambda value: object)(__param_0)):\n    pass\nreturn __param_0",
+        "def closure(__param_0=8):\n    return __param_0\nreturn closure(), __param_0",
+    ],
+)
+def test_parameter_references_follow_compiler_private_identity(tmp_path: Path, body: str) -> None:
+    """Class scopes, heads, defaults and closures retain the compiler's binding."""
+    source = (
+        "_C__param_0 = 100\n"
+        "def __extracted_func_0(__param_0):\n"
+        + textwrap.indent(body, "    ")
+        + "\nprint(__extracted_func_0(3), __extracted_func_0(__param_0=4))\n"
+    )
+    _project(tmp_path, {"main.py": source})
+    before = _run(tmp_path)
+    plan, _ = plan_renames(tmp_path, [("__extracted_func_0.__param_0", "renamed_argument", None)])
+    apply_changes(plan)
+    assert _run(tmp_path) == before
+
+
+def test_matching_nonlocal_private_binding_refuses_entire_batch(tmp_path: Path) -> None:
+    """A real nonlocal declaration remains a conservative, atomic refusal."""
+    source = (
+        "def __extracted_func_0(__param_0):\n"
+        "    def closure():\n"
+        "        nonlocal __param_0\n"
+        "        return __param_0\n"
+        "    return closure()\n"
+    )
+    _project(tmp_path, {"main.py": source, "other.py": HELPER})
+    with pytest.raises(ValueError, match="redeclared"):
+        plan_renames(
+            tmp_path,
+            [("__extracted_func_0.__param_0", "value", None)],
+        )
+    assert (tmp_path / "main.py").read_text() == source
+    assert (tmp_path / "other.py").read_text() == HELPER
 
 
 @pytest.mark.parametrize(

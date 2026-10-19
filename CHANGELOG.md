@@ -10,7 +10,8 @@ mnemonics with PEP 440 ordering; see the
 
 ## [Unreleased]
 
-No further changes beyond the prepared 1.946 version are recorded here.
+- Parameter renaming follows Python's class-private binding identity through
+  nested classes, methods and closures, preserving unrelated private references.
 
 ## [1.946]
 
