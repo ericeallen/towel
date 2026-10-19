@@ -9,8 +9,8 @@ Towel finds repeated Python code and extracts it into shared helper functions.
 It checks each extraction, preserves the parts that differ as parameters, and
 leaves meaningful names for you to choose.
 
-**This source targets 1.947 (beta).** The maintainer selected
-1.947 for the completed audit repairs after published 1.946. The
+**Release status: 1.947 (beta).** This source targets the maintainer-selected
+repair release after published 1.946. The
 [1.947 overview](https://github.com/ericeallen/towel/blob/v1.947/docs/RELEASE_1_947.md)
 and [changelog](https://github.com/ericeallen/towel/blob/v1.947/CHANGELOG.md#1947)
 describe binding-safe renaming, lower candidate-enumeration costs, preservation
