@@ -62,6 +62,30 @@ def test_nested_class_private_name_is_not_an_outer_parameter(tmp_path: Path) -> 
     assert _run(tmp_path) == before
 
 
+def test_private_parameter_cannot_masquerade_as_an_imported_module(tmp_path: Path) -> None:
+    """A conditional private import cannot hide the parameter's original consumer."""
+    _project(
+        tmp_path,
+        {
+            "a.py": "def _extracted_func_0():\n    return 7\n",
+            "main.py": "class FalseModule:\n"
+            "    def __bool__(self):\n        return False\n"
+            "    def _extracted_func_0(self):\n        return 42\n"
+            "class C:\n"
+            "    def use(self, __module, flag=False):\n"
+            "        if flag:\n            import a as __module\n"
+            "        return __module._extracted_func_0()\n"
+            "print(C().use(FalseModule()))\n",
+        },
+    )
+    assert _run(tmp_path) == "42\n"
+    before = {path: path.read_bytes() for path in tmp_path.glob("*.py")}
+    with pytest.raises(ValueError, match="Ambiguous module alias"):
+        plan_renames(tmp_path, [("_extracted_func_0", "answer", tmp_path / "a.py")])
+    assert {path: path.read_bytes() for path in before} == before
+    assert _run(tmp_path) == "42\n"
+
+
 @pytest.mark.parametrize(
     "body",
     [

@@ -1247,7 +1247,8 @@ class _ParameterCallsites:
                         else ()
                     )
                     if targets and (
-                        set(targets) != set(imported) or name in _resolve(scope, name).parameters
+                        set(targets) != set(imported)
+                        or mangled(name, scope.private_class) in _resolve(scope, name).parameters
                     ):
                         raise ValueError(
                             f"Rebound callable prevents safe parameter rename: {module.path}:{name}"
@@ -1483,7 +1484,8 @@ class _ModulePlanner:
     def _check_alias_bindings(self) -> None:
         for (binding_scope, local), imported_module in self.imports.items():
             if self._has_renamed_members(imported_module) and (
-                binding_scope.kind == "class" or local in binding_scope.parameters
+                binding_scope.kind == "class"
+                or mangled(local, binding_scope.private_class) in binding_scope.parameters
             ):
                 raise ValueError(f"Ambiguous module alias binding: {self.module.path}:{local}")
 
@@ -1538,7 +1540,11 @@ class _ModulePlanner:
         scope = self.scopes.nodes[node]
         if node.id not in self.local_renames:
             return
-        if scope.kind == "class" and node.id in scope.bindings and isinstance(node.ctx, ast.Load):
+        if (
+            scope.kind == "class"
+            and mangled(node.id, scope.private_class) in scope.bindings
+            and isinstance(node.ctx, ast.Load)
+        ):
             raise ValueError(f"Ambiguous class namespace lookup: {self.module.path}:{node.id}")
         if _resolve(scope, node.id) is not self.scopes.root:
             return
@@ -1554,7 +1560,8 @@ class _ModulePlanner:
     def _plan_global(self, node: ast.Global) -> None:
         for old, new in self.local_renames.items():
             if old in node.names:
-                if new in self.scopes.nodes[node].bindings:
+                scope = self.scopes.nodes[node]
+                if mangled(new, scope.private_class) in scope.bindings:
                     raise ValueError(
                         f"Rename conflicts with global declaration: {self.module.path}:{new}"
                     )
