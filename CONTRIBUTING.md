@@ -319,14 +319,13 @@ See [the evidence schema and release procedure](docs/RELEASING.md#repository-own
   detailed tasks and explanations in the appropriate guide linked from
   [the documentation index](docs/README.md), and add user-visible changes
   under `[Unreleased]` in CHANGELOG.md
-- The current prepared version is 1.946, named for ln 7. Its
-  [overview](docs/RELEASE_1_946.md) describes the completed capabilities and
-  repairs; [readiness](docs/PRODUCTION_READINESS.md) records completed and
-  incomplete gates and measured performance regressions. The
-  [October 18 publication checkpoint](docs/RELEASING.md#1946-publication-checkpoint-october-18-2026)
-  records the scoped memo implementation and requested fresh Python 3.11–3.13
-  suites and cache-on/off output comparisons; do not report missing results as passed. Keep 1.792 publication facts
-  and older development timings under their original identities. Follow the
+- The current prepared version is 1.947. Its
+  [overview](docs/RELEASE_1_947.md) describes the post-1.946 audit repairs;
+  [readiness](docs/PRODUCTION_READINESS.md) and the
+  [release procedure](docs/RELEASING.md) record completed and outstanding
+  source-bound checks. Do not report missing results as passed. Published
+  1.946/1.792 artifacts and older development measurements retain their
+  original source and artifact identities. Follow the
   [version convention](docs/RELEASING.md#version-number-convention) when choosing
   the next identifier; mathematical mnemonics do not define compatibility policy.
 - Give each new guide an index entry and a backlink. Longer references should

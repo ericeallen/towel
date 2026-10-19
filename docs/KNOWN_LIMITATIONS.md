@@ -220,7 +220,7 @@ describe belong to that version.
   ``__builtins__``. CPython captures that mapping when it creates a function;
   a helper created at another point can capture a different mapping. Blocks
   that read module-resolved builtin spellings therefore decline when their
-  module binds ``__builtins__`` or any function declares it global
+  module binds ``__builtins__`` or any nested scope declares it global
   (`builtin_mapping_replaced`). This conservative rule includes replacement
   before all definitions, conditional assignments and aliased mappings.
   Mutating a shared mapping does not replace it. Blocks without builtin reads
@@ -1749,6 +1749,10 @@ the proposals it built and did not apply, by reason:
   as parameters, the helper still reads bare a name that a site in another
   module could resolve differently. `builtin_may_differ_by_module`: the
   helper would read bare a builtin in a different module's namespace (*Module names stay module names*).
+  `builtin_mapping_replaced`: a block reads a module-resolved builtin while
+  its module binds `__builtins__` or a nested scope declares that name global;
+  the helper or lookup lambda could capture a different mapping. The
+  `--parameterize-builtins` flag does not bypass this conservative refusal.
 - The proposal. `duplicate_proposal`: the helper, home and sites repeat an
   earlier pair's, found through another pair of the same family.
   `existing_helper_becomes_forwarder`: a site is the whole body of a helper
@@ -1851,7 +1855,7 @@ require. What remains:
 ## Performance
 
 The dated phase and self-refactoring measurements below are historical. The
-latest complete CLI comparison at audited `9d57b0d` measured Click at +21.85%
+October 10 complete CLI comparison at audited `9d57b0d` measured Click at +21.85%
 and Rich at +78.10% relative to published 1.792, with two samples per arm on a
 shared host. These observations do not establish recovered performance or a
 release timing guarantee. See the [October 10 Click and Rich
@@ -1861,6 +1865,13 @@ workloads, correctness checks and environment qualifications.
 Analysis is quadratic in candidate blocks per file. The measures below keep
 it tractable, all exact: they change no proposal.
 
+- Functions with no structural partner do not enumerate blocks. Without
+  cross-module sharing, each singleton module is skipped even in directory
+  mode. With sharing enabled, functions in other modules can supply partners.
+  Eligible functions use per-suite prefix facts, but exact interval slices
+  and statement-type tuples still consume storage proportional to their total
+  lengths. `--max-pairs` bounds evaluated pairs, not block storage or peak
+  memory. Incremental changed-file filtering remains after global budgeting.
 - Blocks that can never be accepted are not enumerated: one that returns on
   some path but not every path, or a lone expression statement. On pyflakes'
   2,167-line `test_other.py` that removes 32,857 of 44,826 rejected pairs.

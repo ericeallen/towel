@@ -84,9 +84,12 @@ flowchart TD
    `assignment_analyzer.py`, and `visitors.py` build the module, class, and
    function scopes and record where every name is bound, read, deleted, or
    declared `global`/`nonlocal`.
-3. **Enumerate candidate blocks.** Contiguous runs of statements inside each
-   function body become candidate blocks. Blocks that can never be accepted are
-   never enumerated (see *Enumeration filter*). The caller-narrowing filter
+3. **Enumerate candidate blocks.** Establish structural function partners
+   before materializing blocks: a function without another function in its
+   module is skipped unless cross-module sharing supplies a partner.
+   Contiguous runs inside participating function bodies become candidate blocks.
+   Blocks known to be inadmissible from the enumeration filters are omitted
+   (see *Enumeration filter*). The caller-narrowing filter
    in `narrowing.py` keeps recognized non-None guards and assignments at the
    call site when later operations need the refinement. It runs before
    maximal-block pairing so a larger invalid window cannot hide a smaller
@@ -1056,8 +1059,10 @@ table does not stop discovery. Towel reads enabled rules through
 `ruff check --show-settings`, leaving `extend`, rule selection and ignores
 to Ruff. Sorting uses `--fix-only --fixable I` without overriding selected
 rules; Ruff's per-file ignores and exclusions still govern the actual
-source path. An unavailable or unrecognized settings query logs the failure and supplies
-no Ruff import sorter.
+source path. An unavailable or unrecognized settings query logs the failure
+and leaves imports as assembled for that attempt. This unresolved result is
+not cached as a disabled policy: the directory finisher retries on a later
+call, and the failed measurement cannot certify formatting repeatability.
 An import runs its module where it stands, so the order of a file's own
 imports is the order of their import-time effects, which no binding check
 can show to commute; the finisher therefore moves only the imports Towel
@@ -1488,6 +1493,16 @@ proposal construction is cubic there until the first application collapses
 them; the engine spends its effort avoiding and reusing comparisons. Every
 measure is exact and changes no proposal.
 
+- **Partner eligibility and interval prefixes.** `_Partners` is built before
+  `_signed_blocks`; functions without a structural partner contribute no
+  blocks. The budget still precedes incremental changed-file filtering.
+  `BlockSignatureIndex` and per-suite prefixes reuse additive statement facts
+  for signatures, nested definitions, unspellable integers, returns and the
+  necessary narrowing condition. Positive caller-sensitive guards still run
+  in full. Exact statement slices and type-sequence tuples remain owned by
+  each enumerated interval, so this removes repeated scans without bounding
+  aggregate block storage. Singleton blocks no longer inflate a budget
+  warning's similar-block count.
 - **Enumeration filter.** A block that returns on some path but not all, or a
   lone expression statement, can never be accepted and is never enumerated.
 - **One proposal per refactoring.** Pair evaluation keeps the first proposal
@@ -1788,6 +1803,16 @@ when the stored name is spelled anywhere else (explicitly, as a string, or as
 `__extracted_func_0` in another class of the same name) or when the class's
 body looks attributes up by a computed name. See the [naming guide](NAMING.md) for the end-to-end
 workflow.
+
+The selected definition is separate from its consumer-analysis scope.
+`plan_renames` reads ordinary consumers in the enclosing discovered project
+and refuses before writing when a consumer outside the target needs an edit.
+The CLI requires `--complete-scope` for an unmarked root; that acknowledgement
+cannot bypass a known outside consumer or permit writes beyond the target.
+Stored class-private identity and NFKC-normalized name identity govern
+resolution and collision checks, while the edits use physical source-token
+spans. A proposed parameter name that captures a previously distinct mangled
+reference refuses the whole batch.
 
 ## Verification and evidence
 

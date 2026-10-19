@@ -22,6 +22,7 @@ There are three ways to use Towel, the code refactoring tool based on anti-unifi
 ### 1. Analyze a Single File
 
 ```python
+from towel.changes import apply_changes
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
@@ -29,11 +30,9 @@ engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
 # Analyze one file
 proposals = engine.analyze_file("myfile.py")
 
-# Apply best proposal
+# Apply one proposal with stale-source checks and recoverable byte replacement.
 if proposals:
-    refactored = engine.apply_refactoring("myfile.py", proposals[0])
-    with open("myfile.py", 'w') as f:
-        f.write(refactored)
+    apply_changes(engine.plan_refactoring(proposals[0]))
 ```
 
 ### 2. Analyze Multiple Files (for cross-file duplicates)
@@ -41,6 +40,7 @@ if proposals:
 Sharing a helper between modules is opt-in: it adds an import between them.
 
 ```python
+from towel.changes import apply_changes
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=3, cross_module_helpers=True)
@@ -49,14 +49,9 @@ engine = UnificationRefactorEngine(max_parameters=5, min_lines=3, cross_module_h
 files = ["file1.py", "file2.py", "file3.py"]
 proposals = engine.analyze_files(files)
 
-# Apply best proposal (handles cross-file)
+# Apply every file changed by one proposal as a recoverable batch.
 if proposals:
-    modified_files = engine.apply_refactoring_multi_file(proposals[0])
-
-    # Write all modified files
-    for file_path, content in modified_files.items():
-        with open(file_path, 'w') as f:
-            f.write(content)
+    apply_changes(engine.plan_refactoring(proposals[0]))
 ```
 
 ### 3. Analyze an Entire Directory
@@ -77,6 +72,12 @@ reanalyze before selecting another that could touch changed files; stale source
 is refused. The fixed-point driver handles this sequencing. These API examples
 use the engine's explicitly supplied tools; the CLI also constructs the project
 checker and formatter from its defaults and options.
+
+`plan_refactoring` preserves each file's encoding, BOM and newline convention;
+`apply_changes` checks original bytes and publishes a recoverable batch. The
+lower-level `apply_refactoring` and `apply_refactoring_multi_file` methods only
+return rendered text. Callers using those methods own byte encoding and safe
+publication; ordinary text-mode writes do not preserve all source formats.
 
 ## Progress Modes & Termination Reason
 
@@ -162,14 +163,15 @@ and formatting tools, while the bare API defaults for those callbacks are `None`
 | Parameter | Default | Effect |
 |---|---|---|
 | `parameterize_constants` | `True` | Differing constant occurrences become helper parameters, subject to exact caller-column and compiler-pool checks. |
-| `parameterize_builtins` | `False` | Permit each caller's builtin lookup to reach a shared helper, normally as `lambda: len` or `lambda: print`. Without it, cross-module bare builtin reads decline (except `__debug__`); same-module reads stay bare. Lookup results remain deferred under the immutable-result requirement. Typed thunks retain the callable result, e.g. `Callable[[], Callable[..., int]]` for `lambda: len`. Blocks that differ in which builtin they use still decline. |
+| `parameterize_builtins` | `False` | Permit each caller's builtin lookup to reach a shared helper, normally as `lambda: len` or `lambda: print`. Without it, cross-module bare builtin reads decline (except `__debug__`); safe same-module reads stay bare. Blocks with module-resolved builtin reads decline when their module binds `__builtins__` or any nested scope declares it global (`builtin_mapping_replaced`), including with this option enabled. Lookup results remain deferred under the immutable-result requirement. Typed thunks retain the callable result, e.g. `Callable[[], Callable[..., int]]` for `lambda: len`. Blocks that differ in which builtin they use still decline. |
 | `cross_module_helpers` | `False` | Also share a helper between duplicates in different modules, importing it into the others (`--cross-module/--no-cross-module`). Off, only duplicates within a module are paired and no import of a project module that runs is written. |
 | `excluded_directories` | `()` | Names of directories or files to leave unchanged (`--exclude`), at any depth. The checks that read the whole program still read them, and one that does not parse is taken for no part of the program; the program's import model reads nothing in an excluded directory. |
 | `max_candidate_pairs` | `20_000_000` | Most candidate block pairs one analysis evaluates; past it the largest groups of similar blocks are left out with a warning (`--max-pairs`). |
 | `skip_trivial_helpers` | `True` | Apply optional forwarding and tiny straight-line interface-cost filters. `False` bypasses those output-quality filters, not semantic checks or unconditional no-logic refusals. See [the calibration](DECISIONS.md#2026-10-06-tiny-helpers-must-repay-their-interface-cost). |
 | `annotate_helpers` | `True` | Copy the annotations the call sites declare onto the helper, in code that uses annotations. |
 | `type_oracle` | `None` | A `TypeOracle` (`towel.type_inference`) that reveals types, decides subtyping, and checks generated code; without one no type inference or project type validation runs. Binding, lifetime and instantiation checks remain active; the CLI wires its oracle through `--types/--no-types`. |
-| `snippet_formatter` | `None` | Formats each inserted snippet; see below (`--format/--no-format`). |
+| `snippet_formatter` | `None` | One text-to-text formatter for every inserted snippet; mutually exclusive with `snippet_formatter_for_file`. |
+| `snippet_formatter_for_file` | `None` | Selects a text-to-text formatter (or `None`) from each modified file's original path. Use `formatter_factory_for_project` to retain per-file configuration; see below (`--format/--no-format`). |
 | `file_finisher` | `None` | Finishes each modified file, for example by sorting its imports: called with the file's path and new text, while the file at that path still holds the text the change started from. |
 | `incremental_global_passes` | `True` | Later global passes re-pair only rewritten files (exact). The rehearing that ends a run re-pairs everything regardless. |
 | `promote_equal_hof_literals` | `False` | Explicit API opt-in to expose equal literal arguments of higher-order factory calls as helper parameters after all sites pass its checks. The CLI has no corresponding flag. |
@@ -204,22 +206,32 @@ from the project's own configuration. Library callers can do the same:
 
 ```python
 from pathlib import Path
-from towel.formatting import formatter_for_project, import_sorter_for_project
+from towel.formatting import formatter_factory_for_project, file_finisher_for_project
 from towel.type_inference import type_oracle_for_project
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 root = Path("src/")
-formatter = formatter_for_project(root)   # ruff when configured, else Black
-sorter = import_sorter_for_project(root)  # ruff's I rules or isort, when the project uses them
-oracle = type_oracle_for_project(root)    # mypy, pyright, or both
+formatters = formatter_factory_for_project(root)
+finisher = file_finisher_for_project(root)  # added imports and configured Ruff lint
+oracle = type_oracle_for_project(root)      # mypy, pyright, or both
 
 engine = UnificationRefactorEngine(
-    snippet_formatter=formatter.tool, file_finisher=sorter.tool, type_oracle=oracle.tool
+    snippet_formatter_for_file=formatters,
+    file_finisher=finisher.tool,
+    type_oracle=oracle.tool,
 )
 ```
 
-Each result is a `ToolChoice`: its `tool` is None when nothing suitable is
-installed, and its `note` says what was chosen and names a configured tool
-that is not installed. The checker is the exception: a project that configures
+The formatter factory chooses a tool for each modified file using that
+file's effective configuration and exclusions. Its optional `report` callback
+receives each file's `ToolChoice`, including the selection note. This retains
+nested configurations in directory and cross-file runs. A library caller may
+instead provide one `snippet_formatter` for every snippet, but cannot supply
+both formatter options.
+
+The finisher and oracle return a `ToolChoice`: its `tool` is `None` when
+nothing suitable is installed, and its `note` explains the selection or missing
+tool. The checker is the exception: a project that configures
 mypy or pyright is checked by that checker or not at all, so
 `type_oracle_for_project` raises `CheckerNotInstalled` when a configured one is
 not installed, rather than substitute another checker or none (pass
@@ -230,6 +242,12 @@ and only the probes that infer a helper's types also check the bodies of
 functions without annotations, where mypy otherwise reveals nothing but `Any`.
 Without a formatter the rendering is `ast.unparse`'s: one
 statement per line, single-quoted strings, no blank-line conventions.
+
+Ruff resolves its effective policy from the nearest `.ruff.toml`, `ruff.toml`
+or Ruff-configured `pyproject.toml`, including `extend`, selected and ignored
+rules, exclusions and per-file settings. A transient import-policy query
+failure logs a warning and leaves imports as assembled for that attempt; a
+later call retries rather than caching the failure as a disabled policy.
 
 Each tool keeps to the files its own configuration selects. The formatter
 leaves the inserted code as rendered where the project excludes the path it
@@ -480,7 +498,7 @@ else:
 ## Examples
 
 The outputs below are what `towel dry` writes with the defaults and Black
-installed. Through the API without a `snippet_formatter`, strings come out
+installed. Through the API without either formatter option, strings come out
 single-quoted and the layout is `ast.unparse`'s.
 
 ### Example 1: Simple Validation Code

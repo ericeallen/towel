@@ -17,7 +17,8 @@
 By default cross-module builtin reads and mixed local/builtin sites decline.
 With the explicit opt-in, every original module lookup occurs at its original
 position via a caller-side thunk. A single leading lookup may be inlined when
-doing so preserves evaluation order. Same-module bare builtin reads stay bare.
+doing so preserves evaluation order and has an immutable result. Safe same-module
+builtin reads stay bare; definition-time mapping replacement declines separately.
 Reflection adds no checks, and blocks that differ in which builtin they use
 still decline.
 """
@@ -432,8 +433,18 @@ def test_the_flag_still_declines_blocks_that_differ_in_a_builtin(
     assert "builtin_argument" in declined
 
 
-def test_the_flag_reaches_the_engine_from_the_command_line(tmp_path: Path) -> None:
+def test_the_flag_reaches_the_engine_from_the_command_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     parser = _build_parser()
+    for command in ("dry", "preview"):
+        with pytest.raises(SystemExit) as exit_info:
+            parser.parse_args([command, "--help"])
+        assert exit_info.value.code == 0
+        help_text = " ".join(capsys.readouterr().out.split())
+        assert "if its module binds __builtins__" in help_text
+        assert "or a nested scope declares it global, even with this flag" in help_text
+        assert "an immutable lookup result" in help_text
     assert not DryOptions.from_namespace(parser.parse_args(["dry", "a", "b"])).parameterize_builtins
     dry = DryOptions.from_namespace(parser.parse_args(["dry", "a", "b", "--parameterize-builtins"]))
     assert dry.parameterize_builtins

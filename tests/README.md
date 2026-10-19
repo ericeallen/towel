@@ -27,7 +27,17 @@ functions and unittest methods need no signatures (the `tests.*` override in
 `pyproject.toml`), and every `# type: ignore` must be needed and name its
 error code.
 
-For the prepared 1.946 version, the new focused families cover exact constant
+For the prepared 1.947 version, the audit-repair families include
+`test_rename_audit_regressions.py`, `test_rename_unicode_identifiers.py` and
+`test_rename_consumer_scope.py` for stored binding identity, token spans and
+consumer boundaries; `test_pair_partner_eligibility.py` and
+`test_interval_prefix_facts.py` for bounded enumeration work;
+`test_definition_time_builtins.py` for captured builtin mappings; and
+`test_formatter_file_context.py`/`test_ruff_effective_configuration.py` for
+per-file policies and retry after unresolved Ruff queries. These supplement
+the adversarial renaming and robustness suites, not replace them.
+
+The 1.946 capability families continue to cover exact constant
 occurrences and literal pools, eligible thunk ordering and result lifetimes,
 fresh IF-local outputs and original-source certificates, Optional-aware caller
 contracts, captured comprehension cells, and bounded lexical/source caches.
@@ -35,9 +45,10 @@ Representative complete-CLI controls are `test_occurrence_constant_cli.py`,
 `test_thunk_ordering_cli.py`, `test_if_fresh_bindings_cli.py` and
 `test_comprehension_cell_capture_cli.py`. These coexist with the standing
 positive and hostile batteries; no reduced suite replaces the full check.
-See [the 1.946 overview](../docs/RELEASE_1_946.md) and
+See [the 1.947 overview](../docs/RELEASE_1_947.md), the
+[1.946 capability overview](../docs/RELEASE_1_946.md) and the
 [readiness report](../docs/PRODUCTION_READINESS.md) for the distinction between
-the completed development audit and the final versioned release campaign.
+source-bound development checks and each versioned release campaign.
 
 ## Test Structure
 

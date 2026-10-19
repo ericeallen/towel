@@ -1838,7 +1838,7 @@ lambda created after a replacement also captures the new mapping, so the
 existing ``--parameterize-builtins`` option cannot repair this difference.
 
 Decline a block reading module-resolved builtin spellings when its module
-binds ``__builtins__`` or any function declares it global. Apply this local
+binds ``__builtins__`` or any nested scope declares it global. Apply this local
 lexical guard to original pair sites and additional clustered sites, before
 constructing helper parameters or lambdas. Do not evaluate builtin names into
 new defaults or extend reflection scans. The conservative rule also declines

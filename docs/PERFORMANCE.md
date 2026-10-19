@@ -4,7 +4,7 @@
 
 Use this guide to estimate a run and understand the limits of the published measurements.
 
-The latest profile, on October 18 at `0b3494c`, measured Rich +7.6% versus
+The October 18 whole-command profile at `0b3494c` measured Rich +7.6% versus
 1.792 on a shared native macOS/Python 3.12 host. Click's noisier difference
 includes one more extraction. The maintainer subsequently requested scoped source-correspondence memoization
 in 1.946. It is now implemented; the earlier profile does not measure its benefit.
@@ -19,6 +19,7 @@ Click/Rich comparison retains its own 1.792 metadata, samples and limits.
 
 On this page:
 
+- [Partner eligibility and interval-analysis limits](#partner-eligibility-and-interval-analysis-limits)
 - [October 10 versioned warning-guard cohorts](#october-10-versioned-warning-guard-cohorts)
 - [October 10 Voluptuous regression investigation](#october-10-voluptuous-regression-investigation)
 - [October 10 backslash-parity repair](#october-10-backslash-parity-repair)
@@ -33,6 +34,27 @@ On this page:
 - [Why larger projects take longer](#why-larger-projects-take-longer)
 
 ## How long it takes
+
+### Partner eligibility and interval-analysis limits
+
+Before enumerating blocks, the engine identifies structural function partners.
+With the default within-module policy, a function alone in its module does no
+candidate-block enumeration, even during a directory run. Cross-module mode
+can make functions in different modules eligible, so a singleton file does
+not imply a fast exit there. Existing generated helpers remain potential
+partners. Incremental changed-file filtering still follows the global pair
+budget calculation, preserving which buckets and proposals it admits.
+
+Eligible functions share per-statement facts and per-suite prefix summaries
+for numeric signatures and exact negative guards. Caller-sensitive return
+coverage and narrowing checks retain their full proofs. Exact statement
+slices and statement-type tuples are still materialized: storage can grow
+with the total lengths of enumerated intervals. The pair budget limits evaluated
+pairs, not this earlier storage or overall memory. A budget warning counts
+blocks from functions that can pair; unrelated singleton blocks no longer
+inflate that count. These are bounded analysis improvements, not a
+whole-project timing or memory guarantee. The dated measurements below retain
+their original source and artifact identities.
 
 ### October 10 versioned warning-guard cohorts
 
@@ -105,7 +127,7 @@ warning-capable formatted strings continue to parse freshly. Cache capacity,
 source ownership, parser limits and diagnostic behavior remain unchanged.
 The complete Voluptuous and Click cohorts above now provide source-bound
 observations of repaired `a6dc6ed`. They do not turn the replay into a timing
-sample. Fresh Rich measurements and full release validation remain pending;
+sample. At that checkpoint, fresh Rich measurements and full release validation remained pending;
 no general restoration claim follows from the repair or these limited cohorts.
 
 ### October 10 backslash-parity repair
@@ -132,17 +154,17 @@ native Python 3.11–3.14** passed; these do not replace the integrated matrix.
 
 No complete-command timing result for this later repair is claimed. The
 completed Voluptuous/Click measurements above remain bound to pre-parity
-`a6dc6ed` and their exact wheels; no sample is relabelled. A new frozen source,
-fresh final release gates and source-bound performance assessments remain
-pending. Raw scoped evidence is retained in
+`a6dc6ed` and their exact wheels; no sample is relabelled. At that checkpoint,
+a new frozen source, fresh final release gates and source-bound performance
+assessments remained pending. Raw scoped evidence is retained in
 `20261010T161505Z-codex-1946-warning-guard-validation`, under
 `parity-controls-r01` and `parity-integration-r01`. Construction counts and
 finite native parity are not full cost attribution or release approval.
 
 ### October 10 Click and Rich assessment
 
-Upcoming version **1.946**, named for ln(7) ≈ 1.945910149, has no established
-performance-restoration claim. The completed eight-sample assessment compared
+At this October 10 checkpoint, the upcoming version was **1.946**, named for
+ln(7) ≈ 1.945910149; no performance-restoration claim was established. The completed eight-sample assessment compared
 `9d57b0d25f3ee743e0ce0035ed13df65b2344164` with released source
 `44d779563578a32e24f8213fba96f43c6698ab43`. Each arm used a fresh offline wheel
 built from its named source; both wheels declared **1.792**. The retained
@@ -347,7 +369,7 @@ formatting and automatic worker selection enabled:
 
 This is a historical development result. The repaired candidate's completed
 October 5 result above superseded it at that preparation checkpoint; neither
-measures the later released 1.792 source or upcoming 1.946 artifacts.
+measures the later released 1.792 source or the 1.946 artifacts prepared afterward.
 
 | Complete command settings | Published 1.772 | Candidate `000d751` |
 | --- | ---: | ---: |

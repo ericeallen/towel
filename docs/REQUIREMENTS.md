@@ -4,15 +4,11 @@
 
 Support requirements are separate from resource measurements. The measurements below describe specific workloads and machines, not minimum hardware.
 
-Version **1.946** is prepared for publication with scoped source-proof reuse
-and fresh supported-interpreter validation requested.
-[Current publication status](RELEASING.md#1946-publication-checkpoint-october-18-2026)
-remains unverified. The October 10 audit and performance evidence
-bind source `9d57b0d`, whose tested package metadata was still 1.792. Python
-3.11–3.13 remains the supported range; these dated checks do not establish a
-completed interpreter matrix for versioned 1.946 artifacts. See
-[readiness](PRODUCTION_READINESS.md#1946-preparation-and-audited-source-october-10-2026)
-and the [release procedure](RELEASING.md).
+Version **1.947** is being prepared with the post-1.946 audit repairs.
+[Readiness](PRODUCTION_READINESS.md) and the [release procedure](RELEASING.md)
+record the exact source, artifact and validation status. Python 3.11–3.13
+remains the supported range. Dated audit and performance observations retain
+their original identities; they do not establish results for a later artifact.
 
 On this page:
 

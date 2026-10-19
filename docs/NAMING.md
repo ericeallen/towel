@@ -43,8 +43,8 @@ towel rename-helpers path/to/project --list --json > helpers.json
 # Each key must be an inventory key; its value is the proposed new name.
 
 # Preview the batch, apply it, then run the project's tests.
-towel rename-helpers path/to/project --rename-file renames.json --preview
-towel rename-helpers path/to/project --rename-file renames.json
+towel rename-helpers path/to/project --complete-scope --rename-file renames.json --preview
+towel rename-helpers path/to/project --complete-scope --rename-file renames.json
 ```
 
 Review the proposed names before applying. The shared `towel-rename` skill in
@@ -91,6 +91,19 @@ the exact scope of that protection.
 An older class-level helper without leading double underscores is still
 renamed through its bare key, `helper`, together with its attribute references.
 
+Keys identify Python's normalized bindings. For example, a definition spelled
+`__extracted_func_𝟘` has the inventory name `__extracted_func_0`; use the
+inventory key to rename its definition and resolved references consistently.
+A destination must already be NFKC-normalized: use `K`, not `K`. Collision
+checks use normalized names and Python's class-private stored names. Edits
+use the original source-token spans and preserve untouched source bytes,
+including encoding markers and newline conventions.
+
+A private spelling inside a nested class does not necessarily reference an
+outer parameter of that spelling: Python first applies that class's mangling.
+The renamer resolves that stored binding before editing, and refuses a batch
+if the new name would capture a previously distinct class-private reference.
+
 ## Definition selection and consumer scope
 
 Use the project root as the target, and path-qualified keys or `--file` to
@@ -105,7 +118,8 @@ Project discovery uses the nearest packaging marker (`pyproject.toml`,
 `setup.cfg`, or a non-package `setup.py`) or regular-package ancestry. A
 namespace directory alone cannot establish its surrounding project. For an
 unmarked project, select its complete source root and explicitly declare the
-scope:
+scope. The main workflow above includes this declaration; it can be omitted
+when project discovery already establishes the complete root:
 
 ```bash
 towel rename-helpers path/to/project --complete-scope --rename-file renames.json

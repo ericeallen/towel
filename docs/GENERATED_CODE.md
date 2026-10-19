@@ -132,7 +132,9 @@ it, such as `# fmt: off`, `# ruff: disable`, `# isort: off` or
 
 With the optional formatting tools installed, inserted code follows the
 project's formatter configuration: `ruff format` when the project configures
-ruff, otherwise Black, using the declared line length. Added imports are
+ruff, otherwise Black, using each modified file's effective configuration,
+exclusions and declared line length. Nested configurations are resolved for
+the helper destination and every rewritten call site separately. Added imports are
 sorted with ruff's import rules or isort when the project uses them. Install
 these tools with `pip install "code-towel[format]"`; `--no-format` disables this
 formatting and import sorting. Each tool respects the files its configuration excludes.
@@ -226,8 +228,15 @@ another caller's behalf, apart from the interpreter constant `__debug__`.
 `lambda: len`; each original use then reads the caller's current binding.
 The first-effect, single-use proof also requires an immutable result at every
 caller; an unknown builtin lookup result remains deferred.
-Same-module builtin reads stay bare. The option does not permit blocks that
-differ in which builtin they use.
+Safe same-module builtin reads stay bare. CPython captures a function's
+builtin mapping when the function is defined, so moving a read into an earlier
+helper can change which mapping it uses. A block with module-resolved builtin
+reads therefore declines if its module binds `__builtins__` or any nested scope
+declares that name global (`builtin_mapping_replaced`). This conservative rule
+also covers replacement before all definitions and conditional or aliased
+replacements. The option does not override it. Mutating a shared mapping,
+locally shadowed names and blocks without builtin reads retain their ordinary
+rules. Blocks that differ in which builtin they use still decline.
 
 ## Fresh locals inside an IF
 

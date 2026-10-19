@@ -158,14 +158,19 @@ towel dry path/to/project path/to/cleaned --no-interactive --no-types --no-forma
   [tiny-helper interface policy](GENERATED_CODE.md#choosing-a-worthwhile-helper)
   also considers the complete signature, call wrappers and sharing sites.
 - `--max-pairs` caps the candidate pairs considered in one analysis; groups
-  omitted to meet the cap are reported.
+  omitted to meet the cap are reported. It does not bound block materialization,
+  peak memory or elapsed time. Functions with no structural partner skip block
+  enumeration; long functions that can pair still incur interval-analysis cost.
 - `TOWEL_WORKERS=1` keeps analysis on one worker; `TOWEL_WORKERS=N` caps it at N.
 - `--parameterize-builtins` permits caller-side builtin lookup thunks across
-  modules instead of the default refusal of cross-module bare builtin reads. See [generated-code rules](GENERATED_CODE.md#arguments-and-evaluation).
+  modules instead of the default refusal of cross-module bare builtin reads.
+  It does not override `builtin_mapping_replaced`: a block reading a builtin
+  still declines when its module can replace the mapping captured at definition.
+  See [generated-code rules](GENERATED_CODE.md#arguments-and-evaluation).
 
-Formatting follows the project configuration when the relevant tools are
-installed. The [generated-code guide](GENERATED_CODE.md#comments-and-formatting)
-explains how comments, directives and import order are preserved.
+Formatting follows each modified file's effective configuration when the
+relevant tools are installed, including nested configuration and exclusions.
+The [generated-code guide](GENERATED_CODE.md#comments-and-formatting) explains how comments, directives and import order are preserved.
 The [typing guide](TYPING.md) explains checker selection and typed declines.
 
 Progress is written to stderr so stdout can be redirected. Optional `tqdm`

@@ -87,8 +87,8 @@ contains the adopted result.
 towel rename-helpers path/to/project --list --json > helpers.json
 # Have a coding assistant read helpers.json and write renames.json,
 # then apply the batch (it aborts whole if any name is unsafe):
-towel rename-helpers path/to/project --rename-file renames.json --preview
-towel rename-helpers path/to/project --rename-file renames.json
+towel rename-helpers path/to/project --complete-scope --rename-file renames.json --preview
+towel rename-helpers path/to/project --complete-scope --rename-file renames.json
 ```
 
 Select the complete project root; use path-qualified keys to choose individual
