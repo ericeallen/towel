@@ -843,19 +843,30 @@ def _type_oracle(project_path: "Path") -> Optional["TypeOracle"]:
     return choice.tool
 
 
-def _generated_code_formatter(project_path: "Path") -> Optional[Callable[[str], str]]:
-    """The formatter the project's configuration calls for, or None with a note."""
-    from towel.formatting import formatter_for_project
+def _generated_code_formatter(
+    project_path: "Path",
+) -> Callable[[str], Optional[Callable[[str], str]]]:
+    """Select each modified file's formatter, reporting unavailable project tools."""
+    from towel.formatting import SnippetFormatter, formatter_factory_for_project
+    from towel.project_tools import ToolChoice
 
-    choice = formatter_for_project(project_path)
-    if choice.tool is None:
-        print(
-            f"Note: {choice.note}, so generated code is inserted unformatted. "
-            'Install the format extra (pip install "code-towel[format]") to format it.'
-        )
-    elif "not installed" in choice.note:
-        print(f"Note: {choice.note}; formatting generated code with {choice.note.split(';')[0]}.")
-    return choice.tool
+    reported: set[str] = set()
+
+    def report(choice: ToolChoice[SnippetFormatter]) -> None:
+        if choice.note in reported:
+            return
+        reported.add(choice.note)
+        if choice.tool is None:
+            print(
+                f"Note: {choice.note}, so generated code is inserted unformatted. "
+                'Install the format extra (pip install "code-towel[format]") to format it.'
+            )
+        elif "not installed" in choice.note:
+            print(
+                f"Note: {choice.note}; formatting generated code with {choice.note.split(';')[0]}."
+            )
+
+    return formatter_factory_for_project(project_path, report)
 
 
 def _file_finisher(
@@ -1097,7 +1108,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
             parameterize_constants=True,
             excluded_directories=options.exclude,
             cross_module_helpers=options.cross_module,
-            snippet_formatter=(
+            snippet_formatter_for_file=(
                 _generated_code_formatter(Path(input_path)) if options.format else None
             ),
             file_finisher=_file_finisher(Path(input_path), sort_imports=options.format),

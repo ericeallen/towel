@@ -272,6 +272,9 @@ class EngineState:
     snippet_formatter: Optional[Callable[[str], str]]
     """Formats each inserted snippet, or None to insert the rendering as is."""
 
+    snippet_formatter_for_file: Optional[Callable[[str], Optional[Callable[[str], str]]]]
+    """Selects a formatter using the original source path of each modified file."""
+
     file_finisher: Optional[Callable[[str, str], str]]
     """Finishes each modified file (imports sorted), or None."""
 

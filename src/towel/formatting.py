@@ -81,6 +81,9 @@ formatting_repeatability = _formatting_repeatability
 SnippetFormatter = Callable[[str], str]
 """Maps one generated snippet (a definition or a statement) to its formatted text."""
 
+SnippetFormatterFactory = Callable[[str], Optional[SnippetFormatter]]
+"""Selects a snippet formatter for the actual source path of one modified file."""
+
 FileFinisher = Callable[[str, str], str]
 """Maps ``(path, source)`` of a modified file to its finished text, e.g. with imports sorted.
 
@@ -704,6 +707,37 @@ def formatter_for_project(path: Path) -> ToolChoice[SnippetFormatter]:
         return _black_for_project(path, "Black")
     except ImportError:
         return ToolChoice(None, "Black is not installed")
+
+
+def formatter_factory_for_project(
+    path: Path, report: Optional[Callable[[ToolChoice[SnippetFormatter]], None]] = None
+) -> SnippetFormatterFactory:
+    """Choose each modified file's formatter, retaining its tools for this run.
+
+    The caller passes original project paths, including when materializing a
+    staged copy. Built-in repeatability is updated with every selected tool;
+    an unavailable or custom child cannot certify cached annotation refusals.
+    """
+    selected: dict[str, Optional[SnippetFormatter]] = {}
+    root = _root(path)
+
+    def choose(file_path: str) -> Optional[SnippetFormatter]:
+        if file_path not in selected:
+            choice = formatter_for_project(Path(file_path))
+            selected[file_path] = choice.tool
+            if report is not None:
+                report(choice)
+            if choice.tool is not None and formatting_repeatability(choice.tool) is None:
+                _invalidate_repeatability(context)
+            _propagate_repeatability(choose, base, *selected.values())
+        return selected[file_path]
+
+    def base(source: str) -> str:
+        return source
+
+    context = FormattingRepeatability(("per-file-format",), (root,))
+    _register_repeatable(base, context)
+    return _propagate_repeatability(choose, base)
 
 
 def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:

@@ -979,7 +979,11 @@ class HelperAnnotationWiring(EngineState):
             and flags["check_untyped_defs"] == policy.untyped_bodies_checked
             and all(
                 callback is None or formatting_repeatability(callback) is not None
-                for callback in (self.snippet_formatter, self.file_finisher)
+                for callback in (
+                    self.snippet_formatter,
+                    self.snippet_formatter_for_file,
+                    self.file_finisher,
+                )
             )
         )
 

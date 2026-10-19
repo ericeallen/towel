@@ -338,6 +338,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         annotate_helpers: bool = True,
         type_oracle: Optional[TypeOracle] = None,
         snippet_formatter: Optional[Callable[[str], str]] = None,
+        snippet_formatter_for_file: Optional[
+            Callable[[str], Optional[Callable[[str], str]]]
+        ] = None,
         file_finisher: Optional[Callable[[str, str], str]] = None,
         incremental_global_passes: bool = True,
         max_candidate_pairs: int = DEFAULT_MAX_CANDIDATE_PAIRS,
@@ -434,6 +437,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 call statement from ``ast.unparse`` output to the text that is
                 inserted, for example Black (see ``towel.formatting``). None
                 (default) inserts the ``ast.unparse`` text as is.
+            snippet_formatter_for_file: Selects a formatter from each modified
+                file's original project path. This preserves per-file settings
+                in directory and cross-module runs. Mutually exclusive with
+                snippet_formatter; None uses the existing single formatter.
             file_finisher: Maps ``(path, source)`` of each modified file to its
                 final text, for example with imports sorted the way the project
                 sorts them (see ``towel.formatting.import_sorter_for_project``).
@@ -472,7 +479,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._type_names_any = {}
         self._type_unlooked = {}
         self._type_unreadable = frozenset()
+        if snippet_formatter is not None and snippet_formatter_for_file is not None:
+            raise ValueError("Supply either snippet_formatter or snippet_formatter_for_file")
         self.snippet_formatter = snippet_formatter
+        self.snippet_formatter_for_file = snippet_formatter_for_file
         self.file_finisher = file_finisher
         self.incremental_global_passes = incremental_global_passes
         # Directory names left out of directory mode, such as ``tests`` when a

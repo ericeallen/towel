@@ -319,8 +319,9 @@ def execution_context(engine: "EngineState") -> Optional[str]:
     if type(engine) is not UnificationRefactorEngine or type(engine._settings) is not Settings:
         return None
     snippet = renderer_context(engine.snippet_formatter, engine._analysis_paths)
+    per_file = renderer_context(engine.snippet_formatter_for_file, engine._analysis_paths)
     finishing = renderer_context(engine.file_finisher, engine._analysis_paths)
-    if snippet is None or finishing is None:
+    if snippet is None or per_file is None or finishing is None:
         return None
     if any(
         name in vars(engine)
@@ -347,6 +348,7 @@ def execution_context(engine: "EngineState") -> Optional[str]:
                     json.dumps(sorted(python_tool_environment().items())).encode()
                 ).hexdigest(),
                 snippet,
+                per_file,
                 finishing,
                 tuple((name, getattr(engine, name)) for name in _EXECUTION_OPTIONS),
                 tuple(

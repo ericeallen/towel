@@ -185,13 +185,18 @@ class Materialization(
         finally:
             self._helper_name_counters = counters
 
-    def _render(self, node: ast.AST, prefix: str = "", *, preserve_ast: bool = False) -> str:
-        """The source text inserted for a generated node, formatted when a formatter is set."""
+    def _render(
+        self, node: ast.AST, file_path: str, prefix: str = "", *, preserve_ast: bool = False
+    ) -> str:
+        """Render a generated node using its destination file's formatting policy."""
         source = ast.unparse(node)
-        return self._format_snippet(source, prefix, preserve_ast=preserve_ast)
+        return self._format_snippet(source, file_path, prefix, preserve_ast=preserve_ast)
 
-    def _format_snippet(self, source: str, prefix: str, *, preserve_ast: bool) -> str:
-        formatter = self.snippet_formatter
+    def _format_snippet(
+        self, source: str, file_path: str, prefix: str, *, preserve_ast: bool
+    ) -> str:
+        factory = self.snippet_formatter_for_file
+        formatter = factory(self._origin_of(file_path)) if factory else self.snippet_formatter
         if formatter is None:
             return source
         if preserve_ast and formatting_repeatability(formatter) is None:
@@ -209,12 +214,12 @@ class Materialization(
         """
         preserve_ast = any(r.argument_handoff is not None for r in proposal.replacements)
         if not proposal.helper_comments.carried:
-            return self._render(node, prefix, preserve_ast=preserve_ast)
+            return self._render(node, proposal.file_path, prefix, preserve_ast=preserve_ast)
         helper = node.body[-1] if isinstance(node, ast.Module) else node
         woven = weave_comments(node, helper, proposal.helper_comments)
-        if self.snippet_formatter is None:
-            return woven.text
-        formatted = self._format_snippet(woven.text, prefix, preserve_ast=preserve_ast)
+        formatted = self._format_snippet(
+            woven.text, proposal.file_path, prefix, preserve_ast=preserve_ast
+        )
         return formatted if woven.keeps_directives(formatted) else woven.text
 
     def _materialize_refactoring(self, proposal: RefactoringProposal) -> Dict[str, str]:
@@ -656,6 +661,7 @@ class Materialization(
             indentation = first[: len(first) - len(first.lstrip())]
             replacement_code = self._render(
                 self._call_site(proposal, naming, repl),
+                file_path,
                 indentation,
                 preserve_ast=any(r.argument_handoff is not None for r in proposal.replacements),
             )
@@ -800,7 +806,10 @@ class Materialization(
                 declarations = ast.Module(
                     body=list(proposal.helper_type_declarations), type_ignores=[]
                 )
-                declaration_lines = [line + "\n" for line in self._render(declarations).split("\n")]
+                declaration_lines = [
+                    line + "\n"
+                    for line in self._render(declarations, proposal.file_path).split("\n")
+                ]
                 lines[declared_at:declared_at] = _padded(lines, declared_at, declaration_lines)
             source = "".join(lines)
             insert_line = early_helper_line(lines, self._parse_source(source))
@@ -886,7 +895,7 @@ class Materialization(
         if position > class_start:
             raise RefactoringError("A method type declaration depends on a binding after its host")
         module = ast.Module(body=list(proposal.helper_type_declarations), type_ignores=[])
-        rendered = [line + "\n" for line in self._render(module).split("\n")]
+        rendered = [line + "\n" for line in self._render(module, proposal.file_path).split("\n")]
         lines[position:position] = _padded(lines, position, rendered)
 
     @staticmethod
