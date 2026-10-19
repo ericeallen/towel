@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import sys
 from itertools import chain
 from typing import (
     Callable,
@@ -69,7 +70,8 @@ from .lexical_scopes import (
 from .function_scope import function_names
 from .models import FunctionNode
 from .module_bindings import global_bindings
-from .bounded_cache import BoundedCache
+from .bounded_cache import BoundedCache, memoizing
+from ..analysis_sources import ParserConfiguration, parser_configuration, parsing_is_pure
 from .scope_analyzer import ScopeAnalyzer, _postpones_annotations, type_parameter_names
 from .parameters import parameter_names
 from .statement_facts import (
@@ -1201,6 +1203,48 @@ def _lexical_name_scopes(
 _MODULE_PARENTS: "WeakKeyDictionary[ast.AST, Dict[ast.AST, ast.AST]]" = WeakKeyDictionary()
 
 
+@dataclass(frozen=True)
+class _BuiltinMappingSource:
+    source: str
+    configuration: ParserConfiguration
+    may_replace: bool
+
+
+_BUILTIN_MAPPING_SOURCE_BYTES = 8 * 1024 * 1024
+_BUILTIN_MAPPING_SOURCES: "WeakKeyDictionary[ScopeAnalyzer, _BuiltinMappingSource]" = (
+    WeakKeyDictionary()
+)
+
+
+def _module_may_replace_builtins(analyzer: ScopeAnalyzer, source: str) -> bool:
+    """One warning-free source fact per live analyzer, with an 8 MiB source budget.
+
+    This predicate depends on source and parser limits, not the analyzer's AST.
+    Its weak owner only bounds lifetime. Warning-capable sources still take
+    the native parsing path on every call; no AST or block fact is retained.
+    """
+    use_memo = memoizing() and type(source) is str and type(analyzer) is ScopeAnalyzer
+    configuration = parser_configuration()
+    if use_memo:
+        known = _BUILTIN_MAPPING_SOURCES.get(analyzer)
+        if known is not None and known.source == source and known.configuration == configuration:
+            return known.may_replace
+        _BUILTIN_MAPPING_SOURCES.pop(analyzer, None)
+    bindings = global_bindings(source)
+    may_replace = bindings is None or (
+        "__builtins__" in bindings.bindings or "__builtins__" in bindings.rebound_by_global
+    )
+    if use_memo:
+        # Count the source object and a possible separately cached UTF-8 buffer,
+        # as the lexical warning cache does; over-budget sources stay unretained.
+        storage = sys.getsizeof(source) + (0 if source.isascii() else 4 * len(source) + 1)
+        if storage <= _BUILTIN_MAPPING_SOURCE_BYTES and parsing_is_pure(source):
+            _BUILTIN_MAPPING_SOURCES[analyzer] = _BuiltinMappingSource(
+                source, configuration, may_replace
+            )
+    return may_replace
+
+
 def builtin_mapping_reads(
     function: FunctionNode, nodes: Sequence[ast.stmt], analyzer: ScopeAnalyzer, source: str
 ) -> FrozenSet[str]:
@@ -1217,10 +1261,7 @@ def builtin_mapping_reads(
         if source.strip()
         else (ast.unparse(module) if isinstance(module, ast.Module) else "")
     )
-    bindings = global_bindings(known_source) if known_source else None
-    if bindings is not None and not (
-        "__builtins__" in bindings.bindings or "__builtins__" in bindings.rebound_by_global
-    ):
+    if known_source and not _module_may_replace_builtins(analyzer, known_source):
         return frozenset()
     names = frozenset(name for node in nodes for name in loaded_names(node))
     return module_resolved_names(function, analyzer, names & BUILTIN_NAMES, exact=True) - {
