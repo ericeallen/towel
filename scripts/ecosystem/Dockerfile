@@ -18,8 +18,9 @@ FROM python:3.12-slim
 
 # pyright runs on Node. Without a node on PATH its wrapper downloads one into
 # HOME on first use, and the harness gives every worker a scratch HOME.
+# Towel's watchdog suite observes actual child processes with ps from procps.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git build-essential curl ca-certificates pkg-config nodejs \
+        git build-essential curl ca-certificates pkg-config nodejs procps \
         libxml2-dev libxslt1-dev zlib1g-dev libjpeg-dev libfreetype6-dev \
     && rm -rf /var/lib/apt/lists/*
 
