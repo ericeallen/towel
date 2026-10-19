@@ -177,6 +177,10 @@ class _Partners:
             },
         )
 
+    def participates(self, index: int) -> bool:
+        """Whether another function can pair with this function, before incremental filtering."""
+        return self.count > 1 if self.by_module is None else len(self.by_module[index][0]) > 1
+
     def after(self, index: int) -> Sequence[int]:
         """The functions after ``index``, in order, that it is paired with."""
         if self.by_module is None:
@@ -1093,12 +1097,16 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # forks, so a configuration that cannot be read is reported once.
         for path in sorted({entry.file_path for entry in all_functions}):
             self._coverage_exclusion(path)
-        blocks = [self._signed_blocks(entry.node) for entry in all_functions]
-        buckets = [_bucketed(function_blocks) for function_blocks in blocks]
-        # Without cross-module helpers a function pairs only with the others
-        # of its own module, so no pair across modules is formed, counted
-        # against the budget, or evaluated.
+        # Eligibility precedes block materialization: a module singleton has
+        # no partner unless cross-module helpers are enabled. Earlier partners
+        # count too, including generated helpers from previous passes. Keep
+        # incremental filtering below the budget calculation, as before.
         partners = _Partners.of(all_functions, self.cross_module_helpers)
+        blocks = [
+            self._signed_blocks(entry.node) if partners.participates(index) else []
+            for index, entry in enumerate(all_functions)
+        ]
+        buckets = [_bucketed(function_blocks) for function_blocks in blocks]
         excluded = _buckets_over_budget(buckets, self.max_candidate_pairs, partners)
         if excluded:
             buckets = [bucket.without(excluded) for bucket in buckets]
