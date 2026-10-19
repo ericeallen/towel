@@ -311,6 +311,7 @@ class RejectReason(StrEnum):
 
     BARE_NAME_DIFFERS_BY_MODULE = "bare_name_differs_by_module"
     BUILTIN_ARGUMENT = "builtin_argument"
+    BUILTIN_MAPPING_REPLACED = "builtin_mapping_replaced"
     BUILTIN_MAY_DIFFER_BY_MODULE = "builtin_may_differ_by_module"
     CLOSURE_CROSSES_BLOCK_BOUNDARY = "closure_crosses_block_boundary"
     CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"

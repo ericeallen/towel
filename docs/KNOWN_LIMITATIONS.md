@@ -205,12 +205,23 @@ describe belong to that version.
   can assign `mod.len`, and a partially initialized star import can expose a
   different binding. The September audit's builtin-cycle counterexample
   therefore receives no cross-module extraction under the default policy.
-  Same-module builtin reads remain bare and preserve their original lookup.
+  Same-module builtin reads remain bare when the module does not replace
+  ``__builtins__``. CPython captures that mapping when it creates a function;
+  a helper created at another point can capture a different mapping. Blocks
+  that read module-resolved builtin spellings therefore decline when their
+  module binds ``__builtins__`` or any function declares it global
+  (`builtin_mapping_replaced`). This conservative rule includes replacement
+  before all definitions, conditional assignments and aliased mappings.
+  Mutating a shared mapping does not replace it. Blocks without builtin reads
+  and locally shadowed builtin names retain their ordinary extraction rules.
 
   `--parameterize-builtins` (`parameterize_builtins=True`) explicitly permits
   each caller's binding to reach a shared helper. Module-resolved names use
   lookup thunks such as `lambda: len` and `lambda: print`, preserving repeated
-  reads and intervening ordinary assignments. First-effect, single-use timing
+  reads and intervening ordinary assignments. The option does not override
+  ``builtin_mapping_replaced``: a lookup lambda created during a later call
+  also captures the then-current mapping, so it cannot reproduce an older
+  caller's captured mapping. First-effect, single-use timing
   is insufficient to inline an unknown lookup result. Local bindings retain their
   ordinary parameter behavior. The option does not permit blocks that differ
   in which builtin they use; the builtin-argument and other binding checks

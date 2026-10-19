@@ -68,6 +68,7 @@ from .lexical_scopes import (
 )
 from .function_scope import function_names
 from .models import FunctionNode
+from .module_bindings import global_bindings
 from .bounded_cache import BoundedCache
 from .scope_analyzer import ScopeAnalyzer, _postpones_annotations, type_parameter_names
 from .parameters import parameter_names
@@ -1198,6 +1199,33 @@ def _lexical_name_scopes(
 
 
 _MODULE_PARENTS: "WeakKeyDictionary[ast.AST, Dict[ast.AST, ast.AST]]" = WeakKeyDictionary()
+
+
+def builtin_mapping_reads(
+    function: FunctionNode, nodes: Sequence[ast.stmt], analyzer: ScopeAnalyzer, source: str
+) -> FrozenSet[str]:
+    """Builtin lookups that cannot move when this module may replace ``__builtins__``.
+
+    CPython captures the mapping when it creates a function. A helper or a
+    caller-side lookup lambda created later can capture another mapping.
+    Mutating the shared mapping does not replace it, and local shadowing of
+    a builtin keeps its ordinary parameter behavior.
+    """
+    module = analyzer.analyzed_tree
+    known_source = (
+        source
+        if source.strip()
+        else (ast.unparse(module) if isinstance(module, ast.Module) else "")
+    )
+    bindings = global_bindings(known_source) if known_source else None
+    if bindings is not None and not (
+        "__builtins__" in bindings.bindings or "__builtins__" in bindings.rebound_by_global
+    ):
+        return frozenset()
+    names = frozenset(name for node in nodes for name in loaded_names(node))
+    return module_resolved_names(function, analyzer, names & BUILTIN_NAMES, exact=True) - {
+        "__debug__"
+    }
 
 
 def module_resolved_names(

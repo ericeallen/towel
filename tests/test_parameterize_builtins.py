@@ -286,6 +286,8 @@ class _Evidence(TypedDict, total=False):
 
 # Each form of evidence that a builtin may differ between the modules, which
 # declines the pair by default and makes the builtin a parameter with the flag.
+# The October 19 definition-time rule additionally declines __builtins__
+# replacement: even a freshly created lookup lambda can capture another mapping.
 EVIDENCE: Dict[str, _Evidence] = {
     "the_borrower_binds_it": {"exports_prelude": "def len(item):\n    return 7"},
     "the_host_binds_it": {"reports_prelude": "def len(item):\n    return 7"},
@@ -344,7 +346,13 @@ def test_across_modules_evidence_declines_or_passes_the_builtin(
     _write(before, files)
     _write(after, files)
     applied, declined = _refactor(after / "proj" / "pkg", parameterize_builtins=flag)
-    if flag:
+    if case == "rebound_builtins_namespace":
+        # Conservative even before all definitions; do not generalize the
+        # useful thunk policy to captured mappings without a proof of identity.
+        assert applied == 0
+        assert "builtin_mapping_replaced" in declined
+        assert _python_files(after / "proj") == _python_files(before / "proj")
+    elif flag:
         assert applied > 0
         assert any(
             isinstance(node, ast.Lambda)

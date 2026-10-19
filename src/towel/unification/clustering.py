@@ -63,6 +63,7 @@ from .semantic_safety import (
     captured_comprehension_changes_enclosing_cell,
     available_argument_names,
     builtins_passed,
+    builtin_mapping_reads,
     free_variable_positions,
     function_scope_names,
     thunk_meets_an_inlined_comprehension,
@@ -139,6 +140,18 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         memoizes it on exactly those.
         """
         pair = template.pair
+        mapping_reads = builtin_mapping_reads(
+            candidate.function, candidate.nodes, candidate.analyzer, pair.source1
+        )
+        if mapping_reads:
+            self._debug_decline_site(
+                RejectReason.BUILTIN_MAPPING_REPLACED,
+                pair,
+                candidate.function,
+                candidate.nodes,
+                sorted(mapping_reads),
+            )
+            return None
         if not self._declares_alike(template, candidate):
             return None
         cluster_renames: List[Dict[str, str]] = [{}, {}]

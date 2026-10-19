@@ -186,7 +186,7 @@ IN_MODULE = {
     "rebound_builtins_namespace": (
         "import builtins\n__builtins__ = dict(vars(builtins), len=lambda item: 7)",
         "",
-        "builtin_may_differ_by_module",
+        "builtin_mapping_replaced",
     ),
 }
 

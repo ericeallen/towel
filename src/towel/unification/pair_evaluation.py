@@ -83,6 +83,7 @@ from .semantic_safety import (
     captured_comprehension_changes_enclosing_cell,
     available_argument_names,
     builtins_passed,
+    builtin_mapping_reads,
     function_scope_names,
     module_resolved_names,
     defer_impure_parameters,
@@ -709,7 +710,8 @@ class PairEvaluation(
         With the opt-in every builtin lookup stays at its caller via a thunk.
         ``__debug__``, which the compiler
         replaces by a constant, is neither. Both are empty when every site is
-        in the host. None when the helper's names cannot be listed, or when
+        in the host: pair and cluster admission already guard definition-time
+        ``__builtins__`` replacement. None when the helper's names cannot be listed, or when
         one it reads is declared ``global`` and so cannot be a parameter.
         """
         host = placement.home.file_path
@@ -731,10 +733,18 @@ class PairEvaluation(
         """Reject a pair whose blocks cannot move at all; otherwise resolve their context."""
         ctx = self._resolve_pair_context(pair, functions)
         blocks = (
-            (pair.block1_nodes, ctx.func1, ctx.scope_analyzer, ctx.site1),
-            (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, ctx.site2),
+            (pair.block1_nodes, ctx.func1, ctx.scope_analyzer, ctx.site1, pair.source1),
+            (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, ctx.site2, pair.source2),
         )
-        for nodes, function, analyzer, site in blocks:
+        for nodes, function, analyzer, site, source in blocks:
+            mapping_reads = builtin_mapping_reads(function, nodes, analyzer, source)
+            if mapping_reads:
+                self._debug_reject(
+                    RejectReason.BUILTIN_MAPPING_REPLACED,
+                    pair,
+                    detail=f"__builtins__ replacement changes captured lookups: {sorted(mapping_reads)}",
+                )
+                return None
             if self._block_rejected(
                 captured_comprehension_changes_enclosing_cell, nodes, function, analyzer, site=site
             ):

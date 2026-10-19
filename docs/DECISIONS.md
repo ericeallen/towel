@@ -1827,3 +1827,26 @@ Existing caller-mutation tests are retained unchanged; new tests cover scoped re
 source/configuration boundaries, diagnostics, cleanup and independent verification.
 This amendment supersedes the deferral, not the other correctness obligations.
 The estimated speedup above remains unmeasured.
+
+
+## 2026-10-19: Definition-time builtin mappings belong to the original caller
+
+Ordinary assignment to module-level ``__builtins__`` can cause functions in
+one module to capture different builtin mappings. Moving their builtin reads
+to an earlier helper changes ordinary call results. A caller-side lookup
+lambda created after a replacement also captures the new mapping, so the
+existing ``--parameterize-builtins`` option cannot repair this difference.
+
+Decline a block reading module-resolved builtin spellings when its module
+binds ``__builtins__`` or any function declares it global. Apply this local
+lexical guard to original pair sites and additional clustered sites, before
+constructing helper parameters or lambdas. Do not evaluate builtin names into
+new defaults or extend reflection scans. The conservative rule also declines
+replacement before all definitions; it does not try to establish equal mapping
+identities across execution paths. Shared-mapping mutation, no-builtin blocks
+and locally shadowed builtin names retain useful extraction. Existing opt-in
+lookup thunks keep their timing and behavior for other cases.
+
+*Status: implemented with fresh-process mapping-replacement, shared-mutation,
+method, cross-module, CLI and fixed-point regressions. Final integrated gates
+remain separately required.*
