@@ -532,8 +532,8 @@ def project_configures_ruff(path: Path) -> bool:
     return _ruff_configuration(path) is not None
 
 
-def _ruff_import_rules(command: List[str], path: Path, configuration: Path) -> bool:
-    """Read enabled rules from Ruff's supported effective-settings interface.
+def _ruff_import_rules(command: List[str], path: Path, configuration: Path) -> Optional[bool]:
+    """Read enabled rules, or return None when their effective policy is unresolved.
 
     --show-settings requires an existing file. For a directory or a not-yet
     existing module, an explicit configuration and Towel's own existing file
@@ -560,7 +560,7 @@ def _ruff_import_rules(command: List[str], path: Path, configuration: Path) -> b
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         LOG.warning("Could not resolve Ruff import sorting for %s: %s", path, error)
-        return False
+        return None
     match = re.search(
         r"^linter\.rules\.enabled = \[\n(.*?)^\]",
         result.stdout,
@@ -572,7 +572,7 @@ def _ruff_import_rules(command: List[str], path: Path, configuration: Path) -> b
             path,
             result.stderr.strip() or "unrecognized effective-settings output",
         )
-        return False
+        return None
     return re.search(r"\(I[0-9]+\)", match.group(1)) is not None
 
 
@@ -586,7 +586,7 @@ def project_configures_ruff_import_sorting(path: Path) -> bool:
     if configuration is None:
         return False
     command = _ruff_executable()
-    return command is not None and _ruff_import_rules(command, path, configuration)
+    return command is not None and _ruff_import_rules(command, path, configuration) is True
 
 
 def project_configures_isort(path: Path) -> bool:
@@ -812,6 +812,16 @@ def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
     """
     if path.is_dir():
         return _import_sorter_for_directory(path)
+    selection = _import_sorter_for_file(path)
+    return (
+        selection
+        if selection is not None
+        else ToolChoice(None, "Ruff import policy is unresolved; imports left as assembled")
+    )
+
+
+def _import_sorter_for_file(path: Path) -> Optional[ToolChoice[FileFinisher]]:
+    """Resolve one file's sorting policy; None is a failed query, never a disabled policy."""
     configuration = _ruff_configuration(path)
     if configuration is not None:
         command = _ruff_executable()
@@ -819,7 +829,10 @@ def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
             return ToolChoice(
                 None, "ruff is configured but not installed; imports left as assembled"
             )
-        if _ruff_import_rules(command, path, configuration):
+        imports_enabled = _ruff_import_rules(command, path, configuration)
+        if imports_enabled is None:
+            return None
+        if imports_enabled:
             note = "ruff import sorting"
             return ToolChoice(
                 sorted_where_already_sorted(_ruff_sorter(command, _root(path)), note),
@@ -842,7 +855,10 @@ def _import_sorter_for_directory(path: Path) -> ToolChoice[FileFinisher]:
     def finish(file_path: str, source: str) -> str:
         target = str(_counterpart(root, Path(file_path)))
         if target not in selected:
-            choice = import_sorter_for_project(Path(target))
+            choice = _import_sorter_for_file(Path(target))
+            if choice is None:
+                _invalidate_repeatability(context)
+                return source
             selected[target] = choice.tool
             if "not installed" in choice.note:
                 LOG.warning("%s: %s", target, choice.note)

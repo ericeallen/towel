@@ -118,3 +118,51 @@ def test_standalone_only_project_and_nested_non_ruff_pyproject_preserve_parent_p
     assert _finish(module) == SORTED
     formatter = formatter_for_project(module).tool
     assert formatter is not None and formatter('value = "string"') == "value = 'string'"
+
+
+@pytest.mark.parametrize("failure", ["exit", "timeout", "invalid-settings", "os-error"])
+def test_directory_sorting_recovers_after_unresolved_ruff_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    failure: str,
+) -> None:
+    import logging
+    import subprocess
+
+    from towel import formatting
+
+    pytest.importorskip("ruff")
+    (tmp_path / "ruff.toml").write_text('[lint]\nselect=["I"]\n')
+    module = tmp_path / "m.py"
+    module.write_text(ORIGINAL)
+    command = formatting._ruff_executable()
+    assert command is not None
+    monkeypatch.setattr(formatting, "_ruff_executable", lambda: command)
+    sorter = import_sorter_for_project(tmp_path).tool
+    assert sorter is not None
+
+    def unavailable(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(cmd="ruff", timeout=1.0)
+        if failure == "os-error":
+            raise OSError("temporary configuration query failure")
+        return subprocess.CompletedProcess(
+            command,
+            1 if failure == "exit" else 0,
+            "unrecognized settings" if failure == "invalid-settings" else "",
+            "temporary configuration query failure" if failure == "exit" else "",
+        )
+
+    with monkeypatch.context() as transient:
+        transient.setattr(subprocess, "run", unavailable)
+        with caplog.at_level(logging.WARNING, logger="towel"):
+            assert sorter(str(module), ASSEMBLED) == ASSEMBLED
+    assert "Could not resolve Ruff import sorting" in caplog.text
+    if failure == "timeout":
+        assert "timed out" in caplog.text
+    # An unsuccessful measurement cannot certify a cached policy. The next
+    # attempt must resolve it again and actually sort the newly added import.
+    assert sorter(str(module), ASSEMBLED) == SORTED
+    assert formatting.formatting_repeatability(sorter) is None
+    assert module.read_text() == ORIGINAL
