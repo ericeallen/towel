@@ -31,7 +31,11 @@ from typing import Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence,
 
 from .bounded_cache import BoundedCache
 from .statement_facts import imported_binding_name
-from .visitors import body_shares_header_line
+from .visitors import (
+    annotation_expressions,
+    body_shares_header_line,
+    evaluated_before_definition,
+)
 from ..analysis_sources import ParserConfiguration, parser_configuration, parsing_is_pure
 from ..source_text import source_lines
 
@@ -335,8 +339,11 @@ class _Collector:
             self._bind(stmt.name, certain, class_qualname=qualname)
             return
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for decorator in stmt.decorator_list:
-                self._expression(decorator, certain)
+            for expression in (
+                *evaluated_before_definition(stmt),
+                *annotation_expressions(stmt),
+            ):
+                self._expression(expression, certain)
             self._nested_scope(stmt.body, class_stack)
             self._bind(stmt.name, certain)
             return
@@ -393,7 +400,12 @@ class _Collector:
             if isinstance(node.ctx, (ast.Store, ast.Del)):
                 self._bind(node.id, certain)
             return
-        if isinstance(node, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if isinstance(node, ast.Lambda):
+            # Defaults execute here; the body executes in the lambda's own scope.
+            for expression in evaluated_before_definition(node):
+                self._expression(expression, certain)
+            return
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             return  # Whatever their bodies bind belongs to a scope of their own.
         if isinstance(node, (ast.MatchAs, ast.MatchStar)):
             if node.name:
