@@ -21,7 +21,10 @@ and renamed with its references in that class's body, to a name that is
 class-private too; an older class-level helper defined once is renamed with
 every attribute reference; a helper's parameter is renamed within the
 helper's own scope. Only statically resolved names are supported: renaming
-needs every ordinary consumer in the selected source tree. An escaping
+checks ordinary consumers across the enclosing project, refusing any edit
+outside the selected source tree. Without a project marker or regular-package
+ancestry, library callers must supply a complete source root as the target
+(a standalone file declares its containing directory). An escaping
 module object is rejected because its attribute uses cannot be resolved.
 Reflective lookup is outside the rename contract.
 """
@@ -39,7 +42,7 @@ from typing import Iterable, Literal, NamedTuple, Sequence, cast
 
 from .changes import ChangePlan
 from .import_model import ImportModel, build_import_model
-from .project_layout import find_project_root
+from .project_layout import find_project_root, is_package_dir
 from .source_text import decode_source
 from .source_files import python_sources
 from .unification.class_private import (
@@ -473,6 +476,22 @@ class _ParameterSpec(NamedTuple):
         return qualified, self.parameter
 
 
+def inferred_rename_root(target: Path) -> Path | None:
+    """An enclosing consumer scope established by metadata or regular-package ancestry.
+
+    A bare namespace directory does not establish its surrounding project.
+    CLI callers require an explicit completeness declaration in that case;
+    library callers retain the documented complete-target precondition.
+    """
+    root = find_project_root(target)
+    if any((root / name).exists() for name in ("pyproject.toml", "setup.cfg")) or (
+        (root / "setup.py").exists() and not is_package_dir(root)
+    ):
+        return root
+    directory = target if target.is_dir() else target.parent
+    return root if is_package_dir(directory) else None
+
+
 def plan_renames(
     target: Path, specifications: Sequence[tuple[str, str, Path | None]]
 ) -> tuple[ChangePlan, int]:
@@ -488,20 +507,32 @@ def plan_renames(
     (:func:`_validate_private_renames`); an older class-level helper is
     renamed together with every attribute reference to it, which is sound
     only because generated helper names are unique across the project.
+
+    The target selects definitions and writable files; the enclosing project
+    supplies read-only consumer analysis. An edit outside the target refuses
+    the whole batch. Without a discoverable project anchor, the caller declares
+    the target (or a file target's parent) to be the complete consumer scope.
     """
     for old, new, _ in specifications:
         _validate_names((*old.split("."), new))
-    modules = _load_rename_modules(target)
-    private, specifications = _class_private_specifications(modules, specifications)
+    selected_paths = frozenset(path.resolve() for path in python_sources(target))
+    root = find_project_root(target)
+    modules = _load_rename_modules(root)
+    definition_modules = [module for module in modules if module.path in selected_paths]
+    private, specifications = _class_private_specifications(definition_modules, specifications)
     function_specifications, parameter_specifications = _split_specifications(specifications)
     parameter_specifications += [
         _ParameterSpec(helper.name, parameter, new, helper.module.path, helper)
         for helper, parameter, new in private
         if parameter is not None
     ]
-    parameter_calls = _ParameterCallsites(modules, parameter_specifications)
+    parameter_calls = _ParameterCallsites(
+        modules, parameter_specifications, definition_modules=definition_modules
+    )
     by_name = {module.name: module for module in modules}
-    selected, method_specifications = _select_definitions(modules, function_specifications)
+    selected, method_specifications = _select_definitions(
+        definition_modules, function_specifications
+    )
     _extend_to_generated_importers(modules, selected)
     _refuse_unresolved_helper_imports(modules, selected)
     method_renames = _validate_method_renames(modules, method_specifications)
@@ -523,10 +554,17 @@ def plan_renames(
         edits = _plan_module(module, selected, by_name)
         _plan_method_renames(module, method_renames, edits)
         _plan_private_renames(module, private_renames, edits)
-        parameters_found |= _plan_parameter_renames(module, parameter_specifications, edits)
+        if module.path in selected_paths:
+            parameters_found |= _plan_parameter_renames(module, parameter_specifications, edits)
         parameter_calls.plan(module, edits)
         content = edits.render()
         if content != module.raw:
+            if module.path not in selected_paths:
+                raise ValueError(
+                    f"Rename consumer {module.path} lies outside the selected target {target}. "
+                    f"Rerun at project root {root} with a file-qualified mapping key or --file "
+                    "to select the definition. No files were changed."
+                )
             before[str(module.path)] = module.original
             after[str(module.path)] = content.decode("utf-8")
             count += len(edits.changes)
@@ -1085,6 +1123,8 @@ class _ParameterCallsites:
         self,
         modules: Sequence[_Module],
         specifications: Sequence[_ParameterSpec],
+        *,
+        definition_modules: Sequence[_Module],
     ) -> None:
         self.symbols: dict[tuple[_Scope, str], tuple[_ParameterRename, ...]] = {}
         self.methods: dict[str, tuple[_ParameterRename, ...]] = {}
@@ -1098,7 +1138,7 @@ class _ParameterCallsites:
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     stored = self._stored(node.name, owners.get(node))
                     definitions[stored] = definitions.get(stored, 0) + 1
-        for module in modules:
+        for module in definition_modules:
             owners = self.owners[module.name]
             for node in ast.walk(module.tree):
                 if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):

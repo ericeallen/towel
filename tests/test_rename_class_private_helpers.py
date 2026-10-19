@@ -360,6 +360,7 @@ def test_the_cli_renames_a_class_private_helper_from_its_inventory_key(tmp_path:
         "towel.cli",
         "rename-helpers",
         str(root),
+        "--complete-scope",
         "--rename-file",
         str(mapping),
         "--json",

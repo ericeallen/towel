@@ -50,7 +50,9 @@ from towel.unification.substitution import Substitution
 def test_rename_helpers_failure_exits_nonzero_with_error_on_stderr(tmp_path: Path) -> None:
     """A rename file that cannot be opened is an OSError the dispatcher reports and exits on."""
     (tmp_path / "helpers.py").write_text(HELPER)
-    result = invoke(["rename-helpers", str(tmp_path), "--rename-file", str(tmp_path)])
+    result = invoke(
+        ["rename-helpers", str(tmp_path), "--complete-scope", "--rename-file", str(tmp_path)]
+    )
     assert result.status == 1
     assert result.stderr.startswith("Error: ")
     assert (tmp_path / "helpers.py").read_text() == HELPER
@@ -60,7 +62,14 @@ def test_rename_file_json_contract_on_success_and_rejection(tmp_path: Path) -> N
     source = tmp_path / "helpers.py"
     source.write_text(HELPER)
     mapping = tmp_path / "renames.json"
-    command = ["rename-helpers", str(tmp_path), "--rename-file", str(mapping), "--json"]
+    command = [
+        "rename-helpers",
+        str(tmp_path),
+        "--complete-scope",
+        "--rename-file",
+        str(mapping),
+        "--json",
+    ]
 
     mapping.write_text(json.dumps({"__extracted_func_0": "double_value"}))
     dry = invoke([*command, "--preview"])

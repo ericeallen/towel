@@ -13,6 +13,7 @@ On this page:
 - [Export, propose and apply names](#export-propose-and-apply-names)
 - [What the inventory contains](#what-the-inventory-contains)
 - [Rename keys and class-private names](#rename-keys-and-class-private-names)
+- [Definition selection and consumer scope](#definition-selection-and-consumer-scope)
 - [Checks and other options](#checks-and-other-options)
 
 ## Review and adopt the extraction
@@ -89,6 +90,39 @@ the exact scope of that protection.
 
 An older class-level helper without leading double underscores is still
 renamed through its bare key, `helper`, together with its attribute references.
+
+## Definition selection and consumer scope
+
+Use the project root as the target, and path-qualified keys or `--file` to
+select definitions. Selection does not narrow consumer analysis: ordinary
+imports, re-exports, qualified references and supported keyword callers are
+resolved across the enclosing project. A narrow target refuses before any
+write if an outside consumer needs an edit. The diagnostic names that file
+and the root at which to rerun. Stable user aliases can keep an outside
+consumer unchanged when the selected package preserves that alias.
+
+Project discovery uses the nearest packaging marker (`pyproject.toml`,
+`setup.cfg`, or a non-package `setup.py`) or regular-package ancestry. A
+namespace directory alone cannot establish its surrounding project. For an
+unmarked project, select its complete source root and explicitly declare the
+scope:
+
+```bash
+towel rename-helpers path/to/project --complete-scope --rename-file renames.json
+```
+
+The flag declares that the target contains every ordinary consumer; it does
+not override a discovered outside consumer or permit writes outside the
+target. Listing needs no declaration. Library callers of `plan_renames`
+retain the complete-target precondition when discovery has no anchor; for a
+standalone file its containing directory is the supported consumer scope.
+
+Discovery excludes symlinks, hidden/tool directories, marked environments and
+checker probes under the shared source-discovery policy. An unreadable
+included file or subtree aborts the batch. Consumers outside this supported
+project scope, including installed external clients, require the caller's
+review; a local scan cannot establish their completeness. Reflective lookup
+remains outside the rename contract.
 
 ## Checks and other options
 

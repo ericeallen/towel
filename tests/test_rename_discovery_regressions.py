@@ -32,6 +32,9 @@ HELPER = "def __extracted_func_0(value):\n    return value + 1\n"
 
 
 def _mapping(root: Path, renames: dict[str, str]) -> Path:
+    # The fixture explicitly declares its project boundary; selection tests
+    # then exercise discovery rather than the unmarked-scope precondition.
+    (root / "pyproject.toml").write_text("")
     path = root / "renames.json"
     path.write_text(json.dumps(renames))
     return path

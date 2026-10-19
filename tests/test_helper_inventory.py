@@ -111,6 +111,7 @@ def test_cli_rename_file_reports_structured_result_and_rejection(tmp_path: Path)
         "towel.cli",
         "rename-helpers",
         str(target),
+        "--complete-scope",
         "--rename-file",
         str(mapping),
         "--json",

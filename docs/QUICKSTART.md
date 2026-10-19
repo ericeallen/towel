@@ -91,6 +91,10 @@ towel rename-helpers path/to/project --rename-file renames.json --preview
 towel rename-helpers path/to/project --rename-file renames.json
 ```
 
+Select the complete project root; use path-qualified keys to choose individual
+definitions. Unmarked projects require `--complete-scope` to declare that root
+contains every ordinary consumer. See [rename scope](NAMING.md#definition-selection-and-consumer-scope).
+
 See the [naming guide](NAMING.md) for inventory keys, class-private names
 and the full review workflow.
 

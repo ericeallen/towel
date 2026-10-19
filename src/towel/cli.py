@@ -525,31 +525,44 @@ The tool works in two modes:
 
 2. FILE MODE (--rename-file):
    Provide a JSON file with old_name -> new_name mappings.
-   The tool applies these renamings across your entire codebase.
+   Select the project root so ordinary consumers are included. Use path-qualified
+   keys or --file to select definitions. A narrow target is refused if a consumer
+   outside it needs an edit; files outside the target are never changed.
+   For a project without metadata or regular-package ancestry, --complete-scope
+   explicitly declares that the target contains every ordinary consumer.
         """,
         epilog="""
 Examples:
   # Interactive mode: generate LLM prompt and apply suggestions
-  towel rename-helpers src/
+  towel rename-helpers path/to/project
 
   # List all extracted helpers
-  towel rename-helpers src/ --list
+  towel rename-helpers path/to/project --list
 
   # Apply renamings from a JSON file
-  towel rename-helpers src/ --rename-file renames.json
+  towel rename-helpers path/to/project --rename-file renames.json
 
   # Show the renames without writing files
-  towel rename-helpers src/ --rename-file renames.json --preview
+  towel rename-helpers path/to/project --rename-file renames.json --preview
 
   # Specify specific files or functions
-  towel rename-helpers src/ --file mymodule.py
-  towel rename-helpers src/ --function __extracted_func_7
+  towel rename-helpers path/to/project --file src/mymodule.py
+  towel rename-helpers path/to/project --function __extracted_func_7
+
+  # An unmarked project: explicitly declare its complete consumer scope
+  towel rename-helpers path/to/project --complete-scope --rename-file renames.json
         """,
     )
 
     parser.add_argument(
         "target",
-        help="Directory containing generated extracted helper functions",
+        help="Project directory containing selected definitions and their ordinary consumers",
+    )
+
+    parser.add_argument(
+        "--complete-scope",
+        action="store_true",
+        help="Declare target is the complete consumer root when project metadata is absent",
     )
 
     parser.add_argument(
@@ -1008,6 +1021,7 @@ class RenameOptions:
     json: bool
     preview: bool
     llm: str
+    complete_scope: bool
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "RenameOptions":
@@ -1020,6 +1034,7 @@ class RenameOptions:
             json=bool(args.json),
             preview=bool(args.preview),
             llm=str(args.llm),
+            complete_scope=bool(args.complete_scope),
         )
 
 
@@ -1781,6 +1796,20 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
                     print("      ...")
             print()
         return
+
+    from towel.renaming import inferred_rename_root
+
+    if not options.complete_scope and inferred_rename_root(target) is None:
+        reason = (
+            f"Cannot establish the consumer scope around {target}. Select the whole project "
+            "and pass --complete-scope to declare that target contains every ordinary consumer. "
+            "Use a file-qualified mapping key or --file to select definitions within that root."
+        )
+        if options.json:
+            print(json.dumps({"applied": False, "dry_run": options.preview, "error": reason}))
+        else:
+            print(f"Error: {reason}")
+        sys.exit(2)
 
     if options.rename_file:
         _apply_rename_file(

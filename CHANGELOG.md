@@ -11,9 +11,23 @@ mnemonics with PEP 440 ordering; see the
 ## [Unreleased]
 
 - Parameter renaming follows Python's class-private binding identity through
-  nested classes, methods and closures, preserving unrelated private references.
+  nested classes, methods and closures, preserving unrelated private references
+  and rejecting destinations that would capture a mangled binding.
 - Helper renaming matches Unicode identifiers by Python's normalized identity
   and edits their original token spans, including definitions and keyword calls.
+- Functions without a structural partner skip block enumeration. Eligible
+  intervals reuse per-suite prefix facts instead of repeatedly scanning the
+  same statements; pair budgets and ordering are preserved. Singleton blocks
+  no longer inflate the budget warning's block count.
+- Extractions that read builtin spellings decline when the module may replace
+  `__builtins__`, preserving the mapping captured at function creation even
+  when `--parameterize-builtins` is requested.
+- Generated code uses each modified file's formatter and configuration. Ruff
+  import sorting recognizes standalone, extended and nested configurations
+  through native effective settings and honors disabled/per-file rules.
+- Rename definition selection is separate from project-wide consumer analysis.
+  Batches needing edits outside the target refuse atomically; unmarked CLI
+  projects require an explicit `--complete-scope` declaration.
 
 ## [1.946]
 

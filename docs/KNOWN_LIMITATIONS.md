@@ -24,7 +24,18 @@ they are not detected to refuse or warn on a program. Read this together with
 - [Body instrumentation](#decorators-that-compile-or-instrument-a-body)
 - [Conservative rejections](#conservative-rejections)
 - [Unreadable programs](#a-program-towel-cannot-read-whole)
+- [Rename consumer scope](#rename-consumer-scope)
 - [Performance](#performance) · [Resources and platform](#resources-and-platform) · [Measurement environment](#measurement-environment)
+
+## Rename consumer scope
+
+Renaming analyzes ordinary consumers across its discovered enclosing project,
+and refuses edits needed outside the selected target. An unmarked CLI target
+requires an explicit `--complete-scope` declaration; library callers retain
+the complete-target precondition where project discovery has no anchor.
+Excluded sources and external installed consumers are outside that scope;
+unreadable included sources refuse the batch. See [definition selection and
+consumer scope](NAMING.md#definition-selection-and-consumer-scope).
 
 ## Measurement environment
 
