@@ -48,6 +48,7 @@ from .unification.class_private import (
     mangled,
     mangling_classes,
     mangling_prefix,
+    rewritten_identifiers,
 )
 from .unification.models import GENERATED_HELPER_NAME, FunctionNode
 from .unification.statement_facts import import_binding_names, imported_binding_name
@@ -817,10 +818,18 @@ def _select_definitions(
     return selected, method_specifications
 
 
-def _identifiers_in(node: ast.AST) -> set[str]:
-    """Every identifier a subtree binds, references, or names as an attribute."""
+def _identifiers_in(
+    node: ast.AST, *, private_classes: dict[ast.AST, ast.ClassDef | None] | None = None
+) -> set[str]:
+    """Every raw identifier of a subtree, with compiler identities when requested."""
     names: set[str] = set()
     for child in ast.walk(node):
+        if private_classes is not None:
+            owner = private_classes.get(child)
+            names.update(
+                mangled(name, owner.name if owner is not None else None)
+                for name in rewritten_identifiers(child)
+            )
         if isinstance(child, ast.Name):
             names.add(child.id)
         elif isinstance(child, ast.arg):
@@ -984,6 +993,7 @@ def _plan_parameter_renames(
     """
     found: set[tuple[str, str]] = set()
     scopes = module.scopes
+    private_classes = mangling_classes(module.tree) if specifications else None
     for spec in specifications:
         helper, parameter, new, file_filter = (
             spec.helper,
@@ -1013,7 +1023,9 @@ def _plan_parameter_renames(
             found.add(spec.key)
             if parameter == new:
                 continue
-            if new in _identifiers_in(function) or _private_in_class(scopes.nodes[function], new):
+            if new in _identifiers_in(
+                function, private_classes=private_classes
+            ) or _private_in_class(scopes.nodes[function], new):
                 raise ValueError(
                     f"Parameter rename would collide with {new} in {module.path}:{helper}"
                 )

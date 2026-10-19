@@ -358,3 +358,61 @@ def test_an_output_whose_imports_name_its_package_is_refused_not_half_renamed(
     )
     with pytest.raises(ValueError, match="Adopt the output"):
         plan_renames(candidate, [("__extracted_func_0", "increment", candidate / "b.py")])
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "class C:\n    answer = __param_0\nreturn C.answer, __param_0",
+        "class C:\n    def answer(self):\n        return __param_0\n"
+        "return C().answer(), __param_0",
+        "class Outer:\n    class C:\n        answer = __param_0\n"
+        "return Outer.C.answer, __param_0",
+        "class _C:\n    answer = __param_0\nreturn _C.answer, __param_0",
+    ],
+    ids=["class-body", "nested-method", "nested-class", "leading-underscore-class"],
+)
+def test_parameter_destination_cannot_capture_an_existing_private_reference(
+    tmp_path: Path, body: str
+) -> None:
+    """A destination must not turn an unrelated mangled read into a closure read."""
+    source = (
+        "_C__param_0 = 100\n"
+        "def __extracted_func_0(__param_0):\n"
+        + textwrap.indent(body, "    ")
+        + "\nprint(__extracted_func_0(3))\n"
+    )
+    safe = "def __extracted_func_1(__param_0):\n    return __param_0 + 1\n"
+    _project(tmp_path, {"main.py": source, "safe.py": safe})
+    before = {path: path.read_bytes() for path in tmp_path.glob("*.py")}
+    assert _run(tmp_path) == "(100, 3)\n"
+    with pytest.raises(ValueError, match="collide"):
+        plan_renames(
+            tmp_path,
+            [
+                ("__extracted_func_1.__param_0", "value", tmp_path / "safe.py"),
+                ("__extracted_func_0.__param_0", "_C__param_0", tmp_path / "main.py"),
+            ],
+        )
+    assert {path: path.read_bytes() for path in before} == before
+    assert _run(tmp_path) == "(100, 3)\n"
+
+
+def test_parameter_destination_may_use_an_unrelated_mangling_prefix(tmp_path: Path) -> None:
+    """An explicit stored-name spelling remains useful when it captures no read."""
+    source = (
+        "_C__param_0 = 100\n"
+        "def __extracted_func_0(__param_0):\n"
+        "    class C:\n"
+        "        answer = __param_0\n"
+        "    return C.answer, __param_0\n"
+        "print(__extracted_func_0(3))\n"
+    )
+    _project(tmp_path, {"main.py": source})
+    before = _run(tmp_path)
+    plan, count = plan_renames(
+        tmp_path, [("__extracted_func_0.__param_0", "_Different__param_0", None)]
+    )
+    assert count > 0
+    apply_changes(plan)
+    assert _run(tmp_path) == before == "(100, 3)\n"
