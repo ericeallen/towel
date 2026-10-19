@@ -231,10 +231,15 @@ caller; an unknown builtin lookup result remains deferred.
 Safe same-module builtin reads stay bare. CPython captures a function's
 builtin mapping when the function is defined, so moving a read into an earlier
 helper can change which mapping it uses. A block with module-resolved builtin
-reads therefore declines if its module binds `__builtins__` or any nested scope
-declares that name global (`builtin_mapping_replaced`). This conservative rule
+reads therefore declines if its module binds `__builtins__`, contains a wildcard
+import, or any nested scope declares that name global (`builtin_mapping_replaced`).
+A wildcard provider can export `__builtins__` through an explicit `__all__`,
+so its underscore prefix does not establish safety. This conservative rule
 also covers replacement before all definitions and conditional or aliased
-replacements. The option does not override it. Mutating a shared mapping,
+replacements. Enclosing-scope binding analysis includes `def`/`async def`
+defaults and annotation expressions, and recursively follows lambda defaults;
+an uncalled lambda body does not by itself bind the module name.
+The option does not override it. Mutating a shared mapping,
 locally shadowed names and blocks without builtin reads retain their ordinary
 rules. Blocks that differ in which builtin they use still decline.
 

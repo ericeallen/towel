@@ -1838,15 +1838,24 @@ lambda created after a replacement also captures the new mapping, so the
 existing ``--parameterize-builtins`` option cannot repair this difference.
 
 Decline a block reading module-resolved builtin spellings when its module
-binds ``__builtins__`` or any nested scope declares it global. Apply this local
-lexical guard to original pair sites and additional clustered sites, before
-constructing helper parameters or lambdas. Do not evaluate builtin names into
-new defaults or extend reflection scans. The conservative rule also declines
+binds ``__builtins__``, contains a wildcard import, or any nested scope declares
+that name global. A wildcard provider's explicit ``__all__`` can export
+``__builtins__``; importing it is ordinary interface behavior within the
+preservation contract. Treat wildcard imports conservatively without assuming
+that underscore-prefixed names are excluded or executing a provider to prove its
+exports. Module binding facts include callable defaults and annotation
+expressions in the definition's enclosing scope. Follow positional and
+keyword-only defaults of `def`, `async def` and lambda expressions, including
+nested lambda defaults, while leaving an uncalled lambda body in its own
+scope. This repairs the shared module-binding collector without adding a
+separate cache. Apply the lexical guard to original pair sites and additional
+clustered sites before constructing helper parameters or lambdas. Do not
+evaluate builtin names into new defaults or extend reflection scans. The conservative rule also declines
 replacement before all definitions; it does not try to establish equal mapping
 identities across execution paths. Shared-mapping mutation, no-builtin blocks
 and locally shadowed builtin names retain useful extraction. Existing opt-in
 lookup thunks keep their timing and behavior for other cases.
 
-*Status: implemented with fresh-process mapping-replacement, shared-mutation,
-method, cross-module, CLI and fixed-point regressions. Final integrated gates
-remain separately required.*
+*Status: implemented with fresh-process mapping-replacement, wildcard-provider,
+shared-mutation, method, cross-module, CLI and fixed-point regressions. Final
+integrated gates remain separately required.*

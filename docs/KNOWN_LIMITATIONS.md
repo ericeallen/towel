@@ -220,9 +220,15 @@ describe belong to that version.
   ``__builtins__``. CPython captures that mapping when it creates a function;
   a helper created at another point can capture a different mapping. Blocks
   that read module-resolved builtin spellings therefore decline when their
-  module binds ``__builtins__`` or any nested scope declares it global
-  (`builtin_mapping_replaced`). This conservative rule includes replacement
-  before all definitions, conditional assignments and aliased mappings.
+  module binds ``__builtins__``, contains a wildcard import, or any nested
+  scope declares that name global (`builtin_mapping_replaced`). A wildcard
+  provider can export ``__builtins__`` through ``__all__``; the guard does not
+  assume that underscore-prefixed names are absent. This conservative rule
+  includes replacement before all definitions, conditional assignments and
+  aliased mappings. Binding analysis visits `def`/`async def` defaults and
+  annotation expressions in their enclosing scope, and follows lambda defaults
+  recursively. An assignment in an uncalled lambda body does not by itself
+  bind the module name.
   Mutating a shared mapping does not replace it. Blocks without builtin reads
   and locally shadowed builtin names retain their ordinary extraction rules.
 
@@ -1750,8 +1756,9 @@ the proposals it built and did not apply, by reason:
   module could resolve differently. `builtin_may_differ_by_module`: the
   helper would read bare a builtin in a different module's namespace (*Module names stay module names*).
   `builtin_mapping_replaced`: a block reads a module-resolved builtin while
-  its module binds `__builtins__` or a nested scope declares that name global;
-  the helper or lookup lambda could capture a different mapping. The
+  its module binds `__builtins__`, contains a wildcard import that may bind
+  that name, or a nested scope declares it global; the helper or lookup lambda
+  could capture a different mapping. The
   `--parameterize-builtins` flag does not bypass this conservative refusal.
 - The proposal. `duplicate_proposal`: the helper, home and sites repeat an
   earlier pair's, found through another pair of the same family.

@@ -29,8 +29,14 @@ findings:
 3. **Definition-time builtin lookup.** An extraction reading builtin spellings
    declines when module-level replacement of `__builtins__` prevents proving
    that the helper and original functions use the same mapping. The conservative
-   guard also applies with `--parameterize-builtins`. Its source-only verdict
-   is reused within an analysis for warning-free inputs, avoiding repeated
+   guard includes module-level wildcard imports: a provider's `__all__` can
+   export `__builtins__`. Enclosing-scope binding analysis includes callable
+   defaults and annotation expressions, recursively following lambda defaults
+   without treating uncalled lambda bodies as module assignments.
+   The guard also applies with `--parameterize-builtins`;
+   locally shadowed names and blocks without builtin reads retain their ordinary
+   rules. Its source-only verdict is reused within an analysis for warning-free
+   inputs, avoiding repeated
    large-module lexical scans while retaining fresh handling of warning-capable
    sources. This reuse does not retain AST or block facts or change the
    preservation contract. See the [performance limits](PERFORMANCE.md#1947-large-module-builtin-guard-repair).

@@ -165,8 +165,10 @@ towel dry path/to/project path/to/cleaned --no-interactive --no-types --no-forma
 - `--parameterize-builtins` permits caller-side builtin lookup thunks across
   modules instead of the default refusal of cross-module bare builtin reads.
   It does not override `builtin_mapping_replaced`: a block reading a builtin
-  still declines when its module can replace the mapping captured at definition.
-  See [generated-code rules](GENERATED_CODE.md#arguments-and-evaluation).
+  still declines when its module can replace the mapping captured at definition,
+  including through a wildcard import whose provider may export `__builtins__` in `__all__`.
+  Locally shadowed names and blocks without builtin reads retain their ordinary
+  rules. See [generated-code rules](GENERATED_CODE.md#arguments-and-evaluation).
 
 Formatting follows each modified file's effective configuration when the
 relevant tools are installed, including nested configuration and exclusions.

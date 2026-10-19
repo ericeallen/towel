@@ -26,8 +26,13 @@ release validation and publication; no publication date is assigned here.
   same statements; pair budgets and ordering are preserved. Singleton blocks
   no longer inflate the budget warning's block count.
 - Extractions that read builtin spellings decline when the module may replace
-  `__builtins__`, preserving the mapping captured at function creation even
-  when `--parameterize-builtins` is requested. Warning-free inputs reuse the
+  `__builtins__`, including through a wildcard import whose provider may export
+  that name in `__all__`. Module binding analysis includes callable defaults
+  and annotation expressions in their enclosing scope, recursively following
+  lambda defaults while leaving uncalled lambda bodies in their own scope.
+  The mapping captured at function creation is preserved even with
+  `--parameterize-builtins`; locally shadowed names and blocks without
+  builtin reads retain their ordinary rules. Warning-free inputs reuse the
   source-only guard verdict within an analysis, avoiding repeated lexical
   scans of large unchanged modules while preserving native warning replay
   and parser-limit checks.

@@ -65,9 +65,11 @@ the candidate's completed corpus output byte for byte. These observations
 identify the repeated-input cause; differing profiling and concurrent-work
 conditions do not establish an unprofiled speed ratio.
 
-The repair retains one immutable builtin-mapping verdict per live scope
-analyzer, keyed by the exact source and parser configuration. Only sources
-proven warning-free by the native parsing policy are admitted. Each analyzer
+The repaired predicate also treats module-level wildcard imports as potential
+replacement of `__builtins__`: a provider can export that name through `__all__`.
+It retains one immutable builtin-mapping verdict per live scope analyzer, keyed
+by the exact source and parser configuration. Only sources proven warning-free
+by the native parsing policy are admitted. Each analyzer
 retains at most one source with an 8 MiB storage budget, including a conservative
 reserve for a separately cached UTF-8 representation; weak ownership bounds
 its lifetime. This is a per-analyzer bound, not a process-wide memory bound.
