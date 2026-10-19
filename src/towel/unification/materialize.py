@@ -1040,7 +1040,7 @@ class Materialization(
             taken,
             typing_names,
             proposal.type_checking_imports,
-            self._find_import_position(lines),
+            self._find_import_position(lines, typing_only=True),
             joins_guard=_guard_body_start(lines) is not None,
         )
         proposal.extracted_function = respelled_helper(
@@ -1063,7 +1063,7 @@ class Materialization(
             words_of("".join(lines)),
             (),
             ((module_name, name),),
-            self._find_import_position(lines),
+            self._find_import_position(lines, typing_only=True),
             joins_guard=_guard_body_start(lines) is not None,
         )
         self._write_annotation_imports(file_path, lines, plan)
@@ -1082,7 +1082,9 @@ class Materialization(
         against the same AST proof used by import and effect analysis.
         """
         if plan.typing_import is not None:
-            lines.insert(self._find_import_position(lines), plan.typing_import + "\n")
+            lines.insert(
+                self._find_import_position(lines, typing_only=True), plan.typing_import + "\n"
+            )
         if not plan.guarded:
             return
         existing = _guard_body_start(lines)
@@ -1092,7 +1094,7 @@ class Materialization(
             return
         if plan.guard_test is None:
             raise RefactoringError("Type-only imports need a guard, and none was planned")
-        at = self._find_import_position(lines)
+        at = self._find_import_position(lines, typing_only=True)
         lines[at:at] = [
             "\n",
             self._guard_header(file_path, plan.guard_test),

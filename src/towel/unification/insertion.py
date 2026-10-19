@@ -24,7 +24,8 @@ a method helper goes at the end of its class body; a function-local helper
 goes before the first executable statement of its function. A new import
 goes after every statement ahead of the first definition that imports or
 can run code at import, and never above a ``#!`` line, an encoding
-declaration or the leading comment block (:func:`import_line`). The
+declaration or the leading comment block (:func:`import_line`). Typing
+imports join the imports above module initialization. The
 positions are found from the parsed module, never from text, so imports
 inside strings and comments are never mistaken for imports. Rendered lines
 are re-indented to the unit the file uses.
@@ -104,8 +105,15 @@ def _first_line(statement: ast.stmt) -> int:
     return statement.lineno
 
 
-def import_line(lines: Sequence[str], tree: ast.Module, source: str) -> int:
+def import_line(
+    lines: Sequence[str], tree: ast.Module, source: str, *, typing_only: bool = False
+) -> int:
     """The 0-based index of the line a new import is inserted before.
+
+    With ``typing_only``, the standard-library typing import or an inert
+    type-only guard joins the existing imports, before module initialization
+    that would otherwise cause Ruff E402. Imports from helper modules retain
+    their effect ordering.
 
     Moving an import earlier is itself a reordering: whatever the import
     loads then runs before every statement it was placed above. So the
@@ -132,7 +140,9 @@ def import_line(lines: Sequence[str], tree: ast.Module, source: str) -> int:
     ):
         position = body[0].end_lineno or body[0].lineno
     try:
-        runs_code: Sequence[bool] = ImportTimeCode(source).statements()
+        runs_code: Sequence[bool] = (
+            [False] * len(body) if typing_only else ImportTimeCode(source).statements()
+        )
     except (SyntaxError, ValueError):
         runs_code = [True] * len(body)
     for statement, effectful in zip(body, runs_code):
@@ -215,10 +225,10 @@ class InsertionPoints(EngineState):
             self._source_lines_cache.pop(next(iter(self._source_lines_cache)))
         return lines
 
-    def _find_import_position(self, lines: List[str]) -> int:
+    def _find_import_position(self, lines: List[str], *, typing_only: bool = False) -> int:
         """Return the 0-based line index at which to insert a new import (:func:`import_line`)."""
         source = "".join(lines)
-        return import_line(lines, self._parse_source(source), source)
+        return import_line(lines, self._parse_source(source), source, typing_only=typing_only)
 
     def _get_indent(self, line: str) -> str:
         """Get the indentation of a line."""

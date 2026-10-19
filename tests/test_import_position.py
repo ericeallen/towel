@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Where an inserted import goes: never above a line whose place matters, never before an effect.
+"""Where an inserted import goes: preserving headers and helper-import effects.
 
 One position function serves every import Towel writes: a borrower's
 ``from .a import __extracted_func_0``, a typed run's ``import typing as
@@ -35,6 +35,7 @@ from typing import List
 
 import pytest
 
+from towel.formatting import file_finisher_for_project
 from towel.source_text import EncodingNotKept, decode_source, encode_like, source_lines
 from towel.unification.insertion import import_line
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -85,6 +86,25 @@ def test_the_import_goes_after_every_line_whose_place_matters(source: str, after
     text = "".join(written)
     tree = ast.parse(text)  # still a module, with the import where it was put
     assert any(isinstance(n, ast.Import) and n.names[0].name == "zz_inserted" for n in tree.body)
+
+
+@pytest.mark.parametrize(
+    "source, after",
+    [
+        ("#!/usr/bin/python\n# coding: latin-1\n" + _DEF, 2),
+        (
+            '"""Doc."""\nfrom __future__ import annotations\nimport logging\nlog = init()\n' + _DEF,
+            3,
+        ),
+        ("# Copyright\n\n# type: ignore\n\nlog = init()\n" + _DEF, 3),
+        ("import logging\nlog = logging.getLogger(__name__)\n" + _DEF, 1),
+        ("log = init()\n" + _DEF, 0),
+        ("# only comments\n", 1),
+        ("", 0),
+    ],
+)
+def test_typing_import_keeps_headers_and_joins_existing_imports(source: str, after: int) -> None:
+    assert import_line(source_lines(source), ast.parse(source), source, typing_only=True) == after
 
 
 def test_a_bom_file_keeps_its_bom_and_its_first_line() -> None:
@@ -298,3 +318,29 @@ def test_latin1_literal_carrier_respects_the_complete_default_holder_budget(
     assert (6, 5, False) in observed
     assert {path: path.read_bytes() for path in package.glob("*.py")} == original
     assert run() == before
+
+
+def test_typing_import_joins_imports_above_module_initialization(tmp_path: Path) -> None:
+    """The hpack corpus proposal must survive its configured Ruff E402 gate."""
+    (tmp_path / "pyproject.toml").write_text('[tool.ruff.lint]\nselect = ["E402"]\n')
+    script = tmp_path / "module.py"
+    script.write_text(
+        _duplicates(
+            "from __future__ import annotations\nimport logging\n"
+            "log = logging.getLogger(__name__)\n"
+            "LIMITS = [(2 ** i) - 1 for i in range(9)]\n"
+        )
+    )
+    finisher = file_finisher_for_project(script).tool
+    assert finisher is not None
+    assert _refactor(tmp_path, file_finisher=finisher) == 1
+    written = script.read_text()
+    assert "import typing as _typing" in written
+    assert written.index("import typing as _typing") < written.index("log =")
+    checked = subprocess.run(
+        [sys.executable, "-m", "ruff", "check", str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert checked.returncode == 0, checked.stdout + checked.stderr
