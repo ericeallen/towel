@@ -7,8 +7,10 @@ Its [overview](RELEASE_1_946.md) and [changelog](../CHANGELOG.md#1946) describe
 all changes since released 1.792. The [readiness report](PRODUCTION_READINESS.md)
 records the completed development audit and the current performance regressions.
 The final versioned release needs its own frozen source, exact prebuilt artifacts,
-completed local evidence and exact-commit CI. Nothing in this preparation record
-states that 1.946 has been published or that its release gates have passed.
+completed local evidence and exact-commit CI under the standard procedure. The
+[current publication checkpoint](#1946-publication-checkpoint-october-18-2026)
+records the maintainer's instruction to publish without further tests and the
+remaining remote verification. Publication has not been verified here.
 
 The earlier raw-regex guard source `a6dc6ed` has source-bound 1.946 artifacts,
 static/package checks and a complete Voluptuous canary. Its two completed
@@ -31,8 +33,34 @@ Preparing artifacts does not authorize uploading them, changing repository
 visibility, creating remote tags, or contacting users. Publication is a
 separate maintainer decision.
 
+## 1.946 publication checkpoint, October 18, 2026
+
+The maintainer requested publication of 1.946 using the existing evidence and
+explicitly directed that no more tests be run. This supersedes instructions
+below to start another validation campaign for this publication. No new test,
+coverage, interpreter-matrix or corpus result is claimed. Their completed and
+incomplete results remain attached to the sources that produced them.
+
+The selected source is `8a25ded59c439e8e055d596fb9a7f64a7814169e`, plus the
+subsequent documentation reconciliation. Its runtime includes `--stats` from
+`93b3b0a`; `3fdb82d` and `8a25ded` change documentation only. The October 18
+performance disposition accepts shipping the documented regression. The
+source-correspondence memo is deferred to the release after 1.946 and is not
+implemented in this release.
+
+Publication is authorized but unverified. This environment cannot resolve
+PyPI or GitHub, and the web tool returned no current release metadata. Local
+records identify 1.792 as the last published version and contain no `v1.946`
+tag. Those records cannot establish today's remote state. Before uploading,
+check live version availability and the existing remote commit, CI and tag;
+verify the release-pinned README destinations. After uploading the exact wheel
+and sdist, compare PyPI's artifact hashes and embedded README with them. Do not
+replace an existing upload or mark 1.946 published without that readback.
+No Git push is permitted under the standing repository instructions.
+
 **Contents**
 
+- [Current publication checkpoint](#1946-publication-checkpoint-october-18-2026)
 - [Version convention](#version-number-convention) · [Recorded history](#recorded-release-history)
 - [Evidence gate](#repository-owned-evidence-gate) · [Schema](#evidence-schema-1) · [Changes after freezing](#changes-after-a-validation-freeze)
 - [Required local evidence](#local-evidence-required) · [Automation](#configured-automation)

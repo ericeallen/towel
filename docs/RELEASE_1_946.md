@@ -2,8 +2,9 @@
 
 [Documentation index](README.md) · [Changelog](../CHANGELOG.md#1946)
 
-**1.946 is prepared but not yet published.** The number names ln 7,
-approximately 1.945910149. Version 1.792 remains the latest published release.
+**1.946 is prepared for publication; its upload is unverified.** The number
+names ln 7, approximately 1.945910149. Version 1.792 is the last published
+release recorded here.
 These changes extend the existing extraction model and have no intended public
 API or CLI incompatibility. The [version convention](RELEASING.md#version-number-convention)
 records the limited remaining three-decimal labels below 2.0.
@@ -156,6 +157,13 @@ These are exact analysis changes, not a claim of overall acceleration. The
 
 ## Completed development evidence and remaining release work
 
+The [October 18 publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026)
+records the maintainer's request to publish without further tests. The
+source includes `--stats` from `93b3b0a` and the documentation-only decisions
+through `8a25ded`; source-correspondence memoization remains deferred. Remote
+publication has not been verified. The development results and incomplete
+campaigns below retain their original scope and do not claim a newly passed gate.
+
 The final full development audit completed on `9d57b0d`, with metadata still
 numbered 1.792: 10,583 tests and 45 subtests passed, 32 skipped, and coverage
 was 93.478%. Strict typing and the declared static gates passed. Broad behavioral
@@ -197,9 +205,11 @@ per-CLI CPU is unavailable. Rich has zero actual samples in this new campaign
 and remains pending. The [current portable record](../tests/release_evidence/1.946-warning-guard/README.md)
 keeps exact source/wheel identities and telemetry/closure limits.
 
-Final frozen artifacts, the supported interpreter matrix,
-141-project corpus, exact release-evidence gate and exact-commit CI remain
-required under the [release procedure](RELEASING.md).
+The standard [release procedure](RELEASING.md) calls for final frozen artifacts,
+the supported interpreter matrix, the 141-project corpus, the exact release-evidence
+gate and exact-commit CI. The current publication instruction starts no further
+tests; missing results remain unclaimed. Live remote and artifact verification
+are still outstanding.
 
 ### Where the remaining time goes (profiled on `0b3494c`)
 
@@ -237,8 +247,8 @@ warning-guard and parity repairs.
 
 Disposition (maintainer decision D1, 2026-10-18): the regression was
 profiled. Its single hot spot cannot be removed without relaxing the
-2026-10-10 proof rule, so 1.946 is published with the regression documented
-here.
+2026-10-10 proof rule, so 1.946 is to be published with the regression documented
+here. This is a release decision, not confirmation of a completed upload.
 
 ## Deferred work
 

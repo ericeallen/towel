@@ -4,7 +4,9 @@
 
 Support requirements are separate from resource measurements. The measurements below describe specific workloads and machines, not minimum hardware.
 
-Version **1.946** is in preparation. The latest audit and performance evidence
+Version **1.946** is prepared for publication, requested without further tests.
+[Current publication status](RELEASING.md#1946-publication-checkpoint-october-18-2026)
+remains unverified. The October 10 audit and performance evidence
 bind source `9d57b0d`, whose tested package metadata was still 1.792. Python
 3.11–3.13 remains the supported range; these dated checks do not establish a
 completed interpreter matrix for versioned 1.946 artifacts. See

@@ -10,6 +10,21 @@ they are not evidence of those retired protections in the current code.
 Start with the 1.946 preparation boundary and latest source audit. The later
 sections retain completed releases and earlier preparation checkpoints.
 
+## Current publication status, October 18, 2026
+
+The maintainer has requested publication of the 1.946 source through `8a25ded`,
+with reconciled documentation and without running more tests. The latest runtime
+change is `93b3b0a` (`--stats`); subsequent commits through `8a25ded` touch only
+documentation. The October 18 profile of `0b3494c` measured Rich +7.6% on a shared
+native macOS host. That measured regression is accepted for this release;
+the source-correspondence memo is deferred to the release after 1.946.
+
+No fresh suite, matrix, coverage or corpus result is claimed. The historical
+results below retain their source identities. Publication remains unverified
+pending live PyPI/GitHub and uploaded-artifact readback. See the
+[publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026)
+and [October 18 profile](RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
+
 **Contents**
 
 - [1.946 preparation and audited source](#1946-preparation-and-audited-source-october-10-2026)

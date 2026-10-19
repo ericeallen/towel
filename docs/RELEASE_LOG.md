@@ -29,6 +29,19 @@ the entries below do not transfer approval to a later source or version.
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
 
+## 2026-10-18: 1.946 publication requested, remote verification blocked
+
+The selected source is `8a25ded`, plus documentation reconciliation. It includes
+`--stats` from `93b3b0a`; the later commits change documentation only. The
+maintainer requested publication without more tests. No tests were run for this
+checkpoint and no new validation result is claimed.
+
+The October 18 shared-host profile of `0b3494c` measured Rich +7.6%; the release
+ships with that regression documented. The source-correspondence memo remains
+work for the release after 1.946. PyPI/GitHub verification and upload are blocked
+by unavailable live network access, so 1.946 publication is not claimed. See the
+[current publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026).
+
 ## 2026-10-10: 1.946 preparation and latest audit
 
 Version 1.946 is named for ln(7) ≈ 1.945910149 and is in local preparation.

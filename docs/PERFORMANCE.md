@@ -4,10 +4,16 @@
 
 Use this guide to estimate a run and understand the limits of the published measurements.
 
-The latest completed cohorts compare versioned 1.946 source `a6dc6ed` with
+The latest profile, on October 18 at `0b3494c`, measured Rich +7.6% versus
+1.792 on a shared native macOS/Python 3.12 host. Click's noisier difference
+includes one more extraction. The maintainer accepted shipping the documented
+regression; source-correspondence memoization remains deferred until after 1.946.
+See [the profile and attribution](RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
+
+The earlier October 10 container cohorts compare versioned 1.946 source `a6dc6ed` with
 published 1.792 source `44d7795`: Voluptuous was 3.75% lower and Click 23.39%
 slower in two shared-host samples per source per workload. Rich has zero actual
-samples in this campaign and remains pending. These observations do not certify
+samples in that container campaign; the later native profile is separate. These observations do not certify
 the final release or establish general restoration. The earlier `9d57b0d`
 Click/Rich comparison retains its own 1.792 metadata, samples and limits.
 

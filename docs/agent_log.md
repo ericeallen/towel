@@ -2,6 +2,14 @@
 
 [Documentation index](README.md)
 
+## 2026-10-18: publication requested without further tests
+
+The maintainer requested publication of 1.946 using existing evidence. No tests
+were run in this documentation/publication pass. The source through `8a25ded`
+includes `--stats`; the source-correspondence memo remains deferred. Current
+network access cannot reach PyPI/GitHub, so upload and remote verification remain
+blocked. See the [publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026).
+
 ## 2026-10-10: upcoming 1.946
 
 Version 1.946, named for ln(7) ≈ 1.945910149, is in local preparation; no

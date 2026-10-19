@@ -4,7 +4,13 @@
 
 > Historical record of the September 12, 2026 alpha audit. The production-readiness pass that followed, with its counterexamples, repairs, and consumer evidence, is recorded in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md), which supersedes the disposition below.
 
-**October 10, 2026 orientation:** the alpha candidate, private-repository and
+**Current publication status:** the maintainer requested 1.946 publication on
+October 18 without further tests. Live verification/upload is blocked by network
+access; publication is not confirmed. See the
+[publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026)
+and [latest profile](RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
+
+**October 10, 2026 orientation (historical):** the alpha candidate, private-repository and
 pending-publication statements below are historical. The last published version
 is 1.792 from `44d7795`; **1.946 is prepared and unpublished**. The four selected
 proposal changes and subsequent repairs passed the final runtime audit on

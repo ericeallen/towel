@@ -10,8 +10,8 @@ It checks each extraction, preserves the parts that differ as parameters, and
 leaves meaningful names for you to choose.
 
 **Release status: 1.946 (beta).** Named for ln 7, approximately 1.945910149.
-This version is prepared but not yet published; the latest published release
-is 1.792. The
+This version is prepared for publication; the last published release recorded
+here is 1.792. Publication of 1.946 has not been verified. The
 [1.946 overview](https://github.com/ericeallen/towel/blob/v1.946/docs/RELEASE_1_946.md)
 and [changelog](https://github.com/ericeallen/towel/blob/v1.946/CHANGELOG.md#1946)
 describe the changes: extraction of eligible branch-local outputs, precise
@@ -24,19 +24,27 @@ original test outcomes and expected generated outputs. These results precede
 the 1.946 metadata and documentation update; they do not certify the final
 versioned artifacts. See the
 [readiness report](https://github.com/ericeallen/towel/blob/v1.946/docs/PRODUCTION_READINESS.md)
-for completed evidence and remaining release gates.
+for completed evidence and its limits. Publication has been requested without
+further tests; the upload and remote verification remain outstanding. See the
+[publication checkpoint](https://github.com/ericeallen/towel/blob/v1.946/docs/RELEASING.md#1946-publication-checkpoint-october-18-2026).
 
-Performance restoration remains unresolved. The latest completed cohorts use
+The October 18 profile of `0b3494c` measured Rich 7.6% slower than 1.792
+(97.4/97.6 versus 90.5/90.7 seconds, shared macOS host, Python 3.12).
+Click's noisier difference includes a fifth extraction where 1.792 made four.
+The maintainer chose to ship this regression documented; source-correspondence
+memoization is deferred to the release after 1.946. See
+[where the remaining time goes](https://github.com/ericeallen/towel/blob/v1.946/docs/RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
+
+The earlier October 10 container cohorts use
 versioned 1.946 source `a6dc6ed`: Voluptuous averaged 87.57 versus 90.98 seconds
 (3.75% lower), while Click averaged 58.19 versus 47.16 seconds (23.39% slower).
 These are two shared-host samples per source per workload; Rich has no actual
-sample in this new campaign and remains pending. Fresh full release gates and
-exact-commit CI remain pending. The
-[portable current record](https://github.com/ericeallen/towel/blob/v1.946/tests/release_evidence/1.946-warning-guard/README.md)
+sample in that container campaign. Its full release gates and exact-commit CI
+were incomplete; the October 18 native profile above is a separate measurement.
+The [portable record](https://github.com/ericeallen/towel/blob/v1.946/tests/release_evidence/1.946-warning-guard/README.md)
 binds all eight actual samples, identities, outputs and limits. These results
 predate the subsequent backslash-parity repair. The latest prepared runtime
-needs a new source freeze, fresh final release gates and new timing evidence;
-the earlier source-bound cohorts do not certify it.
+is not certified by those earlier source-bound cohorts.
 
 The earlier October 10 shared-host comparison of `9d57b0d` with released 1.792
 measured the complete cold CLI:

@@ -10,11 +10,16 @@ mnemonics with PEP 440 ordering; see the
 
 ## [Unreleased]
 
-No additional changes beyond the prepared 1.946 version are recorded here.
+The per-analysis source-correspondence memo is approved for the release after
+1.946 and remains unimplemented; see the
+[October 18 decision](docs/DECISIONS.md#2026-10-18-one-analysis-may-reuse-its-source-correspondence-proof).
 
 ## [1.946]
 
-Named for ln 7, approximately 1.945910149. Prepared, not yet published.
+Named for ln 7, approximately 1.945910149. Publication requested; upload not
+verified. On October 18 the maintainer directed publication using existing
+evidence, without further tests. No new test result is claimed. See the
+[publication checkpoint](docs/RELEASING.md#1946-publication-checkpoint-october-18-2026).
 Changes since released 1.792 are described together in the
 [1.946 overview](docs/RELEASE_1_946.md).
 

@@ -8,14 +8,24 @@ release evidence. It separates retained work, completed designs, retired policie
 and historical measurements. Priorities are recommendations, not a schedule.
 
 Older proposal bodies preserve their dates, measurements and contracts; current
-decisions and code take precedence. The last published version is 1.792 from
-`44d7795`. Version **1.946 is prepared and unpublished**; this documentation
-refresh does not authorize publication or establish new versioned release gates.
+decisions and code take precedence. The last published version recorded here is
+1.792 from `44d7795`. Version **1.946 is prepared for publication**; its upload
+remains unverified. Documentation changes do not establish new release-gate results.
 Development checkpoints do not become current validation results, and their
 artifacts numbered 1.772 must not be published. Current behavior is in the guides
 linked from the documentation index.
 
-## Current preparation, October 10, 2026
+## Current disposition, October 18, 2026
+
+The maintainer has requested publication of 1.946 without more tests. The
+October 18 profile measured Rich +7.6% on `0b3494c`; that regression is accepted
+for this release. Reusing the source-correspondence proof within one analysis
+is approved only for the release after 1.946 and remains unimplemented. See the
+[decision](../DECISIONS.md#2026-10-18-one-analysis-may-reuse-its-source-correspondence-proof)
+and [publication checkpoint](../RELEASING.md#1946-publication-checkpoint-october-18-2026).
+Remote publication is not verified. The October 10 records below remain historical.
+
+## Preparation checkpoint, October 10, 2026
 
 All four selected proposals are implemented. Each stage received its own frozen
 audit; subsequent repairs and performance work received a final fresh audit on

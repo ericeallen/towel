@@ -8,11 +8,14 @@ This documentation describes the source version you are reading. Dated
 benchmarks, validation reports and proposals retain their original source and
 artifact identities; they do not establish results for a later release.
 
-The prepared version is **1.946**, named for ln 7; **1.792** remains the latest
-published release. The [1.946 overview](RELEASE_1_946.md) describes the new
+The prepared version is **1.946**, named for ln 7; **1.792** is the last
+published release recorded here. The [1.946 overview](RELEASE_1_946.md) describes the new
 capabilities, audit repairs, performance results and deferred work. The
 [readiness report](PRODUCTION_READINESS.md) distinguishes completed development
-checks from the versioned release gates still needed.
+checks from incomplete versioned gates. The
+[October 18 publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026)
+records the current request to publish without further tests and outstanding
+remote verification; no successful upload is claimed.
 
 ## Start and use Towel
 

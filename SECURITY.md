@@ -4,8 +4,11 @@ Towel rewrites source code. Review the generated diff and run the affected proje
 
 ## Supported versions
 
-Security fixes are provided for the latest released version. This source tree targets **1.946**, which is prepared but not yet published. The supported
-published release is **1.792**; support for 1.946 begins when it is published.
+Security fixes are provided for the latest released version.
+This source tree targets **1.946**, whose publication is requested but has not
+been verified here. The last published version recorded locally is **1.792**;
+support for 1.946 begins when its publication is confirmed. See the
+[publication checkpoint](docs/RELEASING.md#1946-publication-checkpoint-october-18-2026).
 Earlier versions are not supported; the PyPI releases `1.0.0`–`1.0.4` are
 yanked for broken import handling and are not a recommended installation
 target. Upgrade to the latest release rather than relying on a fix to an
