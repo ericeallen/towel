@@ -4,7 +4,8 @@
 
 Support requirements are separate from resource measurements. The measurements below describe specific workloads and machines, not minimum hardware.
 
-Version **1.946** is prepared for publication, requested without further tests.
+Version **1.946** is prepared for publication with scoped source-proof reuse
+and fresh supported-interpreter validation requested.
 [Current publication status](RELEASING.md#1946-publication-checkpoint-october-18-2026)
 remains unverified. The October 10 audit and performance evidence
 bind source `9d57b0d`, whose tested package metadata was still 1.792. Python

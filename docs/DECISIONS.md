@@ -27,7 +27,7 @@ is a defect to fix, not a limitation to document.
 - [Tiny helper interface cost](#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
 - [Exact constants, thunk order and IF outputs](#2026-10-08-retained-proposals-need-source-and-lifetime-proofs)
 - [Scoped facts and native warning behavior](#2026-10-10-share-immutable-facts-without-caching-admission)
-- [Per-analysis source-correspondence proof (from the release after 1.946)](#2026-10-18-one-analysis-may-reuse-its-source-correspondence-proof)
+- [Per-analysis source-correspondence proof (amended for 1.946)](#2026-10-18-one-analysis-may-reuse-its-source-correspondence-proof)
 - [Complete preview and helper inputs](#complete-preview-and-generated-helper-inputs-september-27-2026) · [Annotation evaluation](#generated-annotations-must-not-add-evaluation-september-27-2026)
 - [Release audits](#2026-09-24-every-release-is-audited-and-every-finding-becomes-a-test) · [Evidence and documentation](#2026-09-27-release-documentation-must-agree-with-its-validation-evidence)
 
@@ -1740,9 +1740,9 @@ The reflection exclusion adopted October 2 is unchanged.*
 
 ## 2026-10-10: Share immutable facts without caching admission
 
-*Amended on 2026-10-18 by the entry below: from the release after 1.946, one
-analysis may reuse its own source-correspondence proof. This entry still
-governs 1.946 unchanged.*
+*Amended on 2026-10-18 by the entry and subsequent maintainer amendment below:
+1.946 may reuse source correspondence within one owned immutable analysis.
+The other admission and materialization obligations are unchanged.*
 
 Repeated analysis may reuse immutable facts within a verified owner and source
 lifetime. It may not reuse a verdict about a caller's mutable tree or skip the
@@ -1812,5 +1812,18 @@ and `test_warmed_source_fact_never_validates_mutated_owner` change from
 analysis", and the change must leave proposals and output byte-identical on
 Click, Rich, Voluptuous and Towel's own source.
 
-*Status: decided 2026-10-18 (maintainer decision on review item 7, option a);
-not implemented in 1.946.*
+*Original disposition: decided 2026-10-18 (review item 7, option a), deferred
+until after 1.946.*
+
+**Subsequent maintainer amendment:** implement the memo in 1.946, preserve
+mutation protections, rerun the full Python 3.11–3.13 suites and compare generated
+output with caching enabled and disabled. The implementation explicitly registers
+only the pipeline's owned module/source pairs for one analysis. Caller-owned
+trees retain every existing mutation refusal. With immutability checking enabled,
+a changed warmed owner raises an error; source/parser changes cannot borrow the
+old proof. Materialization explicitly disables proof reuse, even inside an active
+analysis. Function identity, suite identity and aligned-output proofs are unchanged.
+Existing caller-mutation tests are retained unchanged; new tests cover scoped reuse,
+source/configuration boundaries, diagnostics, cleanup and independent verification.
+This amendment supersedes the deferral, not the other correctness obligations.
+The estimated speedup above remains unmeasured.

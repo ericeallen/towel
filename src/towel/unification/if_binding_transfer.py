@@ -20,7 +20,7 @@ import ast
 from dataclasses import dataclass
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import FrozenSet, Iterator, Literal, Optional, Sequence, Set, Tuple, Union
+from typing import Dict, FrozenSet, Iterator, Literal, Optional, Sequence, Set, Tuple, Union
 
 from ..canonical_ast import exact_dump
 from ..analysis_sources import ParserConfiguration, parser_configuration, parsing_is_pure
@@ -77,6 +77,13 @@ def _unique_tree(tree: ast.AST) -> bool:
 
 
 def _source_corresponds(module: ast.Module, source: str) -> bool:
+    proofs = _CORRESPONDENCE_PROOFS.get()
+    if proofs is not None and memoizing() and parsing_is_pure(source):
+        return proofs.corresponds(module, source)
+    return _source_corresponds_uncached(module, source)
+
+
+def _source_corresponds_uncached(module: ast.Module, source: str) -> bool:
     if not _unique_tree(module):
         return False
     try:
@@ -92,6 +99,61 @@ def _source_corresponds(module: ast.Module, source: str) -> bool:
         )
     except (SyntaxError, ValueError, RecursionError):
         return False
+
+
+@dataclass(frozen=True)
+class _CorrespondenceProof:
+    configuration: ParserConfiguration
+    fingerprint: Optional[str]
+
+
+class _CorrespondenceProofs:
+    """Successful proofs for explicitly owned, immutable trees in one analysis."""
+
+    def __init__(
+        self, modules: Sequence[Tuple[ast.Module, str]], check_ast_immutable: bool
+    ) -> None:
+        self.owners = dict(modules)
+        self.proofs: Dict[ast.Module, _CorrespondenceProof] = {}
+        self.check_ast_immutable = check_ast_immutable
+
+    def corresponds(self, module: ast.Module, source: str) -> bool:
+        if self.owners.get(module) != source:
+            return _source_corresponds_uncached(module, source)
+        configuration = parser_configuration()
+        known = self.proofs.get(module)
+        if known is not None and known.configuration == configuration:
+            if self.check_ast_immutable and (
+                not _unique_tree(module) or exact_dump(module) != known.fingerprint
+            ):
+                raise RuntimeError("Analysis mutated an owned IF source-correspondence tree")
+            return True
+        if not _source_corresponds_uncached(module, source):
+            return False
+        self.proofs[module] = _CorrespondenceProof(
+            configuration, exact_dump(module) if self.check_ast_immutable else None
+        )
+        return True
+
+
+_CORRESPONDENCE_PROOFS: ContextVar[Optional[_CorrespondenceProofs]] = ContextVar(
+    "if_transfer_correspondence_proofs", default=None
+)
+
+
+@contextmanager
+def sharing_if_transfer_proofs(
+    modules: Sequence[Tuple[ast.Module, str]], *, check_ast_immutable: bool = False
+) -> Iterator[None]:
+    """Trust only the analysis's own read-only trees; caller trees are always re-proved."""
+    proofs = _CorrespondenceProofs(modules, check_ast_immutable)
+    token = _CORRESPONDENCE_PROOFS.set(proofs)
+    try:
+        yield
+    finally:
+        _CORRESPONDENCE_PROOFS.reset(token)
+        proofs.owners.clear()
+        proofs.proofs.clear()
 
 
 def _selected_node_ids(nodes: Sequence[ast.stmt]) -> Optional[FrozenSet[int]]:
@@ -513,7 +575,7 @@ def certify_if_binding_transfer(
     site: IfTransferSite,
     returned_names: Tuple[str, ...],
 ) -> Optional[IfBindingTransfer]:
-    """Original-source facts never replace fresh mutable-tree correspondence and identity."""
+    """Caller trees are proved afresh; owned analysis trees may share only source correspondence."""
     cache = _cache_for(source)
     if cache is None:
         return _certify_uncached(source, module, function, nodes, site, returned_names)
@@ -594,7 +656,11 @@ def verify_if_binding_transfer(
         nodes = suite[certificate.start : certificate.start + certificate.count]
     except (AttributeError, IndexError, TypeError):
         return False
-    rebuilt = certify_if_binding_transfer(
-        source, module, function, nodes, certificate.site, certificate.returned_names
-    )
+    token = _CORRESPONDENCE_PROOFS.set(None)
+    try:
+        rebuilt = certify_if_binding_transfer(
+            source, module, function, nodes, certificate.site, certificate.returned_names
+        )
+    finally:
+        _CORRESPONDENCE_PROOFS.reset(token)
     return rebuilt == certificate

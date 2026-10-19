@@ -5,7 +5,7 @@
 Status: several recoveries shipped in 1.792; exact constant occurrences and
 bounded IF-only fresh outputs are implemented in prepared, unpublished 1.946.
 The final runtime audit is source-bound to `9d57b0d`, with current evidence in
-the [proposal index](README.md#current-preparation-october-10-2026). Broader
+the [proposal index](README.md#preparation-checkpoint-october-10-2026). Broader
 control-flow recovery remains deferred. The original deferral after 1.772
 was made by the owner on 2026-09-24
 (see `docs/DECISIONS.md`). Each item below was a defect by the owner's

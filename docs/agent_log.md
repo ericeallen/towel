@@ -2,6 +2,19 @@
 
 [Documentation index](README.md)
 
+## 2026-10-18: scoped proof memo implemented; fresh validation requested
+
+The maintainer extended 1.946 to implement source-proof reuse for owned immutable
+analysis trees, preserve mutation protections, rerun the Python 3.11–3.13 suites
+and compare generated output with the cache enabled and disabled. This supersedes
+the earlier no-more-tests instruction and memo deferral. Materialization and caller
+trees retain fresh proofs. The preceding profile is not a speedup measurement for
+this implementation. The [completed local validation](PRODUCTION_READINESS.md#scoped-source-proof-memo-local-validation-october-18-2026)
+records 10,655/10,838/10,825 passes on Python 3.11/3.12/3.13, 93–94% coverage
+and byte-identical CLI outputs. Each full run also had a stale navigation failure
+(corrected and rechecked) and a blocked `ps` observer in the unchanged watchdog
+test. That test remains unverified here; no all-green full-suite result is claimed.
+
 ## 2026-10-18: publication requested without further tests
 
 The maintainer requested publication of 1.946 using existing evidence. No tests

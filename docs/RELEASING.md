@@ -5,11 +5,11 @@
 The prepared version is **1.946**, named for ln 7, approximately 1.945910149.
 Its [overview](RELEASE_1_946.md) and [changelog](../CHANGELOG.md#1946) describe
 all changes since released 1.792. The [readiness report](PRODUCTION_READINESS.md)
-records the completed development audit and the current performance regressions.
+records source-bound development results and historical performance measurements.
 The final versioned release needs its own frozen source, exact prebuilt artifacts,
 completed local evidence and exact-commit CI under the standard procedure. The
 [current publication checkpoint](#1946-publication-checkpoint-october-18-2026)
-records the maintainer's instruction to publish without further tests and the
+records the maintainer's implementation and fresh-validation instruction and the
 remaining remote verification. Publication has not been verified here.
 
 The earlier raw-regex guard source `a6dc6ed` has source-bound 1.946 artifacts,
@@ -35,18 +35,19 @@ separate maintainer decision.
 
 ## 1.946 publication checkpoint, October 18, 2026
 
-The maintainer requested publication of 1.946 using the existing evidence and
-explicitly directed that no more tests be run. This supersedes instructions
-below to start another validation campaign for this publication. No new test,
-coverage, interpreter-matrix or corpus result is claimed. Their completed and
-incomplete results remain attached to the sources that produced them.
+The maintainer extended the 1.946 scope to implement the per-analysis
+source-correspondence memo, preserve mutation protections, rerun the complete
+Python 3.11–3.13 suites and compare generated output with the cache enabled and
+disabled. This supersedes the earlier instruction to publish without more tests
+and the earlier decision to defer the memo. The [local results](PRODUCTION_READINESS.md#scoped-source-proof-memo-local-validation-october-18-2026)
+record completed runs, corrected navigation links and the remaining blocked
+watchdog observer. Historical results retain their original sources.
 
-The selected source is `8a25ded59c439e8e055d596fb9a7f64a7814169e`, plus the
-subsequent documentation reconciliation. Its runtime includes `--stats` from
-`93b3b0a`; `3fdb82d` and `8a25ded` change documentation only. The October 18
-performance disposition accepts shipping the documented regression. The
-source-correspondence memo is deferred to the release after 1.946 and is not
-implemented in this release.
+The runtime includes `--stats` and now reuses source correspondence only for
+explicitly owned immutable trees within one analysis. Caller trees and
+materialization retain fresh proofs; disabled memoization and warning-capable
+sources bypass reuse. The October 18 profile predates this implementation and
+does not establish its performance. No new speedup is claimed.
 
 Publication is authorized but unverified. This environment cannot resolve
 PyPI or GitHub, and the web tool returned no current release metadata. Local

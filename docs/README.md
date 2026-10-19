@@ -14,7 +14,7 @@ capabilities, audit repairs, performance results and deferred work. The
 [readiness report](PRODUCTION_READINESS.md) distinguishes completed development
 checks from incomplete versioned gates. The
 [October 18 publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026)
-records the current request to publish without further tests and outstanding
+records the current implementation, fresh-validation request and outstanding
 remote verification; no successful upload is claimed.
 
 ## Start and use Towel

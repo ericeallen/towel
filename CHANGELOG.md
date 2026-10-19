@@ -10,15 +10,13 @@ mnemonics with PEP 440 ordering; see the
 
 ## [Unreleased]
 
-The per-analysis source-correspondence memo is approved for the release after
-1.946 and remains unimplemented; see the
-[October 18 decision](docs/DECISIONS.md#2026-10-18-one-analysis-may-reuse-its-source-correspondence-proof).
+No further changes beyond the prepared 1.946 version are recorded here.
 
 ## [1.946]
 
 Named for ln 7, approximately 1.945910149. Publication requested; upload not
-verified. On October 18 the maintainer directed publication using existing
-evidence, without further tests. No new test result is claimed. See the
+verified. The maintainer subsequently requested scoped source-proof reuse and
+fresh supported-interpreter suites and cache-on/off output comparisons. See the
 [publication checkpoint](docs/RELEASING.md#1946-publication-checkpoint-october-18-2026).
 Changes since released 1.792 are described together in the
 [1.946 overview](docs/RELEASE_1_946.md).
@@ -48,6 +46,12 @@ version per workload, not an isolated-host or general speed claim. See the
 [readiness report](docs/PRODUCTION_READINESS.md).
 
 ### Improvements and repairs
+
+- Reuse successful whole-module source-correspondence proofs only for explicitly
+  owned immutable trees during one analysis. Keys retain source and parser-limit
+  identity. Caller trees, warning-capable sources, disabled memoization and
+  materialization keep fresh proofs. Optional AST immutability checking detects
+  changes to a warmed owner. Each analysis releases its proof entries.
 
 - Account for every candidate pair with `--stats` (`dry` and the complete
   `preview`). Each pair of the run's last whole analysis is counted once:

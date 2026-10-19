@@ -324,8 +324,8 @@ See [the evidence schema and release procedure](docs/RELEASING.md#repository-own
   repairs; [readiness](docs/PRODUCTION_READINESS.md) records completed and
   incomplete gates and measured performance regressions. The
   [October 18 publication checkpoint](docs/RELEASING.md#1946-publication-checkpoint-october-18-2026)
-  records the current instruction to publish without more tests; do not report
-  missing results as passed. Keep 1.792 publication facts
+  records the scoped memo implementation and requested fresh Python 3.11–3.13
+  suites and cache-on/off output comparisons; do not report missing results as passed. Keep 1.792 publication facts
   and older development timings under their original identities. Follow the
   [version convention](docs/RELEASING.md#version-number-convention) when choosing
   the next identifier; mathematical mnemonics do not define compatibility policy.

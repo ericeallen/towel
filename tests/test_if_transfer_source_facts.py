@@ -24,6 +24,7 @@ import traceback
 import warnings
 import weakref
 from contextlib import AbstractContextManager, nullcontext
+from pathlib import Path
 from typing import Literal, Optional, Tuple, TypeAlias, cast
 from unittest.mock import patch
 import pytest
@@ -31,6 +32,8 @@ from towel.unification import if_binding_transfer as m
 from towel.unification.bounded_cache import memoization_disabled
 from towel.unification.models import source_digest_of
 from towel.canonical_ast import exact_dump
+from towel.unification.ast_paths import resolve_path
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 SIMPLE = "FLAG=True\ndef f():\n if FLAG:\n  x=1\n  y=x+1\n  z=y+2\n return z\n"
 
@@ -76,6 +79,155 @@ def test_scoped_repeated_admissions_reprove_actual_tree() -> None:
         assert all(r == results[0] and r is not None for r in results)
         assert proof.call_count == 8 and parse.call_count == 2 and local.call_count == 2
         assert exact_dump(tree) == before
+
+
+def test_owned_analysis_reuses_only_source_correspondence() -> None:
+    inputs = _parts()
+    tree, fn, nodes, site = inputs
+    with (
+        m.sharing_if_transfer_sources(),
+        m.sharing_if_transfer_proofs(((tree, SIMPLE),)),
+        patch.object(
+            m, "_source_corresponds_uncached", wraps=m._source_corresponds_uncached
+        ) as proof,
+        patch.object(m, "resolve_path", wraps=resolve_path) as identity,
+        patch.object(m, "_selected_suite", wraps=m._selected_suite) as suite,
+    ):
+        results = [_certify(SIMPLE, inputs) for _ in range(8)]
+        assert all(result == results[0] and result is not None for result in results)
+        assert proof.call_count == 1
+        # The current function and selected nodes are still checked on every admission.
+        assert identity.call_count >= 8 and suite.call_count >= 8
+        fake = copy.deepcopy(fn)
+        fake_nodes = cast(ast.If, fake.body[0]).body
+        assert _certify(SIMPLE, (tree, fake, fake_nodes, site)) is None
+        assert proof.call_count == 1
+        assert m.verify_if_binding_transfer(cast(m.IfBindingTransfer, results[0]), SIMPLE, tree)
+        assert proof.call_count == 2  # Materialization never borrows the analysis proof.
+
+
+def test_engine_registers_only_its_current_analysis_trees(tmp_path: Path) -> None:
+    source = SIMPLE + SIMPLE[SIMPLE.index("def f():") :].replace("def f():", "def g():")
+    path = tmp_path / "branches.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(min_lines=3)
+    with (
+        patch.object(m, "_source_corresponds", wraps=m._source_corresponds) as calls,
+        patch.object(
+            m, "_source_corresponds_uncached", wraps=m._source_corresponds_uncached
+        ) as proofs,
+    ):
+        assert engine.analyze_files([str(path)], progress="none")
+        assert calls.call_count > 1 and proofs.call_count == 1
+        assert m._CORRESPONDENCE_PROOFS.get() is None
+        before = proofs.call_count
+        assert engine.analyze_files([str(path)], progress="none")
+        assert proofs.call_count > before
+
+
+def test_owned_proof_does_not_certify_other_source_or_another_tree() -> None:
+    tree = _parts()[0]
+    other = copy.deepcopy(tree)
+    with (
+        m.sharing_if_transfer_proofs(((tree, SIMPLE),)),
+        patch.object(
+            m, "_source_corresponds_uncached", wraps=m._source_corresponds_uncached
+        ) as proof,
+    ):
+        assert m._source_corresponds(tree, SIMPLE)
+        assert not m._source_corresponds(tree, SIMPLE.replace("x=1", "x=9"))
+        assert m._source_corresponds(other, SIMPLE)
+        cast(ast.Constant, cast(ast.Assign, other.body[0]).value).value = False
+        assert not m._source_corresponds(other, SIMPLE)
+        assert m._source_corresponds(tree, SIMPLE)
+        assert proof.call_count == 4
+
+
+def test_owned_proofs_respect_parser_limits_and_disabled_memoization() -> None:
+    tree = _parts()[0]
+    old = sys.getrecursionlimit()
+    with (
+        m.sharing_if_transfer_proofs(((tree, SIMPLE),)),
+        patch.object(
+            m, "_source_corresponds_uncached", wraps=m._source_corresponds_uncached
+        ) as proof,
+    ):
+        try:
+            assert m._source_corresponds(tree, SIMPLE)
+            assert m._source_corresponds(tree, SIMPLE)
+            with memoization_disabled():
+                assert m._source_corresponds(tree, SIMPLE)
+                assert m._source_corresponds(tree, SIMPLE)
+            sys.setrecursionlimit(old + 100)
+            assert m._source_corresponds(tree, SIMPLE)
+            assert m._source_corresponds(tree, SIMPLE)
+            assert proof.call_count == 4
+        finally:
+            sys.setrecursionlimit(old)
+
+
+@pytest.mark.parametrize("target", ["inside", "outside", "shared", "cycle", "marker"])
+def test_owned_tree_immutability_check_rejects_mutations(target: Mutation) -> None:
+    tree, fn, nodes, site = _parts()
+    with m.sharing_if_transfer_proofs(((tree, SIMPLE),), check_ast_immutable=True):
+        assert m._source_corresponds(tree, SIMPLE)
+        if target == "inside":
+            cast(ast.Constant, cast(ast.Assign, nodes[0]).value).value = 99
+        elif target == "outside":
+            cast(ast.Constant, cast(ast.Assign, tree.body[0]).value).value = False
+        else:
+            expression = cast(ast.BinOp, cast(ast.Assign, nodes[1]).value)
+            if target == "shared":
+                expression.left = cast(ast.BinOp, cast(ast.Assign, nodes[2]).value).left
+            elif target == "cycle":
+                expression.left = expression
+            else:
+                operator = type(expression.op)()
+                expression.op = operator
+                setattr(operator, "_fields", ("child",))
+                setattr(operator, "child", operator)
+        with pytest.raises(RuntimeError, match="Analysis mutated"):
+            m._source_corresponds(tree, SIMPLE)
+
+
+def test_owned_proofs_end_with_analysis_and_nested_scopes_restore_parent() -> None:
+    tree = _parts()[0]
+    reference = weakref.ref(tree)
+    with (
+        m.sharing_if_transfer_proofs(((tree, SIMPLE),)),
+        patch.object(
+            m, "_source_corresponds_uncached", wraps=m._source_corresponds_uncached
+        ) as proof,
+    ):
+        owner = m._CORRESPONDENCE_PROOFS.get()
+        assert owner is not None
+        assert m._source_corresponds(tree, SIMPLE)
+        with m.sharing_if_transfer_proofs(((tree, SIMPLE),)):
+            assert m._source_corresponds(tree, SIMPLE)
+        assert m._CORRESPONDENCE_PROOFS.get() is owner
+        assert m._source_corresponds(tree, SIMPLE)
+        assert proof.call_count == 2
+    assert not owner.owners and not owner.proofs
+    assert m._source_corresponds(tree, SIMPLE)
+    del tree, proof
+    gc.collect()
+    assert reference() is None
+
+
+def test_owned_warning_capable_source_keeps_fresh_native_diagnostics() -> None:
+    source = SIMPLE + "W='\\q'\n"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        tree = _parts(source)[0]
+    with m.sharing_if_transfer_proofs(((tree, source),)):
+        with warnings.catch_warnings(record=True) as got:
+            warnings.simplefilter("always")
+            assert m._source_corresponds(tree, source)
+            assert m._source_corresponds(tree, source)
+            assert len(got) == 2
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert not m._source_corresponds(tree, source)
 
 
 def test_cached_local_refusal_has_no_current_tree_proof() -> None:

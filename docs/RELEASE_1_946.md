@@ -11,7 +11,8 @@ records the limited remaining three-decimal labels below 2.0.
 
 The main gains are more useful accepted extractions, cleaner generated calls,
 and stronger checks of ordinary Python behavior and type contracts. Full-command
-performance remains below the 1.792 baseline on the two newly measured workloads.
+measurements below predate the source-proof memo; no new complete-command
+performance result is claimed for its implementation.
 
 ## More duplicate code can be shared
 
@@ -119,8 +120,13 @@ and analysis cleanup releases retained owners even when memoization is disabled.
 
 Impossible branch transfers are rejected before expensive whole-module proof.
 Within an owned analysis, shape and unification failures can also be discovered
-before fresh source admission. Accepted sites still require current source and
-AST identity checks; aligned-output and materialization proofs remain independent.
+before fresh source admission. Accepted sites still require source and AST identity checks. Successful source
+correspondence is now reusable for the engine's explicitly owned immutable module
+within one analysis, with source and parser configuration retained in the key.
+Other trees are proved afresh, as is materialization; function/suite identity and
+aligned-output checks remain independent. Disabled memoization and warning-capable
+sources bypass reuse. Immutability-check mode verifies warmed owners before reuse,
+and analysis exit clears all proof entries.
 No checker-result cache replaces prospective or final project checks.
 
 Source-cache keys accept only native strings and bytes, account for parser limits,
@@ -157,10 +163,19 @@ These are exact analysis changes, not a claim of overall acceleration. The
 
 ## Completed development evidence and remaining release work
 
+The [latest local validation](PRODUCTION_READINESS.md#scoped-source-proof-memo-local-validation-october-18-2026)
+records complete Python 3.11–3.13 runs and 93–94% coverage. Each full run had a
+navigation failure, since corrected and rechecked, and one watchdog observer
+failure because this environment blocks `ps`. That unchanged test remains
+unverified; the full matrix is not claimed all green. The complete example
+corpus produced identical Python bytes with the new memo enabled and disabled
+(28 files, 23 changed), and four branch cases compare identical bytes with all
+memoization disabled on each supported interpreter.
+
 The [October 18 publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026)
-records the maintainer's request to publish without further tests. The
-source includes `--stats` from `93b3b0a` and the documentation-only decisions
-through `8a25ded`; source-correspondence memoization remains deferred. Remote
+records the maintainer's request to implement scoped source-proof reuse and
+validate it on Python 3.11–3.13 and with cache-on/off output comparisons. The
+source now includes that memo alongside `--stats`. Remote
 publication has not been verified. The development results and incomplete
 campaigns below retain their original scope and do not claim a newly passed gate.
 
@@ -207,8 +222,8 @@ keeps exact source/wheel identities and telemetry/closure limits.
 
 The standard [release procedure](RELEASING.md) calls for final frozen artifacts,
 the supported interpreter matrix, the 141-project corpus, the exact release-evidence
-gate and exact-commit CI. The current publication instruction starts no further
-tests; missing results remain unclaimed. Live remote and artifact verification
+gate and exact-commit CI. The current instruction requests fresh supported-interpreter suites and
+cache-on/off output comparisons; missing results remain unclaimed. Live remote and artifact verification
 are still outstanding.
 
 ### Where the remaining time goes (profiled on `0b3494c`)
@@ -245,10 +260,12 @@ warning-guard and parity repairs.
   type-checker runs (11 against 6). The same `if` proof adds about 3 s under
   the profiler.
 
-Disposition (maintainer decision D1, 2026-10-18): the regression was
-profiled. Its single hot spot cannot be removed without relaxing the
-2026-10-10 proof rule, so 1.946 is to be published with the regression documented
-here. This is a release decision, not confirmation of a completed upload.
+Initial disposition (maintainer decision D1, 2026-10-18): ship with the
+regression documented. The maintainer subsequently chose to implement the
+per-analysis memo in 1.946 and rerun the supported suites and output comparisons.
+That amendment permits sharing only an owned immutable tree's source proof;
+all other admission and materialization checks remain. The timings above
+precede the implementation and do not measure its benefit.
 
 ## Deferred work
 

@@ -1429,10 +1429,16 @@ paths, coordinates, names and binding facts. Parser limits are part of each
 source key. A cold locally ineligible candidate does not initialize source
 planning, and a current-tree refusal is never cached. Warning-capable source,
 oversized source, zero budgets and disabled memoization retain the native path.
-Every acceptance still freshly checks current-module uniqueness and exact source
-correspondence, resolves the actual function by identity, and checks the selected
-suite's node identities. Nested analysis scopes restore their parent, and exit
-releases the private syntax and local facts.
+The pipeline additionally registers its explicitly owned module/source pairs
+for one analysis. A successful uniqueness and exact source-correspondence proof
+can be reused only for those immutable trees, the same source and current parser
+configuration. Caller trees and materialization still get fresh proofs. With
+AST immutability checking enabled, a warmed owner's uniqueness and exact spelling
+are checked before reuse and mutation raises an error. Warning-capable sources
+and disabled memoization bypass this cache. Every admission still resolves the
+actual function and selected suite by identity. Nested analysis scopes restore
+their parent, and exit releases all registered owners and proof entries along
+with the private source syntax and local facts.
 
 Compiler-literal summaries hold weak statement owners and immutable boolean or
 integer-set answers. The engine's original statement trees remain read-only;
@@ -1944,7 +1950,8 @@ only the inherited immutable classifications and independently own their
 table bookkeeping. Every scheduling decision still checks the current owner,
 artifact function, analyzer, source-object identity, and nonempty digest against
 its site. A warm lexical answer provides no source correspondence or AST
-authority; both admission certificates remain fresh.
+authority. Only the separately registered immutable analysis owners can reuse
+source correspondence; aligned-output and materialization proofs remain fresh.
 
 Lexical and shared parsing eligibility requires native `str`/`bytes` values.
 String and byte subclasses use the native parsing path; their hashing, sizing,

@@ -6,8 +6,8 @@ Use this guide to estimate a run and understand the limits of the published meas
 
 The latest profile, on October 18 at `0b3494c`, measured Rich +7.6% versus
 1.792 on a shared native macOS/Python 3.12 host. Click's noisier difference
-includes one more extraction. The maintainer accepted shipping the documented
-regression; source-correspondence memoization remains deferred until after 1.946.
+includes one more extraction. The maintainer subsequently requested scoped source-correspondence memoization
+in 1.946. It is now implemented; the earlier profile does not measure its benefit.
 See [the profile and attribution](RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
 
 The earlier October 10 container cohorts compare versioned 1.946 source `a6dc6ed` with

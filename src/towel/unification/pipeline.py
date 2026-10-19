@@ -73,6 +73,7 @@ from .progress import (
 from ..diagnostics import LOG, Settings
 from ..source_text import read_source
 from .visitors import DefinitionDepthVisitor, FunctionCollector
+from .if_binding_transfer import sharing_if_transfer_proofs
 
 
 class PairProcessor(Protocol):
@@ -278,6 +279,10 @@ class AnalysisSession:
         self._parser_configuration = parser_configuration()
 
     @property
+    def check_ast_immutable(self) -> bool:
+        return self._check_immutable
+
+    @property
     def entry_count(self) -> int:
         return len(self._entries)
 
@@ -475,6 +480,14 @@ def run_pipeline(
 
     functions = [function for analysis in analyses for function in analysis.functions]
     classes = [info for analysis in analyses for info in analysis.module.class_infos]
-    pairs = pair_blocks(engine, functions, progress=progress, changed_files=changed_files)
-    proposals = unify_blocks(engine, pairs, functions, classes, progress=progress)
+    with sharing_if_transfer_proofs(
+        tuple(
+            (analysis.module.tree, analysis.module.source)
+            for analysis in analyses
+            if isinstance(analysis.module.tree, ast.Module)
+        ),
+        check_ast_immutable=analysis_session.check_ast_immutable,
+    ):
+        pairs = pair_blocks(engine, functions, progress=progress, changed_files=changed_files)
+        proposals = unify_blocks(engine, pairs, functions, classes, progress=progress)
     return filter_overlaps(proposals)

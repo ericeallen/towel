@@ -17,10 +17,10 @@ linked from the documentation index.
 
 ## Current disposition, October 18, 2026
 
-The maintainer has requested publication of 1.946 without more tests. The
-October 18 profile measured Rich +7.6% on `0b3494c`; that regression is accepted
-for this release. Reusing the source-correspondence proof within one analysis
-is approved only for the release after 1.946 and remains unimplemented. See the
+The maintainer extended 1.946 to implement source-correspondence proof reuse
+within one owned analysis, preserving caller-tree and materialization checks,
+and requested fresh Python 3.11–3.13 suites and cache-on/off output comparisons.
+The October 18 Rich profile (+7.6% at `0b3494c`) predates this implementation. See the
 [decision](../DECISIONS.md#2026-10-18-one-analysis-may-reuse-its-source-correspondence-proof)
 and [publication checkpoint](../RELEASING.md#1946-publication-checkpoint-october-18-2026).
 Remote publication is not verified. The October 10 records below remain historical.

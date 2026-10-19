@@ -476,7 +476,7 @@ class BlockAnalysis(EngineState):
         site: Optional[BlockSite],
         returned: Optional[Sequence[str]] = None,
     ) -> Optional[IfBindingTransfer]:
-        """Reprove original source ownership and the full required output contract, without a memo."""
+        """Certify current ownership and outputs, sharing source proof only for owned analysis trees."""
         module = analyzer.analyzed_tree
         block_range = self._block_line_span(nodes)
         if site is None or not isinstance(module, ast.Module) or block_range is None:

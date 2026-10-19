@@ -5,7 +5,8 @@
 > Historical record of the September 12, 2026 alpha audit. The production-readiness pass that followed, with its counterexamples, repairs, and consumer evidence, is recorded in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md), which supersedes the disposition below.
 
 **Current publication status:** the maintainer requested 1.946 publication on
-October 18 without further tests. Live verification/upload is blocked by network
+October 18, then extended the scope to implement scoped source-proof reuse and
+rerun Python 3.11–3.13 suites and cache-on/off output comparisons. Live verification/upload is blocked by network
 access; publication is not confirmed. See the
 [publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026)
 and [latest profile](RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).

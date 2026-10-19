@@ -10,29 +10,31 @@ It checks each extraction, preserves the parts that differ as parameters, and
 leaves meaningful names for you to choose.
 
 **Release status: 1.946 (beta).** Named for ln 7, approximately 1.945910149.
-This version is prepared for publication; the last published release recorded
-here is 1.792. Publication of 1.946 has not been verified. The
+The
 [1.946 overview](https://github.com/ericeallen/towel/blob/v1.946/docs/RELEASE_1_946.md)
 and [changelog](https://github.com/ericeallen/towel/blob/v1.946/CHANGELOG.md#1946)
 describe the changes: extraction of eligible branch-local outputs, precise
 constant substitution, fewer unnecessary lambdas, stronger typing and lifetime
 checks, and bounded reuse of source-analysis facts.
 
-The final development audit at `9d57b0d` passed 10,583 tests and 45 subtests,
+An earlier development audit at `9d57b0d` passed 10,583 tests and 45 subtests,
 with 32 skips and 93.478% coverage. Its six consumer checks preserved their
 original test outcomes and expected generated outputs. These results precede
 the 1.946 metadata and documentation update; they do not certify the final
 versioned artifacts. See the
 [readiness report](https://github.com/ericeallen/towel/blob/v1.946/docs/PRODUCTION_READINESS.md)
-for completed evidence and its limits. Publication has been requested without
-further tests; the upload and remote verification remain outstanding. See the
-[publication checkpoint](https://github.com/ericeallen/towel/blob/v1.946/docs/RELEASING.md#1946-publication-checkpoint-october-18-2026).
+for source-bound evidence and its limits. The latest
+[local validation](https://github.com/ericeallen/towel/blob/v1.946/docs/PRODUCTION_READINESS.md#scoped-source-proof-memo-local-validation-october-18-2026)
+records the full Python 3.11–3.13 runs, 93–94% coverage, byte-identical CLI
+outputs and the remaining process-observer limitation.
 
 The October 18 profile of `0b3494c` measured Rich 7.6% slower than 1.792
 (97.4/97.6 versus 90.5/90.7 seconds, shared macOS host, Python 3.12).
 Click's noisier difference includes a fifth extraction where 1.792 made four.
-The maintainer chose to ship this regression documented; source-correspondence
-memoization is deferred to the release after 1.946. See
+That profile predates scoped source-correspondence memoization, now implemented
+for this release. It reuses a proof only for an owned immutable tree within one
+analysis; caller trees and materialization retain fresh checks. No new timing
+benefit is claimed. See
 [where the remaining time goes](https://github.com/ericeallen/towel/blob/v1.946/docs/RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
 
 The earlier October 10 container cohorts use

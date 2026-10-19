@@ -566,11 +566,12 @@ def test_unsupported_ancestors_keep_the_existing_binding_guard(
     test_if_bindings_keep_lexical_errors_and_full_observations(tmp_path, case)
 
 
-def test_cached_and_uncached_branch_helpers_agree(tmp_path: Path) -> None:
-    _, _, cached = _extract(tmp_path, next(case for case in _CASES if case.name == "continuation"))
-    _, _, uncached = _extract(
-        tmp_path, next(case for case in _CASES if case.name == "continuation"), uncached=True
-    )
+@pytest.mark.parametrize("name", ["continuation", "nested_if", "both_arms", "renamed_outputs"])
+def test_cached_and_uncached_branch_helpers_agree(tmp_path: Path, name: str) -> None:
+    case = next(case for case in _CASES if case.name == name)
+    _, _, cached = _extract(tmp_path, case)
+    _, _, uncached = _extract(tmp_path, case, uncached=True)
+    assert cached == uncached
     assert cached != _source(next(case for case in _CASES if case.name == "continuation"))
     assert ast.dump(ast.parse(cached)) == ast.dump(ast.parse(uncached))
 
