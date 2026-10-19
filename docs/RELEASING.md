@@ -588,7 +588,7 @@ For the exact candidate commit:
    - Each failure is written as a hostile fixture, ready to commit, under the directory the run prints, with a note saying which battery it belongs to and what to add there. Pass `--prefix` to name the fixtures by your branch. The run exits 1 if any case failed.
    - A failure of a class that [tests/audit_defects.py](../tests/audit_defects.py) names is a known defect. Commit its fixture only when it shows the class in a shape the batteries lack.
    - Any other failure is a finding for the audit, at the owner's P1 standard. Its fixture is committed as a strict expected failure, entered in its battery's `KNOWN_DEFECTS`, until the fix lands.
-   - Record the seed range, the counts the run prints, and each failure. The default of 2000 seeds is about 3,700 runs; on the 1.772 candidate they took two minutes on nine worker processes (`--jobs` defaults to half the cores), and found 27 failures, every one of a class the audit had reported.
+   - Record the seed range, the actual run count printed by each invocation, and each failure. The release recipe draws 2000 seeds; the number of runs depends on the selected family, forms, layouts and typed frequency. The earlier 1.772 campaign completed about 3,700 runs in two minutes on nine worker processes (`--jobs` defaults to half the cores), and found 27 failures, every one of a class the audit had reported. That historical count is not the current two-form grammar's run count.
 
 `just release VERSION /path/to/release-evidence.json` verifies the completed
 evidence and exact prebuilt artifacts. It does not build artifacts, replace
