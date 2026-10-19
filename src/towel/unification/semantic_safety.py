@@ -1232,7 +1232,9 @@ def _module_may_replace_builtins(analyzer: ScopeAnalyzer, source: str) -> bool:
         _BUILTIN_MAPPING_SOURCES.pop(analyzer, None)
     bindings = global_bindings(source)
     may_replace = bindings is None or (
-        "__builtins__" in bindings.bindings or "__builtins__" in bindings.rebound_by_global
+        bool(bindings.star_imports)
+        or "__builtins__" in bindings.bindings
+        or "__builtins__" in bindings.rebound_by_global
     )
     if use_memo:
         # Count the source object and a possible separately cached UTF-8 buffer,

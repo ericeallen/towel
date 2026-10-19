@@ -326,8 +326,9 @@ def _add_parameterize_builtins_flag(parser: argparse.ArgumentParser) -> None:
         help="Preserve each caller's builtin binding through a lookup thunk when sharing "
         "code across modules or between different bindings. By default, cross-module "
         "bare builtin reads are declined (except __debug__). Safe same-module reads stay bare. "
-        "A module-resolved builtin read declines if its module binds __builtins__ or a nested scope "
-        "declares it global, even with this flag. Eager evaluation requires a proved single use "
+        "A module-resolved builtin read declines if its module binds __builtins__, has a wildcard "
+        "import that may bind it, or a nested scope declares it global, even with this flag. "
+        "Eager evaluation requires a proved single use "
         "at the first effect and an immutable lookup result.",
     )
 

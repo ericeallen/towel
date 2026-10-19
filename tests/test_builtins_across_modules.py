@@ -181,7 +181,7 @@ IN_MODULE = {
     "star_import_outside_the_project": (
         "from os.path import *",
         "",
-        "builtin_may_differ_by_module",
+        "builtin_mapping_replaced",
     ),
     "rebound_builtins_namespace": (
         "import builtins\n__builtins__ = dict(vars(builtins), len=lambda item: 7)",
@@ -255,17 +255,19 @@ def test_reflection_does_not_supply_builtin_rebinding_evidence(tmp_path: Path, c
     assert _evidence(tmp_path, REFLECTIVE_NAMESPACE_OPERATIONS[case]) is None
 
 
-def test_a_star_import_is_followed_into_the_project(tmp_path: Path) -> None:
+def test_star_imports_conservatively_decline_unproved_mapping_identity(tmp_path: Path) -> None:
+    # The source-only guard cannot prove a provider's runtime __all__, including
+    # whether it exports __builtins__. It runs before cross-module name lookup.
     binding = _project(
         "from pkg.util import *",
         extra={"pkg/util.py": "def len(item):\n    return 55\n"},
     )
-    _assert_declined(tmp_path / "binding", binding, "builtin_may_differ_by_module")
+    _assert_declined(tmp_path / "binding", binding, "builtin_mapping_replaced")
     listed = _project(
         "from .util import *",
         extra={"pkg/util.py": '__all__ = ["len"]\n\n\ndef len(item):\n    return 55\n'},
     )
-    _assert_declined(tmp_path / "listed", listed, "builtin_may_differ_by_module")
+    _assert_declined(tmp_path / "listed", listed, "builtin_mapping_replaced")
     elsewhere = _project(
         "from pkg.util import *",
         extra={"pkg/util.py": "def measure(item):\n    return 55\n\n\n_len = len\n"},
@@ -274,7 +276,7 @@ def test_a_star_import_is_followed_into_the_project(tmp_path: Path) -> None:
     _write(project, elsewhere)
     applied, declined = _refactor(project)
     assert applied == 0
-    assert "builtin_may_differ_by_module" in declined
+    assert "builtin_mapping_replaced" in declined
 
 
 PATCHES = {

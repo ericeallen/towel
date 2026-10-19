@@ -24,6 +24,7 @@ import pytest
 
 from tests.test_helpers import method_helper_calls, refactor_to_fixed_point_silently
 from tests.test_method_host_machinery import _module, _run
+from tests.test_parameterize_builtins import _refactor
 from towel.unification.models import ClassInfo
 from towel.unification import import_graph
 from towel.unification.module_bindings import global_bindings
@@ -87,11 +88,6 @@ def _files(root: Path, files: dict[str, str]) -> None:
                 "except ImportError:\n    from typing_extensions import Protocol as Contract\n",
             },
         ),
-        (
-            "from aliases import *",
-            "Contract",
-            {"aliases.py": "from typing import Protocol as Contract\n__all__ = ['Contract']\n"},
-        ),
         ("from typing import Protocol", "Protocol if True else object", {}),
         (
             "from typing import Protocol\nchoose = True",
@@ -154,6 +150,43 @@ def test_protocol_aliases_preserve_runtime_structural_conformance(
     assert any(isinstance(node, ast.FunctionDef) for node in ast.parse(final).body)
     (tmp_path / "box.py").write_text(final)
     assert _run(tmp_path, driver) == before
+
+
+@pytest.mark.parametrize("wildcard", [False, True], ids=["explicit", "wildcard"])
+def test_protocol_alias_imports_preserve_builtin_mapping_policy(
+    tmp_path: Path, wildcard: bool
+) -> None:
+    prelude = "from aliases import *" if wildcard else "from aliases import Contract"
+    source = _module(prelude, "class Box(Contract):\n    v: int\n")
+    _files(
+        tmp_path,
+        {
+            "aliases.py": "from typing import Protocol as Contract\n__all__ = ['Contract']\n",
+            "box.py": source,
+        },
+    )
+    driver = (
+        "from typing import runtime_checkable\nfrom box import Box\n"
+        "class Concrete:\n    v = 1\n"
+        "    def first(self, n):\n        return n\n"
+        "    def second(self, n):\n        return n\n"
+        "print(isinstance(Concrete(), runtime_checkable(Box)))\n"
+    )
+    assert _run(tmp_path, driver) == "True\n|"
+    path = tmp_path / "box.py"
+    applied, declined = _refactor(path, False)
+    final = path.read_text()
+    if wildcard:
+        # Source-only analysis cannot prove the provider's runtime exports.
+        assert applied == 0
+        assert "builtin_mapping_replaced" in declined
+        assert final == source
+    else:
+        assert applied > 0
+        assert "builtin_mapping_replaced" not in declined
+        assert not method_helper_calls(final)
+        assert any(isinstance(node, ast.FunctionDef) for node in ast.parse(final).body)
+    assert _run(tmp_path, driver) == "True\n|"
 
 
 @pytest.mark.parametrize(

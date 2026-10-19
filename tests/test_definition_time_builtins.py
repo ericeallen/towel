@@ -33,6 +33,8 @@ BODY = """\
     return z
 """
 
+WILDCARD_REPLACEMENT = '__all__ = ["__builtins__"]\n__builtins__ = {"len": lambda data: 100}\n'
+
 
 def _source(before: str = "", between: str = "", after: str = "") -> str:
     return (
@@ -118,6 +120,46 @@ def test_ordinary_mapping_replacements_are_conservatively_declined(
 
 
 @pytest.mark.parametrize("flag", [False, True])
+@pytest.mark.parametrize(
+    ("position", "expected"),
+    [("before", "306 306\n"), ("between", "9 306\n"), ("after", "9 9\n")],
+)
+def test_explicit_wildcard_export_preserves_definition_time_builtin_mappings(
+    tmp_path: Path, flag: bool, position: str, expected: str
+) -> None:
+    source = _source(**{position: "from replacement import *\n"})
+    _write(tmp_path, {"replacement.py": WILDCARD_REPLACEMENT, "m.py": source})
+    assert _run(tmp_path, "m.py") == expected
+    _, declined = _refactor(tmp_path / "m.py", flag)
+    assert _run(tmp_path, "m.py") == expected
+    assert "builtin_mapping_replaced" in declined
+    final = (tmp_path / "m.py").read_bytes()
+    applied, _ = _refactor(tmp_path / "m.py", flag)
+    assert applied == 0
+    assert (tmp_path / "m.py").read_bytes() == final
+
+
+@pytest.mark.parametrize("flag", [False, True])
+@pytest.mark.parametrize("local_builtin", [False, True])
+def test_wildcard_mapping_replacement_keeps_nonbuiltin_extraction_useful(
+    tmp_path: Path, flag: bool, local_builtin: bool
+) -> None:
+    source = _source(before="from replacement import *\n")
+    if local_builtin:
+        source = source.replace("(data):", "(data, len):").replace(
+            "first([1]), second([1])", "first([1], lambda data: 7), second([1], lambda data: 7)"
+        )
+    else:
+        source = source.replace("len(data)", "data[0]")
+    _write(tmp_path, {"replacement.py": WILDCARD_REPLACEMENT, "m.py": source})
+    expected = _run(tmp_path, "m.py")
+    applied, declined = _refactor(tmp_path / "m.py", flag)
+    assert applied > 0
+    assert "builtin_mapping_replaced" not in declined
+    assert _run(tmp_path, "m.py") == expected
+
+
+@pytest.mark.parametrize("flag", [False, True])
 @pytest.mark.parametrize("mutation", [False, True])
 def test_shared_builtin_mapping_mutation_preserves_useful_extraction(
     tmp_path: Path, flag: bool, mutation: bool
@@ -194,6 +236,29 @@ def test_cross_module_mapping_replacement_is_not_fixed_by_a_lookup_thunk(
     assert _run(tmp_path, "drive.py") == expected
 
 
+@pytest.mark.parametrize("flag", [False, True])
+def test_cross_module_wildcard_mapping_replacement_preserves_results(
+    tmp_path: Path, flag: bool
+) -> None:
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": '[project]\nname = "pkg"\nversion = "0"\n',
+            "replacement.py": WILDCARD_REPLACEMENT,
+            "pkg/__init__.py": "",
+            "pkg/a.py": "import pkg.b\ndef first(data):\n" + BODY,
+            "pkg/b.py": "def unrelated():\n    pass\nfrom replacement import *\ndef second(data):\n"
+            + BODY,
+            "drive.py": "from pkg.a import first\nfrom pkg.b import second\nprint(first([1]), second([1]))\n",
+        },
+    )
+    expected = _run(tmp_path, "drive.py")
+    assert expected == "9 306\n"
+    _, declined = _refactor(tmp_path, flag)
+    assert _run(tmp_path, "drive.py") == expected
+    assert "builtin_mapping_replaced" in declined
+
+
 def test_local_builtins_assignment_does_not_disable_ordinary_module_extraction(
     tmp_path: Path,
 ) -> None:
@@ -210,10 +275,17 @@ def test_local_builtins_assignment_does_not_disable_ordinary_module_extraction(
 
 
 @pytest.mark.parametrize("flag", [False, True])
+@pytest.mark.parametrize("wildcard", [False, True], ids=["assignment", "wildcard-export"])
 def test_default_typed_formatted_cli_preserves_captured_mappings(
-    tmp_path: Path, flag: bool
+    tmp_path: Path, flag: bool, wildcard: bool
 ) -> None:
-    _write(tmp_path, {"m.py": _source(between='__builtins__ = {"len": lambda data: 100}\n')})
+    replacement = (
+        "from replacement import *\n" if wildcard else '__builtins__ = {"len": lambda data: 100}\n'
+    )
+    files = {"m.py": _source(between=replacement)}
+    if wildcard:
+        files["replacement.py"] = WILDCARD_REPLACEMENT
+    _write(tmp_path, files)
     expected = _run(tmp_path, "m.py")
     completed = subprocess.run(
         [
