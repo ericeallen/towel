@@ -503,7 +503,11 @@ REFLECTION_OWNERSHIP_REFUSALS: Dict[str, str] = {
     "r7fz_classhost_init_subclass_wraps": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_classhost_metaclass_registry": "owned bindings straddle a partial or uncertified whole-body frame boundary",
 }
-TRANSFORMED = (HISTORICAL_EXTRACTIONS - OWNERSHIP_REFUSALS.keys()) | {
+# r162 retains its original behavior check, but its wildcard import and bare
+# print reads now require conservative builtin-mapping refusal.
+TRANSFORMED = (
+    HISTORICAL_EXTRACTIONS - OWNERSHIP_REFUSALS.keys() - {"r162_host_star_imports_callable"}
+) | {
     # Occurrence-specific constants recover complete-body ownership handoffs.
     # Conditional bindings and loop deletion move with their unbound reads;
     # no eager argument or partial helper changes the exception or lifetime.
