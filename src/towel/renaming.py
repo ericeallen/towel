@@ -330,11 +330,23 @@ class _Edits:
         """Edit normalized NAME identities using their original UTF-8 source spans."""
         source = self.module.raw.decode("utf-8")
         found = False
+        definition_name_next = False
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
             if token.start[0] < node.lineno:
                 continue
             if token.start[0] > (node.end_lineno or node.lineno):
                 break
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if token.string == "def":
+                    definition_name_next = True
+                    continue
+                if not definition_name_next:
+                    continue
+                if (
+                    token.type != tokenize.NAME
+                    or unicodedata.normalize("NFKC", token.string) != old
+                ):
+                    break
             if token.type == tokenize.NAME and unicodedata.normalize("NFKC", token.string) == old:
                 line = self.lines[token.start[0] - 1].decode("utf-8")
                 column = len(line[: token.start[1]].encode("utf-8"))
