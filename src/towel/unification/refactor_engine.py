@@ -91,7 +91,6 @@ from .block_signature import (
     signature_bucket_key,
 )
 from ..coverage_config import CoverageExclusion
-from ..project_layout import find_project_root
 from .if_binding_transfer import sharing_if_transfer_sources
 from .compiler_literals import sharing_compiler_literal_facts
 from .return_source_uses import sharing_return_source_uses
@@ -776,6 +775,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         if self._output_origin is None:
             # Outside a fixed-point run the analysis is the run.
             self._forget_run_lookups()
+            self.import_graph.begin_run()
         stale = {os.path.abspath(path) for path in (invalidate_paths or ())}
         stale.update(
             os.path.abspath(path) for path in file_paths if not self.analysis_session.reusable(path)
@@ -783,9 +783,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         for path in stale:
             self._evict_cached_analysis(path)
         self._analysis_paths = tuple(file_paths)
-        # Direct analyses can change their project markers between calls,
-        # independently of the import cache's explicitly begun run.
-        roots = {path: find_project_root(self._origin_in_run(path)) for path in file_paths}
+        roots = {path: self._project_root_in_run(path) for path in file_paths}
         mapping_writes = {
             root: project_may_replace_builtin_mapping(root, frozenset(self.excluded_directories))
             for root in sorted(set(roots.values()))
