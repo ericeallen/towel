@@ -685,14 +685,18 @@ def test_pyright_oracle_reveals_types(tmp_path: Path) -> None:
     from towel.type_inference import PyrightOracle
 
     module, source = _pyright_package(tmp_path)
-    revealed = PyrightOracle().reveal(
-        [RevealRequest(str(module), source, 8, "    ", ("box", "Box", "n * 2.5", "lambda: n"))]
-    )
-    assert revealed[(str(module), 8, 0)] == "Box"
-    assert revealed[(str(module), 8, 1)] == "type[Box]"
-    assert revealed[(str(module), 8, 2)] == "float"
-    assert revealed[(str(module), 8, 3)] == "() -> int"
-    assert not list(module.parent.glob("_towel_probe_*")), "probe files are removed"
+    oracle = PyrightOracle()
+    try:
+        revealed = oracle.reveal(
+            [RevealRequest(str(module), source, 8, "    ", ("box", "Box", "n * 2.5", "lambda: n"))]
+        )
+        assert revealed[(str(module), 8, 0)] == "Box"
+        assert revealed[(str(module), 8, 1)] == "type[Box]"
+        assert revealed[(str(module), 8, 2)] == "float"
+        assert revealed[(str(module), 8, 3)] == "() -> int"
+        assert not list(module.parent.glob("_towel_probe_*")), "probe files are removed"
+    finally:
+        oracle.close()
 
 
 @requires_pyright
@@ -701,15 +705,18 @@ def test_pyright_oracle_judges_subtypes_and_checks(tmp_path: Path) -> None:
 
     module, source = _pyright_package(tmp_path)
     oracle = PyrightOracle()
-    assert oracle.is_subtype(
-        str(module),
-        source,
-        [("bool", "int"), ("int", "bool"), ("Box", "Base"), ("int", "Unknown")],
-    ) == [YES, NO, YES, UNKNOWN]
-    assert oracle.check(str(module), source) == CheckSuccess()
-    result = oracle.check(str(module), source + "x: int = 'a'\n")
-    assert isinstance(result, CheckSuccess)
-    assert any("pyright" in error.message for error in result.errors)
+    try:
+        assert oracle.is_subtype(
+            str(module),
+            source,
+            [("bool", "int"), ("int", "bool"), ("Box", "Base"), ("int", "Unknown")],
+        ) == [YES, NO, YES, UNKNOWN]
+        assert oracle.check(str(module), source) == CheckSuccess()
+        result = oracle.check(str(module), source + "x: int = 'a'\n")
+        assert isinstance(result, CheckSuccess)
+        assert any("pyright" in error.message for error in result.errors)
+    finally:
+        oracle.close()
 
 
 def test_pyright_callable_spelling() -> None:
@@ -771,16 +778,20 @@ def test_pyright_project_gets_pyright_types_end_to_end(tmp_path: Path) -> None:
                 label = box.name.upper()
                 return label + str(scaled)
             """))
-    engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=PyrightOracle()
-    )
-    proposals = engine.analyze_file(str(path))
-    assert proposals
-    result = engine.apply_refactoring(str(path), proposals[0])
-    assert (
-        _signature(result)
-        == "def __extracted_func_0(__param_0: int, box: Box, _towel_owner: 'object') -> str:"
-    )
+    oracle = PyrightOracle()
+    try:
+        engine = UnificationRefactorEngine(
+            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        )
+        proposals = engine.analyze_file(str(path))
+        assert proposals
+        result = engine.apply_refactoring(str(path), proposals[0])
+        assert (
+            _signature(result)
+            == "def __extracted_func_0(__param_0: int, box: Box, _towel_owner: 'object') -> str:"
+        )
+    finally:
+        oracle.close()
 
 
 @requires_mypy
@@ -839,10 +850,14 @@ def test_pyright_never_executes_a_project_package_that_shadows_the_standard_libr
     module = package / "m.py"
     source = "def f(x: int) -> int:\n    return x + 1\n"
     module.write_text(source)
-    messages = PyrightOracle().check(str(module), source)
-    assert not marker.exists(), "the project's locale package was executed"
-    assert isinstance(messages, CheckSuccess)
-    assert not messages.errors
+    oracle = PyrightOracle()
+    try:
+        messages = oracle.check(str(module), source)
+        assert not marker.exists(), "the project's locale package was executed"
+        assert isinstance(messages, CheckSuccess)
+        assert not messages.errors
+    finally:
+        oracle.close()
 
 
 def test_original_box_owned_tuple_partial_stays_refused(tmp_path: Path) -> None:

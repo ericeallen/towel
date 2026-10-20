@@ -147,11 +147,14 @@ def test_pyright_project_scope_matches_configuration_and_checks_unchanged_consum
     assert independent.returncode == 0, independent.stdout + independent.stderr
     assert json.loads(independent.stdout)["summary"]["filesAnalyzed"] == 2
     checker = PyrightOracle()
-    assert checker.check(str(host), host.read_text()) == CheckSuccess()
-    changed = checker.check(str(host), "def value() -> int:\n    return 1\n")
-    assert isinstance(changed, CheckSuccess)
-    assert {error.path for error in changed.errors} == {str(consumer)}
-    assert all("reportAssignmentType" in error.message for error in changed.errors)
+    try:
+        assert checker.check(str(host), host.read_text()) == CheckSuccess()
+        changed = checker.check(str(host), "def value() -> int:\n    return 1\n")
+        assert isinstance(changed, CheckSuccess)
+        assert {error.path for error in changed.errors} == {str(consumer)}
+        assert all("reportAssignmentType" in error.message for error in changed.errors)
+    finally:
+        checker.close()
 
 
 def test_all_prospective_modules_are_visible_together(tmp_path: Path, oracle: TypeOracle) -> None:
@@ -385,9 +388,13 @@ def test_hidden_project_stubs_are_part_of_the_prospective_graph(tmp_path: Path) 
     path = tmp_path / "example.py"
     source = "import service\nvalue: int = service.value()\n"
     path.write_text(source)
-    result = PyrightOracle().check(str(path), source)
-    assert isinstance(result, CheckSuccess)
-    assert any("reportAssignmentType" in error.message for error in result.errors)
+    checker = PyrightOracle()
+    try:
+        result = checker.check(str(path), source)
+        assert isinstance(result, CheckSuccess)
+        assert any("reportAssignmentType" in error.message for error in result.errors)
+    finally:
+        checker.close()
 
 
 def test_checker_children_ignore_source_pythonpath_hooks(
@@ -440,10 +447,13 @@ def test_shared_pyright_extends_config_is_preserved(tmp_path: Path) -> None:
     path = root / "m.py"
     path.write_text("def value(x: int) -> int:\n    return x\n")
     checker = PyrightOracle()
-    assert checker.check(str(path), path.read_text()) == CheckSuccess()
-    result = checker.check(str(path), "def value(x):\n    return x\n")
-    assert isinstance(result, CheckSuccess)
-    assert any("reportUnknownParameterType" in error.message for error in result.errors)
+    try:
+        assert checker.check(str(path), path.read_text()) == CheckSuccess()
+        result = checker.check(str(path), "def value(x):\n    return x\n")
+        assert isinstance(result, CheckSuccess)
+        assert any("reportUnknownParameterType" in error.message for error in result.errors)
+    finally:
+        checker.close()
 
 
 @pytest.mark.parametrize(
