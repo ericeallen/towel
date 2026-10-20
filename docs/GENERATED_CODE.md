@@ -228,20 +228,42 @@ another caller's behalf, apart from the interpreter constant `__debug__`.
 `lambda: len`; each original use then reads the caller's current binding.
 The first-effect, single-use proof also requires an immutable result at every
 caller; an unknown builtin lookup result remains deferred.
-Safe same-module builtin reads stay bare. CPython captures a function's
-builtin mapping when the function is defined, so moving a read into an earlier
-helper can change which mapping it uses. A block with module-resolved builtin
-reads therefore declines if its module binds `__builtins__`, contains a wildcard
-import, or any nested scope declares that name global (`builtin_mapping_replaced`).
-A wildcard provider can export `__builtins__` through an explicit `__all__`,
-so its underscore prefix does not establish safety. This conservative rule
-also covers replacement before all definitions and conditional or aliased
-replacements. Enclosing-scope binding analysis includes `def`/`async def`
-defaults and annotation expressions, and recursively follows lambda defaults;
-an uncalled lambda body does not by itself bind the module name.
-The option does not override it. Mutating a shared mapping,
-locally shadowed names and blocks without builtin reads retain their ordinary
-rules. Blocks that differ in which builtin they use still decline.
+Safe same-module builtin reads stay bare when the captured mapping is unchanged.
+CPython captures a function's builtin mapping at definition. If a module's
+`__builtins__` may be replaced, Towel conservatively declines every explicit read that
+can fall back from globals to that mapping (`builtin_mapping_replaced`). This
+includes arbitrary custom keys and names currently bound in the module: a later
+deletion can expose fallback. Implicit imports depend on `__import__`, and class
+construction depends on `__build_class__`; same-spelled locals do not redirect
+those operations. `--parameterize-builtins` cannot bypass the refusal, because
+a lookup lambda created later can itself capture another mapping.
+
+Possible replacement includes explicit or conditional bindings, nested global
+declarations and wildcard imports: a provider's `__all__` can export
+`__builtins__`. Module binding facts include callable defaults and annotation
+expressions in their enclosing scope, recursively following lambda defaults.
+An ordinary attribute store/deletion of `receiver.__builtins__` anywhere in the
+analyzed program makes every module uncertain: the receiver could be a module
+passed through an unknown alias. One fresh boolean records this per analysis;
+excluded runnable files still count. Unreadable input or exceeding the scan's
+file limit is hazardous rather than evidence of absence. Existing unparsed-file
+refusals remain unchanged; excluded non-parsing files are non-program input.
+This ordinary attribute scan does not inspect reflective namespace operations.
+The source-local predicate includes the same attribute-write fact.
+
+For captured-mapping dependencies, definition defaults and eager annotations
+execute in the caller's frame. Nested function/lambda bodies capture the
+module-current mapping when created, so their bodies are not treated as the
+original caller's reads. A generator expression contributes only its outer
+iterable to that frame. List/set/dict comprehension bodies are conservatively
+covered for Python 3.12+ inlining on all supported host versions. Attribute and
+subscript assignment targets still read their receiver/index expressions,
+including comprehension targets.
+
+Explicit lexical local, parameter and cell reads remain eligible, subject to
+the other guards. Compiler-constant `__debug__` and blocks without captured-mapping
+dependencies remain eligible too. Mutating one shared mapping is distinct from
+replacing it. Blocks that differ in which builtin they use still decline.
 
 ## Fresh locals inside an IF
 

@@ -733,11 +733,31 @@ class PairEvaluation(
         """Reject a pair whose blocks cannot move at all; otherwise resolve their context."""
         ctx = self._resolve_pair_context(pair, functions)
         blocks = (
-            (pair.block1_nodes, ctx.func1, ctx.scope_analyzer, ctx.site1, pair.source1),
-            (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, ctx.site2, pair.source2),
+            (
+                pair.block1_nodes,
+                ctx.func1,
+                ctx.scope_analyzer,
+                ctx.site1,
+                pair.source1,
+                pair.file_path,
+            ),
+            (
+                pair.block2_nodes,
+                ctx.func2,
+                ctx.scope_analyzer2,
+                ctx.site2,
+                pair.source2,
+                pair.file_path2 or pair.file_path,
+            ),
         )
-        for nodes, function, analyzer, site, source in blocks:
-            mapping_reads = builtin_mapping_reads(function, nodes, analyzer, source)
+        for nodes, function, analyzer, site, source, file_path in blocks:
+            mapping_reads = builtin_mapping_reads(
+                function,
+                nodes,
+                analyzer,
+                source,
+                project_may_replace=self._project_may_replace_builtin_mapping(file_path),
+            )
             if mapping_reads:
                 self._debug_reject(
                     RejectReason.BUILTIN_MAPPING_REPLACED,

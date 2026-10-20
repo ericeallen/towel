@@ -141,7 +141,11 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         """
         pair = template.pair
         mapping_reads = builtin_mapping_reads(
-            candidate.function, candidate.nodes, candidate.analyzer, pair.source1
+            candidate.function,
+            candidate.nodes,
+            candidate.analyzer,
+            pair.source1,
+            project_may_replace=self._project_may_replace_builtin_mapping(candidate.file_path),
         )
         if mapping_reads:
             self._debug_decline_site(

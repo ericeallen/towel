@@ -26,20 +26,21 @@ findings:
    facts instead of repeatedly scanning the same statements. Pair budgets and
    ordering remain in force. These changes address measured analysis costs;
    they do not establish a new complete-command performance claim for 1.947.
-3. **Definition-time builtin lookup.** An extraction reading builtin spellings
-   declines when module-level replacement of `__builtins__` prevents proving
-   that the helper and original functions use the same mapping. The conservative
-   guard includes module-level wildcard imports: a provider's `__all__` can
-   export `__builtins__`. Enclosing-scope binding analysis includes callable
-   defaults and annotation expressions, recursively following lambda defaults
-   without treating uncalled lambda bodies as module assignments.
-   The guard also applies with `--parameterize-builtins`;
-   locally shadowed names and blocks without builtin reads retain their ordinary
-   rules. Its source-only verdict is reused within an analysis for warning-free
-   inputs, avoiding repeated
-   large-module lexical scans while retaining fresh handling of warning-capable
-   sources. This reuse does not retain AST or block facts or change the
-   preservation contract. See the [performance limits](PERFORMANCE.md#1947-large-module-builtin-guard-repair).
+3. **Definition-time lookup mappings.** When a module's `__builtins__` may be replaced,
+   extraction declines explicit module/global fallback reads, including custom
+   mapping keys and currently module-bound names, plus implicit import and class
+   construction lookups. `--parameterize-builtins` cannot override this rule.
+   Explicit locals, parameters and cells, `__debug__`, and mapping-independent
+   blocks retain their ordinary rules. The guard follows the actual evaluation
+   scopes, including defaults and eager annotations, with conservative coverage
+   for inlined comprehensions. Wildcard exports can replace `__builtins__` too.
+   An ordinary `receiver.__builtins__` store/deletion anywhere in the analyzed
+   program makes every module uncertain, irrespective of receiver aliases;
+   excluded runnable files still contribute to that check.
+   See the [captured-mapping policy](GENERATED_CODE.md#arguments-and-evaluation).
+   A bounded source-only verdict memo avoids repeated large-module lexical
+   scans for warning-free inputs while retaining native warning behavior and
+   fresh AST/block proofs. See the [performance limits](PERFORMANCE.md#1947-large-module-builtin-guard-repair).
 4. **Each file's formatting policy.** Generated helpers, declarations and calls
    use their actual destination file's configuration. Ruff import sorting
    recognizes standalone, dotfile, extended and nested configurations through

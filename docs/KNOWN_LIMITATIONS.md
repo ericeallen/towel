@@ -218,19 +218,46 @@ describe belong to that version.
   therefore receives no cross-module extraction under the default policy.
   Same-module builtin reads remain bare when the module does not replace
   ``__builtins__``. CPython captures that mapping when it creates a function;
-  a helper created at another point can capture a different mapping. Blocks
-  that read module-resolved builtin spellings therefore decline when their
-  module binds ``__builtins__``, contains a wildcard import, or any nested
-  scope declares that name global (`builtin_mapping_replaced`). A wildcard
-  provider can export ``__builtins__`` through ``__all__``; the guard does not
-  assume that underscore-prefixed names are absent. This conservative rule
-  includes replacement before all definitions, conditional assignments and
-  aliased mappings. Binding analysis visits `def`/`async def` defaults and
-  annotation expressions in their enclosing scope, and follows lambda defaults
-  recursively. An assignment in an uncalled lambda body does not by itself
-  bind the module name.
-  Mutating a shared mapping does not replace it. Blocks without builtin reads
-  and locally shadowed builtin names retain their ordinary extraction rules.
+  a helper created at another point can capture a different mapping. A module
+  can replace it by binding ``__builtins__``, through a wildcard import, or
+  through a nested scope declaring that name global. A provider's ``__all__``
+  can explicitly export the underscore-prefixed name. Replacement before all
+  definitions, conditional assignments and aliased mappings are included.
+  Module binding analysis follows callable defaults and annotation expressions
+  in their enclosing scope, including nested lambda defaults; an uncalled
+  lambda body does not by itself bind the module name.
+
+  An ordinary attribute store or deletion of ``receiver.__builtins__`` anywhere
+  in the analyzed program makes **every module's mapping uncertain**. A function
+  such as ``configure(target)`` can receive a module through an unknown alias;
+  the guard does not try to prove a receiver harmless. A fresh project-wide
+  boolean records this hazard once per analysis. Excluded files that can run
+  still count. Unreadable files/directories or exceeding the scan's file limit
+  cannot prove absence and conservatively select the hazard. Existing unparsed
+  program refusals remain in force; excluded files that cannot parse here
+  retain their non-program treatment. The scan reads ordinary AST attribute
+  stores/deletions, not reflective namespace operations. The source-local
+  predicate includes the same attribute-write fact.
+
+  Under possible replacement, **every explicit module/global fallback read**
+  conservatively declines (`builtin_mapping_replaced`). The mapping can contain
+  arbitrary custom keys, and a currently module-bound name can fall back after
+  deletion; the guard is not limited to standard builtin spellings. Implicit
+  imports read ``__import__`` and class construction reads ``__build_class__``
+  from the captured mapping. Same-spelled local variables do not redirect those
+  implicit operations.
+
+  Dependency analysis follows what executes in the caller's frame: definition
+  defaults and eager annotations, and a generator expression's outer iterable.
+  Nested function/lambda bodies capture the module-current mapping when created;
+  their bodies are not flattened into the original caller's read set. List,
+  set and dict comprehension bodies are conservatively covered for Python 3.12+
+  inlining on every supported host version. Attribute/subscript assignment
+  targets include the reads of their receivers and indexes, including in
+  comprehensions. Explicit local, parameter and cell
+  reads remain eligible, as do compiler-constant ``__debug__`` and blocks without
+  captured-mapping dependencies, subject to the other guards. Mutating one shared
+  mapping is distinct from replacing it and retains its ordinary rules.
 
   `--parameterize-builtins` (`parameterize_builtins=True`) explicitly permits
   each caller's binding to reach a shared helper. Module-resolved names use
@@ -1755,10 +1782,12 @@ the proposals it built and did not apply, by reason:
   as parameters, the helper still reads bare a name that a site in another
   module could resolve differently. `builtin_may_differ_by_module`: the
   helper would read bare a builtin in a different module's namespace (*Module names stay module names*).
-  `builtin_mapping_replaced`: a block reads a module-resolved builtin while
-  its module binds `__builtins__`, contains a wildcard import that may bind
-  that name, or a nested scope declares it global; the helper or lookup lambda
-  could capture a different mapping. The
+  `builtin_mapping_replaced`: possible `__builtins__` replacement, including
+  an ordinary attribute store/deletion anywhere in the analyzed program, makes an
+  explicit module/global fallback read or implicit import/class lookup depend
+  on the caller's captured mapping. Custom names and currently module-bound
+  names are included. The helper or lookup lambda could capture another mapping.
+  The
   `--parameterize-builtins` flag does not bypass this conservative refusal.
 - The proposal. `duplicate_proposal`: the helper, home and sites repeat an
   earlier pair's, found through another pair of the same family.

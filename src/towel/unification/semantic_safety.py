@@ -1235,6 +1235,7 @@ def _module_may_replace_builtins(analyzer: ScopeAnalyzer, source: str) -> bool:
         bool(bindings.star_imports)
         or "__builtins__" in bindings.bindings
         or "__builtins__" in bindings.rebound_by_global
+        or bindings.builtin_mapping_attribute_write
     )
     if use_memo:
         # Count the source object and a possible separately cached UTF-8 buffer,
@@ -1248,7 +1249,12 @@ def _module_may_replace_builtins(analyzer: ScopeAnalyzer, source: str) -> bool:
 
 
 def builtin_mapping_reads(
-    function: FunctionNode, nodes: Sequence[ast.stmt], analyzer: ScopeAnalyzer, source: str
+    function: FunctionNode,
+    nodes: Sequence[ast.stmt],
+    analyzer: ScopeAnalyzer,
+    source: str,
+    *,
+    project_may_replace: bool = False,
 ) -> FrozenSet[str]:
     """Builtin lookups that cannot move when this module may replace ``__builtins__``.
 
@@ -1263,12 +1269,95 @@ def builtin_mapping_reads(
         if source.strip()
         else (ast.unparse(module) if isinstance(module, ast.Module) else "")
     )
-    if known_source and not _module_may_replace_builtins(analyzer, known_source):
+    # Keep native source diagnostics even when the independently computed
+    # project fact already prevents a shared-mapping proof.
+    source_may_replace = not known_source or _module_may_replace_builtins(analyzer, known_source)
+    if not project_may_replace and not source_may_replace:
         return frozenset()
-    names = frozenset(name for node in nodes for name in loaded_names(node))
-    return module_resolved_names(function, analyzer, names & BUILTIN_NAMES, exact=True) - {
-        "__debug__"
-    }
+    names, operations = _captured_mapping_dependencies(nodes, analyzer)
+    # Every global lookup can fall back to a captured mapping, which may have
+    # arbitrary keys. A list of the interpreter's standard builtins is not a
+    # proof that other spellings share the same lookup behavior.
+    return (
+        module_resolved_names(function, analyzer, names, exact=True) - {"__debug__"}
+    ) | operations
+
+
+def _captured_mapping_dependencies(
+    nodes: Sequence[ast.stmt], analyzer: ScopeAnalyzer
+) -> Tuple[FrozenSet[str], FrozenSet[str]]:
+    """Explicit and implicit mapping reads executed in the block's original frame.
+
+    Nested callable bodies capture their mapping when they are created; their
+    defaults still execute here. Generator bodies also have their own frame.
+    List, set and dict comprehensions execute inline on Python 3.12+, so their
+    reads must remain safe on those interpreters even when Towel runs on 3.11.
+    Compiler operations consult their mapping key independently of lexical
+    names: a local called ``__import__`` does not affect an import statement.
+    """
+    names: Set[str] = set()
+    operations: Set[str] = set()
+    pending: List[Tuple[ast.AST, FrozenSet[str]]] = [(node, frozenset()) for node in nodes]
+    postponed = _postpones_annotations(analyzer.analyzed_tree)
+    while pending:
+        node, bound = pending.pop()
+        if isinstance(node, ast.Name):
+            if isinstance(node.ctx, ast.Load) and node.id not in bound:
+                names.add(node.id)
+            continue
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            if node.target.id not in bound:
+                names.add(node.target.id)
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            operations.add("__import__")
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            generic_bound = bound | type_parameter_names(node)
+            if not isinstance(node, ast.Lambda):
+                pending.extend((expression, bound) for expression in node.decorator_list)
+            if isinstance(node, ast.ClassDef):
+                operations.add("__build_class__")
+                pending.extend((expression, generic_bound) for expression in node.bases)
+                pending.extend((keyword.value, generic_bound) for keyword in node.keywords)
+            else:
+                pending.extend((expression, generic_bound) for expression in node.args.defaults)
+                pending.extend(
+                    (expression, generic_bound)
+                    for expression in node.args.kw_defaults
+                    if expression is not None
+                )
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not postponed:
+                    pending.extend(
+                        (expression, generic_bound) for expression in annotation_expressions(node)
+                    )
+            continue
+        if isinstance(node, ast.GeneratorExp):
+            pending.append((node.generators[0].iter, bound))
+            continue
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp)):
+            pending.append((node.generators[0].iter, bound))
+            comprehension_bound = bound | comprehension_targets(node)
+            pending.extend(
+                (generator.iter, comprehension_bound) for generator in node.generators[1:]
+            )
+            pending.extend((generator.target, comprehension_bound) for generator in node.generators)
+            pending.extend(
+                (condition, comprehension_bound)
+                for generator in node.generators
+                for condition in generator.ifs
+            )
+            pending.extend(
+                (expression, comprehension_bound) for expression in comprehension_results(node)
+            )
+            continue
+        if isinstance(node, ast.AnnAssign):
+            # Function-local variable annotations never execute.
+            pending.append((node.target, bound))
+            if node.value is not None:
+                pending.append((node.value, bound))
+            continue
+        pending.extend((child, bound) for child in ast.iter_child_nodes(node))
+    return frozenset(names), frozenset(operations)
 
 
 def module_resolved_names(
@@ -1284,19 +1373,24 @@ def module_resolved_names(
     name an enclosing function binds is a cell; either read is not the
     module's. The annotation scopes of generic functions and classes bind
     their type parameters too. Class attributes do not count.
-    Anything else reaches the module's namespace, then the builtins, and is
-    the same lookup from any function of the module. A comprehension's
+    Anything else reaches the shared module namespace, then the builtin
+    mapping captured separately by each function at its creation. Preserving
+    that fallback requires the separate mapping guard. A comprehension's
     target counts as a function's local unless ``exact``
     (``_lexical_name_scopes``): the answer then under-counts module names,
     which only declines.
     """
-    # ``__class__`` is the cell the compiler gives a method for zero-argument
-    # ``super()``; it names the defining class, not a module binding.
-    resolved = set(names) - {"__class__"}
+    resolved = set(names)
     module_only: Set[str] = set()
     for scope in _lexical_name_scopes(function, analyzer, exact=exact):
         module_only.update(scope.global_names & resolved)
         resolved -= (scope.local_names | scope.type_parameters) - module_only
+        if isinstance(scope.node, ast.ClassDef) and "__class__" not in module_only:
+            # Only crossing an actual class boundary supplies its implicit
+            # cell. A plain function can instead fall back to this arbitrary
+            # key in its captured builtin mapping. Nearer global declarations
+            # bypass the class cell just as they bypass enclosing locals.
+            resolved.discard("__class__")
     return frozenset(resolved)
 
 

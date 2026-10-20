@@ -25,6 +25,8 @@ from pathlib import Path
 import pytest
 
 from tests.test_parameterize_builtins import _helpers, _refactor, _run, _write
+from towel.unification.scope_analyzer import ScopeAnalyzer
+from towel.unification.semantic_safety import builtin_mapping_reads
 
 BODY = """\
     x = len(data)
@@ -48,6 +50,20 @@ def _source(before: str = "", between: str = "", after: str = "") -> str:
         + after
         + "\nprint(first([1]), second([1]))\n"
     )
+
+
+def _assert_original_blocks_have_no_mapping_reads(source: str) -> None:
+    module = ast.parse(source)
+    analyzer = ScopeAnalyzer()
+    analyzer.analyze(module)
+    functions = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.FunctionDef) and node.name in {"first", "second"}
+    ]
+    assert len(functions) == 2
+    for function in functions:
+        assert builtin_mapping_reads(function, function.body, analyzer, source) == frozenset()
 
 
 @pytest.mark.parametrize("flag", [False, True])
@@ -151,11 +167,82 @@ def test_wildcard_mapping_replacement_keeps_nonbuiltin_extraction_useful(
         )
     else:
         source = source.replace("len(data)", "data[0]")
+    _assert_original_blocks_have_no_mapping_reads(source)
     _write(tmp_path, {"replacement.py": WILDCARD_REPLACEMENT, "m.py": source})
     expected = _run(tmp_path, "m.py")
-    applied, declined = _refactor(tmp_path / "m.py", flag)
+    applied, _ = _refactor(tmp_path / "m.py", flag)
     assert applied > 0
-    assert "builtin_mapping_replaced" not in declined
+    assert _run(tmp_path, "m.py") == expected
+
+
+@pytest.mark.parametrize("flag", [False, True])
+@pytest.mark.parametrize(
+    ("position", "expected"),
+    [("before", "606 606\n"), ("between", "306 606\n"), ("after", "306 306\n")],
+)
+def test_custom_builtin_names_preserve_each_functions_captured_mapping(
+    tmp_path: Path, flag: bool, position: str, expected: str
+) -> None:
+    replacements = {position: '__builtins__ = {"custom": lambda data: 200}\n'}
+    replacements["before"] = '__builtins__ = {"custom": lambda data: 100}\n' + replacements.get(
+        "before", ""
+    )
+    source = _source(**replacements).replace("len(data)", "custom(data)")
+    _write(tmp_path, {"m.py": source})
+    assert _run(tmp_path, "m.py") == expected
+    _, declined = _refactor(tmp_path / "m.py", flag)
+    assert _run(tmp_path, "m.py") == expected
+    assert "builtin_mapping_replaced" in declined
+    final = (tmp_path / "m.py").read_bytes()
+    applied, _ = _refactor(tmp_path / "m.py", flag)
+    assert applied == 0
+    assert (tmp_path / "m.py").read_bytes() == final
+
+
+@pytest.mark.parametrize("flag", [False, True])
+def test_deleted_module_global_falls_back_to_each_captured_custom_builtin(
+    tmp_path: Path, flag: bool
+) -> None:
+    source = (
+        '__builtins__ = {"custom": lambda data: 100}\ncustom = lambda data: 7\n'
+        + _source(between='__builtins__ = {"custom": lambda data: 200}\n', after="del custom\n")
+    ).replace("len(data)", "custom(data)")
+    _write(tmp_path, {"m.py": source})
+    expected = _run(tmp_path, "m.py")
+    assert expected == "306 606\n"
+    _, declined = _refactor(tmp_path / "m.py", flag)
+    assert _run(tmp_path, "m.py") == expected
+    assert "builtin_mapping_replaced" in declined
+
+
+@pytest.mark.parametrize("flag", [False, True])
+@pytest.mark.parametrize("closure", [False, True], ids=["local-parameter", "closure"])
+def test_custom_builtin_spelling_keeps_genuinely_lexical_extraction_useful(
+    tmp_path: Path, flag: bool, closure: bool
+) -> None:
+    if closure:
+        source = (
+            '__builtins__ = {"custom": lambda data: 100}\n'
+            + "def outer(custom):\n    def first(data):\n"
+            + "\n".join("    " + line for line in BODY.splitlines())
+            + "\n    def second(data):\n"
+            + "\n".join("    " + line for line in BODY.splitlines())
+            + "\n    return first([1]), second([1])\n"
+            + "print(outer(lambda data: 7))\n"
+        )
+        expected = "(27, 27)\n"
+    else:
+        source = _source(before='__builtins__ = {"custom": lambda data: 100}\n')
+        source = source.replace("(data):", "(data, custom):").replace(
+            "first([1]), second([1])", "first([1], lambda data: 7), second([1], lambda data: 7)"
+        )
+        expected = "27 27\n"
+    source = source.replace("len(data)", "custom(data)")
+    _assert_original_blocks_have_no_mapping_reads(source)
+    _write(tmp_path, {"m.py": source})
+    assert _run(tmp_path, "m.py") == expected
+    applied, _ = _refactor(tmp_path / "m.py", flag)
+    assert applied > 0
     assert _run(tmp_path, "m.py") == expected
 
 
@@ -186,11 +273,11 @@ def test_no_builtin_reads_and_local_shadowing_keep_useful_extraction(
         )
     else:
         source = source.replace("len(data)", "data[0]")
+    _assert_original_blocks_have_no_mapping_reads(source)
     _write(tmp_path, {"m.py": source})
     expected = _run(tmp_path, "m.py")
-    applied, declined = _refactor(tmp_path / "m.py", flag)
+    applied, _ = _refactor(tmp_path / "m.py", flag)
     assert applied > 0
-    assert "builtin_mapping_replaced" not in declined
     assert _run(tmp_path, "m.py") == expected
 
 
@@ -353,9 +440,6 @@ def test_comprehension_target_does_not_hide_the_enclosing_builtin_read(
 
 
 def test_lexical_mapping_guard_uses_the_analyzed_module_when_source_is_omitted() -> None:
-    from towel.unification.scope_analyzer import ScopeAnalyzer
-    from towel.unification.semantic_safety import builtin_mapping_reads
-
     module = ast.parse(_source(before='__builtins__ = {"len": lambda data: 100}\n'))
     analyzer = ScopeAnalyzer()
     analyzer.analyze(module)

@@ -1942,6 +1942,7 @@ but the ideas and their names are from the literature.
 | Whether a direct base resolves to `Protocol`, including project aliases and reexports | `protocol_bases.py` |
 | Module namespace writes relevant to ordinary binding analysis | `namespace_writes.py` |
 | What a module's top level binds, statement by statement | `module_bindings.py` |
+| Ordinary attribute stores/deletions that may replace any module's builtin mapping | `builtin_mapping_writes.py` |
 | The names each Python scope binds, and which scope a name resolves in | `lexical_scopes.py` |
 | The standard library some platform or supported Python lacks, per its documentation | `known_platforms.py` |
 | Which modules a project's build configuration leaves out of what it ships | `shipped_files.py` (at `src/towel/`) |
@@ -1998,6 +1999,19 @@ artifact function, analyzer, source-object identity, and nonempty digest against
 its site. A warm lexical answer provides no source correspondence or AST
 authority. Only the separately registered immutable analysis owners can reuse
 source correspondence; aligned-output and materialization proofs remain fresh.
+
+Captured-mapping safety takes a fresh project-wide hazard boolean once per
+analysis before workers start. Any ordinary AST attribute store/deletion named
+`__builtins__` can reach a module through an unknown receiver alias, so it makes
+every module uncertain. Excluded runnable files remain evidence; unreadable
+files/directories and the file limit select a hazard rather than prove absence.
+Existing unparsed-program refusal rules and excluded non-parsing-file treatment
+remain unchanged. This scan does not inspect reflective namespace operations
+or retain source/ASTs in its boolean. The source-local module-binding facts
+include the same attribute-write condition. That boolean is separate from the
+bounded per-analyzer source-verdict memo; the [performance guide](PERFORMANCE.md#1947-large-module-builtin-guard-repair)
+records its storage and warning-policy limits. Both pair and clustered-site
+checks apply the [captured-mapping dependency policy](GENERATED_CODE.md#arguments-and-evaluation).
 
 Lexical and shared parsing eligibility requires native `str`/`bytes` values.
 String and byte subclasses use the native parsing path; their hashing, sizing,

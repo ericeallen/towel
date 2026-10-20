@@ -25,17 +25,21 @@ release validation and publication; no publication date is assigned here.
   intervals reuse per-suite prefix facts instead of repeatedly scanning the
   same statements; pair budgets and ordering are preserved. Singleton blocks
   no longer inflate the budget warning's block count.
-- Extractions that read builtin spellings decline when the module may replace
-  `__builtins__`, including through a wildcard import whose provider may export
-  that name in `__all__`. Module binding analysis includes callable defaults
-  and annotation expressions in their enclosing scope, recursively following
-  lambda defaults while leaving uncalled lambda bodies in their own scope.
-  The mapping captured at function creation is preserved even with
-  `--parameterize-builtins`; locally shadowed names and blocks without
-  builtin reads retain their ordinary rules. Warning-free inputs reuse the
-  source-only guard verdict within an analysis, avoiding repeated lexical
-  scans of large unchanged modules while preserving native warning replay
-  and parser-limit checks.
+- Possible `__builtins__` replacement conservatively declines explicit reads
+  that can fall back from globals to the captured mapping, including custom
+  names and currently module-bound names, plus implicit import and class-building
+  lookups. `--parameterize-builtins` does not bypass this rule. Explicit local,
+  parameter and cell reads, compiler-constant `__debug__` and mapping-independent
+  blocks retain their ordinary rules. Scope analysis follows evaluated definition
+  heads and generator outer iterables, with conservative coverage of inlined
+  list/set/dict comprehensions. Wildcard exports and enclosing-scope assignments
+  in callable defaults/annotations are included. Any ordinary attribute store
+  or deletion of `receiver.__builtins__` in the analyzed program makes every
+  module's mapping uncertain, including through unknown receiver aliases and
+  excluded runnable files. Warning-free inputs reuse the
+  source-only guard verdict within an analysis, avoiding repeated lexical scans
+  while preserving native warning replay and parser-limit checks. See the
+  [captured-mapping policy](docs/GENERATED_CODE.md#arguments-and-evaluation).
 - Generated code uses each modified file's formatter and configuration. Ruff
   import sorting recognizes standalone, extended and nested configurations
   through native effective settings and honors disabled/per-file rules.

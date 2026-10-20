@@ -40,8 +40,13 @@ consumer output. The profiler records identify the repeated work; their elapsed
 times are not an unprofiled production benchmark. This candidate's retained
 results do not certify the subsequent runtime fix.
 
-The repaired guard also covers module-level wildcard imports that may import
-`__builtins__` through a provider's `__all__`. It memoizes only the source-derived
+The repaired guard covers all explicit module/global fallback reads and implicit
+import/class lookups under possible mapping replacement, including wildcard
+exports of `__builtins__` and ordinary `receiver.__builtins__` stores/deletions
+anywhere in the analyzed program. A fresh per-analysis boolean records that
+program-wide hazard, including excluded runnable files and conservative
+unknown-input handling. See the [evaluation-scope policy](GENERATED_CODE.md#arguments-and-evaluation).
+Separately, it memoizes only the source-derived
 builtin-mapping predicate, with one warning-free source/configuration fact per
 weakly held analyzer and an 8 MiB source-storage admission limit. Native warning
 replay, parser-limit changes,

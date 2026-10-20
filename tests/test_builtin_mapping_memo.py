@@ -106,6 +106,67 @@ def test_changed_source_and_reanalyzed_owner_cannot_reuse_an_old_binding_answer(
     assert safety.builtin_mapping_reads(function, function.body, analyzer, FUNCTION) == frozenset()
 
 
+def test_attribute_write_in_changed_source_invalidates_a_safe_source_answer() -> None:
+    analyzer, function = _analyzed(FUNCTION)
+    assert safety.builtin_mapping_reads(function, function.body, analyzer, FUNCTION) == frozenset()
+    # The source predicate is independent of the analyzer's AST. An ordinary
+    # alias need not be known to denote this module for it to invalidate proof.
+    changed = "def configure(target):\n    target.__builtins__ = {}\n" + FUNCTION
+    assert safety.builtin_mapping_reads(function, function.body, analyzer, changed) == frozenset(
+        {"len"}
+    )
+    assert safety.builtin_mapping_reads(function, function.body, analyzer, FUNCTION) == frozenset()
+
+
+def test_project_assignment_fact_is_separate_from_the_pure_source_memo(
+    module_reads: list[str],
+) -> None:
+    analyzer, function = _analyzed(FUNCTION)
+    assert safety.builtin_mapping_reads(function, function.body, analyzer, FUNCTION) == frozenset()
+    assert safety.builtin_mapping_reads(
+        function, function.body, analyzer, FUNCTION, project_may_replace=True
+    ) == frozenset({"len"})
+    assert safety.builtin_mapping_reads(
+        function, [], analyzer, FUNCTION, project_may_replace=True
+    ) == (frozenset())
+    assert safety.builtin_mapping_reads(function, function.body, analyzer, FUNCTION) == frozenset()
+    assert len(module_reads) == 1
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "target.__builtins__ = {}\n",
+        "del target.__builtins__\n",
+        "target.__builtins__ += replacement\n",
+        "for target.__builtins__ in mappings:\n    pass\n",
+        "with provider as target.__builtins__:\n    pass\n",
+        "[None for target.__builtins__ in mappings]\n",
+    ],
+)
+def test_source_attribute_write_predicate_covers_ordinary_assignment_targets(prefix: str) -> None:
+    source = prefix + FUNCTION
+    analyzer, function = _analyzed(source)
+    assert safety.builtin_mapping_reads(function, function.body, analyzer, source) == frozenset(
+        {"len"}
+    )
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "value = target.__builtins__\n",
+        "target.__builtins__['len'] = replacement\n",
+        "target.other = replacement\n",
+        "setattr(target, '__builtins__', replacement)\n",
+    ],
+)
+def test_source_attribute_fact_does_not_confuse_reads_mutation_or_reflection(prefix: str) -> None:
+    source = prefix + FUNCTION
+    analyzer, function = _analyzed(source)
+    assert safety.builtin_mapping_reads(function, function.body, analyzer, source) == frozenset()
+
+
 def test_cached_module_fact_keeps_each_blocks_lexical_reads_fresh(module_reads: list[str]) -> None:
     source = "__builtins__ = {}\n" + FUNCTION + ("def shadowed(len, data):\n    return len(data)\n")
     analyzer, function = _analyzed(source)
@@ -155,7 +216,10 @@ def test_parser_digit_limit_changes_invalidate_the_source_answer() -> None:
         sys.set_int_max_str_digits(previous)
 
 
-def test_warning_capable_sources_replay_native_warnings_and_respect_changed_filters() -> None:
+@pytest.mark.parametrize("project_may_replace", [False, True])
+def test_warning_capable_sources_replay_native_warnings_and_respect_changed_filters(
+    project_may_replace: bool,
+) -> None:
     source = r"pattern = '\d'" + "\n" + FUNCTION
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -163,17 +227,20 @@ def test_warning_capable_sources_replay_native_warnings_and_respect_changed_filt
     with warnings.catch_warnings(record=True) as emitted:
         warnings.simplefilter("always")
         for _ in range(2):
-            assert (
-                safety.builtin_mapping_reads(function, function.body, analyzer, source)
-                == frozenset()
-            )
+            assert safety.builtin_mapping_reads(
+                function,
+                function.body,
+                analyzer,
+                source,
+                project_may_replace=project_may_replace,
+            ) == (frozenset({"len"}) if project_may_replace else frozenset())
     assert len(emitted) == 2
     assert all(issubclass(item.category, (DeprecationWarning, SyntaxWarning)) for item in emitted)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert safety.builtin_mapping_reads(function, function.body, analyzer, source) == frozenset(
-            {"len"}
-        )
+        assert safety.builtin_mapping_reads(
+            function, function.body, analyzer, source, project_may_replace=project_may_replace
+        ) == frozenset({"len"})
 
 
 def test_disabled_memoization_bypasses_warmed_answers_and_retains_no_new_answer(

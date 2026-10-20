@@ -1831,30 +1831,61 @@ The estimated speedup above remains unmeasured.
 
 ## 2026-10-19: Definition-time builtin mappings belong to the original caller
 
-Ordinary assignment to module-level ``__builtins__`` can cause functions in
-one module to capture different builtin mappings. Moving their builtin reads
-to an earlier helper changes ordinary call results. A caller-side lookup
-lambda created after a replacement also captures the new mapping, so the
-existing ``--parameterize-builtins`` option cannot repair this difference.
+Ordinary replacement of module-level ``__builtins__`` can cause functions in
+one module to capture different mappings. Moving a read into a helper can change
+its value or raise ``NameError``. A caller-side lookup lambda created later can
+capture another mapping too; ``--parameterize-builtins`` cannot repair that
+identity change.
 
-Decline a block reading module-resolved builtin spellings when its module
-binds ``__builtins__``, contains a wildcard import, or any nested scope declares
-that name global. A wildcard provider's explicit ``__all__`` can export
-``__builtins__``; importing it is ordinary interface behavior within the
-preservation contract. Treat wildcard imports conservatively without assuming
-that underscore-prefixed names are excluded or executing a provider to prove its
-exports. Module binding facts include callable defaults and annotation
-expressions in the definition's enclosing scope. Follow positional and
-keyword-only defaults of `def`, `async def` and lambda expressions, including
-nested lambda defaults, while leaving an uncalled lambda body in its own
-scope. This repairs the shared module-binding collector without adding a
-separate cache. Apply the lexical guard to original pair sites and additional
-clustered sites before constructing helper parameters or lambdas. Do not
-evaluate builtin names into new defaults or extend reflection scans. The conservative rule also declines
-replacement before all definitions; it does not try to establish equal mapping
-identities across execution paths. Shared-mapping mutation, no-builtin blocks
-and locally shadowed builtin names retain useful extraction. Existing opt-in
-lookup thunks keep their timing and behavior for other cases.
+When the module's mapping may be replaced, conservatively decline every explicit
+read that can fall back from globals to it. This includes arbitrary custom
+mapping keys and currently module-bound names, which can fall back after
+deletion. Also decline implicit imports and class construction: they read
+``__import__`` and ``__build_class__`` directly from the captured mapping,
+regardless of same-spelled locals. CPython 3.13.7 implements these paths in
+[`LOAD_GLOBAL`](https://github.com/python/cpython/blob/v3.13.7/Python/bytecodes.c#L1355-L1385),
+[`LOAD_BUILD_CLASS`](https://github.com/python/cpython/blob/v3.13.7/Python/bytecodes.c#L1106-L1113)
+and [`import_name`](https://github.com/python/cpython/blob/v3.13.7/Python/ceval.c#L2547-L2580).
+The guard models mapping dependencies, not a closed list of standard builtins.
+
+Possible replacement includes explicit/conditional bindings, a nested scope's
+``global __builtins__``, and wildcard imports. A provider's explicit ``__all__``
+can export ``__builtins__``; this is ordinary interface behavior within the
+preservation contract. Do not assume underscore-prefixed names are excluded
+or execute a provider to prove its exports. Module binding facts include
+callable defaults and annotation expressions in the definition's enclosing
+scope, including positional/keyword-only defaults of ``def``, ``async def``
+and nested lambda expressions. This uses the shared collector, not another cache.
+
+Also treat any ordinary AST attribute store/deletion whose attribute is
+``__builtins__`` as a possible replacement of any module's mapping. A receiver
+can pass through ordinary calls and aliases, including ``configure(target)``;
+this rule deliberately does not try to prove its identity harmless. Circular
+imports can expose a module before its functions are defined, so scanning only
+the participating module is insufficient. Take one fresh project-wide hazard
+boolean per analysis, before workers start. Excluded runnable files still
+contribute. Unreadable files/directories or exceeding the file limit yield a
+hazard, not an absence proof. Retain existing unparsed-program refusals and the
+exception for excluded files that cannot parse here. The source-local predicate
+also records this attribute-write fact. Do not extend the scan to reflective
+namespace operations or retain ASTs in the project-wide boolean.
+
+Classify dependencies in the frame that evaluates them. Defaults and eager
+annotations run in the enclosing frame. Nested function/lambda bodies capture
+the module-current mapping when created; do not flatten those bodies into the
+original caller's read set. A generator expression evaluates only its outer
+iterable in that caller frame. Cover list/set/dict comprehension bodies
+conservatively for Python 3.12+ inlining even on a Python 3.11 host. Include
+receiver/index reads of attribute/subscript assignment targets, including
+comprehension targets.
+
+Apply the same rule to original pair sites and additional clustered sites,
+before constructing helper parameters or lookup lambdas. Do not evaluate names
+into new defaults or extend reflection scans. Explicit lexical locals,
+parameters and cells, compiler-constant ``__debug__``, and blocks without
+captured-mapping dependencies retain useful extraction under the other guards.
+Mutating a shared mapping is distinct from replacing it. Existing opt-in lookup
+thunks keep their timing and behavior for other cases.
 
 *Status: implemented with fresh-process mapping-replacement, wildcard-provider,
 shared-mutation, method, cross-module, CLI and fixed-point regressions. Final

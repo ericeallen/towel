@@ -65,9 +65,16 @@ the candidate's completed corpus output byte for byte. These observations
 identify the repeated-input cause; differing profiling and concurrent-work
 conditions do not establish an unprofiled speed ratio.
 
-The repaired predicate also treats module-level wildcard imports as potential
-replacement of `__builtins__`: a provider can export that name through `__all__`.
-It retains one immutable builtin-mapping verdict per live scope analyzer, keyed
+The repaired guard covers explicit module/global fallback reads, including
+custom mapping keys, and implicit import/class lookups under possible mapping
+replacement. Module-level wildcard imports can replace `__builtins__` through
+an explicit `__all__`. Any ordinary attribute store/deletion of
+`receiver.__builtins__` in the analyzed program makes every module uncertain,
+without assuming a receiver's identity. A fresh project-wide boolean records
+that hazard once per analysis, including excluded runnable files and conservative
+unknown-input handling. It retains no source or AST. See the
+[evaluation-scope policy](GENERATED_CODE.md#arguments-and-evaluation).
+Separately, the source-local memo retains one immutable verdict per live scope analyzer, keyed
 by the exact source and parser configuration. Only sources proven warning-free
 by the native parsing policy are admitted. Each analyzer
 retains at most one source with an 8 MiB storage budget, including a conservative

@@ -40,10 +40,15 @@ wheel completed the same case with byte-identical Python output. Partial
 profiles identify the cause but do not establish a production speed ratio.
 See the [performance investigation](PERFORMANCE.md#1947-large-module-builtin-guard-repair).
 
-The repaired guard also conservatively covers module-level wildcard imports,
-which can import `__builtins__` through a provider's `__all__`. It reuses only
-the immutable source/parser-dependent builtin-mapping verdict within a weakly
-owned scope analyzer, with one source and an 8 MiB source-storage budget per
+The repaired guard conservatively covers all explicit module/global fallback
+reads and implicit import/class lookups under possible mapping replacement,
+including wildcard imports exporting `__builtins__` through `__all__` and
+ordinary `receiver.__builtins__` stores/deletions anywhere in the analyzed
+program. One fresh analysis-owned boolean carries the program-wide hazard;
+excluded runnable files count, and unknown input cannot establish absence.
+See the [evaluation-scope policy](GENERATED_CODE.md#arguments-and-evaluation).
+A separate source-local memo reuses only the immutable source/parser-dependent
+builtin-mapping verdict within a weakly owned scope analyzer, with one source and an 8 MiB source-storage budget per
 analyzer. Warning-capable sources and disabled
 memoization retain ordinary computation; no AST or block fact is retained.
 The global lexical cache limits and behavioral contract are unchanged. At

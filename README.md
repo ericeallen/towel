@@ -14,8 +14,8 @@ repair release after published 1.946. The
 [1.947 overview](https://github.com/ericeallen/towel/blob/v1.947/docs/RELEASE_1_947.md)
 and [changelog](https://github.com/ericeallen/towel/blob/v1.947/CHANGELOG.md#1947)
 describe binding-safe renaming, lower candidate-enumeration costs, preservation
-of definition-time builtin lookup, each file's formatting policy and explicit
-rename consumer scope. The builtin-mapping guard also avoids repeated scans of
+of each caller's captured lookup mapping, each file's formatting policy and
+explicit rename consumer scope. The builtin-mapping guard also avoids repeated scans of
 large unchanged modules within an analysis. Narrow or unmarked rename targets
 may now require a project-root rerun or an explicit `--complete-scope` declaration.
 

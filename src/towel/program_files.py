@@ -46,7 +46,17 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AbstractSet, Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence
+from typing import (
+    AbstractSet,
+    Callable,
+    Dict,
+    FrozenSet,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+)
 from typing import Tuple
 
 from .analysis_sources import ParserConfiguration, parser_configuration, parsing_is_pure
@@ -63,7 +73,9 @@ _LEFT_OUT = SKIPPED_DIRECTORIES | {"site-packages", "dist-packages"}
 """Directories no whole-program scan reads: tool state, build outputs, installed packages."""
 
 
-def program_directories(root: Path) -> Iterator[Tuple[str, List[str]]]:
+def program_directories(
+    root: Path, *, on_error: Optional[Callable[[OSError], None]] = None
+) -> Iterator[Tuple[str, List[str]]]:
     """Each directory below ``root`` that the whole-program scans read, with its file names, sorted.
 
     Left out are the directories every scan skips (``SKIPPED_DIRECTORIES``:
@@ -71,10 +83,10 @@ def program_directories(root: Path) -> Iterator[Tuple[str, List[str]]]:
     installation directories, and any environment packages are installed
     into, whatever its name (``is_environment``). What ``--exclude`` names is
     read like the rest (:func:`excluded_by`). Symbolic links to directories
-    are not followed, and an unreadable directory is passed over. Callers
-    pick the files they read by suffix.
+    are not followed, and an unreadable directory is passed over, reporting
+    the error to ``on_error`` when supplied. Callers pick files by suffix.
     """
-    for parent, directories, files in os.walk(root, onerror=lambda _: None):
+    for parent, directories, files in os.walk(root, onerror=on_error):
         directories[:] = sorted(
             name
             for name in directories

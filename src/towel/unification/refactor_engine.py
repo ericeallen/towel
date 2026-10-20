@@ -83,6 +83,7 @@ from .extraction_policy import protected_definitions
 from .function_index import FunctionIndex
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
 from .import_graph import ImportGraphCache
+from .builtin_mapping_writes import project_may_replace_builtin_mapping
 from .block_signature import (
     BlockBucketKey,
     BlockSignature,
@@ -90,6 +91,7 @@ from .block_signature import (
     signature_bucket_key,
 )
 from ..coverage_config import CoverageExclusion
+from ..project_layout import find_project_root
 from .if_binding_transfer import sharing_if_transfer_sources
 from .compiler_literals import sharing_compiler_literal_facts
 from .return_source_uses import sharing_return_source_uses
@@ -579,6 +581,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # What each project's coverage.py excludes, read once per engine.
         self._coverage_exclusions: Dict[str, CoverageExclusion] = {}
         self._origins_in_run: Dict[Tuple[str, Optional[Tuple[Path, Path]]], Path] = {}
+        self._project_builtin_mapping_replacements: Mapping[str, bool] = {}
         self._seen_proposals: Set[Hashable] = set()
         self._pair_rejection: Optional[RejectReason] = None
         self._pair_rejection_subject: Optional[str] = None
@@ -780,6 +783,21 @@ class UnificationRefactorEngine(ParallelEvaluation):
         for path in stale:
             self._evict_cached_analysis(path)
         self._analysis_paths = tuple(file_paths)
+        # Direct analyses can change their project markers between calls,
+        # independently of the import cache's explicitly begun run.
+        roots = {path: find_project_root(self._origin_in_run(path)) for path in file_paths}
+        mapping_writes = {
+            root: project_may_replace_builtin_mapping(root, frozenset(self.excluded_directories))
+            for root in sorted(set(roots.values()))
+        }
+        replacements = {os.path.abspath(path): mapping_writes[root] for path, root in roots.items()}
+        if replacements != self._project_builtin_mapping_replacements:
+            # A third, unchanged/excluded module can change every candidate's
+            # mapping dependency. Neither file digests nor changed-file pairing
+            # alone capture that input to clustered-call admission.
+            self._cluster_scan_cache.clear()
+            changed_files = None
+        self._project_builtin_mapping_replacements = replacements
         if self.cross_module_helpers and file_paths:
             # Read the program's imports before any pair is judged or a
             # worker forked, once for the project; a run's stage has them.

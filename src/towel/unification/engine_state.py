@@ -28,6 +28,7 @@ implements it.
 from __future__ import annotations
 
 import ast
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
@@ -210,6 +211,11 @@ class EngineState:
     """Where each file of the run stands in the project, by the file and the
     run's ``_output_origin``: kept for one run, in which it does not change,
     since every call site of every pair asks (``_origin_in_run``)."""
+    _project_builtin_mapping_replacements: Mapping[str, bool]
+    """Whether each analyzed file's project may replace module builtin mappings.
+
+    A fresh project snapshot is installed before each analysis and worker fork.
+    """
     # Identities of the proposals this analysis has finished; a pair whose
     # proposal repeats one is declined before reuse, filtering and annotation.
     _seen_proposals: Set[Hashable]
@@ -438,6 +444,10 @@ class EngineState:
         cross-module questions ask too.
         """
         return self.import_graph.project_root(self._origin_in_run(path))
+
+    def _project_may_replace_builtin_mapping(self, path: str) -> bool:
+        """The precomputed project fact for an analyzed file, without filesystem work."""
+        return self._project_builtin_mapping_replacements.get(os.path.abspath(path), False)
 
     def _forget_run_lookups(self) -> None:
         """Begin or end a run: forget where the files of the last one stood."""

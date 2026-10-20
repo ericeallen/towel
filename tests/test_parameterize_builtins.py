@@ -448,9 +448,10 @@ def test_the_flag_reaches_the_engine_from_the_command_line(
             parser.parse_args([command, "--help"])
         assert exit_info.value.code == 0
         help_text = " ".join(capsys.readouterr().out.split())
-        assert "if its module binds __builtins__" in help_text
-        assert "has a wildcard import that may bind it" in help_text
-        assert "or a nested scope declares it global, even with this flag" in help_text
+        assert "ordinary bindings, wildcard imports or __builtins__ attribute writes" in help_text
+        assert "elsewhere in the analyzed program may replace a module's mapping" in help_text
+        assert "captured global-fallback reads (including custom names)" in help_text
+        assert "implicit import/class operations decline even with this flag" in help_text
         assert "an immutable lookup result" in help_text
     assert not DryOptions.from_namespace(parser.parse_args(["dry", "a", "b"])).parameterize_builtins
     dry = DryOptions.from_namespace(parser.parse_args(["dry", "a", "b", "--parameterize-builtins"]))

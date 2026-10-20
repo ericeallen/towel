@@ -51,8 +51,12 @@ Python files. Partial diagnostic profiles identify repeated tokenization,
 not an unprofiled production speed ratio. The [performance guide](PERFORMANCE.md#1947-large-module-builtin-guard-repair)
 retains the measurement conditions and limits.
 
-The subsequent repair also covers wildcard imports that may import `__builtins__`
-through a provider's `__all__`. It memoizes the source/parser-dependent builtin-mapping
+The subsequent repair covers all explicit module/global fallback reads and
+implicit import/class lookups under possible mapping replacement, including
+wildcard exports of `__builtins__` and ordinary attribute stores/deletions of
+that name anywhere in the analyzed program. A fresh analysis-owned boolean
+records that program-wide hazard, including excluded runnable files and
+conservative unknown-input handling. Separately, it memoizes the source/parser-dependent builtin-mapping
 boolean for warning-free inputs, with weak analyzer ownership and one source
 per analyzer under an 8 MiB storage budget. It retains no AST or block facts,
 preserves fresh warning-capable parsing and bypasses reuse when memoization is

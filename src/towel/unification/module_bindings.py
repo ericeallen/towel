@@ -105,6 +105,12 @@ class ModuleBindings:
     rebound_by_global: FrozenSet[str]
     star_imports: Tuple[int, ...]
     class_hosts: Mapping[str, ClassHost]
+    builtin_mapping_attribute_write: bool = False
+    """An ordinary attribute store/deletion may replace any module's captured mapping.
+
+    The receiver may be passed through arbitrary ordinary aliases, so this
+    deliberately does not attempt to identify which module it denotes.
+    """
 
     def in_effect(self, name: str, order: int) -> Optional[GlobalBinding]:
         """The binding ``name`` holds where top-level statement ``order`` runs.
@@ -271,6 +277,7 @@ class _Collector:
             self._order = order
             self._statement(stmt, True, ())
         return ModuleBindings(
+            builtin_mapping_attribute_write=writes_builtin_mapping_attribute(tree),
             bindings=MappingProxyType(
                 {name: tuple(events) for name, events in self._bindings.items()}
             ),
@@ -463,6 +470,25 @@ def import_origin(stmt: Union[ast.Import, ast.ImportFrom], alias: ast.alias) -> 
     if stmt.level or not stmt.module:
         return None
     return f"{stmt.module}.{alias.name}"
+
+
+def writes_builtin_mapping_attribute(tree: ast.AST) -> bool:
+    """Whether ordinary code can replace a module's ``__builtins__`` attribute."""
+    # ``receiver.attribute: T`` evaluates its receiver but does not store the
+    # attribute. Its target still carries Store in the AST. Nested expressions
+    # of that receiver can contain real stores and remain part of the walk.
+    annotation_only = {
+        id(node.target)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AnnAssign) and node.value is None
+    }
+    return any(
+        isinstance(node, ast.Attribute)
+        and node.attr == "__builtins__"
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and id(node) not in annotation_only
+        for node in ast.walk(tree)
+    )
 
 
 def global_bindings(source: str) -> Optional[ModuleBindings]:

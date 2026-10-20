@@ -164,11 +164,15 @@ towel dry path/to/project path/to/cleaned --no-interactive --no-types --no-forma
 - `TOWEL_WORKERS=1` keeps analysis on one worker; `TOWEL_WORKERS=N` caps it at N.
 - `--parameterize-builtins` permits caller-side builtin lookup thunks across
   modules instead of the default refusal of cross-module bare builtin reads.
-  It does not override `builtin_mapping_replaced`: a block reading a builtin
-  still declines when its module can replace the mapping captured at definition,
-  including through a wildcard import whose provider may export `__builtins__` in `__all__`.
-  Locally shadowed names and blocks without builtin reads retain their ordinary
-  rules. See [generated-code rules](GENERATED_CODE.md#arguments-and-evaluation).
+  It does not override `builtin_mapping_replaced`: possible `__builtins__`
+  replacement declines explicit module/global fallback reads, including custom
+  keys and currently module-bound names, plus implicit import/class lookups.
+  Ordinary `receiver.__builtins__` stores/deletions anywhere in the analyzed
+  program make every module uncertain, including through unknown aliases;
+  excluded runnable files still count. Explicit locals, parameters and cells remain eligible under the other guards;
+  same-spelled locals do not redirect implicit operations. `__debug__` and blocks
+  without captured-mapping dependencies retain their ordinary rules. See the
+  [evaluation-scope policy](GENERATED_CODE.md#arguments-and-evaluation).
 
 Formatting follows each modified file's effective configuration when the
 relevant tools are installed, including nested configuration and exclusions.
