@@ -666,12 +666,18 @@ and try to reuse a published version.
 
 ## Recording the release
 
-Complete these source edits before freezing and building the release:
+Choose the version and complete these source edits before freezing, building,
+or running the release checks, so version and documentation edits do not
+require repeating acceptance work:
 
 1. Move completed changes from `[Unreleased]` into `## [X.Y]` in [CHANGELOG.md](../CHANGELOG.md) and leave an empty `[Unreleased]` above it. Add a date only if it is already known; publication metadata can record the actual date without changing frozen artifacts.
 2. Add a preparation entry to [RELEASE_LOG.md](RELEASE_LOG.md) naming the version, summary, existing evidence and its limits. Record the final commit, artifact hashes, completed outcomes and CI run externally alongside the artifacts; do not edit a shipped file after its validation freeze.
 3. Update the current-version summary in this document and the readiness report. Do not describe a planned check or publication as completed.
-4. After exact-commit CI and the live PyPI availability check, the maintainer may tag `vX.Y` as specified above. Inspect current tags rather than relying on a historical list. Tagging and publication remain separate from preparing this source.
+
+After exact-commit CI and the live PyPI availability check, the maintainer may
+tag `vX.Y` as specified above. Inspect current tags rather than relying on a
+historical list. Tagging and publication remain separate from preparing this
+source.
 
 ## Maintainer decisions before publication
 
