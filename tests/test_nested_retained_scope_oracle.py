@@ -338,3 +338,28 @@ def test_uncompilable_standalone_nonlocal_helper_declines_correspondence() -> No
         )
         == {}
     )
+
+
+@pytest.mark.parametrize("target", ("holder.value", "holder[0]"))
+def test_comprehension_assignment_receivers_keep_their_enclosing_binding(target: str) -> None:
+    moved = f"    owner = make()\n    [None for {target} in (1, 2)]\n    consume(owner)\n"
+    before = "def f(holder):\n" + moved + "    report()\n"
+    helper = (
+        "def __extracted_func_0(supplied):\n"
+        + moved.replace("holder", "supplied")
+        + "    return owner\n"
+    )
+    after = helper + (
+        "def f(holder):\n" "    _towel_keep_owner = __extracted_func_0(holder)\n" "    report()\n"
+    )
+    assert scope_changes(before, after) == {}
+    changed = after.replace(target.replace("holder", "supplied"), "other.value")
+    assert "gains local _towel_keep_owner" in scope_changes(before, changed)["f#0"]
+
+
+@pytest.mark.parametrize("target", ("holder.value", "holder[key]"))
+@pytest.mark.parametrize("name", ("holder", "key"))
+def test_comprehension_assignment_reads_do_not_hide_new_locals(target: str, name: str) -> None:
+    before = f"def f():\n    [None for {target} in (1, 2)]\n"
+    after = before.replace("def f():\n", f"def f():\n    {name} = replacement\n")
+    assert f"gains local {name}" in scope_changes(before, after)["f#0"]

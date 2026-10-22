@@ -240,6 +240,17 @@ def _definitions(body: Sequence[ast.stmt], path: _Key = ()) -> Iterator[Tuple[_K
             pending.extend(reversed(list(ast.iter_child_nodes(node))))
 
 
+def _target_bindings(target: ast.AST) -> frozenset[str]:
+    """Names assigned by a target, excluding its receiver and index expressions."""
+    if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store):
+        return frozenset({target.id})
+    if isinstance(target, ast.Starred):
+        return _target_bindings(target.value)
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return frozenset(name for item in target.elts for name in _target_bindings(item))
+    return frozenset()
+
+
 def _comprehension_targets(function: ast.AST) -> frozenset[str]:
     """The names the comprehensions of ``function``'s own code bind for themselves."""
     names: set[str] = set()
@@ -249,9 +260,7 @@ def _comprehension_targets(function: ast.AST) -> frozenset[str]:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
             continue
         if isinstance(node, ast.comprehension):
-            names.update(
-                target.id for target in ast.walk(node.target) if isinstance(target, ast.Name)
-            )
+            names.update(_target_bindings(node.target))
         pending.extend(ast.iter_child_nodes(node))
     return frozenset(names)
 
@@ -661,12 +670,8 @@ def _paired_syntax(
     if isinstance(old, comprehensions) and isinstance(new, comprehensions):
         if len(old.generators) != len(new.generators) or not old.generators:
             return False
-        old_targets = {
-            n.id for g in old.generators for n in ast.walk(g.target) if isinstance(n, ast.Name)
-        }
-        new_targets = {
-            n.id for g in new.generators for n in ast.walk(g.target) if isinstance(n, ast.Name)
-        }
+        old_targets = {name for g in old.generators for name in _target_bindings(g.target)}
+        new_targets = {name for g in new.generators for name in _target_bindings(g.target)}
         child = {key: value for key, value in names.items() if key not in old_targets}
         child_substitutions = {
             key: value for key, value in substitutions.items() if key not in new_targets

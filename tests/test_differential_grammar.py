@@ -100,7 +100,7 @@ report, was one the round-3 audit reported, and each is fixed:
 BINDING_SEEDS: Tuple[int, ...] = tuple(range(12))
 """Seeds drawn with the binding forms (``bindings``), in the default mode."""
 
-BINDING_REGRESSION_SEEDS: Tuple[int, ...] = (40, 45, 98, 147, 190, 192, 345)
+BINDING_REGRESSION_SEEDS: Tuple[int, ...] = (40, 45, 98, 147, 190, 192, 345, 94085730748536952)
 """Binding-form seeds on which round-4's Towel changed behaviour, one per form each shows alone.
 
 From a fuzz run of seeds 0 to 1999 with the binding forms, against the
@@ -109,6 +109,9 @@ format spec reading a parameter (45) and a doubly nested one (98), a with
 target (147) and a comprehension target (190) storing into one, and a
 lambda (192) and a sort key (345) whose parameter is spelled like the
 function's (P1-01 to P1-03).
+
+The release seed 94085730748536952 checks retained-local correspondence when
+a comprehension assigns an attribute of an enclosing binding.
 """
 
 KNOWN_DEFECTS: Dict[Mode, Dict[int, str]] = {DEFAULT: {}, CROSS_MODULE: {}, TYPED: {}}
