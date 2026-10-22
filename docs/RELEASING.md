@@ -10,6 +10,23 @@ separates completed repair checks from final release evidence. Final validation
 and publication outcomes are retained externally with the exact artifacts and
 CI records, and on PyPI.
 
+## 1.947 preparation checkpoint, October 22, 2026
+
+Bounded investigation reproduced the grammar failure at binding-form seed
+`94085730748536952` on frozen source `0695378`. Its execution observations
+agreed; the scope oracle rejected a retained caller binding because it
+mistook a comprehension assignment's attribute receiver for a comprehension
+variable. The oracle now distinguishes assigned names from receiver/index
+reads, retaining checks for real scope changes. The seed is a permanent
+regression. No runtime source change was needed.
+
+Development pins were refreshed for the newly reported certifi, virtualenv and
+Black advisories. Both the harness correction and lock update require a replacement
+freeze and new release validation. The prior matrix and artifact checks remain
+bound to `0695378`; its interrupted fuzz campaign and unstarted corpus,
+self-dogfood and timing checks do not establish acceptance. Final outcomes
+remain external to the shipped source as specified below.
+
 ## 1.947 preparation checkpoint, October 19, 2026
 
 At this preparation checkpoint, 1.947 was unpublished and live PyPI metadata

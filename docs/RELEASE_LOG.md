@@ -14,6 +14,7 @@ the entries below do not transfer approval to a later source or version.
 
 **Contents — release checkpoints**
 
+- [1.947 scope-oracle correction](#2026-10-22-1947-scope-oracle-correction)
 - [1.947 candidate 59aafb1 corpus stop](#1947-candidate-59aafb1-corpus-stop)
 - [1.947 preparation after audit repairs](#2026-10-19-1947-preparation-after-audit-repairs)
 - [1.946 preparation and latest audit](#2026-10-10-1946-preparation-and-latest-audit)
@@ -30,6 +31,22 @@ the entries below do not transfer approval to a later source or version.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-10-22: 1.947 scope-oracle correction
+
+The grammar failure at binding-form seed `94085730748536952` reproduced on
+`0695378`. Its only reported difference was a retained caller local rejected by
+the scope oracle; executed observations agreed. The oracle incorrectly counted
+attribute receivers and subscript indexes in comprehension targets as variables
+bound by the comprehension. The correction preserves those outer reads and
+checks actual name/tuple/list/starred bindings. New regressions also demonstrate
+that real receiver binding changes are detected. The original failure remains
+retained separately; no runtime source was changed.
+
+Development pins for certifi, virtualenv and Black were refreshed after new advisories.
+The changed lock and harness require a new freeze. Earlier matrix and artifact
+results remain bound to their original candidate; this preparation entry claims
+no completed replacement release campaign or publication.
 
 ## 1.947 candidate 59aafb1: corpus stop
 

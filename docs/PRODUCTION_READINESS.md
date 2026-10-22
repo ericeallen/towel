@@ -7,9 +7,26 @@ removes reflection and self-instrumentation guarantees. Validation and repair
 records below retain the source, contract and results of their dated runs;
 they are not evidence of those retired protections in the current code.
 
-Start with the 1.947 candidate corpus-stop checkpoint below. Later sections retain
+Start with the October 22 preparation checkpoint below. Later sections retain
 completed releases and earlier preparation checkpoints, with their original
 source identities and historical measurements.
+
+## 1.947 preparation checkpoint, October 22, 2026
+
+The interrupted `0695378` grammar campaign reported a scope difference at
+binding-form seed `94085730748536952`. Bounded reproduction confirmed an oracle
+defect: names read by attribute/subscript comprehension targets were treated as
+comprehension bindings. This rejected a valid retained local and could hide real
+scope changes involving those reads. The corrected oracle distinguishes the
+target's actual bindings; regressions cover accepted correspondence and changed
+receivers/bindings. The case's executed observations agree before and after
+refactoring. No runtime source change was needed.
+
+The development dependency refresh and differential harness correction require
+a replacement freeze. Completed `0695378` checks retain their original identity;
+full release validation, consumer/performance review, exact-commit remote CI and
+publication remain pending for the replacement candidate. See the
+[release procedure](RELEASING.md#1947-preparation-checkpoint-october-22-2026).
 
 ## 1.947 candidate 59aafb1: corpus stop
 
