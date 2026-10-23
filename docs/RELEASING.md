@@ -525,7 +525,7 @@ evidence about the other.
 #### Running the corpus in a container
 
 The harness clones and executes third-party code, so it belongs in a container.
-Seven details matter, and none of them is obvious from the failure it produces:
+Prepare its dependencies before starting the corpus:
 
 - **Install `uv` in the image.** The harness builds a per-project environment
   with it, and its absence surfaces as `FileNotFoundError` on every project.
@@ -545,6 +545,15 @@ Seven details matter, and none of them is obvious from the failure it produces:
   invoke `ps` to check real child processes. A missing or failed observer is an
   environment failure, not evidence that no workers remain. The image includes
   it; verify an owned child's PID is visible when checking a new environment.
+- **Include `libmemcached-dev` for the Django consumers.** Their `pylibmc`
+  dependency builds against these headers. The corpus Dockerfile includes them.
+- **Stage python-dateutil's timezone archive before its preparation hook.**
+  Clone that consumer at the manifest's pinned revision in the work volume,
+  read its `zonefile_metadata.json`, and download the named archive from
+  `https://data.iana.org/time-zones/releases/` into that clone. Verify its SHA-512
+  against `tzdata_file_sha512` before running the corpus. The pinned revision
+  names `tzdata2024a.tar.gz`; its unchanged `post_install` hook checks for the
+  archive and builds the zoneinfo data. A fresh clone does not contain it.
 - **Give the harness a standalone clone detached at the release commit**, not a
   git worktree. A worktree's `.git` is a file pointing outside the mount, so
   the harness cannot read the revision and aborts. With a real clone it records
@@ -556,6 +565,13 @@ Seven details matter, and none of them is obvious from the failure it produces:
 - **Mount the source read-only** so the run cannot change the code it is
   testing, and pass `--towel-src` the mounted path; the harness compares the
   wheel with it before any project starts.
+
+After an interrupted run, verify that every retained consumer clone has a valid
+`HEAD` and its pinned commit before resuming. Stopping the worker pool can leave
+the next clone incomplete; directory existence alone does not establish a usable
+checkout. Preserve completed reports and raw logs before rerunning unfinished
+projects. Restore missing Git objects from that consumer's recorded upstream at
+the same pin; do not substitute a newer revision.
 
 `scripts/ecosystem/Dockerfile` builds an image with those pieces in place, the
 candidate at `/opt/towel`. A working shape, with the wheel built from the clone
@@ -570,6 +586,8 @@ rm "$CLONE"/scripts/ecosystem/code_towel-*.whl
 
 docker volume create towel-eco-work
 docker run --rm --user root -v towel-eco-work:/work "$IMAGE" chown -R runner:runner /work
+# Stage and verify python-dateutil's archive in /work/python-dateutil as above
+# before starting the full corpus below.
 docker run -d --name towel-eco -e TOWEL_WORKERS=1 \
     -v "$CLONE":/snapshot:ro -v towel-eco-work:/work -w /snapshot "$IMAGE" \
     python scripts/ecosystem_check.py --run-untrusted-code \

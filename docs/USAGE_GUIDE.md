@@ -497,9 +497,10 @@ else:
 
 ## Examples
 
-The outputs below are what `towel dry` writes with the defaults and Black
-installed. Through the API without either formatter option, strings come out
-single-quoted and the layout is `ast.unparse`'s.
+These examples show both an accepted extraction and conservative refusals
+with the CLI defaults and Black installed. Through the API without either
+formatter option, generated strings come out single-quoted and the layout is
+`ast.unparse`'s.
 
 ### Example 1: Simple Validation Code
 
@@ -553,8 +554,8 @@ both functions up to the renamed variable, so the call site becomes a
 
 ### Example 2: Cross-File Duplicates
 
-With `--cross-module`, for two modules of one package that neither import
-their package absolutely.
+Consider two otherwise independent modules in a package with an empty
+`__init__.py`. Run `towel dry package cleaned --no-interactive --cross-module`.
 
 **Before (file1.py):**
 ```python
@@ -582,35 +583,15 @@ def calculate_discount_for_premium_customer(price, customer):
     return final_price
 ```
 
-**After (file1.py):**
-```python
-def __extracted_func_0(customer, price):
-    base_discount = 0.1
-    if customer.get("years_member", 0) > 5:
-        base_discount += 0.05
-    if customer.get("total_purchases", 0) > 1000:
-        base_discount += 0.05
-    discount_amount = price * base_discount
-    final_price = price - discount_amount
-    return final_price
+**Result:** Both files remain unchanged. Identical bodies alone do not establish
+that a cross-module extraction is safe. This example's candidates fail the
+import-safety, reassignment or owned-value lifetime checks (reported as
+`import_time_effects`, `unsafe_reassignment_block1` and
+`owned_binding_frame_boundary`). The command reports no refactorings.
 
-
-def calculate_discount_for_regular_customer(price, customer):
-    return __extracted_func_0(customer, price)
-```
-
-**After (file2.py):**
-```python
-from .file1 import __extracted_func_0
-def calculate_discount_for_premium_customer(price, customer):
-    return __extracted_func_0(customer, price)
-```
-
-The duplicate is the whole body of both functions, and each becomes a call of
-the new helper: neither is rewritten to call the other, since such a call
-looks the other function up in its module every time, so patching or rebinding
-it would change both. The import is relative because both modules sit in one
-package.
+An accepted cross-module extraction must also establish that every borrower
+can safely import the helper's host. See [cross-module checks](CROSS_MODULE.md)
+and [argument ownership](GENERATED_CODE.md#arguments-and-evaluation).
 
 ### Example 3: Methods
 
@@ -634,37 +615,18 @@ class Report:
         return f"total {total:.2f}"
 ```
 
-**After:**
-```python
-class Report:
-    def __init__(self, rows):
-        self.rows = rows
-        self.__cache = {}
+**Result:** The class remains unchanged. The common tail would move the
+`total` binding into a helper while the caller retains `values`. Towel cannot
+certify the resulting owned-value lifetime across those frames, so it declines
+that candidate as `owned_binding_frame_boundary`; the other candidates do not
+unify. Numeric-looking code does not prove that its runtime values lack
+finalizers.
 
-    def totals(self):
-        values = [row["amount"] for row in self.rows if row["amount"] > 0]
-        return self.__extracted_func_0(values)
-
-    def refunds(self):
-        values = [row["amount"] for row in self.rows if row["amount"] < 0]
-        return self.__extracted_func_0(values)
-
-    def __extracted_func_0(self, values):
-        total = sum(values)
-        self.__cache["total"] = total
-        return f"total {total:.2f}"
-```
-
-A block that methods of one class share becomes a method of that class, with a
-class-private name, which the class stores as `_Report__extracted_func_0`,
-avoiding accidental overrides by ordinary differently named subclasses.
-Explicit mangled-name writes and same-named subclasses require the
-[documented hygiene checks and scope limits](KNOWN_LIMITATIONS.md#method-insertion). Written in the class's body, the helper reads
-`self.__cache` as the methods did. A block shared by methods of different
-classes, siblings or a parent and its child, becomes a module-level function
-that takes the receiver as an argument instead: Towel never adds a method to a
-class that did not already hold the code, and whether such a function belongs
-in a base class or a mixin is left to your review.
+When a shared method block passes these checks, its helper has a class-private
+name, preserving private attribute access and avoiding accidental overrides by
+ordinary differently named subclasses. Blocks shared by methods of different
+classes instead use a module-level helper with a receiver argument. See the
+[method insertion checks and scope limits](KNOWN_LIMITATIONS.md#method-insertion).
 
 ### Decorated code
 

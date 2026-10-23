@@ -31,7 +31,9 @@ towel preview path/to/project
 
 By default a helper is shared only between duplicates in one module; add `--cross-module` to share helpers between modules too, which adds imports between them.
 
-On a large project, `--min-lines 5` or `--max-pairs N` bounds the analysis; progress is printed to stderr.
+On a large project, raise `--min-lines` to reduce candidate work or use
+`--max-pairs N` to cap evaluated pairs. Neither is a time or memory limit;
+progress is printed to stderr.
 
 ## 2. Refactor into a fresh copy
 

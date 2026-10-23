@@ -21,7 +21,7 @@ FROM python:3.12-slim
 # Towel's watchdog suite observes actual child processes with ps from procps.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git build-essential curl ca-certificates pkg-config nodejs procps \
-        libxml2-dev libxslt1-dev zlib1g-dev libjpeg-dev libfreetype6-dev \
+        libxml2-dev libxslt1-dev zlib1g-dev libjpeg-dev libfreetype6-dev libmemcached-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # The harness builds each project's environment with uv, and runs Towel there.
