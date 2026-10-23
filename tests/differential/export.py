@@ -20,12 +20,15 @@ script for ``tests/hostile_cases/``: the module's source, then a
 Any other case becomes a package for ``tests/hostile_crossfile/``: the
 project, and a ``run.py`` that imports its modules and runs the probes.
 
-Each written fixture is checked with the batteries' own procedure
+Except for resource/time-limit findings, each fixture is checked with the
+batteries' own procedure
 (:mod:`tests.hostile_execution`): refactored as its battery refactors it,
 and run before and after. A fixture whose output does not differ is still
 written, and its note says so: the difference was one only the
 differential observer sees (a signature, a class's ``__dict__``), and the
 fixture needs a probe that prints it before it can be committed.
+Resource/time-limit findings retain their fixture and report, but skip battery
+replay because that runner lacks the differential observer's containment.
 """
 
 from __future__ import annotations
@@ -112,11 +115,16 @@ class Fixture:
         lines = [
             f"Fixture {self.name}: copy {self.path} to {target}.",
             (
-                "Its output differs before and after refactoring, as its battery runs it."
-                if self.reproduced
-                else "Its output does NOT differ as its battery runs it: the difference is one"
-                " only the differential observer records. Add a probe that prints it before"
-                " committing the fixture."
+                "Battery replay was skipped because the differential observer reached a resource "
+                "or time limit. Reproduce with the bounded differential harness before committing."
+                if outcome.observation_limited
+                else (
+                    "Its output differs before and after refactoring, as its battery runs it."
+                    if self.reproduced
+                    else "Its output does NOT differ as its battery runs it: the difference is one"
+                    " only the differential observer records. Add a probe that prints it before"
+                    " committing the fixture."
+                )
             ),
         ]
         battery_file = (
@@ -200,6 +208,8 @@ def _run_script(case: Case, header: str) -> str:
 
 def _reproduces(fixture: Path, battery: Battery, outcome: Outcome) -> bool:
     """Whether the battery, refactoring ``fixture`` its own way, sees the program's output change."""
+    if outcome.observation_limited:
+        return False  # The battery does not provide the differential observer's resource budgets.
     with tempfile.TemporaryDirectory(prefix="towel-export-") as directory:
         before, after = Path(directory).resolve() / "before", Path(directory).resolve() / "after"
         if battery == "hostile_cases":

@@ -42,6 +42,11 @@ names, and memory addresses and the project's path are normalized out of
 every text. A call that runs longer than the spec's ``call_seconds`` is
 interrupted and recorded as a timeout, and nothing after it is observed:
 the program's state is no longer one the original could reach.
+
+Captured streams stop at 20,000 characters each. Memory exhaustion and output
+overflow escape observation helpers and become resource records. Full repr and
+pickle construction run within the runner's memory and wall-time budgets;
+truncating the resulting text alone would not bound their allocations.
 """
 
 from __future__ import annotations
@@ -55,6 +60,7 @@ import json
 import os
 import pickle
 import re
+import resource
 import signal
 import sys
 import types
@@ -98,6 +104,17 @@ class CallTimeout(BaseException):
     """A probe call ran past its budget. Not an ``Exception``, so the program cannot catch it."""
 
 
+class OutputLimit(BaseException):
+    """Captured output exceeded the observation budget."""
+
+
+class _BoundedOutput(io.StringIO):
+    def write(self, text: str) -> int:
+        if self.tell() + len(text) > _TEXT_LIMIT:
+            raise OutputLimit()
+        return super().write(text)
+
+
 class _Normalizer:
     """Rewrites text so that two runs from different directories compare alike."""
 
@@ -112,6 +129,8 @@ class _Normalizer:
     def repr(self, value: object) -> str:
         try:
             shown = repr(value)
+        except (MemoryError, OutputLimit):
+            raise
         except BaseException as error:  # noqa: BLE001 - any repr may raise
             shown = f"<repr raised {type(error).__name__}: {error}>"
         return self.text(shown, _REPR_LIMIT)
@@ -126,7 +145,7 @@ class _Normalizer:
 @contextlib.contextmanager
 def _captured(record: Record, normalize: _Normalizer) -> Iterator[None]:
     """Record into ``record`` what the enclosed code prints and warns."""
-    out, err = io.StringIO(), io.StringIO()
+    out, err = _BoundedOutput(), _BoundedOutput()
     saved = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = out, err
     try:
@@ -183,6 +202,8 @@ class _Describer:
             described["annotations"] = self.normalize.repr(
                 getattr(function, "__annotations__", None)
             )
+        except (MemoryError, OutputLimit):
+            raise
         except BaseException as error:  # noqa: BLE001 - evaluating annotations may raise
             described["annotations"] = f"<raised {type(error).__name__}>"
         return described
@@ -211,6 +232,8 @@ class _Describer:
             keys = []
         try:
             listed = dir(cls)
+        except (MemoryError, OutputLimit):
+            raise
         except BaseException as error:  # noqa: BLE001 - a metaclass may define __dir__
             listed = [f"<dir raised {type(error).__name__}>"]
         members: Record = {}
@@ -244,6 +267,8 @@ class _Describer:
         names = sorted(name for name in namespace if not HELPER_NAME.search(name))
         try:
             listed = [name for name in dir(module) if not HELPER_NAME.search(name)]
+        except (MemoryError, OutputLimit):
+            raise
         except BaseException as error:  # noqa: BLE001 - a module may define __dir__
             listed = [f"<dir raised {type(error).__name__}>"]
         items: Record = {}
@@ -309,6 +334,8 @@ class _Observation:
             try:
                 self.namespace[alias] = importlib.import_module(name)
                 entry["ok"] = True
+            except (MemoryError, OutputLimit):
+                raise
             except BaseException as error:  # noqa: BLE001 - the program's own failure is data
                 entry["exception"] = self.normalize.exception(error)
         entry["new_modules"] = sorted(self.project_modules() - before)
@@ -319,6 +346,8 @@ class _Observation:
         for name in sorted(self.project_modules()):
             try:
                 described[name] = self.describe.module(sys.modules[name])
+            except (MemoryError, OutputLimit):
+                raise
             except BaseException as error:  # noqa: BLE001 - describing must not end the run
                 described[name] = {"describe_raised": self.normalize.exception(error)}
         return described
@@ -331,6 +360,8 @@ class _Observation:
         except CallTimeout:
             self.timed_out = True
             entry["timeout"] = True
+        except (MemoryError, OutputLimit):
+            raise
         except BaseException as error:  # noqa: BLE001 - the program's own failure is data
             entry["exception"] = self.normalize.exception(error)
         return False, None
@@ -346,10 +377,14 @@ class _Observation:
     def pickled(self, value: object) -> Record:
         try:
             data = pickle.dumps(value)
+        except (MemoryError, OutputLimit):
+            raise
         except BaseException as error:  # noqa: BLE001 - unpicklable values are data
             return {"dumps": self.normalize.exception(error)}
         try:
             back = pickle.loads(data)  # noqa: S301 - the data was pickled just above
+        except (MemoryError, OutputLimit):
+            raise
         except BaseException as error:  # noqa: BLE001
             return {"dumps": "ok", "loads": self.normalize.exception(error)}
         return {"dumps": "ok", "loads": "ok", "repr": self.normalize.repr(back)}
@@ -389,7 +424,8 @@ class _Observation:
             call: Record = {"arguments": self.normalize.repr(passed)}
             with _captured(call, self.normalize):
                 self.outcome(call, lambda: function(*passed))
-            call["arguments_after"] = self.normalize.repr(passed)
+            if not self.timed_out:
+                call["arguments_after"] = self.normalize.repr(passed)
             calls.append(call)
         return calls
 
@@ -406,9 +442,21 @@ def main(argv: Sequence[str]) -> int:
     root, spec_path, out_path = argv
     with open(spec_path, encoding="utf-8") as handle:
         spec = json.load(handle)
-    record = observe(os.path.realpath(root), spec)
-    with open(out_path, "w", encoding="utf-8") as handle:
-        json.dump(record, handle, indent=1, sort_keys=True)
+    # Darwin's existing virtual mappings can already exceed a useful absolute
+    # RLIMIT_AS. The parent watches RSS there; Linux also caps allocations here.
+    if sys.platform == "linux":
+        budget = int(spec.get("memory_bytes", 256 * 1024 * 1024))
+        resource.setrlimit(resource.RLIMIT_AS, (budget, budget))
+    reserve = bytearray(1024 * 1024)
+    try:
+        record = observe(os.path.realpath(root), spec)
+        with open(out_path, "w", encoding="utf-8") as handle:
+            json.dump(record, handle, indent=1, sort_keys=True)
+    except (MemoryError, OutputLimit) as error:
+        del reserve
+        reason = "memory" if isinstance(error, MemoryError) else "output"
+        with open(out_path, "w", encoding="utf-8") as handle:
+            json.dump({"observer_resource": reason}, handle)
     return 0
 
 

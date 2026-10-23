@@ -7,9 +7,28 @@ removes reflection and self-instrumentation guarantees. Validation and repair
 records below retain the source, contract and results of their dated runs;
 they are not evidence of those retired protections in the current code.
 
-Start with the October 22 preparation checkpoint below. Later sections retain
+Start with the October 23 preparation checkpoint below. Later sections retain
 completed releases and earlier preparation checkpoints, with their original
 source identities and historical measurements.
+
+## 1.947 preparation checkpoint, October 23, 2026
+
+The single-pass-loop scope-oracle correction required no runtime change. Its
+replacement candidate `575abcc` completed the Linux Python 3.11–3.13 matrix
+and artifact checks, then stopped in grammar fuzzing on binding-form seed
+`10060797319587863840408861851`. Both original and transformed programs grow
+the iterated list without bound, before extracted code is reached; each
+independently exhausted a 256 MiB container. This identifies a harness
+containment defect, not evidence of a Towel behavior change.
+
+The harness now bounds observation memory/output and runs the original first,
+skipping the transformed observer when the original cannot finish. Controls
+retain detection of transformed-only exhaustion and unexpected exits. The
+[release procedure](RELEASING.md#1947-preparation-checkpoint-october-23-2026)
+records the limits and platform qualifications. This correction requires a new
+freeze and fresh validation; the preceding results do not certify the replacement.
+The full corpus, consumer/performance review, exact-commit remote CI and
+publication remain pending. Final validation outcomes are retained externally.
 
 ## 1.947 preparation checkpoint, October 22, 2026
 

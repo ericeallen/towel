@@ -38,11 +38,14 @@ from dataclasses import dataclass
 import difflib
 import io
 import json
+import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
+import time
 import traceback
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import cast, Any, Dict, List, Literal, Optional, Tuple
 
 from tests.differential.cases import Case
 from tests.differential.comparison import Difference, behaviour_changes
@@ -57,6 +60,9 @@ OBSERVER_ENV = {**ISOLATED_ENV, "PYTHONHASHSEED": "0"}
 """The batteries' emptied environment, with string hashing fixed so set order cannot differ."""
 OBSERVER_SECONDS = 60
 """How long an observation may take in all; each probe call has its own, shorter limit."""
+
+OBSERVER_MEMORY_BYTES = 256 * 1024 * 1024
+OBSERVER_FILE_BYTES = 16 * 1024 * 1024
 
 Record = Dict[str, Any]
 
@@ -102,6 +108,7 @@ class Outcome:
     refactoring: str = ""
     changes: Tuple[Difference, ...] = ()
     towel_output: str = ""
+    observation_limited: bool = False
 
     @property
     def is_defect(self) -> bool:
@@ -201,41 +208,109 @@ def _refactor(
     return sum(count for count, _ in results.values())
 
 
-def _observe(case: Case, roots: Tuple[Path, ...], work: Path, call_seconds: float) -> List[Record]:
-    """The observer's record of the program at each of ``roots``, observed side by side.
+def _observation_incomplete(record: Record) -> bool:
+    return bool(
+        record.get("observer_timeout") or record.get("timed_out") or record.get("observer_resource")
+    )
 
-    A record is ``{"observer_timeout": True}`` where the observer did not
-    finish; an observer that fails outright is a fault of this harness, and
-    raises.
-    """
-    spec = work / "probes.json"
-    spec.write_text(json.dumps({**case.probe_spec(), "call_seconds": call_seconds}), "utf-8")
-    outs = [work / f"{root.name}.observed.json" for root in roots]
-    running = [
-        subprocess.Popen(
+
+def _resident_bytes(pid: int) -> int:
+    """Sample the owned observer's RSS; a process that just exited has no RSS."""
+    if sys.platform == "linux":
+        try:
+            status = Path(f"/proc/{pid}/status").read_text()
+        except FileNotFoundError:
+            return 0
+        for line in status.splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) * 1024
+        return 0  # exited/zombie processes have no VmRSS field
+    sampled = subprocess.run(
+        ["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True, timeout=5
+    )
+    if sampled.returncode == 1 and not sampled.stdout.strip():
+        return 0
+    if sampled.returncode != 0:
+        raise RuntimeError(f"Cannot measure observer RSS: {sampled.stderr}")
+    return int(sampled.stdout.strip()) * 1024
+
+
+def _kill_observer(process: subprocess.Popen[bytes]) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+
+
+def _observe_one(root: Path, spec: Path, work: Path, memory_bytes: int) -> Record:
+    out = work / f"{root.name}.observed.json"
+    stdout = work / f"{root.name}.observer.stdout"
+    stderr = work / f"{root.name}.observer.stderr"
+    with stdout.open("wb") as output, stderr.open("wb") as errors:
+        process = subprocess.Popen(
             [sys.executable, "-P", str(OBSERVER), str(root), str(spec), str(out)],
             cwd=root,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+            stdout=output,
+            stderr=errors,
             env=OBSERVER_ENV,
+            start_new_session=True,
         )
-        for root, out in zip(roots, outs)
-    ]
-    records: List[Record] = []
-    for root, out, process in zip(roots, outs, running):
+        deadline = time.monotonic() + OBSERVER_SECONDS
         try:
-            _, stderr = process.communicate(timeout=OBSERVER_SECONDS)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.communicate()
-            records.append({"observer_timeout": True})
-            continue
-        if process.returncode != 0 or not out.exists():
-            raise RuntimeError(
-                f"the observer failed on {root} (exit {process.returncode}):\n{stderr}"
-            )
-        records.append(json.loads(out.read_text("utf-8")))
+            while process.poll() is None:
+                if _resident_bytes(process.pid) > memory_bytes:
+                    return {"observer_resource": "memory"}
+                if any(
+                    path.exists() and path.stat().st_size > OBSERVER_FILE_BYTES
+                    for path in (stdout, stderr, out)
+                ):
+                    return {"observer_resource": "output"}
+                if time.monotonic() >= deadline:
+                    return {"observer_timeout": True}
+                try:
+                    process.wait(timeout=0.01)
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            _kill_observer(process)
+    if process.returncode != 0 or not out.exists():
+        with stderr.open("rb") as errors:
+            detail = errors.read(4000).decode("utf-8", errors="replace")
+        raise RuntimeError(f"the observer failed on {root} (exit {process.returncode}):\n{detail}")
+    # Check again after exit: a final write may have occurred between samples.
+    if any(path.stat().st_size > OBSERVER_FILE_BYTES for path in (stdout, stderr, out)):
+        return {"observer_resource": "output"}
+    return cast(Record, json.loads(out.read_text("utf-8")))
+
+
+def _observe(
+    case: Case,
+    roots: Tuple[Path, ...],
+    work: Path,
+    call_seconds: float,
+    *,
+    memory_bytes: int = OBSERVER_MEMORY_BYTES,
+) -> List[Record]:
+    """Observe serially with bounded memory/output, stopping if the original is inconclusive.
+
+    Linux also enforces RLIMIT_AS in the child. The portable parent RSS check
+    is sampled, so its threshold can be exceeded between observations.
+    Arbitrary process failures remain harness errors, never resource exemptions.
+    """
+    spec = work / "probes.json"
+    spec.write_text(
+        json.dumps(
+            {**case.probe_spec(), "call_seconds": call_seconds, "memory_bytes": memory_bytes}
+        ),
+        "utf-8",
+    )
+    records: List[Record] = []
+    for root in roots:
+        record = _observe_one(root, spec, work, memory_bytes)
+        records.append(record)
+        if len(records) == 1 and _observation_incomplete(record):
+            return records + [{} for _ in roots[1:]]
     return records
 
 
@@ -301,8 +376,14 @@ def run_case(case: Case, mode: Mode, workspace: Path, *, call_seconds: float = 2
         detail = f"The refactored code does not compile: {broken}"
         return Outcome(case, mode, "failed", detail, applied, change, towel_output=towel_output)
     observed_before, observed_after = _observe(case, (before, after), work, call_seconds)
-    if observed_before.get("observer_timeout") or observed_before.get("timed_out"):
-        detail = "The original program does not finish its probes."
+    if _observation_incomplete(observed_before):
+        detail = "The original program exceeds its observation budget: " + json.dumps(
+            {
+                key: value
+                for key, value in observed_before.items()
+                if key in {"observer_timeout", "timed_out", "observer_resource"}
+            }
+        )
         return Outcome(
             case, mode, "inconclusive", detail, applied, change, towel_output=towel_output
         )
@@ -317,4 +398,5 @@ def run_case(case: Case, mode: Mode, workspace: Path, *, call_seconds: float = 2
         refactoring=change,
         changes=changes,
         towel_output=towel_output,
+        observation_limited=_observation_incomplete(observed_after),
     )

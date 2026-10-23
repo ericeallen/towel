@@ -12,6 +12,29 @@ CI records, and on PyPI.
 
 ## 1.947 preparation checkpoint, October 23, 2026
 
+Binding-form seed `10060797319587863840408861851` exhausted memory during
+validation of frozen source `575abcc`. Its original and transformed programs
+both append indefinitely to the list being iterated, before reaching extracted
+code. Each independently exhausted an isolated 256 MiB container; resource
+contention is not required to reproduce the failure. This was a fuzz-harness
+containment defect, with no runtime source correction needed.
+
+Differential observation now runs the original first. An original that exceeds
+its memory, output or time budget is inconclusive, and the transformed observer
+is not launched. Transformed-only exhaustion remains a finding; unexplained
+process exits remain harness errors. Each observer has a 256 MiB memory budget,
+a 60-second overall deadline, and the existing per-call timeout. Linux enforces
+the memory limit with `RLIMIT_AS`; the parent also samples RSS (`/proc` on Linux,
+`ps` on macOS). Sampled RSS can overshoot between checks, so native macOS has
+no hard memory guarantee. Failed RSS measurements fail closed. Run release
+campaigns in disposable Linux containers with an outer memory limit too.
+Captured streams stop at 20,000 characters, output files at a sampled 16 MiB,
+and timeout handling skips subsequent argument representation. Resource findings
+are exported without replay through the less constrained hostile battery.
+The seed and transformed-only controls are permanent regressions. The replacement
+freeze requires fresh release validation; completed `575abcc` results retain
+their original identity. Final outcomes remain external to shipped source.
+
 Binding-form seed `19009312961665790893874724517` exposed another conservative
 scope-oracle refusal on frozen source `5f527a1`. Its execution observations
 agreed. The oracle now certifies retention in literal `while True` loops with
