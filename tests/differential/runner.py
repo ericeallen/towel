@@ -225,14 +225,15 @@ def _resident_bytes(pid: int) -> int:
             if line.startswith("VmRSS:"):
                 return int(line.split()[1]) * 1024
         return 0  # exited/zombie processes have no VmRSS field
-    sampled = subprocess.run(
-        ["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True, timeout=5
-    )
-    if sampled.returncode == 1 and not sampled.stdout.strip():
-        return 0
-    if sampled.returncode != 0:
-        raise RuntimeError(f"Cannot measure observer RSS: {sampled.stderr}")
-    return int(sampled.stdout.strip()) * 1024
+    else:
+        sampled = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True, timeout=5
+        )
+        if sampled.returncode == 1 and not sampled.stdout.strip():
+            return 0
+        if sampled.returncode != 0:
+            raise RuntimeError(f"Cannot measure observer RSS: {sampled.stderr}")
+        return int(sampled.stdout.strip()) * 1024
 
 
 def _kill_observer(process: subprocess.Popen[bytes]) -> None:
