@@ -10,6 +10,18 @@ separates completed repair checks from final release evidence. Final validation
 and publication outcomes are retained externally with the exact artifacts and
 CI records, and on PyPI.
 
+## 1.947 preparation checkpoint, October 23, 2026
+
+Binding-form seed `19009312961665790893874724517` exposed another conservative
+scope-oracle refusal on frozen source `5f527a1`. Its execution observations
+agreed. The oracle now certifies retention in literal `while True` loops with
+an unconditional terminal `break`, no `else`, and no earlier `break` or `continue`,
+nested loop, handler or context manager. Both original and rewritten loops
+must qualify; all existing producer, return-slot and unused-binding checks
+remain in force. The seed and negative controls are permanent regressions.
+No runtime source change was needed. The replacement validation outcomes
+remain external to the shipped source.
+
 ## 1.947 preparation checkpoint, October 22, 2026
 
 Bounded investigation reproduced the grammar failure at binding-form seed
@@ -139,7 +151,7 @@ No Git push is permitted under the standing repository instructions.
 
 **Contents**
 
-- [1.947 preparation checkpoint](#1947-preparation-checkpoint-october-19-2026)
+- [1.947 preparation checkpoint](#1947-preparation-checkpoint-october-23-2026)
 - [Historical 1.946 checkpoint](#1946-publication-checkpoint-october-18-2026)
 - [Version convention](#version-number-convention) · [Recorded history](#recorded-release-history)
 - [Evidence gate](#repository-owned-evidence-gate) · [Schema](#evidence-schema-1) · [Changes after freezing](#changes-after-a-validation-freeze)

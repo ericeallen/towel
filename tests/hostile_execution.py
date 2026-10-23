@@ -895,8 +895,43 @@ def _unique_helper_binding(helper: ast.FunctionDef, module: ast.Module) -> bool:
 _SuitePath = Tuple[Tuple[str, int], ...]
 
 
+def _single_pass_loop(node: ast.AST) -> bool:
+    """Certify only a literal-true loop with one unconditional terminal break.
+
+    Earlier breaks or continues, nested loops, handlers and managers remain
+    unproved. Inspect both original and rewritten suites before admitting a
+    retention assignment: extraction must not hide unsupported control flow.
+    """
+    return (
+        isinstance(node, ast.While)
+        and isinstance(node.test, ast.Constant)
+        and node.test.value is True
+        and not node.orelse
+        and bool(node.body)
+        and isinstance(node.body[-1], ast.Break)
+        and not any(
+            isinstance(
+                child,
+                (
+                    ast.Break,
+                    ast.Continue,
+                    ast.While,
+                    ast.For,
+                    ast.AsyncFor,
+                    ast.Try,
+                    ast.TryStar,
+                    ast.With,
+                    ast.AsyncWith,
+                ),
+            )
+            for statement in node.body[:-1]
+            for child in ast.walk(statement)
+        )
+    )
+
+
 def _retained_suite_paths(node: ast.AST, path: _SuitePath = ()) -> Iterator[_SuitePath]:
-    """Statement suites in one function's acyclic if/match branches only."""
+    """Suites in one function's if/match branches and certified single-pass loops."""
     fields = ("body", "orelse") if isinstance(node, ast.If) else ("body",)
     for field in fields:
         suite: object = getattr(node, field, None)
@@ -905,7 +940,7 @@ def _retained_suite_paths(node: ast.AST, path: _SuitePath = ()) -> Iterator[_Sui
         yield path + ((field, -1),)
         for index, statement in enumerate(suite):
             child_path = path + ((field, index),)
-            if isinstance(statement, ast.If):
+            if isinstance(statement, ast.If) or _single_pass_loop(statement):
                 yield from _retained_suite_paths(statement, child_path)
             elif isinstance(statement, ast.Match):
                 for case_index, case in enumerate(statement.cases):
@@ -945,9 +980,12 @@ def _retained_branch_contexts(
     """One changed suite with every enclosing field and other suite identical.
 
     The existing block/input/producer proof still checks the selected suite.
-    No loop, handler, manager, nested definition or unrelated change is hidden.
+    No unproved loop, handler, manager, nested definition or unrelated change is hidden.
     """
+    original_paths = frozenset(_retained_suite_paths(old))
     for path in _retained_suite_paths(new):
+        if path not in original_paths:
+            continue
         original = _retained_suite(old, path)
         rewritten = _retained_suite(new, path)
         if original is None or rewritten is None:

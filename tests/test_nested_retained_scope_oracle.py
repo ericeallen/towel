@@ -152,9 +152,12 @@ _DRIVER = """for mode in (0,1,2):
 """
 
 
-@pytest.mark.parametrize("branch", ("if", "match", "nested"))
+@pytest.mark.parametrize("branch", ("if", "match", "nested", "single_pass"))
 def test_exact_nested_retention_preserves_executed_lifetimes(tmp_path: Path, branch: str) -> None:
-    if branch == "if":
+    if branch == "single_pass":
+        original = "def f(mode,fail):\n    while True:\n        owner=make()\n        consume(owner,fail)\n        break\n    report()\n"
+        rewritten = "def f(mode,fail):\n    while True:\n        _towel_keep_owner=__extracted_func_0(fail)\n        break\n    report()\n"
+    elif branch == "if":
         original = "def f(mode,fail):\n    if mode:\n        owner=make()\n        consume(owner,fail)\n    report()\n"
         rewritten = "def f(mode,fail):\n    if mode:\n        _towel_keep_owner=__extracted_func_0(fail)\n    report()\n"
     elif branch == "match":
@@ -210,6 +213,100 @@ def test_uncertified_nested_suites_remain_visible(boundary: str) -> None:
     )
     changes = scope_changes(original, after)
     assert "gains local _towel_keep_owner" in changes["f#0"]
+
+
+def _single_pass_seed() -> tuple[str, str]:
+    """Actual before/after output for binding seed 19009312961665790893874724517."""
+    return (
+        (_FIXTURES / "scope_retained_single_pass_before.py.txt").read_text(),
+        (_FIXTURES / "scope_retained_single_pass_after.py.txt").read_text(),
+    )
+
+
+def test_single_pass_seed_has_certified_retention() -> None:
+    assert scope_changes(*_single_pass_seed()) == {}
+
+
+@pytest.mark.parametrize("change", ("wrong_producer", "keeper_read", "keeper_captured"))
+def test_single_pass_seed_still_rejects_changed_values_and_keeper_reads(change: str) -> None:
+    before, after = _single_pass_seed()
+    if change == "wrong_producer":
+        after = after.replace("v1 = c.get('k', 0)", "v1 = c.get('k', 1)")
+    else:
+        statement = (
+            "print(_towel_keep_v1)" if change == "keeper_read" else "later = lambda: _towel_keep_v1"
+        )
+        after = after.replace(
+            "            break", "            " + statement + "\n            break"
+        )
+    assert after != _single_pass_seed()[1]
+    expected = ["gains local _towel_keep_v1"]
+    if change == "keeper_captured":
+        expected.append("gains local later")
+    assert scope_changes(before, after) == {
+        "f1#0.inner#0": expected,
+        "f2#0.inner#0": expected,
+    }
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        "variable_guard",
+        "truthy_guard",
+        "false_guard",
+        "no_break",
+        "conditional_break",
+        "earlier_break",
+        "continue",
+        "nested_loop",
+        "handler",
+        "manager",
+        "else_suite",
+    ),
+)
+def test_single_pass_exemption_does_not_admit_unproved_loop_suites(change: str) -> None:
+    def alter(source: str) -> str:
+        module = ast.parse(source)
+        for outer in module.body:
+            if not isinstance(outer, ast.FunctionDef) or outer.name not in ("f1", "f2"):
+                continue
+            inner = next(node for node in outer.body if isinstance(node, ast.FunctionDef))
+            loop = next(node for node in inner.body if isinstance(node, ast.While))
+            if change == "variable_guard":
+                loop.test = ast.Name(id="flag", ctx=ast.Load())
+            elif change in ("truthy_guard", "false_guard"):
+                loop.test = ast.Constant(value=1 if change == "truthy_guard" else False)
+            elif change == "no_break":
+                loop.body.pop()
+            elif change == "conditional_break":
+                loop.body[-1] = ast.parse("if flag: break").body[0]
+            elif change == "else_suite":
+                loop.orelse = [ast.Pass()]
+            else:
+                statements = {
+                    "earlier_break": "if flag: break",
+                    "continue": "if flag: continue",
+                    "nested_loop": "for item in items: pass",
+                    "handler": "try:\n    pass\nfinally:\n    pass",
+                    "manager": "with manager: pass",
+                }
+                loop.body.insert(0, ast.parse(statements[change]).body[0])
+        return ast.unparse(ast.fix_missing_locations(module))
+
+    before, after = (alter(source) for source in _single_pass_seed())
+    assert scope_changes(before, after) == {
+        "f1#0.inner#0": ["gains local _towel_keep_v1"],
+        "f2#0.inner#0": ["gains local _towel_keep_v1"],
+    }
+
+
+def test_extraction_cannot_hide_an_unproved_original_loop_suite() -> None:
+    # Moving a nested loop into a helper leaves the new outer loop simple;
+    # original-loop certification must still refuse that broader context.
+    before = "def f():\n    while True:\n        for item in items: pass\n        owner=make()\n        consume(owner)\n        break\n"
+    after = "def __extracted_func_0():\n    for item in items: pass\n    owner=make()\n    consume(owner)\n    return owner\ndef f():\n    while True:\n        _towel_keep_owner=__extracted_func_0()\n        break\n"
+    assert scope_changes(before, after) == {"f#0": ["gains local _towel_keep_owner"]}
 
 
 def _comprehension_shadow() -> tuple[str, str]:

@@ -1,0 +1,69 @@
+LOG = []
+G = 5
+
+
+def __extracted_func_0(a, b, c):
+    print('p0', sum(b) - (sum(b) - -2), G)
+    v1 = c.get('k', 0)
+    print('p4', a, len(f'{a}-{a}'))
+    return v1
+
+
+def tr(tag, v):
+    print("tr", tag, repr(v))
+    LOG.append(tag)
+    return v
+
+
+class Box:
+    def __init__(self, v):
+        self.v = v
+
+    def __repr__(self):
+        return f"Box({self.v!r})"
+
+    def __eq__(self, other):
+        return isinstance(other, Box) and self.v == other.v
+
+
+class Ctx:
+    def __init__(self, tag):
+        self.tag = tag
+
+    def __enter__(self):
+        print("enter", self.tag)
+        return self.tag
+
+    def __exit__(self, et, ev, tb):
+        print("exit", self.tag, et.__name__ if et else None)
+        return False
+
+
+def bump():
+    global G
+    G += 1
+    return G
+
+
+def f1(a, b, c, o):
+    k0 = 2
+    def inner():
+        print("cell", k0)
+        while True:
+            _towel_keep_v1 = __extracted_func_0(a, b, c)
+            print("ld", (lambda a=len(b): a + 1)(), (lambda *b: len(b))(1, 2), (lambda **c: len(c))(k=1), (lambda *, o=3: o)())
+            break
+        return None
+    return inner()
+
+
+def f2(a, b, c, o):
+    k1 = 3
+    def inner():
+        print("cell", k1)
+        while True:
+            _towel_keep_v1 = __extracted_func_0(a, b, c)
+            print("ld", (lambda a=len(b): a + 1)(), (lambda *b: len(b))(1, 2), (lambda **c: len(c))(k=1), (lambda *, o=3: o)())
+            break
+        return None
+    return inner()
