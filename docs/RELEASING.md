@@ -12,6 +12,13 @@ CI records, and on PyPI.
 
 ## 1.947 preparation checkpoint, October 23, 2026
 
+The replacement candidate `9def1b8` passed Linux quality checks, then its
+dependency audit reported three vulnerabilities in development dependency
+filelock 3.32.6. The lock now selects filelock 4.2.4, including the fixes
+identified in 4.2.1. Its Python requirement matches the supported 3.11–3.13
+range and the existing dependent packages accept it. Runtime requirements
+are unchanged. This dependency update requires a fresh freeze and validation.
+
 Binding-form seed `10060797319587863840408861851` exhausted memory during
 validation of frozen source `575abcc`. Its original and transformed programs
 both append indefinitely to the list being iterated, before reaching extracted
