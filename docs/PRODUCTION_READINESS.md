@@ -7,9 +7,32 @@ removes reflection and self-instrumentation guarantees. Validation and repair
 records below retain the source, contract and results of their dated runs;
 they are not evidence of those retired protections in the current code.
 
-Start with the October 23 preparation checkpoint below. Later sections retain
+Start with the October 24 preparation checkpoint below. Later sections retain
 completed releases and earlier preparation checkpoints, with their original
 source identities and historical measurements.
+
+## 1.947 preparation checkpoint, October 24, 2026
+
+Candidate `877b37578b79434c1eb473a49f0ae54516679276` completed its Linux
+Python 3.11–3.13 full suites and coverage, 9,400 differential runs with zero
+failures, six wheel smoke checks, 126 sdist documentation checks and self-dogfood
+validation. Its dependency audit also passed with filelock 4.2.4. Those results
+remain evidence for that exact source.
+
+After the corpus workspace permissions were repaired without changing the
+candidate, the resumed corpus stopped at PrettyTable's refactor timeout. It had
+86 completed reports: 60 `PASS`, 23 `NO_CHANGE`, one `BROKEN_KNOWN`, one `CRASH`
+and one `TIMEOUT`. PrettyTable's baseline passed 338 tests; no transformed-suite
+result was available from the timed-out run. The corpus is incomplete and does
+not clear release acceptance.
+
+The [bounded investigation](PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
+identified repeated parsing caused by an overly conservative warning classifier.
+Its narrow runtime correction requires a fresh candidate and complete release
+gates. The isolated completed diagnostic does not transfer earlier gate results
+or establish a controlled performance ratio. Consumer/performance review,
+exact-commit remote CI and publication remain pending at this checkpoint;
+final validation outcomes are retained externally with the exact artifacts.
 
 ## 1.947 preparation checkpoint, October 23, 2026
 

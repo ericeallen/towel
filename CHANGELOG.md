@@ -48,6 +48,12 @@ release validation and publication; no publication date is assigned here.
 - Rename definition selection is separate from project-wide consumer analysis.
   Batches needing edits outside the target refuse atomically; unmarked CLI
   projects require an explicit `--complete-scope` declaration.
+- Ordinary raw-regex brace escapes and comments no longer prevent reuse of
+  warning-free module facts merely because an earlier source fragment resembles
+  a formatted-string prefix. Token checks prove each affected escape belongs to
+  an ordinary raw string or comment; uncertain and warning-capable inputs retain
+  fresh native parsing. This repairs the repeated parsing behind the PrettyTable
+  corpus timeout without changing cache bounds or source-correspondence proofs.
 
 ## [1.946]
 

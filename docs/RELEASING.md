@@ -10,6 +10,22 @@ separates completed repair checks from final release evidence. Final validation
 and publication outcomes are retained externally with the exact artifacts and
 CI records, and on PyPI.
 
+## 1.947 preparation checkpoint, October 24, 2026
+
+Candidate `877b375` reached the corpus after completing its matrix, differential,
+artifact and self-dogfood gates. The corpus workspace permission repair preserved
+that frozen candidate: using a volume mount with `volume-nocopy` prevented Docker
+from replacing the non-root runner's ownership during mount initialization. The
+runner's write, read, rename and removal probe passed before resumption.
+
+The resumed corpus then stopped on PrettyTable's 30-minute refactor timeout.
+Bounded diagnostics identified repeated parsing of a warning-free source caused
+by the lexical warning classifier. The [narrow runtime correction](PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
+requires a new freeze and the complete declared release campaign. This differs
+from the permission-only repair: completed `877b375` gates do not validate the
+changed runtime. Preserve those records and the incomplete corpus under their
+original identities. Final validation and publication outcomes remain external.
+
 ## 1.947 preparation checkpoint, October 23, 2026
 
 The replacement candidate `9def1b8` passed Linux quality checks, then its

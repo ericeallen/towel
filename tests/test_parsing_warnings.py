@@ -18,6 +18,7 @@ import ast
 import sys
 import warnings
 from typing import Callable, List, Literal, Mapping, Optional, Tuple, Union
+from unittest.mock import patch
 
 import pytest
 
@@ -60,6 +61,15 @@ SAFE_SOURCES = [
     "# \\{ and \\} are only a comment\nvalue = f'{1}'\n",
     "pattern = r'''\\{\n\\}'''\nvalue = Fr'{1}'\n",
     r'''pattern = r"quote\"\{"''' + "\nvalue = RF'{1}'\n",
+    "tag = f'{1}'\n# \\{ and \\} are only a comment\nvalue = 1\n",
+    "tag = f'{1}'\npattern = r'''\\{\n\\}'''\n",
+    "tag = f'{1}'\n" + r'''pattern = r"quote\"\{"''' + "\n",
+    "tag = f'{1}'\n" + r'''pattern = br"\\\{[^{}]*\\\}"''' + "\n",
+    'fields = {"t": "text"}\n' + r'''pattern = r"\{[^{}]*\}"''' + "\n",
+    pytest.param(
+        r'''value = f"{r'\{[^{}]*\}'}"''',
+        marks=pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 701 expression strings"),
+    ),
 ]
 
 WARNING_SOURCES = [
@@ -75,6 +85,9 @@ WARNING_SOURCES = [
     r"value = r'\{' + f'\{1}'",
     "value = r'\\{' + f'\\\r{1}'",
     "literal_word = 'text'\nvalue = '\\{'",
+    "tag = f'{1}'\n" + r'''pattern = r"\{"; value = "\}"''',
+    "tag = f'{1}'\n# \\{ is only a comment\n" + r'''value = f"\{1}"''',
+    "tag = f'{1}'\n" + r'''pattern = r"quote\"\{"; value = f"\{1}"''',
     "value = 1if True else 0",
     "value = 1.and 2",
     "value = 1not in ()",
@@ -532,8 +545,22 @@ def test_paired_backslashes_preserve_nested_native_effects(source: str, pure: bo
         assert _parse_observation(source, policy, cache) == expected
 
 
-def test_later_ordinary_raw_braces_remain_conservatively_uncached() -> None:
+def test_later_ordinary_raw_braces_reuse_parses_without_changing_diagnostics() -> None:
     source = "tag = f'{1}'\n" + r'''pattern = r"\{[^{}]*\}"''' + "\n"
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("error")
+        assert parsing_is_pure(source)
+    assert not emitted
+    for policy in ("always", "ignore", "error"):
+        expected = _parse_observation(source, policy, None)
+        assert isinstance(expected[0], str) and not expected[1]
+        cache = AnalysisSources()
+        assert _parse_observation(source, policy, cache) == expected
+        assert _parse_observation(source, policy, cache) == expected
+
+
+def test_raw_brace_fallback_keeps_carriage_returns_conservative() -> None:
+    source = "tag = f'{1}'\r\n" + r'''pattern = r"\{[^{}]*\}"''' + "\n"
     with warnings.catch_warnings(record=True) as emitted:
         warnings.simplefilter("error")
         assert not parsing_is_pure(source)
@@ -553,9 +580,11 @@ def test_later_ordinary_raw_braces_remain_conservatively_uncached() -> None:
         r'''pattern = r"\{'c': 1\} not match for \{'b': 1\}"''' + "\n"
         "value = f'{literal_word}'\n",
         r'''value = f"{value}\\{text}"''' + "\n",
+        'fields = {"t": "text"}\n' + r'''pattern = r"\{[^{}]*\}"''' + "\n",
+        "tag = f'{1}'\n" + r'''pattern = r"\{[^{}]*\}"''' + "\n",
         r'''value = f"\x1b]8;id={value};{text}\x1b\\{text}\x1b]8;;\x1b\\"''' + "\n",
     ],
-    ids=["raw-regex", "markup", "ansi-link"],
+    ids=["raw-regex", "markup", "prettytable-prefix", "later-raw-regex", "ansi-link"],
 )
 def test_warning_free_module_reuses_facts_and_recomputes_changed_or_uncached_queries(
     literal_source: str,
@@ -598,3 +627,27 @@ def test_warning_free_module_reuses_facts_and_recomputes_changed_or_uncached_que
             tuple(typing_forms._local_forms(source, spelling) for spelling in spellings) == expected
         )
     assert constructions == 2 + len(spellings)
+
+
+def test_prettytable_raw_pattern_reuses_global_bindings_without_reparsing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = 'fields = {"t": "text"}\n' + r'''pattern = r"\{[^{}]*\}"''' + "\n"
+    cache: BoundedCache[
+        Tuple[str, ParserConfiguration], Optional[module_bindings.ModuleBindings]
+    ] = BoundedCache(128)
+    monkeypatch.setattr(module_bindings, "_MODULE_BINDINGS", cache)
+    with memoization_disabled():
+        expected = module_bindings.global_bindings(source)
+    assert expected is not None
+    with patch.object(ast, "parse", wraps=ast.parse) as parse:
+        for _ in range(4):
+            assert module_bindings.global_bindings(source) == expected
+        assert parse.call_count == 1
+        changed = module_bindings.global_bindings(source + "added = 1\n")
+        assert changed is not None and changed.may_bind("added")
+        assert not expected.may_bind("added")
+        assert parse.call_count == 2
+        with memoization_disabled():
+            assert module_bindings.global_bindings(source) == expected
+        assert parse.call_count == 3

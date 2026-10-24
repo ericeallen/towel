@@ -14,6 +14,7 @@ the entries below do not transfer approval to a later source or version.
 
 **Contents — release checkpoints**
 
+- [1.947 PrettyTable timeout repair](#2026-10-24-1947-prettytable-timeout-repair)
 - [1.947 scope-oracle correction](#2026-10-22-1947-scope-oracle-correction)
 - [1.947 candidate 59aafb1 corpus stop](#1947-candidate-59aafb1-corpus-stop)
 - [1.947 preparation after audit repairs](#2026-10-19-1947-preparation-after-audit-repairs)
@@ -31,6 +32,24 @@ the entries below do not transfer approval to a later source or version.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-10-24: 1.947 PrettyTable timeout repair
+
+Candidate `877b375` completed its matrix, differential, artifact and self-dogfood
+gates. Its corpus initially failed workspace setup because Docker's default
+volume initialization replaced the runner's ownership; a `volume-nocopy` mount
+and successful non-root filesystem probe allowed the same candidate to resume.
+The resumed run stopped at PrettyTable's 1,800.22-second refactor timeout, after
+86 completed reports: 60 `PASS`, 23 `NO_CHANGE`, one `BROKEN_KNOWN`, one `CRASH`
+and one `TIMEOUT`. This incomplete campaign is not release acceptance.
+
+Bounded diagnostics traced the timeout to repeated parsing of a warning-free
+module whose ordinary raw-regex escapes were rejected by the lexical cache
+guard. The [performance record](PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
+documents the repeated inputs, narrow token-based correction and isolated
+33.096-second completed diagnostic without claiming a controlled speed ratio.
+The runtime correction requires a fresh freeze and complete release validation.
+Prior results remain bound to `877b375`; final outcomes are retained externally.
 
 ## 2026-10-22: 1.947 scope-oracle correction
 

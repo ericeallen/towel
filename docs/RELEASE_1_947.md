@@ -11,6 +11,16 @@ was the latest confirmed release. Its published artifacts cannot be replaced.
 The final 1.947 source and distributions still required their own complete
 release validation at this checkpoint.
 
+**Preparation checkpoint, October 24, 2026:** candidate `877b375` completed its
+matrix, differential and artifact checks, but the corpus stopped on a PrettyTable
+timeout. Repeated parsing of one warning-free module bypassed existing fact
+caches because the lexical guard confused ordinary raw-regex escapes with
+potentially warning-capable formatted strings. Token verification now admits
+those ordinary raw-string and comment cases while preserving the native path
+for uncertain inputs. See the [diagnostic evidence and limits](PERFORMANCE.md#1947-prettytable-warning-classifier-repair).
+The changed runtime requires a new freeze and complete release gates; completed
+checks remain bound to their original candidate.
+
 ## Binding, extraction and formatting repairs
 
 The repairs follow the audit's five priorities and address seven confirmed

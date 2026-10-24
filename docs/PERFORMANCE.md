@@ -4,6 +4,11 @@
 
 Use this guide to estimate a run and understand the limits of the published measurements.
 
+The October 24 PrettyTable investigation identified repeated parsing caused by
+an overly conservative lexical warning check. The [repair and diagnostic result](#1947-prettytable-warning-classifier-repair)
+below describe the specific workload and preserve the distinction between a
+bounded diagnostic and final release evidence.
+
 The 1.947 builtin-mapping guard exposed a repeated large-module scan in candidate
 `59aafb1`. The [repair and its limits](#1947-large-module-builtin-guard-repair)
 below distinguish the completed corpus observation from partial diagnostic
@@ -24,6 +29,7 @@ Click/Rich comparison retains its own 1.792 metadata, samples and limits.
 
 On this page:
 
+- [1.947 PrettyTable warning classifier repair](#1947-prettytable-warning-classifier-repair)
 - [1.947 large-module builtin guard repair](#1947-large-module-builtin-guard-repair)
 - [Partner eligibility and interval-analysis limits](#partner-eligibility-and-interval-analysis-limits)
 - [October 10 versioned warning-guard cohorts](#october-10-versioned-warning-guard-cohorts)
@@ -40,6 +46,40 @@ On this page:
 - [Why larger projects take longer](#why-larger-projects-take-longer)
 
 ## How long it takes
+
+### 1.947 PrettyTable warning classifier repair
+
+Candidate `877b37578b79434c1eb473a49f0ae54516679276` timed out after
+1,800.22 seconds while refactoring PrettyTable at pinned commit
+`2a6cd4fb41bc6754eac57b43fc6dbd43b08ae368`. Its baseline passed 338 tests;
+the timed-out invocation produced no completed transformed output. The corpus
+was stopped at that failure, so it does not establish release acceptance.
+
+An isolated 45-second diagnostic counted 4,562 native parse calls over 32
+distinct inputs. The same 120,767-character PrettyTable module accounted for
+4,483 calls, about 98%. A separate three-minute profile attributed most work
+to repeated parsing and module-fact reconstruction, rather than AST dumping.
+Native parsing of that source emitted no warnings. An ordinary string fragment
+resembling a `t"` prefix, followed by a raw-regex brace escape, caused the lexical
+guard to reject cache eligibility for the whole module.
+
+The repair tokenizes a shadow string with suspect brace escapes masked, and
+requires every masked position to lie in an ordinary raw string or comment.
+Only then does it apply the existing full lexical checks. Formatted-string,
+nonraw-string and unclassified escapes remain conservative; carriage returns
+also retain the fallback. Original source remains the native parse input and
+cache key. Existing cache bounds, parser-limit checks and AST ownership proofs
+are unchanged.
+
+An unprofiled diagnostic using the same input, Python environment and CLI flags,
+with only the classifier replaced, completed in 33.096 seconds and applied
+14 refactorings. The same Linux Python 3.12 environment passed all 338 consumer
+tests before and after, with import-path checks verifying which source each
+suite exercised. It ran in isolation, whereas the original timeout shared its
+container with other corpus work. These different resource conditions do not
+establish a controlled speed ratio. This runtime correction requires a new
+frozen candidate and complete release validation; final results remain external
+to this preparation record.
 
 ### 1.947 large-module builtin guard repair
 
@@ -197,8 +237,10 @@ backslash of a complete even run. Exact native source observations were
 warning-free under always, ignore and error filters. The parity-only refinement
 matches complete odd runs, including the existing carriage-return case; paired
 literal backslashes no longer cause this guard refusal. Existing prefix/token/
-nesting checks remain authoritative, including conservative refusal of an
-ordinary raw brace regex after an earlier possible formatted prefix. No cache,
+nesting checks remained authoritative. At that checkpoint, an ordinary raw brace
+regex after an earlier possible formatted prefix still refused cache eligibility;
+the [October 24 repair](#1947-prettytable-warning-classifier-repair) narrows that
+case through token verification. No cache,
 warning filter, source budget or parser-limit policy was changed.
 
 The integrated seven-file battery passed **479 tests**, with **221

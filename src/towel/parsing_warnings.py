@@ -33,7 +33,8 @@ from .unification.bounded_cache import BoundedCache, memoizing
 _POSSIBLE_WARNING = re.compile(r"\\(?:[^\\'\"abfnrtv0-7x\r\n]|[4-7][0-7]{2})|[0-9]\.?[a-zA-Z_]")
 # The C tokenizer itself warns for these f/t-string escapes, including its
 # special handling of a carriage return. Ordinary occurrences before every
-# possible formatted prefix are handled by the token escape checks below.
+# possible formatted prefix are handled by the token escape checks below;
+# later occurrences need a warning-free shadow to establish token ownership.
 # Only a complete odd run leaves a brace escaped; paired backslashes are literal.
 _TOKENIZER_WARNING = re.compile(r"(?<!\\)(?:\\\\)*\\\r?[{}]")
 # Identifiers consume ASCII letters/underscores; numeric adjacency stays uncertain.
@@ -94,11 +95,44 @@ class _FormattedString:
     curly_depth: int = 0
 
 
+def _ordinary_raw_braces(source: str) -> str | None:
+    """A warning-free tokenizer input, only when masked escapes are raw or comments.
+
+    CPython's tokenizer may warn before yielding an f-string token. Replace
+    the last backslash before each suspect brace with a space, then require
+    every replacement to belong to an ordinary raw string or comment. In
+    those tokens the replacement preserves boundaries and diagnostics. The
+    original source remains both the parse input and the cache key.
+    """
+    if "\r" in source:
+        return None
+    positions = iter(match.end() - 2 for match in _TOKENIZER_WARNING.finditer(source))
+    position = next(positions, None)
+    shadow = _TOKENIZER_WARNING.sub(lambda match: match[0][:-2] + " " + match[0][-1], source)
+    offsets = [0, *(index + 1 for index, char in enumerate(source) if char == "\n"), len(source)]
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(shadow).readline):
+            start = offsets[token.start[0] - 1] + token.start[1]
+            end = offsets[token.end[0] - 1] + token.end[1]
+            prefix = _STRING_START.match(token.string) if token.type == tokenize.STRING else None
+            ordinary_raw = prefix is not None and prefix[1].lower() in {"r", "br", "rb"}
+            while position is not None and position < end:
+                if position < start or not (ordinary_raw or token.type == tokenize.COMMENT):
+                    return None
+                position = next(positions, None)
+    except (SyntaxError, UnicodeError, tokenize.TokenError, RecursionError):
+        return None
+    return shadow if position is None else None
+
+
 def _tokens_cannot_warn(source: str) -> bool:
     if _TOKENIZER_WARNING.search(source):
         first = _POSSIBLE_FORMATTED_START.search(source)
         if first is not None and _TOKENIZER_WARNING.search(source, first.start()):
-            return False
+            shadow = _ordinary_raw_braces(source)
+            if shadow is None:
+                return False
+            source = shadow
     formatted: list[_FormattedString] = []
     previous: tokenize.TokenInfo | None = None
     try:
