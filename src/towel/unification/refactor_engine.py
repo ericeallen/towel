@@ -91,6 +91,7 @@ from .block_signature import (
     signature_bucket_key,
 )
 from ..coverage_config import CoverageExclusion
+from ..consumers import MAXIMUM_FILES
 from .if_binding_transfer import sharing_if_transfer_sources
 from .compiler_literals import sharing_compiler_literal_facts
 from .return_source_uses import sharing_return_source_uses
@@ -581,6 +582,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._coverage_exclusions: Dict[str, CoverageExclusion] = {}
         self._origins_in_run: Dict[Tuple[str, Optional[Tuple[Path, Path]]], Path] = {}
         self._project_builtin_mapping_replacements: Mapping[str, bool] = {}
+        # Local refreshes visit only the rewritten files. Keep prior root/fact
+        # observations for other files so changing that subset is not mistaken
+        # for a changed project dependency. An evicted observation fails closed.
+        self._builtin_mapping_snapshots: BoundedCache[str, Tuple[Path, bool]] = BoundedCache(
+            MAXIMUM_FILES
+        )
         self._seen_proposals: Set[Hashable] = set()
         self._pair_rejection: Optional[RejectReason] = None
         self._pair_rejection_subject: Optional[str] = None
@@ -789,7 +796,14 @@ class UnificationRefactorEngine(ParallelEvaluation):
             for root in sorted(set(roots.values()))
         }
         replacements = {os.path.abspath(path): mapping_writes[root] for path, root in roots.items()}
-        if replacements != self._project_builtin_mapping_replacements:
+        mapping_changed = False
+        for path, root in roots.items():
+            absolute = os.path.abspath(path)
+            snapshot = (root, mapping_writes[root])
+            if self._builtin_mapping_snapshots.get(absolute) != snapshot:
+                mapping_changed = True
+            self._builtin_mapping_snapshots.put(absolute, snapshot)
+        if mapping_changed:
             # A third, unchanged/excluded module can change every candidate's
             # mapping dependency. Neither file digests nor changed-file pairing
             # alone capture that input to clustered-call admission.

@@ -1051,6 +1051,15 @@ for all snippets; the two options are mutually exclusive. Built-in factories
 retain their selected workers for one run and propagate their repeatability;
 unregistered factories cannot justify cached annotation refusals.
 
+Each formatter factory lazily owns at most one Black worker, and each directory
+import-sorter factory at most one isort worker. Policy selection remains
+file-specific: requests carry the selected Black settings or isort configuration
+root and source path. Factories do not share workers with one another. Selecting
+an excluded file does not close a shared worker; a failed worker remains failed
+and invalidates repeatability rather than being replaced when another file is
+selected. The last owning factory or selected callback releases the worker.
+Ruff's subprocess path is unchanged.
+
 A `FileFinisher` selects import sorting separately for each modified file,
 with ruff's `I` rules when selected or isort when configured. Ruff chooses
 the nearest configuration, preferring `.ruff.toml`, then `ruff.toml`, then
@@ -1370,12 +1379,14 @@ previous pass produced from them has since been consumed:
    looks only at the pair's own file); from the classes and receiver types
    holding the methods (whether both can call a private helper in the same
    class); and from the
-   project's import graph (the
-   cycle guard). Nothing else. Proposal priority is a pure function of the
+   project's import graph (the cycle guard); and from the project-wide
+   builtin-mapping hazard described below. A changed root or hazard invalidates
+   the incremental restriction. Proposal priority is a pure function of the
    proposals themselves (size, then position).
 2. *Unchanged files, unchanged scans.* An unchanged file has the same
    syntax tree, the same scope analysis, and the same clustering scan, since
-   the analysis session reuses the parsed module.
+   the analysis session reuses the parsed module. This assumes unchanged
+   project dependency facts; changes to those facts force a full re-pair.
 3. *The class identities are invariant.* Refactoring inserts helper functions
    and methods and rewrites call sites; it never adds, removes, or renames a
    class, and never changes a base list. `ClassInfo` for every module is
@@ -2012,6 +2023,15 @@ include the same attribute-write condition. That boolean is separate from the
 bounded per-analyzer source-verdict memo; the [performance guide](PERFORMANCE.md#1947-large-module-builtin-guard-repair)
 records its storage and warning-policy limits. Both pair and clustered-site
 checks apply the [captured-mapping dependency policy](GENERATED_CODE.md#arguments-and-evaluation).
+
+The current per-file hazard lookup is separate from bounded historical
+`(project root, hazard)` observations. A local refresh visits only rewritten
+files; shrinking and later expanding that file set does not itself change the
+dependency. Each visited file is compared with its historical observation.
+A changed root or boolean, or a missing observation after eviction, clears the
+clustering scan cache and invalidates the changed-files pairing restriction. Keeping
+the history separate prevents a full/local/full sequence from needlessly
+re-pairing unchanged files while preserving conservative invalidation.
 
 Lexical and shared parsing eligibility requires native `str`/`bytes` values.
 String and byte subclasses use the native parsing path; their hashing, sizing,

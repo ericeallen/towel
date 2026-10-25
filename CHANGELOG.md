@@ -40,11 +40,18 @@ release validation and publication; no publication date is assigned here.
   source-only guard verdict within an analysis, avoiding repeated lexical scans
   while preserving native warning replay and parser-limit checks. See the
   [captured-mapping policy](docs/GENERATED_CODE.md#arguments-and-evaluation).
+- Local refreshes preserve incremental candidate pairing when the project root
+  and builtin-mapping hazard are unchanged. Changing which files a refresh
+  visits no longer triggers a full re-pair; genuine dependency changes and
+  missing historical observations still invalidate conservatively.
 - Generated code uses each modified file's formatter and configuration. Ruff
   import sorting recognizes standalone, extended and nested configurations
   through native effective settings and honors disabled/per-file rules.
   Transient configuration-query failures are reported and retried rather than
-  cached as disabled sorting.
+  cached as disabled sorting. File-specific policies share one Black worker per
+  formatter factory and one isort worker per directory import-sorter factory,
+  avoiding a retained process for every selected file. Each request retains
+  its file's settings and exclusions; separate factories remain independent.
 - Rename definition selection is separate from project-wide consumer analysis.
   Batches needing edits outside the target refuse atomically; unmarked CLI
   projects require an explicit `--complete-scope` declaration.

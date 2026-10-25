@@ -21,6 +21,26 @@ for uncertain inputs. See the [diagnostic evidence and limits](PERFORMANCE.md#19
 The changed runtime requires a new freeze and complete release gates; completed
 checks remain bound to their original candidate.
 
+**Preparation checkpoint, October 25, 2026:** investigation of the later Sphinx
+failure confirmed an incremental-invalidation regression introduced after 1.946.
+A full/local/full analysis sequence mistook a changed file subset for a changed
+builtin-mapping hazard, unnecessarily re-pairing unchanged files. Bounded
+historical root/hazard observations now distinguish those cases; genuine changes
+still invalidate. This defect is not established as the sole cause of the
+corpus process's `SIGKILL` under a shared 6 GiB limit. An isolated 119-minute
+replay peaked at 4.25 GiB without OOM and was intentionally stopped incomplete;
+the earlier passing campaign used a different, 7 GiB limit. Neither observation
+establishes a Sphinx pass for the repair. The harness now distinguishes signal
+kills from deadlines and defaults to one project worker. The runtime correction
+requires a new freeze and complete release validation.
+
+A separate formatter regression retained a Black and an isort worker for each
+selected file: three files with identical policies spawned six workers, compared
+with two in published 1.946. Factories now share their workers while preserving
+each file's configuration and exclusions. Sphinx uses Ruff, whose subprocess
+path is unchanged; this repair does not establish the cause of its kill or
+a completed Sphinx result.
+
 ## Binding, extraction and formatting repairs
 
 The repairs follow the audit's five priorities and address seven confirmed
@@ -50,13 +70,17 @@ findings:
    See the [captured-mapping policy](GENERATED_CODE.md#arguments-and-evaluation).
    A bounded source-only verdict memo avoids repeated large-module lexical
    scans for warning-free inputs while retaining native warning behavior and
-   fresh AST/block proofs. See the [performance limits](PERFORMANCE.md#1947-large-module-builtin-guard-repair).
+   fresh AST/block proofs. Historical root/hazard observations preserve
+   incremental pairing across local refreshes without overlooking genuine
+   dependency changes. See the [performance limits](PERFORMANCE.md#1947-large-module-builtin-guard-repair).
 4. **Each file's formatting policy.** Generated helpers, declarations and calls
    use their actual destination file's configuration. Ruff import sorting
    recognizes standalone, dotfile, extended and nested configurations through
    native effective settings. Disabled rules, per-file ignores and exclusions
    remain in force. Transient settings-query failures are reported and retried
-   on later requests instead of being cached as a disabled policy.
+   on later requests instead of being cached as a disabled policy. Black and
+   isort workers are shared within their respective factories, so selecting
+   more files does not retain a separate tool process for each file.
 5. **Rename consumer scope.** Definition selection is separate from the project
    scope needed to resolve ordinary consumers. A batch needing edits outside
    the selected target refuses atomically and explains how to rerun at the

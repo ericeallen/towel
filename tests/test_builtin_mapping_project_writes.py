@@ -24,6 +24,7 @@ from towel.unification import builtin_mapping_writes as writes
 from towel.unification import refactor_engine
 from towel.unification.exceptions import UnparsedProgramError
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.bounded_cache import BoundedCache
 
 
 @pytest.mark.parametrize("flag", [False, True])
@@ -219,3 +220,90 @@ def test_new_project_marker_refreshes_the_scanned_scope(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text('[project]\nname="pkg"\nversion="0"\n')
     assert not engine.analyze_file(str(target))
     assert "builtin_mapping_replaced" in engine.declined_pairs
+
+
+@pytest.mark.parametrize("excluded", [False, True])
+def test_local_subset_keeps_other_project_facts_until_they_are_rechecked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, excluded: bool
+) -> None:
+    roots = [tmp_path / name for name in ("first", "second")]
+    for root in roots:
+        _write(
+            root,
+            {
+                "pyproject.toml": '[project]\nname="pkg"\nversion="0"\n',
+                "target.py": _source(),
+                "writer.py": "VALUE = 1\n",
+            },
+        )
+    paths = [str(root / "target.py") for root in roots]
+    engine = UnificationRefactorEngine(
+        min_lines=3,
+        max_parameters=6,
+        excluded_directories=("writer.py",) if excluded else (),
+    )
+    seen: list[frozenset[str] | None] = []
+    original = engine.find_block_pairs
+
+    def spy(functions, *, progress="none", changed_files=None):
+        seen.append(changed_files)
+        return original(functions, progress=progress, changed_files=changed_files)
+
+    monkeypatch.setattr(engine, "find_block_pairs", spy)
+    assert engine.analyze_files(paths)
+    assert engine.analyze_files(paths[:1])
+    changed = frozenset(paths[:1])
+    assert engine.analyze_files(paths, changed_files=changed)
+    assert seen.pop() == changed
+    writer = roots[1] / "writer.py"
+    for text, expected in (("receiver.__builtins__ = {}\n", True), ("VALUE = 1\n", False)):
+        engine.analyze_files(paths[:1])
+        writer.write_text(text)
+        proposals = engine.analyze_files(paths, changed_files=frozenset({str(writer)}))
+        assert seen.pop() is None, "A genuine fact change must recheck unchanged target files"
+        assert engine._project_may_replace_builtin_mapping(paths[1]) is expected
+        assert any(proposal.file_path == paths[1] for proposal in proposals) is not expected
+
+
+def test_changed_project_root_rechecks_pairs_even_when_both_facts_are_false(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(tmp_path, {"inner/target.py": _source()})
+    target = str(tmp_path / "inner/target.py")
+    engine = UnificationRefactorEngine(min_lines=3, max_parameters=6)
+    seen: list[frozenset[str] | None] = []
+    original = engine.find_block_pairs
+
+    def spy(functions, *, progress="none", changed_files=None):
+        seen.append(changed_files)
+        return original(functions, progress=progress, changed_files=changed_files)
+
+    monkeypatch.setattr(engine, "find_block_pairs", spy)
+    assert engine.analyze_file(target)
+    assert not engine._project_may_replace_builtin_mapping(target)
+    (tmp_path / "pyproject.toml").write_text('[project]\nname="pkg"\nversion="0"\n')
+    assert engine.analyze_files([target], changed_files=frozenset())
+    assert seen[-1] is None
+    assert not engine._project_may_replace_builtin_mapping(target)
+
+
+def test_evicted_mapping_observation_rechecks_instead_of_assuming_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(tmp_path, {"first.py": _source(), "second.py": _source()})
+    engine = UnificationRefactorEngine(min_lines=3, max_parameters=6)
+    engine._builtin_mapping_snapshots = BoundedCache(1)
+    first, second = (str(tmp_path / name) for name in ("first.py", "second.py"))
+    assert engine.analyze_file(first)
+    assert engine.analyze_file(second)
+    assert len(engine._builtin_mapping_snapshots) == 1
+    seen: list[frozenset[str] | None] = []
+    original = engine.find_block_pairs
+
+    def spy(functions, *, progress="none", changed_files=None):
+        seen.append(changed_files)
+        return original(functions, progress=progress, changed_files=changed_files)
+
+    monkeypatch.setattr(engine, "find_block_pairs", spy)
+    assert engine.analyze_files([first], changed_files=frozenset())
+    assert seen == [None]

@@ -31,6 +31,7 @@ from unittest.mock import patch
 import pytest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.models import CodeBlockPair
 
 EXAMPLES = Path(__file__).parent.parent / "test_examples_crossfile"
 PROJECTS = sorted(p.name for p in EXAMPLES.iterdir() if p.is_dir())
@@ -68,8 +69,11 @@ def test_restricted_global_passes_give_identical_output(project: str, tmp_path: 
 
 
 def test_restriction_skips_unchanged_pairs(tmp_path: Path) -> None:
-    source = _standalone(PROJECTS[0], tmp_path)
-    engine = UnificationRefactorEngine(incremental_global_passes=True)
+    source = tmp_path / "src"
+    _write_two_round_project(source)
+    engine = UnificationRefactorEngine(
+        incremental_global_passes=True, cross_module_helpers=True, parameterize_builtins=True
+    )
     seen: list[object] = []
     original = engine.find_block_pairs
 
@@ -89,7 +93,37 @@ def test_restriction_skips_unchanged_pairs(tmp_path: Path) -> None:
     # needed one, names the rewritten files.
     assert seen and seen[0] is None
     later = [c for c in seen[1:] if c is not None]
+    assert later, "Local refreshes must not erase every subsequent global restriction"
     assert all(isinstance(c, frozenset) and c for c in later)
+
+
+def test_local_refresh_preserves_restriction_and_omits_unchanged_pairs(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    _write_two_round_project(source)
+    (source / "d.py").write_text((source / "b.py").read_text().replace("beta", "delta"))
+    paths = [str(source / name) for name in ("a.py", "b.py", "c.py", "d.py")]
+    engine = UnificationRefactorEngine(cross_module_helpers=True, parameterize_builtins=True)
+    seen: list[tuple[frozenset[str] | None, list[CodeBlockPair]]] = []
+    original = engine.find_block_pairs
+
+    def spy(functions, *, progress="none", changed_files=None):
+        pairs = original(functions, progress=progress, changed_files=changed_files)
+        seen.append((changed_files, pairs))
+        return pairs
+
+    with patch.object(engine, "find_block_pairs", spy):
+        engine.analyze_files(paths, progress="none")
+        full_pairs = seen[-1][1]
+        assert any(
+            {pair.file_path, pair.file_path2} == {paths[1], paths[3]} for pair in full_pairs
+        ), "The full pass must have unchanged pairs for the restriction to omit"
+        engine.analyze_files(paths[:1], progress="none")
+        changed = frozenset(paths[:1])
+        engine.analyze_files(paths, progress="none", changed_files=changed)
+    restriction, restricted_pairs = seen[-1]
+    assert restriction == changed
+    assert 0 < len(restricted_pairs) < len(full_pairs)
+    assert all(pair.file_path in changed or pair.file_path2 in changed for pair in restricted_pairs)
 
 
 def _write_two_round_project(source: Path) -> None:
