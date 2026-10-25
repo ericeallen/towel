@@ -174,8 +174,8 @@ def test_builtin_factory_cannot_certify_a_custom_selected_callback(
 
     monkeypatch.setattr(
         formatting,
-        "formatter_for_project",
-        lambda path: ToolChoice(lambda text: text, "custom"),
+        "_formatter_for_project",
+        lambda path, tools: ToolChoice(lambda text: text, "custom"),
     )
     factory = formatter_factory_for_project(tmp_path)
     assert factory(str(tmp_path / "m.py")) is not None

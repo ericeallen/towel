@@ -40,15 +40,18 @@ import configparser
 from dataclasses import dataclass
 import copy
 import json
+import os
 import re
 from enum import Enum
 from pathlib import Path
 import sys
 import shutil
 import subprocess
+import threading
 import weakref
 from typing import (
     Callable,
+    Literal,
     List,
     Mapping,
     NamedTuple,
@@ -730,19 +733,46 @@ def _black_excludes(tool: IsolatedFormatTool, path: Path) -> bool:
     )
 
 
-def _black_for_project(path: Path, note: str) -> ToolChoice[SnippetFormatter]:
+class _RunFormatTools:
+    """Lazy tools owned by one factory; file-specific settings travel with each request.
+
+    Keeping a formatter for every file must not keep a process for every file.
+    These tools remain alive while their factory or any selected callback owns
+    them, and IsolatedFormatTool disposes them with their last owner. A failed
+    worker stays failed, so selecting another file cannot hide its failure.
+    """
+
+    def __init__(self) -> None:
+        self._tools: dict[Literal["black", "isort"], IsolatedFormatTool] = {}
+        self._owner = os.getpid()
+        self._lock = threading.Lock()
+
+    def get(self, name: Literal["black", "isort"]) -> IsolatedFormatTool:
+        if self._owner != os.getpid():
+            raise ToolFailure("Create a new formatter factory after fork")
+        with self._lock:
+            if name not in self._tools:
+                self._tools[name] = IsolatedFormatTool(name)
+            return self._tools[name]
+
+
+def _black_for_project(
+    path: Path, note: str, tools: Optional[_RunFormatTools] = None
+) -> ToolChoice[SnippetFormatter]:
     """Black with the project's settings, or no formatting where its configuration excludes ``path``.
 
     Raises ``ImportError`` when Black is not installed.
     """
-    tool = IsolatedFormatTool("black")
+    tool = IsolatedFormatTool("black") if tools is None else tools.get("black")
     try:
         excluded = _black_excludes(tool, path)
     except BaseException:
-        tool.close()
+        if tools is None:
+            tool.close()
         raise
     if excluded:
-        tool.close()
+        if tools is None:
+            tool.close()
         return ToolChoice(checked(_unformatted), f"{note}, which the project excludes {path} from")
     return ToolChoice(_black_formatter(tool, BlackSettings.for_project(path)), note)
 
@@ -755,17 +785,23 @@ def formatter_for_project(path: Path) -> ToolChoice[SnippetFormatter]:
     A formatter whose configuration excludes ``path`` leaves the code Towel
     writes there as ``ast.unparse`` renders it.
     """
+    return _formatter_for_project(path, None)
+
+
+def _formatter_for_project(
+    path: Path, tools: Optional[_RunFormatTools]
+) -> ToolChoice[SnippetFormatter]:
     if project_configures_ruff(path):
         try:
             return ToolChoice(ruff_formatter(path), "ruff (project configuration)")
         except FormatterUnavailable:
             note = "ruff is configured but not installed"
             try:
-                return _black_for_project(path, f"Black; {note}")
+                return _black_for_project(path, f"Black; {note}", tools)
             except ImportError:
                 return ToolChoice(None, f"{note}, and Black is not installed either")
     try:
-        return _black_for_project(path, "Black")
+        return _black_for_project(path, "Black", tools)
     except ImportError:
         return ToolChoice(None, "Black is not installed")
 
@@ -773,18 +809,19 @@ def formatter_for_project(path: Path) -> ToolChoice[SnippetFormatter]:
 def formatter_factory_for_project(
     path: Path, report: Optional[Callable[[ToolChoice[SnippetFormatter]], None]] = None
 ) -> SnippetFormatterFactory:
-    """Choose each modified file's formatter, retaining its tools for this run.
+    """Choose each modified file's formatter, sharing one Black worker for this run.
 
     The caller passes original project paths, including when materializing a
     staged copy. Built-in repeatability is updated with every selected tool;
     an unavailable or custom child cannot certify cached annotation refusals.
     """
     selected: dict[str, Optional[SnippetFormatter]] = {}
+    tools = _RunFormatTools()
     root = _root(path)
 
     def choose(file_path: str) -> Optional[SnippetFormatter]:
         if file_path not in selected:
-            choice = formatter_for_project(Path(file_path))
+            choice = _formatter_for_project(Path(file_path), tools)
             selected[file_path] = choice.tool
             if report is not None:
                 report(choice)
@@ -820,7 +857,9 @@ def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
     )
 
 
-def _import_sorter_for_file(path: Path) -> Optional[ToolChoice[FileFinisher]]:
+def _import_sorter_for_file(
+    path: Path, tools: Optional[_RunFormatTools] = None
+) -> Optional[ToolChoice[FileFinisher]]:
     """Resolve one file's sorting policy; None is a failed query, never a disabled policy."""
     configuration = _ruff_configuration(path)
     if configuration is not None:
@@ -840,7 +879,7 @@ def _import_sorter_for_file(path: Path) -> Optional[ToolChoice[FileFinisher]]:
             )
     if project_configures_isort(path):
         try:
-            sorter = _isort_sorter(_root(path))
+            sorter = _isort_sorter(_root(path), tools)
         except ImportError:
             return ToolChoice(None, "isort is configured but not installed")
         return ToolChoice(sorted_where_already_sorted(sorter, "isort"), "isort")
@@ -848,14 +887,15 @@ def _import_sorter_for_file(path: Path) -> Optional[ToolChoice[FileFinisher]]:
 
 
 def _import_sorter_for_directory(path: Path) -> ToolChoice[FileFinisher]:
-    """Resolve each modified file's import policy, including nested configurations."""
+    """Resolve each file's import policy, sharing one isort worker across configurations."""
     root = _root(path)
     selected: dict[str, Optional[FileFinisher]] = {}
+    tools = _RunFormatTools()
 
     def finish(file_path: str, source: str) -> str:
         target = str(_counterpart(root, Path(file_path)))
         if target not in selected:
-            choice = _import_sorter_for_file(Path(target))
+            choice = _import_sorter_for_file(Path(target), tools)
             if choice is None:
                 _invalidate_repeatability(context)
                 return source
@@ -949,9 +989,9 @@ def _ruff_sorter(command: List[str], root: Path) -> ImportSorter:
     return _register_repeatable(sort, context)
 
 
-def _isort_sorter(root: Path) -> ImportSorter:
+def _isort_sorter(root: Path, tools: Optional[_RunFormatTools] = None) -> ImportSorter:
     """isort over one file's text, with the project's configuration found from ``root``."""
-    tool = IsolatedFormatTool("isort")
+    tool = IsolatedFormatTool("isort") if tools is None else tools.get("isort")
     context = FormattingRepeatability(("isort", sys.executable), (root,), (weakref.ref(tool),))
 
     def sort(file_path: str, source: str) -> Optional[str]:
