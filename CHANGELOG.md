@@ -54,6 +54,11 @@ release validation and publication; no publication date is assigned here.
   an ordinary raw string or comment; uncertain and warning-capable inputs retain
   fresh native parsing. This repairs the repeated parsing behind the PrettyTable
   corpus timeout without changing cache bounds or source-correspondence proofs.
+- The corpus harness distinguishes an expired deadline from a process killed by
+  a signal. A killed refactor remains a hard failure and cannot trigger an
+  untyped retry or adoption of partial output. Release instructions start with
+  one project worker so consumer tests and checker processes do not compete
+  with another project for the same container memory budget.
 
 ## [1.946]
 

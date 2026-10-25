@@ -620,6 +620,13 @@ Prepare its dependencies before starting the corpus:
   from the host: `copytree` reports `ENOENT` for directories that exist when
   several workers share one. Give that volume to the container's own user, or
   the harness cannot take its lock.
+- **Start with one project worker in a memory-limited container.** The consumer's
+  baseline tests, Towel and its type checkers, and the transformed tests all use
+  the container's shared memory budget. `TOWEL_WORKERS=1` caps Towel's analysis
+  workers; it does not cap the consumer's test or checker processes. Increase
+  `--workers` only after measuring the combined peak. Record the memory limit,
+  swap limit, project concurrency and OOM events with the run; a prior pass
+  under a larger limit does not certify a smaller one.
 - **Mount the source read-only** so the run cannot change the code it is
   testing, and pass `--towel-src` the mounted path; the harness compares the
   wheel with it before any project starts.
@@ -649,7 +656,7 @@ docker run --rm --user root -v towel-eco-work:/work "$IMAGE" chown -R runner:run
 docker run -d --name towel-eco -e TOWEL_WORKERS=1 \
     -v "$CLONE":/snapshot:ro -v towel-eco-work:/work -w /snapshot "$IMAGE" \
     python scripts/ecosystem_check.py --run-untrusted-code \
-        --towel-src /snapshot/src --towel-wheel /opt/towel --work /work --workers 4
+        --towel-src /snapshot/src --towel-wheel /opt/towel --work /work --workers 1
 ```
 
 Verify the default policy separately: an original whose check reports errors
