@@ -10,6 +10,23 @@ separates completed repair checks from final release evidence. Final validation
 and publication outcomes are retained externally with the exact artifacts and
 CI records, and on PyPI.
 
+## 1.947 preparation checkpoint, October 25, 2026
+
+The later Sphinx investigation confirmed and repaired unnecessary incremental
+invalidation and duplicate Black/isort workers. These findings do not establish
+the sole cause of the original signal kill: the failed and earlier passing
+campaigns used different memory limits and concurrent workloads. The corrected
+diagnostic then reached its three-hour deadline with no recorded OOM events;
+it produced no adopted output or transformed consumer test result. See the
+[diagnostic scope and parsing repair](PERFORMANCE.md#1947-sphinx-memory-and-parsing-investigation).
+
+The corpus harness now distinguishes signal kills from expired deadlines and
+defaults to one project worker. The further lexical correction admits only
+warning-free raw formatted literal segments supported by the tokenizer. Freeze
+the changed runtime and run complete exact-candidate release gates. Earlier
+partial runs and completed gates retain their original identities; final
+validation and publication outcomes remain external to the shipped source.
+
 ## 1.947 preparation checkpoint, October 24, 2026
 
 Candidate `877b375` reached the corpus after completing its matrix, differential,
@@ -197,7 +214,7 @@ No Git push is permitted under the standing repository instructions.
 
 **Contents**
 
-- [1.947 preparation checkpoint](#1947-preparation-checkpoint-october-23-2026)
+- [1.947 preparation checkpoint](#1947-preparation-checkpoint-october-25-2026)
 - [Historical 1.946 checkpoint](#1946-publication-checkpoint-october-18-2026)
 - [Version convention](#version-number-convention) · [Recorded history](#recorded-release-history)
 - [Evidence gate](#repository-owned-evidence-gate) · [Schema](#evidence-schema-1) · [Changes after freezing](#changes-after-a-validation-freeze)

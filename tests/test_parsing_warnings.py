@@ -448,7 +448,9 @@ def test_early_raw_brace_does_not_hide_a_later_formatted_escape(
     source = "literal_word = 'text'\nvalue = r'\\{' + " + prefix + "'\\" + separator + "{1}'"
     with warnings.catch_warnings(record=True) as emitted:
         warnings.simplefilter("error")
-        assert not parsing_is_pure(source)
+        assert parsing_is_pure(source) == (
+            "r" in prefix.lower() and not separator and sys.version_info >= (3, 12)
+        )
     assert not emitted
 
 
@@ -458,7 +460,7 @@ def test_early_raw_brace_does_not_hide_a_later_template_escape(prefix: str) -> N
     source = "literal_word = 'text'\nvalue = r'\\{' + " + prefix + "'\\{1}'"
     with warnings.catch_warnings(record=True) as emitted:
         warnings.simplefilter("error")
-        assert not parsing_is_pure(source)
+        assert parsing_is_pure(source) == ("r" in prefix.lower())
     assert not emitted
 
 
@@ -498,7 +500,10 @@ def test_complete_backslash_runs_preserve_native_formatted_diagnostics(
     with warnings.catch_warnings(record=True) as emitted:
         warnings.simplefilter("error")
         for _ in range(2):
-            assert parsing_is_pure(source) == (backslashes % 2 == 0)
+            assert parsing_is_pure(source) == (
+                backslashes % 2 == 0
+                or ("r" in prefix.lower() and not separator and sys.version_info >= (3, 12))
+            )
     assert not emitted
     for policy in ("always", "ignore", "error"):
         expected = _parse_observation(source, policy, None)
@@ -515,7 +520,9 @@ def test_even_run_does_not_hide_a_later_odd_formatted_escape(prefix: str, separa
     source = "value = " + prefix + '"""\\\\{1}""" + ' + prefix + '"""\\' + separator + '{2}"""'
     with warnings.catch_warnings(record=True) as emitted:
         warnings.simplefilter("error")
-        assert not parsing_is_pure(source)
+        assert parsing_is_pure(source) == (
+            "r" in prefix.lower() and not separator and sys.version_info >= (3, 12)
+        )
     assert not emitted
     for policy in ("always", "ignore", "error"):
         expected = _parse_observation(source, policy, None)
@@ -531,9 +538,20 @@ def test_even_run_does_not_hide_a_later_odd_formatted_escape(prefix: str, separa
         (r'''value = f"\\{f'\\{2}'}"''', True),
         (r'''value = f"\\{f'\{2}'}"''', False),
         (r'''value = f"\\{'\q'}"''', False),
+        (r'''value = rf"\{f'\{2}'}"''', False),
+        (r'''value = rf"\{'\{'}"''', False),
+        (r'''value = rf"\{'\q'}"''', False),
+        (r'''value = rf"\{1if True else 0}"''', False),
+        (r'''value = rf"\{1}" + f"\{2}"''', False),
+        (r"""value = rf"\{1}" + '\q' """, False),
+        (r'''value = f"{rf'\{2}'}"''', True),
+        (r'''value = rf"\{ {'key': rf'\{2}'} }"''', True),
+        (r'''value = rf"\{1:\q}"''', sys.version_info[:2] != (3, 12)),
+        (r'''value = rf"\{1:\400}"''', sys.version_info[:2] != (3, 12)),
+        (r'''value = rf"{1:\{2}}"''', False),
     ],
 )
-def test_paired_backslashes_preserve_nested_native_effects(source: str, pure: bool) -> None:
+def test_shadow_ownership_preserves_nested_native_effects(source: str, pure: bool) -> None:
     with warnings.catch_warnings(record=True) as emitted:
         warnings.simplefilter("error")
         assert parsing_is_pure(source) is pure
@@ -543,6 +561,42 @@ def test_paired_backslashes_preserve_nested_native_effects(source: str, pure: bo
         cache = AnalysisSources()
         assert _parse_observation(source, policy, cache) == expected
         assert _parse_observation(source, policy, cache) == expected
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="formatted string token ownership")
+@pytest.mark.parametrize(
+    "source",
+    [
+        r"value = rf'\{x}'",
+        r"value = rf'{x}\}}'",
+        r"value = rf'\{{{x}}}'",
+        r'''value = f"{rf'\{x}'}"''',
+    ],
+)
+def test_raw_formatted_braces_reuse_original_ast(source: str) -> None:
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("error")
+        expected = ast.parse(source, filename="raw.py")
+        assert parsing_is_pure(source)
+        cache = AnalysisSources()
+        first = cache.parse(source, "raw.py")
+        assert cache.parse(source, "raw.py") is first
+        assert ast.dump(first, include_attributes=True) == ast.dump(
+            expected, include_attributes=True
+        )
+        changed = source + "\nadded = 1\n"
+        assert ast.dump(cache.parse(changed, "raw.py"), include_attributes=True) == ast.dump(
+            ast.parse(changed, filename="raw.py"), include_attributes=True
+        )
+    assert not emitted
+
+
+@pytest.mark.parametrize("source", [r"value = rf'\{x", r"value = rf'\{x]}'", r"value = rf'\}'"])
+def test_raw_formatted_shadow_rejects_malformed_frames(source: str) -> None:
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("error")
+        assert not parsing_is_pure(source)
+    assert not emitted
 
 
 def test_later_ordinary_raw_braces_reuse_parses_without_changing_diagnostics() -> None:
@@ -583,8 +637,32 @@ def test_raw_brace_fallback_keeps_carriage_returns_conservative() -> None:
         'fields = {"t": "text"}\n' + r'''pattern = r"\{[^{}]*\}"''' + "\n",
         "tag = f'{1}'\n" + r'''pattern = r"\{[^{}]*\}"''' + "\n",
         r'''value = f"\x1b]8;id={value};{text}\x1b\\{text}\x1b]8;;\x1b\\"''' + "\n",
+        *[
+            pytest.param(
+                "class Translator:\n    def visit(self, short, tag):\n"
+                "        self.body.append(" + literal + ")\n",
+                marks=pytest.mark.skipif(
+                    sys.version_info < (3, 12), reason="formatted string token ownership"
+                ),
+                id=name,
+            )
+            for name, literal in [
+                ("sphinx-section", r"rf'\{self.sectionnames[self.sectionlevel]}{short}{{'"),
+                ("sphinx-last-section", r"rf'\{self.sectionnames[-1]}{short}{{'"),
+                ("sphinx-tag", r"rf'\{tag}*{{'"),
+            ]
+        ],
     ],
-    ids=["raw-regex", "markup", "prettytable-prefix", "later-raw-regex", "ansi-link"],
+    ids=[
+        "raw-regex",
+        "markup",
+        "prettytable-prefix",
+        "later-raw-regex",
+        "ansi-link",
+        "sphinx-section",
+        "sphinx-last-section",
+        "sphinx-tag",
+    ],
 )
 def test_warning_free_module_reuses_facts_and_recomputes_changed_or_uncached_queries(
     literal_source: str,

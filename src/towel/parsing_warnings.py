@@ -100,9 +100,10 @@ def _ordinary_raw_braces(source: str) -> str | None:
 
     CPython's tokenizer may warn before yielding an f-string token. Replace
     the last backslash before each suspect brace with a space, then require
-    every replacement to belong to an ordinary raw string or comment. In
-    those tokens the replacement preserves boundaries and diagnostics. The
-    original source remains both the parse input and the cache key.
+    every replacement to belong to an ordinary raw string, comment, or raw
+    formatted literal outside its replacement fields. In those tokens the
+    replacement preserves boundaries and diagnostics. The original source
+    remains both the parse input and the cache key.
     """
     if "\r" in source:
         return None
@@ -110,19 +111,52 @@ def _ordinary_raw_braces(source: str) -> str | None:
     position = next(positions, None)
     shadow = _TOKENIZER_WARNING.sub(lambda match: match[0][:-2] + " " + match[0][-1], source)
     offsets = [0, *(index + 1 for index, char in enumerate(source) if char == "\n"), len(source)]
+    formatted: list[_FormattedString] = []
     try:
         for token in tokenize.generate_tokens(io.StringIO(shadow).readline):
+            kind = tokenize.tok_name[token.type]
+            if kind in {"FSTRING_START", "TSTRING_START"}:
+                prefix = _STRING_START.match(token.string)
+                if prefix is None:
+                    return None
+                formatted.append(_FormattedString("r" in prefix[1].lower()))
+            elif kind in {"FSTRING_MIDDLE", "TSTRING_MIDDLE"}:
+                if not formatted:
+                    return None
+            elif kind in {"FSTRING_END", "TSTRING_END"}:
+                if not formatted or formatted[-1].curly_depth != 0:
+                    return None
+                formatted.pop()
+            elif token.type == tokenize.OP and formatted and token.string in {"{", "}"}:
+                frame = formatted[-1]
+                depth = frame.curly_depth + (1 if token.string == "{" else -1)
+                if depth < 0:
+                    return None
+                formatted[-1] = _FormattedString(frame.raw, depth)
+            elif token.type == tokenize.ERRORTOKEN:
+                return None
             start = offsets[token.start[0] - 1] + token.start[1]
             end = offsets[token.end[0] - 1] + token.end[1]
             prefix = _STRING_START.match(token.string) if token.type == tokenize.STRING else None
             ordinary_raw = prefix is not None and prefix[1].lower() in {"r", "br", "rb"}
+            # Only the innermost literal owns this segment. In particular,
+            # raw outer strings cannot authorize nested nonraw strings or
+            # format specifications (which Python 3.12 still decodes).
+            raw_literal = (
+                kind in {"FSTRING_MIDDLE", "TSTRING_MIDDLE"}
+                and bool(formatted)
+                and formatted[-1].raw
+                and formatted[-1].curly_depth == 0
+            )
             while position is not None and position < end:
-                if position < start or not (ordinary_raw or token.type == tokenize.COMMENT):
+                if position < start or not (
+                    ordinary_raw or raw_literal or token.type == tokenize.COMMENT
+                ):
                     return None
                 position = next(positions, None)
     except (SyntaxError, UnicodeError, tokenize.TokenError, RecursionError):
         return None
-    return shadow if position is None else None
+    return shadow if position is None and not formatted else None
 
 
 def _tokens_cannot_warn(source: str) -> bool:

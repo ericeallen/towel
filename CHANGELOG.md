@@ -61,6 +61,12 @@ release validation and publication; no publication date is assigned here.
   an ordinary raw string or comment; uncertain and warning-capable inputs retain
   fresh native parsing. This repairs the repeated parsing behind the PrettyTable
   corpus timeout without changing cache bounds or source-correspondence proofs.
+- On Python 3.12 and later token streams, warning-free raw formatted-string
+  literal segments can reuse parsing facts even when a backslash precedes a
+  replacement field. Admission follows the innermost string and excludes
+  replacement fields and format specifications. Nested nonraw strings and
+  warning-capable syntax retain native diagnostics; Python 3.11 remains
+  conservative for these escapes.
 - The corpus harness distinguishes an expired deadline from a process killed by
   a signal. A killed refactor remains a hard failure and cannot trigger an
   untyped retry or adoption of partial output. The harness and `just ecosystem`

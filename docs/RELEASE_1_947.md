@@ -27,12 +27,10 @@ A full/local/full analysis sequence mistook a changed file subset for a changed
 builtin-mapping hazard, unnecessarily re-pairing unchanged files. Bounded
 historical root/hazard observations now distinguish those cases; genuine changes
 still invalidate. This defect is not established as the sole cause of the
-corpus process's `SIGKILL` under a shared 6 GiB limit. An isolated 119-minute
-replay peaked at 4.25 GiB without OOM and was intentionally stopped incomplete;
-the earlier passing campaign used a different, 7 GiB limit. Neither observation
-establishes a Sphinx pass for the repair. The harness now distinguishes signal
-kills from deadlines and defaults to one project worker. The runtime correction
-requires a new freeze and complete release validation.
+corpus process's `SIGKILL` under a shared 6 GiB limit: the earlier passing
+campaign used 7 GiB, and parallel project/baseline workloads differed. The
+harness now distinguishes signal kills from deadlines and defaults to one
+project worker.
 
 A separate formatter regression retained a Black and an isort worker for each
 selected file: three files with identical policies spawned six workers, compared
@@ -40,6 +38,16 @@ with two in published 1.946. Factories now share their workers while preserving
 each file's configuration and exclusions. Sphinx uses Ruff, whose subprocess
 path is unchanged; this repair does not establish the cause of its kill or
 a completed Sphinx result.
+
+The corrected Sphinx diagnostic at `7947727` then expired at its three-hour
+deadline with no recorded memory-limit or OOM events. No output was adopted
+and no transformed consumer tests ran. A further narrow lexical repair admits
+warning-free raw formatted literal segments on Python 3.12 and later token
+streams; Sphinx's LaTeX module had repeatedly missed existing parsing caches
+because of those segments. Python 3.11 and warning-capable or uncertain cases
+retain conservative handling. See the [diagnostic evidence and limits](PERFORMANCE.md#1947-sphinx-memory-and-parsing-investigation).
+The changed runtime needs a new freeze and complete release gates; final
+outcomes remain external to this preparation record.
 
 ## Binding, extraction and formatting repairs
 

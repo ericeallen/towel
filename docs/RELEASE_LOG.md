@@ -14,6 +14,7 @@ the entries below do not transfer approval to a later source or version.
 
 **Contents — release checkpoints**
 
+- [1.947 Sphinx memory and parsing investigation](#2026-10-25-1947-sphinx-memory-and-parsing-investigation)
 - [1.947 PrettyTable timeout repair](#2026-10-24-1947-prettytable-timeout-repair)
 - [1.947 scope-oracle correction](#2026-10-22-1947-scope-oracle-correction)
 - [1.947 candidate 59aafb1 corpus stop](#1947-candidate-59aafb1-corpus-stop)
@@ -32,6 +33,19 @@ the entries below do not transfer approval to a later source or version.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-10-25: 1.947 Sphinx memory and parsing investigation
+
+The Sphinx investigation confirmed separate post-1.946 regressions in
+incremental invalidation (`7947727` repair) and Black/isort worker ownership
+(`2d1f4f1` repair). The original signal kill remains confounded by different
+container memory limits and concurrent workloads; Sphinx itself uses Ruff.
+The corrected diagnostic subsequently expired at its three-hour deadline with
+no recorded memory-limit or OOM events, no adopted output and no transformed
+consumer tests. The [performance record](PERFORMANCE.md#1947-sphinx-memory-and-parsing-investigation)
+retains these limits and the further narrow raw formatted-literal cache repair.
+The changed runtime requires a fresh freeze and complete release validation;
+final outcomes remain external and prior evidence keeps its original identity.
 
 ## 2026-10-24: 1.947 PrettyTable timeout repair
 

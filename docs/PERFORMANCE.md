@@ -4,6 +4,11 @@
 
 Use this guide to estimate a run and understand the limits of the published measurements.
 
+The October 25 [Sphinx investigation](#1947-sphinx-memory-and-parsing-investigation)
+separates the original signal kill from a later deadline expiry and the specific
+runtime regressions confirmed by bounded diagnostics. No completed Sphinx
+consumer result or general speedup follows from those observations.
+
 The October 24 PrettyTable investigation identified repeated parsing caused by
 an overly conservative lexical warning check. The [repair and diagnostic result](#1947-prettytable-warning-classifier-repair)
 below describe the specific workload and preserve the distinction between a
@@ -29,6 +34,7 @@ Click/Rich comparison retains its own 1.792 metadata, samples and limits.
 
 On this page:
 
+- [1.947 Sphinx memory and parsing investigation](#1947-sphinx-memory-and-parsing-investigation)
 - [1.947 PrettyTable warning classifier repair](#1947-prettytable-warning-classifier-repair)
 - [1.947 large-module builtin guard repair](#1947-large-module-builtin-guard-repair)
 - [Partner eligibility and interval-analysis limits](#partner-eligibility-and-interval-analysis-limits)
@@ -46,6 +52,39 @@ On this page:
 - [Why larger projects take longer](#why-larger-projects-take-longer)
 
 ## How long it takes
+
+### 1.947 Sphinx memory and parsing investigation
+
+The original Sphinx corpus process was killed by `SIGKILL` under a shared
+6 GiB container limit, without reaching its deadline. The earlier passing
+campaign used 7 GiB, and parallel project/baseline work differed. Those
+conditions prevent attributing the original kill solely to a runtime change.
+The harness now distinguishes signal kills from deadline expiry and defaults
+to one project worker.
+
+Two post-1.946 regressions were independently confirmed and repaired:
+changing the file subset during a local refresh unnecessarily invalidated
+incremental pairing (`7947727`), and per-file Black/isort policies retained
+duplicate workers (`2d1f4f1`). Sphinx uses Ruff, whose subprocess path was
+unchanged by the worker-sharing repair. A subsequent corrected Sphinx diagnostic
+at exact source `7947727`, without overlays, expired after 10,800.058 seconds
+with peak container memory of 5,370,298,368
+bytes (about 5.001 GiB), no recorded memory-limit or OOM events, and container
+`OOMKilled=false`. No output was adopted and no transformed consumer tests ran.
+This is an incomplete timeout result, not a successful corpus check.
+
+The staged Sphinx LaTeX module also contains three raw f-string literal
+backslashes immediately before replacement fields. Native parsing emits no
+warnings, but the lexical guard refused cache eligibility and repeatedly
+reconstructed module facts. The narrow repair admits masked positions only in
+literal segments of the innermost raw formatted string, outside replacement
+fields and format specifications, when the tokenizer exposes those segments
+(Python 3.12 and later). Python 3.11 remains conservative. Nested nonraw
+strings, Python 3.12's warning-capable raw format specifications, carriage
+returns and all existing native diagnostic checks retain their restrictions.
+Original source remains the parse input and cache key. Final performance and
+consumer outcomes require a fresh frozen candidate and complete release gates;
+the diagnostic records remain evidence for their own inputs and sources.
 
 ### 1.947 PrettyTable warning classifier repair
 
@@ -65,9 +104,11 @@ guard to reject cache eligibility for the whole module.
 
 The repair tokenizes a shadow string with suspect brace escapes masked, and
 requires every masked position to lie in an ordinary raw string or comment.
-Only then does it apply the existing full lexical checks. Formatted-string,
-nonraw-string and unclassified escapes remain conservative; carriage returns
-also retain the fallback. Original source remains the native parse input and
+Only then does it apply the existing full lexical checks. At that checkpoint,
+formatted-string, nonraw-string and unclassified escapes remained conservative;
+the [October 25 repair](#1947-sphinx-memory-and-parsing-investigation) subsequently
+admitted a narrow class of raw formatted literal segments. Carriage returns
+retain the fallback. Original source remains the native parse input and
 cache key. Existing cache bounds, parser-limit checks and AST ownership proofs
 are unchanged.
 
