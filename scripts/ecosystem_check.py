@@ -224,6 +224,7 @@ class Phase:
     seconds: float
     summary: str
     log: str
+    timed_out: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -443,6 +444,7 @@ def run(
     it (see ``_isolate_worker``).
     """
     start = time.monotonic()
+    timed_out = False
     with log.open("w", encoding="utf-8") as handle:
         handle.write(header)
         handle.flush()
@@ -460,6 +462,7 @@ def run(
         try:
             returncode = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            timed_out = True
             handle.write("\nTIMEOUT\n")
             returncode = -9
         finally:
@@ -470,7 +473,7 @@ def run(
             with _PHASE_GROUPS_LOCK:
                 _PHASE_GROUPS.discard(process.pid)
     output = log.read_text(encoding="utf-8", errors="replace")
-    return Phase(returncode, time.monotonic() - start, summarize(output), str(log))
+    return Phase(returncode, time.monotonic() - start, summarize(output), str(log), timed_out)
 
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -3158,7 +3161,7 @@ def check_project(
         # run said about them is kept whatever the attempt's outcome.
         result.pre_existing = _pre_existing_errors(logs / log_name)
         result.unchecked = _unchecked_code(logs / log_name)
-    if result.refactor.returncode != 0 and result.refactor.returncode != -9 and not no_types:
+    if result.refactor.returncode > 0 and not result.refactor.timed_out and not no_types:
         # A project whose checker cannot run at all is one Towel declines to
         # verify, which is the documented behaviour and not a defect. The
         # answer it gives its user is to rerun without types, so that is what
@@ -3179,9 +3182,13 @@ def check_project(
             result.typing_mode = "no-types"
             log_name = f"{project.name}-refactor-no-types.log"
             result.refactor = refactor(True, log_name)
-    if result.refactor.returncode == -9:
+    if result.refactor.timed_out:
         result.verdict = "TIMEOUT"
         result.detail = f"refactor exceeded {timeout}s"
+        return result
+    if result.refactor.returncode < 0:
+        result.verdict = "CRASH"
+        result.detail = f"refactor terminated by signal {-result.refactor.returncode}"
         return result
     if result.refactor.returncode != 0:
         refused = _refusal(logs / log_name)

@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 from typing import Callable, Optional, Sequence
@@ -53,10 +54,10 @@ def _is_refactor(command: Sequence[str]) -> bool:
     return Path(command[0]).name == "towel" and command[1:2] == ["dry"]
 
 
-def _phase(path: Path, code: int, output: str) -> ecosystem.Phase:
+def _phase(path: Path, code: int, output: str, *, timed_out: bool = False) -> ecosystem.Phase:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(output)
-    return ecosystem.Phase(code, 0.0, ecosystem.summarize(output), str(path))
+    return ecosystem.Phase(code, 0.0, ecosystem.summarize(output), str(path), timed_out)
 
 
 @pytest.mark.parametrize(
@@ -143,6 +144,7 @@ def _check(
     test: tuple[str, ...] = tuple(ecosystem.DEFAULT_TEST),
     no_types: bool = False,
     refactor: tuple[int, str] = (0, "Applied 1 refactoring\n"),
+    refactor_timed_out: bool = False,
     refactor_retry: Optional[tuple[int, str]] = None,
 ) -> ecosystem.Result:
     source = root / "fixture"
@@ -178,7 +180,7 @@ def _check(
             cleaned = Path(command[command.index("dry") + 2])
             cleaned.parent.mkdir(parents=True, exist_ok=True)
             cleaned.write_text("value = 2\n" if changed else "value = 1\n")
-            return _phase(log, *outcome)
+            return _phase(log, *outcome, timed_out=refactor_timed_out)
         if ecosystem._pytest_arguments_start(command) is not None:
             assert command[-2:] == ["--verbosity=0", "-ra"]
         code, output = next(phases)
@@ -971,6 +973,45 @@ def test_a_failed_transformation_is_never_retried_without_types(
     assert result.refactor is not None and result.refactor.returncode == 1
 
 
+@pytest.mark.parametrize("termination_signal", [signal.SIGKILL, signal.SIGTERM])
+@pytest.mark.parametrize("diagnostic", ["TIMEOUT\n", CHECKER_FAILED])
+def test_a_signalled_refactor_cannot_claim_a_timeout_or_refusal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    termination_signal: signal.Signals,
+    diagnostic: str,
+) -> None:
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(-termination_signal, diagnostic),
+    )
+    assert result.verdict == "CRASH"
+    assert result.detail == f"refactor terminated by signal {termination_signal.value}"
+    assert result.fallback == "" and result.after is None
+    assert result.typing_mode == "default" and result.changed_files == 0
+    assert (tmp_path / "fixture-ready/package.py").read_text() == "value = 1\n"
+
+
+def test_a_refactor_deadline_is_recorded_as_a_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(-signal.SIGKILL, CHECKER_FAILED),
+        refactor_timed_out=True,
+    )
+    assert result.verdict == "TIMEOUT" and result.detail == "refactor exceeded 10s"
+    assert result.fallback == "" and result.after is None
+    assert result.typing_mode == "default" and result.changed_files == 0
+    assert (tmp_path / "fixture-ready/package.py").read_text() == "value = 1\n"
+
+
 def test_a_project_whose_checker_cannot_run_is_rerun_without_types(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1553,7 +1594,25 @@ def test_a_phase_that_times_out_takes_its_descendants_with_it(tmp_path: Path) ->
         [sys.executable, str(script)], tmp_path, dict(os.environ), 1, tmp_path / "phase.log"
     )
     assert phase.returncode == -9, phase
+    assert phase.timed_out
     deadline = time.monotonic() + 6
     while time.monotonic() < deadline:
         assert not marker.exists(), "a descendant outlived the phase that timed out"
         time.sleep(0.25)
+
+
+def test_a_phase_killed_before_its_deadline_is_not_a_timeout(tmp_path: Path) -> None:
+    phase = ecosystem.run(
+        [
+            sys.executable,
+            "-c",
+            "import os, signal; print('TIMEOUT', flush=True); "
+            "os.kill(os.getpid(), signal.SIGKILL)",
+        ],
+        tmp_path,
+        dict(os.environ),
+        10,
+        tmp_path / "killed.log",
+    )
+    assert phase.returncode == -signal.SIGKILL
+    assert not phase.timed_out
