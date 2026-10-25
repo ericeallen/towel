@@ -92,7 +92,7 @@ intentional ``towel-main`` HEAD compatibility entry;
 ``--print-pins`` lists the commits the last run tested so the pins can be
 refreshed after review.
 
-    python scripts/ecosystem_check.py --run-untrusted-code --work /tmp/towel-ecosystem --workers 4
+    python scripts/ecosystem_check.py --run-untrusted-code --work /tmp/towel-ecosystem --workers 1
 """
 
 from __future__ import annotations
@@ -3762,7 +3762,12 @@ def main() -> int:
         help="directory to clone and test in (default: a fresh private temporary directory; "
         "pass one to reuse clones or to read a previous run's report)",
     )
-    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Concurrent projects (default: 1); each project's tests and checkers share the memory budget",
+    )
     parser.add_argument("--only", nargs="*", default=[])
     parser.add_argument("--timeout", type=int, default=1800, help="seconds per phase")
     parser.add_argument(

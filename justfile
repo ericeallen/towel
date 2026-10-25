@@ -92,7 +92,7 @@ test-file FILENAME:
 # unless you pass the opt-in yourself: `just ecosystem --run-untrusted-code`, on a
 # disposable machine or container. The recipe forwards only what you give it.
 ecosystem *ARGS:
-    uv run --frozen python scripts/ecosystem_check.py --work /tmp/towel-ecosystem --workers 3 {{ARGS}}
+    uv run --frozen python scripts/ecosystem_check.py --work /tmp/towel-ecosystem --workers 1 {{ARGS}}
 
 # DANGER: overwrite the regression baselines (asks for confirmation)
 regenerate-baseline:
