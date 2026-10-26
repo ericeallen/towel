@@ -5,8 +5,9 @@
 Status: the census below was gathered 2026-09-17 on the 1.618 outputs.
 Item 1 was implemented during 1.946 preparation; its stage audit passed on
 `bf564f2`, and the final runtime audit passed on `9d57b0d`. Publication of 1.946
-was verified on October 19; this source targets 1.947. Those later sources retain
-their own validation requirements. Item 2 was resolved
+was verified on October 19, and 1.947 was published October 26. The
+[1.947 publication record](../PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+retains its separate completed validation. Item 2 was resolved
 differently on 2026-09-18 (see below);
 items 3 and 4 remain research. The exact improvements are small; the large
 buckets need an assumption the engine does not make today.

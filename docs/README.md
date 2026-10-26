@@ -8,13 +8,15 @@ This documentation describes the source version you are reading. Dated
 benchmarks, validation reports and proposals retain their original source and
 artifact identities; they do not establish results for a later release.
 
-This source targets **1.947**. The [1.947 overview](RELEASE_1_947.md) describes
-the audit repairs after published 1.946 and the rename-scope requirement. The
-[readiness report](PRODUCTION_READINESS.md) separates prior-source repair
-checks from final versioned release evidence. At the
-[October 19 preparation checkpoint](RELEASING.md#1947-preparation-checkpoint-october-19-2026),
-1.947 was unpublished and its complete release gates remained pending. Final
-outcomes belong to the external artifact/CI records and PyPI.
+**1.947 is the latest release**, published October 26, 2026 on
+[PyPI](https://pypi.org/project/code-towel/1.947/) and
+[GitHub](https://github.com/ericeallen/towel/releases/tag/v1.947).
+The [1.947 overview](RELEASE_1_947.md) describes the audit repairs after 1.946
+and the rename-scope requirement. The
+[publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+summarizes completed validation and its limits; earlier preparation checkpoints
+remain historical. The tagged source and PyPI distributions are immutable;
+post-publication documentation on the default branch adds the completed outcomes.
 
 ## Start and use Towel
 

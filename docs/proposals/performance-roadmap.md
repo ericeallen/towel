@@ -2,7 +2,18 @@
 
 [Proposals and experiments](README.md) · [Documentation index](../README.md)
 
-## Current versioned warning-guard observations
+## Current release observations
+
+The latest release is **1.947**, published October 26, 2026. Its
+[controlled comparison](../PERFORMANCE.md#1947-published-release-comparison)
+with 1.946 observed full-CLI mean increases of 2.58% for Click, 8.84% for Rich
+and 1.25% for Voluptuous, with original consumer outcomes preserved. These
+are two samples per version on a shared host, not a general performance claim.
+The older experiments and roadmap below retain their original source identities.
+
+<a id="current-versioned-warning-guard-observations"></a>
+
+## Historical versioned warning-guard observations
 
 Source `a6dc6ed`/1.946 versus published `44d7795`/1.792 completed two R,F,F,R
 cohorts: Voluptuous 90.984 → 87.569 seconds (−3.75%) and Click 47.165 →

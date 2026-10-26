@@ -4,6 +4,12 @@
 
 > Historical record of the September 12, 2026 alpha audit. The production-readiness pass that followed, with its counterexamples, repairs, and consumer evidence, is recorded in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md), which supersedes the disposition below.
 
+**Current release:** [1.947](https://github.com/ericeallen/towel/releases/tag/v1.947)
+was published October 26, 2026. Its
+[publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+contains the completed release validation and limitations. The audit and
+orientations below retain their historical dates and source identities.
+
 **Publication orientation, October 19, 2026:** publication of 1.946 was
 independently verified; see its [publication record](RELEASE_1_946.md).
 This source targets 1.947, whose [overview](RELEASE_1_947.md) describes the

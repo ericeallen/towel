@@ -2,9 +2,23 @@
 
 [Documentation index](README.md) · [Changelog](../CHANGELOG.md#1947)
 
-The maintainer selected **1.947** for the repairs below. This overview describes
-the versioned source; final validation and publication outcomes are recorded
-externally with the artifacts and on [PyPI](https://pypi.org/project/code-towel/).
+**1.947 was published October 26, 2026** on
+[PyPI](https://pypi.org/project/code-towel/1.947/) and
+[GitHub](https://github.com/ericeallen/towel/releases/tag/v1.947) from frozen
+commit `8a853126f5499eb11dfa04fbe304dc332dc5ef73`. The published distributions
+match the validated hashes, all four
+[exact-commit CI jobs](https://github.com/ericeallen/towel/actions/runs/40312460216)
+passed, and a fresh PyPI installation passed its CLI and behavior checks.
+
+The complete 141-project corpus finished without a phase timeout or signal
+termination: 89 `PASS`, 45 `NO_CHANGE`, five reviewed import refusals and two
+known warning-location limitations. The separate self-dogfood run transformed
+Towel successfully and passed its tests. See the
+[publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+for the interpreter matrix, fuzzing, artifact checks, corpus qualifications and
+hashes, and the [controlled comparison](PERFORMANCE.md#1947-published-release-comparison)
+for observed runtime costs against 1.946. The historical checkpoints below
+retain the state of earlier candidates, including their failed and incomplete runs.
 
 **Preparation checkpoint, October 19, 2026:** 1.947 was unpublished, and 1.946
 was the latest confirmed release. Its published artifacts cannot be replaced.
@@ -63,7 +77,9 @@ findings:
    skip candidate-block enumeration. Eligible intervals reuse per-suite prefix
    facts instead of repeatedly scanning the same statements. Pair budgets and
    ordering remain in force. These changes address measured analysis costs;
-   they do not establish a new complete-command performance claim for 1.947.
+   their isolated costs do not establish a general speed improvement. The
+   [release comparison](PERFORMANCE.md#1947-published-release-comparison)
+   records the measured complete-command results.
 3. **Definition-time lookup mappings.** When a module's `__builtins__` may be replaced,
    extraction declines explicit module/global fallback reads, including custom
    mapping keys and currently module-bound names, plus implicit import and class
@@ -113,7 +129,7 @@ self-instrumentation remain outside that guarantee. The repairs do not restore
 project-wide reflection scans or broaden that exclusion. See
 [known limitations](KNOWN_LIMITATIONS.md).
 
-## Prior repair evidence and remaining release gates
+## Historical preparation evidence
 
 The later frozen candidate `59aafb1` completed its Linux Python 3.11–3.13
 matrix, 9,400 differential runs with zero failures, six clean-install smoke

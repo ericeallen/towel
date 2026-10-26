@@ -2,6 +2,22 @@
 
 [Documentation index](README.md)
 
+## 2026-10-26: 1.947 published; default-branch documentation correction
+
+Towel 1.947 was published from `8a853126f5499eb11dfa04fbe304dc332dc5ef73`
+after the complete local gate and exact-commit GitHub CI passed. The
+[release record](RELEASE_LOG.md#2026-10-26-1947-published-release) and
+[readiness report](PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+record the final matrix, 141-project corpus, fuzzing, self-dogfood, performance
+comparison and verified artifacts. Earlier pending statements below describe
+their dated checkpoints.
+
+Publication updated the release branch and tag but initially left the default
+branch at 1.792. The subsequent documentation correction brings the GitHub
+front page forward and adds a gate for default-branch release visibility.
+The PyPI artifacts and tagged source remained correct and unchanged; no
+full-corpus rerun was needed for this correction.
+
 ## 2026-10-18: scoped proof memo implemented; fresh validation requested
 
 The maintainer extended 1.946 to implement source-proof reuse for owned immutable

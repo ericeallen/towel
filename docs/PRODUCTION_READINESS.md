@@ -7,9 +7,87 @@ removes reflection and self-instrumentation guarantees. Validation and repair
 records below retain the source, contract and results of their dated runs;
 they are not evidence of those retired protections in the current code.
 
-Start with the October 24 preparation checkpoint below. Later sections retain
+Start with the completed 1.947 publication below. Later sections retain
 completed releases and earlier preparation checkpoints, with their original
-source identities and historical measurements.
+source identities and historical measurements. Pending work in those dated
+checkpoints describes the state at that time, not the published release.
+
+## 1.947 published release, October 26, 2026
+
+Towel **1.947** is published on [PyPI](https://pypi.org/project/code-towel/1.947/)
+and [GitHub](https://github.com/ericeallen/towel/releases/tag/v1.947) from
+`8a853126f5499eb11dfa04fbe304dc332dc5ef73`, tagged `v1.947`.
+The existing repository evidence verifier accepted the complete local release
+records before publication. All four
+[GitHub CI jobs](https://github.com/ericeallen/towel/actions/runs/40312460216)
+then passed on that exact commit.
+
+| Python | Local passed / skipped | GitHub CI passed / skipped | Passing subtests in each run | Line coverage |
+| --- | ---: | ---: | ---: | ---: |
+| 3.11 | 11,034 / 337 | 11,036 / 335 | 45 | 93% |
+| 3.12 | 11,237 / 205 | 11,239 / 203 | 45 | 94% |
+| 3.13 | 11,220 / 225 | 11,222 / 223 | 45 | 94% |
+
+Native quality and strict typing, Linux typing, dependency audits, strict Twine
+and distribution-content checks passed. Six clean-wheel smoke checks covered
+bare and formatter/checker-extra installations across Python 3.11–3.13.
+The exact source archive passed 126 documentation tests, and all five Mermaid
+diagrams rendered. Differential grammar and scope fuzzing completed 9,400 runs:
+4,361 equivalent, 5,009 unchanged, 30 inconclusive and zero failures.
+Self-dogfood applied 28 refactorings across 19 files, reached a fixed point,
+and passed strict typing and the Python 3.13 suite; all 108 generated runtime
+members were unchanged by testing.
+
+All **141 corpus projects completed**: **89 PASS, 45 NO_CHANGE, five reviewed
+import-ambiguity refusals and two BROKEN_KNOWN warning-location limitations**.
+There were no timed-out or signal-terminated phases, and Docker reported
+`OOMKilled=false`. This is not a claim that all upstream suites were clean:
+19 projects had pre-existing baseline failures. Three explicit no-types
+fallbacks were reviewed separately from type-verified transformations:
+prompt-toolkit and typing_extensions preserved their original test outcomes,
+while Trio made no changes.
+
+The five refusals were invoke, isort, towel-v1.414, towel-v1.618 and towel-main.
+Each exited with status 1, changed zero files, and produced a refusal log
+identical to the prior 1.946 gate at the same consumer revision. The Towel
+entries expose a harness coverage limitation: the executing candidate occupies
+the same installed package name as the separate target checkout, so import
+analysis refuses the ambiguity. These entries do not demonstrate successful
+self-refactoring; the separate self-dogfood result above does. Pluggy and
+BeautifulSoup introduced only their manifest-listed warning-filename failures.
+
+The corpus used one project worker and one Towel worker, six CPUs, 6 GiB RAM
+and no swap. Sphinx passed its 2,389 tests and 36 skips before and after
+45 refactorings in 16 files; refactoring took 5,738.25 seconds. PrettyTable
+retained all 338 passing tests with 47.82 seconds of refactoring, and Croniter
+retained all 248 with 1,246.14 seconds. The last live memory peak observation
+was 5.67 GiB, not a final lifetime peak: final cgroup counters were unavailable
+after shutdown. The final container state and completed phase results establish
+that this campaign finished without an OOM termination. The interrupted host
+collector's records were recovered from the completed container without
+rerunning the workload.
+
+The [controlled full-CLI comparison](PERFORMANCE.md#1947-published-release-comparison)
+with 1.946 observed mean increases of 2.58% for Click, 8.84% for Rich and 1.25%
+for Voluptuous. All distinct generated outputs matched their original consumer
+test outcomes. Two samples per version on a shared host do not establish
+statistical significance or a general speed improvement.
+
+Both services' downloaded distributions matched these validated SHA-256 hashes:
+
+```text
+11c0a735b9730db6d0b635d3440a22891d79e881bb4dd7682c99210b367a2bd4  code_towel-1.947-py3-none-any.whl
+1feed54607c7fcb108e7664eb7e193fdd22a0d9a5b5763f79b36c50115efe45b  code_towel-1.947.tar.gz
+```
+
+PyPI's description matches the frozen README. A fresh uncached PyPI installation
+verified the installed runtime bytes, CLI preview, an actual refactoring and
+preserved executable behavior. All 22 version-pinned README documentation URLs
+and their fragments resolved at the tag. The immutable tagged documents retain
+their preparation checkpoints; this default-branch record adds the completed
+outcomes. Publication initially left the default branch at 1.792; that stale
+GitHub front page did not alter the tag or either distribution. The subsequent
+documentation correction adds a default-branch publication gate.
 
 ## 1.947 preparation checkpoint, October 24, 2026
 
@@ -241,6 +319,7 @@ see the [publication checkpoint](RELEASING.md#1946-publication-checkpoint-octobe
 
 **Contents**
 
+- [1.947 published release](#1947-published-release-october-26-2026)
 - [1.947 candidate 59aafb1 corpus stop](#1947-candidate-59aafb1-corpus-stop)
 - [1.947 preparation and prior-source repair checks](#1947-preparation-checkpoint-october-19-2026)
 - [1.946 preparation and audited source](#1946-preparation-and-audited-source-october-10-2026)

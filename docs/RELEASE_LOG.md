@@ -14,6 +14,7 @@ the entries below do not transfer approval to a later source or version.
 
 **Contents — release checkpoints**
 
+- [1.947 completed publication](#2026-10-26-1947-published-release)
 - [1.947 Sphinx memory and parsing investigation](#2026-10-25-1947-sphinx-memory-and-parsing-investigation)
 - [1.947 PrettyTable timeout repair](#2026-10-24-1947-prettytable-timeout-repair)
 - [1.947 scope-oracle correction](#2026-10-22-1947-scope-oracle-correction)
@@ -33,6 +34,39 @@ the entries below do not transfer approval to a later source or version.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-10-26: 1.947 published release
+
+Towel **1.947** was published on [PyPI](https://pypi.org/project/code-towel/1.947/)
+and [GitHub](https://github.com/ericeallen/towel/releases/tag/v1.947) from
+frozen commit `8a853126f5499eb11dfa04fbe304dc332dc5ef73`, tagged `v1.947`.
+The completed local evidence gate and all four
+[exact-commit CI jobs](https://github.com/ericeallen/towel/actions/runs/40312460216)
+passed. Both services' downloaded artifacts matched the validated hashes,
+PyPI's README matched the frozen source, all 22 README documentation destinations
+and fragments resolved, and a fresh PyPI installation passed its CLI checks.
+
+The final 141-project corpus completed without a phase timeout or signal
+termination: 89 PASS, 45 NO_CHANGE, five reviewed import refusals and two known
+warning-location failures. The five refusal logs matched the previous release;
+three Towel corpus entries therefore do not establish successful self-refactoring.
+A separate self-dogfood run applied 28 refactorings across 19 files and passed
+strict typing and the full Python 3.13 suite. Differential fuzzing completed
+9,400 runs with zero failures and 30 inconclusive cases. See the
+[publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+for matrix counts, corpus qualifications, hashes and resource limits.
+
+The [controlled comparison](PERFORMANCE.md#1947-published-release-comparison)
+observed Click +2.58%, Rich +8.84% and Voluptuous +1.25% mean full-CLI time
+versus 1.946, with two samples per version on a shared host. Original consumer
+outcomes were preserved. No general speed improvement is claimed.
+
+Publication initially pushed the release branch and tag without bringing
+GitHub's default branch forward from 1.792. That left the repository front page
+stale while PyPI and the release tag held the correct verified artifacts.
+The follow-up documentation correction records publication here and adds a
+default-branch gate to the release procedure. The published distributions and
+tag remain unchanged; no full-corpus rerun was needed for the correction.
 
 ## 2026-10-25: 1.947 Sphinx memory and parsing investigation
 

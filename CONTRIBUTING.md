@@ -301,13 +301,17 @@ for results and qualifications.
 
 Choose and commit a release version before freezing its validation source.
 `just build` and `just bump-version VERSION` are development commands; they do
-not establish release fitness. The supported local release path is
-`just release VERSION /path/to/release-evidence.json`. It requires a clean
-checkout and completed, reviewed evidence bound to the exact prebuilt wheel
-and source archive. It does not rebuild, publish, tag, or enforce remote policy.
+not establish release fitness. Before pushing, use
+`just verify-release-evidence VERSION /path/to/release-evidence.json` to check
+the completed local evidence. After exact-commit CI and promotion to GitHub's
+default branch, run `just release VERSION /path/to/release-evidence.json`.
+It requires a clean checkout, reviewed evidence bound to the exact prebuilt
+wheel and source archive, and a live default branch that contains the validated
+commit and presents the same version and documentation links. A correct local
+checkout, release branch, or tag does not establish what GitHub's front page
+shows. Neither command rebuilds, publishes, or tags.
 
-Use `just verify-release-evidence VERSION /path/to/release-evidence.json` for
-validation-only artifacts. Preserve their nonpublication status. Additional
+Validation-only artifacts must preserve their nonpublication status. Additional
 documentation/tests/evidence need exact source hashes, an explicit review and
 supplemental checks; their results are not part of the frozen suite counts.
 Runtime, configuration and corpus-harness changes invalidate old evidence.
@@ -319,11 +323,11 @@ See [the evidence schema and release procedure](docs/RELEASING.md#repository-own
   detailed tasks and explanations in the appropriate guide linked from
   [the documentation index](docs/README.md), and add user-visible changes
   under `[Unreleased]` in CHANGELOG.md
-- This source targets 1.947. Its
+- This source documents published 1.947. Its
   [overview](docs/RELEASE_1_947.md) describes the post-1.946 audit repairs;
   [readiness](docs/PRODUCTION_READINESS.md) and the
-  [release procedure](docs/RELEASING.md) record completed and outstanding
-  source-bound checks. Do not report missing results as passed. Published
+  [release procedure](docs/RELEASING.md) record the completed release and the
+  gates for its successors. Do not report missing results as passed. Published
   1.946/1.792 artifacts and older development measurements retain their
   original source and artifact identities. Follow the
   [version convention](docs/RELEASING.md#version-number-convention) when choosing

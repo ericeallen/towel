@@ -2,13 +2,22 @@
 
 [Documentation index](README.md)
 
-This source targets **1.947**, the maintainer-selected audit repair release
-after published 1.946. Its [overview](RELEASE_1_947.md) and
+**1.947 was published October 26, 2026** on
+[PyPI](https://pypi.org/project/code-towel/1.947/) and
+[GitHub](https://github.com/ericeallen/towel/releases/tag/v1.947), from
+`8a853126f5499eb11dfa04fbe304dc332dc5ef73`. All four
+[exact-commit CI jobs](https://github.com/ericeallen/towel/actions/runs/40312460216)
+passed. Its [overview](RELEASE_1_947.md) and
 [changelog](../CHANGELOG.md#1947) describe the repair scope and the explicit
 rename consumer-scope requirement. The [readiness report](PRODUCTION_READINESS.md)
-separates completed repair checks from final release evidence. Final validation
-and publication outcomes are retained externally with the exact artifacts and
-CI records, and on PyPI.
+records the completed local campaign, corpus exceptions, performance costs and
+artifact hashes. The dated preparation checkpoints below retain their original
+incomplete or failed results; they do not describe the current release status.
+
+The initial publication left GitHub's default branch at 1.792 even though the
+1.947 tag and PyPI distributions were correct. A release branch and tag are
+not a substitute for promoting the validated source to the default branch.
+The live default-branch gate below now checks that missing step explicitly.
 
 ## 1.947 preparation checkpoint, October 25, 2026
 
@@ -738,8 +747,18 @@ For the exact candidate commit:
    - Record the seed range, the actual run count printed by each invocation, and each failure. The release recipe draws 2000 seeds; the number of runs depends on the selected family, forms, layouts and typed frequency. The earlier 1.772 campaign completed about 3,700 runs in two minutes on nine worker processes (`--jobs` defaults to half the cores), and found 27 failures, every one of a class the audit had reported. That historical count is not the current two-form grammar's run count.
 
 `just release VERSION /path/to/release-evidence.json` verifies the completed
-evidence and exact prebuilt artifacts. It does not build artifacts, replace
-the full evidence above or authorize publication. Retain the credential-scan
+evidence and exact prebuilt artifacts, then checks the live GitHub default branch.
+It refuses if that branch does not contain the validated commit, if package or
+README/security/changelog versions are stale, or if README documentation links
+name another release or missing files. It discovers the configured default branch
+through GitHub, rather than assuming `main` or trusting local tracking refs.
+API failures and incomplete file responses fail the gate.
+
+Before pushing, run `just verify-release-evidence VERSION /path/to/release-evidence.json`
+for the local evidence check. After the validated commit is on the default
+branch, run the full `just release` command before tagging or uploading.
+Neither command builds artifacts, replaces the full evidence above or grants
+publication permission. Retain the credential-scan
 report alongside the bundle: the verifier checks dependency-audit evidence,
 but does not currently require a secret-scan record.
 
@@ -764,8 +783,14 @@ Before uploading to PyPI:
    pushing. An agent must not upload while leaving an unresolved GitHub push
    for the maintainer afterward.
 3. Push the release commit to GitHub, without its tag, and wait for all CI
-   jobs on that exact commit to pass.
-4. Confirm the version is still free on PyPI
+   jobs on that exact commit to pass. If CI ran on a release branch, promote
+   that tested commit to the repository's configured default branch through
+   its normal protection rules. Preserve its ancestry; do not squash or rebase
+   away the commit whose artifacts and CI were validated. A fast-forward is
+   sufficient when the branches have not diverged.
+4. Run `just release VERSION /path/to/release-evidence.json` against the frozen
+   candidate and require both its local evidence and live default-branch gates
+   to pass. Then confirm the version is still free on PyPI
    (`https://pypi.org/pypi/code-towel/json` lists every published version).
    Only then create the annotated tag on that commit, recording the artifacts'
    hashes, and push it. A tag pushed before CI passes, or for a version PyPI
@@ -775,11 +800,22 @@ Before uploading to PyPI:
 5. Upload the verified distributions to PyPI, then compare the remote hashes
    and description with the local artifacts and smoke-test a fresh installation.
 6. Create the GitHub release from the existing tag with the same artifacts and
-   release notes. Verify its tag, assets, and links before declaring completion.
+   release notes. Update the default branch's current-status documentation with
+   the completed publication results while preserving dated preparation history.
+   Do not rebuild or replace the uploaded artifacts or move the release tag.
+   Run `just verify-release-visibility VERSION COMMIT` again and verify the
+   repository front page, tag, assets, and links before declaring completion.
+   The **Release documentation** workflow independently checks the live default
+   branch when a release is published; it can also be dispatched with a published
+   tag to recheck an existing release. Its check is read-only and requires no
+   package upload credentials. It complements the mandatory pre-upload gate,
+   rather than postponing detection until after an irreversible upload.
 
-Uploaded artifacts cannot be replaced. A documentation-only correction after
-publication requires a new post-release, such as `1.732.post1`; do not delete
-and try to reuse a published version.
+Uploaded artifacts cannot be replaced. Correcting documentation embedded in
+those distributions requires a new post-release, such as `1.732.post1`; do not
+delete and try to reuse a published version. Repository-only documentation
+corrections can be committed to the default branch without rebuilding the
+published distributions or moving their tag.
 
 ## Recording the release
 

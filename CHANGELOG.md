@@ -10,11 +10,19 @@ mnemonics with PEP 440 ordering; see the
 
 ## [Unreleased]
 
+- Require the live GitHub default branch to contain the validated release and
+  present its version and documentation before publication. A release-event
+  workflow rechecks that public view. Refresh the default-branch documentation
+  with the completed 1.947 publication and validation results.
+
 ## [1.947]
 
 Audit repairs after published 1.946; see the [1.947 overview](docs/RELEASE_1_947.md).
-The October 19, 2026 preparation checkpoint precedes this version's final
-release validation and publication; no publication date is assigned here.
+Published October 26, 2026 from `8a853126f5499eb11dfa04fbe304dc332dc5ef73`.
+The [GitHub release](https://github.com/ericeallen/towel/releases/tag/v1.947)
+records the completed validation, known corpus limitations, performance
+comparison and exact distribution hashes. Earlier dated preparation records
+retain the state of their original candidates.
 
 - Parameter renaming follows Python's class-private binding identity through
   nested classes, methods and closures, preserving unrelated private references

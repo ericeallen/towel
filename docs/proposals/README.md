@@ -8,11 +8,12 @@ release evidence available at that review. It separates retained work, completed
 and historical measurements. Priorities are recommendations, not a schedule.
 
 Older proposal bodies preserve their dates, measurements and contracts; current
-decisions and code take precedence. This source targets **1.947**, following
-published 1.946, whose publication was independently verified on October 19.
-The [1.947 overview](../RELEASE_1_947.md) describes the audit repairs; the
-[readiness report](../PRODUCTION_READINESS.md) separates each source's checks
-from final validation and publication outcomes recorded externally.
+decisions and code take precedence. **1.947 was published October 26, 2026**,
+following 1.946. The [1.947 overview](../RELEASE_1_947.md) describes the audit
+repairs; the [publication record](../PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+separates completed release validation from the historical source-bound checks
+below. The [release comparison](../PERFORMANCE.md#1947-published-release-comparison)
+records the measured full-CLI costs against 1.946 without claiming a general speedup.
 Documentation changes do not establish new release-gate results.
 Development checkpoints do not become current validation results, and their
 artifacts numbered 1.772 must not be published. Current behavior is in the guides

@@ -9,8 +9,10 @@ Towel finds repeated Python code and extracts it into shared helper functions.
 It checks each extraction, preserves the parts that differ as parameters, and
 leaves meaningful names for you to choose.
 
-**Release status: 1.947 (beta).** This source targets the maintainer-selected
-repair release after published 1.946. The
+**Release status: 1.947 (beta).** Published October 26, 2026 on
+[PyPI](https://pypi.org/project/code-towel/1.947/) and
+[GitHub](https://github.com/ericeallen/towel/releases/tag/v1.947) from commit
+`8a853126f5499eb11dfa04fbe304dc332dc5ef73`. The
 [1.947 overview](https://github.com/ericeallen/towel/blob/v1.947/docs/RELEASE_1_947.md)
 and [changelog](https://github.com/ericeallen/towel/blob/v1.947/CHANGELOG.md#1947)
 describe binding-safe renaming, lower candidate-enumeration costs, preservation
@@ -18,6 +20,22 @@ of each caller's captured lookup mapping, each file's formatting policy and
 explicit rename consumer scope. The builtin-mapping guard also avoids repeated scans of
 large unchanged modules within an analysis. Narrow or unmarked rename targets
 may now require a project-root rerun or an explicit `--complete-scope` declaration.
+
+The release completed its local gates and
+[exact-commit GitHub CI](https://github.com/ericeallen/towel/actions/runs/40312460216).
+All 141 corpus projects completed: 89 `PASS`, 45 `NO_CHANGE`, five reviewed
+import-ambiguity refusals and two known warning-location limitations. There
+were no phase timeouts or signal terminations. Differential fuzzing completed
+9,400 runs with zero failures and 30 inconclusive cases. The published wheel
+and source archive matched the validated hashes; a fresh PyPI installation and
+all 22 version-pinned README documentation links were verified.
+The [release notes](https://github.com/ericeallen/towel/releases/tag/v1.947)
+record the final outcomes, qualifications and controlled comparison with 1.946.
+
+### Historical evidence from 1.947 preparation
+
+The following checkpoints describe earlier candidates; the completed release
+above supersedes their pending status without changing their recorded results.
 
 At the **October 19, 2026 preparation checkpoint**, 1.947 had not been published.
 The preceding repair source `2027689`, still numbered 1.946, passed its Linux
@@ -77,8 +95,10 @@ Click averaged 56.69 versus 46.53 seconds (21.85% slower), and Rich averaged
 per workload. The
 [performance guide](https://github.com/ericeallen/towel/blob/v1.947/docs/PERFORMANCE.md)
 records all samples, CPU time, workload differences and measurement limits.
-README documentation links target `v1.947`; verify their remote destinations
-as part of release publication.
+README documentation links target the immutable `v1.947` source snapshot.
+Dated preparation records in that snapshot retain their original status; the
+[GitHub release](https://github.com/ericeallen/towel/releases/tag/v1.947) records
+completed publication and validation.
 
 **Start with the [Quick start](https://github.com/ericeallen/towel/blob/v1.947/docs/QUICKSTART.md),
 or browse the [documentation index](https://github.com/ericeallen/towel/blob/v1.947/docs/README.md).**

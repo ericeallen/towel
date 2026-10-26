@@ -4,6 +4,14 @@
 
 Use this guide to estimate a run and understand the limits of the published measurements.
 
+The published 1.947 [full-CLI comparison](#1947-published-release-comparison)
+with 1.946 observed mean times 2.58% higher for Click, 8.84% higher for Rich
+and 1.25% higher for Voluptuous. All distinct generated outputs preserved
+their original consumer outcomes. The completed release corpus also passed
+Sphinx, PrettyTable and Croniter; see the
+[publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026).
+The earlier investigations below retain their original source and outcome.
+
 The October 25 [Sphinx investigation](#1947-sphinx-memory-and-parsing-investigation)
 separates the original signal kill from a later deadline expiry and the specific
 runtime regressions confirmed by bounded diagnostics. No completed Sphinx
@@ -34,6 +42,7 @@ Click/Rich comparison retains its own 1.792 metadata, samples and limits.
 
 On this page:
 
+- [1.947 published release comparison](#1947-published-release-comparison)
 - [1.947 Sphinx memory and parsing investigation](#1947-sphinx-memory-and-parsing-investigation)
 - [1.947 PrettyTable warning classifier repair](#1947-prettytable-warning-classifier-repair)
 - [1.947 large-module builtin guard repair](#1947-large-module-builtin-guard-repair)
@@ -52,6 +61,41 @@ On this page:
 - [Why larger projects take longer](#why-larger-projects-take-longer)
 
 ## How long it takes
+
+### 1.947 published release comparison
+
+Published 1.947 at `8a853126f5499eb11dfa04fbe304dc332dc5ef73` was compared
+with the published 1.946 wheel on pinned Click, Rich and Voluptuous projects.
+Each project used two complete CLI samples per version, in
+release/candidate/candidate/release order, fresh project copies and processes,
+normal typing, formatting and cross-module extraction. Python 3.12 and the
+selected checker/formatter versions were identical within each project.
+Runs were sequential with one Towel worker, six CPUs, 6 GiB RAM and no swap.
+Setup and consumer testing were excluded from the timings. Hardware caches
+were not flushed and the host was shared.
+
+| Project | 1.946 mean seconds | 1.947 mean seconds | Observed change |
+| --- | ---: | ---: | ---: |
+| Click | 76.945 | 78.928 | +2.58% |
+| Rich | 144.560 | 157.344 | +8.84% |
+| Voluptuous | 123.122 | 124.656 | +1.25% |
+
+All 12 CLI commands completed successfully. Repeat outputs were byte-identical
+within each version. Click and Voluptuous outputs were also identical across
+versions. Rich differed only in the placement of generated `import typing as
+_typing` statements in `box.py` and `style.py`; both distinct outputs were tested.
+All four distinct generated-output suites matched their original complete
+outcomes and exact failure identities: Click retained its 24 baseline failures
+and 2,035 passes, Rich its eight failures and 948 passes, and Voluptuous all
+182 passes. This is equivalence against the recorded baselines, not a claim
+that every upstream suite was clean.
+
+These observations show small measured slowdowns, not a speedup. Two samples
+per version do not establish statistical significance or a general performance
+claim. The comparison container peaked at 1,292,763,136 bytes and recorded zero
+memory-limit or OOM events before its intentional stop. The
+[release notes](https://github.com/ericeallen/towel/releases/tag/v1.947) retain
+these results alongside the exact distribution hashes and validation scope.
 
 ### 1.947 Sphinx memory and parsing investigation
 

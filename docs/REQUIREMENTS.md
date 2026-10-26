@@ -4,7 +4,8 @@
 
 Support requirements are separate from resource measurements. The measurements below describe specific workloads and machines, not minimum hardware.
 
-This source targets **1.947** with the post-1.946 audit repairs.
+This source targets **1.947**, published October 26, 2026 with the post-1.946
+audit repairs.
 [Readiness](PRODUCTION_READINESS.md) and the [release procedure](RELEASING.md)
 record the exact source, artifact and validation status. Python 3.11–3.13
 remains the supported range. Dated audit and performance observations retain
@@ -34,6 +35,14 @@ reports the slower complete CLI results and their shared-host limits.
 One core is enough. The tool parallelizes a large analysis by forking one worker per core, which speeds up big projects but changes nothing about the result; `TOWEL_WORKERS=1` keeps it on one core and `TOWEL_WORKERS=N` caps the workers.
 
 ### Memory
+
+The completed 1.947 corpus used one project worker and one Towel worker in a
+six-CPU, 6 GiB container with no swap. All 141 projects completed without a
+phase timeout or signal termination. This validates that specific sequential
+campaign, not a universal memory bound or concurrent-workload guarantee.
+The final container was not OOM-killed; final lifetime peak memory was unavailable.
+See the [publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+for the observed peak's limits and the review of corpus outcomes.
 
 The historical memory figures below were measured on an Apple M5 Max
 (18 cores, 128 GiB); [the known limitations](KNOWN_LIMITATIONS.md#measurement-environment) record the rest of the environment. Measured in September 2026: a single analysis process holds the parsed modules and its caches: tens of megabytes for one file, about 250 MB for a 140,000-line project.

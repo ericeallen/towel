@@ -173,10 +173,15 @@ build:
 verify-release-evidence VERSION EVIDENCE:
     uv run --frozen python scripts/verify_release_evidence.py {{quote(VERSION)}} {{quote(EVIDENCE)}} --validation-only
 
-# Verify an already-versioned clean source and its exact prebuilt release artifacts
-# Never bump or rebuild after checking evidence; publication/tagging remain separate.
+# Verify local artifacts AND the live GitHub default branch before publication.
+# Local-only validation above remains available before pushing the candidate.
 release VERSION EVIDENCE:
     uv run --frozen python scripts/verify_release_evidence.py {{quote(VERSION)}} {{quote(EVIDENCE)}}
+    uv run --frozen python scripts/verify_release_visibility.py {{quote(VERSION)}} --evidence {{quote(EVIDENCE)}}
+
+# Check the GitHub front page, source ancestry and documentation without uploading.
+verify-release-visibility VERSION COMMIT:
+    uv run --frozen python scripts/verify_release_visibility.py {{quote(VERSION)}} --commit {{quote(COMMIT)}}
 
 # Everything CI runs: quality gates, tests, coverage gate, build
 ci: check audit-dependencies coverage build
