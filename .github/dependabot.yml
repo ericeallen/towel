@@ -1,11 +1,15 @@
 # Dependabot: weekly update proposals for the workflow actions and the Python
 # dependencies. Python is managed through the `uv` ecosystem, which reads
 # pyproject.toml and refreshes uv.lock so `uv sync --frozen` keeps working;
-# CI's pip-audit step and the test matrix vet every proposal.
+# CI's pip-audit step and the test matrix vet every proposal. The vendored
+# third-party projects under tests/ecosystem_context_sources/ are corpora Towel
+# only reads, never installs, so they are excluded from update proposals.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
+    exclude-paths:
+      - "tests/ecosystem_context_sources/**"
     schedule:
       interval: "weekly"
     groups:
@@ -15,6 +19,8 @@ updates:
 
   - package-ecosystem: "uv"
     directory: "/"
+    exclude-paths:
+      - "tests/ecosystem_context_sources/**"
     schedule:
       interval: "weekly"
     groups:
