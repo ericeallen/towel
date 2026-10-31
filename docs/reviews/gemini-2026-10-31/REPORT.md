@@ -697,3 +697,73 @@ Each of the following 19 cases in `docs/reviews/gemini-2026-10-31/cases/<name>/`
 17. **`possibly_unbound_local_in_thunk`** (Scopes and bindings / Exceptions): `if x > 0: maybe = x * 10` followed by `if flag: b += maybe + x`. Because `maybe` is not definitely assigned before the block, `available_argument_names` excludes `maybe` and `defer_impure_parameters` declines wrapping a possibly-unbound local (`check_possibly_unbound_local_in_thunk.py` `OK`).
 18. **`walrus_in_condition_short_circuit`** (Walrus `:=` / Evaluation order): `if flag and (captured := b + 10) > 0: return captured + 1`. Towel declines extracting across the short-circuited walrus and partial return (`check_walrus_in_condition_short_circuit.py` `OK`).
 19. **`weakref_raii_lifetime_escaped`** (Scopes and bindings / Object lifetime): `box = Box(); ref = weakref.ref(box); scaled = x * 2; return scaled + 1, ref() is not None`. If `box` were dropped at the end of `__extracted_func_0`, `ref()` would become `None` before the caller checks `ref() is not None`. Towel's lifetime guard returns `box` from `__extracted_func_0` (`box, ref, scaled = __extracted_func_0(x)`) so `box` stays alive in the caller's frame (`check_weakref_raii_lifetime_escaped.py` `OK`).
+
+---
+
+## Verification (Claude, 2026-10-31)
+
+**The review ran against Towel 1.772, not 1.947.** Its line references match
+the source at `main` in the local checkout it read, which was 249 commits behind
+`origin/main` and still at version 1.772. All nine reproducers fail on 1.772.
+On 1.947, the version on PyPI, only two fail as written. Variants of three more
+cases still fail on 1.947, because 1.947 declined Gemini's exact inputs for
+unrelated reasons. Each case was re-run with `towel dry` on Python 3.13.7
+against 1.947 (`d637d4f`), and again after the fixes.
+
+| # | Case | On 1.947 | Verdict |
+|---|---|---|---|
+| 1 | `same_named_methods_semicolon_orphan` | declined as written; a variant whose block binds only literals raised `UnboundLocalError` | **Fixed** |
+| 2 | `default_arg_frame_inspection` | declined | **Accepted limitation** |
+| 3 | `inlined_comp_in_default_thunk_cell` | declined as written; a variant whose block binds nothing raised `NameError` | **Fixed** |
+| 4 | `aliased_suppress_return_coverage` | declined | **Refuted for 1.947** |
+| 5 | `aliased_suppress_eager_hoist` | declined | **Refuted for 1.947** |
+| 6 | `class_attr_shadows_global_lookup` | thunked, correct; the same root cause gave a wrong value through an enclosing function's variable | **Fixed** (root cause shared with 7) |
+| 7 | `nonlocal_in_class_method_hazard` | wrong value, `(17, 19)` for `(18, 20)` | **Fixed** |
+| 8 | `thunk_inlined_across_global_store` | thunk kept, correct | **Refuted for 1.947**; the flaw is latent |
+| 9 | `while_walrus_del_renamed_unbound` | `UnboundLocalError` names `alpha` where the original names `beta` | **Fixed** |
+
+**Root causes and fixes**
+
+- **1.** There were two independent faults; each fix alone makes the variant
+  correct.
+  - The return-variable scan (`return_source_uses.py`) skipped every statement
+    starting on the block's last line. It now compares (line, column)
+    positions, so `c = 3; res = c + x` returns `c`.
+  - `_leaves_orphans` looked up the function by bare name and took the last
+    one, which was another class's `compute`. It now uses the pair's own
+    function nodes.
+- **2.** `dir()` in a default argument observes the enclosing frame. That is
+  reflection, which `KNOWN_LIMITATIONS.md` ("Observable differences that
+  remain", and the October 2 decision) places outside the preservation
+  contract. 1.947 happens to decline the case.
+- **3.** `thunk_meets_an_inlined_comprehension` scanned with `walk_own_scope`,
+  which stops at a nested `def`. The new `walk_own_frame` also visits what a
+  definition evaluates where it stands (decorators, defaults, annotations, and
+  a class's bases and keywords), all of which run in the enclosing frame.
+- **4, 5.** `definite_assignment.py` now assumes any `with` may fall through
+  with nothing bound. The name-based `_suppresses` test is gone (952d9df).
+  Variants that spell `suppress` directly are declined too.
+- **6, 7.** `Scope.lookup` walked into class scopes, which Python skips when it
+  resolves a name from a nested function or a `nonlocal`. Scopes now record
+  whether they are class bodies, and both `lookup` and the `nonlocal` summary
+  (the new `lookup_free`) skip them. Since 1.947 every module-level name is
+  thunked, so Gemini's module-global form of case 6 was already sound.
+- **8.** Since 897c0fe, a leading thunk is inlined only when every site passes
+  an immutable literal, and a literal cannot observe an earlier store. The flaw
+  Gemini described is still in the code but unreachable: `_effect_free` treats
+  a store to a `global` name as having no effect.
+- **9.** Not an accepted limitation. `KNOWN_LIMITATIONS.md` ("Instantiation")
+  promises to decline a renamed binder that a read may find unbound, because
+  `UnboundLocalError` names it. `_UnboundReads` returned `holds & fails` for a
+  `while` loop. That ignored the body's `break` exits and the `else` clause, so
+  a name the test bound and either path deleted counted as bound after the
+  loop. It now subtracts what the body and the `else` clause may unbind.
+
+**Not in Gemini's nine.** On 1.947, `decorator_body_transform_declined` is
+extracted, and `fn.__code__.co_varnames` then differs. Reading bytecode is
+reflection, so this is an accepted limitation as well.
+
+**Regression tests.** There are four hostile fixtures, `tests/hostile_cases/rgm_*.py`,
+covering cases 1, 3, 6 and 7 together, and 9. Each fails on 1.947 and passes
+after the fix. A unit test in `tests/test_return_source_uses.py` covers the
+semicolon case.

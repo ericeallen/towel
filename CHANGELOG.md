@@ -14,6 +14,21 @@ mnemonics with PEP 440 ordering; see the
   present its version and documentation before publication. A release-event
   workflow rechecks that public view. Refresh the default-branch documentation
   with the completed 1.947 publication and validation results.
+- Repair four silent miscompilations of 1.947 found from the Gemini review of
+  October 31 ([report](docs/reviews/gemini-2026-10-31/REPORT.md)):
+  - A method's bare read and a method's `nonlocal` now resolve past the class
+    body to the enclosing function, as Python resolves them, so a variable
+    another function rebinds is no longer passed eagerly because a class
+    attribute shares its name.
+  - A statement after a semicolon on a block's last line counts as a later
+    read, and the orphan check uses the method that holds each block rather
+    than the last method of that name.
+  - A comprehension in a nested function's default, decorator or annotation,
+    or in a class's bases, runs in the enclosing frame (PEP 709), and now
+    declines a thunk whose cell it would empty.
+  - A name a `while` test binds and the loop body or `else` clause deletes is
+    no longer taken as bound after the loop, so a renamed binder keeps the
+    name `UnboundLocalError` reports.
 
 ## [1.947]
 
