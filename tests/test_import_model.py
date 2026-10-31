@@ -769,6 +769,50 @@ def test_an_import_its_package_does_not_hold_is_a_problem(tmp_path):
     assert model.importers_of_missing_modules == {model.root / "tests/test_a.py"}
 
 
+@pytest.mark.parametrize(
+    "observation",
+    [
+        "globals()",
+        "vars()",
+        "locals()",
+        "setattr(obj, 'name', 1)",
+        "exec('pass')",
+        "eval('1')",
+        "obj.__dict__",
+    ],
+)
+def test_reflective_spellings_do_not_hide_missing_imports(tmp_path, observation: str) -> None:
+    project = _write(
+        tmp_path / "project",
+        {
+            "pyproject.toml": _setuptools_project(name="alpha"),
+            "alpha/__init__.py": f"def observe(obj):\n    return {observation}\n",
+            "alpha/a.py": "",
+            "tests/test_a.py": "import alpha.a\nfrom alpha import absent\n",
+        },
+    )
+    (problem,) = _model(project).problems
+    assert isinstance(problem, UnresolvedImport)
+    assert problem.missing == "alpha.absent"
+
+
+@pytest.mark.parametrize(
+    "initializer",
+    ["def __getattr__(name):\n    return 1\n", "from math import *\n"],
+)
+def test_ordinary_dynamic_import_bindings_remain_unknown(tmp_path, initializer: str) -> None:
+    project = _write(
+        tmp_path / "project",
+        {
+            "pyproject.toml": _setuptools_project(name="alpha"),
+            "alpha/__init__.py": initializer,
+            "alpha/a.py": "",
+            "tests/test_a.py": "import alpha.a\nfrom alpha import absent\n",
+        },
+    )
+    assert _model(project).problems == ()
+
+
 def test_the_file_making_an_unresolved_import_is_neither_provider_nor_borrower(tmp_path):
     project = _write(
         tmp_path / "project",
@@ -1127,16 +1171,22 @@ def test_the_scan_stops_rather_than_model_part_of_a_tree(tmp_path, monkeypatch):
         _model(project)
 
 
-def test_future_and_main_are_never_project_modules(tmp_path):
+def test_future_is_a_runtime_import_but_main_is_the_running_program(tmp_path):
     project = _write(
         tmp_path / "project",
         {
-            "__future__.py": "",
+            "__future__.py": "annotations = 0\n",
             "__main__.py": "",
             "a.py": "from __future__ import annotations\nimport __main__\n",
         },
     )
-    assert _model(project).names == {}
+    model = _model(project)
+    assert set(model.names) == {"__future__"}
+    future = model.names["__future__"]
+    assert future.status is NameStatus.AMBIGUOUS
+    assert future.candidates == (project / "__future__.py",)
+    assert len(model.problems) == 1
+    assert isinstance(model.problems[0], AmbiguousName)
 
 
 def _sites(source: str, tmp_path: Path) -> Iterator[tuple[str, bool, bool, bool]]:
@@ -1175,10 +1225,10 @@ def test_each_import_records_when_it_runs(tmp_path):
         ("import b.c", True, False, False),
         ("from contextlib import suppress", True, False, False),
         ("import typing", True, False, False),
-        ("from d import e", False, False, False),
-        ("import f", True, False, False),
-        ("import g", True, False, False),
-        ("import m", False, False, False),
+        ("from d import e", True, True, False),
+        ("import f", True, True, False),
+        ("import g", True, True, False),
+        ("import m", True, True, False),
         ("import h", True, True, False),
         ("import i", True, False, False),
         ("import j", True, True, False),

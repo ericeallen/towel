@@ -52,9 +52,20 @@ still legal, only wider, and the complaint arrives somewhere else entirely.
 from __future__ import annotations
 
 import ast
-from typing import Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence, Set
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence, Set
+from weakref import WeakKeyDictionary
 
-from .models import Replacement
+from ..canonical_ast import canonical_dump
+from ..source_text import read_source
+from .exceptions import ProjectScanLimitError
+from .function_index import FunctionIndex
+from .function_scope import function_names
+from .import_graph import ImportGraphCache, host_has_stub, imported_alias_sites
+from .models import FunctionNode, Replacement
+from .module_bindings import dotted_name, global_bindings
+from .statement_facts import memoized_per_node
 
 _NARROWING_CALLS = frozenset({"isinstance", "issubclass", "hasattr", "callable"})
 """Builtins whose result narrows their first argument in mypy and pyright."""
@@ -135,6 +146,273 @@ def _own_scope(node: ast.AST) -> Iterator[ast.AST]:
         if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
             continue
         yield from _own_scope(child)
+
+
+def _following_block(
+    function: FunctionNode, block: Sequence[ast.stmt]
+) -> Optional[tuple[tuple[ast.stmt, ...], FrozenSet[str], FrozenSet[str]]]:
+    """The block's continuation and the tests enclosing it, without sibling branches."""
+
+    def find(
+        body: Sequence[ast.stmt],
+        after: tuple[ast.stmt, ...],
+        guarded: FrozenSet[str],
+        non_none: FrozenSet[str],
+    ) -> Optional[tuple[tuple[ast.stmt, ...], FrozenSet[str], FrozenSet[str]]]:
+        for index, statement in enumerate(body):
+            if statement is block[0]:
+                if list(body[index : index + len(block)]) == list(block):
+                    return (*body[index + len(block) :], *after), guarded, non_none
+                return None
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            continuation = (*body[index + 1 :], *after)
+            inner = guarded
+            if isinstance(statement, (ast.If, ast.While)):
+                inner |= frozenset(
+                    _non_none_test(statement.test) | _non_none_test(statement.test, False)
+                )
+            for suite, tail in _suites(statement):
+                known = non_none
+                if isinstance(statement, ast.If):
+                    known |= frozenset(_non_none_test(statement.test, suite is statement.body))
+                result = find(suite, (*tail, *continuation), inner, known)
+                if result is not None:
+                    return result
+            written = _statement_narrowing_facts(statement).stored
+            non_none = frozenset(
+                reference
+                for reference in non_none
+                if not any(
+                    reference == name or reference.startswith(name + ".") for name in written
+                )
+            )
+            if isinstance(statement, ast.Assert):
+                non_none |= frozenset(_non_none_test(statement.test))
+        return None
+
+    return find(function.body, (), frozenset(), frozenset()) if block else None
+
+
+def _non_none_test(test: ast.expr, truth: bool = True) -> Set[str]:
+    """References an explicit None test makes nonoptional on this branch."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return _non_none_test(test.operand, not truth)
+    if isinstance(test, ast.BoolOp):
+        parts = [_non_none_test(part, truth) for part in test.values]
+        if isinstance(test.op, ast.And) == truth:
+            return {reference for part in parts for reference in part}
+        return set.intersection(*parts) if parts else set()
+    if isinstance(test, ast.Compare) and len(test.ops) == 1:
+        left, right = test.left, test.comparators[0]
+        if isinstance(left, ast.Constant) and left.value is None:
+            left, right = right, left
+        if isinstance(right, ast.Constant) and right.value is None:
+            operator = test.ops[0]
+            if (truth and isinstance(operator, ast.IsNot)) or (
+                not truth and isinstance(operator, ast.Is)
+            ):
+                name = dotted_name(left)
+                return {name} if name is not None else set()
+    return set()
+
+
+def _suites(statement: ast.stmt) -> Iterator[tuple[Sequence[ast.stmt], Sequence[ast.stmt]]]:
+    """Nested statement lists and the suites executed after each one."""
+    if isinstance(statement, (ast.Try, ast.TryStar)):
+        yield statement.body, (*statement.orelse, *statement.finalbody)
+        for handler in statement.handlers:
+            yield handler.body, statement.finalbody
+        yield statement.orelse, statement.finalbody
+        yield statement.finalbody, ()
+    elif isinstance(statement, ast.Match):
+        for case in statement.cases:
+            yield case.body, ()
+    elif isinstance(statement, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+        yield statement.body, statement.orelse if not isinstance(statement, ast.If) else ()
+        yield statement.orelse, ()
+    elif isinstance(statement, (ast.With, ast.AsyncWith)):
+        yield statement.body, ()
+
+
+def _stored_references(nodes: Iterable[ast.AST]) -> Set[str]:
+    """Fresh stores for generated helper trees, which construction may still change."""
+    return _stored_references_in_scope([node for root in nodes for node in _own_scope(root)])
+
+
+def _stored_references_in_scope(own: Sequence[ast.AST]) -> Set[str]:
+    comprehension_locals = {
+        id(target)
+        for node in own
+        if isinstance(node, ast.comprehension)
+        for target in ast.walk(node.target)
+        if isinstance(target, ast.Name)
+    }
+    return {
+        name
+        for node in own
+        if isinstance(node, (ast.Name, ast.Attribute))
+        and isinstance(node.ctx, ast.Store)
+        and id(node) not in comprehension_locals
+        and (name := dotted_name(node)) is not None
+    }
+
+
+@dataclass(frozen=True)
+class _StatementNarrowingFacts:
+    """String-only facts of an immutable source statement, independent of its caller."""
+
+    tested: FrozenSet[str]
+    asserted: FrozenSet[str]
+    stored: FrozenSet[str]
+
+
+def _compute_statement_narrowing_facts(statement: ast.AST) -> _StatementNarrowingFacts:
+    own = tuple(_own_scope(statement))
+    tested: Set[str] = set()
+    asserted: Set[str] = set()
+    for node in own:
+        if isinstance(node, (ast.If, ast.While)):
+            tested |= _non_none_test(node.test) | _non_none_test(node.test, False)
+        elif isinstance(node, ast.Assert):
+            asserted |= _non_none_test(node.test)
+    return _StatementNarrowingFacts(
+        frozenset(tested), frozenset(asserted), frozenset(_stored_references_in_scope(own))
+    )
+
+
+_STATEMENT_NARROWING_FACTS: WeakKeyDictionary[ast.AST, _StatementNarrowingFacts] = (
+    WeakKeyDictionary()
+)
+
+
+def _statement_narrowing_facts(statement: ast.stmt) -> _StatementNarrowingFacts:
+    """Reuse source facts across overlapping windows, only for the statement's lifetime.
+
+    Parsed source trees are never mutated during analysis. The cached value has
+    no node references, so it cannot keep its weak key or the source tree alive.
+    Generated helper trees use the fresh ``_stored_references`` path instead.
+    """
+    return memoized_per_node(
+        _STATEMENT_NARROWING_FACTS, statement, _compute_statement_narrowing_facts
+    )
+
+
+def may_establish_caller_narrowing(statement: ast.stmt) -> bool:
+    """A necessary condition for a block containing this statement to lose narrowing.
+
+    A block without an assertion or an attribute store takes the caller guard's
+    immediate False branch. This fact can therefore be counted over intervals;
+    a positive answer still requires the complete caller-sensitive guard.
+    """
+    facts = _statement_narrowing_facts(statement)
+    return bool(facts.asserted) or any("." in name for name in facts.stored)
+
+
+_NONE_ATTRIBUTES = frozenset(dir(None))
+
+
+def _needs_non_none(node: ast.AST, reference: str, refinements: FrozenSet[str]) -> bool:
+    """Operations that consume the refinement, rather than merely read its value.
+
+    Passing or returning a bare value can accept its declared optional type.
+    Those contexts require type information and remain the checker's concern.
+    """
+    for inner in _own_scope(node):
+        operands: Sequence[ast.expr] = ()
+        if isinstance(inner, ast.Attribute) and inner.attr not in _NONE_ATTRIBUTES:
+            operands = (inner.value,)
+        elif isinstance(inner, ast.Subscript):
+            operands = (inner.value,)
+        elif isinstance(inner, ast.Call):
+            operands = (inner.func,)
+        elif isinstance(inner, ast.BinOp):
+            # An unknown opposite operand can implement a reflected operator
+            # accepting None; its type is needed before ruling that out.
+            if not all(
+                isinstance(operand, ast.Constant) or dotted_name(operand) in refinements
+                for operand in (inner.left, inner.right)
+            ):
+                continue
+            operands = (inner.left, inner.right)
+        elif isinstance(inner, ast.UnaryOp) and not isinstance(inner.op, ast.Not):
+            operands = (inner.operand,)
+        elif isinstance(inner, ast.Compare) and any(
+            isinstance(operator, (ast.Lt, ast.LtE, ast.Gt, ast.GtE)) for operator in inner.ops
+        ):
+            operands = (inner.left, *inner.comparators)
+        if any(dotted_name(operand) == reference for operand in operands):
+            return True
+    return False
+
+
+def _reads_before_rebinding(
+    body: Sequence[ast.stmt], reference: str, refinements: FrozenSet[str]
+) -> bool:
+    """Whether a continuation reads a refinement before replacing or reasserting it."""
+    for statement in body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if isinstance(statement, ast.Assert) and reference in _non_none_test(statement.test):
+            return False
+        if isinstance(statement, ast.If):
+            if _needs_non_none(statement.test, reference, refinements):
+                return True
+            for branch, truth in ((statement.body, True), (statement.orelse, False)):
+                if reference not in _non_none_test(
+                    statement.test, truth
+                ) and _reads_before_rebinding(branch, reference, refinements):
+                    return True
+            continue
+        if _needs_non_none(statement, reference, refinements):
+            return True
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            if any(
+                reference == stored or reference.startswith(stored + ".")
+                for stored in _statement_narrowing_facts(statement).stored
+            ):
+                return False
+        if isinstance(statement, (ast.Return, ast.Raise)):
+            return False
+    return False
+
+
+def caller_narrowing_leaves_with_block(function: FunctionNode, block: List[ast.stmt]) -> bool:
+    """Keep assertions and guarded attribute initialization with their later caller reads.
+
+    In ``if obj.cache is None: obj.cache = compute()`` the assignment is
+    essential too: extracting just the branch body would leave the caller's
+    cache optional. Smaller windows can move the computation while retaining
+    both the guard and assignment. A local returned by the helper can instead
+    carry its type through the call's assignment. This exemption applies to
+    the local itself, not refinements of its attributes.
+
+    This recognizes explicit None tests and operations needing their result.
+    Passing or returning a bare value, arbitrary TypeGuard calls, and other
+    refinements still require the final checker backstop.
+    """
+    tested: Set[str] = set()
+    asserted: Set[str] = set()
+    stored: Set[str] = set()
+    for statement in block:
+        facts = _statement_narrowing_facts(statement)
+        tested |= facts.tested
+        asserted |= facts.asserted
+        stored |= facts.stored
+    if not asserted and not any("." in name for name in stored):
+        return False
+    context = _following_block(function, block)
+    if context is None:
+        return False
+    following, enclosing, non_none = context
+    tested |= enclosing
+    established = (asserted - non_none) | (tested & stored)
+    rebound = {name for name in stored if "." not in name}
+    return any(
+        ("." in reference or reference not in rebound)
+        and _reads_before_rebinding(following, reference, frozenset(established))
+        for reference in established
+    )
 
 
 def _parameters(helper: ast.FunctionDef) -> List[str]:
@@ -274,4 +552,329 @@ def narrowing_lost_at_call_site(
             if depends:
                 subject = sorted(depends)[0]
                 return f"{ast.unparse(argument)} reads {subject} outside the test that narrows it"
+    return None
+
+
+class _ProjectDeclarations:
+    """Explicit declarations reached through unambiguous project imports.
+
+    Assignment aliases, overloads, decorated functions and unresolved bases
+    retain the checker fallback. Trees share the engine parse cache; this
+    query's module table never outlives construction of the proposal.
+    """
+
+    def __init__(
+        self,
+        source: str,
+        tree: ast.Module,
+        path: str,
+        imports: ImportGraphCache,
+        parse: Callable[[str], ast.Module],
+        modules: Optional[Dict[str, _ProjectDeclarations]] = None,
+    ) -> None:
+        self.tree = tree
+        self.bindings = global_bindings(source)
+        self.path = path
+        self.imports = imports
+        self.parse = parse
+        self.modules = modules if modules is not None else {}
+        self.modules[path] = self
+
+    def definition(
+        self, name: str, seen: FrozenSet[tuple[str, str]] = frozenset()
+    ) -> Optional[tuple[ast.stmt, _ProjectDeclarations]]:
+        key = self.path, name
+        if self.bindings is None or key in seen or len(seen) >= 16:
+            return None
+        head, _, rest = name.partition(".")
+        # Multiple bindings include overload sets and rebinding imports. Their
+        # effective static signature need not be the last runtime definition.
+        if len(self.bindings.bindings.get(head, ())) != 1:
+            return None
+        binding = self.bindings.in_effect(head, len(self.tree.body) + 1)
+        if binding is None:
+            return None
+        statement = self.tree.body[binding.order]
+        if isinstance(statement, (ast.Import, ast.ImportFrom)):
+            alias = next(
+                (
+                    item
+                    for item in statement.names
+                    if (item.asname or item.name.split(".")[0]) == head
+                ),
+                None,
+            )
+            sites = (
+                imported_alias_sites(self.path, statement, alias, rest, self.imports)
+                if alias is not None
+                else None
+            )
+            if sites is None or len(sites) != 1:
+                return None
+            path, qualname = next(iter(sites))
+            owner = self.modules.get(str(path))
+            if owner is None:
+                try:
+                    # The checker may see a different signature or a structural
+                    # type from a stub instead of this runtime declaration.
+                    if host_has_stub(str(path), self.imports):
+                        return None
+                    source = read_source(path)
+                    owner = _ProjectDeclarations(
+                        source,
+                        self.parse(source),
+                        str(path),
+                        self.imports,
+                        self.parse,
+                        self.modules,
+                    )
+                except (OSError, UnicodeError, SyntaxError, ValueError, ProjectScanLimitError):
+                    return None
+            return owner.definition(qualname, seen | {key})
+        return None if rest else (statement, self)
+
+    def function(self, name: str) -> Optional[tuple[ast.FunctionDef, _ProjectDeclarations]]:
+        found = self.definition(name)
+        if found is None:
+            return None
+        definition, owner = found
+        if (
+            isinstance(definition, ast.FunctionDef)
+            and not definition.decorator_list
+            and not getattr(definition, "type_params", ())
+        ):
+            return definition, owner
+        return None
+
+    def excludes_none(
+        self, annotation: Optional[ast.expr], seen: FrozenSet[tuple[str, str]] = frozenset()
+    ) -> bool:
+        if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+            return self.excludes_none(annotation.left, seen) and self.excludes_none(
+                annotation.right, seen
+            )
+        if not isinstance(annotation, ast.Name):
+            return False
+        found = self.definition(annotation.id)
+        definition, owner = found if found is not None else (None, self)
+        if isinstance(definition, ast.ClassDef):
+            key = owner.path, definition.name
+            # A base can be Protocol or an unresolved structural alias. Only
+            # a chain of explicit nominal classes proves None is not accepted.
+            return (
+                key not in seen
+                and len(seen) < 16
+                and not (definition.keywords or definition.decorator_list)
+                and all(owner.excludes_none(base, seen | {key}) for base in definition.bases)
+            )
+        return (
+            annotation.id in {"str", "bytes", "int", "float", "complex", "bool"}
+            and self.bindings is not None
+            and not self.bindings.may_bind(annotation.id)
+        )
+
+    def includes_none(self, annotation: Optional[ast.expr]) -> bool:
+        """An explicit None union, without assuming what an imported alias means."""
+        if isinstance(annotation, ast.Constant):
+            return annotation.value is None
+        if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+            return self.includes_none(annotation.left) or self.includes_none(annotation.right)
+        return False
+
+    def argument_needs_non_none(self, call: ast.Call, parameter: str) -> bool:
+        if not isinstance(call.func, ast.Name):
+            return False
+        found = self.function(call.func.id)
+        if found is None or any(isinstance(arg, ast.Starred) for arg in call.args):
+            return False
+        function, owner = found
+        annotations = {
+            argument.arg: argument.annotation
+            for argument in (
+                *function.args.posonlyargs,
+                *function.args.args,
+                *function.args.kwonlyargs,
+            )
+        }
+        arguments = dict(zip(_parameters(function), call.args))
+        arguments.update({keyword.arg: keyword.value for keyword in call.keywords if keyword.arg})
+        return any(
+            isinstance(argument, ast.Name)
+            and argument.id == parameter
+            and owner.excludes_none(annotations.get(name))
+            for name, argument in arguments.items()
+        )
+
+
+def _optional_before_test(
+    function: FunctionNode, test: ast.expr, subject: str, declarations: _ProjectDeclarations
+) -> bool:
+    """A local's optional type immediately before a top-level test, when explicit.
+
+    Stop claiming a fact after any intervening use or store we do not model.
+    A redundant None test on an already narrowed value must remain extractable.
+    """
+    arguments = (*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs)
+    if any(
+        isinstance(node, (ast.Global, ast.Nonlocal)) and subject in node.names
+        for node in ast.walk(function)
+    ):
+        return False
+    optional = any(
+        argument.arg == subject and declarations.includes_none(argument.annotation)
+        for argument in arguments
+    )
+    local_names = function_names(function).local
+    for statement in function.body:
+        if isinstance(statement, ast.If) and (
+            statement.test.lineno == test.lineno
+            and canonical_dump(statement.test) == canonical_dump(test)
+        ):
+            return optional
+        assigned: Optional[ast.expr] = None
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == subject
+        ):
+            assigned = statement.value
+        if assigned is not None:
+            callee = (
+                declarations.function(assigned.func.id)
+                if isinstance(assigned, ast.Call)
+                and isinstance(assigned.func, ast.Name)
+                and assigned.func.id not in local_names
+                else None
+            )
+            optional = callee is not None and declarations.includes_none(callee[0].returns)
+        elif any(
+            isinstance(node, ast.Name) and node.id == subject for node in _own_scope(statement)
+        ):
+            optional = False
+    return False
+
+
+def _operation_needs_non_none(node: ast.AST, parameter: str) -> bool:
+    """A direct consumer, excluding operators an unknown opposite operand can supply."""
+    operand: Optional[ast.expr] = None
+    if isinstance(node, ast.Attribute) and node.attr not in _NONE_ATTRIBUTES:
+        operand = node.value
+    elif isinstance(node, ast.Subscript):
+        operand = node.value
+    elif isinstance(node, ast.Call):
+        operand = node.func
+    elif isinstance(node, ast.UnaryOp) and not isinstance(node.op, ast.Not):
+        operand = node.operand
+    return isinstance(operand, ast.Name) and operand.id == parameter
+
+
+def parameterized_narrowing_lost(
+    helper: ast.FunctionDef,
+    replacements: Sequence[Replacement],
+    functions: FunctionIndex,
+    file_path: str,
+    parse: Callable[[str], ast.Module],
+    imports: ImportGraphCache,
+) -> Optional[str]:
+    """An erased None predicate whose separately passed subject needs its proof.
+
+    This deliberately recognizes a bounded construction, not arbitrary Python
+    typing. A direct or zero-argument deferred parameter replaces a top-level
+    None test, the caller's subject is provably optional, and the helper consumes it
+    without another test or assignment. Bare reads and Optional-aware consumers
+    are valid; unknown callees and type aliases retain the checker fallback.
+    """
+    predicates = set()
+    for statement in helper.body:
+        for node in _own_scope(statement):
+            if not isinstance(node, ast.If):
+                continue
+            predicate_test = node.test
+            if isinstance(predicate_test, ast.Name):
+                predicates.add((predicate_test.id, False))
+            elif (
+                isinstance(predicate_test, ast.Call)
+                and isinstance(predicate_test.func, ast.Name)
+                and not predicate_test.args
+                and not predicate_test.keywords
+            ):
+                predicates.add((predicate_test.func.id, True))
+    if not predicates:
+        return None
+    parameters = _parameters(helper)
+    retained = narrowed_names(helper.body) | _stored_references(helper.body)
+    # A comprehension's own target is a different binding, even when spelled
+    # like a parameter. Do not mistake its uses for consumers of that parameter.
+    comprehension_names = {
+        target.id
+        for node in ast.walk(helper)
+        if isinstance(node, ast.comprehension)
+        for target in ast.walk(node.target)
+        if isinstance(target, ast.Name)
+    }
+    retained |= comprehension_names
+    local_names = function_names(helper).local | comprehension_names
+    declarations: Optional[_ProjectDeclarations] = None
+    for replacement in replacements:
+        if replacement.file_path not in (None, file_path):
+            continue
+        call = _call_in(replacement.node, helper.name)
+        function = functions.innermost_at(file_path, replacement.line_range)
+        if call is None or function is None or function.enclosing_function is not None:
+            continue
+        arguments = _arguments_by_parameter(call, parameters, helper)
+        for predicate, deferred in predicates:
+            test = arguments.get(predicate)
+            if deferred:
+                if not isinstance(test, ast.Lambda):
+                    continue
+                args = test.args
+                if (
+                    args.posonlyargs
+                    or args.args
+                    or args.kwonlyargs
+                    or args.vararg is not None
+                    or args.kwarg is not None
+                    or args.defaults
+                    or args.kw_defaults
+                ):
+                    continue
+                test = test.body
+            if not isinstance(test, ast.Compare):
+                continue
+            subjects = _non_none_test(test) | _non_none_test(test, False)
+            for parameter, argument in arguments.items():
+                if (
+                    parameter in retained
+                    or not isinstance(argument, ast.Name)
+                    or argument.id not in subjects
+                ):
+                    continue
+                if declarations is None:
+                    declarations = _ProjectDeclarations(
+                        function.source,
+                        parse(function.source),
+                        str(Path(file_path).resolve()),
+                        imports,
+                        parse,
+                    )
+                if not _optional_before_test(function.node, test, argument.id, declarations):
+                    continue
+                for statement in helper.body:
+                    required = any(
+                        _operation_needs_non_none(node, parameter)
+                        or (
+                            isinstance(node, ast.Call)
+                            and isinstance(node.func, ast.Name)
+                            and node.func.id not in local_names
+                            and declarations.argument_needs_non_none(node, parameter)
+                        )
+                        for node in _own_scope(statement)
+                    )
+                    if required:
+                        return (
+                            f"parameterizing {ast.unparse(test)} removes the None refinement "
+                            f"needed by {parameter} in the helper"
+                        )
     return None

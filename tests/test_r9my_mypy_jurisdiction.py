@@ -54,21 +54,24 @@ def _write(root: Path, files: Mapping[str, str]) -> None:
         path.write_text(textwrap.dedent(text), encoding="utf-8")
 
 
+# A literal count adds no owned object to the helper frame. The duplicate
+# mutating calls remain useful, while differing caller tails keep the helper
+# partial: its returned local has no site-declared type to copy outside coverage.
 TWINS = """\
     def first(values: list[int], k: int) -> int:
-        out = []
-        for v in values:
-            out.append(v + k)
-        count = len(out)
-        return count
+        count = 0
+        values.append(k)
+        values.reverse()
+        values.sort()
+        return len(values) + count
 
 
     def second(items: list[str], j: str) -> int:
-        out = []
-        for v in items:
-            out.append(v + j)
-        count = len(out)
-        return count * 2
+        count = 0
+        items.append(j)
+        items.reverse()
+        items.sort()
+        return (len(items) + count) * 2
     """
 
 STUB = "def first(values: list[int], k: int) -> int: ...\ndef second(items: list[str], j: str) -> int: ...\n"
@@ -193,19 +196,15 @@ TAX_TESTS = """\
 
 
     def test_total_with_tax() -> None:
-        prices = [1.0, 2.0, 3.5]
-        result = total(prices, 0.1)
-        assert result > 0
-        assert isinstance(result, float)
-        assert result == 7.15
+        assert total([1.0, 2.0, 3.5], 0.1) > 0
+        assert isinstance(total([1.0, 2.0, 3.5], 0.1), float)
+        assert total([1.0, 2.0, 3.5], 0.1) == 7.15
 
 
     def test_total_without_tax() -> None:
-        prices = [4.0, 5.0, 6.5]
-        result = total(prices, 0.0)
-        assert result > 0
-        assert isinstance(result, float)
-        assert result == 15.5
+        assert total([4.0, 5.0, 6.5], 0.0) > 0
+        assert isinstance(total([4.0, 5.0, 6.5], 0.0), float)
+        assert total([4.0, 5.0, 6.5], 0.0) == 15.5
     """
 
 

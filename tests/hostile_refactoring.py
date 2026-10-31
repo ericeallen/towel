@@ -60,12 +60,14 @@ def refactor_package(
     package: Path,
     *,
     cross_module: bool = True,
+    parameterize_builtins: bool = False,
     typed: bool = False,
     file_finisher: Optional[Callable[[str, str], str]] = None,
 ) -> Dict[str, Tuple[int, List[str]]]:
     """Refactor the directory ``package`` in place, as the package battery does; per-file results.
 
-    ``cross_module`` is ``--cross-module``. ``typed`` runs with the checker
+    ``cross_module`` is ``--cross-module``; ``parameterize_builtins`` enables
+    the corresponding caller-lookup opt-in. ``typed`` runs with the checker
     the project around ``package`` configures, as ``towel dry`` does by
     default, and skips the calling test where it is not installed; without
     it no checker runs. Modified files are finished with the import sorter
@@ -94,6 +96,7 @@ def refactor_package(
         engine = UnificationRefactorEngine(
             min_lines=3,
             cross_module_helpers=cross_module,
+            parameterize_builtins=parameterize_builtins,
             type_oracle=oracle,
             file_finisher=finished if sorter is not None or file_finisher is not None else None,
         )

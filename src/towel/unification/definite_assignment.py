@@ -341,14 +341,10 @@ def _definite_statement(statement: ast.stmt) -> Definite:
     if isinstance(statement, ast.If):
         return _meet(_definite(statement.body), _definite(statement.orelse))
     if isinstance(statement, (ast.With, ast.AsyncWith)):
-        if any(_suppresses(item.context_expr) for item in statement.items):
-            return frozenset()
-        names = set()
-        for item in statement.items:
-            if item.optional_vars is not None:
-                names |= stored_names(item.optional_vars)
-        # The body may delete a target it was given.
-        return _then(frozenset(names), statement.body)
+        # Any manager may suppress an exception before the body binds a name.
+        # In a multi-manager with, an earlier manager can also suppress a
+        # later __enter__ failure, leaving later `as` targets unbound.
+        return frozenset()
     if isinstance(statement, ast.Try):
         # The else clause runs after the body and may delete what it bound;
         # so may the finally clause, after whichever path came before it.
@@ -374,12 +370,6 @@ def _definite_statement(statement: ast.stmt) -> Definite:
     # Loops may run zero times; a while-else or for-else without break would
     # be definite, but that refinement is not needed for soundness.
     return frozenset()
-
-
-def _suppresses(expression: ast.AST) -> bool:
-    callee = expression.func if isinstance(expression, ast.Call) else expression
-    name = callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", "")
-    return name == "suppress"
 
 
 def _irrefutable(pattern: ast.AST) -> bool:

@@ -4,10 +4,526 @@ All notable changes to Towel are recorded here. This file summarizes releases;
 [docs/RELEASE_LOG.md](docs/RELEASE_LOG.md) keeps the detailed engineering log,
 and [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) records the
 ecosystem evidence behind each claim. The format follows
-[Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
-[Semantic Versioning](https://semver.org/).
+[Keep a Changelog](https://keepachangelog.com/). Versions use mathematical
+mnemonics with PEP 440 ordering; see the
+[version convention](docs/RELEASING.md#version-number-convention).
 
 ## [Unreleased]
+
+- Require the live GitHub default branch to contain the validated release and
+  present its version and documentation before publication. A release-event
+  workflow rechecks that public view. Refresh the default-branch documentation
+  with the completed 1.947 publication and validation results.
+
+## [1.947]
+
+Audit repairs after published 1.946; see the [1.947 overview](docs/RELEASE_1_947.md).
+Published October 26, 2026 from `8a853126f5499eb11dfa04fbe304dc332dc5ef73`.
+The [GitHub release](https://github.com/ericeallen/towel/releases/tag/v1.947)
+records the completed validation, known corpus limitations, performance
+comparison and exact distribution hashes. Earlier dated preparation records
+retain the state of their original candidates.
+
+- Parameter renaming follows Python's class-private binding identity through
+  nested classes, methods and closures, preserving unrelated private references
+  and rejecting destinations that would capture a mangled binding.
+- Helper renaming matches Unicode identifiers by Python's normalized identity
+  and edits their original token spans, including definitions and keyword calls.
+- Functions without a structural partner skip block enumeration. Eligible
+  intervals reuse per-suite prefix facts instead of repeatedly scanning the
+  same statements; pair budgets and ordering are preserved. Singleton blocks
+  no longer inflate the budget warning's block count.
+- Possible `__builtins__` replacement conservatively declines explicit reads
+  that can fall back from globals to the captured mapping, including custom
+  names and currently module-bound names, plus implicit import and class-building
+  lookups. `--parameterize-builtins` does not bypass this rule. Explicit local,
+  parameter and cell reads, compiler-constant `__debug__` and mapping-independent
+  blocks retain their ordinary rules. Scope analysis follows evaluated definition
+  heads and generator outer iterables, with conservative coverage of inlined
+  list/set/dict comprehensions. Wildcard exports and enclosing-scope assignments
+  in callable defaults/annotations are included. Any ordinary attribute store
+  or deletion of `receiver.__builtins__` in the analyzed program makes every
+  module's mapping uncertain, including through unknown receiver aliases and
+  excluded runnable files. Warning-free inputs reuse the
+  source-only guard verdict within an analysis, avoiding repeated lexical scans
+  while preserving native warning replay and parser-limit checks. See the
+  [captured-mapping policy](docs/GENERATED_CODE.md#arguments-and-evaluation).
+- Local refreshes preserve incremental candidate pairing when the project root
+  and builtin-mapping hazard are unchanged. Changing which files a refresh
+  visits no longer triggers a full re-pair; genuine dependency changes and
+  missing historical observations still invalidate conservatively.
+- Generated code uses each modified file's formatter and configuration. Ruff
+  import sorting recognizes standalone, extended and nested configurations
+  through native effective settings and honors disabled/per-file rules.
+  Transient configuration-query failures are reported and retried rather than
+  cached as disabled sorting. File-specific policies share one Black worker per
+  formatter factory and one isort worker per directory import-sorter factory,
+  avoiding a retained process for every selected file. Each request retains
+  its file's settings and exclusions; separate factories remain independent.
+- Rename definition selection is separate from project-wide consumer analysis.
+  Batches needing edits outside the target refuse atomically; unmarked CLI
+  projects require an explicit `--complete-scope` declaration.
+- Ordinary raw-regex brace escapes and comments no longer prevent reuse of
+  warning-free module facts merely because an earlier source fragment resembles
+  a formatted-string prefix. Token checks prove each affected escape belongs to
+  an ordinary raw string or comment; uncertain and warning-capable inputs retain
+  fresh native parsing. This repairs the repeated parsing behind the PrettyTable
+  corpus timeout without changing cache bounds or source-correspondence proofs.
+- On Python 3.12 and later token streams, warning-free raw formatted-string
+  literal segments can reuse parsing facts even when a backslash precedes a
+  replacement field. Admission follows the innermost string and excludes
+  replacement fields and format specifications. Nested nonraw strings and
+  warning-capable syntax retain native diagnostics; Python 3.11 remains
+  conservative for these escapes.
+- The corpus harness distinguishes an expired deadline from a process killed by
+  a signal. A killed refactor remains a hard failure and cannot trigger an
+  untyped retry or adoption of partial output. The harness and `just ecosystem`
+  default to one project worker so consumer tests and checker processes do not compete
+  with another project for the same container memory budget.
+
+## [1.946]
+
+Named for ln 7, approximately 1.945910149. PyPI publication was verified on
+October 19, 2026. The historical preparation record below retains its original
+sources, measurements and incomplete candidate gates. The maintainer had
+requested scoped source-proof reuse, fresh supported-interpreter suites and
+cache-on/off output comparisons; see the dated
+[publication checkpoint](docs/RELEASING.md#1946-publication-checkpoint-october-18-2026).
+Changes since released 1.792 are described together in the
+[1.946 overview](docs/RELEASE_1_946.md).
+
+The completed development audit at `9d57b0d` passed 10,583 tests and 45
+subtests, with 32 skips and 93.478% coverage. Six consumer original-command
+pairs and their 531 generated Python outputs matched the retained references.
+At that preparation checkpoint, the versioned 1.946 source and artifacts still
+needed their own release gates.
+The latest completed versioned cohorts use `a6dc6ed` (1.946) versus published
+`44d7795` (1.792): Voluptuous means were 90.984 → 87.569 seconds (−3.75%),
+and Click means were 47.165 → 58.195 seconds (+23.39%), with two shared-host
+samples per source per workload. Rich has zero actual samples in this new
+campaign; its measurements and fresh full release gates remain pending.
+The [current eight-sample record](tests/release_evidence/1.946-warning-guard/README.md)
+retains original pairs, repeated outputs and closure. Profiling `0b3494c`
+on 2026-10-18 (shared native host, interleaved samples) measured Rich at
++7.6% and attributed it to the fresh source-correspondence proof for `if`
+outputs, which the 2026-10-10 decision keeps uncached. Click's larger
+difference mostly pays for its fifth extraction. The regression ships
+documented; see [where the remaining time goes](docs/RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
+
+On the earlier `9d57b0d` eight-sample shared-host comparison, complete cold CLI
+means were 46.53 → 56.69 seconds for Click (+21.85%) and 99.77 → 177.70
+seconds for Rich (+78.10%) versus released 1.792. These are two samples per
+version per workload, not an isolated-host or general speed claim. See the
+[performance evidence](docs/PERFORMANCE.md) and
+[readiness report](docs/PRODUCTION_READINESS.md).
+
+### Improvements and repairs
+
+- Reuse successful whole-module source-correspondence proofs only for explicitly
+  owned immutable trees during one analysis. Keys retain source and parser-limit
+  identity. Caller trees, warning-capable sources, disabled memoization and
+  materialization keep fresh proofs. Optional AST immutability checking detects
+  changes to a warmed owner. Each analysis releases its proof entries.
+
+- Account for every candidate pair with `--stats` (`dry` and the complete
+  `preview`). Each pair of the run's last whole analysis is counted once:
+  declined, a duplicate of an earlier pair's proposal, dropped for overlapping
+  a kept proposal, or emitted. The run's helper signatures are counted as
+  verified or refused by the type checker. `RunReport` carries the same counts.
+  The flag only reports, so output files are identical with and without it.
+  This completes the user-facing part of the post-1.772 loss statistics.
+
+- Admit ordinary raw-regex brace escapes to the existing typing-fact cache
+  when they precede every possible formatted-string start. Repeated queries
+  reuse immutable module facts; warning-capable formatted strings still take
+  the fresh native parsing path. This repairs a reproduced performance defect
+  without changing warning filters, cache bounds or parser-limit keys.
+
+- Distinguish complete even backslash runs from unmatched odd escapes before
+  formatted-string braces. Paired literal backslashes no longer cause this
+  warning-guard refusal; potentially warning-capable odd escapes keep the
+  native diagnostic path and all existing token checks. Repeated eligible
+  queries reuse the existing immutable facts without new caches or bounds.
+  The seven-file focused battery passed 479 tests with 221 version skips;
+  3,719 external controls per native Python 3.11–3.14 passed. These are scoped
+  correctness/cost controls, not timing or full-release evidence. Fresh final
+  gates remain pending; the earlier numeric measurements retain their sources.
+
+- Share warning-free raw f-string literal analyses on Python 3.12. Distinguish
+  literal text from replacement fields while retaining native warning checks
+  for raw format specifications and nonraw nested strings.
+
+- Limit source-cache keys to native strings/bytes so subclass methods cannot
+  change cache behavior. Include parser limits in typing-form and namespace
+  syntax cache keys, and keep warning-capable parses on the native path.
+
+- Reuse immutable lexical warning classifications while scheduling IF proofs
+  within one owned analysis, including sources larger than the process cache's
+  character limit. Bound retained source storage and keep every ownership
+  check, native diagnostic fallback, and admission proof fresh.
+
+- Snapshot bounded-cache keys during iteration so standard mapping item and
+  value views tolerate reads that promote entries in the LRU order. Keep
+  ordinary lookups, eviction and explicit ownership release unchanged.
+
+- Postpone fresh IF source proofs until binding, shape and unification checks
+  pass within an engine-owned analysis of ordinary original source. Keep
+  both the initial admission and aligned-output proofs before helper construction,
+  with the existing early order for direct and warning-capable calls.
+
+- Release bounded-cache entries and weight bookkeeping on explicit cleanup
+  even while memoization is disabled, so analysis scopes can always drop owners.
+
+- Reuse immutable later-read statement facts within one engine source-analysis
+  scope. Preserve traversal and diagnostic records, calculate lifetime outputs
+  on every call and return fresh sets; keep direct, disabled and mismatched-owner
+  queries lazy and release the bounded function cache at scope exit.
+
+- Consult the bounded lexical eligibility cache before searching repeated
+  warning-free source text; preserve native diagnostics, disabled and oversized
+  bypasses, source storage limits and fork-safe bookkeeping.
+
+- Reuse IF binding and flow facts from private original-source syntax within
+  one bounded analysis context. Keep every accepted current-module comparison,
+  function identity and selected-suite ownership check fresh; preserve native
+  warning behavior and the uncached path when memoization is disabled.
+- Reuse immutable instability and runtime byte-value facts per original source
+  statement during analysis. Release the summaries with that context, recompute
+  direct library calls and keep generated-helper literal checks fresh.
+
+- Reject impossible IF binding transfers from local syntax, binding and flow
+  facts before parsing, comparing or mapping the whole module. Keep graph
+  checks cycle-safe and require fresh exact module identity and ownership
+  for every admitted certificate and aligned-output reproof.
+- Keep captured comprehension targets that share an outer free binding at
+  their original sites. Moving the comprehension can change compiler cell
+  restoration on Python 3.12 and 3.13, altering later reads and exceptions.
+  Preserve ordinary uncaptured and independently bound comprehension cases.
+- Recover fresh local outputs from contiguous blocks inside IF-only suites.
+  Certify the original source, branch location and definite initialization;
+  return every later-read or lifetime-required value in the existing cleanup
+  order. Reprove the aligned outputs without caching the verdict. Keep
+  unsupported ancestry, rebinding, captures and existing ownership guards
+  restrictive, and reject ineligible sites before whole-module validation.
+- Order eligible leading thunk parameters by their certified evaluation sequence
+  before eager inlining. Reorder only contiguous eligible slots within each
+  positional signature segment; preserve other parameters, the positional-only
+  boundary and every caller's immutable-result proof. Pair and cluster
+  reconstruction use the same pass.
+- Preserve narrowing obligations when generated predicates stay deferred;
+  decline helpers whose separate values or thunks lose those proofs before
+  annotation fallback. Keep proven return types when an unannotated caller
+  adds no declared constraint.
+- Keep Optional-aware result thunks eligible. A read of a tested subject does
+  not itself require narrowing; use the checker's rejected operand and original
+  caller correspondence before weakening helper annotations. Cover named
+  arguments, reflected comparisons and Pyright Optional-operand and receiver
+  diagnostics while leaving ambiguous operands unresolved.
+- Preserve declared return and assignment refinements, including fixed tuple
+  components, before helper annotations can widen to `Any`. Require the original
+  caller's matching obligation; a provisional helper signature must not reject
+  valid nullable returns.
+- Match those declared obligations across early returns, repeated branch returns,
+  nested annotated assignments and fixed tuple assignments. Preserve exact
+  getter correspondence and unchanged local aliases before refusing `Any`
+  fallback; unrelated returns do not erase a matching declaration.
+- Keep thunks deferred when their result lifetime is unknown. Eager evaluation
+  requires an immutable result proof from every caller as well as the existing
+  evaluation-order proof; preserve temporary release and exception cleanup.
+- Unify differing constant occurrences without changing equal literals at other
+  positions. Reuse a parameter only when its complete typed column agrees across
+  callers; preserve caller literal pools, syntax pins and the existing budget.
+- Preserve useful shared f-string helpers by passing common exact-string
+  fragments from their original callers; retain formatting effects, literal
+  identities and the complete helper argument budget.
+- Preserve compiler-pooled literal identities: pass complete literal expressions
+  when replacing their parts would rebuild objects, and pass shared non-global
+  literals from their original callers within the existing interface budget.
+  Keep unproved folded floating arithmetic and lexically private single-byte
+  literals at their original sites; retain safe shared helpers.
+- Reuse whole-body ownership certificates and immutable source/compiler facts
+  under exact source, syntax, location and parser-context keys; preserve runtime
+  guards and independently reprove each certificate during materialization.
+- Handle malformed non-table Poetry configuration during cross-module import
+  analysis without losing valid PEP 621 dependency restrictions.
+- Certify readonly lookup suppliers in the independent scope oracle without
+  exempting generated names or unrelated caller bindings; retain the exact
+  grammar/binding regressions and adversarial negative controls.
+- Review the proposal backlog against the released implementation and separate
+  remaining research from completed, superseded and retired ideas.
+- Clarify completed 1.792 release validation separately from its historical
+  preparation records.
+
+## [1.792]
+
+Named for ln 6, approximately 1.791759469. Changes since 1.772.
+The measurements below retain their original development-source identities;
+release verification binds the final versioned source to its own evidence.
+
+- Explain why independently mutable class aliases keep lookup suppliers, and
+  why an unread ownership holder preserves original argument lifetimes.
+  Distinguish shared spellings from shared bindings and document equal
+  higher-order literal promotion as an explicit API opt-in.
+- Decline tiny straight-line helpers whose complete interface and call wrappers
+  outweigh their shared work under the documented initial calibration.
+- Place a helper according to its completed runtime receiver/class-frame needs
+  and account for the actual receiver and lifetime holder in its budget.
+- Reuse immutable block free-variable facts only within one unification, copy
+  mutable results for callers and clear the facts on reset or release.
+- Remove the inner rendered-variant checker-refusal memo. Every variant submitted
+  to project checking is checked again; configuration and known-error matches
+  cannot certify changed, absent or external stub providers. The outer exact
+  completed-proposal rehearing cache remains separately qualified by its
+  candidate, revision and recognized context requirements.
+- Refresh CLI defaults, scoped opt-out boundaries and release status. The latest
+  development audit follow-ups passed 9,697 native tests and the 93% coverage gate.
+  Matrix, corpus and final release gates were pending at that checkpoint; earlier results retain their
+  original identities. The block memo halves repeated work in its bounded
+  control, with no measured complete-command wall benefit.
+- Add `# towel: no-extract` immediately after a function signature's final
+  colon to protect that definition and its nested bodies on every pass.
+  Unmarked code remains eligible. This protects the definition, not its
+  absolute line position, module namespace or unmarked callers and callees;
+  see [the scoped opt-out](docs/CLI_GUIDE.md#protect-a-function).
+- The soundness requirement is to preserve the behavior of programs that do
+  not use reflection or self-instrumentation, including through their callees.
+  Violations within that scope must be fixed or the transformation refused.
+  Reflection and self-instrumentation are outside the preservation guarantee,
+  including source/AST/bytecode/frame/namespace observations and body or class
+  transformations applied by decorators, ordinary calls or hooks. Towel no
+  longer scans or refuses code to protect those behaviors. Ordinary
+  nonreflective semantics remain covered. The October 2 decision supersedes
+  the recognized-instrumentation and source-reader protections recorded in
+  historical development and release records; their validation facts retain
+  their original source and policy scope.
+- Preview now runs the same checked, formatted fixed-point pipeline as dry in
+  private output and shows its final diff and helper inventory. Use explicit
+  `--quick` for a partial structural listing. Input files remain unchanged.
+- Reuse equivalent helpers introduced earlier in the current run where the
+  call and host are proved compatible, avoiding redundant forwarding chains
+  while preserving existing functions' independent bindings.
+- Generated helper signatures omit free names used only inside caller-side
+  thunks; differing attribute lookups no longer spend unused child parameters.
+
+
+### Fixed
+
+- Retain block-bound results of ordinary factories and other calls across
+  helper return, preserving observable resource and finalizer lifetimes,
+  including aliases and the relative cleanup order of multiple results.
+- Preserve caller ownership of opaque values returned by properties,
+  subscription, operators, iterators and context-manager enter protocols.
+  Count nested bindings at their actual source positions and refuse unsafe
+  exceptional ownership transfers to an outer handler or context manager.
+- Preserve cleanup relative to caller-held values on normal and exceptional
+  exits. Refuse unsafe partial frame splits; certify whole-body argument
+  transfer on CPython only when original bindings and cleanup order are proved.
+- Spell lifetime-only caller bindings with hygienic underscore names when no
+  outside code reads, rebinds or deletes them, preserving configured lint checks.
+- Discover Ruff without importing project-owned modules; run Black and isort in
+  persistent isolated workers with bounded replies and parent-exit cleanup.
+- Reject malformed Pyright diagnostics before changing stored checker errors;
+  abandon the warm session and require the normal cold-check fallback.
+- Quote executable recovery remedies, including paths with spaces and shell
+  metacharacters, and use portable permission-command option ordering.
+- Preserve known tuple-element types when another retained result is `Any`.
+- Treat all context managers as potentially suppressing exceptions, keeping
+  conditional reads of possibly unbound locals at their original sites.
+- Report optional naming-sidecar write failures as warnings after successful
+  source publication, with a successful command exit and preserved collisions.
+
+### Changed
+
+- Generated annotation imports use the immutable guard `if 0 > 1:`. They stay
+  inert when ordinary code changes `typing.TYPE_CHECKING`; existing guards
+  retain their behavior. Both mypy and Pyright still validate the imported types.
+- Cross-module bare builtin reads now decline by default, except `__debug__`.
+  `--parameterize-builtins` preserves caller-side lookup timing with thunks;
+  their inferred annotations retain the callable result type. Other callable
+  module bindings also retain their original lookup timing.
+
+- The README is a short introduction, with a documentation index and separate
+  guides for CLI use, typing, generated code, naming, cross-module extraction,
+  resources and performance. Long references have contents lists. Navigation
+  regressions check guide discovery and local links; moved measurement claims
+  retain their evidence checks.
+- The supported local release command requires completed, reviewed evidence
+  for the exact source and prebuilt distributions. Missing phases, interrupted
+  baselines, changed failure identities and stale artifacts refuse verification.
+  Validation-only artifacts remain explicitly nonpublishable.
+- Completed corrected-source validation has immutable evidence and documentary
+  regressions for actual platform coverage, resources, elapsed time and scoped
+  exceptions; see [the report](docs/proposals/next-validation-final.md).
+
+- Extraction discovery now includes match-case bodies and except-star
+  handlers/finally. List-valued AST fields can unify differing expression
+  values while retaining restrictions on bindings and control flow.
+- Scope guards examine the moving block: unrelated nonlocal declarations
+  and private names elsewhere in a method no longer hide a safe extraction.
+  Names used only in local-variable annotations no longer become runtime
+  helper arguments or prevent cross-module extraction.
+- Release documentation has offline regression checks against retained 1.772
+  evidence and current CI configuration. They protect platform coverage,
+  test and corpus counts, typed fallbacks, measurement units and resource
+  context. The Windows support implication and the concurrency attributed
+  to the Sphinx-only timing are corrected.
+- Class-private extractions no longer require approved base classes or
+  class machinery. Hygienic private names protect against accidental
+  overrides; namespace scans and lookup hooks observing the new helper fall
+  under the documented reflection limitation. The same-class, receiver,
+  `Protocol` and import-time checks remain. This admits
+  valid extractions previously declined solely for a metaclass, class hook,
+  subscripted project base or unlisted library base.
+
+### Fixed
+
+- Shared helpers carrying comments are checked against their adapted helper
+  tree, so safely quoted cross-module annotations no longer cause a false
+  rendering refusal. AST and tool-directive preservation checks remain intact.
+- Generated calls and helpers are formatted at their destination indentation,
+  so inserting them into methods does not exceed the configured line width.
+- Reachability and import-type probes follow each checker's configured file
+  scope before building probes. Excluded consumer tests no longer make a clean
+  project check fail through imports outside that scope.
+- Corpus log-formatting controls now apply only to Towel. Consumer tests can
+  enable color themselves without a harness override changing their behavior.
+- Corpus pytest commands retain the cache fixture and clear cached state before
+  each test phase and retry. This avoids missing-fixture errors and prevents
+  baseline cache values from hiding changes in the transformed program.
+- Corpus setup considers a project's versioned typing requirements before
+  defaulting to Towel's checker requirements. Existing project, lock-file and
+  hook selections retain their precedence; alternative typing environments
+  remain separate. Cached environments record and verify the selected context
+  so a stale checker cannot silently survive a configuration change. Literal CI
+  workflow pins and explicitly selected uv groups containing a checker are
+  included among the declared contexts.
+- Typed import probes distinguish a shadowing parameter from an imported module
+  and query a companion submodule through its original binding. This avoids
+  false refusals seen in Cachetools and Werkzeug. Unrelated local bindings no
+  longer disable that evidence, and an alias replaced within one module import
+  block is not queried for attributes read from its replacement afterward.
+  Attribute assignments and deletions no longer ask for a previous value that
+  the program never reads; augmented assignments and intermediate reads still
+  receive type questions. An immutable read inventory is shared across imports.
+  A write to an unrelated attribute no longer disables evidence for an imported
+  submodule; writes overlapping its path and module rebinding remain restrictive.
+- Reachability probes preserve the indentation of one-line `match` case and
+  exception handlers, including cases with multiline patterns or guards.
+  Inline `except` and `except*` bodies use their handler's enclosing indentation.
+  Semicolon-separated statements receive separate probes so an early exit cannot
+  make an unreachable sibling appear checked; probes also stay outside multiline
+  strings.
+- Typed runs recognize imported `Self`, including aliases
+  and qualified spellings such as `typing.Self`. Pyright's `Unknown` answer
+  outside a class no longer makes those valid imports appear untyped; the
+  checker must identify the same import as `Self` in a class context.
+- A known import inside an unchecked mypy function no longer prevents typed
+  extraction elsewhere in its file. Towel distinguishes an unchecked expression
+  from an unresolved module without changing the project's checker settings.
+- Cross-module helpers exist before ordinary imports can reenter their host.
+  Package initializers' later imports are no longer assumed complete, reused
+  functions retain their definition order, and wildcard imports cannot
+  overwrite generated helper bindings. Relative `__future__` imports retain
+  ordinary runtime annotation semantics.
+- The development lock now uses virtualenv 21.14.1. Fresh dependency auditing
+  found four advisories against the previous 21.7.9 pin; the update also includes
+  the maintainer's later activation-script fixes. Runtime dependencies remain
+  unchanged.
+- Generated compound annotations remain wholly quoted, including tuple returns
+  assembled late in signature construction. Precise checker types no longer add
+  attribute lookups, subscriptions or union operations while a module imports.
+- Star-import resolution treats the imported target as a module. Cyclic
+  reexports no longer invent ever-longer attribute paths in Protocol analysis.
+
+### Performance
+
+The October 5 comparison of the repaired runtime at `00b4f4f` averaged
+43.43 seconds versus 38.80 seconds for published 1.772 on the complete typed,
+formatted Packaging command: **11.9% slower**. Four fresh-process samples per
+arm produced consistent results in two balanced blocks. The candidate applied
+20 refactorings versus 18; these are full requested paths with different
+transformations, not identical-work timings. No whole-corpus speedup is
+established. See the [final comparison](docs/PERFORMANCE.md#october-5-repaired-candidate-comparison).
+The earlier improvements below belong to their development checkpoints and
+are not final-release performance claims.
+
+The October 6 audit repairs supersede that runtime. Three separate paired
+complete CLI comparisons measured immutable ownership memoization, witnessed
+fixed-Any retry pruning, and exact unchanged-context refusal retention. Each
+produced byte-identical output; none established a complete-command speedup.
+Those timings predate removal of the inner rendered-variant refusal memo and
+do not measure that removal. See [the optimization measurements](docs/PERFORMANCE.md#october-6-optimization-experiments).
+
+- Cache pure ownership facts weakly by immutable AST identity, returning fresh
+  mutable result sets to callers.
+- Skip parameter-only annotation erasure only when a plugin-free checker
+  diagnostic proves the unchanged helper's fixed-Any result still fails.
+- Retain definitive completed type refusals only for the exact candidate,
+  current whole-project revision and complete built-in checker/rendering
+  context; retry unknown answers and invalidate after source changes.
+
+- Keep sharing immutable analysis for warning-free source containing comments,
+  raw strings and valid numeric literals. A bounded lexical cache distinguishes
+  those cases from syntax that needs native parser diagnostics. Its source-byte
+  budget retains many small modules across repeated project scans. Import
+  discovery also avoids collecting scope bindings that its literal guards cannot use.
+- Reuse definite subtype verdicts within one helper's annotation inference
+  and immutable narrowing facts across overlapping source windows. Complete
+  typed, formatted Packaging runs at runtime commit `000d751` on October 2
+  averaged 36.24 seconds versus 41.59 seconds
+  for published 1.772, about 13% faster, while applying one more refactoring.
+  Generated Python is unchanged from the preceding candidate. See the
+  [measurement conditions and samples](docs/PERFORMANCE.md#october-2-complete-cli-comparison).
+
+An earlier comparison at development commit `3af8c4b` against the actual
+published 1.772 wheel found no meaningful Packaging whole-command speedup
+(39.98 versus 39.77 seconds; the
+candidate performed one more extraction). Sphinx's first Pyright reveal fell
+from 931.07 to 8.63 seconds, about 108 times faster, with identical requests
+and answers. This measures the reveal phase only; it establishes no full-run
+or whole-corpus speedup. See the [measurements and limitations](docs/proposals/published-1772-comparison.md).
+
+The typed timings below compare intermediate commits `35035a7` and `1b97196`;
+later changes are outside these measurements.
+
+- Typed signatures preserve argument/result correlations before validation
+  and retain mypy's return-context treatment of `NotImplemented`. A known
+  erased-None-predicate construction stays at its caller instead of falling
+  back to an Any parameter. In a controlled packaging comparison, rejected
+  signatures fell from eight to zero and mean elapsed time fell about 16%;
+  the run intentionally applied 18 extractions instead of 19.
+- Pyright reveal probes share one checker exchange per project. On a frozen
+  Sphinx startup workload, 218 exchanges became one, with identical requests
+  and reported types; initial reveal time fell from 980.7 to 8.65 seconds.
+  This is a phase measurement, not a full-run timing. See the
+  [comparison details](docs/proposals/next-release.md#typed-performance-comparisons).
+- An earlier development snapshot indexed immutable module/class definitions
+  once per module tree for instrumentation resolution. A packaging scan made
+  558 identity queries instead of 36,741, retaining the exact same application
+  index. The index was released with its AST and did not cache
+  project-dependent decisions. That analyzer
+  was removed under the October 2 contract; this measurement describes the
+  earlier implementation only.
+- Non-None assertions and guarded attribute initialization whose refinements
+  are needed by remaining caller operations stay at the call site during block discovery.
+  Filtering before maximal-block pairing keeps smaller valid extractions
+  available and avoids signature checks for the recognized invalid shapes.
+  Strict-mypy regressions cover both refusal and successful extraction inside
+  a retained guard and assignment.
+- Repeated method-placement questions share a method's receiver analysis.
+  The receiver facts live only as long as their AST. On two analysis passes
+  over packaging 26.3, receiver walks fell from 17,405 to 245. The follow-up
+  above removes the repeated class-machinery analysis altogether.
+- Function-scope `global` and `nonlocal` declarations are computed once per
+  immutable function tree. Two analysis passes over the same packaging
+  fixture needed 226 walks instead of 2,666 with this memo alone; all 23
+  proposals rendered byte-identically and compiled. The combined policy
+  change and memo also preserved those outputs. See the
+  [measurement and regression checks](docs/proposals/performance-roadmap.md#method-placement-after-1772).
+- Resolving a receiver annotation now shares the module's binding scan for
+  that name. An eight-method `Self` fixture makes 336 queries but scans once,
+  producing the same proposal. Cached statement tuples preserve order and
+  are released with their module tree.
 
 ## [1.772] - 2026-09-26
 
@@ -21,14 +537,19 @@ asking the checkers questions whose answers were already known. On
 September 21 it reached a fixed point in 46 minutes, applying 380 refactorings
 across 105 files, after which Sphinx's own test suite reported exactly what it
 reported before: 2385 passed, 34 skipped, and the same six failures that
-checkout already had. The audit rounds that followed made Towel decline more;
-the release corpus, typed with `--cross-module` on one worker in the release corpus's Docker container, a Linux VM on the same M5 Max given all 18 cores and 8 GB of memory, running four projects at a time,
-took 94 minutes over Sphinx and changed 55 files, its suite again unchanged.
+checkout already had. The audit rounds that followed made Towel decline more.
+The Sphinx-only rerun at `29454ab` took 5,660 s (about 94 minutes) and changed
+55 files. It ran alone in a Docker Linux VM with 18 cores and 8 GB of memory,
+using Python 3.12, `TOWEL_WORKERS=1`, `--cross-module`, and default typing
+(mypy and Pyright both strict). These are measured conditions, not minimum
+resource requirements or time guarantees. Its suite was again unchanged.
 
 Every figure in this file was measured on an Apple M5 Max with 18 cores and
 128 GiB. This entry's were taken on macOS 26.5.1 with Python 3.12.13, the
 machine otherwise idle, except where a figure says otherwise: the release
-corpus ran in the release corpus's Docker container, a Linux VM on the same M5 Max given all 18 cores and 8 GB of memory, running four projects at a time. The Sphinx figures are Sphinx 9.1.1 at `e44a40e`, 243 modules with
+full corpus ran in a Docker Linux VM on the same M5 Max given all 18 cores
+and 8 GB of memory, running four projects at a time; the Sphinx-only rerun
+ran alone. The Sphinx figures are Sphinx 9.1.1 at `e44a40e`, 243 modules with
 mypy and Pyright both strict, checked by that project's own venv: **mypy
 1.19.1 and pyright 1.1.407**. The mypy behaviour described below belongs to
 that version; Towel's own checks run against a newer mypy and do not show it.
@@ -2070,7 +2591,10 @@ affected project's own tests.
 - The PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and
   are not a recommended installation target.
 
-[Unreleased]: https://github.com/ericeallen/towel/compare/v1.772...HEAD
+[Unreleased]: https://github.com/ericeallen/towel/compare/v1.947...HEAD
+[1.947]: https://github.com/ericeallen/towel/compare/v1.946...v1.947
+[1.946]: https://github.com/ericeallen/towel/compare/v1.792...v1.946
+[1.792]: https://github.com/ericeallen/towel/compare/v1.772...v1.792
 [1.772]: https://github.com/ericeallen/towel/compare/v1.732.post1...v1.772
 [1.732.post1]: https://github.com/ericeallen/towel/compare/v1.732...v1.732.post1
 [1.732]: https://github.com/ericeallen/towel/compare/v1.618...v1.732

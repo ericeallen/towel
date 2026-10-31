@@ -14,12 +14,9 @@
 
 """Which classes can take a helper into their body.
 
-A helper placed in a class is one more member of it, and that is invisible
-only when the class statement's namespace is what the class ends up with
-and nothing treats its members as a contract. The hostile battery runs each
-refused shape and compares the program's output (``p10`` to ``p18`` in
-``tests/hostile_cases``); these tests pin down the rule that decides, and
-that a class the rule accepts still gets its helper as a method.
+A helper needs a renderable class body and must not add a requirement to a
+Protocol. Class decorators do not impose an additional restriction: inspecting
+or rebuilding a class's namespace is outside the equivalence contract.
 """
 
 from __future__ import annotations
@@ -103,7 +100,7 @@ def test_an_implementation_of_a_protocol_takes_one() -> None:
         "import enum\n@enum.unique",
     ],
 )
-def test_decorators_that_keep_the_namespace_allow_a_helper(decorator: str) -> None:
+def test_standard_class_decorators_allow_a_helper(decorator: str) -> None:
     assert _refusal(decorator + "\nclass C:\n    k = 0\n", "C") is None
 
 
@@ -111,7 +108,7 @@ def test_decorators_that_keep_the_namespace_allow_a_helper(decorator: str) -> No
     "decorator",
     [
         "def register(cls):\n    return cls\n@register",
-        # Named like a known decorator, but not the one the allowlist means.
+        # Unknown decorators need no body-preservation allowlist.
         "from mylib import dataclass\n@dataclass",
         "def dataclass(cls):\n    return cls\n@dataclass",
         "try:\n    from dataclasses import dataclass\nexcept ImportError:\n"
@@ -119,8 +116,8 @@ def test_decorators_that_keep_the_namespace_allow_a_helper(decorator: str) -> No
         "import dataclasses\n@dataclasses.dataclass\n@(lambda cls: cls)",
     ],
 )
-def test_any_other_decorator_refuses_a_helper(decorator: str) -> None:
-    assert _refusal(decorator + "\nclass C:\n    k = 0\n", "C") == "decorator"
+def test_unknown_class_decorators_allow_a_helper(decorator: str) -> None:
+    assert _refusal(decorator + "\nclass C:\n    k = 0\n", "C") is None
 
 
 def test_classes_the_rule_accepts_keep_their_helpers_as_methods(tmp_path: Path) -> None:

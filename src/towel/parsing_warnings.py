@@ -1,0 +1,296 @@
+# Copyright 2025-2026 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Pure lexical eligibility for sharing CPython 3.11--3.14 AST parses.
+
+Uncertain syntax uses the native parser. This module neither decodes source nor
+changes warning filters: its only retained result is an immutable boolean.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import io
+import os
+import re
+import sys
+import threading
+import tokenize
+
+from .unification.bounded_cache import BoundedCache, memoizing
+
+_POSSIBLE_WARNING = re.compile(r"\\(?:[^\\'\"abfnrtv0-7x\r\n]|[4-7][0-7]{2})|[0-9]\.?[a-zA-Z_]")
+# The C tokenizer itself warns for these f/t-string escapes, including its
+# special handling of a carriage return. Ordinary occurrences before every
+# possible formatted prefix are handled by the token escape checks below;
+# later occurrences need a warning-free shadow to establish token ownership.
+# Only a complete odd run leaves a brace escaped; paired backslashes are literal.
+_TOKENIZER_WARNING = re.compile(r"(?<!\\)(?:\\\\)*\\\r?[{}]")
+# Identifiers consume ASCII letters/underscores; numeric adjacency stays uncertain.
+_POSSIBLE_FORMATTED_START = re.compile(r"(?i)(?<![A-Za-z_])(?:[ft]r?|r[ft])['\"]")
+_STRING_START = re.compile("(?i)^([rubft]*)(\"\"\"|'''|\"|')")
+# Python 3.11 emits one token for a whole f-string. This intentionally also
+# matches literal text and identifiers; it cannot miss a numeric suffix at a
+# replacement-expression boundary, including hexadecimal and imaginary ones.
+_LEGACY_NUMERIC_KEYWORD = re.compile(r"[0-9a-fA-FjJ]\.?(?:and|else|for|if|in|is|not|or)")
+_MAX_SOURCE_CHARACTERS = 128 * 1024
+_CACHE_ENTRIES = 2048
+_CACHE_SOURCE_BYTES = 16 * 1024 * 1024
+
+
+def _safe_escapes(text: str, *, is_bytes: bool = False) -> bool:
+    position = 0
+    while (position := text.find("\\", position)) >= 0:
+        position += 1
+        if position == len(text):
+            return False
+        escape = text[position]
+        position += 1
+        if escape in "\\'\"abfnrtv\r\n":
+            continue
+        if escape in "01234567":
+            start = position - 1
+            while position < min(start + 3, len(text)) and text[position] in "01234567":
+                position += 1
+            if position - start == 3 and escape in "4567":
+                return False
+            continue
+        width = {"x": 2, "u": 4, "U": 8}.get(escape)
+        if width is not None and (escape == "x" or not is_bytes):
+            digits = text[position : position + width]
+            if len(digits) != width or any(
+                digit not in "0123456789abcdefABCDEF" for digit in digits
+            ):
+                return False
+            position += width
+            continue
+        if escape == "N" and not is_bytes and text[position : position + 1] == "{":
+            end = text.find("}", position + 1)
+            if end <= position + 1:
+                return False
+            # Unknown Unicode names fail parsing; resolving names is not needed
+            # to prove that this escape cannot emit a warning.
+            position = end + 1
+            continue
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class _FormattedString:
+    """One string's prefix and OP-brace nesting within its replacement fields."""
+
+    raw: bool
+    curly_depth: int = 0
+
+
+def _ordinary_raw_braces(source: str) -> str | None:
+    """A warning-free tokenizer input, only when masked escapes are raw or comments.
+
+    CPython's tokenizer may warn before yielding an f-string token. Replace
+    the last backslash before each suspect brace with a space, then require
+    every replacement to belong to an ordinary raw string, comment, or raw
+    formatted literal outside its replacement fields. In those tokens the
+    replacement preserves boundaries and diagnostics. The original source
+    remains both the parse input and the cache key.
+    """
+    if "\r" in source:
+        return None
+    positions = iter(match.end() - 2 for match in _TOKENIZER_WARNING.finditer(source))
+    position = next(positions, None)
+    shadow = _TOKENIZER_WARNING.sub(lambda match: match[0][:-2] + " " + match[0][-1], source)
+    offsets = [0, *(index + 1 for index, char in enumerate(source) if char == "\n"), len(source)]
+    formatted: list[_FormattedString] = []
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(shadow).readline):
+            kind = tokenize.tok_name[token.type]
+            if kind in {"FSTRING_START", "TSTRING_START"}:
+                prefix = _STRING_START.match(token.string)
+                if prefix is None:
+                    return None
+                formatted.append(_FormattedString("r" in prefix[1].lower()))
+            elif kind in {"FSTRING_MIDDLE", "TSTRING_MIDDLE"}:
+                if not formatted:
+                    return None
+            elif kind in {"FSTRING_END", "TSTRING_END"}:
+                if not formatted or formatted[-1].curly_depth != 0:
+                    return None
+                formatted.pop()
+            elif token.type == tokenize.OP and formatted and token.string in {"{", "}"}:
+                frame = formatted[-1]
+                depth = frame.curly_depth + (1 if token.string == "{" else -1)
+                if depth < 0:
+                    return None
+                formatted[-1] = _FormattedString(frame.raw, depth)
+            elif token.type == tokenize.ERRORTOKEN:
+                return None
+            start = offsets[token.start[0] - 1] + token.start[1]
+            end = offsets[token.end[0] - 1] + token.end[1]
+            prefix = _STRING_START.match(token.string) if token.type == tokenize.STRING else None
+            ordinary_raw = prefix is not None and prefix[1].lower() in {"r", "br", "rb"}
+            # Only the innermost literal owns this segment. In particular,
+            # raw outer strings cannot authorize nested nonraw strings or
+            # format specifications (which Python 3.12 still decodes).
+            raw_literal = (
+                kind in {"FSTRING_MIDDLE", "TSTRING_MIDDLE"}
+                and bool(formatted)
+                and formatted[-1].raw
+                and formatted[-1].curly_depth == 0
+            )
+            while position is not None and position < end:
+                if position < start or not (
+                    ordinary_raw or raw_literal or token.type == tokenize.COMMENT
+                ):
+                    return None
+                position = next(positions, None)
+    except (SyntaxError, UnicodeError, tokenize.TokenError, RecursionError):
+        return None
+    return shadow if position is None and not formatted else None
+
+
+def _tokens_cannot_warn(source: str) -> bool:
+    if _TOKENIZER_WARNING.search(source):
+        first = _POSSIBLE_FORMATTED_START.search(source)
+        if first is not None and _TOKENIZER_WARNING.search(source, first.start()):
+            shadow = _ordinary_raw_braces(source)
+            if shadow is None:
+                return False
+            source = shadow
+    formatted: list[_FormattedString] = []
+    previous: tokenize.TokenInfo | None = None
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            kind = tokenize.tok_name[token.type]
+            if (
+                previous is not None
+                and previous.type == tokenize.NUMBER
+                and token.type == tokenize.NAME
+                and previous.end == token.start
+            ):
+                return False
+            if kind in {"FSTRING_START", "TSTRING_START"}:
+                start = _STRING_START.match(token.string)
+                if start is None:
+                    return False
+                formatted.append(_FormattedString("r" in start[1].lower()))
+            elif kind in {"FSTRING_MIDDLE", "TSTRING_MIDDLE"}:
+                # CPython 3.12 decodes even raw f-string format specifications.
+                # Only OP braces enter fields: braces within literal text,
+                # quoted strings and comments leave this frame unchanged.
+                if not formatted:
+                    return False
+                frame = formatted[-1]
+                raw = frame.raw and (sys.version_info[:2] != (3, 12) or frame.curly_depth == 0)
+                if not raw and not _safe_escapes(token.string):
+                    return False
+            elif kind in {"FSTRING_END", "TSTRING_END"}:
+                if not formatted or formatted[-1].curly_depth != 0:
+                    return False
+                formatted.pop()
+            elif token.type == tokenize.OP and formatted and token.string in {"{", "}"}:
+                frame = formatted[-1]
+                depth = frame.curly_depth + (1 if token.string == "{" else -1)
+                if depth < 0:
+                    return False
+                formatted[-1] = _FormattedString(frame.raw, depth)
+            elif token.type == tokenize.STRING:
+                start = _STRING_START.match(token.string)
+                if start is None:
+                    return False
+                prefix = start[1].lower()
+                body = token.string[start.end() : -len(start[2])]
+                if "f" in prefix and _LEGACY_NUMERIC_KEYWORD.search(body):
+                    return False
+                if "r" not in prefix and not _safe_escapes(body, is_bytes="b" in prefix):
+                    return False
+            elif token.type == tokenize.ERRORTOKEN:
+                return False
+            previous = token
+    except (SyntaxError, UnicodeError, tokenize.TokenError, RecursionError):
+        return False
+    return not formatted
+
+
+@dataclass(frozen=True)
+class _Eligibility:
+    cannot_warn: bool
+    source_bytes: int
+
+
+class _LexicalCache:
+    """Immutable answers with bounded source storage and synchronized bookkeeping."""
+
+    def __init__(
+        self,
+        *,
+        max_entries: int = _CACHE_ENTRIES,
+        max_source_bytes: int = _CACHE_SOURCE_BYTES,
+    ) -> None:
+        self.pid = os.getpid()
+        self.lock = threading.Lock()
+        self._max_source_bytes = max_source_bytes
+        self.entries: BoundedCache[str, _Eligibility] = BoundedCache(
+            max_entries,
+            weight=lambda answer: answer.source_bytes,
+            weight_limit=max_source_bytes,
+        )
+
+    def cannot_warn(self, source: str) -> bool:
+        with self.lock:
+            known = self.entries.get(source)
+        if known is not None:
+            return known.cannot_warn
+        # Tokenization is pure and can be repeated by simultaneous misses;
+        # only shared table/weight bookkeeping needs serialization.
+        # CPython may later cache a separate UTF-8 representation when the
+        # native parser reads a non-ASCII string. Reserve its maximum size
+        # now, including the terminator; ASCII shares its existing buffer.
+        source_bytes = sys.getsizeof(source) + (0 if source.isascii() else 4 * len(source) + 1)
+        answer = _Eligibility(
+            _POSSIBLE_WARNING.search(source) is None or _tokens_cannot_warn(source), source_bytes
+        )
+        if answer.source_bytes <= self._max_source_bytes:
+            with self.lock:
+                self.entries.put(source, answer)
+        return answer.cannot_warn
+
+
+_CACHE = _LexicalCache()
+
+
+def _cached_tokens_cannot_warn(source: str) -> bool:
+    global _CACHE
+    cache = _CACHE
+    if cache.pid != os.getpid():
+        # A fork may inherit a lock held by a different parent thread. Start
+        # fresh before acquiring it, without installing process-wide hooks.
+        cache = _CACHE = _LexicalCache()
+    return cache.cannot_warn(source)
+
+
+def parsing_cannot_warn(source: str) -> bool:
+    """Prove lexical warning freedom, retaining at most 16 MiB of source strings.
+
+    Only the known CPython versions may call this predicate. Eligibility is
+    independent of parser limits and warning policy. Counted string storage
+    (plus a conservative UTF-8 reserve for non-ASCII text), rather than a
+    worst-case size per entry, lets an ordinary source corpus remain cached.
+    Entry and character caps also bound bookkeeping and each
+    admitted source; larger sources are classified without retention. No AST
+    is held here. The bounded cache is process-local and resets after fork.
+    """
+    # Subclasses can override hashing/size operations; only native strings are pure keys.
+    if type(source) is not str or not memoizing() or len(source) > _MAX_SOURCE_CHARACTERS:
+        return _POSSIBLE_WARNING.search(source) is None or _tokens_cannot_warn(source)
+    return _cached_tokens_cannot_warn(source)

@@ -3,13 +3,22 @@ Validation utilities.
 """
 
 from api import checkout
-from api.checkout import __extracted_func_1
 
 
 def validate_transaction_amount(amount, currency):
     """Validate transaction amount."""
     # Validation logic (DUPLICATE across multiple levels!)
-    return __extracted_func_1(amount, currency)
+    if amount <= 0:
+        return False
+    if not currency:
+        return False
+    if len(currency) != 3:
+        return False
+    if currency not in ["USD", "EUR", "GBP"]:
+        return False
+    if amount > 1000000:
+        return False
+    return True
 
 
 def validate_transaction(transaction):

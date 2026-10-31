@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-from typing import Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from .statement_facts import statement_facts
 
@@ -52,15 +52,111 @@ class BlockSignature:
     call_count: int
 
 
-def extract_block_signature(block: Sequence[ast.stmt]) -> BlockSignature:
+@dataclass(frozen=True)
+class _SignaturePrefixes:
+    statement_types: Tuple[str, ...]
+    with_counts: Tuple[int, ...]
+    try_counts: Tuple[int, ...]
+    name_load_counts: Tuple[int, ...]
+    name_store_counts: Tuple[int, ...]
+    call_counts: Tuple[int, ...]
+
+    @classmethod
+    def of(cls, body: Sequence[ast.stmt]) -> "_SignaturePrefixes":
+        columns: List[List[int]] = [[0] for _ in range(5)]
+        for statement in body:
+            facts = statement_facts(statement)
+            for column, value in zip(
+                columns,
+                (
+                    int(facts.has_with),
+                    int(facts.has_try),
+                    facts.name_load_count,
+                    facts.name_store_count,
+                    facts.call_count,
+                ),
+            ):
+                column.append(column[-1] + value)
+        return cls(
+            tuple(type(statement).__name__ for statement in body), *(tuple(c) for c in columns)
+        )
+
+    def signature(self, start: int, stop: int) -> BlockSignature:
+        return BlockSignature(
+            stmt_count=stop - start,
+            stmt_seq=self.statement_types[start:stop],
+            has_with=self.with_counts[stop] != self.with_counts[start],
+            has_try=self.try_counts[stop] != self.try_counts[start],
+            name_load_count=self.name_load_counts[stop] - self.name_load_counts[start],
+            name_store_count=self.name_store_counts[stop] - self.name_store_counts[start],
+            call_count=self.call_counts[stop] - self.call_counts[start],
+        )
+
+
+class BlockSignatureIndex:
+    """Read-only prefix facts for contiguous suites in one immutable source function.
+
+    The index lives only for one enumeration. Nested definitions are separate
+    functions and are not indexed. Statement lists and the exact type sequence
+    remain owned by the source tree and each returned signature respectively.
+    """
+
+    def __init__(self, function: ast.AST) -> None:
+        positions: Dict[ast.stmt, Tuple[_SignaturePrefixes, int]] = {}
+        pending = [function]
+        while pending:
+            node = pending.pop()
+            if node is not function and isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                continue
+            for _, value in ast.iter_fields(node):
+                if isinstance(value, list) and value and isinstance(value[0], ast.stmt):
+                    body = [statement for statement in value if isinstance(statement, ast.stmt)]
+                    prefixes = _SignaturePrefixes.of(body)
+                    positions.update(
+                        (statement, (prefixes, index)) for index, statement in enumerate(body)
+                    )
+            pending.extend(ast.iter_child_nodes(node))
+        self._positions = positions
+
+    def signature(self, block: Sequence[ast.stmt]) -> Optional[BlockSignature]:
+        """Summarize an original contiguous source-suite slice, in its original order.
+
+        The caller supplies an actual slice of the indexed source. Endpoint
+        checks locate that interval and allow an unindexed suite to fall back;
+        they do not validate arbitrary permutations of its middle statements.
+        """
+        if not block:
+            return None
+        first = self._positions.get(block[0])
+        last = self._positions.get(block[-1])
+        if first is None or last is None or first[0] is not last[0]:
+            return None
+        prefixes, start = first
+        if last[1] != start + len(block) - 1:
+            return None
+        return prefixes.signature(start, start + len(block))
+
+
+def extract_block_signature(
+    block: Sequence[ast.stmt], *, index: Optional[BlockSignatureIndex] = None
+) -> BlockSignature:
     """The structural summary two blocks must share before unification is attempted.
 
     Nested definitions and lambdas are not looked into: their bodies are
     other scopes, and the unifier treats them by structure. Each statement's
-    share is memoized (``statement_facts``) and folded, so enumerating every
-    contiguous sub-block of a body costs one walk of the body, not one per
-    block.
+    share is memoized (``statement_facts``). An optional source-suite index
+    answers the numeric facts from prefix sums instead of repeatedly folding
+    overlapping intervals. With an index, ``block`` must be an original,
+    contiguous source-suite slice in its original order. Exact statement-type
+    tuples are still retained, so their allocation remains proportional to
+    the total interval lengths.
     """
+    if index is not None:
+        indexed = index.signature(block)
+        if indexed is not None:
+            return indexed
     has_with = False
     has_try = False
     name_load_count = 0

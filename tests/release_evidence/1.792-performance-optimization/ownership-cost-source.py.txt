@@ -1,0 +1,27 @@
+"""Bounded diagnostic of repeated pure ownership inputs, not a CLI timing substitute."""
+import ast, json, sys, time
+from pathlib import Path
+from towel.unification.block_analysis import lifetime_bound_names
+from towel.unification.semantic_safety import walk_own_scope
+from towel.unification.assignment_analyzer import own_scope_bindings
+
+root=Path('/Users/ericeallen/Knowledge/handoffs/towel/20261006T030201Z-codex-1792-performance-and-audit/trace-current/input/packaging')
+blocks=[]
+for p in sorted(root.rglob('*.py')):
+    tree=ast.parse(p.read_text())
+    for function in (n for n in ast.walk(tree) if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))):
+        for statement in walk_own_scope(function):
+            for _,value in ast.iter_fields(statement):
+                if isinstance(value,list) and value and all(isinstance(n,ast.stmt) for n in value):
+                    for start in range(len(value)):
+                        block=value[start:start+3]
+                        initial={binding.name for binding in own_scope_bindings(block)}
+                        if initial: blocks.append((block,initial))
+# Repeat exact immutable inputs at the observed production repeat rate (~4.75 calls/input).
+repeats=5
+before=[ast.dump(ast.Module(body=b,type_ignores=[]),include_attributes=True) for b,_ in blocks]
+started=time.process_time(); results=[]
+for _ in range(repeats): results=[sorted(lifetime_bound_names(b,initial)) for b,initial in blocks]
+elapsed=time.process_time()-started
+assert before==[ast.dump(ast.Module(body=b,type_ignores=[]),include_attributes=True) for b,_ in blocks]
+print(json.dumps({'inputs':len(blocks),'calls':len(blocks)*repeats,'cpu_seconds':elapsed,'results':results,'scope':'bounded repeated ownership calls derived from actual fixture statements; phase diagnostic, not full CLI benchmark'}))

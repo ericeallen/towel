@@ -1,12 +1,46 @@
 # Declines that need a wider analysis
 
-Status: deferred to the release after 1.772, by the owner on 2026-09-24
-(see `docs/DECISIONS.md`). Each item below is a defect by the owner's
-standard: a decline that exists only because Towel's analysis cannot yet
-show a sound transformation sound. None is a limitation to document and
-leave. Each would be fixed by making the safety analysis accept code it now
-refuses, so each needs its own soundness argument, tests that fail before
-and pass after, and a from-scratch audit of its own.
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
+Status: several recoveries shipped in 1.792; exact constant occurrences and
+bounded IF-only fresh outputs were implemented during 1.946 preparation.
+Publication of 1.946 was verified on October 19; 1.947 was published October 26.
+See the [1.947 publication record](../PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+for its separate completed release validation.
+The final runtime audit cited here is source-bound to `9d57b0d`, with its evidence in
+the [proposal index](README.md#preparation-checkpoint-october-10-2026). Broader
+control-flow recovery remains deferred. The original deferral after 1.772
+was made by the owner on 2026-09-24
+(see `docs/DECISIONS.md`). Each item below was a defect by the owner's
+standard at that checkpoint: a decline caused by analysis that could not yet
+certify a sound transformation. The goal was to strengthen the analysis rather
+than leave the refusal unexplained. That statement does not make every row a current defect or
+restore subsequently withdrawn reflection policies. A new recovery needs its
+own soundness argument, tests that fail before and pass after, and a from-scratch
+audit of its own.
+
+On the post-1.772 branch, list-field expression values of differing kinds,
+match-case suites and except-star handlers/finally are now considered.
+Nonlocal declarations and private names elsewhere in a function no longer
+block an unrelated extraction. Local-variable annotation names are no longer
+treated as runtime module lookups. The historical tables below retain what
+the audits measured; `tests/test_candidate_recovery.py` and
+`tests/test_scope_guard_boundaries.py` protect these recovered capabilities
+with positive extraction and runtime controls. The 1.946 preparation also
+recovers differing raw constant occurrences by AST field/index path, preserving
+equal literals at other positions, exact types and common caller literal pools.
+It retains whole pooled compound roots, grammar pins and the existing budget;
+the value-wide consistency row below records the historical refusal.
+Store/delete targets, pattern headers, escaping captured bindings and real
+evaluated annotations keep their
+existing safety checks. The 1.946 preparation also recovers fresh local
+outputs from contiguous IF-only slices through the shared pair/cluster gate.
+It independently certifies original source ownership and definite initialization, then reproves
+the complete aligned output tuple, including lifetime-only names. Prior or
+repeated bindings, captures, unsupported ancestry and the existing frame and
+exception guards remain restrictive. Broader nested-block liveness remains
+deferred. The historical nested-binding row below predates this bounded proof;
+definite assignment alone does not establish safe ownership transfer.
 
 ## How the costs were measured
 
@@ -78,6 +112,16 @@ deferred on the same grounds.
 | A name used only in a local-variable annotation | Such an annotation never runs, but the name is treated as a run-time read. It declines the pair with a `TYPE_CHECKING` import, and otherwise makes the type a helper parameter. | real-code reproducer `p2_xmod_annotation_only_name` (uvicorn) |
 
 ## Found in round 4
+
+This table records the round-4 behavior of 1.772. The September 26 follow-up
+removes the machinery-only refusals for subscripted project bases, `type`,
+unlisted library bases and project metaclasses. Class-private helpers still
+need the same class, a compatible receiver and a host that permits an added
+member. The October 2 contract subsequently removed reflection-specific
+decorator restrictions; ordinary receiver, Protocol and import-time semantics
+remain protected. The measurements below
+predate that change; the old base registry is now a test fixture in
+`tests/stdlib_bases.py`, not an eligibility list.
 
 These were found by round 4's decline auditor and deferred on the same
 grounds. Each is a decline, never a wrong transformation. The first two are

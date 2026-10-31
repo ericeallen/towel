@@ -1,0 +1,20 @@
+"""Run the real complete CLI; control only the new per-unification memo."""
+
+import runpy
+import sys
+
+from towel.unification.parameterization import Parameterization
+from towel.unification.scope_analyzer import ScopeAnalyzer
+
+mode, source, destination = sys.argv[1:]
+if mode == 'uncached':
+    def legacy_block_query(self, index):
+        if self.current_blocks is None or index >= len(self.current_blocks):
+            return set()
+        return ScopeAnalyzer().free_variables(self.current_blocks[index])
+    Parameterization._block_free_variables = legacy_block_query
+elif mode != 'cached':
+    raise ValueError(mode)
+
+sys.argv = ['towel', 'dry', source, destination, '--no-interactive']
+runpy.run_module('towel.cli', run_name='__main__')

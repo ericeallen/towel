@@ -32,11 +32,11 @@ from collections import Counter
 import configparser
 import copy
 import dataclasses
-import fnmatch
 import hashlib
 import os
 from pathlib import Path
 import re
+import tomllib
 
 from typing import Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 from ..canonical_ast import canonical_dump
@@ -45,11 +45,12 @@ from .annotation_ladder import (
     Judge,
     Rejection,
     Unanswerable,
+    any_result_still_refused,
     declarations_leave_their_class,
     drop_unbound_variables,
     method_at,
-    narrowing_needed_in_thunk,
     narrowing_refused_in_thunk,
+    original_thunk_call,
     narrowing_the_call_cannot_carry,
     partial_type_passed,
     self_as_type_variable,
@@ -90,9 +91,11 @@ from .exceptions import (
 )
 from .models import FunctionNode, RefactoringProposal, span_contains
 from ..diagnostics import LOG, TYPES
+from ..formatting import formatting_repeatability
+from ..mypy_ci_policy import UnsupportedMypyPolicy, mypy_policy
 from ..checker_project import _read_json_config
 from ..declared_python import declared_requirement, python_lower_bound
-from ..project_layout import find_project_root, load_pyproject, package_chain
+from ..project_layout import find_project_root, load_pyproject
 from ..type_baseline import (
     NO_SHAPE,
     ChangeShape,
@@ -114,11 +117,13 @@ from ..type_inference import (
     CheckSuccess,
     CombinedOracle,
     MypyInferrer,
+    PyrightOracle,
     RevealKey,
     RevealRequest,
     TypeDiagnostic,
     TypeOracle,
     _configured_root,
+    _checker_root,
     _module_name_and_root,
     _mypy_config,
     _RelocatedOracle,
@@ -138,6 +143,53 @@ from .function_index import FunctionIndex
 from .generic_annotations import MethodContext, generic_helpers
 from .type_bindings import CheckerImports, ModuleNames
 from .program_imports import ProgramImports
+
+
+def _annotation_expression(annotation: Optional[ast.expr]) -> Optional[ast.expr]:
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            return ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return None
+    return annotation
+
+
+def _may_lose_result_correlation(helper: ast.FunctionDef) -> bool:
+    """A union input and a structured result merit checking for a shared type parameter.
+
+    This only orders existing candidates; it does not suppress a signature or
+    declare one valid. Simple fixed results, such as bool, gain no precision
+    from relating the input types to the result.
+    """
+    result = _annotation_expression(helper.returns)
+    if not isinstance(result, (ast.Subscript, ast.BinOp)):
+        return False
+    return any(
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.BitOr)
+        or isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in {"Union", "Optional"}
+        for parameter in (*helper.args.posonlyargs, *helper.args.args, *helper.args.kwonlyargs)
+        if (annotation := _annotation_expression(parameter.annotation)) is not None
+        for node in ast.walk(annotation)
+    )
+
+
+def _relates_result(variant: RefactoringProposal) -> bool:
+    """Whether a newly declared generic parameter occurs in the result contract."""
+    names = {
+        target.id
+        for statement in variant.helper_type_declarations
+        if isinstance(statement, ast.Assign)
+        for target in statement.targets
+        if isinstance(target, ast.Name)
+    }
+    result = _annotation_expression(variant.extracted_function.returns)
+    return result is not None and any(
+        isinstance(node, ast.Name) and node.id in names for node in ast.walk(result)
+    )
+
 
 UNTYPED_REMEDY = "rerun with --no-types (library: type_oracle=None, annotate_helpers=False)."
 """The way out when the checker cannot run at all: the one thing such a user can act on."""
@@ -192,7 +244,9 @@ def _checker_targets(path: Path) -> List[PythonVersion]:
     return [target for target in targets if target is not None]
 
 
-def declared_oldest_python(path: Path) -> Optional[PythonVersion]:
+def declared_oldest_python(
+    path: Path, *, project_root: Optional[Path] = None
+) -> Optional[PythonVersion]:
     """The oldest Python the project around ``path`` says it supports, or None when it says nothing.
 
     ``requires-python`` first (``[project]`` in pyproject.toml, else setup.cfg's
@@ -200,8 +254,11 @@ def declared_oldest_python(path: Path) -> Optional[PythonVersion]:
     promise the package makes to whoever installs it. Failing that, the older
     of the versions mypy and pyright are configured to check for: a project
     whose checker targets 3.9 means its code to run there.
+
+    A caller that already resolved the layout can supply that root; checker
+    configuration still resolves from the actual module's original path.
     """
-    requirement = declared_requirement(find_project_root(path))
+    requirement = declared_requirement(project_root or find_project_root(path))
     if requirement is not None:
         bound = python_lower_bound(requirement)
         if bound is not None:
@@ -273,7 +330,12 @@ def _names_module(pattern: str, module: str) -> bool:
         prefix = pattern[:-2]
         return module == prefix or module.startswith(prefix + ".")
     if "*" in pattern:
-        return fnmatch.fnmatchcase(module, pattern) or fnmatch.fnmatchcase(module, pattern[:-2])
+        parts = pattern.split(".")
+        expression = ".*" if parts[0] == "*" else re.escape(parts[0])
+        expression += "".join(
+            r"(\..*)?" if part == "*" else re.escape("." + part) for part in parts[1:]
+        )
+        return re.fullmatch(expression, module) is not None
     return module == pattern
 
 
@@ -282,24 +344,36 @@ def mypy_ladder_flags(path: Path) -> Dict[str, bool]:
 
     What the global section says, ``strict`` setting both where a flag is not
     given, then every per-module section whose pattern names the module, in
-    the order the file gives them. A project without a mypy configuration has
-    mypy's defaults, which set neither.
+    native specificity order. Literal CI --strict overrides global options,
+    while per-module sections retain their precedence over CLI flags.
     """
     root = _configured_root(path, "mypy")
     config = _mypy_config(root) if root is not None else None
-    if config is None:
-        return {flag: False for flag in _LADDER_FLAGS}
-    options, overrides = _mypy_sections(Path(config))
+    ci_strict = "--strict" in mypy_policy(root or _checker_root(path), [path]).flags
+    options, overrides = _mypy_sections(Path(config)) if config else ({}, [])
     normalized = {str(key).replace("-", "_"): value for key, value in options.items()}
-    strict = _boolean(normalized.get("strict")) or False
+    strict = ci_strict or (_boolean(normalized.get("strict")) or False)
     flags: Dict[str, bool] = {}
     for flag in _LADDER_FLAGS:
         given = _boolean(normalized.get(flag))
-        flags[flag] = strict if given is None else given
+        flags[flag] = True if ci_strict else strict if given is None else given
     module = _module_name_and_root(path)[0]
-    for patterns, section in overrides:
-        if not any(_names_module(pattern, module) for pattern in patterns):
-            continue
+    # Native mypy: specific structured suffixes, then unstructured globs in
+    # file order, then exact module sections, independently of file order.
+    matched = [
+        (
+            (
+                (2, 0, index)
+                if "*" not in pattern
+                else (1, 0, index) if "*" in pattern[:-1] else (0, len(pattern.split(".")), index)
+            ),
+            section,
+        )
+        for index, (patterns, section) in enumerate(overrides)
+        for pattern in patterns
+        if _names_module(pattern, module)
+    ]
+    for _, section in sorted(matched, key=lambda match: match[0]):
         for key, value in section.items():
             flag = str(key).replace("-", "_")
             given = _boolean(value)
@@ -319,6 +393,61 @@ def verifies_with_mypy(oracle: Optional[TypeOracle]) -> bool:
     return False
 
 
+def _builtin_oracle(oracle: Optional[TypeOracle]) -> bool:
+    """Whether every checker and relocation/combination wrapper is exactly built-in.
+
+    An override can emit mypy-shaped diagnostics without using mypy's call
+    semantics. Inference from those messages must leave every fallback intact.
+    """
+    if type(oracle) in (MypyInferrer, PyrightOracle):
+        return True
+    if type(oracle) is _RelocatedOracle:
+        return _builtin_oracle(oracle.inner)
+    if type(oracle) is CombinedOracle:
+        return bool(oracle.checkers) and all(_builtin_oracle(one) for one in oracle.checkers)
+    return False
+
+
+def _mypy_config_identity(path: Path) -> Optional[Tuple[str, str]]:
+    """The explicit configuration's path and exact bytes, or no reusable evidence."""
+    root = _configured_root(path, "mypy")
+    filename = _mypy_config(root) if root is not None else None
+    if filename is None:
+        return None
+    try:
+        return os.path.realpath(filename), hashlib.sha256(Path(filename).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _mypy_without_plugins(path: Path) -> bool:
+    """Whether a readable explicit mypy configuration proves no configured plugins.
+
+    A plugin can refine even a declared ``Any`` result using parameter types,
+    so unreadable, absent or malformed configuration leaves every rung intact.
+    """
+    root = _configured_root(path, "mypy")
+    filename = _mypy_config(root) if root is not None else None
+    if filename is None:
+        return False
+    config = Path(filename)
+    try:
+        if config.name == "pyproject.toml":
+            with config.open("rb") as stream:
+                parsed = tomllib.load(stream)
+            options = _table(parsed, "tool", "mypy")
+            if not options:
+                return False
+            plugins = options.get("plugins", [])
+            return plugins == [] or plugins == ""
+        parser = configparser.ConfigParser()
+        with config.open(encoding="utf-8") as stream:
+            parser.read_file(stream)
+        return parser.has_section("mypy") and not parser.get("mypy", "plugins", fallback="").strip()
+    except (OSError, UnicodeError, ValueError, configparser.Error):
+        return False
+
+
 @dataclasses.dataclass(frozen=True)
 class _LadderPolicy:
     """What the project's checker settles in advance about the fallback rungs of one module."""
@@ -331,109 +460,25 @@ class _LadderPolicy:
     """mypy's ``check_untyped_defs``: the body of an unannotated function is checked too."""
     mypy: bool = False
     """Whether mypy verifies at all; every other field is False when it does not."""
-
-
-@dataclasses.dataclass(frozen=True)
-class _RefusedCheck:
-    """A project check that refused a variant, and what its verdict depended on."""
-
-    errors: Tuple[TypeDiagnostic, ...]
-    helper_name: str
-    depends_on: Tuple[Tuple[str, str], ...]
-    """(path, digest) of every file the refusal could depend on, the variant's own as they stand."""
-    known: str
-    """What the run already counted as the project's own errors in those files (``type_baseline``)."""
-
-
-_REFUSED_CHECKS_KEPT = 512
-"""Refusals a run remembers; a variant refused earlier is heard at a rehearing, not before."""
-_DEPENDENCIES_FOLLOWED = 4096
-"""Past this many files a refusal's dependencies are not followed and it is not remembered."""
+    builtin_mypy: bool = False
+    """Only exact built-in checkers/wrappers participate, including at least one mypy."""
+    configuration: Optional[Tuple[str, str]] = None
+    """The exact mypy configuration that supplied the policy, when readable."""
+    plugins_absent: bool = False
+    """An explicit readable configuration has no plugin that could refine a helper call."""
 
 
 def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
 
 
-def _variant_key(files: Mapping[str, str], helper_name: str) -> str:
-    """What a rendered variant is, apart from the name its helper was given this time.
-
-    A helper's generated name is allocated per attempt and advances with every
-    application, so a variant rendered again after unrelated changes differs
-    only there (packaging: ``__extracted_func_6`` heard first, ``_9`` again).
-    """
-    name = re.compile(rf"(?<!\w){re.escape(helper_name)}(?!\w)")
-    parts: List[str] = []
-    for path in sorted(files):
-        parts.extend((os.path.realpath(path), name.sub(_HELPER_PLACEHOLDER, files[path])))
-    return _digest(_SEPARATOR.join(parts))
-
-
-_HELPER_PLACEHOLDER = "<helper>"
-"""Stands for the helper's name in a variant's key; no identifier can be spelled so."""
-_SEPARATOR = "\0"
-
-
-def _module_imports(tree: ast.Module) -> List[Tuple[int, str, Tuple[str, ...]]]:
-    """``(level, module, names)`` for every import anywhere in ``tree``, conditional or not."""
-    found: List[Tuple[int, str, Tuple[str, ...]]] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            found.extend((0, alias.name, ()) for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            found.append((node.level, node.module or "", tuple(a.name for a in node.names)))
-    return found
-
-
-def _imported_files(path: Path, tree: ast.Module, roots: Sequence[Path]) -> Set[Path]:
-    """The source files under ``roots`` that ``tree``'s imports may read, package initializers included.
-
-    Resolved generously -- every candidate location of every name, submodule
-    or not -- because a missed dependency could only make a remembered refusal
-    outlive the change that answers it, and an extra one only makes it
-    forgotten sooner.
-    """
-    found: Set[Path] = set()
-
-    def modules(base: Path, dotted: str) -> None:
-        directory = base
-        for part in [part for part in dotted.split(".") if part]:
-            initializer = directory / "__init__.py"
-            if initializer.is_file():
-                found.add(initializer)
-            candidate = directory / f"{part}.py"
-            if candidate.is_file():
-                found.add(candidate)
-            directory = directory / part
-        initializer = directory / "__init__.py"
-        if initializer.is_file():
-            found.add(initializer)
-
-    for level, module, names in _module_imports(tree):
-        if level:
-            base = path.parent
-            for _ in range(level - 1):
-                base = base.parent
-            bases = [base]
-        else:
-            bases = list(roots)
-        for base in bases:
-            modules(base, module)
-            for name in names:
-                modules(base, f"{module}.{name}" if module else name)
-    return found
-
-
 class HelperAnnotationWiring(EngineState):
     """Helper AnnotationWiring methods of the engine; see the module docstring."""
 
-    # The oldest Python each project root declares, read once per engine.
+    # The oldest Python each project root declares, read once per run.
     _declared_pythons: Mapping[str, Optional[PythonVersion]] = {}
     # What the project's mypy settles about the fallback rungs, per module, once per run.
     _ladder_policies: Mapping[str, _LadderPolicy] = {}
-    # Project checks that refused a variant this run, by what the variant renders
-    # to (``_variant_key``); see ``_project_errors``.
-    _refused_checks: Mapping[str, _RefusedCheck] = {}
 
     def begin_refactoring_run(self, file_paths: Sequence[str]) -> None:
         """Establish a new run's original project before inference or changes.
@@ -446,8 +491,9 @@ class HelperAnnotationWiring(EngineState):
         """
         self._type_run_oracle = self.type_oracle
         self._type_run_baseline = None
+        self._declared_pythons = {}
+        self._forget_run_lookups()
         self._ladder_policies = {}
-        self._refused_checks = {}
         self._type_known = KnownErrors()
         self._type_checked = None
         self._type_names_any = {}
@@ -678,11 +724,13 @@ class HelperAnnotationWiring(EngineState):
         anyway, so its own evidence raises the floor
         (:func:`~towel.unification.annotations.evaluated_syntax`).
         """
-        root = str(find_project_root(Path(self._origin_of(file_path))))
+        root = str(self._project_root_in_run(file_path))
         if root not in self._declared_pythons:
             self._declared_pythons = {
                 **self._declared_pythons,
-                root: declared_oldest_python(Path(self._origin_of(file_path))),
+                root: declared_oldest_python(
+                    self._origin_in_run(file_path), project_root=Path(root)
+                ),
             }
         declared = self._declared_pythons[root] or OLDEST_PYTHON
         return max(declared, evaluated_syntax(host)) if host is not None else declared
@@ -739,9 +787,21 @@ class HelperAnnotationWiring(EngineState):
             oracle,
             bare_ok,
             receiver,
+            return_as_any=(
+                frozenset(
+                    {
+                        "types.NotImplementedType",
+                        "builtins._NotImplementedType",
+                        "_typeshed.NotImplementedType",
+                    }
+                )
+                if verifies_with_mypy(oracle)
+                else frozenset()
+            ),
         )
         completed = complete_with_any(respell_bare(inferred.helper, host, bare_ok), host, receiver)
         proposal.extracted_function = completed.helper
+        proposal.observed_return_any = inferred.observed_return_any
         proposal.required_imports = tuple(
             dict.fromkeys(inferred.required_imports + completed.required_imports)
         )
@@ -888,9 +948,44 @@ class HelperAnnotationWiring(EngineState):
                 returning_any_refused=flags["warn_return_any"],
                 untyped_bodies_checked=flags["check_untyped_defs"],
                 mypy=True,
+                builtin_mypy=_builtin_oracle(self._type_run_oracle),
+                configuration=_mypy_config_identity(Path(origin)),
+                plugins_absent=_mypy_without_plugins(Path(origin)),
             )
             self._ladder_policies = {**self._ladder_policies, origin: known}
         return known
+
+    def _fixed_any_result(self, policy: _LadderPolicy, file_path: str) -> bool:
+        """Whether the witnessed mypy result survives current configuration and rendering.
+
+        Recheck between rungs: CI may change strict flags, a plugin may be
+        introduced, or a tool failure may invalidate a rendering capability.
+        Unknown or changed evidence retains the checker attempt.
+        """
+        if not (policy.builtin_mypy and policy.plugins_absent and policy.configuration is not None):
+            return False
+        origin = Path(self._origin_of(file_path))
+        if policy.configuration != _mypy_config_identity(origin) or not _mypy_without_plugins(
+            origin
+        ):
+            return False
+        try:
+            flags = mypy_ladder_flags(origin)
+        except (UnsupportedMypyPolicy, OSError, ValueError):
+            return False
+        return (
+            flags["disallow_untyped_defs"] == policy.annotations_required
+            and flags["warn_return_any"] == policy.returning_any_refused
+            and flags["check_untyped_defs"] == policy.untyped_bodies_checked
+            and all(
+                callback is None or formatting_repeatability(callback) is not None
+                for callback in (
+                    self.snippet_formatter,
+                    self.snippet_formatter_for_file,
+                    self.file_finisher,
+                )
+            )
+        )
 
     def _annotation_ladder(
         self, proposal: RefactoringProposal, check_types: bool, hearing: Hearing
@@ -899,8 +994,9 @@ class HelperAnnotationWiring(EngineState):
 
         Untyped, or reusing a function whose signature stays, the proposal as it
         is. Otherwise: generic candidates first when the ordinary signature has
-        already lost information to ``Any``, then the ordinary signature, then
-        generic candidates when it had not; then the targeted rung, ``Any``
+        already lost information to ``Any`` or independent unions would lose a
+        result relationship, then the ordinary signature, then remaining
+        generic candidates; then the targeted rung, ``Any``
         exactly where the ordinary signature's own errors point
         (``targeted_any``); then every annotation ``Any``, where the checker
         does not refuse a helper returning ``Any`` wherever its value is
@@ -930,17 +1026,31 @@ class HelperAnnotationWiring(EngineState):
         policy = self._ladder_policy(proposal.file_path)
         lossy = self._helper_uses_any(proposal)
 
-        def generics() -> Iterator[RefactoringProposal]:
-            for index, variant in enumerate(self._generic_helper_variants(proposal)):
+        candidates = self._generic_helper_variants(proposal)
+        # Preserve complete rows before trying an independent union in each
+        # position. Compute this list once: later fallback reuses the same
+        # candidates, never another set of checker reveals.
+        early: List[RefactoringProposal] = []
+        later: List[RefactoringProposal] = []
+        if (
+            not lossy
+            and not proposal.observed_return_any
+            and _may_lose_result_correlation(proposal.extracted_function)
+        ):
+            for variant in candidates:
+                (early if _relates_result(variant) else later).append(variant)
+            candidates = iter(later)
+
+        def generics(variants: Iterator[RefactoringProposal]) -> Iterator[RefactoringProposal]:
+            for index, variant in enumerate(variants):
                 TYPES.debug("ladder rung generic#%d for %s", index, proposal.description)
                 yield self._finished(variant)
                 if hearing.settled_by() is not None:
                     return
 
-        if lossy:
-            yield from generics()
-            if hearing.settled_by() is not None:
-                return
+        yield from generics(candidates if lossy else iter(early))
+        if hearing.settled_by() is not None:
+            return
         ordinary = self._finished(proposal)
         TYPES.debug("ladder rung ordinary for %s", proposal.description)
         yield ordinary
@@ -948,11 +1058,17 @@ class HelperAnnotationWiring(EngineState):
             return
         refusal = hearing.of(ordinary)
         if not lossy:
-            yield from generics()
+            yield from generics(candidates)
             if hearing.settled_by() is not None:
                 return
         targeted = self._targeted_variant(ordinary, refusal) if refusal is not None else None
-        if targeted is not None:
+        if targeted is not None and not (
+            self._fixed_any_result(policy, proposal.file_path)
+            and refusal is not None
+            and any_result_still_refused(
+                targeted.extracted_function, refusal, ordinary.extracted_function
+            )
+        ):
             TYPES.debug("ladder rung targeted for %s", proposal.description)
             yield targeted
             if hearing.settled_by() is not None:
@@ -964,6 +1080,14 @@ class HelperAnnotationWiring(EngineState):
             if targeted is None or canonical_dump(every_any.extracted_function) != canonical_dump(
                 targeted.extracted_function
             ):
+                if (
+                    self._fixed_any_result(policy, proposal.file_path)
+                    and refusal is not None
+                    and any_result_still_refused(
+                        every_any.extracted_function, refusal, ordinary.extracted_function
+                    )
+                ):
+                    return
                 TYPES.debug("ladder rung every-Any for %s", proposal.description)
                 yield self._finished(every_any)
                 if hearing.settled_by() is not None:
@@ -1083,18 +1207,13 @@ class HelperAnnotationWiring(EngineState):
     def _untypeable_as_proposed(self, proposal: RefactoringProposal) -> Optional[Unanswerable]:
         """Why no signature can type ``proposal``, when the proposal alone shows it; else None.
 
-        A lambda at a call that needs a test's narrowing
-        (``narrowing_needed_in_thunk``), and, where mypy verifies, a
-        collection whose partial type the block would have completed
-        (``partial_type_passed``). Both are the proposal's own construction,
-        so no check is spent learning them; the other two reasons need the
-        checker's verdict (``_judge_for``).
+        Under mypy, a collection whose partial type the block would have
+        completed (``partial_type_passed``). Narrowing refusals instead need
+        the checker's actual operand diagnostic (``_judge_for``).
         """
         sites = self._annotation_sites(proposal)
-        verdict = narrowing_needed_in_thunk(
-            proposal.extracted_function, [site.call for site in sites]
-        )
-        if verdict is None and self._ladder_policy(proposal.file_path).mypy:
+        verdict = None
+        if self._ladder_policy(proposal.file_path).mypy:
             verdict = partial_type_passed(
                 [(site.file_path, site.source, site.start_line, site.call) for site in sites],
                 lambda path: self._ladder_policy(path).untyped_bodies_checked,
@@ -1110,11 +1229,21 @@ class HelperAnnotationWiring(EngineState):
         their class with the block (``declarations_leave_their_class``).
         """
         receivers = self._site_receivers(proposal)
+        sites = self._annotation_sites(proposal)
+        original_calls = tuple(site.call for site in sites)
+        original_contexts = tuple(
+            original_thunk_call(
+                site.call, site.declared_return, site.source, site.start_line, site.end_line
+            )
+            for site in sites
+        )
 
         def judge(helper: ast.FunctionDef, rejection: Rejection) -> Optional[Unanswerable]:
             reason = narrowing_the_call_cannot_carry(helper, rejection)
             if reason is None:
-                reason = narrowing_refused_in_thunk(helper, rejection)
+                reason = narrowing_refused_in_thunk(
+                    helper, rejection, original_calls, original_contexts
+                )
             if reason is None and receivers:
                 reason = declarations_leave_their_class(helper, rejection, receivers)
             return reason
@@ -1162,7 +1291,8 @@ class HelperAnnotationWiring(EngineState):
             for arg in helper.args.posonlyargs + helper.args.args
             if arg.arg != receiver
         ]
-        annotations.append(helper.returns)
+        if not proposal.observed_return_any:
+            annotations.append(helper.returns)
         for annotation in annotations:
             if annotation is None:
                 return True
@@ -1393,135 +1523,18 @@ class HelperAnnotationWiring(EngineState):
         return tuple(error for error in unseen if id(error) in brought)
 
     def _project_errors(
-        self, modified_files: Dict[str, str], helper_name: str, shape: ChangeShape = NO_SHAPE
+        self, modified_files: Dict[str, str], shape: ChangeShape = NO_SHAPE
     ) -> Tuple[TypeDiagnostic, ...]:
-        """What the project check says of a variant, without asking again when nothing it read changed.
+        """Check every rendered variant against the current project and original baseline.
 
-        A declined proposal is heard again at a rehearing, once something has
-        been applied since, and each of its rungs is rendered and checked
-        again. Rendered again it is often the same text, but for the number in
-        its helper's generated name (packaging: 28 of 68 checks repeated an
-        earlier one exactly, errors and all). A refusal is kept with the files
-        it could have depended on: those its errors lie in and every project
-        file they import, followed through their imports, the variant's own
-        files aside, which the key already holds. When a variant renders to a
-        kept key and none of those files has changed, the check would answer
-        as it did, and its answer is replayed under the helper's new name.
-
-        Only refusals are kept; an accepted variant is applied and changes the
-        project. The run forgets them all when it begins, and a refusal whose
-        dependencies cannot be followed (an error in no file, too many files)
-        is not kept at all. ``shape`` says where the variant wrote what
-        (:meth:`_change_shape`); what the variant renders to settles it, so
-        the key needs nothing more.
+        A dependency approximation cannot certify a prior refusal: a new
+        project stub may supersede an unchanged implementation, configured
+        stub roots may hold other interfaces, or a custom oracle may answer
+        differently without any source change. No inner result is retained,
+        accepted or refused. The outer fixed-point proposal cache separately
+        requires its exact unchanged run revision and closed execution context.
         """
-        key = _variant_key(modified_files, helper_name)
-        known = self._refused_checks.get(key)
-        if (
-            known is not None
-            and self._dependencies_unchanged(known)
-            and self._known_errors_in(known.depends_on) == known.known
-        ):
-            self._checker_refusals += 1
-            renamed = re.compile(rf"(?<!\w){re.escape(known.helper_name)}(?!\w)")
-            TYPES.debug(
-                "replaying the refusal of an identical variant: %d error(s)", len(known.errors)
-            )
-            return tuple(
-                dataclasses.replace(error, message=renamed.sub(helper_name, error.message))
-                for error in known.errors
-            )
-        errors = self._new_type_errors(modified_files, shape)
-        if errors:
-            depends_on = self._refusal_dependencies(modified_files, errors)
-            if depends_on is not None:
-                kept = dict(self._refused_checks)
-                kept[key] = _RefusedCheck(
-                    errors, helper_name, depends_on, self._known_errors_in(depends_on)
-                )
-                while len(kept) > _REFUSED_CHECKS_KEPT:
-                    kept.pop(next(iter(kept)))
-                self._refused_checks = kept
-        return errors
-
-    @staticmethod
-    def _refusal_dependencies(
-        modified_files: Mapping[str, str], errors: Sequence[TypeDiagnostic]
-    ) -> Optional[Tuple[Tuple[str, str], ...]]:
-        """(path, digest) of the files a refusal could depend on, outside the variant; None if unknown."""
-        variant = {os.path.realpath(path) for path in modified_files}
-        pending: List[Path] = []
-        for error in errors:
-            path = Path(os.path.realpath(error.path))
-            if not path.is_file():
-                return None
-            pending.append(path)
-        roots = sorted(
-            {
-                (packages[-1].parent if packages else Path(path).parent)
-                for path in [*modified_files, *(error.path for error in errors)]
-                for packages in [package_chain(Path(path))]
-            }
-        )
-        seen: Set[Path] = set()
-        while pending:
-            path = pending.pop()
-            if path in seen:
-                continue
-            seen.add(path)
-            if len(seen) > _DEPENDENCIES_FOLLOWED:
-                return None
-            text = modified_files.get(str(path))
-            if text is None:
-                text = next(
-                    (t for p, t in modified_files.items() if os.path.realpath(p) == str(path)),
-                    None,
-                )
-            if text is None:
-                text = try_read_source(str(path))
-            if text is None:
-                return None
-            try:
-                tree = ast.parse(text)
-            except SyntaxError:
-                return None
-            pending.extend(_imported_files(path, tree, roots) - seen)
-        # The variant's own files count as they stand before the change: the
-        # key holds what the change makes of them, and what the run counts as
-        # their existing errors is read against this text.
-        seen |= {Path(path) for path in variant}
-        depends_on: List[Tuple[str, str]] = []
-        for path in sorted(seen):
-            text = try_read_source(str(path))
-            if text is None:
-                return None
-            depends_on.append((str(path), _digest(text)))
-        return tuple(depends_on)
-
-    def _known_errors_in(self, depends_on: Sequence[Tuple[str, str]]) -> str:
-        """A digest of the errors the run counts as the project's own in these files, and which moved.
-
-        A change is refused only for an error the project did not already
-        report (``towel.type_baseline``), and what it already reports is
-        brought up to date after every applied change. A refusal replayed must
-        have been judged against the same account of these files.
-        """
-        places = {self._where_checked(path) for path, _ in depends_on}
-        known = self._type_known
-        errors = sorted(
-            (error.path, error.line or 0, error.message)
-            for error in known.errors
-            if error.path in places
-        )
-        return _digest(repr((errors, sorted(known.moved & places))))
-
-    @staticmethod
-    def _dependencies_unchanged(known: _RefusedCheck) -> bool:
-        for path, digest in known.depends_on:
-            text = try_read_source(path)
-            if text is None or _digest(text) != digest:
-                return False
-        return True
+        return self._new_type_errors(modified_files, shape)
 
     def _new_type_errors(
         self, modified_files: Dict[str, str], shape: ChangeShape = NO_SHAPE
@@ -1733,7 +1746,7 @@ class HelperAnnotationWiring(EngineState):
         requests = [request for probe in probes.values() if probe for request in probe.requests]
         if oracle is None or not requests:
             return {path: tuple(errors) for path, errors in found.items()}
-        answers = reveal_by_each(oracle, requests)
+        answers = reveal_by_each(oracle, requests, reported_only=True)
         for path, probe in probes.items():
             if probe is None:
                 continue
@@ -1816,7 +1829,13 @@ class HelperAnnotationWiring(EngineState):
             reported = reported[:1]  # the one that infers comes first
         if requests:
             answers = (
-                reveal_by_each(oracle, requests) if every_checker else (oracle.reveal(requests),)
+                reveal_by_each(oracle, requests, reported_only=True)
+                if every_checker
+                else (
+                    oracle.reveal(
+                        [request for request in requests if request.file_path in reported[0]]
+                    ),
+                )
             )
         for answer in answers:
             failed = unanswered_files(answer) if isinstance(answer, Mapping) else {}

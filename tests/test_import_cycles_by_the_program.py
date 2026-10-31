@@ -35,6 +35,8 @@ import sys
 import textwrap
 from typing import List, Mapping, Tuple
 
+import pytest
+
 import towel
 from towel.unification.import_graph import ImportGraphCache, would_create_import_cycle
 
@@ -63,17 +65,22 @@ _FILES: Mapping[str, str] = {
     "src/alpha/__init__.py": "",
     # The host the pair would take first: importing it runs beta.hub, which
     # reads a name the borrower defines.
-    "src/alpha/a_host.py": "import beta.hub\n\n" + _BLOCK.format(name="fa", tag="a"),
+    "src/alpha/a_host.py": "import beta.hub\nimport alpha.b_borrower\n\n"
+    + _BLOCK.format(name="fa", tag="a"),
     "src/alpha/b_borrower.py": "import beta\n\nVALUE = 7\n\n" + _BLOCK.format(name="fb", tag="b"),
     "src/beta/__init__.py": "",
     "src/beta/hub.py": "from alpha.b_borrower import VALUE\n",
 }
 
 
-def _write(root: Path) -> Path:
+def _write(root: Path, *, safe: bool = False) -> Path:
     for name, text in _FILES.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
+        if safe and name in {"src/alpha/a_host.py", "src/alpha/b_borrower.py"}:
+            text = "from builtins import print as emit\n" + text.replace("print(", "emit(").replace(
+                "    for value", "    value = 0\n    for value"
+            )
         path.write_text(textwrap.dedent(text), encoding="utf-8")
     return root
 
@@ -105,9 +112,10 @@ def test_the_guard_sees_a_cycle_through_a_sibling_package(tmp_path: Path) -> Non
     assert not would_create_import_cycle(str(borrower), {str(host)}, ImportGraphCache())
 
 
-def test_the_helper_goes_where_importing_it_closes_no_cycle(tmp_path: Path) -> None:
-    original = _write(tmp_path / "original")
-    refactored = _write(tmp_path / "refactored")
+@pytest.mark.parametrize("safe", [False, True])
+def test_the_helper_goes_where_importing_it_closes_no_cycle(tmp_path: Path, safe: bool) -> None:
+    original = _write(tmp_path / "original", safe=safe)
+    refactored = _write(tmp_path / "refactored", safe=safe)
     result = subprocess.run(
         [
             sys.executable,
@@ -130,11 +138,16 @@ def test_the_helper_goes_where_importing_it_closes_no_cycle(tmp_path: Path) -> N
         timeout=600,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "def __extracted_func_0(" in (refactored / "src/alpha/b_borrower.py").read_text()
     assert (
-        "from .b_borrower import __extracted_func_0"
+        "def __extracted_func_0(" in (refactored / "src/alpha/b_borrower.py").read_text()
+    ) is safe
+    assert (
+        "from alpha.b_borrower import __extracted_func_0"
         in (refactored / "src/alpha/a_host.py").read_text()
-    )
+    ) is safe
+    if not safe:
+        for relative in ("src/alpha/a_host.py", "src/alpha/b_borrower.py"):
+            assert (original / relative).read_bytes() == (refactored / relative).read_bytes()
     for first in ("alpha.a_host", "alpha.b_borrower"):
         expected = _imports(original, first)
         assert expected[0] == 0, expected

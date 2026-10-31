@@ -17,6 +17,7 @@
 from pathlib import Path
 import subprocess
 import sys
+import textwrap
 
 import pytest
 
@@ -39,6 +40,103 @@ def _run(root: Path) -> str:
     )
     assert result.returncode == 0, result.stderr
     return result.stdout
+
+
+def test_nested_class_private_name_is_not_an_outer_parameter(tmp_path: Path) -> None:
+    """The compiler resolves the class's private spelling to a module binding."""
+    _project(
+        tmp_path,
+        {
+            "main.py": "_C__param_0 = 100\n"
+            "def __extracted_func_0(__param_0):\n"
+            "    class C:\n"
+            "        answer = __param_0\n"
+            "    return C.answer, __param_0\n"
+            "print(__extracted_func_0(__param_0=3))\n"
+        },
+    )
+    before = _run(tmp_path)
+    assert before == "(100, 3)\n"
+    plan, _ = plan_renames(tmp_path, [("__extracted_func_0.__param_0", "value", None)])
+    apply_changes(plan)
+    assert _run(tmp_path) == before
+
+
+def test_private_parameter_cannot_masquerade_as_an_imported_module(tmp_path: Path) -> None:
+    """A conditional private import cannot hide the parameter's original consumer."""
+    _project(
+        tmp_path,
+        {
+            "a.py": "def _extracted_func_0():\n    return 7\n",
+            "main.py": "class FalseModule:\n"
+            "    def __bool__(self):\n        return False\n"
+            "    def _extracted_func_0(self):\n        return 42\n"
+            "class C:\n"
+            "    def use(self, __module, flag=False):\n"
+            "        if flag:\n            import a as __module\n"
+            "        return __module._extracted_func_0()\n"
+            "print(C().use(FalseModule()))\n",
+        },
+    )
+    assert _run(tmp_path) == "42\n"
+    before = {path: path.read_bytes() for path in tmp_path.glob("*.py")}
+    with pytest.raises(ValueError, match="Ambiguous module alias"):
+        plan_renames(tmp_path, [("_extracted_func_0", "answer", tmp_path / "a.py")])
+    assert {path: path.read_bytes() for path in before} == before
+    assert _run(tmp_path) == "42\n"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "class C:\n    def answer(self):\n        return __param_0\n"
+        "return C().answer(), __param_0",
+        "class _C:\n    answer = __param_0\nreturn _C.answer, __param_0",
+        "class Outer:\n    class C:\n        answer = __param_0\n"
+        "return Outer.C.answer, __param_0",
+        "class C:\n    global __param_0\n    answer = __param_0\n" "return C.answer, __param_0",
+        "class C:\n    __param_0 = 7\n    answer = __param_0\n" "return C.answer, __param_0",
+        "class C:\n    def answer(self, value=__param_0):\n        return value\n"
+        "return C().answer(), __param_0",
+        "class C:\n    answer = [__param_0 for _ in (1,)]\n" "return C.answer, __param_0",
+        "class ___:\n    answer = __param_0\nreturn ___.answer, __param_0",
+        "def closure():\n    return __param_0\nreturn closure(), __param_0",
+        "class C((lambda value: object)(__param_0)):\n    pass\nreturn __param_0",
+        "def closure(__param_0=8):\n    return __param_0\nreturn closure(), __param_0",
+    ],
+)
+def test_parameter_references_follow_compiler_private_identity(tmp_path: Path, body: str) -> None:
+    """Class scopes, heads, defaults and closures retain the compiler's binding."""
+    source = (
+        "_C__param_0 = 100\n"
+        "def __extracted_func_0(__param_0):\n"
+        + textwrap.indent(body, "    ")
+        + "\nprint(__extracted_func_0(3), __extracted_func_0(__param_0=4))\n"
+    )
+    _project(tmp_path, {"main.py": source})
+    before = _run(tmp_path)
+    plan, _ = plan_renames(tmp_path, [("__extracted_func_0.__param_0", "renamed_argument", None)])
+    apply_changes(plan)
+    assert _run(tmp_path) == before
+
+
+def test_matching_nonlocal_private_binding_refuses_entire_batch(tmp_path: Path) -> None:
+    """A real nonlocal declaration remains a conservative, atomic refusal."""
+    source = (
+        "def __extracted_func_0(__param_0):\n"
+        "    def closure():\n"
+        "        nonlocal __param_0\n"
+        "        return __param_0\n"
+        "    return closure()\n"
+    )
+    _project(tmp_path, {"main.py": source, "other.py": HELPER})
+    with pytest.raises(ValueError, match="redeclared"):
+        plan_renames(
+            tmp_path,
+            [("__extracted_func_0.__param_0", "value", None)],
+        )
+    assert (tmp_path / "main.py").read_text() == source
+    assert (tmp_path / "other.py").read_text() == HELPER
 
 
 @pytest.mark.parametrize(
@@ -172,12 +270,15 @@ def test_module_rename_may_use_unreferenced_builtin_spelling(tmp_path: Path) -> 
         ("namespace = globals\n", "namespace()"),
     ],
 )
-def test_aliased_global_reflection_prevents_rename(
+def test_aliased_global_reflection_is_outside_the_rename_contract(
     tmp_path: Path, prefix: str, lookup: str
 ) -> None:
     _project(tmp_path, {"main.py": prefix + HELPER + f'print({lookup}["__extracted_func_0"](3))\n'})
-    with pytest.raises(ValueError, match="Dynamic"):
-        plan_renames(tmp_path, [("__extracted_func_0", "fresh", None)])
+    plan, _ = plan_renames(tmp_path, [("__extracted_func_0", "fresh", None)])
+    apply_changes(plan)
+    updated = (tmp_path / "main.py").read_text()
+    assert "def fresh(" in updated
+    assert f'{lookup}["__extracted_func_0"]' in updated
 
 
 @pytest.mark.parametrize(
@@ -188,7 +289,7 @@ def test_aliased_global_reflection_prevents_rename(
         ("lookup, unused = getattr, None\n", "lookup"),
     ],
 )
-def test_aliased_method_reflection_prevents_rename(
+def test_aliased_method_reflection_is_outside_the_rename_contract(
     tmp_path: Path, prefix: str, lookup: str
 ) -> None:
     _project(
@@ -199,8 +300,11 @@ def test_aliased_method_reflection_prevents_rename(
             + f'print({lookup}(A(), "_extracted_func_0")())\n'
         },
     )
-    with pytest.raises(ValueError, match="referenced by name"):
-        plan_renames(tmp_path, [("_extracted_func_0", "fresh", None)])
+    plan, _ = plan_renames(tmp_path, [("_extracted_func_0", "fresh", None)])
+    apply_changes(plan)
+    updated = (tmp_path / "main.py").read_text()
+    assert "def fresh(self):" in updated
+    assert f'{lookup}(A(), "_extracted_func_0")' in updated
 
 
 @pytest.mark.parametrize("new", ["__len__", "__iter__", "__getattr__"])
@@ -219,7 +323,7 @@ def test_method_rename_cannot_introduce_protocol_behavior(tmp_path: Path, new: s
         ("from builtins import locals as namespace\n", "namespace()"),
     ],
 )
-def test_parameter_rename_refuses_local_namespace_observation(
+def test_parameter_reflection_is_outside_the_rename_contract(
     tmp_path: Path, prefix: str, lookup: str
 ) -> None:
     _project(
@@ -229,8 +333,27 @@ def test_parameter_rename_refuses_local_namespace_observation(
             + f'def __extracted_func_0(__param_0):\n    return {lookup}["__param_0"]\n'
         },
     )
-    with pytest.raises(ValueError, match="Dynamic"):
+    plan, _ = plan_renames(tmp_path, [("__extracted_func_0.__param_0", "value", None)])
+    apply_changes(plan)
+    updated = (tmp_path / "main.py").read_text()
+    assert "def __extracted_func_0(value):" in updated
+    assert f'{lookup}["__param_0"]' in updated
+
+
+def test_wrapper_keyword_interface_still_prevents_parameter_rename(tmp_path: Path) -> None:
+    """A decorator may return a callable whose keyword interface is independent of its input."""
+    source = (
+        "def decorate(function):\n"
+        "    def wrapper(__param_0):\n"
+        "        return function(__param_0)\n"
+        "    return wrapper\n\n"
+        "@decorate\n" + HELPER + "print(__extracted_func_0(__param_0=3))\n"
+    )
+    _project(tmp_path, {"main.py": source})
+    assert _run(tmp_path) == "4\n"
+    with pytest.raises(ValueError, match="Decorated callable"):
         plan_renames(tmp_path, [("__extracted_func_0.__param_0", "value", None)])
+    assert (tmp_path / "main.py").read_text() == source
 
 
 def test_method_rename_cannot_remove_protocol_behavior(tmp_path: Path) -> None:
@@ -259,3 +382,61 @@ def test_an_output_whose_imports_name_its_package_is_refused_not_half_renamed(
     )
     with pytest.raises(ValueError, match="Adopt the output"):
         plan_renames(candidate, [("__extracted_func_0", "increment", candidate / "b.py")])
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "class C:\n    answer = __param_0\nreturn C.answer, __param_0",
+        "class C:\n    def answer(self):\n        return __param_0\n"
+        "return C().answer(), __param_0",
+        "class Outer:\n    class C:\n        answer = __param_0\n"
+        "return Outer.C.answer, __param_0",
+        "class _C:\n    answer = __param_0\nreturn _C.answer, __param_0",
+    ],
+    ids=["class-body", "nested-method", "nested-class", "leading-underscore-class"],
+)
+def test_parameter_destination_cannot_capture_an_existing_private_reference(
+    tmp_path: Path, body: str
+) -> None:
+    """A destination must not turn an unrelated mangled read into a closure read."""
+    source = (
+        "_C__param_0 = 100\n"
+        "def __extracted_func_0(__param_0):\n"
+        + textwrap.indent(body, "    ")
+        + "\nprint(__extracted_func_0(3))\n"
+    )
+    safe = "def __extracted_func_1(__param_0):\n    return __param_0 + 1\n"
+    _project(tmp_path, {"main.py": source, "safe.py": safe})
+    before = {path: path.read_bytes() for path in tmp_path.glob("*.py")}
+    assert _run(tmp_path) == "(100, 3)\n"
+    with pytest.raises(ValueError, match="collide"):
+        plan_renames(
+            tmp_path,
+            [
+                ("__extracted_func_1.__param_0", "value", tmp_path / "safe.py"),
+                ("__extracted_func_0.__param_0", "_C__param_0", tmp_path / "main.py"),
+            ],
+        )
+    assert {path: path.read_bytes() for path in before} == before
+    assert _run(tmp_path) == "(100, 3)\n"
+
+
+def test_parameter_destination_may_use_an_unrelated_mangling_prefix(tmp_path: Path) -> None:
+    """An explicit stored-name spelling remains useful when it captures no read."""
+    source = (
+        "_C__param_0 = 100\n"
+        "def __extracted_func_0(__param_0):\n"
+        "    class C:\n"
+        "        answer = __param_0\n"
+        "    return C.answer, __param_0\n"
+        "print(__extracted_func_0(3))\n"
+    )
+    _project(tmp_path, {"main.py": source})
+    before = _run(tmp_path)
+    plan, count = plan_renames(
+        tmp_path, [("__extracted_func_0.__param_0", "_Different__param_0", None)]
+    )
+    assert count > 0
+    apply_changes(plan)
+    assert _run(tmp_path) == before == "(100, 3)\n"

@@ -1,0 +1,38 @@
+{
+  "source_commit": "04d2710a28228b12cb64edefb563093866deaeb4",
+  "runtime_tree": "792623860332f187d72fa263a9e2aeb6976d930c",
+  "native": {
+    "passed": 9697,
+    "skipped": 20,
+    "subtests_passed": 26,
+    "warnings": 4,
+    "pytest_seconds": 1810.38,
+    "coverage_percent_reported": 93,
+    "source_unchanged": true
+  },
+  "finding_closure": {
+    "PARAM-1": "completed helper placement; full final ownership interface guard",
+    "PARAM-2": "final formal/wrapper cost compared with tiny useful sharing, after cluster",
+    "CACHE-1": "inner refusal retention removed; each submitted variant rechecked",
+    "DOC-1": "newly differing-expression budget distinguished from complete ownership interface",
+    "PERF-1": "immutable result facts scoped to a single unification; copies/reset/release",
+    "MAINT-1": "obsolete whole JoinedStr removal scan removed; low-level substitution unchanged"
+  },
+  "cli": {
+    "uncached_mean_seconds": 56.719387041870505,
+    "cached_mean_seconds": 56.6992194999475,
+    "applications": 18,
+    "changed_files": 8,
+    "samples_per_arm": 2,
+    "outputs_identical": true,
+    "scope": "Complete typed/formatted CLI with TOWEL_WORKERS=1; fresh input/output and owned checker workers each arm; current fixed source in both arms. Only block-query memo differs. ABBA two samples per arm; not a published-1.772 or corpus comparison.",
+    "conclusion": "No measurable complete-command benefit established; host background activity varies."
+  },
+  "excluded": [
+    "matrix",
+    "corpus",
+    "published-1.772 comparison",
+    "publication",
+    "push"
+  ]
+}

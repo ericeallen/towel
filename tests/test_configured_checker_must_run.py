@@ -42,7 +42,7 @@ requires_pyright = pytest.mark.skipif(
 BODY = "    total = value + 1\n    doubled = total * 2\n    answer = doubled - 3\n"
 SOURCE = (
     'def first(value: int) -> int:\n    print("first")\n' + BODY + "    return answer\n\n\n"
-    'def second(value: int) -> int:\n    print("second")\n' + BODY + "    return answer + 1\n"
+    'def second(value: int) -> int:\n    print("second")\n' + BODY + "    return answer\n"
 )
 
 

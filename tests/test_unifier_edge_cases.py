@@ -111,14 +111,23 @@ def test_unifier_list_comp_tuple_target_alpha():
     assert subst is not None
 
 
-def test_unifier_constant_inconsistency_rule():
-    # Should fail due to constant 2 appearing both differing and identical positions
+def test_unifier_distinguishes_differing_and_fixed_constant_occurrences():
+    # The differing multiplier and fixed exponent are separate occurrences.
     code1 = "x = item * 2\nz = y ** 2"  # constant 2 twice
     code2 = "x = item * 3\nz = y ** 2"  # second occurrence identical (2 vs 2)
     blocks = [parse_block(code1), parse_block(code2)]
     u = Unifier()
     subst = u.unify_blocks(blocks, [{}, {}])
-    assert subst is None, "Inconsistent constant parameterization should reject"
+    assert subst is not None
+    assert len(subst.param_expressions) == 1
+    for index, block in enumerate(blocks):
+        product = _assign_value(block, 0)
+        power = _assign_value(block, 1)
+        assert isinstance(product, ast.BinOp)
+        assert isinstance(power, ast.BinOp)
+        assert subst.get_param_for_expr(index, product.right) is not None
+        assert subst.get_param_for_expr(index, power.right) is None
+        assert isinstance(power.right, ast.Constant) and power.right.value == 2
 
 
 def test_unifier_reject_parameterize_entire_fstring():

@@ -40,8 +40,10 @@ from typing import (
     cast,
 )
 from .substitution import Substitution
+from .ast_paths import Path, path_map
 from .visitors import all_instances, visit_as
 from .definite_assignment import definitely_bound_after
+from .function_scope import code_names
 from .lexical_scopes import (
     Comprehension,
     NestedScope,
@@ -51,6 +53,7 @@ from .lexical_scopes import (
     nested_scope_names,
 )
 from .models import FunctionNode
+from .parameters import GENERATED_PARAMETER_PREFIX
 from .statement_facts import block_contains_return, import_binding_names, pattern_capture_names
 
 if TYPE_CHECKING:
@@ -79,9 +82,14 @@ class ParameterSubstituter(ast.NodeTransformer):
     """
 
     def __init__(
-        self, subst: Substitution, param_names: List[str], rename_mapping: Dict[str, str]
+        self,
+        subst: Substitution,
+        param_names: List[str],
+        rename_mapping: Dict[str, str],
+        template_paths: Optional[Dict[ast.AST, Path]] = None,
     ) -> None:
         self.subst = subst
+        self._template_paths = template_paths if template_paths is not None else {}
         self.param_names = param_names
         self.rename_mapping = rename_mapping
         self.block_idx = 0
@@ -166,7 +174,9 @@ class ParameterSubstituter(ast.NodeTransformer):
         if not isinstance(node, ast.expr):
             return None
 
-        maybe_param_name: Optional[str] = self.subst.get_param_for_expr(self.block_idx, node)
+        maybe_param_name: Optional[str] = self.subst.get_param_for_expr(
+            self.block_idx, node, path=self._template_paths.get(node)
+        )
         if not maybe_param_name or maybe_param_name not in self.param_names:
             return None
 
@@ -187,6 +197,20 @@ class ParameterSubstituter(ast.NodeTransformer):
         if isinstance(node, ast.FormattedValue):
             return None
 
+        pool = self.subst.literal_pool
+        if pool is not None and pool.parameter == maybe_param_name:
+            index = pool.index_at(self.block_idx, self._template_paths.get(node))
+            if index is None:
+                return None
+            return ast.copy_location(
+                ast.Subscript(
+                    value=ast.Name(id=maybe_param_name, ctx=ast.Load()),
+                    slice=ast.Constant(index),
+                    ctx=ast.Load(),
+                ),
+                node,
+            )
+
         if self.subst.is_function_param(maybe_param_name):
             bound_vars = self.subst.get_function_param_vars(maybe_param_name)
             call = ast.Call(
@@ -201,16 +225,49 @@ class ParameterSubstituter(ast.NodeTransformer):
 
     def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
         # JoinedStr (f-string) can only have Constant or FormattedValue as direct children
-        # We must NEVER parameterize Constant nodes inside f-strings
-        # But we CAN parameterize expressions inside FormattedValue nodes
+        # Ordinary substitutions never replace f-string text; certified
+        # caller literal slots retain its exact object through formatting.
         new_values: List[ast.expr] = []
         previous_state = self.in_joinedstr
         self.in_joinedstr = True
         try:
             for value in node.values:
                 if isinstance(value, ast.Constant):
-                    # String literal parts of f-string must stay as constants
-                    new_values.append(value)
+                    # Only a certified exact-string carrier slot may replace
+                    # raw text. No-spec formatting preserves that exact string
+                    # object; the JoinedStr keeps its original chunk order.
+                    pool = self.subst.literal_pool
+                    path = self._template_paths.get(value)
+                    parameter = self.subst.get_param_for_expr(self.block_idx, value, path=path)
+                    slot = None if pool is None else pool.index_at(self.block_idx, path)
+                    if (
+                        pool is not None
+                        and parameter == pool.parameter
+                        and parameter in self.param_names
+                        and type(value.value) is str
+                        and slot is not None
+                    ):
+                        index = slot
+                        assert all(
+                            isinstance(element, ast.Constant) and type(element.value) is str
+                            for element in (row[index] for row in pool.rows)
+                        )
+                        new_values.append(
+                            ast.copy_location(
+                                ast.FormattedValue(
+                                    value=ast.Subscript(
+                                        value=ast.Name(id=parameter, ctx=ast.Load()),
+                                        slice=ast.Constant(index),
+                                        ctx=ast.Load(),
+                                    ),
+                                    conversion=-1,
+                                    format_spec=None,
+                                ),
+                                value,
+                            )
+                        )
+                    else:
+                        new_values.append(value)
                 else:
                     new_values.append(visit_as(self, value))
         finally:
@@ -219,8 +276,15 @@ class ParameterSubstituter(ast.NodeTransformer):
 
     def visit_FormattedValue(self, node: ast.FormattedValue) -> ast.FormattedValue:
         """The value and the format specification: ``f"{v:>{width}}"`` evaluates ``width`` too."""
+        # The value is evaluated Python, unlike JoinedStr's raw text chunks.
+        previous_state = self.in_joinedstr
+        self.in_joinedstr = False
+        try:
+            value = visit_as(self, node.value)
+        finally:
+            self.in_joinedstr = previous_state
         return ast.FormattedValue(
-            value=visit_as(self, node.value),
+            value=value,
             conversion=node.conversion,
             format_spec=visit_as(self, node.format_spec) if node.format_spec is not None else None,
         )
@@ -688,6 +752,11 @@ def _unified_argument(
     function parameter and as a forwarding lambda when the helper calls it;
     None when the substitution records no expression for this block.
     """
+    pool = substitution.literal_pool
+    if pool is not None and pool.parameter == param_name:
+        return ast.Tuple(
+            elts=[copy.deepcopy(node) for node in pool.rows[block_idx]], ctx=ast.Load()
+        )
     for expr_block_idx, expr in substitution.param_expressions[param_name]:
         if expr_block_idx != block_idx:
             continue
@@ -809,8 +878,6 @@ class HygienicExtractor:
         all_param_names = param_names_unified + sorted(free_variables)
         if len(set(all_param_names)) != len(all_param_names):
             raise UnsupportedExtraction("Generated parameter name collides with a free variable")
-        param_order = {name: idx for idx, name in enumerate(all_param_names)}
-
         body_nodes = self._substitute_parameters(
             copy.deepcopy(list(template_block)),
             substitution,
@@ -827,11 +894,39 @@ class HygienicExtractor:
         final_body = _declarations(global_decls, nonlocal_decls) + body
         if return_variables:
             final_body.append(ast.Return(value=_names_tuple(return_variables)))
+        # Substituting a whole expression can move all its free reads into a
+        # caller-side thunk. Construct inputs from the resulting body, so those
+        # captured names are not also passed as unused arguments. Count nested
+        # free reads and bindings (including del/nonlocal), not just own loads.
+        # Scope facts memoize by AST identity. This helper will still be
+        # rewritten (thunk inlining and annotations), so query a disposable
+        # copy rather than putting its mutable construction nodes in a memo.
+        names = code_names(copy.deepcopy(final_body))
+        needed = (
+            set(names.references)
+            | set(names.bound)
+            | names.declared_global
+            | names.declared_nonlocal
+        )
+        all_param_names = [name for name in all_param_names if name in needed]
+        param_order = {name: idx for idx, name in enumerate(all_param_names)}
+        # Synthetic double-underscore names denote positional-only parameters
+        # to type checkers. Every generated call passes its arguments by position;
+        # give the helper the same runtime signature, without changing any names.
+        positional_only_count = max(
+            (
+                index + 1
+                for index, name in enumerate(all_param_names)
+                if name in substitution.param_expressions
+                and name.startswith(GENERATED_PARAMETER_PREFIX)
+            ),
+            default=0,
+        )
         func_def = ast.FunctionDef(
             name=function_name,
             args=ast.arguments(
-                posonlyargs=[],
-                args=[ast.arg(arg=name) for name in all_param_names],
+                posonlyargs=[ast.arg(arg=name) for name in all_param_names[:positional_only_count]],
+                args=[ast.arg(arg=name) for name in all_param_names[positional_only_count:]],
                 kwonlyargs=[],
                 kw_defaults=[],
                 defaults=[],
@@ -925,7 +1020,9 @@ class HygienicExtractor:
             Transformed AST nodes
         """
 
-        substituter = ParameterSubstituter(substitution, param_names, rename_mapping)
+        substituter = ParameterSubstituter(
+            substitution, param_names, rename_mapping, path_map(nodes)
+        )
         return [visit_as(substituter, node) for node in nodes]
 
     def _ensure_unique_name(self, name: str, enclosing_names: Set[str]) -> str:

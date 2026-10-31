@@ -49,6 +49,7 @@ from dataclasses import dataclass
 import os
 
 from ..canonical_ast import canonical_dump
+from ..analysis_sources import parse_analysis_source, parser_configuration, parsing_is_pure
 from .models import (
     RawModule,
     ParsedModule,
@@ -72,6 +73,7 @@ from .progress import (
 from ..diagnostics import LOG, Settings
 from ..source_text import read_source
 from .visitors import DefinitionDepthVisitor, FunctionCollector
+from .if_binding_transfer import sharing_if_transfer_proofs
 
 
 class PairProcessor(Protocol):
@@ -274,6 +276,11 @@ class AnalysisSession:
             else check_ast_immutable
         )
         self._digests: Dict[Tuple[str, str], str] = {}
+        self._parser_configuration = parser_configuration()
+
+    @property
+    def check_ast_immutable(self) -> bool:
+        return self._check_immutable
 
     @property
     def entry_count(self) -> int:
@@ -306,7 +313,14 @@ class AnalysisSession:
 
     def clear(self) -> None:
         self._entries.clear()
+        self._digests.clear()
         self._source_bytes = 0
+
+    def _refresh_parser_configuration(self) -> None:
+        configuration = parser_configuration()
+        if configuration != self._parser_configuration:
+            self.clear()
+            self._parser_configuration = configuration
 
     def _discard(self, key: Tuple[str, str]) -> None:
         previous = self._entries.pop(key, None)
@@ -316,11 +330,13 @@ class AnalysisSession:
 
     def reusable(self, path: str) -> bool:
         """Whether the next ``analyze_module(path)`` will return the cached graph."""
+        self._refresh_parser_configuration()
         cached = self._entries.get((os.path.abspath(path), path))
         if cached is None:
             return False
         try:
-            return read_source(path) == cached.module.source
+            source = read_source(path)
+            return parsing_is_pure(source) and source == cached.module.source
         except (OSError, UnicodeError, SyntaxError):
             return False
 
@@ -342,13 +358,15 @@ class AnalysisSession:
         Analysis failures also propagate, because they indicate engine defects,
         not a conservative rejection of a source file.
         """
+        self._refresh_parser_configuration()
         key = (os.path.abspath(path), path)
         try:
             source = read_source(path)
         except (OSError, UnicodeError, SyntaxError) as error:
             self._discard(key)
             raise SourceFileError(str(error)) from error
-        cached = self._entries.get(key)
+        cacheable = parsing_is_pure(source)
+        cached = self._entries.get(key) if cacheable else None
         if cached is not None and cached.module.source == source:
             self._entries.move_to_end(key)
             if self._check_immutable and self._digest(cached) != self._digests[key]:
@@ -356,7 +374,7 @@ class AnalysisSession:
             return cached
         self._discard(key)
         try:
-            tree = ast.parse(source, filename=path)
+            tree = parse_analysis_source(source, filename=path)
         except SyntaxError as error:
             raise SourceFileError(str(error)) from error
         try:
@@ -373,7 +391,7 @@ class AnalysisSession:
                 "it nests too deeply for Towel to analyze (maximum recursion depth exceeded)"
             ) from error
         source_bytes = len(source.encode("utf-8"))
-        if self._max_entries and source_bytes <= self._max_source_bytes:
+        if cacheable and self._max_entries and source_bytes <= self._max_source_bytes:
             while self._entries and (
                 len(self._entries) >= self._max_entries
                 or self._source_bytes + source_bytes > self._max_source_bytes
@@ -462,6 +480,14 @@ def run_pipeline(
 
     functions = [function for analysis in analyses for function in analysis.functions]
     classes = [info for analysis in analyses for info in analysis.module.class_infos]
-    pairs = pair_blocks(engine, functions, progress=progress, changed_files=changed_files)
-    proposals = unify_blocks(engine, pairs, functions, classes, progress=progress)
+    with sharing_if_transfer_proofs(
+        tuple(
+            (analysis.module.tree, analysis.module.source)
+            for analysis in analyses
+            if isinstance(analysis.module.tree, ast.Module)
+        ),
+        check_ast_immutable=analysis_session.check_ast_immutable,
+    ):
+        pairs = pair_blocks(engine, functions, progress=progress, changed_files=changed_files)
+        proposals = unify_blocks(engine, pairs, functions, classes, progress=progress)
     return filter_overlaps(proposals)

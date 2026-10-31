@@ -1,0 +1,44 @@
+{
+  "commit": "1e87842e9ac50952e74643594cd41dbd258203ef",
+  "python": "/Users/ericeallen/Code/towel-1792-performance/.venv/bin/python3",
+  "python_version": "3.13.7 (main, Aug 14 2025, 11:12:11) [Clang 16.0.0 (clang-1600.0.26.6)]",
+  "towel_import": "/Users/ericeallen/Code/towel-1792-performance/src/towel/__init__.py",
+  "runtime_tree": "87bd254a7948b5611b334e85856c2aec94d13207",
+  "results": [
+    {
+      "gate": "pytest",
+      "exit_code": 0,
+      "seconds": 1503.7916952499654,
+      "arguments": [
+        "coverage",
+        "run",
+        "-m",
+        "pytest",
+        "-q"
+      ]
+    },
+    {
+      "gate": "coverage-combine",
+      "exit_code": 0,
+      "seconds": 0.13213987508788705,
+      "arguments": [
+        "coverage",
+        "combine",
+        "--keep",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261006T162407Z-codex-audit-fixes-and-performance/native-final-r05/coverage"
+      ]
+    },
+    {
+      "gate": "coverage-report",
+      "exit_code": 0,
+      "seconds": 0.9418526659719646,
+      "arguments": [
+        "coverage",
+        "report",
+        "--fail-under=85"
+      ]
+    }
+  ],
+  "source_unchanged": true,
+  "scope": "Complete native Python3.13 pytest under coverage and declared coverage gate. No matrix or corpus."
+}

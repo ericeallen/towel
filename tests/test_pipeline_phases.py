@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 import ast
-
+import contextlib
+import io
 
 from tests.test_helpers import PROJECT_ROOT, example_paths
 from towel.unification.pipeline import (
@@ -42,6 +43,24 @@ PROCESS_PROCESS = "Extract common code from process and process"
 
 def descriptions(proposals: list[RefactoringProposal]) -> list[str]:
     return [p.description for p in proposals]
+
+
+def observed_process_output(source: str) -> str:
+    """Observe the untyped example's values, identity, output and ordinary errors."""
+    exercise = """
+for function in (process_user_data, process_admin_data, process_guest_data):
+    for value in (None, 0, '', 23, 'identifier'):
+        try:
+            result = function(value)
+            print(type(result).__name__, result['id'] is value,
+                  result['name'], result['email'])
+        except Exception as error:
+            print(type(error).__name__, str(error))
+"""
+    stream = io.StringIO()
+    with contextlib.redirect_stdout(stream):
+        exec(compile(source + exercise, "<process-example>", "exec"), {})
+    return stream.getvalue()
 
 
 class TestParseModules:
@@ -283,13 +302,25 @@ class TestUnifyBlocks:
         pairs = pair_blocks(eng, funcs, progress="none")
 
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
-        # Before overlap filtering, each pair of the three functions unifies
-        # into six overlapping proposals, in pairing order; a proposal a later
-        # pair repeats (the same helper over the same clustered sites) is
-        # kept once, under the pair that found it first. The user/guest pairs
-        # repeat the user/admin proposals; three admin/guest proposals order
-        # the helper's parameters differently and are their own.
-        assert descriptions(proposals) == [USER_ADMIN] * 6 + [ADMIN_GUEST] * 3
+        # Occurrence-specific constants also admit four mixed guard windows.
+        assert descriptions(proposals) == [USER_ADMIN] * 5 + [ADMIN_GUEST] * 2
+        assert [
+            tuple(replacement.line_range for replacement in proposal.replacements)
+            for proposal in proposals
+        ] == [
+            ((14, 19), (31, 36), (48, 53)),
+            ((14, 17), (31, 34), (48, 51)),
+            ((14, 17), (33, 36), (50, 53)),
+            ((16, 19), (31, 34), (48, 51)),
+            ((16, 19), (33, 36), (50, 53)),
+            ((31, 34), (50, 53), (16, 19)),
+            ((33, 36), (48, 51), (14, 17)),
+        ]
+        baseline = observed_process_output(mods[0].source)
+        for proposal in proposals:
+            materialized = eng.apply_refactoring(files[0], proposal)
+            assert materialized != mods[0].source
+            assert observed_process_output(materialized) == baseline
 
 
 class TestFilterOverlaps:
@@ -306,8 +337,9 @@ class TestFilterOverlaps:
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
 
         filtered = filter_overlaps(proposals)
-        # The nine distinct overlapping proposals collapse to the one the engine reports.
-        assert len(proposals) == 9
+        # All seven valid overlapping windows still collapse to one.
+        assert descriptions(proposals) == [USER_ADMIN] * 5 + [ADMIN_GUEST] * 2
+        assert isinstance(filtered, list)
         assert descriptions(filtered) == [USER_ADMIN]
 
 

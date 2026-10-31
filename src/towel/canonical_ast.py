@@ -45,8 +45,12 @@ spelled in hexadecimal as ``int(0x...)``, where ``ast.dump`` raises
 ``ValueError``. ``repr`` never writes that for a constant, so the spelling
 cannot equal another value's.
 
+``exact_dump`` also includes present empty fields and source positions, keeping
+an absent compiler input distinct from an explicitly supplied value. It is for
+exact compilation keys; ordinary semantic comparisons keep using ``canonical_dump``.
+
 Every comparison, hash and cache key Towel builds from a tree's structure
-goes through this function; ``tests/test_canonical_ast.py`` fails on any
+goes through this module; ``tests/test_canonical_ast.py`` fails on any
 ``ast.dump`` call elsewhere in ``src/towel``.
 """
 
@@ -80,29 +84,38 @@ def canonical_dump(node: ast.AST) -> str:
     return _spelled_node(node)
 
 
-def _spelled(value: object) -> str:
+def exact_dump(node: ast.AST) -> str:
+    """Every present AST field and location, with wide-safe constants and no normalization.
+
+    Missing fields differ from present ``None`` or empty lists. In particular,
+    a missing expression context must not share a compiler key with ``Load()``.
+    """
+    return _spelled_node(node, exact=True)
+
+
+def _spelled(value: object, *, exact: bool = False) -> str:
     if isinstance(value, ast.AST):
-        return _spelled_node(value)
+        return _spelled_node(value, exact=exact)
     if isinstance(value, list):
-        return "[" + ", ".join(_spelled(item) for item in value) + "]"
+        return "[" + ", ".join(_spelled(item, exact=exact) for item in value) + "]"
     return _spelled_constant(value)
 
 
-def _spelled_node(node: ast.AST) -> str:
+def _spelled_node(node: ast.AST, *, exact: bool = False) -> str:
     none_is_a_value = isinstance(node, _NONE_IS_A_VALUE)
     fields: List[str] = []
-    for name in node._fields:
+    for name in (*node._fields, *node._attributes) if exact else node._fields:
         value = getattr(node, name, _ABSENT)
         if value is _ABSENT:
-            if name == _CONTEXT_FIELD:
+            if not exact and name == _CONTEXT_FIELD:
                 fields.append(f"{name}={_MISSING_CONTEXT}")
             continue
-        if value is None:
+        if not exact and value is None:
             if not (none_is_a_value and name == "value"):
                 continue
-        elif isinstance(value, list) and not value:
+        elif not exact and isinstance(value, list) and not value:
             continue
-        fields.append(f"{name}={_spelled(value)}")
+        fields.append(f"{name}={_spelled(value, exact=exact)}")
     return f"{type(node).__name__}({', '.join(fields)})"
 
 

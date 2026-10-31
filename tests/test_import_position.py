@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Where an inserted import goes: never above a line whose place matters, never before an effect.
+"""Where an inserted import goes: preserving headers and helper-import effects.
 
 One position function serves every import Towel writes: a borrower's
 ``from .a import __extracted_func_0``, a typed run's ``import typing as
-_typing`` and its ``TYPE_CHECKING`` guard. The table below holds it to each
+_typing`` and an immutable false guard. The table below holds it to each
 kind of line a module can open with, and the end-to-end cases run the
 written files the way their first lines say they run.
 """
@@ -35,6 +35,7 @@ from typing import List
 
 import pytest
 
+from towel.formatting import file_finisher_for_project
 from towel.source_text import EncodingNotKept, decode_source, encode_like, source_lines
 from towel.unification.insertion import import_line
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -85,6 +86,25 @@ def test_the_import_goes_after_every_line_whose_place_matters(source: str, after
     text = "".join(written)
     tree = ast.parse(text)  # still a module, with the import where it was put
     assert any(isinstance(n, ast.Import) and n.names[0].name == "zz_inserted" for n in tree.body)
+
+
+@pytest.mark.parametrize(
+    "source, after",
+    [
+        ("#!/usr/bin/python\n# coding: latin-1\n" + _DEF, 2),
+        (
+            '"""Doc."""\nfrom __future__ import annotations\nimport logging\nlog = init()\n' + _DEF,
+            3,
+        ),
+        ("# Copyright\n\n# type: ignore\n\nlog = init()\n" + _DEF, 3),
+        ("import logging\nlog = logging.getLogger(__name__)\n" + _DEF, 1),
+        ("log = init()\n" + _DEF, 0),
+        ("# only comments\n", 1),
+        ("", 0),
+    ],
+)
+def test_typing_import_keeps_headers_and_joins_existing_imports(source: str, after: int) -> None:
+    assert import_line(source_lines(source), ast.parse(source), source, typing_only=True) == after
 
 
 def test_a_bom_file_keeps_its_bom_and_its_first_line() -> None:
@@ -146,20 +166,37 @@ def test_r9xh_a_latin1_borrower_keeps_its_declaration(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'pkg'\nversion = '0'\n")
     (package / "__init__.py").write_text("")
     body = (
-        "def f{n}(values, offset):\n    total = sum(values) + offset\n    doubled = total * 2\n"
+        "def f{n}(values, offset):\n    total = values[0] + offset\n    doubled = total * 2\n"
         "    label = '\u00c3\u00a9 {{}} {{}}'.format(total, doubled)\n    print(label)\n"
         "    return label\n"
     )
     for name in ("a", "b"):
+        imports = "import pkg.a\n" if name == "b" else ""
         (package / f"{name}.py").write_bytes(
-            f"# -*- coding: latin-1 -*-\n\n\n{body.format(n=name)}".encode("latin-1")
+            f"# -*- coding: latin-1 -*-\n{imports}\n\n{body.format(n=name)}".encode("latin-1")
         )
     with (package / "b.py").open("ab") as handle:
         handle.write("\n\ndef stays():\n    return '\u00c3\u00a9 stays'\n".encode("latin-1"))
     (package / "c.py").write_text("from pkg import a, b\n")
-    assert _refactor(package, cross_module_helpers=True) == 2
+    calls = "from pkg import a,b; assert a.fa([1,3],2)==b.fb([1,3],2)=='\u00c3\u00a9 3 6'"
+
+    def run_calls() -> str:
+        return subprocess.run(
+            [sys.executable, "-c", calls],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(tmp_path)},
+        ).stdout
+
+    before = run_calls()
+    assert _refactor(package, cross_module_helpers=True, parameterize_builtins=True) == 2
+    assert run_calls() == before
     borrower = (package / "b.py").read_bytes()
-    assert borrower.startswith(b"# -*- coding: latin-1 -*-\nfrom .a import __extracted_func_0\n")
+    assert borrower.startswith(
+        b"# -*- coding: latin-1 -*-\nimport pkg.a\nfrom pkg.a import __extracted_func_0\n"
+    )
     probe = "from pkg import b; print(ascii(b.stays()))"
     ran = subprocess.run(
         [sys.executable, "-c", probe],
@@ -190,7 +227,7 @@ def test_r9xh_the_borrowers_own_patch_still_runs_before_the_host(tmp_path: Path)
         + _SUMMARY.format(n="a", N="A")
     )
     (package / "b.py").write_text(
-        "import time\ntime.sleep = lambda s: print('patched sleep', s)\n\n\n"
+        "import time\ntime.sleep = lambda s: print('patched sleep', s)\nimport shop.a\n\n\n"
         + _SUMMARY.format(n="b", N="B")
     )
     oracle = "import shop.b, shop.a; shop.a.use_sleep(); print(shop.b.summarize_b(['ab'], 2))"
@@ -206,9 +243,104 @@ def test_r9xh_the_borrowers_own_patch_still_runs_before_the_host(tmp_path: Path)
         ).stdout
 
     before = run()
-    assert _refactor(package, cross_module_helpers=True) > 0
+    original = {path: path.read_text() for path in package.glob("*.py")}
+    assert _refactor(package, cross_module_helpers=True, parameterize_builtins=True) == 0
+    assert {path: path.read_text() for path in package.glob("*.py")} == original
+    # A definite loop binding plus the physical holder budget gives the import
+    # position regression a complete, transferable body with identical output.
+    for path, source in original.items():
+        path.write_text(source.replace("    for r in rows:", "    r = ''\n    for r in rows:"))
+    assert (
+        _refactor(package, cross_module_helpers=True, parameterize_builtins=True, max_parameters=8)
+        > 0
+    )
     lines = (package / "b.py").read_text().splitlines()
-    assert lines.index("from .a import __extracted_func_0") > lines.index(
+    assert lines.index("from shop.a import __extracted_func_0") > lines.index(
         "time.sleep = lambda s: print('patched sleep', s)"
     )
     assert run() == before == "patched sleep 0\nBN=41\n"
+
+
+def test_latin1_literal_carrier_respects_the_complete_default_holder_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The original sum/print shape needs six physical arguments after safe pooling.
+
+    Its encoding/import capability test uses values[0] instead; this control
+    preserves the original source and proves the declared five-argument limit.
+    """
+    from towel.unification import pair_evaluation
+    from towel.unification.argument_ownership import argument_handoff_fits
+
+    observed: List[tuple[int, int, bool]] = []
+    original_fits = argument_handoff_fits
+
+    def record_budget(helper: ast.FunctionDef, max_parameters: int) -> bool:
+        fits = original_fits(helper, max_parameters)
+        observed.append((len(helper.args.posonlyargs + helper.args.args) + 1, max_parameters, fits))
+        return fits
+
+    monkeypatch.setattr(pair_evaluation, "argument_handoff_fits", record_budget)
+    package = tmp_path / "pkg"
+    package.mkdir()
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='pkg'\nversion='0'\n")
+    (package / "__init__.py").write_text("")
+    body = (
+        "def f{n}(values, offset):\n    total = sum(values) + offset\n    doubled = total * 2\n"
+        "    label = '\u00c3\u00a9 {{}} {{}}'.format(total, doubled)\n    print(label)\n"
+        "    return label\n"
+    )
+    for name in ("a", "b"):
+        imports = "import pkg.a\n" if name == "b" else ""
+        (package / f"{name}.py").write_bytes(
+            f"# -*- coding: latin-1 -*-\n{imports}\n\n{body.format(n=name)}".encode("latin-1")
+        )
+    with (package / "b.py").open("ab") as handle:
+        handle.write("\n\ndef stays():\n    return '\u00c3\u00a9 stays'\n".encode("latin-1"))
+    original = {path: path.read_bytes() for path in package.glob("*.py")}
+    program = (
+        "from pkg import a,b; print(ascii(a.fa([1,3],2)),ascii(b.fb([1,3],2)),ascii(b.stays()))"
+    )
+
+    def run() -> str:
+        ran = subprocess.run(
+            [sys.executable, "-c", program],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(tmp_path)},
+        )
+        return ran.stdout
+
+    before = run()
+    assert _refactor(package, cross_module_helpers=True, parameterize_builtins=True) == 0
+    assert (6, 5, False) in observed
+    assert {path: path.read_bytes() for path in package.glob("*.py")} == original
+    assert run() == before
+
+
+def test_typing_import_joins_imports_above_module_initialization(tmp_path: Path) -> None:
+    """The hpack corpus proposal must survive its configured Ruff E402 gate."""
+    (tmp_path / "pyproject.toml").write_text('[tool.ruff.lint]\nselect = ["E402"]\n')
+    script = tmp_path / "module.py"
+    script.write_text(
+        _duplicates(
+            "from __future__ import annotations\nimport logging\n"
+            "log = logging.getLogger(__name__)\n"
+            "LIMITS = [(2 ** i) - 1 for i in range(9)]\n"
+        )
+    )
+    finisher = file_finisher_for_project(script).tool
+    assert finisher is not None
+    assert _refactor(tmp_path, file_finisher=finisher) == 1
+    written = script.read_text()
+    assert "import typing as _typing" in written
+    assert written.index("import typing as _typing") < written.index("log =")
+    checked = subprocess.run(
+        [sys.executable, "-m", "ruff", "check", str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert checked.returncode == 0, checked.stdout + checked.stderr

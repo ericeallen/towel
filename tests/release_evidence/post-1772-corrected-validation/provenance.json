@@ -1,0 +1,4315 @@
+{
+  "archive_root": "/Users/ericeallen/Knowledge/handoffs/towel/20260927T181305Z-codex-next-validation/release-gates-3af8c4b",
+  "corpus_exit_status": 1,
+  "frozen_commit": "3af8c4bfe8acd56c204f5e31c7cf80f4f028b654",
+  "retained_raw": {
+    "artifacts.json.gz": {
+      "bytes": 536,
+      "sha256": "0148217a1d706b096feacd174afbacb9c2a86403e240833869330c22c977a0d8",
+      "source": "artifacts.json"
+    },
+    "assemble-corpus-review.py.gz": {
+      "bytes": 4610,
+      "sha256": "0e1d53c8537a2bf7a4075b6646607ae7783762f63b5409650859f34bc33b579e",
+      "source": "assemble-corpus-review.py"
+    },
+    "build-results.json.gz": {
+      "bytes": 2153,
+      "sha256": "87585f326f3d869858b37bf3d8f7621f4c70f7e3a3e2ab38d05fc8a0d44befcf",
+      "source": "build-results.json"
+    },
+    "candidate--pyproject.toml.gz": {
+      "bytes": 3992,
+      "sha256": "0b13cee0229110390fcf0dc7a2b1a1bea75c43f66e81dacadd87cb9c91e42243",
+      "source": "candidate/pyproject.toml"
+    },
+    "candidate--scripts--ecosystem--manifest.toml.gz": {
+      "bytes": 37261,
+      "sha256": "d440b6711d2ecb707e16757922aecf244566e383c11d1fbeab04b87dd3cc07cc",
+      "source": "candidate/scripts/ecosystem/manifest.toml"
+    },
+    "candidate--scripts--ecosystem_check.py.gz": {
+      "bytes": 141278,
+      "sha256": "9c5f5fa9ea1bd22f89e5a57f621a7ee862a19f3c98536db8817f90dcfcefae97",
+      "source": "candidate/scripts/ecosystem_check.py"
+    },
+    "completed-baseline-review.json.gz": {
+      "bytes": 142687,
+      "sha256": "1078420e4ee53a41ede2c1cfcff4b22eeea7c9f864868c23ab06565365c51e2a",
+      "source": "completed-baseline-review.json"
+    },
+    "continuation-driver.log.gz": {
+      "bytes": 32185,
+      "sha256": "2065ddbf96d2a29ba7f5f5d169d16d1b843a65ab83b9392d4c520bb99d72714a",
+      "source": "continuation-driver.log"
+    },
+    "continuation-result.json.gz": {
+      "bytes": 180,
+      "sha256": "a972b6503528251dc1c7593ab11979d2ebe1fe1c8308dbcefe8dbde71a268d36",
+      "source": "continuation-result.json"
+    },
+    "continuation-resumed-driver.log.gz": {
+      "bytes": 198,
+      "sha256": "8df62f3c64e61586d32424d33500687ecf701e8dfc4674b75ae73256a9571a0f",
+      "source": "continuation-resumed-driver.log"
+    },
+    "continuation-stopped-20260928.json.gz": {
+      "bytes": 118,
+      "sha256": "d5d1cb39d10cb81240477be00da159cd8668c73b028623f2c7ee8546c6664264",
+      "source": "continuation-stopped-20260928.json"
+    },
+    "continue-final-gates.py.gz": {
+      "bytes": 4912,
+      "sha256": "3f590b4f3bdd0229f90e62874ee0198286382d7057a72af0c183ac18337dafc1",
+      "source": "continue-final-gates.py"
+    },
+    "corpus-assessment.json.gz": {
+      "bytes": 165119,
+      "sha256": "358a2987076b6d680ee83af30ca261f2d030598d0f7724cc5537c5f861bdd951",
+      "source": "corpus-assessment.json"
+    },
+    "corpus-command.json.gz": {
+      "bytes": 1869,
+      "sha256": "ea6890a052791df85577d123117a3979fad96a6eb3ef15e47a5e5fc016d6809b",
+      "source": "corpus-command.json"
+    },
+    "corpus-container-state.json.gz": {
+      "bytes": 269,
+      "sha256": "bc2368023babfdd99e006f91781d13b1324891a7beec0dd92c4c237d41d52ad7",
+      "source": "corpus-container-state.json"
+    },
+    "corpus-entry.py.gz": {
+      "bytes": 1878,
+      "sha256": "c5f018b175d5b662a7fb4c20426895cc39ae79a9a27e3d66687df20901885394",
+      "source": "corpus-entry.py"
+    },
+    "corpus-environment.json.gz": {
+      "bytes": 2837,
+      "sha256": "ab23f375ddd57153b411cc67552aa41ed0d14eff1711c30e6a2ed7fe75f565a6",
+      "source": "corpus-environment.json"
+    },
+    "corpus-exit.json.gz": {
+      "bytes": 91,
+      "sha256": "f232c0d977a9014e0c53cd8ecba87f326105a98cfd690f2de910c32e4b764055",
+      "source": "corpus-exit.json"
+    },
+    "corpus-logs--anyio-after.log.gz": {
+      "bytes": 272513,
+      "sha256": "48645f952257ae37084d5fc14fdf90c9bd92f492f917ed971fbcd7e5c9ab8f70",
+      "source": "corpus-logs/anyio-after.log"
+    },
+    "corpus-logs--anyio-before.log.gz": {
+      "bytes": 272495,
+      "sha256": "5c5bf5765134edf369fb1559cbe0bc7e696408c4fd06bde27ec663fd8dde9284",
+      "source": "corpus-logs/anyio-before.log"
+    },
+    "corpus-logs--anyio-environment.log.gz": {
+      "bytes": 1281,
+      "sha256": "b3f58f096fc2e9eb5ac52a90e0c33e81e9542cb7085855e28646941273974192",
+      "source": "corpus-logs/anyio-environment.log"
+    },
+    "corpus-logs--anyio-refactor.log.gz": {
+      "bytes": 7136,
+      "sha256": "f3728e7fb8dddcc047698fe85c5b3749f4634f0c853a744255dc7285746a7835",
+      "source": "corpus-logs/anyio-refactor.log"
+    },
+    "corpus-logs--apispec-after.log.gz": {
+      "bytes": 1964,
+      "sha256": "153ea31ffb967b5f99f4042782897c454baf58593b38379fabd047c0482f78ec",
+      "source": "corpus-logs/apispec-after.log"
+    },
+    "corpus-logs--apispec-before.log.gz": {
+      "bytes": 1958,
+      "sha256": "d0f2a9691da1984ee9d7276c782a05ff14abec0edef1913923ca4be6ecdc1feb",
+      "source": "corpus-logs/apispec-before.log"
+    },
+    "corpus-logs--apispec-environment.log.gz": {
+      "bytes": 1300,
+      "sha256": "2e144fd45ae589efc1f992030a8c0b4176771e282eba3e530e77a66fc8a166c1",
+      "source": "corpus-logs/apispec-environment.log"
+    },
+    "corpus-logs--apispec-refactor.log.gz": {
+      "bytes": 2105,
+      "sha256": "50f67549c44847ff98605c1b9274ca71575e283ca87e7344e0e1516f4cc7ea55",
+      "source": "corpus-logs/apispec-refactor.log"
+    },
+    "corpus-logs--arrow-after.log.gz": {
+      "bytes": 2986,
+      "sha256": "02127c8243bad18de90e3fe708d02aad16016a3dc050b02a4a258aa731d3f773",
+      "source": "corpus-logs/arrow-after.log"
+    },
+    "corpus-logs--arrow-before.log.gz": {
+      "bytes": 2980,
+      "sha256": "cd5a5796ef216a9fcdaee25e5302f74d35867a628fd25be3ae4ad5c583317197",
+      "source": "corpus-logs/arrow-before.log"
+    },
+    "corpus-logs--arrow-environment.log.gz": {
+      "bytes": 1246,
+      "sha256": "7ca1efb381b5c114f96b71ca5199159c8a569e2ccc20e8a5a05a0942fdefbb2a",
+      "source": "corpus-logs/arrow-environment.log"
+    },
+    "corpus-logs--arrow-refactor.log.gz": {
+      "bytes": 2844,
+      "sha256": "a384145bdefa305424d9da6aac473b1e6399aba59ee23a043852e3947e75b7f5",
+      "source": "corpus-logs/arrow-refactor.log"
+    },
+    "corpus-logs--astroid-after.log.gz": {
+      "bytes": 18050,
+      "sha256": "1aee4e2d83775217a9ece0829c15181679a8a3819558e840c24d26a547e33e6d",
+      "source": "corpus-logs/astroid-after.log"
+    },
+    "corpus-logs--astroid-before.log.gz": {
+      "bytes": 18044,
+      "sha256": "adf3f748dcb24bbf13e415113e36a107031c265c493b046c47df124ea8b499b4",
+      "source": "corpus-logs/astroid-before.log"
+    },
+    "corpus-logs--astroid-environment.log.gz": {
+      "bytes": 1318,
+      "sha256": "e1abf7cab8a0eec7d45477948dea264dad219767a8f6b8eb6932c9f16e1d1ac1",
+      "source": "corpus-logs/astroid-environment.log"
+    },
+    "corpus-logs--astroid-refactor.log.gz": {
+      "bytes": 8228,
+      "sha256": "378679924db5c67176d7c2a67c4b77ffadce1f10718580afab33a826d57d275f",
+      "source": "corpus-logs/astroid-refactor.log"
+    },
+    "corpus-logs--attrs-after.log.gz": {
+      "bytes": 6919,
+      "sha256": "49385ef5147a0c42ae0685d4732ec2d94b45f9450359b854f8f658b84289644e",
+      "source": "corpus-logs/attrs-after.log"
+    },
+    "corpus-logs--attrs-before.log.gz": {
+      "bytes": 6913,
+      "sha256": "5ff50a22ad96ba838c6ca2701c738a3d1044adcd00ae1f38872c1da04015dbee",
+      "source": "corpus-logs/attrs-before.log"
+    },
+    "corpus-logs--attrs-environment.log.gz": {
+      "bytes": 1278,
+      "sha256": "a5d122fa18e43881de8c98147756d9b1bcb32b53c5207a03af6b6b2dca382859",
+      "source": "corpus-logs/attrs-environment.log"
+    },
+    "corpus-logs--attrs-refactor.log.gz": {
+      "bytes": 4417,
+      "sha256": "6b45e7249679d50d9c82f5afdc4bf09062a9439cbfa0de316f664178129a3385",
+      "source": "corpus-logs/attrs-refactor.log"
+    },
+    "corpus-logs--backoff-after.log.gz": {
+      "bytes": 7518,
+      "sha256": "550a014e68b13067de0615f1036c699804396aeabc0eeb19214117d6c63bbb05",
+      "source": "corpus-logs/backoff-after.log"
+    },
+    "corpus-logs--backoff-before.log.gz": {
+      "bytes": 7500,
+      "sha256": "42c71e74306ffba1dd4a755c6d1210b980b7b346d60d59d6138432e04506dccf",
+      "source": "corpus-logs/backoff-before.log"
+    },
+    "corpus-logs--backoff-environment.log.gz": {
+      "bytes": 1293,
+      "sha256": "20f9976ad7d57a37dc3cb37a61bdba6555904f6a81acf6d1aed676c08a706dd4",
+      "source": "corpus-logs/backoff-environment.log"
+    },
+    "corpus-logs--backoff-refactor.log.gz": {
+      "bytes": 1861,
+      "sha256": "41b486630d51692790710c16fc9f8e1abda6e57a1044509810014f53876dfc76",
+      "source": "corpus-logs/backoff-refactor.log"
+    },
+    "corpus-logs--beautifulsoup4-after.log.gz": {
+      "bytes": 2552,
+      "sha256": "29543fb64e927279a3bf585b4142a4f03cfbee79819abe8533f1b97644b5a767",
+      "source": "corpus-logs/beautifulsoup4-after.log"
+    },
+    "corpus-logs--beautifulsoup4-before.log.gz": {
+      "bytes": 2546,
+      "sha256": "e6cb7668dafa13dfb74bb3b562d600bed812857ef142b5d6eaf3870b4e3bdd38",
+      "source": "corpus-logs/beautifulsoup4-before.log"
+    },
+    "corpus-logs--beautifulsoup4-environment.log.gz": {
+      "bytes": 1467,
+      "sha256": "36973d4ba0e8865b5887ed976ed9b82d5c94f67280a351cded1124c7a848a6c6",
+      "source": "corpus-logs/beautifulsoup4-environment.log"
+    },
+    "corpus-logs--beautifulsoup4-refactor.log.gz": {
+      "bytes": 29086,
+      "sha256": "e475401a6b05f028e919d9de6a99f3912544e92d97eae92c725d82e7f647ee6e",
+      "source": "corpus-logs/beautifulsoup4-refactor.log"
+    },
+    "corpus-logs--bidict-before.log.gz": {
+      "bytes": 2427,
+      "sha256": "0d26e36343262d661007eba628d9ac3eeb5f5b5faf14ddd1a7af4e52f5efc62b",
+      "source": "corpus-logs/bidict-before.log"
+    },
+    "corpus-logs--bidict-environment.log.gz": {
+      "bytes": 1521,
+      "sha256": "ac23f72c647b7091db458bd8ec4a6e92c9c8241ee437794d7356fac45e4167a2",
+      "source": "corpus-logs/bidict-environment.log"
+    },
+    "corpus-logs--bidict-refactor.log.gz": {
+      "bytes": 1567,
+      "sha256": "be7171282185d858cab1d07f6f146ba3bf7e7b3b0a12cb2293e4321085405738",
+      "source": "corpus-logs/bidict-refactor.log"
+    },
+    "corpus-logs--black-after.log.gz": {
+      "bytes": 36826,
+      "sha256": "0049f3395d54a519c2335b4f4dc246d0e763031726560712a36e27ecb2ca48a8",
+      "source": "corpus-logs/black-after.log"
+    },
+    "corpus-logs--black-before.log.gz": {
+      "bytes": 36820,
+      "sha256": "5b5641a79ac5e3fb4326b9ceeef851888f10c1397dd24f98c50d93f2bad075c8",
+      "source": "corpus-logs/black-before.log"
+    },
+    "corpus-logs--black-environment.log.gz": {
+      "bytes": 1329,
+      "sha256": "9d09de2fa2a8475e5ffccd8655e9037596b8c1571713141bf2d87854660eaea8",
+      "source": "corpus-logs/black-environment.log"
+    },
+    "corpus-logs--black-refactor.log.gz": {
+      "bytes": 18266,
+      "sha256": "e0fac128d12042c4b960ebc9d0e662005e0b16852b550aa9e57cfb41dd032ce7",
+      "source": "corpus-logs/black-refactor.log"
+    },
+    "corpus-logs--bleach-after.log.gz": {
+      "bytes": 1708,
+      "sha256": "e68d277b1eafb3c4c365427fe2ef4fc5997df1f4603c1d6d206ccb81d7c2b04f",
+      "source": "corpus-logs/bleach-after.log"
+    },
+    "corpus-logs--bleach-before.log.gz": {
+      "bytes": 1702,
+      "sha256": "3515079b4282b070a2a396a23aee7d70c1f1c2c29db9b95e1fd6193a91ef7576",
+      "source": "corpus-logs/bleach-before.log"
+    },
+    "corpus-logs--bleach-environment.log.gz": {
+      "bytes": 1274,
+      "sha256": "31c0977dbbf197431e806a05e4e134197ce4cac0389398fa69a6d023b74219cb",
+      "source": "corpus-logs/bleach-environment.log"
+    },
+    "corpus-logs--bleach-refactor.log.gz": {
+      "bytes": 5112,
+      "sha256": "2e449176366c0bf31ee826947d64647880e01053cf6ff14ee6317070701c5eaf",
+      "source": "corpus-logs/bleach-refactor.log"
+    },
+    "corpus-logs--blinker-before.log.gz": {
+      "bytes": 706,
+      "sha256": "85e54e05901312b33fe52cf8076cf00d75a3900589873992eb8322919b69af1e",
+      "source": "corpus-logs/blinker-before.log"
+    },
+    "corpus-logs--blinker-environment.log.gz": {
+      "bytes": 2163,
+      "sha256": "5588eee93000c567bfbf56fe3a979ef6f6adedecf85e332f31366b7e6b0ed241",
+      "source": "corpus-logs/blinker-environment.log"
+    },
+    "corpus-logs--blinker-refactor.log.gz": {
+      "bytes": 705,
+      "sha256": "7303d3ffd848646e90d79826a45c1dc47aeb8fdda173e6b0cbc9c4f757264e7f",
+      "source": "corpus-logs/blinker-refactor.log"
+    },
+    "corpus-logs--boltons-after.log.gz": {
+      "bytes": 2970,
+      "sha256": "23d98a37d8a96633db4ea5ea16f621576310889ba9103f9f77940561332c7749",
+      "source": "corpus-logs/boltons-after.log"
+    },
+    "corpus-logs--boltons-before.log.gz": {
+      "bytes": 2964,
+      "sha256": "c9af06d0d7a317176fb92e53463121bc2efaffeec1592ef3e1cb1ef2680660bc",
+      "source": "corpus-logs/boltons-before.log"
+    },
+    "corpus-logs--boltons-environment.log.gz": {
+      "bytes": 1317,
+      "sha256": "b2bcc9aa45474e85b30f59a10cf020e13bb2cb6bde398dcb9bf272ce2ac54e50",
+      "source": "corpus-logs/boltons-environment.log"
+    },
+    "corpus-logs--boltons-refactor.log.gz": {
+      "bytes": 3810,
+      "sha256": "96e08a5b439795e3295e909c960be2d04f010bc12f9ba2151fef3d73c4df1627",
+      "source": "corpus-logs/boltons-refactor.log"
+    },
+    "corpus-logs--bottle-before.log.gz": {
+      "bytes": 2243,
+      "sha256": "efd9e41d2f2e3323672bf16031640579106bd0c7411adf4ea9e77a551c7840aa",
+      "source": "corpus-logs/bottle-before.log"
+    },
+    "corpus-logs--bottle-environment.log.gz": {
+      "bytes": 1290,
+      "sha256": "4ced97301483cb358777f5c7fcd7f441bb12cba4c677adc6dfa6baef03886bb3",
+      "source": "corpus-logs/bottle-environment.log"
+    },
+    "corpus-logs--bottle-refactor.log.gz": {
+      "bytes": 2914,
+      "sha256": "26bea2cc0a691602c2961e3f4e7ac364057f97b7c3516350423509de099b3afc",
+      "source": "corpus-logs/bottle-refactor.log"
+    },
+    "corpus-logs--cachetools-after.log.gz": {
+      "bytes": 1453,
+      "sha256": "4f098fbbb2567394038d4cf93ed7effab68f91037b1634a6c75236963e4b2028",
+      "source": "corpus-logs/cachetools-after.log"
+    },
+    "corpus-logs--cachetools-before.log.gz": {
+      "bytes": 1447,
+      "sha256": "d837a4ceef97d03a68dca777ab00394a729edf95bb407e002d65840ecc57e14b",
+      "source": "corpus-logs/cachetools-before.log"
+    },
+    "corpus-logs--cachetools-environment.log.gz": {
+      "bytes": 1370,
+      "sha256": "ef176fd150975a75543999d979be47cf1de0215d560d0e55fc92494a388403dc",
+      "source": "corpus-logs/cachetools-environment.log"
+    },
+    "corpus-logs--cachetools-refactor.log.gz": {
+      "bytes": 6461,
+      "sha256": "823cd83d85bd93cde4807255fd14de3cbae2651393e6e40e709a605b86e80110",
+      "source": "corpus-logs/cachetools-refactor.log"
+    },
+    "corpus-logs--cattrs-after.log.gz": {
+      "bytes": 69994,
+      "sha256": "d3dc39d1d3340a5bcf68abbdf5a105d13fa530449e66eb51b8e9c9341db8c514",
+      "source": "corpus-logs/cattrs-after.log"
+    },
+    "corpus-logs--cattrs-before.log.gz": {
+      "bytes": 69893,
+      "sha256": "c5898f997667ac7145d4aeade8b380052bfe171da41df6bd9e2989ec65e0dc7a",
+      "source": "corpus-logs/cattrs-before.log"
+    },
+    "corpus-logs--cattrs-environment.log.gz": {
+      "bytes": 1298,
+      "sha256": "8f1149e345a740139fda82380e09401b915a85bab2f181145de242fe37b3468d",
+      "source": "corpus-logs/cattrs-environment.log"
+    },
+    "corpus-logs--cattrs-refactor.log.gz": {
+      "bytes": 7194,
+      "sha256": "14ec50eca5d8b3ba1abbceed30d6e427217b82bf86fe032e47a65bf91a69031f",
+      "source": "corpus-logs/cattrs-refactor.log"
+    },
+    "corpus-logs--cerberus-after.log.gz": {
+      "bytes": 3050,
+      "sha256": "2b29654c34e3451ee6212b2fa4d95295e5950ccd9d7250235d4b7b16347caad3",
+      "source": "corpus-logs/cerberus-after.log"
+    },
+    "corpus-logs--cerberus-before.log.gz": {
+      "bytes": 3044,
+      "sha256": "06aa815499bcbb5f72e2b56601a6270381f1efa82ce265760f55048091b01342",
+      "source": "corpus-logs/cerberus-before.log"
+    },
+    "corpus-logs--cerberus-environment.log.gz": {
+      "bytes": 1329,
+      "sha256": "4add43953b7b4986fd9ffb26da156f43b5ec37e4904fbcd9672685a1da8e92f5",
+      "source": "corpus-logs/cerberus-environment.log"
+    },
+    "corpus-logs--cerberus-refactor.log.gz": {
+      "bytes": 6313,
+      "sha256": "677414693252fc3ee1223aff0f29b34096dce119229609f0ca22ed410a87a183",
+      "source": "corpus-logs/cerberus-refactor.log"
+    },
+    "corpus-logs--chardet-after.log.gz": {
+      "bytes": 72240,
+      "sha256": "704936e74469b37a1e1a14318338faf7ff86a2d211266e1e882a018b94f57b4f",
+      "source": "corpus-logs/chardet-after.log"
+    },
+    "corpus-logs--chardet-before.log.gz": {
+      "bytes": 70968,
+      "sha256": "1d641c8c42e60b896a65e83e0843d4d7e3cdfdecdfed03208853ab950b056ebf",
+      "source": "corpus-logs/chardet-before.log"
+    },
+    "corpus-logs--chardet-environment.log.gz": {
+      "bytes": 1297,
+      "sha256": "2335c85aed1d7d577f0b42f1a4255ff20dd135bd543e70803fdfb3219dd8b68e",
+      "source": "corpus-logs/chardet-environment.log"
+    },
+    "corpus-logs--chardet-refactor.log.gz": {
+      "bytes": 2541,
+      "sha256": "a25f0a6597c49550059127caa978c3ee355fc2acf9b631b3db0b2b2906353dbd",
+      "source": "corpus-logs/chardet-refactor.log"
+    },
+    "corpus-logs--cheroot-after.log.gz": {
+      "bytes": 171913,
+      "sha256": "b601b3cc9a5b47984ee0e4a126c75309f005459043abbb3d44d325b09f37e151",
+      "source": "corpus-logs/cheroot-after.log"
+    },
+    "corpus-logs--cheroot-before.log.gz": {
+      "bytes": 171915,
+      "sha256": "9225109ae592af68676832b81af1ece774ed2e24312903b47974e85963dc7637",
+      "source": "corpus-logs/cheroot-before.log"
+    },
+    "corpus-logs--cheroot-environment.log.gz": {
+      "bytes": 1373,
+      "sha256": "b5333ccaae97767e209d0a923d3013839f6c16d507ffee7e32d7fc5794736b1b",
+      "source": "corpus-logs/cheroot-environment.log"
+    },
+    "corpus-logs--cheroot-refactor-no-types.log.gz": {
+      "bytes": 1172,
+      "sha256": "5ca20d1d5a4540593e5ced3c290971ade796ad05bec7cc6acd7446992fd08a50",
+      "source": "corpus-logs/cheroot-refactor-no-types.log"
+    },
+    "corpus-logs--cheroot-refactor.log.gz": {
+      "bytes": 1301,
+      "sha256": "f57fdddfe3bb19335bbfe03908e968740062cac95ac8e4097d45c7db8cd1e131",
+      "source": "corpus-logs/cheroot-refactor.log"
+    },
+    "corpus-logs--click-after.log.gz": {
+      "bytes": 157297,
+      "sha256": "c98575a054bdb96fdb4b484eff5d681ac138fc09a88a73c49414ef7350655046",
+      "source": "corpus-logs/click-after.log"
+    },
+    "corpus-logs--click-before.log.gz": {
+      "bytes": 157291,
+      "sha256": "2e74e5f3e4a3a3d65f63dab4588bedfe7aab415393f81abcfeae93eaa9eb0a5c",
+      "source": "corpus-logs/click-before.log"
+    },
+    "corpus-logs--click-environment.log.gz": {
+      "bytes": 1269,
+      "sha256": "38bb0c38f68637755700909b11ad7ba83083b5fe0942fd3bb98eab4bfa4ef8d2",
+      "source": "corpus-logs/click-environment.log"
+    },
+    "corpus-logs--click-refactor.log.gz": {
+      "bytes": 6628,
+      "sha256": "1361e03dbbd00a0ee8222f08896ccc6ff1079a036a84d3f2c5ffccce70f4e65b",
+      "source": "corpus-logs/click-refactor.log"
+    },
+    "corpus-logs--colorama-after.log.gz": {
+      "bytes": 1809,
+      "sha256": "3a0a91fee9b194fd39cd68feaa65523778c3c9ec4a194a5aaf77ad6856254626",
+      "source": "corpus-logs/colorama-after.log"
+    },
+    "corpus-logs--colorama-before.log.gz": {
+      "bytes": 1802,
+      "sha256": "c9e3a236b9063a16d13754b721d10b6eaa12dd1759ae45b34af5a2cb27e873d2",
+      "source": "corpus-logs/colorama-before.log"
+    },
+    "corpus-logs--colorama-environment.log.gz": {
+      "bytes": 1339,
+      "sha256": "f8fe320f06ff6f7997095fa98189bd9e7e5d48afd647f9a874df891efa77ee79",
+      "source": "corpus-logs/colorama-environment.log"
+    },
+    "corpus-logs--colorama-refactor.log.gz": {
+      "bytes": 2980,
+      "sha256": "c7fe2c4054f2153194403c220f43d5707b7a4dda333401a02be2bb999d32e457",
+      "source": "corpus-logs/colorama-refactor.log"
+    },
+    "corpus-logs--croniter-after.log.gz": {
+      "bytes": 1051,
+      "sha256": "9cfe2dcbc4e8df4a5d82691c2e63f480117a9823c601cbf40aa69196e48b842d",
+      "source": "corpus-logs/croniter-after.log"
+    },
+    "corpus-logs--croniter-before.log.gz": {
+      "bytes": 1045,
+      "sha256": "1f95c97b7b70ebef960eefdff03dcaf7e6f0b8082acd9d4b127014954c5e73b5",
+      "source": "corpus-logs/croniter-before.log"
+    },
+    "corpus-logs--croniter-environment.log.gz": {
+      "bytes": 1346,
+      "sha256": "912a1ba12efca34d27e32f6291e68da035c25e00deecbc7a1bc9c7a19f08c16a",
+      "source": "corpus-logs/croniter-environment.log"
+    },
+    "corpus-logs--croniter-refactor.log.gz": {
+      "bytes": 2471,
+      "sha256": "bf622dfda484610dfcb5c65a2d0ee62eeeebc3bf28fc32d01835e430fd3aa8bc",
+      "source": "corpus-logs/croniter-refactor.log"
+    },
+    "corpus-logs--decorator-before.log.gz": {
+      "bytes": 405,
+      "sha256": "4152af9b74709b95ae0fb845b440ffcc0500a21cc0847a3202ae082ccbf0f074",
+      "source": "corpus-logs/decorator-before.log"
+    },
+    "corpus-logs--decorator-environment.log.gz": {
+      "bytes": 1346,
+      "sha256": "97f3ba993afc66eb9984a761b5e57b891c41fb020c469c6f77f09d0e5663ddb6",
+      "source": "corpus-logs/decorator-environment.log"
+    },
+    "corpus-logs--decorator-refactor.log.gz": {
+      "bytes": 2019,
+      "sha256": "63ada50aee290a05bfb99fd97976d47e4f15c1b6fc03d8c33f41d6133ee978b7",
+      "source": "corpus-logs/decorator-refactor.log"
+    },
+    "corpus-logs--deepdiff-after.log.gz": {
+      "bytes": 6192,
+      "sha256": "ef2720b2b5f94eb693eea3cb2ebd35ac32127f8a364c3738c4526e79216705a5",
+      "source": "corpus-logs/deepdiff-after.log"
+    },
+    "corpus-logs--deepdiff-before.log.gz": {
+      "bytes": 6174,
+      "sha256": "ee0ccb993938336a3b50e1cc7ab6195669ff70f1b6c9c5cda7e18b823e9dfb8d",
+      "source": "corpus-logs/deepdiff-before.log"
+    },
+    "corpus-logs--deepdiff-environment.log.gz": {
+      "bytes": 1324,
+      "sha256": "247d2d877aa988b837d1bdbd206babcaed360761d6a3f58c787169200666ef77",
+      "source": "corpus-logs/deepdiff-environment.log"
+    },
+    "corpus-logs--deepdiff-refactor.log.gz": {
+      "bytes": 4275,
+      "sha256": "8ca3300073c05c7c40c7683233cb4e1378df7f7282ce97c3559fbf7522301332",
+      "source": "corpus-logs/deepdiff-refactor.log"
+    },
+    "corpus-logs--django-forms-after.log.gz": {
+      "bytes": 1408,
+      "sha256": "d4934ed3e24abb7d8a84a0dfc0f0c1db2344fa20a9673212c2268484b3dabb74",
+      "source": "corpus-logs/django-forms-after.log"
+    },
+    "corpus-logs--django-forms-before.log.gz": {
+      "bytes": 1402,
+      "sha256": "f658bdf57f8eb3ff3b96560f9a90c7d91f4f8d72665430e238bb6c6e9d407776",
+      "source": "corpus-logs/django-forms-before.log"
+    },
+    "corpus-logs--django-forms-environment.log.gz": {
+      "bytes": 1436,
+      "sha256": "dde7ad5da10350303584501b35421f8b35abf8a8a90b5adc59915c834e08c84f",
+      "source": "corpus-logs/django-forms-environment.log"
+    },
+    "corpus-logs--django-forms-refactor.log.gz": {
+      "bytes": 4310,
+      "sha256": "b3ea683cc8f0f4bf90530f0df0353b417b26b742b9fc82e79654bda251bf8f4f",
+      "source": "corpus-logs/django-forms-refactor.log"
+    },
+    "corpus-logs--django-utils-after.log.gz": {
+      "bytes": 1050,
+      "sha256": "14fd24398350ef2428f26b5accad8956009848820066152f4ddc4d36b40e8f16",
+      "source": "corpus-logs/django-utils-after.log"
+    },
+    "corpus-logs--django-utils-before.log.gz": {
+      "bytes": 1044,
+      "sha256": "7189ed82455f1859f59d4eba65e730108838365e90d10e571a0244397072b3c2",
+      "source": "corpus-logs/django-utils-before.log"
+    },
+    "corpus-logs--django-utils-environment.log.gz": {
+      "bytes": 1436,
+      "sha256": "7be5dd9fa401ff906008e0fce8280f39f2f0d6b43a35f46dfa73df8a30f1e703",
+      "source": "corpus-logs/django-utils-environment.log"
+    },
+    "corpus-logs--django-utils-refactor.log.gz": {
+      "bytes": 6932,
+      "sha256": "e85cd5cdd48337b92651aefd619781a05f2c957cead2af3267a3486aa05d4abb",
+      "source": "corpus-logs/django-utils-refactor.log"
+    },
+    "corpus-logs--docopt-ng-before.log.gz": {
+      "bytes": 1225,
+      "sha256": "c5ab750e10736f832347b637fd0ae7a695ea0f5bb4ce5706f26c42991539be2e",
+      "source": "corpus-logs/docopt-ng-before.log"
+    },
+    "corpus-logs--docopt-ng-environment.log.gz": {
+      "bytes": 1349,
+      "sha256": "d0f3ffa563340aafe53e53d6e8844bca5e158017c39a03102f1f1bbd119153c4",
+      "source": "corpus-logs/docopt-ng-environment.log"
+    },
+    "corpus-logs--docopt-ng-refactor.log.gz": {
+      "bytes": 1584,
+      "sha256": "e3a4556a1ee66d9b3a2943c9efe8fe3af60b9060d6468619c602160fbb30a5e6",
+      "source": "corpus-logs/docopt-ng-refactor.log"
+    },
+    "corpus-logs--dpath-after.log.gz": {
+      "bytes": 1990,
+      "sha256": "7ff246840307481c21ff1dd59eab1fbe81fcc944aa93770231ce3df52427e287",
+      "source": "corpus-logs/dpath-after.log"
+    },
+    "corpus-logs--dpath-before.log.gz": {
+      "bytes": 1972,
+      "sha256": "22cde69fa32f275c5a7c65d30765f0c85d662136d9e1dd07889d4cc7afe76a13",
+      "source": "corpus-logs/dpath-before.log"
+    },
+    "corpus-logs--dpath-environment.log.gz": {
+      "bytes": 1247,
+      "sha256": "6ed6ced8e46b60021941a3652ddc6bd687ebece33a1d356c263ad06085cb2792",
+      "source": "corpus-logs/dpath-environment.log"
+    },
+    "corpus-logs--dpath-refactor.log.gz": {
+      "bytes": 1280,
+      "sha256": "2e8ffddfe0b66bc873923044f6f27edda73389d9b7e04e2e40487cbdd89bb6a5",
+      "source": "corpus-logs/dpath-refactor.log"
+    },
+    "corpus-logs--ecdsa-after.log.gz": {
+      "bytes": 5407,
+      "sha256": "d16185b8881f45d2a7f2d693eaf1a1c3b73e536920740d8b9a884d154d2b1660",
+      "source": "corpus-logs/ecdsa-after.log"
+    },
+    "corpus-logs--ecdsa-before.log.gz": {
+      "bytes": 5401,
+      "sha256": "546ef7c1b292f930e1516c237f2cdcecc3a32e539dda9d96b6b47bec9fc80b47",
+      "source": "corpus-logs/ecdsa-before.log"
+    },
+    "corpus-logs--ecdsa-environment.log.gz": {
+      "bytes": 1305,
+      "sha256": "3fe6622b05bba940fd9edd4806c6ba9ed3b5c636bb980cc3914735e7ac754b61",
+      "source": "corpus-logs/ecdsa-environment.log"
+    },
+    "corpus-logs--ecdsa-refactor.log.gz": {
+      "bytes": 99927,
+      "sha256": "f19d15593fc1d8e085044060611f11094043df912b7458be98851f638a2632b4",
+      "source": "corpus-logs/ecdsa-refactor.log"
+    },
+    "corpus-logs--environs-before.log.gz": {
+      "bytes": 2208,
+      "sha256": "b401005af332a5bf92921756176553498f1d372f5692526280b86034d919babd",
+      "source": "corpus-logs/environs-before.log"
+    },
+    "corpus-logs--environs-environment.log.gz": {
+      "bytes": 1326,
+      "sha256": "07b5ae13e7a77c7af566b4f0ac7d51f4131be82cf81896cb8ec02cbcd8ecca1d",
+      "source": "corpus-logs/environs-environment.log"
+    },
+    "corpus-logs--environs-refactor.log.gz": {
+      "bytes": 2945,
+      "sha256": "9fb465cb2d92cc3e1ddde1d387684684604b97ab9987039631d63d49153235ec",
+      "source": "corpus-logs/environs-refactor.log"
+    },
+    "corpus-logs--feedparser-after.log.gz": {
+      "bytes": 7183,
+      "sha256": "d0bbbe3168c1d7f21c8a20ab15afde5884f2ec17a9db25b9988f6d55191b6418",
+      "source": "corpus-logs/feedparser-after.log"
+    },
+    "corpus-logs--feedparser-before.log.gz": {
+      "bytes": 7177,
+      "sha256": "58bad591c70c20f2ae09d7469c9d8d50313c5876cfe541a4fe276fdd5a95b140",
+      "source": "corpus-logs/feedparser-before.log"
+    },
+    "corpus-logs--feedparser-environment.log.gz": {
+      "bytes": 1381,
+      "sha256": "b25cde42d740c29a21c0b4f436e91b2e1fed870e1396b6b747361c6404657730",
+      "source": "corpus-logs/feedparser-environment.log"
+    },
+    "corpus-logs--feedparser-refactor.log.gz": {
+      "bytes": 3827,
+      "sha256": "14814d4fa4b9c40814e0e512a53923badbc5c2e688613c0d9fece38299738c09",
+      "source": "corpus-logs/feedparser-refactor.log"
+    },
+    "corpus-logs--filelock-after.log.gz": {
+      "bytes": 7284,
+      "sha256": "45be898118983e3e4cb5b109775c0793071c3063b3ceee84bf5128a7758222cf",
+      "source": "corpus-logs/filelock-after.log"
+    },
+    "corpus-logs--filelock-before.log.gz": {
+      "bytes": 7278,
+      "sha256": "de7f7e38e64376eb3025579e8135c9d41b7526b1ebf88019f76911898b728490",
+      "source": "corpus-logs/filelock-before.log"
+    },
+    "corpus-logs--filelock-environment.log.gz": {
+      "bytes": 1326,
+      "sha256": "53954461f9e0e24e90e26880dee7e30f0d75e9069e6c3ea07c46880adb6a1cac",
+      "source": "corpus-logs/filelock-environment.log"
+    },
+    "corpus-logs--filelock-refactor.log.gz": {
+      "bytes": 4592,
+      "sha256": "f4cc16aecd325e4b353f29d3a7900ec35d6b21f9b919fc0e960474dbbc2bf7ad",
+      "source": "corpus-logs/filelock-refactor.log"
+    },
+    "corpus-logs--flake8-after.log.gz": {
+      "bytes": 3121,
+      "sha256": "fb90b95877c6547b796765cf9c88c3577e7d3db1524a5424a009bee4ccba8182",
+      "source": "corpus-logs/flake8-after.log"
+    },
+    "corpus-logs--flake8-before.log.gz": {
+      "bytes": 3115,
+      "sha256": "e8488092c09ac0e75796b6b69fc20d9c205d7dec084a2af9275c38f01d1b4f10",
+      "source": "corpus-logs/flake8-before.log"
+    },
+    "corpus-logs--flake8-environment.log.gz": {
+      "bytes": 1277,
+      "sha256": "74c42f1cdbf8363f33ba3e21b74da265ff013b98cb6e0fda998147060cfddfbf",
+      "source": "corpus-logs/flake8-environment.log"
+    },
+    "corpus-logs--flake8-refactor.log.gz": {
+      "bytes": 4124,
+      "sha256": "6b9cbf761784f45cb0d8a4d0d2cd2cb76066e12cf5546eb43c98e00b9563c4d2",
+      "source": "corpus-logs/flake8-refactor.log"
+    },
+    "corpus-logs--flask-after.log.gz": {
+      "bytes": 2425,
+      "sha256": "ca955277a55d27d529166068dcc68bd2cc71b80eac282b6cdcf277ce916e1683",
+      "source": "corpus-logs/flask-after.log"
+    },
+    "corpus-logs--flask-before.log.gz": {
+      "bytes": 2419,
+      "sha256": "83e38309913ff6cb974312566509d6ca1de48ccc586d55c617a8ae978c96a943",
+      "source": "corpus-logs/flask-before.log"
+    },
+    "corpus-logs--flask-environment.log.gz": {
+      "bytes": 1272,
+      "sha256": "066ceb6995ab8d23491767604f11c3366a245b05f43672eeb1c5dfabe1181045",
+      "source": "corpus-logs/flask-environment.log"
+    },
+    "corpus-logs--flask-refactor.log.gz": {
+      "bytes": 3518,
+      "sha256": "cf254431a8e7173f9d10df5f0b721ecac2756253843ea64211419eb63a38dd6e",
+      "source": "corpus-logs/flask-refactor.log"
+    },
+    "corpus-logs--funcy-after.log.gz": {
+      "bytes": 1501,
+      "sha256": "853258a8bae07800c11a7c6e8fe3dc0fc13c0bb0998d06519540cfc8334794b4",
+      "source": "corpus-logs/funcy-after.log"
+    },
+    "corpus-logs--funcy-before.log.gz": {
+      "bytes": 1495,
+      "sha256": "c689f56a3bb1839bbdd432dc81d5e3b25b4235c00031a990713291c5206ccdee",
+      "source": "corpus-logs/funcy-before.log"
+    },
+    "corpus-logs--funcy-environment.log.gz": {
+      "bytes": 1245,
+      "sha256": "9ed4366d57a367f6e1d52ba73660f53006550c30d958739270dbd616b2940a1e",
+      "source": "corpus-logs/funcy-environment.log"
+    },
+    "corpus-logs--funcy-refactor.log.gz": {
+      "bytes": 1720,
+      "sha256": "6be0093a9523ccede0672b3af2861912ae322e76df967e9d6405a8db1a2bbc11",
+      "source": "corpus-logs/funcy-refactor.log"
+    },
+    "corpus-logs--glom-after.log.gz": {
+      "bytes": 2248,
+      "sha256": "9e24b5e2b4eb59a1df85a854cfbff446445f3f477f3ead32290a51cb2b63e149",
+      "source": "corpus-logs/glom-after.log"
+    },
+    "corpus-logs--glom-before.log.gz": {
+      "bytes": 2236,
+      "sha256": "faabf59d9bad428ec0462735ae50803b1b0e51bbb1a464c4658f3a013727e3f0",
+      "source": "corpus-logs/glom-before.log"
+    },
+    "corpus-logs--glom-environment.log.gz": {
+      "bytes": 1252,
+      "sha256": "f01828de97149e344f11443a1074d22a715aeffedaa5fe5d06dcec0e2ed1d2f2",
+      "source": "corpus-logs/glom-environment.log"
+    },
+    "corpus-logs--glom-refactor.log.gz": {
+      "bytes": 6572,
+      "sha256": "02ee60ab91b88f057512587809d6b746985404c9306efb31d241403c65b868a3",
+      "source": "corpus-logs/glom-refactor.log"
+    },
+    "corpus-logs--gunicorn-after.log.gz": {
+      "bytes": 36178,
+      "sha256": "2dcc5e47cedc36edebf1cd54778dcda9c2a81c6acb104dec9de0494fed9bc62e",
+      "source": "corpus-logs/gunicorn-after.log"
+    },
+    "corpus-logs--gunicorn-before.log.gz": {
+      "bytes": 35259,
+      "sha256": "3217096cd719432c0f8e97ba2a884fa03d3ae44b6d8027e92eb4e78b8fbec429",
+      "source": "corpus-logs/gunicorn-before.log"
+    },
+    "corpus-logs--gunicorn-environment.log.gz": {
+      "bytes": 1331,
+      "sha256": "0ae03f7e11b65bd4ebf2128c3a0e676972b9ae87031289469d42d8d6f16400f8",
+      "source": "corpus-logs/gunicorn-environment.log"
+    },
+    "corpus-logs--gunicorn-refactor.log.gz": {
+      "bytes": 19892,
+      "sha256": "ab7986a5baeac5f1cddbceb9b19ae230c0e06b95d29ec451c5c6d1d74eeea9e0",
+      "source": "corpus-logs/gunicorn-refactor.log"
+    },
+    "corpus-logs--h11-after.log.gz": {
+      "bytes": 1045,
+      "sha256": "f9863991a067f20e6b8be5959bbb0d779aad033cb3ed9b3c3c7adccc9aee03dd",
+      "source": "corpus-logs/h11-after.log"
+    },
+    "corpus-logs--h11-before.log.gz": {
+      "bytes": 1039,
+      "sha256": "b107edc5e173f41c3baa704299c2722672e8eb93fb3dab13f70f84045c76ee56",
+      "source": "corpus-logs/h11-before.log"
+    },
+    "corpus-logs--h11-environment.log.gz": {
+      "bytes": 1222,
+      "sha256": "da771cbf98e5d7ef88e474743080cc1fccdffede46d26f6793d55d1e14426d8e",
+      "source": "corpus-logs/h11-environment.log"
+    },
+    "corpus-logs--h11-refactor.log.gz": {
+      "bytes": 2142,
+      "sha256": "8199101613b4fa1972b60e51fa3e90772082778379b5b1bfca6ad17afdc7a1c5",
+      "source": "corpus-logs/h11-refactor.log"
+    },
+    "corpus-logs--h2-after.log.gz": {
+      "bytes": 5089,
+      "sha256": "72d739629e58fff256d6a83b2824e05f7126b05a21166ecfcd75d9e135732e79",
+      "source": "corpus-logs/h2-after.log"
+    },
+    "corpus-logs--h2-before.log.gz": {
+      "bytes": 5083,
+      "sha256": "6cdd25513547d5ee2c90531634df075d5d661f31ba4de925cc2ec8a574960672",
+      "source": "corpus-logs/h2-before.log"
+    },
+    "corpus-logs--h2-environment.log.gz": {
+      "bytes": 1181,
+      "sha256": "9f191ce6b850a4bba70f8ffeb00112fda104bb6e2732cad40322f80c41ced917",
+      "source": "corpus-logs/h2-environment.log"
+    },
+    "corpus-logs--h2-refactor.log.gz": {
+      "bytes": 3352,
+      "sha256": "dcc69bebecee9faded433fbe7460f686becd7808c0ed9a90cdf666c08ce1ea0f",
+      "source": "corpus-logs/h2-refactor.log"
+    },
+    "corpus-logs--hpack-after.log.gz": {
+      "bytes": 4034,
+      "sha256": "45dade17fe7dda3fa247b63e19f097ecae77cfc9ca6d7443aeac4b514aef4f78",
+      "source": "corpus-logs/hpack-after.log"
+    },
+    "corpus-logs--hpack-before.log.gz": {
+      "bytes": 4022,
+      "sha256": "c6020ce682513908c1c5bfba843a98a8410e5a7492f7de09d3c9216192fac361",
+      "source": "corpus-logs/hpack-before.log"
+    },
+    "corpus-logs--hpack-environment.log.gz": {
+      "bytes": 1250,
+      "sha256": "b0e5942ab316c247ddd85bbc37f692e2fbb4f40f6fa748b3ac79d77d2f4cc56e",
+      "source": "corpus-logs/hpack-environment.log"
+    },
+    "corpus-logs--hpack-refactor.log.gz": {
+      "bytes": 1253,
+      "sha256": "22126325e633b51594e5f83c06acea1e839db584cfafcfd605c7fc9ea19b8e82",
+      "source": "corpus-logs/hpack-refactor.log"
+    },
+    "corpus-logs--html5lib-after.log.gz": {
+      "bytes": 4511,
+      "sha256": "b8d21cd96f5177ed12904eb32fcb1429cd27a7f7b157467453b9679d804385f4",
+      "source": "corpus-logs/html5lib-after.log"
+    },
+    "corpus-logs--html5lib-before.log.gz": {
+      "bytes": 4481,
+      "sha256": "14e5ab53adc5c2e91f66614cef2afb5bd6b9c88a9e47adc0048e4bba16a78fee",
+      "source": "corpus-logs/html5lib-before.log"
+    },
+    "corpus-logs--html5lib-environment.log.gz": {
+      "bytes": 419,
+      "sha256": "170ca863436fe821d2f3d49664c1137830e029183b1b776c001b35e94edf3220",
+      "source": "corpus-logs/html5lib-environment.log"
+    },
+    "corpus-logs--html5lib-refactor.log.gz": {
+      "bytes": 64603,
+      "sha256": "1c56c3df2fdbbea6cbf496ef1298239cdd30a4e04da4df0ab454c5db5c3db338",
+      "source": "corpus-logs/html5lib-refactor.log"
+    },
+    "corpus-logs--httpx-after.log.gz": {
+      "bytes": 41162,
+      "sha256": "0e50cbfa936c4600826a586e8e431a3e54fcf2fcdebb337eac04a9931406befe",
+      "source": "corpus-logs/httpx-after.log"
+    },
+    "corpus-logs--httpx-before.log.gz": {
+      "bytes": 41158,
+      "sha256": "89166b94c656a9825ca42147852518305e41bdcae6bbcafaf94f5c3c2235263e",
+      "source": "corpus-logs/httpx-before.log"
+    },
+    "corpus-logs--httpx-environment.log.gz": {
+      "bytes": 1254,
+      "sha256": "fc117eada093a087973c30760d47fe435135e5e3155ad20d8c866d00247c382b",
+      "source": "corpus-logs/httpx-environment.log"
+    },
+    "corpus-logs--httpx-refactor.log.gz": {
+      "bytes": 9945,
+      "sha256": "24830ca89a4b6fd6d230310c8ee55e5a0e6306756e2ceb466051d7d8429ef2ee",
+      "source": "corpus-logs/httpx-refactor.log"
+    },
+    "corpus-logs--humanize-before.log.gz": {
+      "bytes": 10390,
+      "sha256": "0450947239de7de74c6d0dd941214ad308324f83c318217e7b70fc691213f960",
+      "source": "corpus-logs/humanize-before.log"
+    },
+    "corpus-logs--humanize-environment.log.gz": {
+      "bytes": 1347,
+      "sha256": "4704cacbfb24c665626b9c69ed34f717327977300caa169f3406db0843a4affc",
+      "source": "corpus-logs/humanize-environment.log"
+    },
+    "corpus-logs--humanize-refactor.log.gz": {
+      "bytes": 1314,
+      "sha256": "e80eb2e35c0ebe4eb2623aa696a62a8b3e3d1d97ce63d6501cca8641d20a9bf8",
+      "source": "corpus-logs/humanize-refactor.log"
+    },
+    "corpus-logs--hyperframe-after.log.gz": {
+      "bytes": 826,
+      "sha256": "aea538eefa434f03fbb094f906dcb2b98760dd6e16c79417d97f0086a5b59ed9",
+      "source": "corpus-logs/hyperframe-after.log"
+    },
+    "corpus-logs--hyperframe-before.log.gz": {
+      "bytes": 820,
+      "sha256": "837cdfb59d680897c64ccc0a72885cf068d3cac01641e9b72cf9d0a1d268c348",
+      "source": "corpus-logs/hyperframe-before.log"
+    },
+    "corpus-logs--hyperframe-environment.log.gz": {
+      "bytes": 1386,
+      "sha256": "fc6f38c5fbfa4d50640bfe957c0aae91d8895351a2eda805a0c1f621cbd5d61b",
+      "source": "corpus-logs/hyperframe-environment.log"
+    },
+    "corpus-logs--hyperframe-refactor.log.gz": {
+      "bytes": 1714,
+      "sha256": "e57785b413739f28b61408d4f5991faa99a49e017592788fe02932bd2092b6da",
+      "source": "corpus-logs/hyperframe-refactor.log"
+    },
+    "corpus-logs--idna-after.log.gz": {
+      "bytes": 8382,
+      "sha256": "151cc4599a86466dd6c0f2258f96b7b694f8897adac33df64a1659df972c1bac",
+      "source": "corpus-logs/idna-after.log"
+    },
+    "corpus-logs--idna-before.log.gz": {
+      "bytes": 8376,
+      "sha256": "3a9c696755d09181fa74b36d757a03c30e3463c0e6087efad2cf2223d3e32b1b",
+      "source": "corpus-logs/idna-before.log"
+    },
+    "corpus-logs--idna-environment.log.gz": {
+      "bytes": 1223,
+      "sha256": "c643835027ba881492811b0748a22f015c157cc336bf5760d8e85c2cb0a792d9",
+      "source": "corpus-logs/idna-environment.log"
+    },
+    "corpus-logs--idna-refactor.log.gz": {
+      "bytes": 2605,
+      "sha256": "35404ad4d06c5e60366947dc61a8ae012769907021b3c85a423ad21b851fc73a",
+      "source": "corpus-logs/idna-refactor.log"
+    },
+    "corpus-logs--inflect-before.log.gz": {
+      "bytes": 60615,
+      "sha256": "b316bdf9cb923616ae510f943cdaa498d63872514e6f61f43ec25fb66c806530",
+      "source": "corpus-logs/inflect-before.log"
+    },
+    "corpus-logs--inflect-environment.log.gz": {
+      "bytes": 1368,
+      "sha256": "9e7bd5457318a396eae22c11d3cf06fea19a3de7ffc8aea6e50db1b2d2da4f96",
+      "source": "corpus-logs/inflect-environment.log"
+    },
+    "corpus-logs--inflect-refactor.log.gz": {
+      "bytes": 1601,
+      "sha256": "98ff481d4fc4a92a7eacb8eebc71a050b851b962cce60281d2ddc8854565e367",
+      "source": "corpus-logs/inflect-refactor.log"
+    },
+    "corpus-logs--inflection-before.log.gz": {
+      "bytes": 960,
+      "sha256": "a22bf8b82850c531e460e2fa6578772c4e398809f273e218a6ce1f9746b7e6ae",
+      "source": "corpus-logs/inflection-before.log"
+    },
+    "corpus-logs--inflection-environment.log.gz": {
+      "bytes": 1436,
+      "sha256": "5e6db9d663401d0f413026f69750faeb137fe5547718367d73e98c03d59acd70",
+      "source": "corpus-logs/inflection-environment.log"
+    },
+    "corpus-logs--inflection-refactor.log.gz": {
+      "bytes": 628,
+      "sha256": "aeefa35e90a0b3f39482ee238b581453c13d4aea4ef6a51ccf699519681cf1ea",
+      "source": "corpus-logs/inflection-refactor.log"
+    },
+    "corpus-logs--installer-before.log.gz": {
+      "bytes": 993,
+      "sha256": "454e4f6ea89888f5532545ba2ae7feb90449c9e71c8a5a6675733c47ae8ccce4",
+      "source": "corpus-logs/installer-before.log"
+    },
+    "corpus-logs--installer-environment.log.gz": {
+      "bytes": 1343,
+      "sha256": "baac5047f3fb0d55d1941bf24870d194af77c1145d0d562099c912496cf80394",
+      "source": "corpus-logs/installer-environment.log"
+    },
+    "corpus-logs--installer-refactor.log.gz": {
+      "bytes": 1661,
+      "sha256": "902616797b4b8369b06d8fd40bc99dbc31997ec374c64a97eebb8bd978c676c0",
+      "source": "corpus-logs/installer-refactor.log"
+    },
+    "corpus-logs--invoke-before.log.gz": {
+      "bytes": 610851,
+      "sha256": "d7b037ba8102e5bcb3478b5eed25304ff94e5b96c7466a387b06821d15e37db5",
+      "source": "corpus-logs/invoke-before.log"
+    },
+    "corpus-logs--invoke-environment.log.gz": {
+      "bytes": 1272,
+      "sha256": "b353b188e450b3146ce45d674ba2c1bfe2d2a3811825695ef55f6427f36f9e18",
+      "source": "corpus-logs/invoke-environment.log"
+    },
+    "corpus-logs--invoke-refactor.log.gz": {
+      "bytes": 651,
+      "sha256": "d3b59cf7dc25ff99af770bd034abf55d99cf9adb67d411285f281c774fa21031",
+      "source": "corpus-logs/invoke-refactor.log"
+    },
+    "corpus-logs--isort-before.log.gz": {
+      "bytes": 3594,
+      "sha256": "f65c00f8a5cedb64ebb0baddcd6b78e0c2715f33e375968b88a84bba8f9135eb",
+      "source": "corpus-logs/isort-before.log"
+    },
+    "corpus-logs--isort-environment.log.gz": {
+      "bytes": 1250,
+      "sha256": "08e691dff4349c8398231fa7d67e024bb3a0d511ec87ac452436829da8222c8c",
+      "source": "corpus-logs/isort-environment.log"
+    },
+    "corpus-logs--isort-refactor.log.gz": {
+      "bytes": 1466,
+      "sha256": "9353b3220b6651a040f0839a4ac2879c3e32482914e97c05b024346ccb6a014a",
+      "source": "corpus-logs/isort-refactor.log"
+    },
+    "corpus-logs--itsdangerous-before.log.gz": {
+      "bytes": 1066,
+      "sha256": "359a87c397f0de348bc0bb843e0a6d2f2efe7308ac8519cc2a1b1843a9090ec7",
+      "source": "corpus-logs/itsdangerous-before.log"
+    },
+    "corpus-logs--itsdangerous-environment.log.gz": {
+      "bytes": 1440,
+      "sha256": "d934d601439120b4a69442752cf21d30dfc157299823910e3aab4d4ceddc81f6",
+      "source": "corpus-logs/itsdangerous-environment.log"
+    },
+    "corpus-logs--itsdangerous-refactor.log.gz": {
+      "bytes": 1259,
+      "sha256": "b1decee33377db5563b069fa5d36b5a9932004c5db33cdeaf361d99055b1a951",
+      "source": "corpus-logs/itsdangerous-refactor.log"
+    },
+    "corpus-logs--jinja2-after.log.gz": {
+      "bytes": 2826,
+      "sha256": "2a983deb91a0acd77f08231e016fc25b0d0dd9ab71b3057dd28c439cc4279c08",
+      "source": "corpus-logs/jinja2-after.log"
+    },
+    "corpus-logs--jinja2-before.log.gz": {
+      "bytes": 2820,
+      "sha256": "df2acac3c36094433c0acd543a320d871c7c63b4192971424a8bf16ad6b854d5",
+      "source": "corpus-logs/jinja2-before.log"
+    },
+    "corpus-logs--jinja2-environment.log.gz": {
+      "bytes": 1293,
+      "sha256": "03741b722c1b9cd195668c90557a28e2dff4c26c26bc708c786c9cb2e77425b0",
+      "source": "corpus-logs/jinja2-environment.log"
+    },
+    "corpus-logs--jinja2-refactor.log.gz": {
+      "bytes": 3470,
+      "sha256": "b037b1593a0f1cf89348da63778eea37a320ef610d48e1a5035a4de98fdc904f",
+      "source": "corpus-logs/jinja2-refactor.log"
+    },
+    "corpus-logs--jmespath-after.log.gz": {
+      "bytes": 3497,
+      "sha256": "4c684a04eb49ef9794342e0fb4bb6ce6ccb3988aa383f936ccdc94cdddbbadd6",
+      "source": "corpus-logs/jmespath-after.log"
+    },
+    "corpus-logs--jmespath-before.log.gz": {
+      "bytes": 3485,
+      "sha256": "21d71d99915a708b7f7123cb255e6e2e73f051efcdb141ca5ad98b5c133cc67e",
+      "source": "corpus-logs/jmespath-before.log"
+    },
+    "corpus-logs--jmespath-environment.log.gz": {
+      "bytes": 1322,
+      "sha256": "9aab0b46346e191b9fb5496e01be604f230f75e20d8eae10657b2149f67ead01",
+      "source": "corpus-logs/jmespath-environment.log"
+    },
+    "corpus-logs--jmespath-refactor.log.gz": {
+      "bytes": 1907,
+      "sha256": "0d1bf62bb8a6714ab033bd0010364186dc3f6ff17acdb8dec471822983c5d5a5",
+      "source": "corpus-logs/jmespath-refactor.log"
+    },
+    "corpus-logs--jsonpatch-before.log.gz": {
+      "bytes": 459,
+      "sha256": "8f4ed44f748ec38b3c0f9a032b783e41dfcb0f31755c08761a445395f2c6469b",
+      "source": "corpus-logs/jsonpatch-before.log"
+    },
+    "corpus-logs--jsonpatch-environment.log.gz": {
+      "bytes": 1336,
+      "sha256": "8b24a46d039fffab9cf1700491efd9d77029fcdb35e9da6bcd96eac866f7b0c0",
+      "source": "corpus-logs/jsonpatch-environment.log"
+    },
+    "corpus-logs--jsonpatch-refactor.log.gz": {
+      "bytes": 2704,
+      "sha256": "772196e1291d39362a96313b2ee5f6db0fb5fd0657ec1e608398c0701e7fa4f7",
+      "source": "corpus-logs/jsonpatch-refactor.log"
+    },
+    "corpus-logs--jsonpointer-before.log.gz": {
+      "bytes": 380,
+      "sha256": "31e1d7e5aa5b2aeb7c5e1bb84944a77b83d4d36231189f30cc79f7042824ece3",
+      "source": "corpus-logs/jsonpointer-before.log"
+    },
+    "corpus-logs--jsonpointer-environment.log.gz": {
+      "bytes": 1397,
+      "sha256": "258d35497ba4196424327694487a44ae3126d5adb07840d2a2b1057231759c33",
+      "source": "corpus-logs/jsonpointer-environment.log"
+    },
+    "corpus-logs--jsonpointer-refactor.log.gz": {
+      "bytes": 640,
+      "sha256": "5d384af7f3f392cfc533b72d7acf8f6ff4c56c2edf61b420ae0b1c58dc6eb611",
+      "source": "corpus-logs/jsonpointer-refactor.log"
+    },
+    "corpus-logs--jsonschema-after.log.gz": {
+      "bytes": 12404,
+      "sha256": "e8495e75cadb4aa76dcc4ee235b57124bacd810390914f125f53e0096661de50",
+      "source": "corpus-logs/jsonschema-after.log"
+    },
+    "corpus-logs--jsonschema-before.log.gz": {
+      "bytes": 12398,
+      "sha256": "222ea4d00df88946939034d8add5545c6ede84004d9c2a79fc75061e1f3bc509",
+      "source": "corpus-logs/jsonschema-before.log"
+    },
+    "corpus-logs--jsonschema-environment.log.gz": {
+      "bytes": 1449,
+      "sha256": "ed0cc2aa00ad1a91921f8c27f682e2bc3ec9a67875fea4d08323ef8f1d4c1b68",
+      "source": "corpus-logs/jsonschema-environment.log"
+    },
+    "corpus-logs--jsonschema-refactor.log.gz": {
+      "bytes": 40617,
+      "sha256": "70c3d8846c485d0a5bd4d7cfaac98fafdb7685f2714112409c3773f7276b2dd8",
+      "source": "corpus-logs/jsonschema-refactor.log"
+    },
+    "corpus-logs--lark-after.log.gz": {
+      "bytes": 5338,
+      "sha256": "52bb500c4d3560fe07213ddb36f272b6f4c86f3affec4d808dec9e38102d4e7d",
+      "source": "corpus-logs/lark-after.log"
+    },
+    "corpus-logs--lark-before.log.gz": {
+      "bytes": 5332,
+      "sha256": "d20c2670650bc0556b17b9d6a9b6ccc14248dbc81b6d67868684708da0d5db58",
+      "source": "corpus-logs/lark-before.log"
+    },
+    "corpus-logs--lark-environment.log.gz": {
+      "bytes": 1228,
+      "sha256": "7f8561373ebdb5c2c6b58004003ba469eaf842cf5c81593a9602081ed0b1302e",
+      "source": "corpus-logs/lark-environment.log"
+    },
+    "corpus-logs--lark-refactor.log.gz": {
+      "bytes": 4136,
+      "sha256": "b3e1d5a9f54de6d3807a0b262a8fed78cc8f75ee468384561958ed7399ddf97a",
+      "source": "corpus-logs/lark-refactor.log"
+    },
+    "corpus-logs--loguru-after.log.gz": {
+      "bytes": 8135,
+      "sha256": "6ce7b7b916cfb3b3a6f60f5950cfc1714ea9c2efc19e8b1f84446295bec7ca0b",
+      "source": "corpus-logs/loguru-after.log"
+    },
+    "corpus-logs--loguru-before.log.gz": {
+      "bytes": 8129,
+      "sha256": "834d76c69f35f10e61f1db5174793fc68cdb3746c5f95da683e64701ac0d5234",
+      "source": "corpus-logs/loguru-before.log"
+    },
+    "corpus-logs--loguru-environment.log.gz": {
+      "bytes": 1269,
+      "sha256": "0342269ad81b58e69081ebd24ca5d836d53fb0a268c32a4ec2a72143d2e28678",
+      "source": "corpus-logs/loguru-environment.log"
+    },
+    "corpus-logs--loguru-refactor.log.gz": {
+      "bytes": 2288,
+      "sha256": "002667f6eabb9b12d3f53a01f67a2240b2cb11970c62f12cf3354c3545022edd",
+      "source": "corpus-logs/loguru-refactor.log"
+    },
+    "corpus-logs--mako-after.log.gz": {
+      "bytes": 6733,
+      "sha256": "6bc7640e4202111c1f88111beb9958536c9c3790eaaae935a6cfb99e102c6df0",
+      "source": "corpus-logs/mako-after.log"
+    },
+    "corpus-logs--mako-before.log.gz": {
+      "bytes": 6727,
+      "sha256": "16db19699f8cdbf75cc58c4befb14b770ec8a728ab90e8872e6bbd6c32b4fdb9",
+      "source": "corpus-logs/mako-before.log"
+    },
+    "corpus-logs--mako-environment.log.gz": {
+      "bytes": 1246,
+      "sha256": "6e19e72b5d8e2337ca26e96a2cc0fcf0c3e33afe4581f95b445f2aa4e23cdb07",
+      "source": "corpus-logs/mako-environment.log"
+    },
+    "corpus-logs--mako-refactor.log.gz": {
+      "bytes": 5420,
+      "sha256": "193755892d6b413d3ee412193aee22131c97a5fb6c28180e3c87751011f273e4",
+      "source": "corpus-logs/mako-refactor.log"
+    },
+    "corpus-logs--markdown-after.log.gz": {
+      "bytes": 1213,
+      "sha256": "b94b2e3584ba0eb841b2635f65d4e841d98049eba20bdb222121d6c01ec59b06",
+      "source": "corpus-logs/markdown-after.log"
+    },
+    "corpus-logs--markdown-before.log.gz": {
+      "bytes": 1213,
+      "sha256": "ce563f62a06d50e7e8f9bc36d544543dd20f87a3042c926f943988f7b77cc861",
+      "source": "corpus-logs/markdown-before.log"
+    },
+    "corpus-logs--markdown-environment.log.gz": {
+      "bytes": 1326,
+      "sha256": "3fdb766b48e1f5a95c7cf1c162e030b17f905a601387a97fe9320a85df0e0bfd",
+      "source": "corpus-logs/markdown-environment.log"
+    },
+    "corpus-logs--markdown-it-py-after.log.gz": {
+      "bytes": 3307,
+      "sha256": "1c04999516b1fae0a727aad124a18a5b2d339709817d5e7e963986836e2d2ba9",
+      "source": "corpus-logs/markdown-it-py-after.log"
+    },
+    "corpus-logs--markdown-it-py-before.log.gz": {
+      "bytes": 3301,
+      "sha256": "dc6b2065c1e611e15820b687c605c098821a3110f0c200432e206b1029174ca2",
+      "source": "corpus-logs/markdown-it-py-before.log"
+    },
+    "corpus-logs--markdown-it-py-environment.log.gz": {
+      "bytes": 1464,
+      "sha256": "f739be8c3e2cd8c70d20730cb10861ce2d264c0f79f8d403a4e361bfa7e49063",
+      "source": "corpus-logs/markdown-it-py-environment.log"
+    },
+    "corpus-logs--markdown-it-py-refactor.log.gz": {
+      "bytes": 4224,
+      "sha256": "966a7d4d4003aa52e43a9bdcc6345466297431f733b4c727afd7ec5318551f39",
+      "source": "corpus-logs/markdown-it-py-refactor.log"
+    },
+    "corpus-logs--markdown-refactor.log.gz": {
+      "bytes": 6651,
+      "sha256": "afb76e4efc57e9e34bb8e49ece967689262d14de2f35c724c73201b71a2674cf",
+      "source": "corpus-logs/markdown-refactor.log"
+    },
+    "corpus-logs--markupsafe-before.log.gz": {
+      "bytes": 1283,
+      "sha256": "e1639740609427d807d7c303c90b42f715f8f15abe31e54c41e5355c357ad986",
+      "source": "corpus-logs/markupsafe-before.log"
+    },
+    "corpus-logs--markupsafe-environment.log.gz": {
+      "bytes": 1394,
+      "sha256": "6e63a70b37f4ddf50503c8b6d4466d6536994c30f65748a02c628bcda1aaa142",
+      "source": "corpus-logs/markupsafe-environment.log"
+    },
+    "corpus-logs--markupsafe-refactor.log.gz": {
+      "bytes": 1558,
+      "sha256": "2234f4939b3cf4744522b97beacd91c7cd6e1254d8f7a2c983b09e978515b628",
+      "source": "corpus-logs/markupsafe-refactor.log"
+    },
+    "corpus-logs--marshmallow-after.log.gz": {
+      "bytes": 2415,
+      "sha256": "cb4abf95e91ae5aecbd1e72cbd4baf56177de6425f38a1c338dc12eeb6f2c855",
+      "source": "corpus-logs/marshmallow-after.log"
+    },
+    "corpus-logs--marshmallow-before.log.gz": {
+      "bytes": 2409,
+      "sha256": "de385f0f088b0f84f94966b92aa0db92f1d524f7154250a475c4eeb9b4f0ad9c",
+      "source": "corpus-logs/marshmallow-before.log"
+    },
+    "corpus-logs--marshmallow-environment.log.gz": {
+      "bytes": 1393,
+      "sha256": "2826c72da73afd0001e49f78921fa81feeaf4243b9e0a37fd0bfd7416876c0a9",
+      "source": "corpus-logs/marshmallow-environment.log"
+    },
+    "corpus-logs--marshmallow-refactor.log.gz": {
+      "bytes": 5718,
+      "sha256": "7b8d27bcfe77f0868b9e07e746332e428f058fb1bf27564b1098fa539165a79f",
+      "source": "corpus-logs/marshmallow-refactor.log"
+    },
+    "corpus-logs--mccabe-before.log.gz": {
+      "bytes": 2581,
+      "sha256": "4aa621d84aa757bcc7b81831bec45f1bdf5d5293aa3f1da2e6c4842eb4df212f",
+      "source": "corpus-logs/mccabe-before.log"
+    },
+    "corpus-logs--mccabe-environment.log.gz": {
+      "bytes": 1271,
+      "sha256": "e96fe40d1ead3b636390cfaecc41a8dba4d0e10fec99f2c03f9fd0284cd6b711",
+      "source": "corpus-logs/mccabe-environment.log"
+    },
+    "corpus-logs--mccabe-refactor.log.gz": {
+      "bytes": 1543,
+      "sha256": "80ad3bf037d5afead2fa52dd80b2c5871aee1dcbf41f3e1d84a85368ac017b49",
+      "source": "corpus-logs/mccabe-refactor.log"
+    },
+    "corpus-logs--mistune-after.log.gz": {
+      "bytes": 2908,
+      "sha256": "69c04ee490f8065d31f0cf077e033624cb99cd1148589f167cd13f0504fada07",
+      "source": "corpus-logs/mistune-after.log"
+    },
+    "corpus-logs--mistune-before.log.gz": {
+      "bytes": 2902,
+      "sha256": "81f9a26d505f76f7ea6945174f813f662d7b52d7e5a388b58025f320ce45eea5",
+      "source": "corpus-logs/mistune-before.log"
+    },
+    "corpus-logs--mistune-environment.log.gz": {
+      "bytes": 1298,
+      "sha256": "0aaee66de35b6a265e811a12b6ccd4f0cd022150a422905288b8527c12051f69",
+      "source": "corpus-logs/mistune-environment.log"
+    },
+    "corpus-logs--mistune-refactor.log.gz": {
+      "bytes": 7256,
+      "sha256": "106542dfee19de9420850961c658652dcb4067d6c0782828b0b6911d7fc72139",
+      "source": "corpus-logs/mistune-refactor.log"
+    },
+    "corpus-logs--mkdocs-before.log.gz": {
+      "bytes": 2189,
+      "sha256": "f44e29a4d02579b6beae4bdbdb45188a160e101d7bee548d47945612a016489d",
+      "source": "corpus-logs/mkdocs-before.log"
+    },
+    "corpus-logs--mkdocs-environment.log.gz": {
+      "bytes": 1276,
+      "sha256": "efa587193452295e11343d4c18b72171d718a4d2d8d07a9a72b96b51f6807597",
+      "source": "corpus-logs/mkdocs-environment.log"
+    },
+    "corpus-logs--mkdocs-refactor.log.gz": {
+      "bytes": 4228,
+      "sha256": "c689210800b7b09d8ce418e0dbe0f6633275ee928b61ddfaa6a33657a15ea223",
+      "source": "corpus-logs/mkdocs-refactor.log"
+    },
+    "corpus-logs--more-itertools-after.log.gz": {
+      "bytes": 1015,
+      "sha256": "434f902c7f39d9ebbf64609eb6437e826dcb5e9812a2c3d6c8676debea3138f3",
+      "source": "corpus-logs/more-itertools-after.log"
+    },
+    "corpus-logs--more-itertools-before.log.gz": {
+      "bytes": 1015,
+      "sha256": "276cdd0c7682ef189bb45fbc4be89a236c8011af43f119ee29105a900bb21207",
+      "source": "corpus-logs/more-itertools-before.log"
+    },
+    "corpus-logs--more-itertools-environment.log.gz": {
+      "bytes": 1468,
+      "sha256": "7195200966904aafffe887e70d665e6bccafb54f599d5db9673c5be5d87f9221",
+      "source": "corpus-logs/more-itertools-environment.log"
+    },
+    "corpus-logs--more-itertools-refactor.log.gz": {
+      "bytes": 880,
+      "sha256": "172f4751db28efa803b79e06d220e7a2b147a0d3dfc2a78d9d36c443e75e3b73",
+      "source": "corpus-logs/more-itertools-refactor.log"
+    },
+    "corpus-logs--natsort-after.log.gz": {
+      "bytes": 76048,
+      "sha256": "dbe2ad65143e0353529cff4cbd75c505f547ae1666b4035147213028fd018bfa",
+      "source": "corpus-logs/natsort-after.log"
+    },
+    "corpus-logs--natsort-before.log.gz": {
+      "bytes": 76042,
+      "sha256": "9289abd7753d45dcd7253e471cce674271f3f0b896f3a082aa7c312fc6564988",
+      "source": "corpus-logs/natsort-before.log"
+    },
+    "corpus-logs--natsort-environment.log.gz": {
+      "bytes": 1368,
+      "sha256": "7520dea1c612302df58cc12fb99935c263dc65e4270ee63f20465088fd4a3359",
+      "source": "corpus-logs/natsort-environment.log"
+    },
+    "corpus-logs--natsort-refactor.log.gz": {
+      "bytes": 1212,
+      "sha256": "ba8bbc82b512c589683bfaf2c5aeb0238076c1d3e2c919096cdc45fc671f734b",
+      "source": "corpus-logs/natsort-refactor.log"
+    },
+    "corpus-logs--networkx-after.log.gz": {
+      "bytes": 165114,
+      "sha256": "13c3d507d06ee243d91764d404e3bbf8191b0fcc9638e9aa5559243e0c0e303a",
+      "source": "corpus-logs/networkx-after.log"
+    },
+    "corpus-logs--networkx-before.log.gz": {
+      "bytes": 165108,
+      "sha256": "2b008bfe499375cae01e985690dd289133bf7f381a0a60490c4f3050ebea9a17",
+      "source": "corpus-logs/networkx-before.log"
+    },
+    "corpus-logs--networkx-environment.log.gz": {
+      "bytes": 1349,
+      "sha256": "3f0cf9254dddf9d6d23a05d29a9f1967194832de9b37756398e0f0d67cbd5829",
+      "source": "corpus-logs/networkx-environment.log"
+    },
+    "corpus-logs--networkx-refactor.log.gz": {
+      "bytes": 32065,
+      "sha256": "5aca7e2b90bb76ab92f584cab20e0549b0eee85b2bbbe3929a8b4ef3d892935b",
+      "source": "corpus-logs/networkx-refactor.log"
+    },
+    "corpus-logs--nox-after.log.gz": {
+      "bytes": 22954,
+      "sha256": "ca776e3730d35f83d98a54fe94427d917dfb70c3d01590f248ff609e3d29e13d",
+      "source": "corpus-logs/nox-after.log"
+    },
+    "corpus-logs--nox-before.log.gz": {
+      "bytes": 22787,
+      "sha256": "50b42c7d2e480b7bedf8964850895e84b83a9e1f5d9a00be2d34f330d1ca69e2",
+      "source": "corpus-logs/nox-before.log"
+    },
+    "corpus-logs--nox-environment.log.gz": {
+      "bytes": 1222,
+      "sha256": "7232af5993350fde71692c4372122b0f4c2b9f92d9b5eb193ea5ded6607f7c65",
+      "source": "corpus-logs/nox-environment.log"
+    },
+    "corpus-logs--nox-refactor.log.gz": {
+      "bytes": 1677,
+      "sha256": "f05057deff0565feec744a4a18b3869b2afea18fe277fc74c905461616e64cea",
+      "source": "corpus-logs/nox-refactor.log"
+    },
+    "corpus-logs--oauthlib-after.log.gz": {
+      "bytes": 7829,
+      "sha256": "1cb4fe6e3a9057053cb02b0bc2d86332f53a6476ce5402d6ec5ff3b28e2ce3dc",
+      "source": "corpus-logs/oauthlib-after.log"
+    },
+    "corpus-logs--oauthlib-before.log.gz": {
+      "bytes": 7817,
+      "sha256": "6af47d4fe3760793411975634cc64039852f8cca903ae85dce47b30157e8378b",
+      "source": "corpus-logs/oauthlib-before.log"
+    },
+    "corpus-logs--oauthlib-environment.log.gz": {
+      "bytes": 1325,
+      "sha256": "d3f0f4ce3ccd568185373930673e5778e7150d2036edded0deb31e41c27c8c6e",
+      "source": "corpus-logs/oauthlib-environment.log"
+    },
+    "corpus-logs--oauthlib-refactor.log.gz": {
+      "bytes": 5330,
+      "sha256": "ca828ec98458ce74a055d805e1714c644bd6ca24920f978a5088477916b8738a",
+      "source": "corpus-logs/oauthlib-refactor.log"
+    },
+    "corpus-logs--outcome-before.log.gz": {
+      "bytes": 2495,
+      "sha256": "2ad80761db8cd412cdcf2ba0f66b251f919db9e56fbe9274ee51745a001ee9b9",
+      "source": "corpus-logs/outcome-before.log"
+    },
+    "corpus-logs--outcome-environment.log.gz": {
+      "bytes": 1338,
+      "sha256": "48079f2f20bac924c16bcb31f390e79926d14089c35b0d2c92b18bb339bf9140",
+      "source": "corpus-logs/outcome-environment.log"
+    },
+    "corpus-logs--outcome-refactor.log.gz": {
+      "bytes": 1547,
+      "sha256": "7d7f5d22e254881900c63a6db7f4a680ead2ba2a98eb53340d9a07e343433f6a",
+      "source": "corpus-logs/outcome-refactor.log"
+    },
+    "corpus-logs--packaging-after.log.gz": {
+      "bytes": 70853,
+      "sha256": "7fa6d91eb7d1afaa99d51d64cdfa8818ebc79c3f620bcbd1c47c0e0ce2b60f6e",
+      "source": "corpus-logs/packaging-after.log"
+    },
+    "corpus-logs--packaging-before.log.gz": {
+      "bytes": 70847,
+      "sha256": "7abcef2122c0b4ab69b8f1fa0826bd057cbf565178906353f42c13bb00a71c7e",
+      "source": "corpus-logs/packaging-before.log"
+    },
+    "corpus-logs--packaging-environment.log.gz": {
+      "bytes": 1361,
+      "sha256": "18bcd8a5020d55719e7cfe36f2bc0b0cf90379559ae62866521a69ef53034380",
+      "source": "corpus-logs/packaging-environment.log"
+    },
+    "corpus-logs--packaging-refactor.log.gz": {
+      "bytes": 7659,
+      "sha256": "354f8359c03b7a5b98c118c5dba44684b876afe5d778bbf31f39ff0bf8aba06a",
+      "source": "corpus-logs/packaging-refactor.log"
+    },
+    "corpus-logs--parsimonious-after.log.gz": {
+      "bytes": 1018,
+      "sha256": "ff91dfb243786cd67e5ea8dec1533bcf2044af5ecf650cc805951c4e5d04eb39",
+      "source": "corpus-logs/parsimonious-after.log"
+    },
+    "corpus-logs--parsimonious-before.log.gz": {
+      "bytes": 1012,
+      "sha256": "48cea783166aa65f1110bd827c4dca74d54bcdfc16ee9c81ce4b12551e00893c",
+      "source": "corpus-logs/parsimonious-before.log"
+    },
+    "corpus-logs--parsimonious-environment.log.gz": {
+      "bytes": 1426,
+      "sha256": "c7b96b53847bf592695e8e38ffb6d60b12cb342624226891cc3fcd8f6e9efa27",
+      "source": "corpus-logs/parsimonious-environment.log"
+    },
+    "corpus-logs--parsimonious-refactor.log.gz": {
+      "bytes": 3237,
+      "sha256": "188b09e57e9f899c9447ba4cd72c6bc06a838204f72ecc6499a5c02bea42c14e",
+      "source": "corpus-logs/parsimonious-refactor.log"
+    },
+    "corpus-logs--parso-after.log.gz": {
+      "bytes": 3845,
+      "sha256": "9546e7982a3bbfbc7d0c9859777b9460e4ff919bc9479aad4cdab52503e7c7cc",
+      "source": "corpus-logs/parso-after.log"
+    },
+    "corpus-logs--parso-before.log.gz": {
+      "bytes": 3839,
+      "sha256": "1a4220e8f027ca81662acfcdcaa7558f22a553b27c3d556e719b36aea9608d25",
+      "source": "corpus-logs/parso-before.log"
+    },
+    "corpus-logs--parso-environment.log.gz": {
+      "bytes": 1250,
+      "sha256": "d5e350911f2938eed8ddf906e5a2170dbf6d70112a442a2ddd07cb76ede22ed3",
+      "source": "corpus-logs/parso-environment.log"
+    },
+    "corpus-logs--parso-refactor.log.gz": {
+      "bytes": 3561,
+      "sha256": "6e3ccc618389a79ecb2c9ae3fbf1f0922e8603ab0d59d10c10191e626b8e2cbb",
+      "source": "corpus-logs/parso-refactor.log"
+    },
+    "corpus-logs--pathspec-after.log.gz": {
+      "bytes": 971,
+      "sha256": "ce715514815dec0ff0a3ea9a7f3613ec7da20ae764e636c2104e94f79d1e49d4",
+      "source": "corpus-logs/pathspec-after.log"
+    },
+    "corpus-logs--pathspec-before.log.gz": {
+      "bytes": 965,
+      "sha256": "b5e8a3dc154bd69540c7f4bfcd21b6f9e933957c83edaf7ff4efd6c7995dca2e",
+      "source": "corpus-logs/pathspec-before.log"
+    },
+    "corpus-logs--pathspec-environment.log.gz": {
+      "bytes": 1327,
+      "sha256": "9c6281e16962eb5d504cf86035039e5c9428b4584b5e93d542f21467bd92c810",
+      "source": "corpus-logs/pathspec-environment.log"
+    },
+    "corpus-logs--pathspec-refactor.log.gz": {
+      "bytes": 3284,
+      "sha256": "3d1c3a550f0aee0fccdde5e18e8be6b21f9cd0e77065e59fbff5f7bc3d876826",
+      "source": "corpus-logs/pathspec-refactor.log"
+    },
+    "corpus-logs--peewee-before.log.gz": {
+      "bytes": 2264,
+      "sha256": "d0a540f0d5efb178d1002a915d70cb9709f681594f92a04ddb1313da02c7f3a3",
+      "source": "corpus-logs/peewee-before.log"
+    },
+    "corpus-logs--peewee-environment.log.gz": {
+      "bytes": 1273,
+      "sha256": "dc7745caba284600b913826eedc50e1c4cc6ba20a4c690f7ebe5f2f3442896a0",
+      "source": "corpus-logs/peewee-environment.log"
+    },
+    "corpus-logs--peewee-refactor.log.gz": {
+      "bytes": 9465,
+      "sha256": "071dab2bc63aa73e1d308600dcea870881ce8f4eed9adc082e94e5758121acac",
+      "source": "corpus-logs/peewee-refactor.log"
+    },
+    "corpus-logs--platformdirs-after.log.gz": {
+      "bytes": 4534,
+      "sha256": "b63fe7674528bbeb5d2345fa6d97560515fe5de5b9e825f5458ee29299e4c8cc",
+      "source": "corpus-logs/platformdirs-after.log"
+    },
+    "corpus-logs--platformdirs-before.log.gz": {
+      "bytes": 4528,
+      "sha256": "408e3b6540595cbeef57722b35ef64c61a0dc374e60fb026ab7491dc0ec7ae14",
+      "source": "corpus-logs/platformdirs-before.log"
+    },
+    "corpus-logs--platformdirs-environment.log.gz": {
+      "bytes": 1425,
+      "sha256": "b37a9af8697026fb8c07081b060720e68384382a9cc95d13d2dd89ddd09f659f",
+      "source": "corpus-logs/platformdirs-environment.log"
+    },
+    "corpus-logs--platformdirs-refactor.log.gz": {
+      "bytes": 3595,
+      "sha256": "5e1a42c836ac393c93b92b0e28dcea1abde53541b3e9b3e6e3ef1d5205ef145d",
+      "source": "corpus-logs/platformdirs-refactor.log"
+    },
+    "corpus-logs--pluggy-after.log.gz": {
+      "bytes": 1159,
+      "sha256": "7f22820003841dfde83bc83c9a3fdae4f20b8ae51dba888072d847d08a27aad9",
+      "source": "corpus-logs/pluggy-after.log"
+    },
+    "corpus-logs--pluggy-before.log.gz": {
+      "bytes": 1153,
+      "sha256": "7a604d88100ae573c7b4a4a2cdb85b176accf24b7fe83f1a5ff42cc5ae808dfa",
+      "source": "corpus-logs/pluggy-before.log"
+    },
+    "corpus-logs--pluggy-environment.log.gz": {
+      "bytes": 1348,
+      "sha256": "d2639161be45171011b4cf915167311de6b91bac93584531442137dfe8e90e0b",
+      "source": "corpus-logs/pluggy-environment.log"
+    },
+    "corpus-logs--pluggy-refactor.log.gz": {
+      "bytes": 1920,
+      "sha256": "800d82669544bbfd43f9fc8651d2fbe2d2c3ad1370198e59997af3fdc13194a4",
+      "source": "corpus-logs/pluggy-refactor.log"
+    },
+    "corpus-logs--ply-after.log.gz": {
+      "bytes": 418,
+      "sha256": "43bfb66052028cbb70e015ce183303740f7d88252e5895180572ef7ebae32509",
+      "source": "corpus-logs/ply-after.log"
+    },
+    "corpus-logs--ply-before.log.gz": {
+      "bytes": 412,
+      "sha256": "b032775c44d56b64b8263523607277775d3231a2d6af9e2fe3805ad3f8633d83",
+      "source": "corpus-logs/ply-before.log"
+    },
+    "corpus-logs--ply-environment.log.gz": {
+      "bytes": 1225,
+      "sha256": "dfc9a2b0a4e09019ec4aa4ec0306cc50a5cc7aa60427f1c5b11245420b578cdb",
+      "source": "corpus-logs/ply-environment.log"
+    },
+    "corpus-logs--ply-refactor.log.gz": {
+      "bytes": 2390,
+      "sha256": "e3ec59760672c054c413c0a3f5c437ec6b3dbf57ffe881e20ec86cbd4f4114e6",
+      "source": "corpus-logs/ply-refactor.log"
+    },
+    "corpus-logs--prettytable-before.log.gz": {
+      "bytes": 1480,
+      "sha256": "712372f23161bf7cb455055128badcd5dec491aee180b28b373514909f734711",
+      "source": "corpus-logs/prettytable-before.log"
+    },
+    "corpus-logs--prettytable-environment.log.gz": {
+      "bytes": 1418,
+      "sha256": "ce9d935c0f274a10ad1346a83f4308b1aa5e1f8f8c8592be90511865e2e76f1d",
+      "source": "corpus-logs/prettytable-environment.log"
+    },
+    "corpus-logs--prettytable-refactor.log.gz": {
+      "bytes": 8280,
+      "sha256": "2ba5f60bec5e4198d8842a7f940301e98206c645eda9d35cc5f3260eca0f0850",
+      "source": "corpus-logs/prettytable-refactor.log"
+    },
+    "corpus-logs--pyasn1-after.log.gz": {
+      "bytes": 3130,
+      "sha256": "2070d74f669e4cd9efea3223315fc6357778c01ee2ff75630b7ba2f2125ca02f",
+      "source": "corpus-logs/pyasn1-after.log"
+    },
+    "corpus-logs--pyasn1-before.log.gz": {
+      "bytes": 3124,
+      "sha256": "abeb4af67d1b5e5ceacd4447cc542eb540e964e7796677a6833aa8c7fa7da723",
+      "source": "corpus-logs/pyasn1-before.log"
+    },
+    "corpus-logs--pyasn1-environment.log.gz": {
+      "bytes": 1272,
+      "sha256": "679e313eb4c997da5221237d2024920ae4931d6c35ec429d17f6f1733a0cff2f",
+      "source": "corpus-logs/pyasn1-environment.log"
+    },
+    "corpus-logs--pyasn1-refactor.log.gz": {
+      "bytes": 5752,
+      "sha256": "21af6da17c492cd0a4c603f60837614dc229b3f6110abed971d3231699e07301",
+      "source": "corpus-logs/pyasn1-refactor.log"
+    },
+    "corpus-logs--pycodestyle-before.log.gz": {
+      "bytes": 2150,
+      "sha256": "32491efac5acb1ceda7c74827fba66d793079504bd822ba0c4bda4269b3619d9",
+      "source": "corpus-logs/pycodestyle-before.log"
+    },
+    "corpus-logs--pycodestyle-environment.log.gz": {
+      "bytes": 1401,
+      "sha256": "18e3fe8d8daa8475f469ba456503cbcdb7bbc51609d4a4a8b439983e6200cf01",
+      "source": "corpus-logs/pycodestyle-environment.log"
+    },
+    "corpus-logs--pycodestyle-refactor.log.gz": {
+      "bytes": 5364,
+      "sha256": "4cdee7a1143fc3762bd52e36be2428a2f9a6eb4202629920f7188243342e82e8",
+      "source": "corpus-logs/pycodestyle-refactor.log"
+    },
+    "corpus-logs--pycparser-after.log.gz": {
+      "bytes": 892,
+      "sha256": "e46fbeedb19195441b7d61c4fcb88eeccb84b2246f8ebff1eb69cb8076db35d1",
+      "source": "corpus-logs/pycparser-after.log"
+    },
+    "corpus-logs--pycparser-before.log.gz": {
+      "bytes": 886,
+      "sha256": "9f011ac0c66acd0ab86cd3fdedcb9c4cbb5ef61a2eeacee17ab4c8388bb558ad",
+      "source": "corpus-logs/pycparser-before.log"
+    },
+    "corpus-logs--pycparser-environment.log.gz": {
+      "bytes": 1342,
+      "sha256": "57a33e5f1df5ad6d4d7735fc521a4445beb968c21ccfba48ac1df63e8344f5f6",
+      "source": "corpus-logs/pycparser-environment.log"
+    },
+    "corpus-logs--pycparser-refactor.log.gz": {
+      "bytes": 7200,
+      "sha256": "0e100342c6d8812fb8a08751978de07af20e54f413b3561dc6fe303f9d892697",
+      "source": "corpus-logs/pycparser-refactor.log"
+    },
+    "corpus-logs--pyflakes-after.log.gz": {
+      "bytes": 3607,
+      "sha256": "13bde9ebbe0234c8609f7b8ea023ee4963300070634a344eb03dfc7ff72bd840",
+      "source": "corpus-logs/pyflakes-after.log"
+    },
+    "corpus-logs--pyflakes-before.log.gz": {
+      "bytes": 3602,
+      "sha256": "25bfcce1e5e3b336dc0335640074ef76c4db2de193c861a9535b583a487ad3db",
+      "source": "corpus-logs/pyflakes-before.log"
+    },
+    "corpus-logs--pyflakes-environment.log.gz": {
+      "bytes": 1325,
+      "sha256": "c08395560ec67d9840c34568efd80c79d1bcf64f15a80c040c384f481340aa94",
+      "source": "corpus-logs/pyflakes-environment.log"
+    },
+    "corpus-logs--pyflakes-refactor.log.gz": {
+      "bytes": 4635,
+      "sha256": "b1afe7566acfcaff9050f79b18ee78d4d397b2d6b5671afbbbe481b416831a01",
+      "source": "corpus-logs/pyflakes-refactor.log"
+    },
+    "corpus-logs--pygments-after.log.gz": {
+      "bytes": 130904,
+      "sha256": "20cef605914ea70293299331ccdc090421bda15b7bee46506ff4f80b25c19bb4",
+      "source": "corpus-logs/pygments-after.log"
+    },
+    "corpus-logs--pygments-before.log.gz": {
+      "bytes": 130898,
+      "sha256": "f2f80dbc41b9a2ca8f97175dffe53b498bfc2a58e05743adb125a32766c16b25",
+      "source": "corpus-logs/pygments-before.log"
+    },
+    "corpus-logs--pygments-environment.log.gz": {
+      "bytes": 1326,
+      "sha256": "a88d825f315f881bc9e81f753522f961bfe938e030df76f9ad7663a8eaa95ba3",
+      "source": "corpus-logs/pygments-environment.log"
+    },
+    "corpus-logs--pygments-refactor.log.gz": {
+      "bytes": 13183,
+      "sha256": "7330ddcd06d604781b6de6b9c326c412c5961c70d339bd2059d0e21a5c26549f",
+      "source": "corpus-logs/pygments-refactor.log"
+    },
+    "corpus-logs--pyjwt-after.log.gz": {
+      "bytes": 1958,
+      "sha256": "84b52ef2b538da14842095cad95f1f273fee1fb11b670943fefa06b572f8a2fb",
+      "source": "corpus-logs/pyjwt-after.log"
+    },
+    "corpus-logs--pyjwt-before.log.gz": {
+      "bytes": 1952,
+      "sha256": "6b7ce595bc2d266e1addbd0546e9397cde23353364fd7ed573e44fc7c8cef65c",
+      "source": "corpus-logs/pyjwt-before.log"
+    },
+    "corpus-logs--pyjwt-environment.log.gz": {
+      "bytes": 1257,
+      "sha256": "492104569cf7f4747c7ce71957a3612e24b5904919ae8ce94dcc20d966e3a867",
+      "source": "corpus-logs/pyjwt-environment.log"
+    },
+    "corpus-logs--pyjwt-refactor.log.gz": {
+      "bytes": 3242,
+      "sha256": "3b4d111c3739906dee8a22a97f93ce49adcb172b0482b2857ef5d93d01f0ae69",
+      "source": "corpus-logs/pyjwt-refactor.log"
+    },
+    "corpus-logs--pyparsing-after.log.gz": {
+      "bytes": 30820,
+      "sha256": "0ff0fcd66b5eac36da0f24f86a0985162088bce353cd7a4ad6cf72bbabc52d8e",
+      "source": "corpus-logs/pyparsing-after.log"
+    },
+    "corpus-logs--pyparsing-before.log.gz": {
+      "bytes": 4004,
+      "sha256": "95d3cb42a298c175fb4378972ed0dc4c4f92b5586b7f5f14e62698c736a9d814",
+      "source": "corpus-logs/pyparsing-before.log"
+    },
+    "corpus-logs--pyparsing-environment.log.gz": {
+      "bytes": 1346,
+      "sha256": "a2d446de3e760c25df588fddf8ef428a1b3ca52dc27e0f1206aa1af0e1e9a379",
+      "source": "corpus-logs/pyparsing-environment.log"
+    },
+    "corpus-logs--pyparsing-refactor.log.gz": {
+      "bytes": 5401,
+      "sha256": "6474fcfaef0aa3b2d8781133baa564e27d6313ac4b586d6cf9e582414c6efe4b",
+      "source": "corpus-logs/pyparsing-refactor.log"
+    },
+    "corpus-logs--pyparsing-retest-after.log.gz": {
+      "bytes": 27378,
+      "sha256": "80834b88902596dc22c49b40121d2f3b2c0fe0163883b060062170e947a1dc6f",
+      "source": "corpus-logs/pyparsing-retest-after.log"
+    },
+    "corpus-logs--pyparsing-retest-before.log.gz": {
+      "bytes": 481,
+      "sha256": "5c98ee0b1e367a850e92764a0e69e124511cca84cced6f94a20f92e00c3a327f",
+      "source": "corpus-logs/pyparsing-retest-before.log"
+    },
+    "corpus-logs--pyparsing-retest.json.gz": {
+      "bytes": 1586,
+      "sha256": "a0d54d656b4e632df053755665f84bcf15b6ded7a2094c266d8f073a0681ab89",
+      "source": "corpus-logs/pyparsing-retest.json"
+    },
+    "corpus-logs--pyproject-hooks-after.log.gz": {
+      "bytes": 573,
+      "sha256": "a478fb6d7f6f0bcbd7b1e4cf7b758a4453e3b72bac74b9b5319f96f164fdb0ab",
+      "source": "corpus-logs/pyproject-hooks-after.log"
+    },
+    "corpus-logs--pyproject-hooks-before.log.gz": {
+      "bytes": 567,
+      "sha256": "8bd0870d2fbb26448efeed21c77764ca44420639502ad695553325f81b904713",
+      "source": "corpus-logs/pyproject-hooks-before.log"
+    },
+    "corpus-logs--pyproject-hooks-environment.log.gz": {
+      "bytes": 1487,
+      "sha256": "f817307f45e083de26e274a07e1a22d2c6569cae75f1ddec7d716bb15d9674b5",
+      "source": "corpus-logs/pyproject-hooks-environment.log"
+    },
+    "corpus-logs--pyproject-hooks-refactor.log.gz": {
+      "bytes": 1767,
+      "sha256": "4cb60afe94b801bbbb5a9ba96e963b495feac521dac8ef976fb1476e06a40079",
+      "source": "corpus-logs/pyproject-hooks-refactor.log"
+    },
+    "corpus-logs--pyrsistent-after.log.gz": {
+      "bytes": 2795,
+      "sha256": "9419677aebc232ad9d002f86fad7a087086376001fa186d999279dc51682bc2d",
+      "source": "corpus-logs/pyrsistent-after.log"
+    },
+    "corpus-logs--pyrsistent-before.log.gz": {
+      "bytes": 2789,
+      "sha256": "e8afda08adfc72b3273cc71d46eed7c69c4769a323dde061c7aba6925d1ec6e8",
+      "source": "corpus-logs/pyrsistent-before.log"
+    },
+    "corpus-logs--pyrsistent-environment.log.gz": {
+      "bytes": 1374,
+      "sha256": "3a7ab301eba51d9691650ae0463945985adeb59242e10b2ffd48eac1134d820f",
+      "source": "corpus-logs/pyrsistent-environment.log"
+    },
+    "corpus-logs--pyrsistent-refactor.log.gz": {
+      "bytes": 4059,
+      "sha256": "4fc28d0cfdd5a4bda6d83ac639d59b81afb3c397bee9f280115b0f8ebc207c52",
+      "source": "corpus-logs/pyrsistent-refactor.log"
+    },
+    "corpus-logs--pytest-after.log.gz": {
+      "bytes": 24975,
+      "sha256": "314f415e661ad01bbb3765ddbe3f572b7d8ef62b5e9478a4be0d917035b8217a",
+      "source": "corpus-logs/pytest-after.log"
+    },
+    "corpus-logs--pytest-before.log.gz": {
+      "bytes": 24951,
+      "sha256": "9768dfa12666aa20516ddb9fa2c485a70ee2a9d2a2edb441513b392c6daf3255",
+      "source": "corpus-logs/pytest-before.log"
+    },
+    "corpus-logs--pytest-environment.log.gz": {
+      "bytes": 1348,
+      "sha256": "92ac27e4596d7ab44d48b2f5e1263cd56202cd5f02f232facc403f51f63ffeff",
+      "source": "corpus-logs/pytest-environment.log"
+    },
+    "corpus-logs--pytest-refactor.log.gz": {
+      "bytes": 17651,
+      "sha256": "9b1c06a3b6ae20213d8a4b838f78bf05bdc8831c564a3d6f9ebf20836a31269b",
+      "source": "corpus-logs/pytest-refactor.log"
+    },
+    "corpus-logs--python-dateutil-after.log.gz": {
+      "bytes": 189413,
+      "sha256": "6b67c191fa06ec2e76747c03a9c6b22192ffebfd0359aa0b4302943cc6d95c21",
+      "source": "corpus-logs/python-dateutil-after.log"
+    },
+    "corpus-logs--python-dateutil-before.log.gz": {
+      "bytes": 189119,
+      "sha256": "d52869013f130b0caa025430412eb132b0559117ec051ec2761753e6513474aa",
+      "source": "corpus-logs/python-dateutil-before.log"
+    },
+    "corpus-logs--python-dateutil-environment.log.gz": {
+      "bytes": 1574,
+      "sha256": "1ee83b42e05b11aba82cf1d1c3a589a695471231b6d240e33c5179f2ddcaf0a8",
+      "source": "corpus-logs/python-dateutil-environment.log"
+    },
+    "corpus-logs--python-dateutil-refactor.log.gz": {
+      "bytes": 10627,
+      "sha256": "50c6782d8b8761c76025df620190e24d6a5dc3f6e37b8b17c718880fc4c74cdc",
+      "source": "corpus-logs/python-dateutil-refactor.log"
+    },
+    "corpus-logs--python-dotenv-before.log.gz": {
+      "bytes": 1862,
+      "sha256": "52f1ad6ac20c7439af4167d7c8b3dacdcb717250a315ac36d303c38d7b2a2206",
+      "source": "corpus-logs/python-dotenv-before.log"
+    },
+    "corpus-logs--python-dotenv-environment.log.gz": {
+      "bytes": 1442,
+      "sha256": "8199dc8cadb95e44f58861e8120574610c3271b12fd8eb4ce117abd45c2b9a71",
+      "source": "corpus-logs/python-dotenv-environment.log"
+    },
+    "corpus-logs--python-dotenv-refactor.log.gz": {
+      "bytes": 2316,
+      "sha256": "42988690ba2049a3baa79cae6c26d026b460c739445ff1d15535b64497f71294",
+      "source": "corpus-logs/python-dotenv-refactor.log"
+    },
+    "corpus-logs--python-fire-after.log.gz": {
+      "bytes": 2114,
+      "sha256": "7ef11d6d566c2090489262e51fc7e0aabde49f69b655325d4acf239ee318d3fa",
+      "source": "corpus-logs/python-fire-after.log"
+    },
+    "corpus-logs--python-fire-before.log.gz": {
+      "bytes": 2108,
+      "sha256": "fdade8ccfcd8af75d53a5fd845d35c59ece9dc8b5a9b1d9b8ac885472392d143",
+      "source": "corpus-logs/python-fire-before.log"
+    },
+    "corpus-logs--python-fire-environment.log.gz": {
+      "bytes": 1336,
+      "sha256": "3f337953e70c2c14244d3b18fdb36552fb8cf79f6fc0558e1a48092795fd9d26",
+      "source": "corpus-logs/python-fire-environment.log"
+    },
+    "corpus-logs--python-fire-refactor.log.gz": {
+      "bytes": 7385,
+      "sha256": "6b7438e50f46253f9d6e9c9cb4d9f17bca38666aec6ecfa4147d0f8045663d4e",
+      "source": "corpus-logs/python-fire-refactor.log"
+    },
+    "corpus-logs--python-prompt-toolkit-after.log.gz": {
+      "bytes": 2037,
+      "sha256": "aba7b40e4294cad528c8ebef8635a91c23f13b8a27581a8a3dd33c01a26fd8cd",
+      "source": "corpus-logs/python-prompt-toolkit-after.log"
+    },
+    "corpus-logs--python-prompt-toolkit-before.log.gz": {
+      "bytes": 2031,
+      "sha256": "cd657a7dcab6c84f82ae25ecd2895984da87274491b0b742306426c5907ccaff",
+      "source": "corpus-logs/python-prompt-toolkit-before.log"
+    },
+    "corpus-logs--python-prompt-toolkit-environment.log.gz": {
+      "bytes": 1589,
+      "sha256": "dbef5fa657ccd22eae22ba37299d3e2a24b67db538f13c85519d3b7443e9849e",
+      "source": "corpus-logs/python-prompt-toolkit-environment.log"
+    },
+    "corpus-logs--python-prompt-toolkit-refactor.log.gz": {
+      "bytes": 18097,
+      "sha256": "a128cab99bd0d71a445d80f5545a17a273ce959cc4bed2f2ff83b7fb7d9aeb3f",
+      "source": "corpus-logs/python-prompt-toolkit-refactor.log"
+    },
+    "corpus-logs--python-slugify-before.log.gz": {
+      "bytes": 1614,
+      "sha256": "95f9ddd2761bbea4eb29dc925984b6497f3fae169f5eb78c7789f00d1c90d4ea",
+      "source": "corpus-logs/python-slugify-before.log"
+    },
+    "corpus-logs--python-slugify-environment.log.gz": {
+      "bytes": 1466,
+      "sha256": "e90981f9250401562f93c0bac079b592cb5bfd665a13f7402c15d375d4e82292",
+      "source": "corpus-logs/python-slugify-environment.log"
+    },
+    "corpus-logs--python-slugify-refactor.log.gz": {
+      "bytes": 1255,
+      "sha256": "832746477091099ff82936992d8e55774105159bfb96094d7a7996ce68d68e72",
+      "source": "corpus-logs/python-slugify-refactor.log"
+    },
+    "corpus-logs--pyupgrade-before.log.gz": {
+      "bytes": 6513,
+      "sha256": "31cabfef1ab5627fb350cd3896dd80384505190c62eb9697716d9620c236f198",
+      "source": "corpus-logs/pyupgrade-before.log"
+    },
+    "corpus-logs--pyupgrade-environment.log.gz": {
+      "bytes": 1350,
+      "sha256": "4021da0c999c1352346d37358d838d63f0f6fed9e747eab6d367d3989dbd880f",
+      "source": "corpus-logs/pyupgrade-environment.log"
+    },
+    "corpus-logs--pyupgrade-refactor.log.gz": {
+      "bytes": 5274,
+      "sha256": "0de0183ce962d8b6ae2497731f49b229e9802639eb8b4a085c91a3c16fbab234",
+      "source": "corpus-logs/pyupgrade-refactor.log"
+    },
+    "corpus-logs--rfc3986-after.log.gz": {
+      "bytes": 6227,
+      "sha256": "9263869a7a9e4263eb2c3c8078c7f2254ea303358c6697f81c118e2a6387e814",
+      "source": "corpus-logs/rfc3986-after.log"
+    },
+    "corpus-logs--rfc3986-before.log.gz": {
+      "bytes": 6185,
+      "sha256": "98b6bb3aadba1ef791b750c208d91d88b6023f3e7ccc01e1fefab5d5602436e6",
+      "source": "corpus-logs/rfc3986-before.log"
+    },
+    "corpus-logs--rfc3986-environment.log.gz": {
+      "bytes": 1295,
+      "sha256": "e6568008a4a058655147bcfaa8b45e1806e9744738cc7e29030c817387759438",
+      "source": "corpus-logs/rfc3986-environment.log"
+    },
+    "corpus-logs--rfc3986-refactor.log.gz": {
+      "bytes": 6246,
+      "sha256": "2bdc5b60626c1f5fc503b50e403fd549e71b36878a9aac1b02ff7f1dd18ae1d5",
+      "source": "corpus-logs/rfc3986-refactor.log"
+    },
+    "corpus-logs--rich-after.log.gz": {
+      "bytes": 108402,
+      "sha256": "aa6c1674968d363543e65042a2d549ed591cc9774b7e4ba7163b14672c089fab",
+      "source": "corpus-logs/rich-after.log"
+    },
+    "corpus-logs--rich-before.log.gz": {
+      "bytes": 108396,
+      "sha256": "b8021a9ad7819adcf50868cc2912a78253247beb17bdca0d51e6d90a0a913e5b",
+      "source": "corpus-logs/rich-before.log"
+    },
+    "corpus-logs--rich-environment.log.gz": {
+      "bytes": 1233,
+      "sha256": "aa9939552c00871b7b8813f012aac8db73e27e3f1810ffbd0ffe2a25bf76dc33",
+      "source": "corpus-logs/rich-environment.log"
+    },
+    "corpus-logs--rich-refactor.log.gz": {
+      "bytes": 9611,
+      "sha256": "ddc36a977c8d904314eedb310ba7625b796d35bb77dfd3da45e1fde2c3cb5299",
+      "source": "corpus-logs/rich-refactor.log"
+    },
+    "corpus-logs--rsa-after.log.gz": {
+      "bytes": 4383,
+      "sha256": "b15ebc1262573b69d7f47eefb19777a64645dc0144a693b8a88638e00a46e1c4",
+      "source": "corpus-logs/rsa-after.log"
+    },
+    "corpus-logs--rsa-before.log.gz": {
+      "bytes": 4381,
+      "sha256": "52570e016c5ad43e414f13b62ecda5f92f1a2289c9bb4c2cea833f71198a943e",
+      "source": "corpus-logs/rsa-before.log"
+    },
+    "corpus-logs--rsa-environment.log.gz": {
+      "bytes": 1218,
+      "sha256": "b2603fb74dd2c155a5f5c769ad97a844ab5f870ec83d73d6a65507daedde19c3",
+      "source": "corpus-logs/rsa-environment.log"
+    },
+    "corpus-logs--rsa-refactor.log.gz": {
+      "bytes": 4555,
+      "sha256": "27e60dd5b153b14f8de5d19f8c98510930796a2b2c35110d3076c5b68f3cd864",
+      "source": "corpus-logs/rsa-refactor.log"
+    },
+    "corpus-logs--schedule-after.log.gz": {
+      "bytes": 2685,
+      "sha256": "36d3bc8d2c19f240a122c06e48b149fac49be392bf31c82c0b9dc97c7e871842",
+      "source": "corpus-logs/schedule-after.log"
+    },
+    "corpus-logs--schedule-before.log.gz": {
+      "bytes": 2679,
+      "sha256": "8ccf46d179a20689db3836ff8433f7e80d0058afc7d65b1e43eea06db38d12e1",
+      "source": "corpus-logs/schedule-before.log"
+    },
+    "corpus-logs--schedule-environment.log.gz": {
+      "bytes": 1317,
+      "sha256": "ee67207d007d28aee8923e27953d6c142bf8286efd88cedad33e1c2a791d88f9",
+      "source": "corpus-logs/schedule-environment.log"
+    },
+    "corpus-logs--schedule-refactor.log.gz": {
+      "bytes": 1878,
+      "sha256": "e14e82a83e8499a5b258ef470e8bcd9ba1109ada0e71da52f79c74c61261aeec",
+      "source": "corpus-logs/schedule-refactor.log"
+    },
+    "corpus-logs--schema-before.log.gz": {
+      "bytes": 563,
+      "sha256": "815ff7e00d231e4b0fab134d52c27296744aa521148d420228512a16b524700b",
+      "source": "corpus-logs/schema-before.log"
+    },
+    "corpus-logs--schema-environment.log.gz": {
+      "bytes": 1274,
+      "sha256": "05c43071259a75267f8d956e31edd7d3e5b1232d1ae351098459f02984a60030",
+      "source": "corpus-logs/schema-environment.log"
+    },
+    "corpus-logs--schema-refactor.log.gz": {
+      "bytes": 1658,
+      "sha256": "142fecd6c545b4b77825231f52f2a250e7d3cf339050b42528b6ec786e3bc45f",
+      "source": "corpus-logs/schema-refactor.log"
+    },
+    "corpus-logs--simpy-before.log.gz": {
+      "bytes": 8306,
+      "sha256": "02b04f991882302d38fd85f0a33ef66514bcd32347ef6e75f82dbdef9d4c605c",
+      "source": "corpus-logs/simpy-before.log"
+    },
+    "corpus-logs--simpy-environment.log.gz": {
+      "bytes": 1255,
+      "sha256": "3a726ec084adbaf5c664b97d9868add1961a2164e4350f3c999f888f5ee08623",
+      "source": "corpus-logs/simpy-environment.log"
+    },
+    "corpus-logs--simpy-refactor.log.gz": {
+      "bytes": 1825,
+      "sha256": "68c3679b96086ca4e7617a75349addefec423d14516c4868a3fc9fdee7129061",
+      "source": "corpus-logs/simpy-refactor.log"
+    },
+    "corpus-logs--six-before.log.gz": {
+      "bytes": 683,
+      "sha256": "a82713de139f28da1df37aff23ce97bf624f782287d20fe103f6bfc5f08f1678",
+      "source": "corpus-logs/six-before.log"
+    },
+    "corpus-logs--six-environment.log.gz": {
+      "bytes": 1209,
+      "sha256": "ca4710dc3cb6780267681f2c22aba3114d1da844f6cec62b0fc96fd85d3299a3",
+      "source": "corpus-logs/six-environment.log"
+    },
+    "corpus-logs--six-refactor.log.gz": {
+      "bytes": 1838,
+      "sha256": "5334dcba9f9301d762568c10d9c6a5f8c6bec91b4a89981c900f07b9de458709",
+      "source": "corpus-logs/six-refactor.log"
+    },
+    "corpus-logs--sly-after.log.gz": {
+      "bytes": 565,
+      "sha256": "45f9ccce505bd40843f3bfb8dde8a3e5f2481fdad20a8b32710d9728982b9075",
+      "source": "corpus-logs/sly-after.log"
+    },
+    "corpus-logs--sly-before.log.gz": {
+      "bytes": 559,
+      "sha256": "7e71c18fc495c0821516e8c343e59fdbcf95866bdcef16073538ab90b68d47df",
+      "source": "corpus-logs/sly-before.log"
+    },
+    "corpus-logs--sly-environment.log.gz": {
+      "bytes": 1197,
+      "sha256": "1623624734f9c30dd93c56b5795ad657cb4e7b3f99e4762bfdf7afa7dd197c14",
+      "source": "corpus-logs/sly-environment.log"
+    },
+    "corpus-logs--sly-refactor.log.gz": {
+      "bytes": 1651,
+      "sha256": "3a812b3257138dbe77040134559a4e4ce6c666cde9f9c1bdbeb08ea63f5a9dd4",
+      "source": "corpus-logs/sly-refactor.log"
+    },
+    "corpus-logs--sniffio-before.log.gz": {
+      "bytes": 600,
+      "sha256": "9c96f9676b7cbd3548876c4eb8d219c7e0f3a6305382ecc7766f3f69a45a3a30",
+      "source": "corpus-logs/sniffio-before.log"
+    },
+    "corpus-logs--sniffio-environment.log.gz": {
+      "bytes": 1311,
+      "sha256": "88f0f800e01f21afde6cdffa018d5478eab8416f838a3a5e15797a6e05d7a7bd",
+      "source": "corpus-logs/sniffio-environment.log"
+    },
+    "corpus-logs--sniffio-refactor.log.gz": {
+      "bytes": 2315,
+      "sha256": "a9ef389e4bed97e66e9c0eec591ba52ae97f565a6c80a51be3cd1daf311f2945",
+      "source": "corpus-logs/sniffio-refactor.log"
+    },
+    "corpus-logs--sortedcontainers-after.log.gz": {
+      "bytes": 2217,
+      "sha256": "e765f6b47c14807a8fa2379fe33f3e451cbac37cc1c2cfa37a3d0b6f41c42f6d",
+      "source": "corpus-logs/sortedcontainers-after.log"
+    },
+    "corpus-logs--sortedcontainers-before.log.gz": {
+      "bytes": 2211,
+      "sha256": "d752dd36f9e5664efc4bb689eeb8fa2c983af4811a1f93d7c8aae37aa1a9acbf",
+      "source": "corpus-logs/sortedcontainers-before.log"
+    },
+    "corpus-logs--sortedcontainers-environment.log.gz": {
+      "bytes": 1517,
+      "sha256": "0c37818f475eedf845e43a982db736bddebc2b14d38f6a6a99c00a097e103f4c",
+      "source": "corpus-logs/sortedcontainers-environment.log"
+    },
+    "corpus-logs--sortedcontainers-refactor.log.gz": {
+      "bytes": 1899,
+      "sha256": "3eac83af4ea15d65698a9729415798c085664b2af9bc18cf9e5a40439ffcf0eb",
+      "source": "corpus-logs/sortedcontainers-refactor.log"
+    },
+    "corpus-logs--soupsieve-after.log.gz": {
+      "bytes": 7375,
+      "sha256": "bc4eb19d23e1144a8fc3a278fdcdba46b4667b1ec9690928e5d909aeec0d0c67",
+      "source": "corpus-logs/soupsieve-after.log"
+    },
+    "corpus-logs--soupsieve-before.log.gz": {
+      "bytes": 7369,
+      "sha256": "17b0a0bb14d90bb1dea46ad39a52671419a6ca66ac26380680db84c5c533631a",
+      "source": "corpus-logs/soupsieve-before.log"
+    },
+    "corpus-logs--soupsieve-environment.log.gz": {
+      "bytes": 1349,
+      "sha256": "7494dc10e904117946a3548e32f4b58fe6d7a32292caad0e32a46820721ab8e8",
+      "source": "corpus-logs/soupsieve-environment.log"
+    },
+    "corpus-logs--soupsieve-refactor.log.gz": {
+      "bytes": 2581,
+      "sha256": "10544e5883c64377b5e7c8577c1187def0551e4eae6a10e6520a40a19ddbb4ec",
+      "source": "corpus-logs/soupsieve-refactor.log"
+    },
+    "corpus-logs--sphinx-after.log.gz": {
+      "bytes": 630868,
+      "sha256": "5b1d5c5bb8929625e2308912bd0d14f4a8e2395809dbc9c4d84cc949a392d3f8",
+      "source": "corpus-logs/sphinx-after.log"
+    },
+    "corpus-logs--sphinx-before.log.gz": {
+      "bytes": 630910,
+      "sha256": "20b0c72ecf65b45bb29bd88a34276e74572002b7d54cf2a3066dac45c93afe37",
+      "source": "corpus-logs/sphinx-before.log"
+    },
+    "corpus-logs--sphinx-environment.log.gz": {
+      "bytes": 1272,
+      "sha256": "4ed2c5e248fd4c7f7563d7d5ea971b635c6b0fae5f382f0702f0ec74b3271373",
+      "source": "corpus-logs/sphinx-environment.log"
+    },
+    "corpus-logs--sphinx-refactor.log.gz": {
+      "bytes": 79083,
+      "sha256": "c8696df23e361295fb618aff27202a2458497b714934ea54d8d06e3f6a61ae39",
+      "source": "corpus-logs/sphinx-refactor.log"
+    },
+    "corpus-logs--sqlparse-after.log.gz": {
+      "bytes": 1959,
+      "sha256": "0dae8ed36ea37464765e91732fc22353d96e8575c6860d9078af741c5758ff6f",
+      "source": "corpus-logs/sqlparse-after.log"
+    },
+    "corpus-logs--sqlparse-before.log.gz": {
+      "bytes": 1953,
+      "sha256": "72dee82ade1bf6430c29e5a3ce1518bb03ecae9b497f66e6e479cdea7b53a269",
+      "source": "corpus-logs/sqlparse-before.log"
+    },
+    "corpus-logs--sqlparse-environment.log.gz": {
+      "bytes": 1339,
+      "sha256": "21226f5d309a5e29dd54806a78f9b8078aad4a84262880aadfc06e63d56c7d93",
+      "source": "corpus-logs/sqlparse-environment.log"
+    },
+    "corpus-logs--sqlparse-refactor.log.gz": {
+      "bytes": 1196,
+      "sha256": "d35617f0062bf5c235a6760bfd54402158c48da133b71a960c94c6c6ac5be361",
+      "source": "corpus-logs/sqlparse-refactor.log"
+    },
+    "corpus-logs--starlette-after.log.gz": {
+      "bytes": 4551,
+      "sha256": "f2aabe9a8e358298bd815b55fa250058ace9c76519d512ab19c61e11a5918c01",
+      "source": "corpus-logs/starlette-after.log"
+    },
+    "corpus-logs--starlette-before.log.gz": {
+      "bytes": 4545,
+      "sha256": "69766fcf1f82caca46ddb3f97fb2ad95874feee4aa3c1204d929096f9e332e90",
+      "source": "corpus-logs/starlette-before.log"
+    },
+    "corpus-logs--starlette-environment.log.gz": {
+      "bytes": 1349,
+      "sha256": "94da36d5050d80dcfc125e17565617f2d0698c10de9ae1c8773ac49587cd4df5",
+      "source": "corpus-logs/starlette-environment.log"
+    },
+    "corpus-logs--starlette-refactor.log.gz": {
+      "bytes": 6701,
+      "sha256": "76b00fce94e5093cefea3427ee51c291e45b091adcb9e70b1b5ebf08b64496c9",
+      "source": "corpus-logs/starlette-refactor.log"
+    },
+    "corpus-logs--structlog-after.log.gz": {
+      "bytes": 3237,
+      "sha256": "dadb4cc7bb81194c5d77c7df1dc5e8f18eb26f87a63beb0fe652594a102de2d3",
+      "source": "corpus-logs/structlog-after.log"
+    },
+    "corpus-logs--structlog-before.log.gz": {
+      "bytes": 3231,
+      "sha256": "e627554989d0736e1f9ba3837ce88b4ecc427a4e6d862895c7c90647469f9401",
+      "source": "corpus-logs/structlog-before.log"
+    },
+    "corpus-logs--structlog-environment.log.gz": {
+      "bytes": 1377,
+      "sha256": "e3ef016a7bd701c33cc1df830d4ae0cc253fb3ee164c6918d35679cb9703a794",
+      "source": "corpus-logs/structlog-environment.log"
+    },
+    "corpus-logs--structlog-refactor.log.gz": {
+      "bytes": 4884,
+      "sha256": "adf5c4263303d08ad555d8bce45b2c19b9fa80233a5f5e25ed791d3246b8df52",
+      "source": "corpus-logs/structlog-refactor.log"
+    },
+    "corpus-logs--tabulate-before.log.gz": {
+      "bytes": 5955,
+      "sha256": "1af2ca1f75e28f1e4220613d9a6825f09f91425dfdb9fb8c619408d6555f3814",
+      "source": "corpus-logs/tabulate-before.log"
+    },
+    "corpus-logs--tabulate-environment.log.gz": {
+      "bytes": 1391,
+      "sha256": "3ceebc0ddd8ce8694a3d9ada26d52fbea84a96e41eaa7378e54f48de8eb212f1",
+      "source": "corpus-logs/tabulate-environment.log"
+    },
+    "corpus-logs--tabulate-refactor.log.gz": {
+      "bytes": 2687,
+      "sha256": "ef6814578447f2b4663fea63dfb13107b67d693593d474984be4abc55176e76a",
+      "source": "corpus-logs/tabulate-refactor.log"
+    },
+    "corpus-logs--tenacity-after.log.gz": {
+      "bytes": 1127,
+      "sha256": "f4b9127afe30e959408e2dc68aee1eea3a3c9906ab20e86334fb1df8a0ddb04f",
+      "source": "corpus-logs/tenacity-after.log"
+    },
+    "corpus-logs--tenacity-before.log.gz": {
+      "bytes": 1121,
+      "sha256": "c72bc813404b36bebb5becb8ff26e8d162bf7256f7fc1f51b66014c6cb26bfd0",
+      "source": "corpus-logs/tenacity-before.log"
+    },
+    "corpus-logs--tenacity-environment.log.gz": {
+      "bytes": 1393,
+      "sha256": "a0b47e8da73f2d7d61384fce3bf16cd5d93f90088318abb4f8c51dedd63a8906",
+      "source": "corpus-logs/tenacity-environment.log"
+    },
+    "corpus-logs--tenacity-refactor.log.gz": {
+      "bytes": 3792,
+      "sha256": "ca3c905e83513fe553b214c559c191aa351872afbb98a11e7b1bb34f1ae2313e",
+      "source": "corpus-logs/tenacity-refactor.log"
+    },
+    "corpus-logs--termcolor-before.log.gz": {
+      "bytes": 73561,
+      "sha256": "78a5ed7557cbfa130a0924977d7e86a469c7e82622a2d0b22b565cfd9d69be83",
+      "source": "corpus-logs/termcolor-before.log"
+    },
+    "corpus-logs--termcolor-environment.log.gz": {
+      "bytes": 1367,
+      "sha256": "a50655c895d9b9688a35bcde74128f68ccf3ba88e514a9ac813e5cfdab518308",
+      "source": "corpus-logs/termcolor-environment.log"
+    },
+    "corpus-logs--termcolor-refactor.log.gz": {
+      "bytes": 479,
+      "sha256": "3a8f1fd9c70d17eb022ad1e20b4ce5570c4d0bf35fa3de70ed10e159db6b73b6",
+      "source": "corpus-logs/termcolor-refactor.log"
+    },
+    "corpus-logs--texttable-before.log.gz": {
+      "bytes": 378,
+      "sha256": "09620c56fe4f4463ce2b441e15dc96e71ade4ff48ee93d9783b47a4f898c16a3",
+      "source": "corpus-logs/texttable-before.log"
+    },
+    "corpus-logs--texttable-environment.log.gz": {
+      "bytes": 1349,
+      "sha256": "79ec6f4efd671528e0f67e6faf85334ff9724e018b26a396e6a9d445ab28f7e0",
+      "source": "corpus-logs/texttable-environment.log"
+    },
+    "corpus-logs--texttable-refactor.log.gz": {
+      "bytes": 1375,
+      "sha256": "296ee70e1ff8b8a7a59ec79406b9cdb75908dfd8513037c9345f335e8525fde6",
+      "source": "corpus-logs/texttable-refactor.log"
+    },
+    "corpus-logs--tomli-after.log.gz": {
+      "bytes": 702,
+      "sha256": "b208529fc2cc08ae678fb40e9bce14c2985f63d5a37aa336ce7b260ee23d6f5a",
+      "source": "corpus-logs/tomli-after.log"
+    },
+    "corpus-logs--tomli-before.log.gz": {
+      "bytes": 696,
+      "sha256": "66d40188cd4b43a97788b1862e8f9e042b95eeba9e5829b45605ac6c78f3e26e",
+      "source": "corpus-logs/tomli-before.log"
+    },
+    "corpus-logs--tomli-environment.log.gz": {
+      "bytes": 1252,
+      "sha256": "6cbeb7bd18e4edffaf69af1fca01ec3717115284a09ec2ebb7e61eb00898ef56",
+      "source": "corpus-logs/tomli-environment.log"
+    },
+    "corpus-logs--tomli-refactor.log.gz": {
+      "bytes": 1168,
+      "sha256": "af092fe7f8c0cd62ab1435c1ca706473b1901ea020d8307d4bc73a096a2c53cc",
+      "source": "corpus-logs/tomli-refactor.log"
+    },
+    "corpus-logs--tomli-w-before.log.gz": {
+      "bytes": 1337,
+      "sha256": "0b9a40105b8ce641ebd69e9f5f6ff3a10648fe8841c0038968beabb6ec46edb3",
+      "source": "corpus-logs/tomli-w-before.log"
+    },
+    "corpus-logs--tomli-w-environment.log.gz": {
+      "bytes": 1296,
+      "sha256": "8e1fbf98d7ba105da53fa01e7e54bb17d24e7bcc680832448b268ff55f807c93",
+      "source": "corpus-logs/tomli-w-environment.log"
+    },
+    "corpus-logs--tomli-w-refactor.log.gz": {
+      "bytes": 676,
+      "sha256": "9ed9767c3d13833384ffa0a75de3209c8fd4b3e0c3d7289217f04364febddf71",
+      "source": "corpus-logs/tomli-w-refactor.log"
+    },
+    "corpus-logs--tomlkit-after.log.gz": {
+      "bytes": 2091,
+      "sha256": "468c1d790c47936841c54c1c6921818a202ad397e11470b7b89e41dbc1a8870a",
+      "source": "corpus-logs/tomlkit-after.log"
+    },
+    "corpus-logs--tomlkit-before.log.gz": {
+      "bytes": 2085,
+      "sha256": "fc4f84d9e54a6f1d3a63628eba9b293a7d6065c7e41d0dd8c581b2fb53345f44",
+      "source": "corpus-logs/tomlkit-before.log"
+    },
+    "corpus-logs--tomlkit-environment.log.gz": {
+      "bytes": 1299,
+      "sha256": "ba9046bcc04d89f742e25fba8d9a88a27a7c73f3bde15b494104dab44930c1a9",
+      "source": "corpus-logs/tomlkit-environment.log"
+    },
+    "corpus-logs--tomlkit-refactor.log.gz": {
+      "bytes": 5298,
+      "sha256": "a49f392adb7009c2f01c8578429a531166a4674dee7e7c4dc96f8b3fd300999f",
+      "source": "corpus-logs/tomlkit-refactor.log"
+    },
+    "corpus-logs--toolz-after.log.gz": {
+      "bytes": 1705,
+      "sha256": "29e37901798a424d4fd875a160e62462272765fe083e4a48b44c3b183a64b101",
+      "source": "corpus-logs/toolz-after.log"
+    },
+    "corpus-logs--toolz-before.log.gz": {
+      "bytes": 1699,
+      "sha256": "1c478a074b7d707f4701ac8e497b5b24187c810f511bbaa5c34f9f0f4afa557d",
+      "source": "corpus-logs/toolz-before.log"
+    },
+    "corpus-logs--toolz-environment.log.gz": {
+      "bytes": 1249,
+      "sha256": "c2564545dec3d466a3ebe56487819b242252bfb499c2cda1891fc253a043c202",
+      "source": "corpus-logs/toolz-environment.log"
+    },
+    "corpus-logs--toolz-refactor.log.gz": {
+      "bytes": 4499,
+      "sha256": "af7da28c327cc0ee7107d162896e9692acbc4785fb47d0dcd7b1c0e1afb1c164",
+      "source": "corpus-logs/toolz-refactor.log"
+    },
+    "corpus-logs--tornado-after.log.gz": {
+      "bytes": 218126,
+      "sha256": "8e0270934812564e59d82abd75b120ef2bca717ccd2237e2244f42efdcf10fde",
+      "source": "corpus-logs/tornado-after.log"
+    },
+    "corpus-logs--tornado-before.log.gz": {
+      "bytes": 218047,
+      "sha256": "0ce0f3f67840a6c0e5b486d85c89389e555c27737be186f97fd63cc4221b5225",
+      "source": "corpus-logs/tornado-before.log"
+    },
+    "corpus-logs--tornado-environment.log.gz": {
+      "bytes": 1312,
+      "sha256": "f5493cecc63bd747810931c13e5cafdcdb860fffb3818c82fb421a8fcff768a4",
+      "source": "corpus-logs/tornado-environment.log"
+    },
+    "corpus-logs--tornado-refactor.log.gz": {
+      "bytes": 18765,
+      "sha256": "b9872b04f54a14b257e913a842ae204e6f83bdfc543db054afe9754da84f36b5",
+      "source": "corpus-logs/tornado-refactor.log"
+    },
+    "corpus-logs--towel-main-before.log.gz": {
+      "bytes": 88664,
+      "sha256": "e1256385da88b3ee0baf2a0914238503e0f415b5f4418395b6383fc4f3335324",
+      "source": "corpus-logs/towel-main-before.log"
+    },
+    "corpus-logs--towel-main-environment.log.gz": {
+      "bytes": 968,
+      "sha256": "a666d4a90981bb4c079ba2b69fabe738f550d1b36330f9fe5889086f483d738e",
+      "source": "corpus-logs/towel-main-environment.log"
+    },
+    "corpus-logs--towel-main-refactor.log.gz": {
+      "bytes": 715,
+      "sha256": "f2eec19ecb728c34df5fb812f6663b85afd6b32e12ec3549005c27f1e6ccdb6f",
+      "source": "corpus-logs/towel-main-refactor.log"
+    },
+    "corpus-logs--towel-v1.414-before.log.gz": {
+      "bytes": 13294,
+      "sha256": "1e85cfc94d4d9cc49dbb4d701273ec8512c777005cdac49bce524da6b232c484",
+      "source": "corpus-logs/towel-v1.414-before.log"
+    },
+    "corpus-logs--towel-v1.414-environment.log.gz": {
+      "bytes": 989,
+      "sha256": "5ff86ddd7ea3ed57bb4b93ef5c0da63c7bd09b4dd54dce7fd0363c149630fe44",
+      "source": "corpus-logs/towel-v1.414-environment.log"
+    },
+    "corpus-logs--towel-v1.414-refactor.log.gz": {
+      "bytes": 1061,
+      "sha256": "fed59db7255694c4e121cd7451f2353f742379196fec671be45e6fae6a50c19a",
+      "source": "corpus-logs/towel-v1.414-refactor.log"
+    },
+    "corpus-logs--towel-v1.618-before.log.gz": {
+      "bytes": 8527,
+      "sha256": "35056688f0c6b0de94c0088cb35a8025dca4152abfb53e4d9e5a14781d6b1d63",
+      "source": "corpus-logs/towel-v1.618-before.log"
+    },
+    "corpus-logs--towel-v1.618-environment.log.gz": {
+      "bytes": 986,
+      "sha256": "ce9e65b41980ad62d3f4a98ad63b2c78160b4bca9954db3b70eadcf172f4ed7e",
+      "source": "corpus-logs/towel-v1.618-environment.log"
+    },
+    "corpus-logs--towel-v1.618-refactor.log.gz": {
+      "bytes": 719,
+      "sha256": "08fd440c86663f20c080e732185b4099e255882af51de5f75b11534d59ea8cd7",
+      "source": "corpus-logs/towel-v1.618-refactor.log"
+    },
+    "corpus-logs--tqdm-before.log.gz": {
+      "bytes": 5022,
+      "sha256": "5da843684f231aaf4dcbaea2d87282c50a16ac8f1681418efc7998269ff974b0",
+      "source": "corpus-logs/tqdm-before.log"
+    },
+    "corpus-logs--tqdm-environment.log.gz": {
+      "bytes": 1232,
+      "sha256": "7c5472a7b76acd85881ec507651c4dac22333e32ce4bb66834f8be5693c87e97",
+      "source": "corpus-logs/tqdm-environment.log"
+    },
+    "corpus-logs--tqdm-refactor.log.gz": {
+      "bytes": 4137,
+      "sha256": "34a260b5e92ed08e32c8704bf64a1938e32c5d1b286b30ab1996b2d8fe194aa7",
+      "source": "corpus-logs/tqdm-refactor.log"
+    },
+    "corpus-logs--traitlets-after.log.gz": {
+      "bytes": 10334,
+      "sha256": "9349b753605fd86d5897d8769b7c25a6431c434fc0d57c8ba45e8f7275ff1779",
+      "source": "corpus-logs/traitlets-after.log"
+    },
+    "corpus-logs--traitlets-before.log.gz": {
+      "bytes": 10420,
+      "sha256": "b3df8eeec256d2df68a74b8badf7fa1fa827bf8d50eac268eaf460eddef8ce39",
+      "source": "corpus-logs/traitlets-before.log"
+    },
+    "corpus-logs--traitlets-environment.log.gz": {
+      "bytes": 1344,
+      "sha256": "50133b004f843269ccd7d4b4b8ced80c8c3f290d06fb11e0db5f2b11d89b9bbf",
+      "source": "corpus-logs/traitlets-environment.log"
+    },
+    "corpus-logs--traitlets-refactor.log.gz": {
+      "bytes": 2731,
+      "sha256": "8e78f999f4cd5e165af7999f37aaa43f4ce17632a300b058b3a50635c947c0d2",
+      "source": "corpus-logs/traitlets-refactor.log"
+    },
+    "corpus-logs--trio-after.log.gz": {
+      "bytes": 6485,
+      "sha256": "469b39984a58949f155bbe7112e20845cab97a1a6475f578d5ff0652fb2c9a6e",
+      "source": "corpus-logs/trio-after.log"
+    },
+    "corpus-logs--trio-before.log.gz": {
+      "bytes": 6479,
+      "sha256": "3b4fb16d142baea4c3a32a30adedf2d592e231136dff1dc5525a5445d2a25588",
+      "source": "corpus-logs/trio-before.log"
+    },
+    "corpus-logs--trio-environment.log.gz": {
+      "bytes": 1246,
+      "sha256": "a87148925a43ba675e4ee2bebc0bff133d2da827590461e81922de64b77268df",
+      "source": "corpus-logs/trio-environment.log"
+    },
+    "corpus-logs--trio-refactor-no-types.log.gz": {
+      "bytes": 8791,
+      "sha256": "80b711e566696264db82145f77783802bfbd50b0312b665c4625aaf9fabe9b8f",
+      "source": "corpus-logs/trio-refactor-no-types.log"
+    },
+    "corpus-logs--trio-refactor.log.gz": {
+      "bytes": 689,
+      "sha256": "88f5a27c67e23c9d3cfd526e3a5abf7dfe02993a32d0427f95da96f5702f712c",
+      "source": "corpus-logs/trio-refactor.log"
+    },
+    "corpus-logs--typer-after.log.gz": {
+      "bytes": 461755,
+      "sha256": "960c8955029dbe2dd0c351db040353f594618633d16aae28938fddce5c3c5aa2",
+      "source": "corpus-logs/typer-after.log"
+    },
+    "corpus-logs--typer-before.log.gz": {
+      "bytes": 459768,
+      "sha256": "f414af37f324a513025fda69a77f98e5ebc88a40bcfd10a7fb3de41b242e2367",
+      "source": "corpus-logs/typer-before.log"
+    },
+    "corpus-logs--typer-environment.log.gz": {
+      "bytes": 1254,
+      "sha256": "5caa0e7aa13df51ac9add4cb9c732f87205689b0e618aba2dde6c8d78ec42799",
+      "source": "corpus-logs/typer-environment.log"
+    },
+    "corpus-logs--typer-refactor.log.gz": {
+      "bytes": 10110,
+      "sha256": "43c113194e83fe85200f6fd6f562cc8fbc87d6c63df8ba4b565e021d50a9bab0",
+      "source": "corpus-logs/typer-refactor.log"
+    },
+    "corpus-logs--typing_extensions-after.log.gz": {
+      "bytes": 1033,
+      "sha256": "aa4752f7154b51ff6afd3b52993f404f0a4447fcda1cef4668e8bbd4b7e93cbb",
+      "source": "corpus-logs/typing_extensions-after.log"
+    },
+    "corpus-logs--typing_extensions-before.log.gz": {
+      "bytes": 1027,
+      "sha256": "c3abe7597008b946fb7bc359fe9f47e3f895cef9710bb8aba9cd15d593c1cc88",
+      "source": "corpus-logs/typing_extensions-before.log"
+    },
+    "corpus-logs--typing_extensions-environment.log.gz": {
+      "bytes": 1562,
+      "sha256": "a49b03050c0d9df03f40a4de74ed81ec55c3246126605b2ce6f9f3f02011755b",
+      "source": "corpus-logs/typing_extensions-environment.log"
+    },
+    "corpus-logs--typing_extensions-refactor-no-types.log.gz": {
+      "bytes": 980,
+      "sha256": "2f314e1e9ce97bd8a595233e28efaae7d58183c5bee223d0ea5a53d864145f55",
+      "source": "corpus-logs/typing_extensions-refactor-no-types.log"
+    },
+    "corpus-logs--typing_extensions-refactor.log.gz": {
+      "bytes": 830,
+      "sha256": "68400593b124f95a5fcbb37affa3fa49b08dbda30f2b3aa63eb9cedd4d3d1ccd",
+      "source": "corpus-logs/typing_extensions-refactor.log"
+    },
+    "corpus-logs--unidecode-before.log.gz": {
+      "bytes": 538,
+      "sha256": "cf8b647908263f50c548495af081acc8ead05dbbd4ff83b1cf755bd55fd7130a",
+      "source": "corpus-logs/unidecode-before.log"
+    },
+    "corpus-logs--unidecode-environment.log.gz": {
+      "bytes": 1346,
+      "sha256": "265451b818eb1dd28f29195fee6c48e25dded59ddae252b6180d1c259c008a0d",
+      "source": "corpus-logs/unidecode-environment.log"
+    },
+    "corpus-logs--unidecode-refactor.log.gz": {
+      "bytes": 655,
+      "sha256": "1c4e3a7982d2f4458a66a3fb1c83eba6199faa9b036791a46655a54b48aa4787",
+      "source": "corpus-logs/unidecode-refactor.log"
+    },
+    "corpus-logs--uritemplate-before.log.gz": {
+      "bytes": 487,
+      "sha256": "fad7e068c397f01e4951a09a0273974835a7f3321124d524c1f46a3893ad10fe",
+      "source": "corpus-logs/uritemplate-before.log"
+    },
+    "corpus-logs--uritemplate-environment.log.gz": {
+      "bytes": 1392,
+      "sha256": "f4e49d470784a2afbf26ab8d65a36a7e790502d08de2b04b1157e67629f0c3fd",
+      "source": "corpus-logs/uritemplate-environment.log"
+    },
+    "corpus-logs--uritemplate-refactor.log.gz": {
+      "bytes": 809,
+      "sha256": "4df16db2e35b6030be75fabc638654f476af3666f4dbc96a8acd653b119cbb24",
+      "source": "corpus-logs/uritemplate-refactor.log"
+    },
+    "corpus-logs--virtualenv-before.log.gz": {
+      "bytes": 115839,
+      "sha256": "b896f093fcae13e18c6c81cf1af14bd976612d640098312f293b0dd698df0bd3",
+      "source": "corpus-logs/virtualenv-before.log"
+    },
+    "corpus-logs--virtualenv-environment.log.gz": {
+      "bytes": 1439,
+      "sha256": "451904f4218158dedd8eef9333e9033ff7aed8d88bf2daa8c482a635d82b0ff0",
+      "source": "corpus-logs/virtualenv-environment.log"
+    },
+    "corpus-logs--virtualenv-refactor.log.gz": {
+      "bytes": 3509,
+      "sha256": "111bd92f482870165b6b6ad5001e07dc3cd3e613fed9681f869f9d15d49441e0",
+      "source": "corpus-logs/virtualenv-refactor.log"
+    },
+    "corpus-logs--voluptuous-after.log.gz": {
+      "bytes": 681,
+      "sha256": "835030edc27d4fc168208973a7adaedd2ff582e0fd529626db2082423e825317",
+      "source": "corpus-logs/voluptuous-after.log"
+    },
+    "corpus-logs--voluptuous-before.log.gz": {
+      "bytes": 675,
+      "sha256": "7b927783228f37620ce293c58c09935791d1f97aeba9d45f2c0590e1fe2cc638",
+      "source": "corpus-logs/voluptuous-before.log"
+    },
+    "corpus-logs--voluptuous-environment.log.gz": {
+      "bytes": 1371,
+      "sha256": "39c6d2e6e2dca953ea6e8502cf5923a48c4dedf0d2137684c98b14f9a92fbc02",
+      "source": "corpus-logs/voluptuous-environment.log"
+    },
+    "corpus-logs--voluptuous-refactor.log.gz": {
+      "bytes": 42079,
+      "sha256": "ba39072f3d6844027a0238d205a0c5f32a5cfcfe199f47d1fa1afde0d5b54341",
+      "source": "corpus-logs/voluptuous-refactor.log"
+    },
+    "corpus-logs--waitress-after.log.gz": {
+      "bytes": 4802,
+      "sha256": "5f44fae4e998098d45c913bad2dfeb54c08ddbf55ea210de85c6f69aeea2880b",
+      "source": "corpus-logs/waitress-after.log"
+    },
+    "corpus-logs--waitress-before.log.gz": {
+      "bytes": 4790,
+      "sha256": "877920f3930d277c067c28041ba6e46a59a14da6c06f286a122247ff7f18c103",
+      "source": "corpus-logs/waitress-before.log"
+    },
+    "corpus-logs--waitress-environment.log.gz": {
+      "bytes": 1326,
+      "sha256": "0c96f106bde591d5eabf25f09d8a60329564b50899b88687bd71674e0d26d37e",
+      "source": "corpus-logs/waitress-environment.log"
+    },
+    "corpus-logs--waitress-refactor.log.gz": {
+      "bytes": 2316,
+      "sha256": "d1cce23bb6a921cb3670129947a69881caca7052f2e49545173d9d176d29533e",
+      "source": "corpus-logs/waitress-refactor.log"
+    },
+    "corpus-logs--wcwidth-after.log.gz": {
+      "bytes": 17145,
+      "sha256": "df057012b92fef494d2c4aeca0a5a4874a4758ae5c77288829e89905032416fd",
+      "source": "corpus-logs/wcwidth-after.log"
+    },
+    "corpus-logs--wcwidth-before.log.gz": {
+      "bytes": 17139,
+      "sha256": "c19e738227c07f9dc5a78d998ae2eaa376d9a4923cbbf3878606990f47f23339",
+      "source": "corpus-logs/wcwidth-before.log"
+    },
+    "corpus-logs--wcwidth-environment.log.gz": {
+      "bytes": 1305,
+      "sha256": "ec00621e86ba65be949524fec41390e2dcd4293fab690e647025fc68b1632dd4",
+      "source": "corpus-logs/wcwidth-environment.log"
+    },
+    "corpus-logs--wcwidth-refactor.log.gz": {
+      "bytes": 724,
+      "sha256": "f2c862d779646ef0562905a38935434ea9ddc611106a1cb058e4d4a47300a9d0",
+      "source": "corpus-logs/wcwidth-refactor.log"
+    },
+    "corpus-logs--webargs-after.log.gz": {
+      "bytes": 3627,
+      "sha256": "e0474384f0ce0b3f5e97f7a1e7707db191aab44bb128016145b8b2d018aee761",
+      "source": "corpus-logs/webargs-after.log"
+    },
+    "corpus-logs--webargs-before.log.gz": {
+      "bytes": 3621,
+      "sha256": "00d3b5a24b1b5b590fc881cda66334ede78ef33c90848ae84b5e8cb835d19f04",
+      "source": "corpus-logs/webargs-before.log"
+    },
+    "corpus-logs--webargs-environment.log.gz": {
+      "bytes": 1296,
+      "sha256": "5b717b7ab0dd2e4200d7522a862b7f488a20937390a611f5b33479da44ffa523",
+      "source": "corpus-logs/webargs-environment.log"
+    },
+    "corpus-logs--webargs-refactor.log.gz": {
+      "bytes": 8307,
+      "sha256": "aebf198cffcdd1292e16fb7a958a93e344071d90b1da8c0c7568922a68b23175",
+      "source": "corpus-logs/webargs-refactor.log"
+    },
+    "corpus-logs--werkzeug-after.log.gz": {
+      "bytes": 3004,
+      "sha256": "7b749e1028420781d9cf57bc8bd96129ac645f3a34d86aa588707848c5bf02ed",
+      "source": "corpus-logs/werkzeug-after.log"
+    },
+    "corpus-logs--werkzeug-before.log.gz": {
+      "bytes": 2998,
+      "sha256": "18d4a661daf5875cde0f5e55191b81068866beaa20025b6ffd94e559cfe29e5f",
+      "source": "corpus-logs/werkzeug-before.log"
+    },
+    "corpus-logs--werkzeug-environment.log.gz": {
+      "bytes": 1347,
+      "sha256": "21283724672ff191bcfb118fef0eb23b4c31b43b51afd7ba61cd51d57e9a7db6",
+      "source": "corpus-logs/werkzeug-environment.log"
+    },
+    "corpus-logs--werkzeug-refactor.log.gz": {
+      "bytes": 19904,
+      "sha256": "13e8538a0babfd8c75b73b070f248eef942c47e5f74cab8bbe9d664ab960c336",
+      "source": "corpus-logs/werkzeug-refactor.log"
+    },
+    "corpus-logs--wheel-before.log.gz": {
+      "bytes": 1056,
+      "sha256": "f736d37c2cb15831e9e107a9175a784436c366d31e906143d66b6db69021be87",
+      "source": "corpus-logs/wheel-before.log"
+    },
+    "corpus-logs--wheel-environment.log.gz": {
+      "bytes": 1248,
+      "sha256": "f066c7fb0fd2ba8f0407e9bdd380b40f5cc62a1b525f5ed57033bfd2dba18f3c",
+      "source": "corpus-logs/wheel-environment.log"
+    },
+    "corpus-logs--wheel-refactor.log.gz": {
+      "bytes": 3062,
+      "sha256": "d01ee7fb11a2521580c10143421c765b28f0ee71f69f36f9434269d7a6b2762c",
+      "source": "corpus-logs/wheel-refactor.log"
+    },
+    "corpus-logs--wrapt-after.log.gz": {
+      "bytes": 33826,
+      "sha256": "0e7983875b17a472db5c49bf158774e4a03de6d461dd8b7ddf8b07dcb9f268ba",
+      "source": "corpus-logs/wrapt-after.log"
+    },
+    "corpus-logs--wrapt-before.log.gz": {
+      "bytes": 33820,
+      "sha256": "2c8c35739e81159f6781f21111043e72ff2f26ace8d6f394e0575cc1701aa251",
+      "source": "corpus-logs/wrapt-before.log"
+    },
+    "corpus-logs--wrapt-environment.log.gz": {
+      "bytes": 413,
+      "sha256": "3055bdf1c1ad02e2cc8b255993e9e614b59770edc74db8c5652c34c3cd09ee3e",
+      "source": "corpus-logs/wrapt-environment.log"
+    },
+    "corpus-logs--wrapt-refactor.log.gz": {
+      "bytes": 3051,
+      "sha256": "97996f575146eaa47404e2792acb965f99568439219d1216116bd1972d77f075",
+      "source": "corpus-logs/wrapt-refactor.log"
+    },
+    "corpus-logs--wsproto-after.log.gz": {
+      "bytes": 1067,
+      "sha256": "61eaa9f79c94eb93c7138cdfb94136d55d8b26dbbe988f53d7c1f688b0d22d10",
+      "source": "corpus-logs/wsproto-after.log"
+    },
+    "corpus-logs--wsproto-before.log.gz": {
+      "bytes": 1061,
+      "sha256": "5e9be0a4112377c8f9c76cc5c186ec0c17cefa32c7a74165b29c96067c28672b",
+      "source": "corpus-logs/wsproto-before.log"
+    },
+    "corpus-logs--wsproto-environment.log.gz": {
+      "bytes": 1301,
+      "sha256": "0f85c42126195b67b3278d9bde14ca4ea80004af0b1181a7daa1088b5dd689bd",
+      "source": "corpus-logs/wsproto-environment.log"
+    },
+    "corpus-logs--wsproto-refactor.log.gz": {
+      "bytes": 2193,
+      "sha256": "0d327d596c75cff6245f0e31ae2d2682ecdb1ef20e6862f6c517061e75de5e88",
+      "source": "corpus-logs/wsproto-refactor.log"
+    },
+    "corpus-logs--xmltodict-before.log.gz": {
+      "bytes": 646,
+      "sha256": "7fad813e366a18caecf81b7562b6197c4e141326289657eaa4ab68ec13206c05",
+      "source": "corpus-logs/xmltodict-before.log"
+    },
+    "corpus-logs--xmltodict-environment.log.gz": {
+      "bytes": 1344,
+      "sha256": "899a77be5984aa3df7c67ec80f2607ccf19a8fad5faaf55fb7bdc96ebd47a6e9",
+      "source": "corpus-logs/xmltodict-environment.log"
+    },
+    "corpus-logs--xmltodict-refactor.log.gz": {
+      "bytes": 1014,
+      "sha256": "2c206d4ee1dee91d725c9f0a2d550ed6aea94d0df7df0b3c399c6a2cee1ec94f",
+      "source": "corpus-logs/xmltodict-refactor.log"
+    },
+    "corpus-logs--yapf-after.log.gz": {
+      "bytes": 2407,
+      "sha256": "84f07c355266d8cdfadbccceccd95d4f268e41cbc2244fe4e2b17b5e6ebed79a",
+      "source": "corpus-logs/yapf-after.log"
+    },
+    "corpus-logs--yapf-before.log.gz": {
+      "bytes": 2401,
+      "sha256": "0fdba62d1ea5e068934c4670fd23e5e9c491c112e537ba0c264ad18290e7ab42",
+      "source": "corpus-logs/yapf-before.log"
+    },
+    "corpus-logs--yapf-environment.log.gz": {
+      "bytes": 1230,
+      "sha256": "d6bf8bed94f77387d5baf5e7c6e3ec6bf8b2462465b0dd5b28978ee7c437d007",
+      "source": "corpus-logs/yapf-environment.log"
+    },
+    "corpus-logs--yapf-refactor.log.gz": {
+      "bytes": 5173,
+      "sha256": "0bb15dcc954c0890962fe392774891b2c00b4f69481a0ba4d384594782850b6e",
+      "source": "corpus-logs/yapf-refactor.log"
+    },
+    "corpus-reconciliation.json.gz": {
+      "bytes": 65227,
+      "sha256": "b88ec110f5989a56f49af77aab5557d6e6c26535ee9b88be0bb83749f922b23e",
+      "source": "corpus-reconciliation.json"
+    },
+    "corpus-report--anyio.json.gz": {
+      "bytes": 6074,
+      "sha256": "1f5d84432eac3db66c110f56499100acda778fcaa97d9a6259b8a030d049230e",
+      "source": "corpus-report/anyio.json"
+    },
+    "corpus-report--apispec.json.gz": {
+      "bytes": 2891,
+      "sha256": "9af9809539e9b69316b945ede4da39733099e0792e60576c858cc6fdf2302aae",
+      "source": "corpus-report/apispec.json"
+    },
+    "corpus-report--arrow.json.gz": {
+      "bytes": 2222,
+      "sha256": "76d47cbbfff6883848dfe22f8ed23d71473bf769c051835e8f69e0806e6ed863",
+      "source": "corpus-report/arrow.json"
+    },
+    "corpus-report--astroid.json.gz": {
+      "bytes": 2271,
+      "sha256": "79f66b14efeb31922408d5f3664b32d3d2d41057f6beff20f126b874266784f5",
+      "source": "corpus-report/astroid.json"
+    },
+    "corpus-report--attrs.json.gz": {
+      "bytes": 9266,
+      "sha256": "6b0dd76ceb69c7a596508eb39b45b3b1a98fb2f4cb65ee01c266a6fe30365eeb",
+      "source": "corpus-report/attrs.json"
+    },
+    "corpus-report--backoff.json.gz": {
+      "bytes": 1946,
+      "sha256": "dc263104fcd30145be70ff60fdb5a65cb2ca53f6454ff381103b1e757f63a961",
+      "source": "corpus-report/backoff.json"
+    },
+    "corpus-report--beautifulsoup4.json.gz": {
+      "bytes": 2093,
+      "sha256": "b5887d48137e39ecdf18c2425c801faae65c930a22685607862af69328cbb819",
+      "source": "corpus-report/beautifulsoup4.json"
+    },
+    "corpus-report--bidict.json.gz": {
+      "bytes": 1998,
+      "sha256": "38520b8278fc0d93fe165b1a2c22f0aabea6844738014a770c2eeece652a31f6",
+      "source": "corpus-report/bidict.json"
+    },
+    "corpus-report--black.json.gz": {
+      "bytes": 6051,
+      "sha256": "e6174e7bdb6ae10a4ec299562d3945f344687583ec615d063f922b9c66fbf44c",
+      "source": "corpus-report/black.json"
+    },
+    "corpus-report--bleach.json.gz": {
+      "bytes": 2074,
+      "sha256": "c5eff3059646a996c8a16b5ccd747652923252e66144a6b79b0626cd93f08332",
+      "source": "corpus-report/bleach.json"
+    },
+    "corpus-report--blinker.json.gz": {
+      "bytes": 3175,
+      "sha256": "08ea901168de2fb025d25550ae2eac0d039bbdfa22bf2e1b57ec06be6e84a55a",
+      "source": "corpus-report/blinker.json"
+    },
+    "corpus-report--boltons.json.gz": {
+      "bytes": 2018,
+      "sha256": "a7595eadb41f78161e1f1ae8cdddd481f5ce588e5a7a543a0b00da2eb63b814d",
+      "source": "corpus-report/boltons.json"
+    },
+    "corpus-report--bottle.json.gz": {
+      "bytes": 2327,
+      "sha256": "ab1131e1ecc597f670a2e5ff7ba2aebb9dc11a0df890084a2b32c95c70f1c626",
+      "source": "corpus-report/bottle.json"
+    },
+    "corpus-report--cachetools.json.gz": {
+      "bytes": 2113,
+      "sha256": "218b77c45deb784e8f7da49d7d5756d202c9e1a2e2437b27a8515e5efc787a60",
+      "source": "corpus-report/cachetools.json"
+    },
+    "corpus-report--cattrs.json.gz": {
+      "bytes": 2297,
+      "sha256": "ad7b174f761c8594cfc08150cb5a83a878841c33b7d1627dde907f39f44762d0",
+      "source": "corpus-report/cattrs.json"
+    },
+    "corpus-report--cerberus.json.gz": {
+      "bytes": 2046,
+      "sha256": "1e9056f06d544cf105d8ea02e71bde9f500da0f73b40ba747f7bf70db24ac393",
+      "source": "corpus-report/cerberus.json"
+    },
+    "corpus-report--chardet.json.gz": {
+      "bytes": 2022,
+      "sha256": "f54e5f3181430f53146de26acde7a364146c6af3af33db052fa6d9856b4384c4",
+      "source": "corpus-report/chardet.json"
+    },
+    "corpus-report--cheroot.json.gz": {
+      "bytes": 5783,
+      "sha256": "782a14e4aa6de3f0a898d9a78c9a0c0f67f1d6aec072dc2da274098302e46838",
+      "source": "corpus-report/cheroot.json"
+    },
+    "corpus-report--click.json.gz": {
+      "bytes": 3551,
+      "sha256": "b522f9122e49771f67b124d76fbaac8a081b1537cf3542e5cc1337982ca1862e",
+      "source": "corpus-report/click.json"
+    },
+    "corpus-report--colorama.json.gz": {
+      "bytes": 2045,
+      "sha256": "4b0be15261f5f9057732532f6c3082e2ae71b755ae741d20e1605c01aecaf947",
+      "source": "corpus-report/colorama.json"
+    },
+    "corpus-report--croniter.json.gz": {
+      "bytes": 2972,
+      "sha256": "178258fc7dbb8de07146965d074f0ed724c0916eed0dfd4f73c09d58b21cfc54",
+      "source": "corpus-report/croniter.json"
+    },
+    "corpus-report--decorator.json.gz": {
+      "bytes": 1968,
+      "sha256": "f521a3a3ae9e1d5e437ae32d4d2d17c9e551eaf08a360a8f7e2b1d21e7869dae",
+      "source": "corpus-report/decorator.json"
+    },
+    "corpus-report--deepdiff.json.gz": {
+      "bytes": 8420,
+      "sha256": "3199c23ba337b1038070e6ffd5e539ddb62682d0f9de423d29dab79c14cdaaa5",
+      "source": "corpus-report/deepdiff.json"
+    },
+    "corpus-report--django-forms.json.gz": {
+      "bytes": 2113,
+      "sha256": "7e56292136a864e1fd0303dfab7a053aa8d238c68d922ca088a2795d3e83bd02",
+      "source": "corpus-report/django-forms.json"
+    },
+    "corpus-report--django-utils.json.gz": {
+      "bytes": 2113,
+      "sha256": "44bb39d346b982bd9ae3078401cfabfd1a276b8487fc3fe61ad2134b85ffa263",
+      "source": "corpus-report/django-utils.json"
+    },
+    "corpus-report--docopt-ng.json.gz": {
+      "bytes": 2064,
+      "sha256": "01602e5cd861b5f70edd6ac943c0c109716dad004ebb2d7c9740b9d6768e6de8",
+      "source": "corpus-report/docopt-ng.json"
+    },
+    "corpus-report--dpath.json.gz": {
+      "bytes": 1948,
+      "sha256": "b7d396039175867c35e297607fadd22b4621b771d95ad52141aaa4436219be10",
+      "source": "corpus-report/dpath.json"
+    },
+    "corpus-report--ecdsa.json.gz": {
+      "bytes": 2028,
+      "sha256": "c3d2c8f8e7861d29bdedf5d29a6bfa0c7ef8efef6ace9b14e7f7e98236d05aaf",
+      "source": "corpus-report/ecdsa.json"
+    },
+    "corpus-report--environs.json.gz": {
+      "bytes": 3917,
+      "sha256": "e3960b660756ad5a88e7fda88c814c80ca9c0bcc1261875716249b8223239431",
+      "source": "corpus-report/environs.json"
+    },
+    "corpus-report--feedparser.json.gz": {
+      "bytes": 9903,
+      "sha256": "6ac61505a934dd9022188f620ad26ab1136e394493a637abdffad41b60bb9a9c",
+      "source": "corpus-report/feedparser.json"
+    },
+    "corpus-report--filelock.json.gz": {
+      "bytes": 9013,
+      "sha256": "73545698cbac0660a63eab273d490e72560fe4c4fd397537b492ead814a9269b",
+      "source": "corpus-report/filelock.json"
+    },
+    "corpus-report--flake8.json.gz": {
+      "bytes": 2042,
+      "sha256": "43106ee9e5a7a1b9f34c082efeeca9609cb43a19784fa795b1cc393b969aeba2",
+      "source": "corpus-report/flake8.json"
+    },
+    "corpus-report--flask.json.gz": {
+      "bytes": 6042,
+      "sha256": "823639109e272dcec11892a7f2d9cab9a9b0193c020588876062c4fc7f0c232e",
+      "source": "corpus-report/flask.json"
+    },
+    "corpus-report--funcy.json.gz": {
+      "bytes": 2000,
+      "sha256": "81b2b793bda8c831da9e8705edaf7e856ef9f2a2db15cb46b96bc23e042952b4",
+      "source": "corpus-report/funcy.json"
+    },
+    "corpus-report--glom.json.gz": {
+      "bytes": 1998,
+      "sha256": "befefc8796f67a1f4706d7419a06f6813703c9a2eb007fa672d24b7fd2b60316",
+      "source": "corpus-report/glom.json"
+    },
+    "corpus-report--gunicorn.json.gz": {
+      "bytes": 2060,
+      "sha256": "daf53e4d2ef74f3585d715db37665fe02835a2d85e6781c1ca91e6606fe48aa4",
+      "source": "corpus-report/gunicorn.json"
+    },
+    "corpus-report--h11.json.gz": {
+      "bytes": 2471,
+      "sha256": "a1bd15e87ee1150dca39b528e6d8f23f54f9b7c2a2fd9f2a1e83e906a7c0b524",
+      "source": "corpus-report/h11.json"
+    },
+    "corpus-report--h2.json.gz": {
+      "bytes": 3417,
+      "sha256": "f30a4e94db83bdc70216da347861f14698c6e722b0081f7fef35a4554b669cd3",
+      "source": "corpus-report/h2.json"
+    },
+    "corpus-report--hpack.json.gz": {
+      "bytes": 3442,
+      "sha256": "204c4885b2a6706fe3131a1531da5e7334dde3176e73ffaac4419107586a5991",
+      "source": "corpus-report/hpack.json"
+    },
+    "corpus-report--html5lib.json.gz": {
+      "bytes": 2033,
+      "sha256": "78c627cf51410fef455aa5a6527ef1725ca70f1535ea6fdf4c849f072578aa5c",
+      "source": "corpus-report/html5lib.json"
+    },
+    "corpus-report--httpx.json.gz": {
+      "bytes": 1949,
+      "sha256": "175f0daa9827346bd2e5415387cd0fc23fed58cd5815e0ad5b1f68d6274c5684",
+      "source": "corpus-report/httpx.json"
+    },
+    "corpus-report--humanize.json.gz": {
+      "bytes": 5154,
+      "sha256": "5a604dbafd68d19f68bdb3f80f141aa5ec69ec78fdd0d48c128405a573e4e440",
+      "source": "corpus-report/humanize.json"
+    },
+    "corpus-report--hyperframe.json.gz": {
+      "bytes": 2962,
+      "sha256": "24cdae73727a75a9ccca812414945f25c92259c7fed85d3975dd6ecc1aa5554f",
+      "source": "corpus-report/hyperframe.json"
+    },
+    "corpus-report--idna.json.gz": {
+      "bytes": 1860,
+      "sha256": "2f8668270f39f3418ce149ca6835363547848ef91da26d1fb9e91eb63601692c",
+      "source": "corpus-report/idna.json"
+    },
+    "corpus-report--inflect.json.gz": {
+      "bytes": 4017,
+      "sha256": "70031a085833fee5484e8f19c7ca850e6af697bb0bbde8d9c3f6d0b33607c921",
+      "source": "corpus-report/inflect.json"
+    },
+    "corpus-report--inflection.json.gz": {
+      "bytes": 1660,
+      "sha256": "c9166d8cfe027eb837ba71c8c5f27cebf10d00fe083a48e6c1a588a7b64312f9",
+      "source": "corpus-report/inflection.json"
+    },
+    "corpus-report--installer.json.gz": {
+      "bytes": 2338,
+      "sha256": "7de0de732b41440e0e682e64d1182b7855c131d52c8ad03d13058235b8a80ab3",
+      "source": "corpus-report/installer.json"
+    },
+    "corpus-report--invoke.json.gz": {
+      "bytes": 2000,
+      "sha256": "ab92d8cee9378d976a9898b53d00196910957a48d98480fff36178436973f791",
+      "source": "corpus-report/invoke.json"
+    },
+    "corpus-report--isort.json.gz": {
+      "bytes": 9156,
+      "sha256": "bfcb89ccba3e81d7cd8ef078e5ec14f3b0523b72702e4065851fb49933e3d9ab",
+      "source": "corpus-report/isort.json"
+    },
+    "corpus-report--itsdangerous.json.gz": {
+      "bytes": 3303,
+      "sha256": "a819e742c6b1c0333c86cfc92aec34d2fb424ac26a4f0ba82dba46beb53a7704",
+      "source": "corpus-report/itsdangerous.json"
+    },
+    "corpus-report--jinja2.json.gz": {
+      "bytes": 3454,
+      "sha256": "514a1a68c2561e258fb677328c3515a47dfae953651a0b45657b266bc2754b72",
+      "source": "corpus-report/jinja2.json"
+    },
+    "corpus-report--jmespath.json.gz": {
+      "bytes": 1994,
+      "sha256": "cf39e842c8967b2d8ac282c16d077761783b2b81415c142c7eca31cb5b5f541c",
+      "source": "corpus-report/jmespath.json"
+    },
+    "corpus-report--jsonpatch.json.gz": {
+      "bytes": 1944,
+      "sha256": "8d4679f0c4792c05a37f7364c1644d4f228608e9202a48e5949ab1d6459b6432",
+      "source": "corpus-report/jsonpatch.json"
+    },
+    "corpus-report--jsonpointer.json.gz": {
+      "bytes": 1703,
+      "sha256": "188f3aa52675439c859160a1af39aeed3ee2e0f3374257d68343c3ccedffc269",
+      "source": "corpus-report/jsonpointer.json"
+    },
+    "corpus-report--jsonschema.json.gz": {
+      "bytes": 2427,
+      "sha256": "09d26daeabe5720c891f8d47114b26d8a2941487f6b47b6a4ed76b2ccef29526",
+      "source": "corpus-report/jsonschema.json"
+    },
+    "corpus-report--lark.json.gz": {
+      "bytes": 3263,
+      "sha256": "b5f140eab8a16ce2cfc04b157e55354af3b575ce63a284a67a0cbeedcac22270",
+      "source": "corpus-report/lark.json"
+    },
+    "corpus-report--loguru.json.gz": {
+      "bytes": 2043,
+      "sha256": "8c02addae407e4925181f7549607dc64e8e6967bc3525cf027f9de023bfd9017",
+      "source": "corpus-report/loguru.json"
+    },
+    "corpus-report--mako.json.gz": {
+      "bytes": 4824,
+      "sha256": "57842ef55db55b830f6e119512a2dd08bf05b0879c9fbbc8208f54f5022940d3",
+      "source": "corpus-report/mako.json"
+    },
+    "corpus-report--markdown-it-py.json.gz": {
+      "bytes": 3189,
+      "sha256": "5c562bba4fb31b6958bef8b6bef5bd2561dbf3d187113992cd8d70f4611ae7de",
+      "source": "corpus-report/markdown-it-py.json"
+    },
+    "corpus-report--markdown.json.gz": {
+      "bytes": 2075,
+      "sha256": "a2d5ac816054921663eebf39d60ba953fef9166421a6b8015419962a21dd5c6e",
+      "source": "corpus-report/markdown.json"
+    },
+    "corpus-report--markupsafe.json.gz": {
+      "bytes": 3296,
+      "sha256": "ba7fd9d991c2b70eb3e5d4b4d9b978b475fea92c5dd780f95ee9abc90ce32f32",
+      "source": "corpus-report/markupsafe.json"
+    },
+    "corpus-report--marshmallow.json.gz": {
+      "bytes": 3421,
+      "sha256": "d2de4a0e325278684216e52bd1b4e0b55c55c50e0703c874f2cf1715f20bac42",
+      "source": "corpus-report/marshmallow.json"
+    },
+    "corpus-report--mccabe.json.gz": {
+      "bytes": 1903,
+      "sha256": "be2f938ad786060cba2665d3b63fcbdfb67491797a4355aea5a992bddbbf3220",
+      "source": "corpus-report/mccabe.json"
+    },
+    "corpus-report--mistune.json.gz": {
+      "bytes": 2380,
+      "sha256": "4f3bc70aeb3a5bb20f13098dfd09940bdc6647b51284d37e08d91b9a04ee72ce",
+      "source": "corpus-report/mistune.json"
+    },
+    "corpus-report--mkdocs.json.gz": {
+      "bytes": 2588,
+      "sha256": "542d8f914fa2c5976126a64cc3ef6afd85231abddbc48977a8ead581166c30f4",
+      "source": "corpus-report/mkdocs.json"
+    },
+    "corpus-report--more-itertools.json.gz": {
+      "bytes": 1923,
+      "sha256": "fc2098b01a7b9127d48a71a96f1f301e44aeeb997b2e2f2785e977ef0cf58464",
+      "source": "corpus-report/more-itertools.json"
+    },
+    "corpus-report--natsort.json.gz": {
+      "bytes": 3315,
+      "sha256": "fe1544e5c1f141b81627c6bc7f7e6cc45efe415ec2e174b9af4cfa6741a827d5",
+      "source": "corpus-report/natsort.json"
+    },
+    "corpus-report--networkx.json.gz": {
+      "bytes": 1978,
+      "sha256": "09ed39517820f03f000d3fb2338f51ffa8385cdd9893e6513cb2eb918b660638",
+      "source": "corpus-report/networkx.json"
+    },
+    "corpus-report--nox.json.gz": {
+      "bytes": 5013,
+      "sha256": "44a428d08b084448ebcf19e6c3d81d7d5d5efd3ebc5a51ab83ace50f8a2b9e13",
+      "source": "corpus-report/nox.json"
+    },
+    "corpus-report--oauthlib.json.gz": {
+      "bytes": 2057,
+      "sha256": "f6542af16da0a4aaae1e6e2af1292bcdc074f9fb9b091d93dddc931e04b6911d",
+      "source": "corpus-report/oauthlib.json"
+    },
+    "corpus-report--outcome.json.gz": {
+      "bytes": 1690,
+      "sha256": "b2f95f708788d785d9094755c1740252dc85fc0c86024124ffa3dae05e5d533e",
+      "source": "corpus-report/outcome.json"
+    },
+    "corpus-report--packaging.json.gz": {
+      "bytes": 4002,
+      "sha256": "a5dcac18c4976a66486dcf9354529d6e1de6a8387888a01b5e6c07169dd88f9e",
+      "source": "corpus-report/packaging.json"
+    },
+    "corpus-report--parsimonious.json.gz": {
+      "bytes": 2073,
+      "sha256": "82a5035eec06e917dddc6cd69242a5be56d23b4aa2213ce8e7cb16510402f87b",
+      "source": "corpus-report/parsimonious.json"
+    },
+    "corpus-report--parso.json.gz": {
+      "bytes": 2001,
+      "sha256": "be92da785f3e64ff53582fa481b453d97a56832fea7eb6fe29252801b77611a0",
+      "source": "corpus-report/parso.json"
+    },
+    "corpus-report--pathspec.json.gz": {
+      "bytes": 2024,
+      "sha256": "7faa8499c43f908fac69961a5a0b0294abf2b1e50f66280d2e08553d4130614f",
+      "source": "corpus-report/pathspec.json"
+    },
+    "corpus-report--peewee.json.gz": {
+      "bytes": 2888,
+      "sha256": "9edbadb52cfbdc781131475ba78f2d76f48727f3bc1b64bc53ddcf9fe33f0041",
+      "source": "corpus-report/peewee.json"
+    },
+    "corpus-report--platformdirs.json.gz": {
+      "bytes": 4166,
+      "sha256": "d18d4b56dc5ef8693373e44e89e567fab5145adcad52a66a6282e516f8759413",
+      "source": "corpus-report/platformdirs.json"
+    },
+    "corpus-report--pluggy.json.gz": {
+      "bytes": 2152,
+      "sha256": "3991f22fdaa30eafddcfff619e2d380c847e785d07000218b68a24d3e67655b7",
+      "source": "corpus-report/pluggy.json"
+    },
+    "corpus-report--ply.json.gz": {
+      "bytes": 1932,
+      "sha256": "07cf57f6b2d94afd953e4081211a99e9e4fabfde9dcc5890f3da174f85f4e249",
+      "source": "corpus-report/ply.json"
+    },
+    "corpus-report--prettytable.json.gz": {
+      "bytes": 5096,
+      "sha256": "d231bdd34e84d5ed62c39d6b818d3371f8435b7587e2c2b3d3862a8da6deae40",
+      "source": "corpus-report/prettytable.json"
+    },
+    "corpus-report--pyasn1.json.gz": {
+      "bytes": 2014,
+      "sha256": "fedc5f3a03f4275ed5f8879c1e98c39c0e0d1c7ce683bbe8b874ebdd6ef86ad6",
+      "source": "corpus-report/pyasn1.json"
+    },
+    "corpus-report--pycodestyle.json.gz": {
+      "bytes": 2097,
+      "sha256": "05dd7fd5e2d5ac3d0107b90a29c8ae2f43f35cfbd51c9fbb4d18f956aa29314e",
+      "source": "corpus-report/pycodestyle.json"
+    },
+    "corpus-report--pycparser.json.gz": {
+      "bytes": 2032,
+      "sha256": "bfcf7d78d9527f5cb71757db8052482e51821d91431a2133afd0fed50ef7021b",
+      "source": "corpus-report/pycparser.json"
+    },
+    "corpus-report--pyflakes.json.gz": {
+      "bytes": 2048,
+      "sha256": "872002dbddd14776c5fbc3580873ef5e0d81407067223954904b2351dd2d5ad9",
+      "source": "corpus-report/pyflakes.json"
+    },
+    "corpus-report--pygments.json.gz": {
+      "bytes": 2057,
+      "sha256": "dac895d5d779d0323c282c6612d02ace1ee296fa4f202a9e24b41851a3bb749b",
+      "source": "corpus-report/pygments.json"
+    },
+    "corpus-report--pyjwt.json.gz": {
+      "bytes": 2870,
+      "sha256": "bbd5681d147eb608437635f684d78b0a9ea5e059166edf586195f92aa4bf6942",
+      "source": "corpus-report/pyjwt.json"
+    },
+    "corpus-report--pyparsing.json.gz": {
+      "bytes": 2309,
+      "sha256": "53e8ac452823fae678d907d08f9f189734ad9c7e4528bbe4649f7ab06b958d79",
+      "source": "corpus-report/pyparsing.json"
+    },
+    "corpus-report--pyproject-hooks.json.gz": {
+      "bytes": 1961,
+      "sha256": "e310366f1348fc5d9539f357bac8d11535533602162106330fdc5cc17f480ad0",
+      "source": "corpus-report/pyproject-hooks.json"
+    },
+    "corpus-report--pyrsistent.json.gz": {
+      "bytes": 2058,
+      "sha256": "c40cfbe5c2c5bde826e55e5b778ed68069a54c6d1656dfaf99792811c1e4bbed",
+      "source": "corpus-report/pyrsistent.json"
+    },
+    "corpus-report--pytest.json.gz": {
+      "bytes": 5926,
+      "sha256": "fa8f49f790f2a35abe5270766744498f30586089264f123864772f3054168613",
+      "source": "corpus-report/pytest.json"
+    },
+    "corpus-report--python-dateutil.json.gz": {
+      "bytes": 2143,
+      "sha256": "ad282e4a293c4fcd40ffdfe1886e38eacd6f2a3664c2e3c9db0f0995c3777548",
+      "source": "corpus-report/python-dateutil.json"
+    },
+    "corpus-report--python-dotenv.json.gz": {
+      "bytes": 2391,
+      "sha256": "513934f7671f52939896e53953bfeccdaa7c093035c4e88d835f8e20257f3e93",
+      "source": "corpus-report/python-dotenv.json"
+    },
+    "corpus-report--python-fire.json.gz": {
+      "bytes": 2045,
+      "sha256": "d99ce18700e2b3d4ae507de5bcb6b9637289c84e7bd281f273d8205f8a21f747",
+      "source": "corpus-report/python-fire.json"
+    },
+    "corpus-report--python-prompt-toolkit.json.gz": {
+      "bytes": 2018,
+      "sha256": "a705ae01df0d207dbdf2baa8549a89937b2f2550649a9552c445a79716327d63",
+      "source": "corpus-report/python-prompt-toolkit.json"
+    },
+    "corpus-report--python-slugify.json.gz": {
+      "bytes": 2097,
+      "sha256": "f5890eb3ae245f3c58d43e14b4f58fabc1a1a58218582c61b1a8dfd7febe77d5",
+      "source": "corpus-report/python-slugify.json"
+    },
+    "corpus-report--pyupgrade.json.gz": {
+      "bytes": 2271,
+      "sha256": "1c0f6406123b57ff978f686da21afeb904726e2c1f6f7b3893798de7641b136a",
+      "source": "corpus-report/pyupgrade.json"
+    },
+    "corpus-report--rfc3986.json.gz": {
+      "bytes": 2060,
+      "sha256": "c399ff8d62dad969e77401e78a0bd504eea45b813a020e46c48b79b53e9a2b92",
+      "source": "corpus-report/rfc3986.json"
+    },
+    "corpus-report--rich.json.gz": {
+      "bytes": 1965,
+      "sha256": "dc5dbf9f420d25058cfa67560655390a0941881ac5753bafd32ce86890fe9069",
+      "source": "corpus-report/rich.json"
+    },
+    "corpus-report--rsa.json.gz": {
+      "bytes": 1891,
+      "sha256": "8924d62933dc467df80b01d43c98160253be8d19d943e36d1342ab51f8f9b224",
+      "source": "corpus-report/rsa.json"
+    },
+    "corpus-report--schedule.json.gz": {
+      "bytes": 2870,
+      "sha256": "5e3c62d13142567747f7022e7b058afc00cff26a02dc0d40602a024832ef532f",
+      "source": "corpus-report/schedule.json"
+    },
+    "corpus-report--schema.json.gz": {
+      "bytes": 2124,
+      "sha256": "1322de3beaf94ba0c7119adb4a3da1ea119940f3028e54edd9f0149cd191a627",
+      "source": "corpus-report/schema.json"
+    },
+    "corpus-report--simpy.json.gz": {
+      "bytes": 3113,
+      "sha256": "9a3d210dd037cf3eab297198edc30ef3bded7980b9f49f8caacfafbf14175b22",
+      "source": "corpus-report/simpy.json"
+    },
+    "corpus-report--six.json.gz": {
+      "bytes": 1996,
+      "sha256": "91822c03008094419ddf9ffa8fe949fcd2da46f3aabfea8cbf174e879b30faa5",
+      "source": "corpus-report/six.json"
+    },
+    "corpus-report--sly.json.gz": {
+      "bytes": 1986,
+      "sha256": "e7f8659db9789df490190a14d2bc2725e74c5fa788ab632f7bdfb4b251e9d530",
+      "source": "corpus-report/sly.json"
+    },
+    "corpus-report--sniffio.json.gz": {
+      "bytes": 1720,
+      "sha256": "9d123767772e1c5b2f993a412e0d3f64e3e74ce9511b56946b5a115cac8c1495",
+      "source": "corpus-report/sniffio.json"
+    },
+    "corpus-report--sortedcontainers.json.gz": {
+      "bytes": 2033,
+      "sha256": "e40a3e1fdcdf400fecfa21e613f1cfcef9b4d72fbd85a38e295a1204b35c52b6",
+      "source": "corpus-report/sortedcontainers.json"
+    },
+    "corpus-report--soupsieve.json.gz": {
+      "bytes": 1944,
+      "sha256": "a2e4fb7240911daed1cd8faf6b41288c1b987fed45ee4834a52c1face7901ed1",
+      "source": "corpus-report/soupsieve.json"
+    },
+    "corpus-report--sphinx.json.gz": {
+      "bytes": 16546,
+      "sha256": "87dd63231a3fbaf61bb70eb4b22db2f465fc6910276755c5eef3dff5875c3954",
+      "source": "corpus-report/sphinx.json"
+    },
+    "corpus-report--sqlparse.json.gz": {
+      "bytes": 2011,
+      "sha256": "1433b1cf92af68667e6c35013166e4120314bfb965452a53aac683dd013839a5",
+      "source": "corpus-report/sqlparse.json"
+    },
+    "corpus-report--starlette.json.gz": {
+      "bytes": 2041,
+      "sha256": "aa0e79a7646313cf89f8315cf6f4b6d227f1a7a13d4fca806d4fffb8ca582937",
+      "source": "corpus-report/starlette.json"
+    },
+    "corpus-report--structlog.json.gz": {
+      "bytes": 4514,
+      "sha256": "95a4d261857f72ba878e8c2fcea113aae52c5faa743cbc3e491c8e342f4b4409",
+      "source": "corpus-report/structlog.json"
+    },
+    "corpus-report--summary.json.gz": {
+      "bytes": 548415,
+      "sha256": "1652a547eddad6459e106f8179f164a5bc79f0c73140ba06f7a8e2a1459408c8",
+      "source": "corpus-report/summary.json"
+    },
+    "corpus-report--summary.md.gz": {
+      "bytes": 40010,
+      "sha256": "e5be36c0057621a07bb60163fe48c65e0670aa8c7de8e51759f24138519e028a",
+      "source": "corpus-report/summary.md"
+    },
+    "corpus-report--tabulate.json.gz": {
+      "bytes": 2166,
+      "sha256": "986457acd7f49bd0629445f2f17a1a411a9ae50e71e3c2633350aa1d0d1c1e4d",
+      "source": "corpus-report/tabulate.json"
+    },
+    "corpus-report--tenacity.json.gz": {
+      "bytes": 2042,
+      "sha256": "c621a8d775b87bb0720086b002811baf4c87ca70bec05dd8c462878df73851e5",
+      "source": "corpus-report/tenacity.json"
+    },
+    "corpus-report--termcolor.json.gz": {
+      "bytes": 1900,
+      "sha256": "781597979f65a49f492dd021ec12439569e91745f6f279b7104e606d18a769d7",
+      "source": "corpus-report/termcolor.json"
+    },
+    "corpus-report--texttable.json.gz": {
+      "bytes": 1776,
+      "sha256": "65affb9ab283706683e4e262077065039ea829f8ba3e95b9bf35ac6ccfd77404",
+      "source": "corpus-report/texttable.json"
+    },
+    "corpus-report--tomli-w.json.gz": {
+      "bytes": 2218,
+      "sha256": "b02142cd6c32399a843943984cf3c0bf04ecaa40d6c15af6fed100e0fa437524",
+      "source": "corpus-report/tomli-w.json"
+    },
+    "corpus-report--tomli.json.gz": {
+      "bytes": 1917,
+      "sha256": "cbfca10da4d1a0e0e50c8c318deb3c6dd18edfe57134f68d2c184b297ae12cb3",
+      "source": "corpus-report/tomli.json"
+    },
+    "corpus-report--tomlkit.json.gz": {
+      "bytes": 2030,
+      "sha256": "4559368bff0ad54749f06a9e8233e569113d2917216b748190ada24527da8d3d",
+      "source": "corpus-report/tomlkit.json"
+    },
+    "corpus-report--toolz.json.gz": {
+      "bytes": 2004,
+      "sha256": "f2748ab219fdbe4d93652a93feaf203796e68e34eb5ebd5c01f5b3d98697692e",
+      "source": "corpus-report/toolz.json"
+    },
+    "corpus-report--tornado.json.gz": {
+      "bytes": 15660,
+      "sha256": "1a378de0032858399b385c26040384ad83b973d6e1a31c733711af448a3c3de7",
+      "source": "corpus-report/tornado.json"
+    },
+    "corpus-report--towel-main.json.gz": {
+      "bytes": 2769,
+      "sha256": "8a0a01aee30a4e8aaec6b6dc7460468761e0505d42d4963409dbdb5e88dcb776",
+      "source": "corpus-report/towel-main.json"
+    },
+    "corpus-report--towel-v1.414.json.gz": {
+      "bytes": 2252,
+      "sha256": "b5702efedb77b0ec16ba49d06775cc9384e3baab27dc1db79565b8260c904b51",
+      "source": "corpus-report/towel-v1.414.json"
+    },
+    "corpus-report--towel-v1.618.json.gz": {
+      "bytes": 2254,
+      "sha256": "d8ee427e9ab060a4bb27e330c3fecba566da804744a0711877c82e29ac28036f",
+      "source": "corpus-report/towel-v1.618.json"
+    },
+    "corpus-report--tqdm.json.gz": {
+      "bytes": 2321,
+      "sha256": "b89afcaaf8a5aee2724aea89ec641938576ebc5c1564fb85745db21c312aaf8b",
+      "source": "corpus-report/tqdm.json"
+    },
+    "corpus-report--traitlets.json.gz": {
+      "bytes": 2193,
+      "sha256": "4948ce11c4ada09ce5d6fb4501b9185f938d09b44aa2406d47f4c160349378ce",
+      "source": "corpus-report/traitlets.json"
+    },
+    "corpus-report--trio.json.gz": {
+      "bytes": 23853,
+      "sha256": "aadd2fd945ededd2a4e33ff6f9d2470d46678e9f367fb41c30ce352f0d01fab1",
+      "source": "corpus-report/trio.json"
+    },
+    "corpus-report--typer.json.gz": {
+      "bytes": 1953,
+      "sha256": "1623ee05857f6cbdd7416db761dfb6a78d5e27d57fc61036d224eff0b600e76d",
+      "source": "corpus-report/typer.json"
+    },
+    "corpus-report--typing_extensions.json.gz": {
+      "bytes": 2169,
+      "sha256": "b987a0ebd2e31548154bf908ce72f8a53dc15d48a1051452f2df43b0c2d183f3",
+      "source": "corpus-report/typing_extensions.json"
+    },
+    "corpus-report--unidecode.json.gz": {
+      "bytes": 1683,
+      "sha256": "d23b26a12428435f29f97fe85003404ff92b59a21c3f73f2b4e91deb017e987a",
+      "source": "corpus-report/unidecode.json"
+    },
+    "corpus-report--uritemplate.json.gz": {
+      "bytes": 2616,
+      "sha256": "1dd0c574627ff4b35a4675ce14637e1248a60c7442f2adb6572cfae52da45e9b",
+      "source": "corpus-report/uritemplate.json"
+    },
+    "corpus-report--virtualenv.json.gz": {
+      "bytes": 6657,
+      "sha256": "39cc5977dbd10457735a9ec6e22f00ff80a9fdcecfb4e4e8fe1a4caa49b8f4f6",
+      "source": "corpus-report/virtualenv.json"
+    },
+    "corpus-report--voluptuous.json.gz": {
+      "bytes": 2317,
+      "sha256": "39ef32a5214d100b46c8d729de3ef25ba1ebd42d6e097b0110989816cd84fe92",
+      "source": "corpus-report/voluptuous.json"
+    },
+    "corpus-report--waitress.json.gz": {
+      "bytes": 2041,
+      "sha256": "c03d5c92d21f90b3ae82baf25373237e84d0f8637f68a8d86ecedcd78772afca",
+      "source": "corpus-report/waitress.json"
+    },
+    "corpus-report--wcwidth.json.gz": {
+      "bytes": 2107,
+      "sha256": "b569ace576e6310bf221342c1f660c01a54e67872ff2a944eab9d5c809fa8bbc",
+      "source": "corpus-report/wcwidth.json"
+    },
+    "corpus-report--webargs.json.gz": {
+      "bytes": 16102,
+      "sha256": "27491be04613e786a1923da87823190eface483f4b5f51313c0aafa249701369",
+      "source": "corpus-report/webargs.json"
+    },
+    "corpus-report--werkzeug.json.gz": {
+      "bytes": 4495,
+      "sha256": "6d6a26561c092bdceb83490f18ff988a788327a4de90a58eda316eac52e20ce2",
+      "source": "corpus-report/werkzeug.json"
+    },
+    "corpus-report--wheel.json.gz": {
+      "bytes": 2126,
+      "sha256": "dcb5a853f34ae01ae8e16befd5f6b746718d8d8b5a9cdc5381b255429665ff9e",
+      "source": "corpus-report/wheel.json"
+    },
+    "corpus-report--wrapt.json.gz": {
+      "bytes": 1920,
+      "sha256": "be3f4eaad9e1439a749fe6e39ed811084f7292d3a4aa606f3d9339b353b4985f",
+      "source": "corpus-report/wrapt.json"
+    },
+    "corpus-report--wsproto.json.gz": {
+      "bytes": 3457,
+      "sha256": "c06c8b4cc5b32eb7ddbe7fddc34f7894f24bd2d6c1d0ee397e7334a847d40bb0",
+      "source": "corpus-report/wsproto.json"
+    },
+    "corpus-report--xmltodict.json.gz": {
+      "bytes": 1967,
+      "sha256": "fa9393363bab6c61775fff001a1f58426bdfc0f024b9e6f709a50225e76d2a05",
+      "source": "corpus-report/xmltodict.json"
+    },
+    "corpus-report--yapf.json.gz": {
+      "bytes": 2007,
+      "sha256": "2f4e77306c38834068253354b7d0e24d5b5335b8a272959fa495350b53287850",
+      "source": "corpus-report/yapf.json"
+    },
+    "corpus-resources.jsonl.gz": {
+      "bytes": 414849,
+      "sha256": "cab50628e88e94b81883ad4e52ab2648c3b28ca724ef266135ef7449b5f5ff87",
+      "source": "corpus-resources.jsonl"
+    },
+    "corpus-review--blinker--assessment.json.gz": {
+      "bytes": 917,
+      "sha256": "723bc5c12818051fd16c87d177fe94cb21427bcade798d2d57e1e4bef8492970",
+      "source": "corpus-review/blinker/assessment.json"
+    },
+    "corpus-review--blinker--before.log.gz": {
+      "bytes": 706,
+      "sha256": "85e54e05901312b33fe52cf8076cf00d75a3900589873992eb8322919b69af1e",
+      "source": "corpus-review/blinker/before.log"
+    },
+    "corpus-review--blinker--refactor.log.gz": {
+      "bytes": 705,
+      "sha256": "7303d3ffd848646e90d79826a45c1dc47aeb8fdda173e6b0cbc9c4f757264e7f",
+      "source": "corpus-review/blinker/refactor.log"
+    },
+    "corpus-review--blinker--result.json.gz": {
+      "bytes": 3175,
+      "sha256": "08ea901168de2fb025d25550ae2eac0d039bbdfa22bf2e1b57ec06be6e84a55a",
+      "source": "corpus-review/blinker/result.json"
+    },
+    "corpus-review--chardet--after.log.gz": {
+      "bytes": 72240,
+      "sha256": "704936e74469b37a1e1a14318338faf7ff86a2d211266e1e882a018b94f57b4f",
+      "source": "corpus-review/chardet/after.log"
+    },
+    "corpus-review--chardet--assessment.json.gz": {
+      "bytes": 856,
+      "sha256": "94c602fb604a877f4dbf7ae29ee595b7f915bd1561a38b37f16d5e4a70d37bc8",
+      "source": "corpus-review/chardet/assessment.json"
+    },
+    "corpus-review--chardet--before.log.gz": {
+      "bytes": 70968,
+      "sha256": "1d641c8c42e60b896a65e83e0843d4d7e3cdfdecdfed03208853ab950b056ebf",
+      "source": "corpus-review/chardet/before.log"
+    },
+    "corpus-review--chardet--refactor.log.gz": {
+      "bytes": 2541,
+      "sha256": "a25f0a6597c49550059127caa978c3ee355fc2acf9b631b3db0b2b2906353dbd",
+      "source": "corpus-review/chardet/refactor.log"
+    },
+    "corpus-review--chardet--result.json.gz": {
+      "bytes": 2022,
+      "sha256": "f54e5f3181430f53146de26acde7a364146c6af3af33db052fa6d9856b4384c4",
+      "source": "corpus-review/chardet/result.json"
+    },
+    "corpus-review--cheroot--after.log.gz": {
+      "bytes": 171913,
+      "sha256": "b601b3cc9a5b47984ee0e4a126c75309f005459043abbb3d44d325b09f37e151",
+      "source": "corpus-review/cheroot/after.log"
+    },
+    "corpus-review--cheroot--assessment.json.gz": {
+      "bytes": 5382,
+      "sha256": "202a3750f6a60d8e8dd0aa6c86fad552505030f108f81c9b183bf8d81d20d198",
+      "source": "corpus-review/cheroot/assessment.json"
+    },
+    "corpus-review--cheroot--before.log.gz": {
+      "bytes": 171915,
+      "sha256": "9225109ae592af68676832b81af1ece774ed2e24312903b47974e85963dc7637",
+      "source": "corpus-review/cheroot/before.log"
+    },
+    "corpus-review--cheroot--predecessor-cause--.mypy.ini.gz": {
+      "bytes": 328,
+      "sha256": "8c78c93fddf1bc41b79fbf8c633d252c9a0c3f17450fbe1ac2ebce0c1c97222f",
+      "source": "corpus-review/cheroot/predecessor-cause/.mypy.ini"
+    },
+    "corpus-review--cheroot--predecessor-cause--.pre-commit-config.yaml.gz": {
+      "bytes": 9273,
+      "sha256": "5c8f5137c4fd2fe5e9fae7c9a9f54b8d21dbc010e5891462188e0970db17bb59",
+      "source": "corpus-review/cheroot/predecessor-cause/.pre-commit-config.yaml"
+    },
+    "corpus-review--cheroot--predecessor-cause--assessment.json.gz": {
+      "bytes": 4267,
+      "sha256": "af2d1095ecb5a7343f76a52bcfdd7d8b8b68664e621bab967466d06ca67f8da5",
+      "source": "corpus-review/cheroot/predecessor-cause/assessment.json"
+    },
+    "corpus-review--cheroot--predecessor-cause--own-mypy.json.gz": {
+      "bytes": 591,
+      "sha256": "829bbd7ff5c17dcdbb69a3d7c31b66b6c73d5bfc24acf83369b042acba9886d0",
+      "source": "corpus-review/cheroot/predecessor-cause/own-mypy.json"
+    },
+    "corpus-review--cheroot--predecessor-cause--own-mypy.log.gz": {
+      "bytes": 131,
+      "sha256": "7d3ccdc88d09ce03c1c92929d45b4320e60785932bae3832441ee96f7b270426",
+      "source": "corpus-review/cheroot/predecessor-cause/own-mypy.log"
+    },
+    "corpus-review--cheroot--predecessor-cause--pyproject.toml.gz": {
+      "bytes": 2662,
+      "sha256": "f6add7409c54fc5d4248c7a06c5dd3afe4a7c95b5f4b549a1b07709731da6ac5",
+      "source": "corpus-review/cheroot/predecessor-cause/pyproject.toml"
+    },
+    "corpus-review--cheroot--predecessor-cause--tox.ini.gz": {
+      "bytes": 17498,
+      "sha256": "3a6cac35961f377f505fcd36ee130bcee133dea8b00c5495321c8aebb816fcab",
+      "source": "corpus-review/cheroot/predecessor-cause/tox.ini"
+    },
+    "corpus-review--cheroot--refactor-no-types.log.gz": {
+      "bytes": 1172,
+      "sha256": "5ca20d1d5a4540593e5ced3c290971ade796ad05bec7cc6acd7446992fd08a50",
+      "source": "corpus-review/cheroot/refactor-no-types.log"
+    },
+    "corpus-review--cheroot--refactor.log.gz": {
+      "bytes": 1301,
+      "sha256": "f57fdddfe3bb19335bbfe03908e968740062cac95ac8e4097d45c7db8cd1e131",
+      "source": "corpus-review/cheroot/refactor.log"
+    },
+    "corpus-review--cheroot--result.json.gz": {
+      "bytes": 5783,
+      "sha256": "782a14e4aa6de3f0a898d9a78c9a0c0f67f1d6aec072dc2da274098302e46838",
+      "source": "corpus-review/cheroot/result.json"
+    },
+    "corpus-review--invoke--assessment.json.gz": {
+      "bytes": 1094,
+      "sha256": "57f20447522da55cd64cbbadffaf602076d809ee8eb79ea59ee137e366d04f4f",
+      "source": "corpus-review/invoke/assessment.json"
+    },
+    "corpus-review--invoke--before.log.gz": {
+      "bytes": 610851,
+      "sha256": "d7b037ba8102e5bcb3478b5eed25304ff94e5b96c7466a387b06821d15e37db5",
+      "source": "corpus-review/invoke/before.log"
+    },
+    "corpus-review--invoke--facts.json.gz": {
+      "bytes": 904,
+      "sha256": "5c739a7f6e13c122e15873184f1a2c4850da5fcaff87f36cddcc4d4a04662482",
+      "source": "corpus-review/invoke/facts.json"
+    },
+    "corpus-review--invoke--probe-command.json.gz": {
+      "bytes": 369,
+      "sha256": "afae362db2571d662ec4d4e81dd551f294a3f3cf32edd2e0cea872503163c1c7",
+      "source": "corpus-review/invoke/probe-command.json"
+    },
+    "corpus-review--invoke--probe.py.gz": {
+      "bytes": 789,
+      "sha256": "2477127426338979fc7988ca43ec089fb939e68193c5cce2c30b75896f421cc0",
+      "source": "corpus-review/invoke/probe.py"
+    },
+    "corpus-review--invoke--refactor.log.gz": {
+      "bytes": 651,
+      "sha256": "d3b59cf7dc25ff99af770bd034abf55d99cf9adb67d411285f281c774fa21031",
+      "source": "corpus-review/invoke/refactor.log"
+    },
+    "corpus-review--invoke--result.json.gz": {
+      "bytes": 2000,
+      "sha256": "ab92d8cee9378d976a9898b53d00196910957a48d98480fff36178436973f791",
+      "source": "corpus-review/invoke/result.json"
+    },
+    "corpus-review--isort--assessment.json.gz": {
+      "bytes": 965,
+      "sha256": "a04a10eb8d01cbe54c71eb8ac3587faa6a0588fe4961c9ceb18d40da67984377",
+      "source": "corpus-review/isort/assessment.json"
+    },
+    "corpus-review--isort--before.log.gz": {
+      "bytes": 3594,
+      "sha256": "f65c00f8a5cedb64ebb0baddcd6b78e0c2715f33e375968b88a84bba8f9135eb",
+      "source": "corpus-review/isort/before.log"
+    },
+    "corpus-review--isort--facts.json.gz": {
+      "bytes": 4375,
+      "sha256": "7e4e21cf80c1c41b9869ac7719da36db4a90f9644dc3de501e16c45d6a7e7931",
+      "source": "corpus-review/isort/facts.json"
+    },
+    "corpus-review--isort--probe-command.json.gz": {
+      "bytes": 1134,
+      "sha256": "13b622f4e39fbe9f9b951e1a944daf4b74000b663fc6505c2513fdeca18108b1",
+      "source": "corpus-review/isort/probe-command.json"
+    },
+    "corpus-review--isort--probe.py.gz": {
+      "bytes": 917,
+      "sha256": "800c30640204e145d5a814ff9c39716f1b9811700ae60b77fc1acc5e25377150",
+      "source": "corpus-review/isort/probe.py"
+    },
+    "corpus-review--isort--refactor.log.gz": {
+      "bytes": 1466,
+      "sha256": "9353b3220b6651a040f0839a4ac2879c3e32482914e97c05b024346ccb6a014a",
+      "source": "corpus-review/isort/refactor.log"
+    },
+    "corpus-review--isort--result.json.gz": {
+      "bytes": 9156,
+      "sha256": "bfcb89ccba3e81d7cd8ef078e5ec14f3b0523b72702e4065851fb49933e3d9ab",
+      "source": "corpus-review/isort/result.json"
+    },
+    "corpus-review--pyparsing--after.log.gz": {
+      "bytes": 30820,
+      "sha256": "0ff0fcd66b5eac36da0f24f86a0985162088bce353cd7a4ad6cf72bbabc52d8e",
+      "source": "corpus-review/pyparsing/after.log"
+    },
+    "corpus-review--pyparsing--assessment.json.gz": {
+      "bytes": 1190,
+      "sha256": "1840887c960783f100c842780687dd7d2870707b7f7ee23b1c45e1e942f9f39e",
+      "source": "corpus-review/pyparsing/assessment.json"
+    },
+    "corpus-review--pyparsing--before.log.gz": {
+      "bytes": 4004,
+      "sha256": "95d3cb42a298c175fb4378972ed0dc4c4f92b5586b7f5f14e62698c736a9d814",
+      "source": "corpus-review/pyparsing/before.log"
+    },
+    "corpus-review--pyparsing--refactor.log.gz": {
+      "bytes": 5401,
+      "sha256": "6474fcfaef0aa3b2d8781133baa564e27d6313ac4b586d6cf9e582414c6efe4b",
+      "source": "corpus-review/pyparsing/refactor.log"
+    },
+    "corpus-review--pyparsing--result.json.gz": {
+      "bytes": 2309,
+      "sha256": "53e8ac452823fae678d907d08f9f189734ad9c7e4528bbe4649f7ab06b958d79",
+      "source": "corpus-review/pyparsing/result.json"
+    },
+    "corpus-review--sphinx--after.log.gz": {
+      "bytes": 630868,
+      "sha256": "5b1d5c5bb8929625e2308912bd0d14f4a8e2395809dbc9c4d84cc949a392d3f8",
+      "source": "corpus-review/sphinx/after.log"
+    },
+    "corpus-review--sphinx--assessment.json.gz": {
+      "bytes": 1445,
+      "sha256": "08cdf32b0728b7d961e3207a5d834a7a8b5ac29940644c74623941abc414e4c8",
+      "source": "corpus-review/sphinx/assessment.json"
+    },
+    "corpus-review--sphinx--before.log.gz": {
+      "bytes": 630910,
+      "sha256": "20b0c72ecf65b45bb29bd88a34276e74572002b7d54cf2a3066dac45c93afe37",
+      "source": "corpus-review/sphinx/before.log"
+    },
+    "corpus-review--sphinx--refactor.log.gz": {
+      "bytes": 79083,
+      "sha256": "c8696df23e361295fb618aff27202a2458497b714934ea54d8d06e3f6a61ae39",
+      "source": "corpus-review/sphinx/refactor.log"
+    },
+    "corpus-review--sphinx--result.json.gz": {
+      "bytes": 16546,
+      "sha256": "87dd63231a3fbaf61bb70eb4b22db2f465fc6910276755c5eef3dff5875c3954",
+      "source": "corpus-review/sphinx/result.json"
+    },
+    "corpus-review--tornado--after.log.gz": {
+      "bytes": 218126,
+      "sha256": "8e0270934812564e59d82abd75b120ef2bca717ccd2237e2244f42efdcf10fde",
+      "source": "corpus-review/tornado/after.log"
+    },
+    "corpus-review--tornado--assessment.json.gz": {
+      "bytes": 40808,
+      "sha256": "a68f71d5c166b71b0decd3e674b1e392920d21e762eeec0feabbfb6526f57de8",
+      "source": "corpus-review/tornado/assessment.json"
+    },
+    "corpus-review--tornado--before.log.gz": {
+      "bytes": 218047,
+      "sha256": "0ce0f3f67840a6c0e5b486d85c89389e555c27737be186f97fd63cc4221b5225",
+      "source": "corpus-review/tornado/before.log"
+    },
+    "corpus-review--tornado--refactor.log.gz": {
+      "bytes": 18765,
+      "sha256": "b9872b04f54a14b257e913a842ae204e6f83bdfc543db054afe9754da84f36b5",
+      "source": "corpus-review/tornado/refactor.log"
+    },
+    "corpus-review--tornado--result.json.gz": {
+      "bytes": 15660,
+      "sha256": "1a378de0032858399b385c26040384ad83b973d6e1a31c733711af448a3c3de7",
+      "source": "corpus-review/tornado/result.json"
+    },
+    "corpus-review--towel-main--assessment.json.gz": {
+      "bytes": 7534,
+      "sha256": "391ee1f4958a4cb55eec74ea5a7ccc1d20b5ddfcc0a3ec62f47340c9fea4b36d",
+      "source": "corpus-review/towel-main/assessment.json"
+    },
+    "corpus-review--towel-main--before.log.gz": {
+      "bytes": 88664,
+      "sha256": "e1256385da88b3ee0baf2a0914238503e0f415b5f4418395b6383fc4f3335324",
+      "source": "corpus-review/towel-main/before.log"
+    },
+    "corpus-review--towel-main--refactor.log.gz": {
+      "bytes": 715,
+      "sha256": "f2eec19ecb728c34df5fb812f6663b85afd6b32e12ec3549005c27f1e6ccdb6f",
+      "source": "corpus-review/towel-main/refactor.log"
+    },
+    "corpus-review--towel-main--result.json.gz": {
+      "bytes": 2769,
+      "sha256": "8a0a01aee30a4e8aaec6b6dc7460468761e0505d42d4963409dbdb5e88dcb776",
+      "source": "corpus-review/towel-main/result.json"
+    },
+    "corpus-review--towel-v1.414--assessment.json.gz": {
+      "bytes": 776,
+      "sha256": "fe9a70d85bd67ce04fb596558118983ce6ae68e5025ade155ce9619318d43f33",
+      "source": "corpus-review/towel-v1.414/assessment.json"
+    },
+    "corpus-review--towel-v1.414--before.log.gz": {
+      "bytes": 13294,
+      "sha256": "1e85cfc94d4d9cc49dbb4d701273ec8512c777005cdac49bce524da6b232c484",
+      "source": "corpus-review/towel-v1.414/before.log"
+    },
+    "corpus-review--towel-v1.414--refactor.log.gz": {
+      "bytes": 1061,
+      "sha256": "fed59db7255694c4e121cd7451f2353f742379196fec671be45e6fae6a50c19a",
+      "source": "corpus-review/towel-v1.414/refactor.log"
+    },
+    "corpus-review--towel-v1.414--result.json.gz": {
+      "bytes": 2252,
+      "sha256": "b5702efedb77b0ec16ba49d06775cc9384e3baab27dc1db79565b8260c904b51",
+      "source": "corpus-review/towel-v1.414/result.json"
+    },
+    "corpus-review--towel-v1.618--assessment.json.gz": {
+      "bytes": 776,
+      "sha256": "4326ced4eb246a53a42d0db3d7121ffea63c3f446e66572a734e3c5c53439970",
+      "source": "corpus-review/towel-v1.618/assessment.json"
+    },
+    "corpus-review--towel-v1.618--before.log.gz": {
+      "bytes": 8527,
+      "sha256": "35056688f0c6b0de94c0088cb35a8025dca4152abfb53e4d9e5a14781d6b1d63",
+      "source": "corpus-review/towel-v1.618/before.log"
+    },
+    "corpus-review--towel-v1.618--refactor.log.gz": {
+      "bytes": 719,
+      "sha256": "08fd440c86663f20c080e732185b4099e255882af51de5f75b11534d59ea8cd7",
+      "source": "corpus-review/towel-v1.618/refactor.log"
+    },
+    "corpus-review--towel-v1.618--result.json.gz": {
+      "bytes": 2254,
+      "sha256": "d8ee427e9ab060a4bb27e330c3fecba566da804744a0711877c82e29ac28036f",
+      "source": "corpus-review/towel-v1.618/result.json"
+    },
+    "corpus-review--trio--after.log.gz": {
+      "bytes": 6485,
+      "sha256": "469b39984a58949f155bbe7112e20845cab97a1a6475f578d5ff0652fb2c9a6e",
+      "source": "corpus-review/trio/after.log"
+    },
+    "corpus-review--trio--assessment.json.gz": {
+      "bytes": 1513,
+      "sha256": "4e72cb54e3a7cddfcdb51fcf959bc7ae8730d2a0d4c277c462395ba5bdcce6bf",
+      "source": "corpus-review/trio/assessment.json"
+    },
+    "corpus-review--trio--before.log.gz": {
+      "bytes": 6479,
+      "sha256": "3b4fb16d142baea4c3a32a30adedf2d592e231136dff1dc5525a5445d2a25588",
+      "source": "corpus-review/trio/before.log"
+    },
+    "corpus-review--trio--current-checker-environment.json.gz": {
+      "bytes": 133,
+      "sha256": "f8c3086c042a04f5599aa38d02fb67af8d538fb3f0acb864fb558a6a684016c7",
+      "source": "corpus-review/trio/current-checker-environment.json"
+    },
+    "corpus-review--trio--predecessor-cause--assessment.json.gz": {
+      "bytes": 1281,
+      "sha256": "d8dfac8e09277c5c245ddbd208611b48560a783bdd332879eece8d2b42ce1d46",
+      "source": "corpus-review/trio/predecessor-cause/assessment.json"
+    },
+    "corpus-review--trio--predecessor-cause--checker-environment.json.gz": {
+      "bytes": 545,
+      "sha256": "d7881225d9d01fd664a1dc459097517cf8dc76b3bfbda5dc7a63cb52a5e9f647",
+      "source": "corpus-review/trio/predecessor-cause/checker-environment.json"
+    },
+    "corpus-review--trio--predecessor-cause--own-mypy-linux.json.gz": {
+      "bytes": 589,
+      "sha256": "1489bd9344c23c71046bce5e94b4e7502245e5f248603aa08fc296e2e0ccb047",
+      "source": "corpus-review/trio/predecessor-cause/own-mypy-linux.json"
+    },
+    "corpus-review--trio--predecessor-cause--own-mypy-linux.log.gz": {
+      "bytes": 207,
+      "sha256": "0315c988e3d22139464d93b30b5462985eec98e8dc8d518f20bb7d1def35d680",
+      "source": "corpus-review/trio/predecessor-cause/own-mypy-linux.log"
+    },
+    "corpus-review--trio--predecessor-cause--pyproject.toml.gz": {
+      "bytes": 10951,
+      "sha256": "231f6eaad388df3324831ad713a8b8d9ae7b4349d2cf26f7bcd35b1c5cb910ef",
+      "source": "corpus-review/trio/predecessor-cause/pyproject.toml"
+    },
+    "corpus-review--trio--predecessor-cause--test-requirements.txt.gz": {
+      "bytes": 5072,
+      "sha256": "17d1ce5fd9764c40cc8d6840dea3c81694de749f770b6af6f35a4799ef162205",
+      "source": "corpus-review/trio/predecessor-cause/test-requirements.txt"
+    },
+    "corpus-review--trio--predecessor-cause--tox.ini.gz": {
+      "bytes": 3545,
+      "sha256": "a7207d7b7088ad792b560f4bce67f8663a6f2d321e7f2de7093f5e0c42b9ddeb",
+      "source": "corpus-review/trio/predecessor-cause/tox.ini"
+    },
+    "corpus-review--trio--refactor-no-types.log.gz": {
+      "bytes": 8791,
+      "sha256": "80b711e566696264db82145f77783802bfbd50b0312b665c4625aaf9fabe9b8f",
+      "source": "corpus-review/trio/refactor-no-types.log"
+    },
+    "corpus-review--trio--refactor.log.gz": {
+      "bytes": 689,
+      "sha256": "88f5a27c67e23c9d3cfd526e3a5abf7dfe02993a32d0427f95da96f5702f712c",
+      "source": "corpus-review/trio/refactor.log"
+    },
+    "corpus-review--trio--result.json.gz": {
+      "bytes": 23853,
+      "sha256": "aadd2fd945ededd2a4e33ff6f9d2470d46678e9f367fb41c30ce352f0d01fab1",
+      "source": "corpus-review/trio/result.json"
+    },
+    "corpus-review--typing_extensions--after.log.gz": {
+      "bytes": 1033,
+      "sha256": "aa4752f7154b51ff6afd3b52993f404f0a4447fcda1cef4668e8bbd4b7e93cbb",
+      "source": "corpus-review/typing_extensions/after.log"
+    },
+    "corpus-review--typing_extensions--assessment.json.gz": {
+      "bytes": 2263,
+      "sha256": "b5b0942c83f7a5a011289a3f497a956ce046a91eb56746d3589979cef738744e",
+      "source": "corpus-review/typing_extensions/assessment.json"
+    },
+    "corpus-review--typing_extensions--before.log.gz": {
+      "bytes": 1027,
+      "sha256": "c3abe7597008b946fb7bc359fe9f47e3f895cef9710bb8aba9cd15d593c1cc88",
+      "source": "corpus-review/typing_extensions/before.log"
+    },
+    "corpus-review--typing_extensions--predecessor-cause--.pre-commit-config.yaml.gz": {
+      "bytes": 2421,
+      "sha256": "f1403a6fdaf6f855816ccd557e4eaa9618d01f82274d580132b72da5c9eacced",
+      "source": "corpus-review/typing_extensions/predecessor-cause/.pre-commit-config.yaml"
+    },
+    "corpus-review--typing_extensions--predecessor-cause--assessment.json.gz": {
+      "bytes": 1403,
+      "sha256": "817032912eac92034c78052d32a80dfc9f9b698aa779d48030a294eda26d3f2d",
+      "source": "corpus-review/typing_extensions/predecessor-cause/assessment.json"
+    },
+    "corpus-review--typing_extensions--predecessor-cause--own-mypy.json.gz": {
+      "bytes": 555,
+      "sha256": "ebc4616651732cfc0fda67f1ae607c87e8fb2a72fec7e87ef9178829dbef7000",
+      "source": "corpus-review/typing_extensions/predecessor-cause/own-mypy.json"
+    },
+    "corpus-review--typing_extensions--predecessor-cause--own-mypy.log.gz": {
+      "bytes": 257,
+      "sha256": "b0fca5ecebd384865d05813c316f3768e972ae9dc1cecab2bbf38f542a12a5f1",
+      "source": "corpus-review/typing_extensions/predecessor-cause/own-mypy.log"
+    },
+    "corpus-review--typing_extensions--predecessor-cause--pyproject.toml.gz": {
+      "bytes": 3618,
+      "sha256": "47f8ffa7e24c60d975551181721e07e3f47220cd17865c647446794ffc2dc7c1",
+      "source": "corpus-review/typing_extensions/predecessor-cause/pyproject.toml"
+    },
+    "corpus-review--typing_extensions--predecessor-cause--tox.ini.gz": {
+      "bytes": 144,
+      "sha256": "ef1261dd8b3d4576a624842ff1970cbd0e678cfbfc5f6ffb7cd3c53c62f23a4d",
+      "source": "corpus-review/typing_extensions/predecessor-cause/tox.ini"
+    },
+    "corpus-review--typing_extensions--refactor-no-types.log.gz": {
+      "bytes": 980,
+      "sha256": "2f314e1e9ce97bd8a595233e28efaae7d58183c5bee223d0ea5a53d864145f55",
+      "source": "corpus-review/typing_extensions/refactor-no-types.log"
+    },
+    "corpus-review--typing_extensions--refactor.log.gz": {
+      "bytes": 830,
+      "sha256": "68400593b124f95a5fcbb37affa3fa49b08dbda30f2b3aa63eb9cedd4d3d1ccd",
+      "source": "corpus-review/typing_extensions/refactor.log"
+    },
+    "corpus-review--typing_extensions--result.json.gz": {
+      "bytes": 2169,
+      "sha256": "b987a0ebd2e31548154bf908ce72f8a53dc15d48a1051452f2df43b0c2d183f3",
+      "source": "corpus-review/typing_extensions/result.json"
+    },
+    "corpus.log.gz": {
+      "bytes": 15018,
+      "sha256": "5f83a865008a28d84229282de7804e5943c2adb63a287f91efab4965e3df2f07",
+      "source": "corpus.log"
+    },
+    "coverage-3.11.xml.gz": {
+      "bytes": 1064585,
+      "sha256": "15c5211157ef1305e25abfdd3ad69f7e573ffe3ccf53dc48fa3a3e0f45e416f4",
+      "source": "coverage-3.11.xml"
+    },
+    "coverage-3.12.xml.gz": {
+      "bytes": 1064577,
+      "sha256": "2120dfa73de214df5c9d14fae053b6e0194ba45659810d5d4289e66f3b4d9b01",
+      "source": "coverage-3.12.xml"
+    },
+    "coverage-3.13.xml.gz": {
+      "bytes": 1064579,
+      "sha256": "a913203566ce7bb8931e6722b3f19fd4f1306a9077728e064785527fc0cca605",
+      "source": "coverage-3.13.xml"
+    },
+    "dependencies-audit-command.json.gz": {
+      "bytes": 677,
+      "sha256": "393f4d0063c5f917e229125312e809405e2e771f2e2329a5744195b084af6a15",
+      "source": "dependencies-audit-command.json"
+    },
+    "dependencies-dev-audit.log.gz": {
+      "bytes": 265,
+      "sha256": "79d30422388543b2563e1dde76bb7e7857d7ef0c6fdf05c8c71598633ca07e1e",
+      "source": "dependencies-dev-audit.log"
+    },
+    "dependencies-dev.txt.gz": {
+      "bytes": 1131,
+      "sha256": "3a690ec83e720ffd113276610f1610567b0601a8f9d5d64a27a7cf879a693ecd",
+      "source": "dependencies-dev.txt"
+    },
+    "diagrams-command.json.gz": {
+      "bytes": 2683,
+      "sha256": "29c4ceb66f30ccf49f13465b1b189144a81e77fb748a5677155a45a1102e6994",
+      "source": "diagrams-command.json"
+    },
+    "diagrams-writable-cache.log.gz": {
+      "bytes": 31,
+      "sha256": "14c46c3446dbd1c872021fd8ff5b46246377c7e07f0ddcf1591a96cf874f10da",
+      "source": "diagrams-writable-cache.log"
+    },
+    "distribution-contents.json.gz": {
+      "bytes": 1997,
+      "sha256": "d7fe52a64c67eb2f1f298abb985a15d16e7e384bfd4a51bca9d420efca611f63",
+      "source": "distribution-contents.json"
+    },
+    "fallback-config-probe-command.json.gz": {
+      "bytes": 827,
+      "sha256": "d450e4dd53d3b68a37cdc9ed7f101f7005f14f3c3321d9173a245eb79e35c0d1",
+      "source": "fallback-config-probe-command.json"
+    },
+    "fallback-config-probe-result.json.gz": {
+      "bytes": 680,
+      "sha256": "d3177f9469d0f21305fd2ab35624f16bbeecd9f0740645379ea3e26d36fec56a",
+      "source": "fallback-config-probe-result.json"
+    },
+    "fallback-config-probe.py.gz": {
+      "bytes": 367,
+      "sha256": "acd88db3b20df86aa74736e1af0f4afa32726fb281dde5533631fdf5046a9a64",
+      "source": "fallback-config-probe.py"
+    },
+    "fuzz-grammar.log.gz": {
+      "bytes": 5530,
+      "sha256": "e390c5e6cf3e0f08c03c73677238011994d03000332da1a1b0df2d9e438e0679",
+      "source": "fuzz-grammar.log"
+    },
+    "fuzz-results.json.gz": {
+      "bytes": 1168,
+      "sha256": "f617cb116aa4e3bc5027ae6586a7983efbf0b0f4b368e67b662cb0cebd20ed6d",
+      "source": "fuzz-results.json"
+    },
+    "fuzz-scope.log.gz": {
+      "bytes": 1303,
+      "sha256": "eb7e8d7f73227465992b10b2aa88ac907abe7767fa46e81207686d2ecdaae25f",
+      "source": "fuzz-scope.log"
+    },
+    "input-preflight-command.json.gz": {
+      "bytes": 1110,
+      "sha256": "981a7c7d04715ca0a1dfe3fa5ef9e32ea7a94d962031c5daea4055f7e3cf0d76",
+      "source": "input-preflight-command.json"
+    },
+    "input-preflight.json.gz": {
+      "bytes": 31843,
+      "sha256": "99b81d9c08393beeaf88784b348fc8467f223b4766d0849e9289b9b7c98c5af6",
+      "source": "input-preflight.json"
+    },
+    "inspect_artifacts.py.gz": {
+      "bytes": 2349,
+      "sha256": "eb9c0303236bbed27493404d701a174497df0e1adc7382167636583122ed6ed7",
+      "source": "inspect_artifacts.py"
+    },
+    "matrix-3.11-container.json.gz": {
+      "bytes": 8941,
+      "sha256": "f3b74e3ba50673c6b40461aea768e97e367a4334b9c8422b6bcd04da50516f37",
+      "source": "matrix-3.11-container.json"
+    },
+    "matrix-3.11-launch.json.gz": {
+      "bytes": 892,
+      "sha256": "b66ca3a9b7c99552b52605aa4b8d681170b7967fec15ed5362397685c9e53aec",
+      "source": "matrix-3.11-launch.json"
+    },
+    "matrix-3.11-resources.jsonl.gz": {
+      "bytes": 67788,
+      "sha256": "553fd5f0a242b4e5bc42ab511ab36c75e4416f44b293367c028ce1dd81d35a59",
+      "source": "matrix-3.11-resources.jsonl"
+    },
+    "matrix-3.11-result.json.gz": {
+      "bytes": 652,
+      "sha256": "00ebde51ed2da608330b24c1a80843a2acbebfb57040171bb48e1f551056b66b",
+      "source": "matrix-3.11-result.json"
+    },
+    "matrix-3.11.log.gz": {
+      "bytes": 19053,
+      "sha256": "a5a05215e849b756ac6639cd44452d38412acfbe9d8876a3ca66e945e9bd9e4e",
+      "source": "matrix-3.11.log"
+    },
+    "matrix-3.12-container.json.gz": {
+      "bytes": 8941,
+      "sha256": "b437f36f87c76e710e16f2a9be59bb7870c1c86fa9993c3984e40677756c8bd0",
+      "source": "matrix-3.12-container.json"
+    },
+    "matrix-3.12-launch.json.gz": {
+      "bytes": 892,
+      "sha256": "7cd545e202df5772a999ee576d575ee1b1b06deb172e31e69c8905d38d5736a0",
+      "source": "matrix-3.12-launch.json"
+    },
+    "matrix-3.12-resources.jsonl.gz": {
+      "bytes": 74832,
+      "sha256": "8aa45a6c1fc4fb6e38840d5a5ce5f6dceac592084ea98a83b764cf020989b7b7",
+      "source": "matrix-3.12-resources.jsonl"
+    },
+    "matrix-3.12-result.json.gz": {
+      "bytes": 649,
+      "sha256": "48c292a1b277f5bc5463af29237a5dd22aac5ac9626f4cb569ecbab0cd30edd0",
+      "source": "matrix-3.12-result.json"
+    },
+    "matrix-3.12.log.gz": {
+      "bytes": 19153,
+      "sha256": "471cf826d0a0506dbc5fa0f6c61a7c77c7250bea27895bf566a871fa66c9f20d",
+      "source": "matrix-3.12.log"
+    },
+    "matrix-3.13-container.json.gz": {
+      "bytes": 8940,
+      "sha256": "b1b11bd4455d676c4717a4162cb79d5174d557ff4db2386dbd1106b53dd26ccc",
+      "source": "matrix-3.13-container.json"
+    },
+    "matrix-3.13-launch.json.gz": {
+      "bytes": 892,
+      "sha256": "1a3296578030a1b3844e90a0b5c6b7aae59c44a461fcd93c5d08c4d4ba9f6c06",
+      "source": "matrix-3.13-launch.json"
+    },
+    "matrix-3.13-resources.jsonl.gz": {
+      "bytes": 66595,
+      "sha256": "0373a5a3cad9bcc752eb7f897672500c33642bf330163cf8ace47c71c718922c",
+      "source": "matrix-3.13-resources.jsonl"
+    },
+    "matrix-3.13-result.json.gz": {
+      "bytes": 652,
+      "sha256": "bb7e60354536dbd330686af7a4956b6533a38d6d7f3cf2c34e0af040d5c27812",
+      "source": "matrix-3.13-result.json"
+    },
+    "matrix-3.13.log.gz": {
+      "bytes": 19177,
+      "sha256": "ba1a0a56d7fb6d760ca73ec68c1440f743ab8392ba949f713f568f78f30bc2cd",
+      "source": "matrix-3.13.log"
+    },
+    "matrix-driver.log.gz": {
+      "bytes": 387,
+      "sha256": "6fbf373afedf1147d2b39e0be349af5cc8509ae6514b7577761f244c5be6ff85",
+      "source": "matrix-driver.log"
+    },
+    "matrix-resumption-preflight.json.gz": {
+      "bytes": 455,
+      "sha256": "4bd004de44ae68d57f0e5faa893a16fe2e01c676a936122d5e995889baf8e5bd",
+      "source": "matrix-resumption-preflight.json"
+    },
+    "mechanical-corpus-review.json.gz": {
+      "bytes": 1114,
+      "sha256": "563bbe46ac5e8a3cc19f9071a4ea8e9cb89bc4380f4c1b3dd6de66140df497d4",
+      "source": "mechanical-corpus-review.json"
+    },
+    "observe_cold_cli.py.gz": {
+      "bytes": 555,
+      "sha256": "4d5ad595857a956d519139a5863a79fb2e04292c73d913618dd90465cc889722",
+      "source": "observe_cold_cli.py"
+    },
+    "predecessor-oom--assessment.json.gz": {
+      "bytes": 862,
+      "sha256": "8015c12e11bdee74538bd1a848e65b9260f2245b177a1de80aee0e45b643d368",
+      "source": "predecessor-oom/assessment.json"
+    },
+    "predecessor-oom--before.log.gz": {
+      "bytes": 19588,
+      "sha256": "19c631476b3017687faed8efcf21999c6f10e9ae8f84a33b1dcaad69c8849760",
+      "source": "predecessor-oom/before.log"
+    },
+    "predecessor-oom--corpus-entry.py.gz": {
+      "bytes": 725,
+      "sha256": "9abf0d51ae23e74444c023b35a25df9521b11ec42a03b103370a9332152fe80c",
+      "source": "predecessor-oom/corpus-entry.py"
+    },
+    "predecessor-oom--resource-failure.json.gz": {
+      "bytes": 2251,
+      "sha256": "3cab09af8e6889e2880c6bf18a265c9aeaf2a80d417ab190b64ede117297887f",
+      "source": "predecessor-oom/resource-failure.json"
+    },
+    "predecessor-oom--result.json.gz": {
+      "bytes": 1922,
+      "sha256": "c62cc49f8fe48b491871c136d75c1200f9d603b2f7037fb4ce215dfca46ea814",
+      "source": "predecessor-oom/result.json"
+    },
+    "predecessor-review.json.gz": {
+      "bytes": 4352,
+      "sha256": "c67c1dab1d17db6ec5c55033d998617d8384502865fbd6751fd7ace19cbd9623",
+      "source": "predecessor-review.json"
+    },
+    "quality-313.log.gz": {
+      "bytes": 1067,
+      "sha256": "7dec18c928359e678bc76a781a5359b4e7679119c203fc5e3ca6f330e9000e34",
+      "source": "quality-313.log"
+    },
+    "refusal-integrity-command.json.gz": {
+      "bytes": 549,
+      "sha256": "3fe4ba852e3c5c162b862353b42a7b85dbe9abee698d8b2cc81c2aa525274f5d",
+      "source": "refusal-integrity-command.json"
+    },
+    "refusal-integrity.json.gz": {
+      "bytes": 24916,
+      "sha256": "fd623ab82db4f81dfd2ebf0a440ab9ebee065e70d51f424f20c89dd3ebdab079",
+      "source": "refusal-integrity.json"
+    },
+    "refusal-integrity.py.gz": {
+      "bytes": 872,
+      "sha256": "2a926bcac68fc62424629b43b98faa69568a8eec4a3b49e6a301e118e56bd6c2",
+      "source": "refusal-integrity.py"
+    },
+    "resume-final-gates.py.gz": {
+      "bytes": 4194,
+      "sha256": "a6a0b52d6b23026e34a125caf43be697480b09eeae12a27fcd97233ee4e51434",
+      "source": "resume-final-gates.py"
+    },
+    "run-corpus.py.gz": {
+      "bytes": 6062,
+      "sha256": "31e88fbdbb7c92c35d8996e7877741bc45e854118eea24360064127a129e38b4",
+      "source": "run-corpus.py"
+    },
+    "run-fuzz.py.gz": {
+      "bytes": 1172,
+      "sha256": "8af547be9aa04e4241552f7cf54d364a1f9a623f4bac2c34abade44d103b2ba6",
+      "source": "run-fuzz.py"
+    },
+    "run-matrix.py.gz": {
+      "bytes": 2926,
+      "sha256": "62addada94f845813d08c06806ec711f64ca9798417e3c9d6bbe712e8f4c0913",
+      "source": "run-matrix.py"
+    },
+    "run-matrix.sh.gz": {
+      "bytes": 2185,
+      "sha256": "2a5974f9b1d59e3e81f104570278a5c3bd1cb39033d5aa2bda6d06ea65a398dc",
+      "source": "run-matrix.sh"
+    },
+    "run-self-complete.py.gz": {
+      "bytes": 1988,
+      "sha256": "83d453eb95161e44b8fb016d19fa6c6b2362a96444a6da0a972d1a7912740d44",
+      "source": "run-self-complete.py"
+    },
+    "run-self-project.py.gz": {
+      "bytes": 2689,
+      "sha256": "c0a4716f7df37e152c98e809e4bfbb99408a4d4b841959e7e0974e15cc542da6",
+      "source": "run-self-project.py"
+    },
+    "sdist-docs-result.json.gz": {
+      "bytes": 1210,
+      "sha256": "519dec775177846b6bc8fb6f8d5a6b3f9876efd08aad104711d37d1c52db47de",
+      "source": "sdist-docs-result.json"
+    },
+    "sdist-docs-source.log.gz": {
+      "bytes": 154,
+      "sha256": "cc992382d271af8517d7b79e707678d8bd94cc299ea1f458b29e7ae3561c036e",
+      "source": "sdist-docs-source.log"
+    },
+    "sdist-docs-tests.log.gz": {
+      "bytes": 99,
+      "sha256": "730ae1c675be10aed9954158708ad002fdcb465cfd53e19acd3701494c4a8b0b",
+      "source": "sdist-docs-tests.log"
+    },
+    "self-generation-result.json.gz": {
+      "bytes": 462,
+      "sha256": "be17f2e727798741257a18fe5880aeaa3ed2313b1c2d80a03937049e6bc811c9",
+      "source": "self-generation-result.json"
+    },
+    "selfdogfood--imported-source.log.gz": {
+      "bytes": 218,
+      "sha256": "f13e2f5bdb26e90ceeca5dd2634e7a6734cb87b50ebdde79a863566fe1b3bf65",
+      "source": "selfdogfood/imported-source.log"
+    },
+    "selfdogfood--post-test-integrity.json.gz": {
+      "bytes": 210,
+      "sha256": "49e8cb729695cae3c554d7dcd2379e06858ad09439ecaf84010839d68d45b7e4",
+      "source": "selfdogfood/post-test-integrity.json"
+    },
+    "selfdogfood--results.json.gz": {
+      "bytes": 1575,
+      "sha256": "a304469b157003906811ff81bafc67622172a730bf78f6cd26d73cc9ad4fd471",
+      "source": "selfdogfood/results.json"
+    },
+    "selfdogfood--source.json.gz": {
+      "bytes": 22571,
+      "sha256": "d9fd805e22fa42da82f8e7a621fdef7e9a37c53f824a6a4d02d1c957d80118db",
+      "source": "selfdogfood/source.json"
+    },
+    "selfdogfood--tests.log.gz": {
+      "bytes": 11426,
+      "sha256": "e427233e1636948769e343b10b079445d8e7d6f5fedac0133067417fb5c0c665",
+      "source": "selfdogfood/tests.log"
+    },
+    "selfdogfood--typecheck.log.gz": {
+      "bytes": 45,
+      "sha256": "b8c95e6ea314fa0d48adf3e56789ec331c16108eb509d01d726c0586b6d3505c",
+      "source": "selfdogfood/typecheck.log"
+    },
+    "selfdogfood.log.gz": {
+      "bytes": 18831,
+      "sha256": "57a92f7516445a82bb2cd3671b98122b47872725218252ea2c9275cbca270711",
+      "source": "selfdogfood.log"
+    },
+    "smoke_wheels.py.gz": {
+      "bytes": 5444,
+      "sha256": "34b5b3b0c2e179481bda5e7511faa56612e002cfd43421bc4b7fa49ce4e1cbcb",
+      "source": "smoke_wheels.py"
+    },
+    "source.json.gz": {
+      "bytes": 11864,
+      "sha256": "e23066e1281cee6cb7af3825d743a279ab5f98dca89f2a91b147c611de459744",
+      "source": "source.json"
+    },
+    "twine-313.log.gz": {
+      "bytes": 314,
+      "sha256": "661f027a8b9cb51103b12e24c5144b88965e6477fc80a9fc8e7c776c0ebd101f",
+      "source": "twine-313.log"
+    },
+    "validate-corpus-records.py.gz": {
+      "bytes": 4793,
+      "sha256": "c884b36a76d7ce0f35d22d760f2037507f4aa81b00b776e9f431902193898b60",
+      "source": "validate-corpus-records.py"
+    },
+    "verify_distribution_contents.py.gz": {
+      "bytes": 3662,
+      "sha256": "a1466a939b7b1f9f8641784cb5f9ae882883fc2fcd46d9920602cebea43a346a",
+      "source": "verify_distribution_contents.py"
+    },
+    "wheel-smoke--3.11-bare--commands.json.gz": {
+      "bytes": 12753,
+      "sha256": "b4b72df00c3b4f00535eaca572cecbda1775802c2cfabaed896610cada3f8f06",
+      "source": "wheel-smoke/3.11-bare/commands.json"
+    },
+    "wheel-smoke--3.11-extras--cold-check.json.gz": {
+      "bytes": 226,
+      "sha256": "de912415e03ef8c2c18f22db09f8012885d1c2da57a9bcb916f9fdd91ef9c93f",
+      "source": "wheel-smoke/3.11-extras/cold-check.json"
+    },
+    "wheel-smoke--3.11-extras--commands.json.gz": {
+      "bytes": 16685,
+      "sha256": "6e49a90353685210b42bc8ed73dd6d71b8afe095904408c90afcc92b5e6176df",
+      "source": "wheel-smoke/3.11-extras/commands.json"
+    },
+    "wheel-smoke--3.12-bare--commands.json.gz": {
+      "bytes": 12723,
+      "sha256": "ad13faf43665f7de60a307279d20b8a9a7fc6aebd76a141cb499bbe63f9e47ef",
+      "source": "wheel-smoke/3.12-bare/commands.json"
+    },
+    "wheel-smoke--3.12-extras--cold-check.json.gz": {
+      "bytes": 226,
+      "sha256": "00df8bcf4b0cc4eb8355afcd9ebc6e8ff3c3f00196098cfb46d4db02137a487e",
+      "source": "wheel-smoke/3.12-extras/cold-check.json"
+    },
+    "wheel-smoke--3.12-extras--commands.json.gz": {
+      "bytes": 16684,
+      "sha256": "137c96ed56587fba5122c0ae6985c6031c742fd118c229385bdc461c8fbbceef",
+      "source": "wheel-smoke/3.12-extras/commands.json"
+    },
+    "wheel-smoke--3.13-bare--commands.json.gz": {
+      "bytes": 12730,
+      "sha256": "cec90bfec483db3609b12d13064709a6b8ad8e8b5c55df3cdae80f7a2cc89f5a",
+      "source": "wheel-smoke/3.13-bare/commands.json"
+    },
+    "wheel-smoke--3.13-extras--cold-check.json.gz": {
+      "bytes": 226,
+      "sha256": "267441d2ab59f56a7eb1cf481c7d208a724aa4b4698220384421251ad151bc69",
+      "source": "wheel-smoke/3.13-extras/cold-check.json"
+    },
+    "wheel-smoke--3.13-extras--commands.json.gz": {
+      "bytes": 16688,
+      "sha256": "5bf651473976a79652937c4d46bf0caae7eb3aae8de90eb628fee0e03d2cdb60",
+      "source": "wheel-smoke/3.13-extras/commands.json"
+    },
+    "wheel-smoke--results.json.gz": {
+      "bytes": 5061,
+      "sha256": "4bc376d25452b112959a7cd9d92bfad77a5fb828510bed3d761c941ab084fe5d",
+      "source": "wheel-smoke/results.json"
+    }
+  },
+  "runtime_tree": "78c8c6ea954f370a1afa8846a41988856589acc5",
+  "scope": "Completed corrected-source local validation; later documentation tests and rebuilt artifacts are separately verified. No historical 3f09421 records replaced.",
+  "tests_tree": "63c2bb4b75e17dbe12947d83dc9219346eecd6af"
+}

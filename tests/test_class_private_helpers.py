@@ -285,7 +285,27 @@ def test_same_class_helpers_keep_private_attributes_super_and_classmethods_worki
     class-private classmethod reached through ``cls``, which ``Savings``
     inherits without being able to replace.
     """
-    root = _project(tmp_path, {"pkg/__init__.py": "", "pkg/lib.py": SAME_CLASS})
+    # Keep opaque classmethod locals in their original frame. The companion
+    # below tests class-private dispatch without creating new local bindings.
+    original_root = _project(tmp_path / "unsafe", {"pkg/__init__.py": "", "pkg/lib.py": SAME_CLASS})
+    original_before = _run(original_root, SAME_CLASS_DRIVER, original_root)
+    assert _refactor(original_root / "pkg") == 1  # useful instance prefix only
+    original_after = (original_root / "pkg/lib.py").read_text()
+    assert _run(original_root, SAME_CLASS_DRIVER, original_root) == original_before
+
+    def classmethods(text: str) -> list[str]:
+        return [
+            ast.dump(node, include_attributes=False)
+            for node in ast.walk(ast.parse(text))
+            if isinstance(node, ast.FunctionDef) and node.name in {"describe", "summary"}
+        ]
+
+    assert classmethods(original_after) == classmethods(SAME_CLASS)
+    source = SAME_CLASS.replace(
+        'parts = [cls.__name__, name, cls.unit()]\n        joined = "/".join(parts)\n        return joined.',
+        'print("class", cls.__name__)\n        print("unit", cls.unit())\n        return "/".join([cls.__name__, name, cls.unit()]).',
+    )
+    root = _project(tmp_path, {"pkg/__init__.py": "", "pkg/lib.py": source})
     before = _run(root, SAME_CLASS_DRIVER, root)
     assert _refactor(root / "pkg") >= 2
     after = _run(root, SAME_CLASS_DRIVER, root)
@@ -300,7 +320,9 @@ def test_same_class_helpers_keep_private_attributes_super_and_classmethods_worki
 # -- mangling edge cases ---------------------------------------------------------
 
 
-def test_a_class_with_leading_underscores_stores_the_helper_without_them(tmp_path: Path) -> None:
+def test_a_class_with_leading_underscores_stores_the_helper_without_them(
+    tmp_path: Path,
+) -> None:
     library = "class __Hidden:\n    base = 1\n" + textwrap.indent(textwrap.dedent(SHARED), "    ")
     root = _project(tmp_path, {"pkg/__init__.py": "", "pkg/lib.py": library})
     driver = (
@@ -351,7 +373,9 @@ def test_a_nested_class_keeps_its_own_private_names(tmp_path: Path) -> None:
     assert helpers["A"] != ["__extracted_func_0"]
 
 
-def test_the_stored_name_collides_with_nothing_the_class_already_has(tmp_path: Path) -> None:
+def test_the_stored_name_collides_with_nothing_the_class_already_has(
+    tmp_path: Path,
+) -> None:
     """``_A__extracted_func_0`` written out is what ``__extracted_func_0`` in ``A`` would be."""
     library = (
         "class A:\n    base = 1\n\n"
@@ -524,14 +548,26 @@ class Audited(Ledger):
 def _strict_errors(tool: str, path: Path) -> List[str]:
     """The errors ``tool`` in strict mode reports for the module at ``path``; asserts it ran."""
     if tool == "mypy":
-        command = [sys.executable, "-m", "mypy", "--strict", "--no-incremental", path.name]
+        command = [
+            sys.executable,
+            "-m",
+            "mypy",
+            "--strict",
+            "--no-incremental",
+            path.name,
+        ]
         marker = ": error:"
     else:
         (path.parent / "pyrightconfig.json").write_text('{"typeCheckingMode": "strict"}\n')
         command = [sys.executable, "-m", "pyright", path.name]
         marker = " - error:"
     completed = subprocess.run(
-        command, cwd=path.parent, capture_output=True, text=True, timeout=300, check=False
+        command,
+        cwd=path.parent,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
     )
     errors = [line for line in completed.stdout.splitlines() if marker in line]
     assert completed.returncode == (1 if errors else 0), completed.stdout + completed.stderr
@@ -539,7 +575,9 @@ def _strict_errors(tool: str, path: Path) -> List[str]:
 
 
 @requires_checkers
-def test_a_class_private_helper_passes_mypy_strict_and_pyright_strict(tmp_path: Path) -> None:
+def test_a_class_private_helper_passes_mypy_strict_and_pyright_strict(
+    tmp_path: Path,
+) -> None:
     """The helper Towel writes, beside a subclass with its own ``__extracted_func_0``, checks.
 
     The subclass's helper takes and returns ``str`` where ``Ledger``'s returns

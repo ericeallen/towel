@@ -1,0 +1,45 @@
+# Operator-recorded environment, not machine-derived from the harness logs.
+# Sources and the limits of this record are explained in README.md beside it.
+release = "1.772"
+date = "2026-09-26"
+local_platform = "macOS"
+ci_platform = "Linux"
+corpus_platform = "Linux"
+corpus_python = "3.12"
+untested_platform = "Windows"
+host = "Apple M5 Max"
+host_cores = 18
+host_memory_gib = 128
+host_filesystem = "APFS"
+vm_cores = 18
+vm_memory_gb = 8
+corpus_concurrency = 4
+sphinx_concurrency = 1
+refactor_workers = 1
+sphinx_mypy = "1.19.1"
+sphinx_pyright = "1.1.407"
+
+[source_sha256]
+"corpus-full.txt" = "e06d21796ca935fabf8f34e917e36cb808ce6c5cd976604ecdf17eaf6a19f5c1"
+"corpus-sphinx.txt" = "d85cd12b5aa5ced812e6674298a99d4ce03de42adc37c863997a461aa7555380"
+"release-record.txt" = "3b640b2af0b5c561f6d3b5e2d48baf4c1e5edb4eae05ad951267b542bcb8c7bf"
+
+# Completed suite counts recorded in PRODUCTION_READINESS.md at 088a4c7.
+# release-record.txt independently retains the passed counts.
+[[suite]]
+python = "3.11"
+passed = 7751
+skipped = 74
+subtests = 24
+
+[[suite]]
+python = "3.12"
+passed = 7882
+skipped = 13
+subtests = 24
+
+[[suite]]
+python = "3.13"
+passed = 7899
+skipped = 3
+subtests = 24

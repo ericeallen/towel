@@ -26,6 +26,7 @@ settle what the file is.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import shutil
 import textwrap
@@ -35,6 +36,8 @@ from types import SimpleNamespace
 from typing import Mapping, Sequence
 
 import pytest
+
+from tests.test_helpers import method_helper_calls
 
 from towel.pyright_session import (
     UNSEEN_MARKER_TIMEOUT_SECONDS,
@@ -210,7 +213,39 @@ def test_a_directory_pyright_excludes_costs_no_wait(tmp_path: Path) -> None:
     assert _refactored(tmp_path, oracle) == ["version.py"]
     assert time.monotonic() - started < UNSEEN_MARKER_TIMEOUT_SECONDS / 2
     written = (tmp_path / "pkg" / "legacy" / "version.py").read_text(encoding="utf-8")
-    helper = next(line for line in written.splitlines() if "def __extracted_func_0" in line)
-    assert helper.strip() == (
-        "def __extracted_func_0(self, __param_0: _typing.Any, prefix: str) -> str:"
-    ), "what the sites declare and Any for the rest: nothing would check an inferred type"
+    tree = ast.parse(written)
+    helper = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "__extracted_func_0"
+    )
+    assert [parameter.arg for parameter in helper.args.posonlyargs] == ["self", "__param_0"]
+    assert (
+        helper.args.vararg,
+        helper.args.kwarg,
+        helper.args.kwonlyargs,
+        helper.args.defaults,
+    ) == (None, None, [], [])
+    assert [parameter.arg for parameter in helper.args.args] == ["prefix", "_towel_owner"]
+    assert helper.args.posonlyargs[0].annotation is None
+    annotations = [
+        ast.unparse(parameter.annotation)
+        for parameter in helper.args.posonlyargs + helper.args.args[:-1]
+        if parameter.annotation is not None
+    ]
+    assert annotations == [
+        "_typing.Any",
+        "str",
+    ], "what the sites declare and Any for the rest: nothing would check an inferred type"
+    assert isinstance(helper.args.args[-1].annotation, ast.Constant)
+    assert helper.args.args[-1].annotation.value == "object"
+    assert helper.returns is not None and ast.unparse(helper.returns) == "str"
+    calls = method_helper_calls(written)
+    assert len(calls) == 2
+    assert all(
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == helper.name
+        and not call.keywords
+        and len(call.args) + 1 == len(helper.args.posonlyargs + helper.args.args)
+        for call in calls
+    )

@@ -30,7 +30,9 @@ not the block's structure, because the answers read the block's context.
 from __future__ import annotations
 
 import ast
+from itertools import accumulate
 import sys
+from types import CodeType
 from weakref import WeakKeyDictionary
 
 from typing import (
@@ -40,6 +42,7 @@ from typing import (
     FrozenSet,
     Iterable,
     List,
+    Mapping,
     Optional,
     Sequence,
     Set,
@@ -49,15 +52,20 @@ from typing import (
 )
 from .assignment_analyzer import (
     stored_names,
-    _collect_bindings_and_reassignments,
+    Binding,
+    own_scope_bindings,
     _collect_block_binding_stats,
     analyze_assignments,
 )
-from .block_signature import BlockSignature, extract_block_signature
+from .argument_ownership import argument_handoff_plan
+from .extraction_policy import overlaps_protected
+from .block_signature import BlockSignature, BlockSignatureIndex, extract_block_signature
 from .extractor import has_complete_return_coverage, is_value_producing
 from .function_scope import code_names, function_names, identifiers, scope_moving_names
+from .frame_ownership import FrameOwnership, frame_ownership
 from .models import (
     BlockBindingSnapshot,
+    ArgumentHandoff,
     CodeBlockPair,
     FunctionNode,
     RejectReason,
@@ -65,9 +73,17 @@ from .models import (
     is_generated_helper_name,
 )
 from .parameters import GENERATED_PARAMETER_PREFIX, parameter_names
+from .narrowing import caller_narrowing_leaves_with_block, may_establish_caller_narrowing
 from .scope_analyzer import ScopeAnalyzer
-from .semantic_safety import own_scope_locals, rebound_external_names, walk_own_scope
-from .statement_facts import memoized_per_node
+from .semantic_safety import (
+    nested_bindings_escape,
+    own_scope_locals,
+    rebound_external_names,
+    walk_own_scope,
+)
+from .if_binding_transfer import IfBindingTransfer, IfTransferSite, certify_if_binding_transfer
+from .return_source_uses import return_statement_usages
+from .statement_facts import memoized_per_node, statement_facts
 from .static_positions import (
     TYPING_FORMS_BY_NAME,
     TranslationKeywords,
@@ -75,6 +91,7 @@ from .static_positions import (
     configured_translation_keywords,
 )
 from .structural_memo import load_substitution, store_substitution
+from .ast_paths import has_shared_expressions
 from .typing_forms import ModuleText, typing_forms_of
 from .substitution import Substitution
 from .visitors import (
@@ -130,6 +147,8 @@ def align_return_variables(
     bound_first: Set[str],
     bound_second: Set[str],
     renames: Sequence[Dict[str, str]],
+    *,
+    template_order: Sequence[str] = (),
 ) -> Optional[Tuple[List[str], List[str]]]:
     """Order both blocks' live variables so one helper return serves every call.
 
@@ -152,64 +171,180 @@ def align_return_variables(
         canonical = template_renames.get(name, name)
         return canonical_to_block.get(canonical, canonical)
 
-    template_names = sorted(set(first) | {to_template(name) for name in second})
+    names = set(first) | {to_template(name) for name in second}
+    template_names = [name for name in template_order if name in names]
+    template_names.extend(sorted(names - set(template_names)))
     block_names = [to_block(name) for name in template_names]
     if not set(template_names) <= bound_first or not set(block_names) <= bound_second:
         return None
     return template_names, block_names
 
 
-# Callees whose result plausibly owns a resource or a finalizer: a class
-# instantiation (a capitalized name, by convention) or one of the standard
-# factories that return such objects under lowercase names. A weak reference
-# can only target a class instance, and ``__del__`` only lives on a class, so
-# the result of a lowercase function is kept alive only when the function is
-# a known resource factory; a factory outside this list is not detected.
-_RESOURCE_FACTORIES = frozenset(
-    {"open", "connect", "socket", "mkdtemp", "Popen", "popen", "urlopen", "create_connection"}
-)
+def _may_own_observable_value(expression: ast.AST) -> bool:
+    """Only a literal constant proves its result needs no lifetime retention.
+
+    Properties, subscription, arithmetic and other implicit protocols can
+    produce resources without an explicit Call node. A bare name can also
+    add the caller's last surviving reference when later code deletes its
+    original binding. Syntax alone does not prove those values harmless.
+    """
+    return not isinstance(expression, ast.Constant)
 
 
-def _allocates(expression: ast.AST) -> bool:
-    """Whether evaluating ``expression`` may construct an object whose lifetime is observable."""
-    for node in ast.walk(expression):
-        if isinstance(node, ast.Call):
-            callee = node.func
-            name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
-            if name in _RESOURCE_FACTORIES or (name[:1].isupper() and name not in _VALUE_TYPES):
-                return True
-    return False
+_LIFETIME_BINDINGS: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
 
 
-_VALUE_TYPES = frozenset({"True", "False", "None"})
+def _statement_lifetime_bindings(statement: ast.AST) -> FrozenSet[str]:
+    """Immutable ownership facts for one immutable statement, without AST references.
+
+    Every nonliteral result already seeds ownership, including bare aliases.
+    Consequently no fixed-point propagation is needed: a constant cannot
+    load an owned name, and every expression that can load one is opaque.
+    """
+    names: Set[str] = set()
+    for node in walk_own_scope(statement):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if value is not None and _may_own_observable_value(value):
+                for target in targets:
+                    names |= stored_names(target)
+        elif isinstance(node, ast.NamedExpr) and _may_own_observable_value(node.value):
+            names.add(node.target.id)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            names |= stored_names(node.target)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    names |= stored_names(item.optional_vars)
+    return frozenset(names)
 
 
 def lifetime_bound_names(block: Sequence[ast.stmt], initially_bound: Set[str]) -> Set[str]:
-    """Block-bound names whose object must outlive the helper.
+    """Fresh block-bound names whose opaque object must outlive the helper.
 
-    In the original function a local lives until the function returns or
-    rebinds it; a helper drops what it does not return when it returns. For
-    a plain value that is invisible; for the result of a call it may not be
-    (a ``NamedTemporaryFile`` is deleted, a weak reference dies). Every name
-    the block binds from an expression that instantiates a class or calls a
-    known resource factory (``_allocates``) is therefore returned and rebound
-    at the site. Nested functions and classes are their own scopes and are
-    not entered.
+    A literal constant has no observable finalizer; every other expression,
+    iterator target and manager target may. Facts depend only on each parsed
+    statement, never the surrounding block or caller's initial-binding set.
+    The weak memo dies with the immutable AST and is bypassed under
+    ``memoization_disabled``. The intersection is always a fresh mutable set.
     """
-    names: Set[str] = set()
+    owned: Set[str] = set()
     for statement in block:
-        for node in walk_own_scope(statement):
-            if isinstance(node, (ast.Assign, ast.AnnAssign)):
-                value = node.value
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                if value is not None and _allocates(value):
-                    for target in targets:
-                        names |= stored_names(target)
-            elif isinstance(node, ast.NamedExpr) and _allocates(node.value):
-                names.add(node.target.id)
-            elif isinstance(node, (ast.For, ast.AsyncFor)) and _allocates(node.iter):
-                names |= stored_names(node.target)
-    return names & initially_bound
+        facts: FrozenSet[str] = memoized_per_node(
+            _LIFETIME_BINDINGS, statement, _statement_lifetime_bindings
+        )
+        owned.update(facts)
+    return owned & initially_bound
+
+
+_POSITIONED_BINDINGS: "WeakKeyDictionary[ast.AST, Tuple[Tuple[Binding, Tuple[int, int]], ...]]" = (
+    WeakKeyDictionary()
+)
+
+
+def _positioned_bindings(function: ast.AST) -> Tuple[Tuple[Binding, Tuple[int, int]], ...]:
+    """Own-scope binding positions, with no strong reference to the parsed tree."""
+    assert isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+    positions = {
+        id(node): (node.lineno, node.col_offset)
+        for node in ast.walk(function)
+        if hasattr(node, "lineno") and hasattr(node, "col_offset")
+    }
+    return tuple(
+        (binding, positions[binding.node_id])
+        for binding in own_scope_bindings(function.body)
+        if binding.node_id in positions and not binding.deleted_on_exit
+    )
+
+
+_EXCEPTION_BOUNDARY_NODES: "WeakKeyDictionary[ast.AST, FrozenSet[int]]" = WeakKeyDictionary()
+
+
+def _exception_boundary_nodes(function: ast.AST) -> FrozenSet[int]:
+    """Nodes whose enclosing handler/manager remains outside an extracted helper."""
+    assert isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+    protected: Set[int] = set()
+    pending: List[Tuple[ast.AST, bool]] = [(statement, False) for statement in function.body]
+    boundaries: Tuple[type[ast.AST], ...] = (ast.Try, ast.With, ast.AsyncWith)
+    try_star = getattr(ast, "TryStar", None)
+    if try_star is not None:
+        boundaries += (try_star,)
+    while pending:
+        node, inside = pending.pop()
+        if inside:
+            protected.add(id(node))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        pending.extend(
+            (child, inside or isinstance(node, boundaries)) for child in ast.iter_child_nodes(node)
+        )
+    return frozenset(protected)
+
+
+def owned_binding_crosses_exception_boundary(
+    function: FunctionNode, nodes: Sequence[ast.stmt]
+) -> bool:
+    """A failed helper cannot transfer its new locals back to an outer handler.
+
+    Returning an owned local preserves normal completion, but an exception
+    bypasses that return. A caller's handler or manager can then continue
+    after the helper frame releases the value, whereas the original caller
+    kept it. Until exceptional transfers are modeled, refuse these sites.
+    A complete manager/try statement can still move as one block.
+    """
+    protected = memoized_per_node(_EXCEPTION_BOUNDARY_NODES, function, _exception_boundary_nodes)
+    if not nodes or id(nodes[0]) not in protected:
+        return False
+    bound = {binding.name for binding in own_scope_bindings(nodes) if not binding.deleted_on_exit}
+    return bool(lifetime_bound_names(nodes, bound))
+
+
+_LOCAL_ORDERS: "WeakKeyDictionary[ast.AST, Mapping[Tuple[str, int], Tuple[str, ...]]]" = (
+    WeakKeyDictionary()
+)
+
+
+def _compiled_local_orders(module: ast.AST) -> Mapping[Tuple[str, int], Tuple[str, ...]]:
+    """Compile without executing: names in each frame's local cleanup order."""
+    orders: Dict[Tuple[str, int], Tuple[str, ...]] = {}
+    if not isinstance(module, ast.Module):
+        return orders
+    try:
+        pending = [compile(module, "<towel-lifetime-order>", "exec", dont_inherit=True)]
+    except (SyntaxError, ValueError, TypeError):
+        return orders
+    while pending:
+        code = pending.pop()
+        orders[(code.co_name, code.co_firstlineno)] = tuple(
+            dict.fromkeys((*code.co_varnames, *code.co_cellvars))
+        )
+        pending.extend(item for item in code.co_consts if isinstance(item, CodeType))
+    return orders
+
+
+def local_cleanup_order(function: FunctionNode, analyzer: ScopeAnalyzer) -> Tuple[str, ...]:
+    """Original local slots, including cells; unavailable compiler evidence yields no order."""
+    module = analyzer.analyzed_tree
+    if not isinstance(module, ast.Module):
+        return ()
+    orders = memoized_per_node(_LOCAL_ORDERS, module, _compiled_local_orders)
+    first_line = min([function.lineno, *(node.lineno for node in function.decorator_list)])
+    return orders.get((function.name, first_line), ())
+
+
+def lifetime_order_preserved(
+    block: Sequence[ast.stmt],
+    function: FunctionNode,
+    analyzer: ScopeAnalyzer,
+    returned: Sequence[str],
+) -> bool:
+    """Returning owned values must preserve their relative finalization order."""
+    owned = lifetime_bound_names(block, set(returned))
+    if len(owned) < 2:
+        return True
+    original = [name for name in local_cleanup_order(function, analyzer) if name in owned]
+    return original == [name for name in returned if name in owned]
 
 
 class BlockAnalysis(EngineState):
@@ -254,6 +389,8 @@ class BlockAnalysis(EngineState):
         blocks: Sequence[Sequence[ast.stmt]],
         hygienic_renames: List[Dict[str, str]],
         modules: Optional[Sequence[ModuleText]] = None,
+        *,
+        thread_literal_pools: bool = False,
     ) -> Optional[Substitution]:
         """Unify two blocks, reusing the result for any pair with the same structure.
 
@@ -261,6 +398,8 @@ class BlockAnalysis(EngineState):
         to the typing forms they denote; the same structure calling other
         objects is another pair, so the forms are part of the key.
         """
+        if any(has_shared_expressions(block) for block in blocks):
+            return None
         keywords = self._translation_keywords()
         forms = tuple(
             self._typing_forms(block, module)
@@ -270,9 +409,15 @@ class BlockAnalysis(EngineState):
         )
         if len(blocks) != 2:
             return self.unifier.unify_blocks(
-                blocks, hygienic_renames, translation_keywords=keywords, typing_forms=forms
+                blocks,
+                hygienic_renames,
+                translation_keywords=keywords,
+                typing_forms=forms,
+                thread_literal_pools=thread_literal_pools,
             )
-        key = UnifyKey(self._sid(blocks[0]), self._sid(blocks[1]), forms[0], forms[1])
+        key = UnifyKey(
+            self._sid(blocks[0]), self._sid(blocks[1]), forms[0], forms[1], thread_literal_pools
+        )
         if key in self._unify_cache:
             stored = self._unify_cache[key]
             if stored is None:
@@ -283,7 +428,11 @@ class BlockAnalysis(EngineState):
                 target.update(source)
             return substitution
         result = self.unifier.unify_blocks(
-            blocks, hygienic_renames, translation_keywords=keywords, typing_forms=forms
+            blocks,
+            hygienic_renames,
+            translation_keywords=keywords,
+            typing_forms=forms,
+            thread_literal_pools=thread_literal_pools,
         )
         self._unify_cache[key] = (
             None if result is None else store_substitution(result, blocks, hygienic_renames)
@@ -318,6 +467,62 @@ class BlockAnalysis(EngineState):
             self._block_guard_cache[key] = verdict
         return verdict
 
+    def _if_binding_transfer(
+        self,
+        function: FunctionNode,
+        nodes: Sequence[ast.stmt],
+        source: str,
+        analyzer: ScopeAnalyzer,
+        *,
+        site: Optional[BlockSite],
+        returned: Optional[Sequence[str]] = None,
+    ) -> Optional[IfBindingTransfer]:
+        """Certify current ownership and outputs, sharing source proof only for owned analysis trees."""
+        module = analyzer.analyzed_tree
+        block_range = self._block_line_span(nodes)
+        if site is None or not isinstance(module, ast.Module) or block_range is None:
+            return None
+        reassignments = self._get_assignment_reuse(function)
+        snapshot = self._build_block_binding_snapshot(
+            function, nodes, block_range, reassignments, site=site
+        )
+        required = self._find_return_variables(
+            function, block_range, snapshot.initially_bound, nodes
+        )
+        outputs = tuple(sorted(required)) if returned is None else tuple(returned)
+        if not required <= set(outputs):
+            return None
+        return certify_if_binding_transfer(
+            source,
+            module,
+            function,
+            nodes,
+            IfTransferSite(site.module_digest, site.function_position, site.block_position),
+            outputs,
+        )
+
+    def _nested_bindings_rejected(
+        self,
+        function: FunctionNode,
+        nodes: Sequence[ast.stmt],
+        source: str,
+        analyzer: ScopeAnalyzer,
+        *,
+        site: Optional[BlockSite],
+        allow_if_transfer: bool,
+    ) -> bool:
+        """Default nested guard, with only an original-source two-site IF proof as an exception.
+
+        Additional nested clustered callers remain conservative. A construction
+        or snapshot cache hit never discharges the source certificate itself.
+        """
+        if not self._block_rejected(nested_bindings_escape, nodes, function, site=site):
+            return False
+        return (
+            not allow_if_transfer
+            or self._if_binding_transfer(function, nodes, source, analyzer, site=site) is None
+        )
+
     def _is_value_producing(self, block: Sequence[ast.stmt]) -> bool:
         """``is_value_producing`` memoized per block: a block is paired many times."""
         if not block:
@@ -348,8 +553,9 @@ class BlockAnalysis(EngineState):
         """Share one block/signature enumeration across pairing and clustering."""
         cached = self._signed_block_cache.get(function)
         if cached is None:
+            signatures = BlockSignatureIndex(function)
             cached = [
-                (span, nodes, extract_block_signature(nodes))
+                (span, nodes, extract_block_signature(nodes, index=signatures))
                 for span, nodes in self._extract_code_blocks(function)
                 if span[1] - span[0] + 1 >= self.min_lines
             ]
@@ -372,6 +578,15 @@ class BlockAnalysis(EngineState):
             List of (line_range, statements) tuples
         """
 
+        function_span = (function.lineno, function.end_lineno or function.lineno)
+        protected = tuple(
+            span
+            for span in self._extraction_exclusions.get(function, ())
+            if overlaps_protected(function_span, (span,))
+        )
+        if any(start <= function_span[0] and function_span[1] <= end for start, end in protected):
+            return []
+
         def extract_from_body(
             body: List[ast.stmt], parent: Optional[ast.stmt] = None
         ) -> List[Tuple[Tuple[int, int], List[ast.stmt]]]:
@@ -389,41 +604,57 @@ class BlockAnalysis(EngineState):
                 and body[0].col_offset == parent.col_offset
             )
 
+            # A statement contributes to many overlapping intervals. Compute
+            # the exact, additive rejection facts once for this suite, and
+            # materialize a statement slice only when a remaining guard or
+            # accepted candidate needs one. Caller-dependent guards retain
+            # their complete implementation after their necessary-condition
+            # gate; these prefixes never discharge a positive guard.
+            definitions = tuple(
+                accumulate(
+                    (
+                        int(isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))
+                        for stmt in body
+                    ),
+                    initial=0,
+                )
+            )
+            unspellable = tuple(
+                accumulate((int(holds_unspellable_int(s)) for s in body), initial=0)
+            )
+            returns = tuple(
+                accumulate((int(statement_facts(s).contains_return) for s in body), initial=0)
+            )
+            narrowing = tuple(
+                accumulate((int(may_establish_caller_narrowing(s)) for s in body), initial=0)
+            )
             for length in range(0 if is_elif else len(body), 0, -1):
                 for start in range(len(body) - length + 1):
-                    block = body[start : start + length]
-
-                    # Do not extract blocks that contain nested function/class definitions.
-                    # These statements establish new scopes whose bindings must remain in the
-                    # original function so later statements can reference them.
-                    if any(
-                        isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-                        for stmt in block
-                    ):
+                    stop = start + length
+                    if definitions[stop] != definitions[start]:
                         continue
-
-                    if any(holds_unspellable_int(stmt) for stmt in block):
+                    if unspellable[stop] != unspellable[start]:
                         continue
-
-                    span = self._block_line_span(block)
-                    if span is None:
+                    # The original span reads only the interval's endpoints.
+                    span = self._block_line_span((body[start], body[stop - 1]))
+                    if span is None or (protected and overlaps_protected(span, protected)):
                         continue
                     start_line, end_line = span
-                    line_count = end_line - start_line + 1
-
-                    # A block that returns on some path but not on every path
-                    # (a conditional return, or a lone expression statement,
-                    # which counts as value-producing) is never accepted: a
-                    # value-producing helper needs complete return coverage,
-                    # and one that also binds live variables is rejected as
-                    # mixed. Leaving such blocks out spares every pair they
-                    # would have formed; on pyflakes' test_other.py that is
-                    # 32,857 of 44,826 rejected pairs.
-                    if is_value_producing(block) and not has_complete_return_coverage(block):
+                    if end_line - start_line + 1 < self.min_lines:
                         continue
-
-                    if line_count >= self.min_lines:
-                        results.append(((start_line, end_line), block))
+                    produces_value = returns[stop] != returns[start] or (
+                        length == 1 and isinstance(body[start], ast.Expr)
+                    )
+                    block = body[start:stop]
+                    if produces_value and not has_complete_return_coverage(block):
+                        continue
+                    # Filter before maximal-block pairing, so an invalid
+                    # large window cannot hide a smaller valid extraction.
+                    if narrowing[stop] != narrowing[start] and caller_narrowing_leaves_with_block(
+                        function, block
+                    ):
+                        continue
+                    results.append(((start_line, end_line), block))
 
             # Recurse into nested bodies for control-flow/container statements
             for stmt in body:
@@ -439,13 +670,18 @@ class BlockAnalysis(EngineState):
 
                 # With and AsyncWith already covered by .body
                 # Try/Except/Finally blocks
-                if isinstance(stmt, ast.Try):
+                if isinstance(stmt, (ast.Try, ast.TryStar)):
                     if stmt.handlers:
                         for h in stmt.handlers:
                             if hasattr(h, "body") and isinstance(h.body, list):
                                 results.extend(extract_from_body(h.body))
                     if hasattr(stmt, "finalbody") and isinstance(stmt.finalbody, list):
                         results.extend(extract_from_body(stmt.finalbody))
+                # A case owns a statement suite even though Match has no
+                # .body. Its pattern and guard remain at the original site.
+                if isinstance(stmt, ast.Match):
+                    for case in stmt.cases:
+                        results.extend(extract_from_body(case.body))
 
             return results
 
@@ -531,6 +767,33 @@ class BlockAnalysis(EngineState):
             return cast(T, self._per_block_cache[key])
         return cast(T, self._per_block_cache.put(key, compute()))
 
+    def _frame_ownership(
+        self, function: FunctionNode, nodes: Sequence[ast.stmt], *, site: Optional[BlockSite]
+    ) -> FrameOwnership:
+        """Immutable caller/block ownership facts once per original block site."""
+        return self._per_block(
+            "frame_ownership", lambda: frame_ownership(function, nodes), site=site
+        )
+
+    def _argument_handoff_plan(
+        self,
+        function: FunctionNode,
+        nodes: Sequence[ast.stmt],
+        analyzer: ScopeAnalyzer,
+        call_node: ast.stmt,
+        helper_ast: ast.FunctionDef,
+    ) -> Optional[ArgumentHandoff]:
+        """Certify the current site, sharing only exact immutable ownership results."""
+        return argument_handoff_plan(
+            function,
+            nodes,
+            analyzer,
+            call_node,
+            helper_ast,
+            memo=self._argument_handoff_memo,
+            source_digest=self._module_digest(function),
+        )
+
     def _own_scope_locals(
         self, function: FunctionNode, site: Optional[BlockSite]
     ) -> FrozenSet[str]:
@@ -604,29 +867,21 @@ class BlockAnalysis(EngineState):
             block_nodes, reassignments
         )
 
-        bound_before_block: Set[str] = set()
-        block_start_line = block_range[0]
-        for stmt in func.body:
-            if hasattr(stmt, "lineno") and stmt.lineno < block_start_line:
-                stmt_bound: Set[str] = set()
-                stmt_reassigned: Set[str] = set()
-                _collect_bindings_and_reassignments(
-                    stmt, reassignments, stmt_bound, stmt_reassigned
-                )
-                bound_before_block.update(stmt_bound)
-
+        first, last = block_nodes[0], block_nodes[-1]
+        start = (first.lineno, first.col_offset)
+        end = (last.end_lineno or last.lineno, last.end_col_offset or last.col_offset)
+        bindings = memoized_per_node(_POSITIONED_BINDINGS, func, _positioned_bindings)
+        initial = [
+            (binding.name, position)
+            for binding, position in bindings
+            if not binding.reads_first and not reassignments.get(binding.node_id, False)
+        ]
+        # An enclosing compound statement starts before its child block, but
+        # bindings inside that block do not. Compare actual binding positions,
+        # including columns for multiple statements on one source line.
+        bound_before_block = {name for name, position in initial if position < start}
         bound_before_block.update(self._collect_parameter_names(func))
-
-        bound_after_block: Set[str] = set()
-        block_end_line = block_range[1]
-        for stmt in func.body:
-            if hasattr(stmt, "lineno") and stmt.lineno > block_end_line:
-                stmt_bound = set()
-                stmt_reassigned = set()
-                _collect_bindings_and_reassignments(
-                    stmt, reassignments, stmt_bound, stmt_reassigned
-                )
-                bound_after_block.update(stmt_bound)
+        bound_after_block = {name for name, position in initial if position >= end}
 
         initially_bound = bound_in_block - bound_before_block
 
@@ -661,19 +916,15 @@ class BlockAnalysis(EngineState):
         block_end_line = block_range[1]
         result: Set[str] = set()
         debug_enabled = debugging(VALIDATION)
-        continues = any(getattr(stmt, "lineno", 0) > block_end_line for stmt in func.body)
-        if block and continues and not self._is_value_producing(block):
+        if block and not self._is_value_producing(block):
+            # Keeping caller ownership also matters at the end of a nested
+            # suite, before its enclosing manager/finally cleanup executes.
             result |= lifetime_bound_names(block, initially_bound)
 
-        for stmt in func.body:
-            if not hasattr(stmt, "lineno") or stmt.lineno <= block_end_line:
-                continue
-
-            uses = self._used_names(stmt)
+        for usage in return_statement_usages(self, func, self._used_names, block_end_line):
+            uses = set(usage.names)
             if debug_enabled and debug_label:
-                VALIDATION.debug(
-                    f"  {debug_label}: stmt@{stmt.lineno} ({stmt.__class__.__name__}) uses {uses}"
-                )
+                VALIDATION.debug(f"  {debug_label}: stmt@{usage.lineno} ({usage.kind}) uses {uses}")
 
             overlap = uses & initially_bound
             if overlap:
@@ -761,22 +1012,6 @@ class BlockAnalysis(EngineState):
         return aug_assign_vars
 
     @staticmethod
-    def _strip_fstring_params(substitution: Substitution) -> None:
-        """Drop parameters that map to a whole f-string in the template block.
-
-        Parameterizing an entire ``JoinedStr`` would replace the f-string with a
-        single argument and lose its structure, so those parameters are removed.
-        """
-        fstring_params = []
-        for param_name, exprs in substitution.param_expressions.items():
-            for block_idx, expr in exprs:
-                if block_idx == 0 and isinstance(expr, ast.JoinedStr):
-                    fstring_params.append(param_name)
-                    break
-        for param_name in fstring_params:
-            del substitution.param_expressions[param_name]
-
-    @staticmethod
     def _working_free_vars(
         substitution: Substitution, aug_assign_vars: Set[str], free_vars1: Set[str]
     ) -> Set[str]:
@@ -803,7 +1038,7 @@ class BlockAnalysis(EngineState):
 
         The answer reads the scopes enclosing the function and the module's
         hazards: the same nested function under an enclosing function that
-        rebinds the name it reads, or in a module that reflects, has another.
+        rebinds the name it reads has another answer.
         """
         return self._per_block(
             "rebound_external_names",
@@ -896,7 +1131,7 @@ class BlockAnalysis(EngineState):
         statement = body[0]
         thunks = frozenset(
             argument.arg
-            for argument in func.args.args
+            for argument in (*func.args.posonlyargs, *func.args.args)
             if argument.arg.startswith(GENERATED_PARAMETER_PREFIX)
         )
         if isinstance(statement, ast.Return):
@@ -1023,7 +1258,7 @@ class BlockAnalysis(EngineState):
         """
         thunks = frozenset(
             argument.arg
-            for argument in func.args.args
+            for argument in (*func.args.posonlyargs, *func.args.args)
             if argument.arg.startswith(GENERATED_PARAMETER_PREFIX)
         )
         values: List[ast.expr] = []

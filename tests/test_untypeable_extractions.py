@@ -22,19 +22,32 @@ three comparison pairs, rich's progress columns and JSON and bar ``__init__``s,
 mistune's image attributes, nox's environments) are four patterns; each has a
 miniature here, run under strict mypy as those projects are.
 
-Two are decided from the proposal alone and cost no check: a lambda at the call
-that needs a test's narrowing, and, under mypy, a collection whose partial type
-the block completed. Two need the checker's verdict, because whether the code
-after the call needed the narrower type, and whether another declaration of an
-attribute survives, are questions of declared types: they cost the one check
-that shows them.
+Caller-side assertions and guarded initialization are now kept at the call site
+during construction (test_narrowing_boundaries.py). The checker-side judgment
+remains a backstop for narrowing forms construction does not recognize.
+
+A collection whose partial type the block completed is decided from the
+proposal alone and costs no check. A deferred result needing narrowing, code
+after a call needing narrowing, and attribute declarations leaving their class
+need the checker's verdict: they cost the checks that establish the refusal.
 """
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
+from typing import Optional
+
+import pytest
 
 from tests.typed_fixtures import apply_one, requires_mypy
+from towel.type_inference import TypeDiagnostic
+from towel.unification.annotation_ladder import (
+    Rejection,
+    Unanswerable,
+    narrowing_refused_in_thunk,
+)
+from towel.unification.exceptions import Untypeable
 
 
 def _declined(outcome: object, reason: str) -> str:
@@ -46,50 +59,7 @@ def _declined(outcome: object, reason: str) -> str:
 
 
 @requires_mypy
-def test_a_narrowing_the_code_after_the_call_relied_on_is_declined_after_one_check(
-    tmp_path: Path,
-) -> None:
-    """packaging's ``Version.__lt__``/``__le__``: ``if self._key_cache is None: ...`` then ``<``."""
-    outcome = apply_one(
-        tmp_path,
-        """
-        def _key(a: int, b: int) -> tuple[int, int]:
-            return (a, b)
-
-
-        class Version:
-            def __init__(self, a: int, b: int) -> None:
-                self.a = a
-                self.b = b
-                self._key_cache: tuple[int, int] | None = None
-
-            def __lt__(self, other: object) -> bool:
-                if isinstance(other, Version):
-                    if self._key_cache is None:
-                        self._key_cache = _key(self.a, self.b)
-                    if other._key_cache is None:
-                        other._key_cache = _key(other.a, other.b)
-                    return self._key_cache < other._key_cache
-                return NotImplemented
-
-            def __le__(self, other: object) -> bool:
-                if isinstance(other, Version):
-                    if self._key_cache is None:
-                        self._key_cache = _key(self.a, self.b)
-                    if other._key_cache is None:
-                        other._key_cache = _key(other.a, other.b)
-                    return self._key_cache <= other._key_cache
-                return NotImplemented
-        """,
-        pick="__lt__ and __le__",
-    )
-    message = _declined(outcome, "narrows what its caller reads after the call")
-    assert "_key_cache" in message
-    assert outcome.prospective_checks == 1, outcome.checked_helpers
-
-
-@requires_mypy
-def test_a_lambda_that_needs_a_tests_narrowing_is_declined_without_a_check(
+def test_a_lambda_that_needs_a_tests_narrowing_is_declined_after_one_check(
     tmp_path: Path,
 ) -> None:
     """rich's progress columns: ``int(task.total) if task.total is not None else completed``."""
@@ -118,13 +88,52 @@ def test_a_lambda_that_needs_a_tests_narrowing_is_declined_without_a_check(
                 if task.finished
                 else fallback
             )
-            return value * 2
+            return value + 1
         """,
         pick="describe_total and describe_done",
     )
     message = _declined(outcome, "narrows what a call-site lambda reads")
     assert "task.total is not None" in message
-    assert outcome.prospective_checks == 0, outcome.checked_helpers
+    assert outcome.prospective_checks == 1, outcome.checked_helpers
+    assert all("Any" not in signature for signature in outcome.checked_helpers)
+
+
+@requires_mypy
+def test_a_nullable_result_aliased_before_consumption_is_declined_after_one_check(
+    tmp_path: Path,
+) -> None:
+    outcome = apply_one(
+        tmp_path,
+        """
+        class Task:
+            def __init__(self, total: float | None, completed: float, finished: bool) -> None:
+                self.total = total
+                self.completed = completed
+                self.finished = finished
+
+        def describe_total(task: Task, completed: int) -> int:
+            if task.total is not None:
+                total = task.total
+                value = int(total)
+            else:
+                value = completed
+            return value + 1
+
+        def describe_done(task: Task, fallback: int) -> int:
+            if task.finished:
+                total = task.completed
+                value = int(total)
+            else:
+                value = fallback
+            return value + 1
+        """,
+        pick="describe_total and describe_done",
+    )
+    message = _declined(outcome, "narrows what a call-site lambda reads")
+    assert "task.total is not None" in message
+    assert "float | None" in message
+    assert outcome.prospective_checks == 1, outcome.checked_helpers
+    assert all("Any" not in signature for signature in outcome.checked_helpers)
 
 
 @requires_mypy
@@ -227,3 +236,108 @@ def test_an_annotated_collection_is_no_partial_type(tmp_path: Path) -> None:
         pick="image_attributes and figure_attributes",
     )
     assert outcome.error is None, outcome.error
+
+
+def _refused_caller_operand(helper: ast.FunctionDef, call: ast.Call) -> Optional[Unanswerable]:
+    module = ast.unparse(helper) + "\n\ndef caller(task):\n    return " + ast.unparse(call) + "\n"
+    line = len(module.splitlines())
+    rejection = Rejection(
+        (
+            TypeDiagnostic(
+                "/p/module.py",
+                'Argument 1 to "int" has incompatible type "float | None"; expected "SupportsInt"',
+                line,
+            ),
+        ),
+        "/p/module.py",
+        helper.name,
+        module,
+        {"/p/module.py": module},
+    )
+    return narrowing_refused_in_thunk(helper, rejection)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "return result() if predicate() else fallback",
+        "if predicate():\n    return result()\nreturn fallback",
+        "if not predicate():\n    return fallback\nelse:\n    return result()",
+        "while predicate():\n    return result()\nreturn fallback",
+        "return predicate() and result()",
+    ],
+)
+def test_a_deferred_predicate_governs_a_checker_refused_thunk(body: str) -> None:
+    """Deferring the test preserves the relationship when its operand is actually refused."""
+    source = "def helper(predicate, result, fallback):\n" + "\n".join(
+        "    " + line for line in body.splitlines()
+    )
+    helper = ast.parse(source).body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    call = ast.parse(
+        "helper(lambda: task.total is not None, lambda: int(task.total), 0)", mode="eval"
+    ).body
+    assert isinstance(call, ast.Call)
+    original = (ast.dump(helper), ast.dump(call))
+    verdict = _refused_caller_operand(helper, call)
+    assert verdict is not None
+    assert verdict.reason is Untypeable.NARROWING_READ_IN_THUNK
+    assert "task.total is not None" in verdict.detail
+    assert (ast.dump(helper), ast.dump(call)) == original
+
+
+@pytest.mark.parametrize(
+    "test, predicate, result",
+    [
+        ("predicate(0)", "lambda: task.total is not None", "lambda: int(task.total)"),
+        ("predicate(unused=0)", "lambda: task.total is not None", "lambda: int(task.total)"),
+        ("predicate.__call__()", "lambda: task.total is not None", "lambda: int(task.total)"),
+        ("predicate()", "lambda unused=task: task.total is not None", "lambda: int(task.total)"),
+        ("predicate()", "lambda unused: task.total is not None", "lambda: int(task.total)"),
+        ("predicate()", "lambda *unused: task.total is not None", "lambda: int(task.total)"),
+        ("predicate()", "lambda **unused: task.total is not None", "lambda: int(task.total)"),
+        ("predicate", "lambda: task.total is not None", "lambda: int(task.total)"),
+        ("predicate()", "lambda: task.finished", "lambda: int(task.total)"),
+        ("predicate()", "lambda: task.total >= 0", "lambda: int(task.total)"),
+        ("predicate()", "lambda: task.total is not None", "lambda: int(task.completed)"),
+    ],
+)
+def test_only_the_exact_deferred_predicate_proves_a_lost_refinement(
+    test: str, predicate: str, result: str
+) -> None:
+    """Unsupported calls, binders and unrelated reads retain checker fallback."""
+    helper = ast.parse(
+        f"def helper(predicate, result, fallback):\n    return result() if {test} else fallback"
+    ).body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    call = ast.parse(f"helper({predicate}, {result}, 0)", mode="eval").body
+    assert isinstance(call, ast.Call)
+    assert _refused_caller_operand(helper, call) is None
+
+
+def test_a_deferred_truth_test_keeps_the_checker_refinement_backstop() -> None:
+    """Only an actual operand diagnostic establishes that a truth test was needed."""
+    module = (
+        "def helper(predicate, result):\n"
+        "    return result() if predicate() else 0\n"
+        "\n"
+        "def caller(task):\n"
+        "    return helper(lambda: task.total, lambda: task.total / 2)\n"
+    )
+    helper = ast.parse(module).body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    for diagnostic, expected in (
+        ('Unsupported operand types for / ("None" and "int")', True),
+        ('Argument 1 to "helper" has incompatible type "float | None"; expected "float"', False),
+    ):
+        rejection = Rejection(
+            (TypeDiagnostic("/p/module.py", diagnostic, 5),),
+            "/p/module.py",
+            "helper",
+            module,
+            {"/p/module.py": module},
+        )
+        verdict = narrowing_refused_in_thunk(helper, rejection)
+        assert (verdict is not None) is expected
+        if verdict is not None:
+            assert verdict.reason is Untypeable.NARROWING_READ_IN_THUNK

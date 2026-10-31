@@ -1,0 +1,26 @@
+{
+  "utc": "2026-10-07T02:29:07.027170+00:00",
+  "source_commit": "04d2710a28228b12cb64edefb563093866deaeb4",
+  "runtime_tree": "792623860332f187d72fa263a9e2aeb6976d930c",
+  "test_tree": "87e5fd1e9652c785d01be91aacfbcbfb289d4e51",
+  "git_status": "",
+  "finding_closure": {
+    "PARAM-1": "completed helper placement; full final ownership interface guard",
+    "PARAM-2": "final formal/wrapper cost compared with tiny useful sharing, after cluster",
+    "CACHE-1": "inner refusal retention removed; each submitted variant rechecked",
+    "DOC-1": "newly differing-expression budget distinguished from complete ownership interface",
+    "PERF-1": "immutable result facts scoped to a single unification; copies/reset/release",
+    "MAINT-1": "obsolete whole JoinedStr removal scan removed; low-level substitution unchanged"
+  },
+  "pending": [
+    "native full suite and coverage finish",
+    "bounded complete CLI memo comparison",
+    "final documentation and artifact refresh"
+  ],
+  "excluded": [
+    "matrix",
+    "corpus",
+    "publication",
+    "push"
+  ]
+}

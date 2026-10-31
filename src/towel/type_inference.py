@@ -74,6 +74,7 @@ from typing import (
 )
 
 from .diagnostics import LOG
+from .mypy_ci_policy import UnsupportedMypyPolicy, declared_mypy_root, mypy_policy
 from .project_tools import ToolChoice, python_tool_environment
 from .unification.exceptions import TowelError
 from .checker_project import (
@@ -763,6 +764,26 @@ class MypyInferrer:
                 root = _configured_root(Path(sources[0].path), "mypy") or _checker_root(
                     Path(sources[0].path)
                 )
+            try:
+                policy = mypy_policy(
+                    root,
+                    (
+                        [
+                            Path(path)
+                            for path in self._run_targets
+                            if Path(path).is_relative_to(root)
+                        ]
+                        if self._run_targets is not None
+                        else [Path(source.path) for source in sources]
+                    ),
+                )
+            except (UnsupportedMypyPolicy, OSError, UnicodeError) as error:
+                return CheckFailure(f"Cannot establish mypy CI policy: {error}")
+            for provenance in policy.provenance:
+                note = f"mypy CLI policy {policy.flags or 'defaults'} from {provenance}"
+                if note not in self._warned:
+                    self._warned.add(note)
+                    LOG.info(note)
             group = self._group_caches.setdefault(
                 root.resolve(),
                 (
@@ -777,6 +798,9 @@ class MypyInferrer:
             request = {
                 "root": os.path.realpath(root),
                 "config": _mypy_config(root),
+                "cli_flags": policy.flags,
+                "cli_provenance": policy.provenance,
+                "cli_targets": [str(path) for path in policy.targets],
                 "sources": {os.path.realpath(source.path): source.text for source in sources},
                 # A complete build is a check of the project, any other a probe.
                 "complete": complete,
@@ -1318,32 +1342,56 @@ class PyrightOracle:
         self._warmed.clear()
 
     def _diagnostics(self, file_path: str, text: str) -> _PyrightDiagnostics | CheckFailure:
-        if self._forked():
-            return CheckFailure(_AFTER_FORK)
         original = Path(file_path).resolve()
         root = _configured_root(original, "pyright") or _checker_root(original)
+        return self._probe_diagnostics(root, {str(original): text})[str(original)]
+
+    def _probe_diagnostics(
+        self, root: Path, sources: Mapping[str, str]
+    ) -> Mapping[str, _PyrightDiagnostics | CheckFailure]:
+        """Probe one revision of a project's modules in one checker exchange.
+
+        Each path is resolved and belongs to this checker root. A reveal's
+        diagnostics stay attached to its own file, even when imported modules
+        publish diagnostics at the same line. Project validation remains a
+        separate operation over every configured consumer.
+        """
+        if self._forked():
+            return dict.fromkeys(sources, CheckFailure(_AFTER_FORK))
         warm = self._warm(root, ())
         if warm is not None:
             try:
-                published = warm.diagnostics({str(original): text})
+                published = warm.diagnostics(sources)
             except SessionFailure as error:
                 self._abandon_sessions(error)
             else:
-                # Only this module's diagnostics: a probe's answer is read from
-                # the line it landed on, and the command line saw this file alone.
-                return _PyrightDiagnostics(
-                    tuple(_as_entry(entry) for entry in published.get(str(original), ()))
-                )
+                return {
+                    path: _PyrightDiagnostics(
+                        tuple(_as_entry(entry) for entry in published.get(path, ()))
+                    )
+                    for path in sources
+                }
         copy = self._probe_copy(root)
         if isinstance(copy, CheckFailure):
-            return copy
+            return dict.fromkeys(sources, copy)
         try:
             # The copy follows the project, then shows the probe as the module
             # itself, where every import it makes resolves as it would there.
-            copy.apply({str(original): text})
+            copy.apply(sources)
         except (OSError, ValueError, UnicodeError) as error:
-            return CheckFailure(f"Could not write a pyright probe into Towel's copy: {error}")
-        return self._run_diagnostics(root, copy.tree, [str(copy.path_of(str(original)))])
+            failure = CheckFailure(f"Could not write a pyright probe into Towel's copy: {error}")
+            return dict.fromkeys(sources, failure)
+        result = self._run_diagnostics(
+            root, copy.tree, [str(copy.path_of(path)) for path in sources]
+        )
+        if isinstance(result, CheckFailure):
+            return dict.fromkeys(sources, result)
+        by_file: Dict[str, List[_PyrightDiagnostic]] = {path: [] for path in sources}
+        for diagnostic in result.diagnostics:
+            original = copy.original_of(diagnostic["file"])
+            if original in by_file:
+                by_file[original].append(diagnostic)
+        return {path: _PyrightDiagnostics(tuple(entries)) for path, entries in by_file.items()}
 
     def _run_diagnostics(
         self, root: Path, project: Path, paths: Sequence[str] = ()
@@ -1476,6 +1524,8 @@ class PyrightOracle:
         for request in requests:
             if self.reports_on(request.file_path):
                 by_file.setdefault(request.file_path, []).append(request)
+        probes: Dict[str, Dict[int, RevealKey]] = {}
+        groups: Dict[Path, Dict[str, str]] = {}
         for file_path, file_requests in by_file.items():
             text = file_requests[0].source
             ordered = sorted(file_requests, key=lambda request: request.line)
@@ -1491,13 +1541,23 @@ class PyrightOracle:
                 for index in range(len(request.expressions)):
                     probe_lines[request.line + shift + index] = (file_path, request.line, index)
                 shift += len(request.expressions)
-            result = self._diagnostics(file_path, text)
+            probes[file_path] = probe_lines
+            original = Path(file_path).resolve()
+            root = _configured_root(original, "pyright") or _checker_root(original)
+            groups.setdefault(root, {})[str(original)] = text
+        results = {
+            path: result
+            for root, replacements in groups.items()
+            for path, result in self._probe_diagnostics(root, replacements).items()
+        }
+        for file_path in by_file:
+            result = results[str(Path(file_path).resolve())]
             if isinstance(result, CheckFailure):
                 unanswered[file_path] = result.reason
                 continue
             for diagnostic in result.diagnostics:
                 match = _PYRIGHT_REVEALED.match(str(diagnostic.get("message", "")))
-                key = probe_lines.get(self._line(diagnostic))
+                key = probes[file_path].get(self._line(diagnostic))
                 if match is not None and key is not None:
                     revealed[key] = match.group("type")
         return Revealed(revealed, unanswered)
@@ -1866,7 +1926,7 @@ def checks_in_turn(
 
 
 def reveal_by_each(
-    oracle: TypeOracle, requests: Sequence[RevealRequest]
+    oracle: TypeOracle, requests: Sequence[RevealRequest], *, reported_only: bool = False
 ) -> Tuple[Mapping[RevealKey, str], ...]:
     """What each checker behind ``oracle`` reveals for ``requests``, one answer per checker.
 
@@ -1874,11 +1934,22 @@ def reveal_by_each(
     ``reveal`` asks. Whether a checker looks at a line at all is a question for
     every checker that verifies: mypy and pyright each take their own platform
     and Python version, and code one of them skips it verifies nothing about.
+    ``reported_only`` limits verification probes to each checker's own
+    reporting scope. Naming an excluded file as a probe target would make mypy
+    follow imports the project's check never reads, which can fail the whole
+    batch before any covered module is answered.
     """
     if isinstance(oracle, CombinedOracle):
-        return tuple(answer for one in oracle.checkers for answer in reveal_by_each(one, requests))
+        return tuple(
+            answer
+            for one in oracle.checkers
+            for answer in reveal_by_each(one, requests, reported_only=reported_only)
+        )
     if isinstance(oracle, _RelocatedOracle):
-        return oracle.reveal_by_each(requests)
+        return oracle.reveal_by_each(requests, reported_only=reported_only)
+    if reported_only:
+        covered = reports_by_each(oracle, [request.file_path for request in requests])[0]
+        requests = [request for request in requests if request.file_path in covered]
     return (oracle.reveal(requests),)
 
 
@@ -1996,10 +2067,12 @@ class _RelocatedOracle:
         return self._outputs(self._oracle.reveal(self._originals(requests)), requests)
 
     def reveal_by_each(
-        self, requests: Sequence[RevealRequest]
+        self, requests: Sequence[RevealRequest], *, reported_only: bool = False
     ) -> Tuple[Mapping[RevealKey, str], ...]:
         """Each checker's revelations, at the copy's paths; see :func:`reveal_by_each`."""
-        answers = reveal_by_each(self._oracle, self._originals(requests))
+        answers = reveal_by_each(
+            self._oracle, self._originals(requests), reported_only=reported_only
+        )
         return tuple(self._outputs(answer, requests) for answer in answers)
 
     def begin_checked_run(self, analyzed: Sequence[str]) -> None:
@@ -2204,7 +2277,7 @@ def type_oracle_for_project(path: Path) -> ToolChoice[TypeOracle]:
     :class:`CheckerNotInstalled`: substituting another, or none, would verify
     against a check the project does not run.
     """
-    mypy_root = _configured_root(path, "mypy")
+    mypy_root = _configured_root(path, "mypy") or declared_mypy_root(path)
     pyright_root = _configured_root(path, "pyright")
     mypy: Optional[TypeOracle] = None
     pyright: Optional[TypeOracle] = None

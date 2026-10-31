@@ -1,0 +1,7 @@
+name: Strict type check
+on: [push, pull_request]
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: mypy --strict pkg

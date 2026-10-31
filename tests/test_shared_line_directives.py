@@ -183,6 +183,19 @@ def test_the_engine_declines_such_a_pair_by_name(
 ) -> None:
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent(source), encoding="utf-8")
+    original = _engine()
+    original.analyze_file(str(path))
+    assert "owned_binding_frame_boundary" in original.declined_pairs
+    # Keep identical physical-line/directive boundaries; literal bindings
+    # make their ownership harmless while the duplicated print remains useful.
+    source = source.replace("def f1(n):", "def f1():").replace("def f2(n):", "def f2():")
+    source = source.replace("a = n + 1;", "a = 1;").replace("a: int = n + 2;", "a: int = 2;")
+    source = (
+        source.replace("total = sum(items)", "total = 0")
+        .replace("count = len(items)", "count = 1")
+        .replace("scaled = count * 3", "scaled = 3")
+    )
+    path.write_text(textwrap.dedent(source), encoding="utf-8")
     engine = _engine()
     proposals = engine.analyze_file(str(path))
     assert "directive_on_shared_line" in engine.declined_pairs

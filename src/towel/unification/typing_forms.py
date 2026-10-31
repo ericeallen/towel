@@ -56,6 +56,7 @@ from .module_bindings import ModuleBindings, dotted_name, global_bindings, impor
 from .statement_facts import imported_binding_name
 from .static_positions import TYPING_FORM_NAMES, TypingForms, callee_spellings
 from ..source_text import try_read_source
+from ..analysis_sources import ParserConfiguration, parser_configuration, parsing_is_pure
 
 _TYPING_MODULES = ("typing", "typing_extensions")
 
@@ -228,18 +229,21 @@ def _scoped_bindings(
 
 # One module's facts, keyed by its source so a rewritten module never answers
 # from the version it replaced; a pure function of the text.
-_FACTS: BoundedCache[str, Optional[_ModuleFacts]] = BoundedCache(256)
+_FACTS: BoundedCache[Tuple[str, ParserConfiguration], Optional[_ModuleFacts]] = BoundedCache(256)
 
 
 def _module_facts(source: str) -> Optional[_ModuleFacts]:
     """What ``source`` binds, or None when it will not parse."""
-    if source in _FACTS:
-        return _FACTS[source]
+    key = source, parser_configuration()
+    if type(source) is str and key in _FACTS:
+        return _FACTS[key]
+    cacheable = parsing_is_pure(source)
     bindings = global_bindings(source)
     if bindings is None:
-        return _FACTS.put(source, None)
+        return _FACTS.put(key, None) if cacheable else None
     scoped, stars = _scoped_bindings(ast.parse(source))
-    return _FACTS.put(source, _ModuleFacts(bindings, scoped, stars))
+    result = _ModuleFacts(bindings, scoped, stars)
+    return _FACTS.put(key, result) if cacheable else result
 
 
 # What a name a followed module binds denotes, keyed by the module file's

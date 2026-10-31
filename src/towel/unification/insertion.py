@@ -14,14 +14,18 @@
 
 """Where a generated helper and its import go in a module.
 
-A module-level helper is placed before the first definition, after the
+A module helper shared with other files is inert and precedes ordinary
+imports and effects, so a partial host can supply it during import reentry.
+It follows the header, docstring and future imports. A same-file helper is
+placed before the first definition, after the
 docstring and imports, or after the last definition its annotations name
 when nothing before that point can run code at import (``ImportTimeCode``);
 a method helper goes at the end of its class body; a function-local helper
 goes before the first executable statement of its function. A new import
 goes after every statement ahead of the first definition that imports or
 can run code at import, and never above a ``#!`` line, an encoding
-declaration or the leading comment block (:func:`import_line`). The
+declaration or the leading comment block (:func:`import_line`). Typing
+imports join the imports above module initialization. The
 positions are found from the parsed module, never from text, so imports
 inside strings and comments are never mistaken for imports. Rendered lines
 are re-indented to the unit the file uses.
@@ -101,8 +105,15 @@ def _first_line(statement: ast.stmt) -> int:
     return statement.lineno
 
 
-def import_line(lines: Sequence[str], tree: ast.Module, source: str) -> int:
+def import_line(
+    lines: Sequence[str], tree: ast.Module, source: str, *, typing_only: bool = False
+) -> int:
     """The 0-based index of the line a new import is inserted before.
+
+    With ``typing_only``, the standard-library typing import or an inert
+    type-only guard joins the existing imports, before module initialization
+    that would otherwise cause Ruff E402. Imports from helper modules retain
+    their effect ordering.
 
     Moving an import earlier is itself a reordering: whatever the import
     loads then runs before every statement it was placed above. So the
@@ -129,7 +140,9 @@ def import_line(lines: Sequence[str], tree: ast.Module, source: str) -> int:
     ):
         position = body[0].end_lineno or body[0].lineno
     try:
-        runs_code: Sequence[bool] = ImportTimeCode(source).statements()
+        runs_code: Sequence[bool] = (
+            [False] * len(body) if typing_only else ImportTimeCode(source).statements()
+        )
     except (SyntaxError, ValueError):
         runs_code = [True] * len(body)
     for statement, effectful in zip(body, runs_code):
@@ -137,6 +150,39 @@ def import_line(lines: Sequence[str], tree: ast.Module, source: str) -> int:
             break
         if effectful or isinstance(statement, (ast.Import, ast.ImportFrom)):
             position = max(position, statement.end_lineno or statement.lineno)
+    return position
+
+
+def early_helper_line(lines: Sequence[str], tree: ast.Module) -> int:
+    """Before executable module statements, after its header, docstring and future imports.
+
+    A helper imported from a partially initialized module must already exist
+    when that module's imports or other effects reenter a borrower. Its
+    definition must be inert; the materializer checks that separately. A
+    protected statement sharing a line with executable code leaves no whole
+    line at which that ordering can be preserved, so that proposal is refused.
+    """
+    first = _first_line(tree.body[0]) if tree.body else len(lines) + 1
+    position = _after_header(lines[: first - 1])
+    for index, statement in enumerate(tree.body):
+        docstring = (
+            index == 0
+            and isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        )
+        future = (
+            isinstance(statement, ast.ImportFrom)
+            and statement.level == 0
+            and statement.module == "__future__"
+        )
+        if not docstring and not future:
+            if statement.lineno <= position:
+                raise RefactoringError(
+                    "A shared helper cannot precede executable code on its module header's line"
+                )
+            break
+        position = max(position, statement.end_lineno or statement.lineno)
     return position
 
 
@@ -179,10 +225,10 @@ class InsertionPoints(EngineState):
             self._source_lines_cache.pop(next(iter(self._source_lines_cache)))
         return lines
 
-    def _find_import_position(self, lines: List[str]) -> int:
+    def _find_import_position(self, lines: List[str], *, typing_only: bool = False) -> int:
         """Return the 0-based line index at which to insert a new import (:func:`import_line`)."""
         source = "".join(lines)
-        return import_line(lines, self._parse_source(source), source)
+        return import_line(lines, self._parse_source(source), source, typing_only=typing_only)
 
     def _get_indent(self, line: str) -> str:
         """Get the indentation of a line."""

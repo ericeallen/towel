@@ -24,6 +24,8 @@ All tests read from test_examples in read-only mode.
 
 import unittest
 import ast
+import tempfile
+from pathlib import Path
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import get_test_example_path, assert_file_not_modified
 
@@ -95,7 +97,18 @@ class TestReturnValuePropagation(unittest.TestCase):
         proposals = self.engine.analyze_file(str(self.example_path))
 
         no_ret = [p for p in proposals if "no_return" in p.description.lower()]
-        self.assertGreater(len(no_ret), 0, "Should find no-return duplicates")
+        # The original loop can leave its iteration target unbound; retain it
+        # unchanged instead of returning a potentially missing owned binding.
+        self.assertEqual(no_ret, [])
+        safe_source = (
+            "def no_return_a(x):\n    print(x)\n    print(x + 1)\n    print(x * 2)\n\n"
+            "def no_return_b(y):\n    print(y)\n    print(y + 1)\n    print(y * 2)\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "safe.py"
+            path.write_text(safe_source)
+            no_ret = self.engine.analyze_file(str(path))
+        self.assertTrue(no_ret, "Binding-free implicit-None bodies remain extractable")
 
         # Neither the helper nor the call returns a value.
         for prop in no_ret:

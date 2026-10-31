@@ -155,11 +155,14 @@ class E(Exception):
 
 
 class _Context:
+    def __init__(self, suppresses: bool = False) -> None:
+        self.suppresses = suppresses
+
     def __enter__(self) -> int:
         return 0
 
-    def __exit__(self, *exc_info: object) -> None:
-        return None
+    def __exit__(self, *exc_info: object) -> bool:
+        return self.suppresses
 
 
 def _environment(rng: random.Random) -> Dict[str, object]:
@@ -179,7 +182,7 @@ def _environment(rng: random.Random) -> Dict[str, object]:
         "t": t,
         "h": h,
         "E": E,
-        "ctx": _Context,
+        "ctx": lambda: _Context(rng.random() < 0.5),
         "suppress": contextlib.suppress,
         "__builtins__": __builtins__,
     }

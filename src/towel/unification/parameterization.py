@@ -33,12 +33,14 @@ from .parameters import fresh_parameter_name
 from .scope_analyzer import ScopeAnalyzer
 from ..diagnostics import UNIFIER
 
-from .substitution import Substitution
+from .substitution import Substitution, structural_text
+from .constant_consistency import constant_identity
 from .binding_context import bound_variables_in_block
 from .static_positions import is_statically_read
 from .statement_facts import loaded_names
 from .statement_facts import memoized_per_node
 from .unifier_state import UnifierState
+from .bounded_cache import memoizing
 
 
 def _named_expr_targets(statement: ast.AST) -> Tuple[ast.AST, ...]:
@@ -122,7 +124,10 @@ class Parameterization(UnifierState):
         Returns:
             True if parameterization succeeded
         """
-        if not _parameterizable(exprs) or self._read_where_it_stands(exprs, block_indices):
+        occurrences = any(isinstance(expr, ast.Constant) for expr in exprs)
+        if not _parameterizable(exprs) or self._read_where_it_stands(
+            exprs, block_indices, occurrences=occurrences
+        ):
             return False
         # Expressions already mapped must all map to one parameter.
         existing_params = [
@@ -130,6 +135,35 @@ class Parameterization(UnifierState):
         ]
         if all(p is not None for p in existing_params):
             return len(set(existing_params)) == 1
+        if any(p is not None for p in existing_params):
+            return False
+        paths = [substitution.source_path(idx, expr) for idx, expr in zip(block_indices, exprs)]
+        if occurrences and any(path is None for path in paths):
+            return False
+        if all(isinstance(expr, ast.Constant) for expr in exprs):
+            column = tuple(
+                (idx, constant_identity(expr.value))
+                for idx, expr in zip(block_indices, exprs)
+                if isinstance(expr, ast.Constant)
+            )
+            for parameter, expressions in substitution.param_expressions.items():
+                if (
+                    substitution.literal_pool is not None
+                    and parameter == substitution.literal_pool.parameter
+                ):
+                    continue
+                if not all(isinstance(expr, ast.Constant) for _, expr in expressions):
+                    continue
+                existing_column = tuple(
+                    (idx, constant_identity(expr.value))
+                    for idx, expr in expressions
+                    if isinstance(expr, ast.Constant)
+                )
+                if existing_column == column:
+                    for idx, expr, path in zip(block_indices, exprs, paths):
+                        assert path is not None
+                        substitution.add_occurrence_mapping(idx, path, expr, parameter)
+                    return True
         if len(substitution.param_expressions) >= self.max_parameters:
             return False
         common_bound_vars = self._common_bound_variables(exprs, block_indices)
@@ -151,16 +185,33 @@ class Parameterization(UnifierState):
                     )
                     return False
         param_name = self._fresh_parameter_name()
-        for idx, expr in zip(block_indices, exprs):
-            substitution.add_mapping(idx, expr, param_name, bound_vars=common_bound_vars)
+        for idx, expr, path in zip(block_indices, exprs, paths):
+            if occurrences:
+                assert path is not None
+                substitution.add_occurrence_mapping(idx, path, expr, param_name, common_bound_vars)
+            else:
+                substitution.add_mapping(idx, expr, param_name, bound_vars=common_bound_vars)
         return True
 
-    def _read_where_it_stands(self, exprs: Sequence[ast.AST], block_indices: Sequence[int]) -> bool:
-        """Whether a tool reads any of the differing expressions from the source text.
+    def _read_where_it_stands(
+        self, exprs: Sequence[ast.AST], block_indices: Sequence[int], *, occurrences: bool = False
+    ) -> bool:
+        """Whether syntax is pinned or substitution would rebuild a pooled literal.
 
         Then the blocks are not duplicates: a parameter would move the
-        literal out of the call that extraction or a checker looks in.
+        literal out of the call that extraction or a checker looks in, or
+        replace part of a compiler constant with a runtime computation.
         """
+        if any(
+            idx < len(self._pooled_literal_parts)
+            and (
+                expr in self._pooled_literal_nodes[idx]
+                if occurrences
+                else structural_text(expr) in self._pooled_literal_parts[idx]
+            )
+            for idx, expr in zip(block_indices, exprs)
+        ):
+            return True
         read_in_place = getattr(self, "_read_in_place", ())
         return any(
             idx < len(read_in_place) and is_statically_read(expr, read_in_place[idx])
@@ -189,10 +240,22 @@ class Parameterization(UnifierState):
         return None
 
     def _block_free_variables(self, idx: int) -> Set[str]:
-        """The free variables of block ``idx``: the names its call site can supply."""
+        """Names its call site supplies, copied from facts owned by this unification.
+
+        The default analyzer's result depends only on the block's AST. Input
+        blocks stay immutable while a unification runs. Resetting the run
+        drops all facts, so callers may rewrite and reuse nodes in a later
+        run. Each returned set is a copy; an empty result is cached too.
+        """
         if self.current_blocks is None or idx >= len(self.current_blocks):
             return set()
-        return ScopeAnalyzer().free_variables(self.current_blocks[idx])
+        nodes = tuple(self.current_blocks[idx])
+        cached = self._block_free_variables_cache.get(nodes) if memoizing() else None
+        if cached is None:
+            cached = frozenset(ScopeAnalyzer().free_variables(nodes))
+            if memoizing():
+                self._block_free_variables_cache[nodes] = cached
+        return set(cached)
 
     def _setup_bound_variable_alpha_renamings(self, blocks: Sequence[Sequence[ast.AST]]) -> None:
         """

@@ -6,27 +6,25 @@ lists, dicts, comprehensions, and deeply nested expressions.
 """
 
 
-def __extracted_func_4(__param_0, data, filter_func):
+def __extracted_func_3(__param_0, data, filter_func, _towel_owner):
     processed = [x * __param_0 for x in data if x > 0]
     filtered = [item for item in processed if filter_func(item)]
     result = {'values': filtered, 'count': len(filtered), 'sum': sum(filtered)}
     return result
 
 
-def __extracted_func_3(__param_0, __param_1, __param_2, __param_3, config, data):
-    results = []
-    for item in data:
-        value = item[__param_0][__param_1][__param_2][__param_3]
-        adjusted = value * 1.5 + 10
-        validated = adjusted > config['min_value']
-        if validated:
-            results.append(adjusted)
-    return results
+def __extracted_func_2(__param_0, __param_1, __param_2, dict1, dict2, key, merger, result):
+    if key in dict2:
+        result[key] = {__param_0: dict1[key][__param_2], __param_1: dict2[key][__param_2], 'merged': merger(dict1[key][__param_2], dict2[key][__param_2])}
+    else:
+        result[key] = dict1[key]
 
 
-def __extracted_func_2(__param_0, data, processor):
+def __extracted_func_1(__param_0, data, processor, _towel_owner):
     result = []
     for item in data:
+        # Chain of nested operations
+        # Same chain, different multiplier
         stage1 = {k: v * __param_0 for k, v in item.items()}
         stage2 = {k: processor(v) for k, v in stage1.items()}
         stage3 = [v for v in stage2.values() if v > 10]
@@ -35,9 +33,11 @@ def __extracted_func_2(__param_0, data, processor):
     return result
 
 
-def __extracted_func_1(__param_0, items):
+def __extracted_func_0(__param_0, items, _towel_owner):
     output = {'data': [], 'meta': {'total': 0, 'categories': {}}}
     for item in items:
+        # Builds nested structure
+        # Same structure, different multiplier
         category = item['category']
         value = item['value'] * __param_0
         output['data'].append({'cat': category, 'val': value})
@@ -48,44 +48,62 @@ def __extracted_func_1(__param_0, items):
     return output
 
 
-def __extracted_func_0(__param_0, __param_1, __param_2, dict1, dict2, merger):
-    result = {}
-    for key in dict1.keys():
-        if key in dict2:
-            result[key] = {__param_0: dict1[key][__param_2], __param_1: dict2[key][__param_2], 'merged': merger(dict1[key][__param_2], dict2[key][__param_2])}
-        else:
-            result[key] = dict1[key]
-    return result
-
-
 def process_nested_dict_v1(data, config):
     """Version 1: Nested dictionary access."""
-    return __extracted_func_3('user', 'profile', 'settings', 'threshold', config, data)
+    results = []
+    for item in data:
+        # Complex nested structure access
+        value = item["user"]["profile"]["settings"]["threshold"]
+        adjusted = value * 1.5 + 10
+        validated = adjusted > config["min_value"]
+        if validated:
+            results.append(adjusted)
+    return results
 
 
 def process_nested_dict_v2(data, config):
     """Version 2: Different nested path, same pattern."""
-    return __extracted_func_3('customer', 'account', 'preferences', 'limit', config, data)
+    results = []
+    for item in data:
+        # Different nesting, same algorithm
+        value = item["customer"]["account"]["preferences"]["limit"]
+        adjusted = value * 1.5 + 10
+        validated = adjusted > config["min_value"]
+        if validated:
+            results.append(adjusted)
+    return results
 
 
 def transform_with_comprehension_a(data, filter_func):
     """Version A: List comprehension as expression."""
-    return __extracted_func_4(2, data, filter_func)
+    _towel_arguments_2 = [(filter_func, data)]
+    del data
+    del filter_func
+    return __extracted_func_3(2, _towel_arguments_2[0][1], _towel_arguments_2[0][0], _towel_arguments_2.pop())
 
 
 def transform_with_comprehension_b(data, filter_func):
     """Version B: Different multiplier in comprehension."""
-    return __extracted_func_4(3, data, filter_func)
+    _towel_arguments_2 = [(filter_func, data)]
+    del data
+    del filter_func
+    return __extracted_func_3(3, _towel_arguments_2[0][1], _towel_arguments_2[0][0], _towel_arguments_2.pop())
 
 
 def build_complex_structure_v1(items, metadata):
     """Version 1: Builds complex nested structure."""
-    return __extracted_func_1(2, items)
+    _towel_arguments = [(metadata, items)]
+    del items
+    del metadata
+    return __extracted_func_0(2, _towel_arguments[0][1], _towel_arguments.pop())
 
 
 def build_complex_structure_v2(items, metadata):
     """Version 2: Different multiplier, same structure building."""
-    return __extracted_func_1(3, items)
+    _towel_arguments = [(metadata, items)]
+    del items
+    del metadata
+    return __extracted_func_0(3, _towel_arguments[0][1], _towel_arguments.pop())
 
 
 def filter_nested_lists_a(matrix, threshold):
@@ -114,12 +132,24 @@ def filter_nested_lists_b(matrix, threshold):
 
 def merge_nested_dicts_v1(dict1, dict2, merger):
     """Version 1: Deep dictionary merging."""
-    return __extracted_func_0('a', 'b', 'values', dict1, dict2, merger)
+    result = {}
+
+    for key in dict1.keys():
+        # Complex nested merge
+        __extracted_func_2('a', 'b', 'values', dict1, dict2, key, merger, result)
+
+    return result
 
 
 def merge_nested_dicts_v2(dict1, dict2, merger):
     """Version 2: Different key names, same merge pattern."""
-    return __extracted_func_0('first', 'second', 'data', dict1, dict2, merger)
+    result = {}
+
+    for key in dict1.keys():
+        # Same pattern, different keys
+        __extracted_func_2('first', 'second', 'data', dict1, dict2, key, merger, result)
+
+    return result
 
 
 def process_mixed_types_a(data, converter):
@@ -158,9 +188,15 @@ def process_mixed_types_b(data, converter):
 
 def chain_nested_operations_v1(data, processor):
     """Version 1: Chained operations on nested structures."""
-    return __extracted_func_2(2, data, processor)
+    _towel_arguments_1 = [(processor, data)]
+    del data
+    del processor
+    return __extracted_func_1(2, _towel_arguments_1[0][1], _towel_arguments_1[0][0], _towel_arguments_1.pop())
 
 
 def chain_nested_operations_v2(data, processor):
     """Version 2: Different multiplier, same chaining."""
-    return __extracted_func_2(3, data, processor)
+    _towel_arguments_1 = [(processor, data)]
+    del data
+    del processor
+    return __extracted_func_1(3, _towel_arguments_1[0][1], _towel_arguments_1[0][0], _towel_arguments_1.pop())

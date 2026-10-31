@@ -186,7 +186,7 @@ def test_interactive_helper_prompt_accepts_manual_markdown_json(
 ) -> None:
     source = tmp_path / "helpers.py"
     source.write_text(HELPER)
-    arguments = ["rename-helpers", str(tmp_path), "--llm", "claude"]
+    arguments = ["rename-helpers", str(tmp_path), "--complete-scope", "--llm", "claude"]
     if dry_run:
         arguments.append("--preview")
     response = '```json\n{"helpers.py:__extracted_func_0": "double_value"}\n```\n'
@@ -211,7 +211,7 @@ def test_helper_rename_file_runs_through_dispatch(tmp_path: Path, dry_run: bool)
     source.write_text(HELPER)
     mapping = tmp_path / "rename.json"
     mapping.write_text(json.dumps({"__extracted_func_0": "double_value"}))
-    arguments = ["rename-helpers", str(tmp_path), "--rename-file", str(mapping)]
+    arguments = ["rename-helpers", str(tmp_path), "--complete-scope", "--rename-file", str(mapping)]
     if dry_run:
         arguments.append("--preview")
     result = invoke(arguments)
@@ -235,7 +235,7 @@ def test_invalid_interactive_json_reports_problem_without_writing(
 ) -> None:
     source = tmp_path / "helpers.py"
     source.write_text(HELPER)
-    result = invoke(["rename-helpers", str(tmp_path)], stdin=response)
+    result = invoke(["rename-helpers", str(tmp_path), "--complete-scope"], stdin=response)
     assert diagnostic in result.stdout
     assert result.status == (1 if response else 0)
     assert source.read_text() == HELPER
@@ -246,7 +246,9 @@ def test_invalid_rename_file_has_failure_status(tmp_path: Path, contents: str) -
     source, mapping = tmp_path / "helpers.py", tmp_path / "renames.json"
     source.write_text(HELPER)
     mapping.write_text(contents)
-    result = invoke(["rename-helpers", str(tmp_path), "--rename-file", str(mapping)])
+    result = invoke(
+        ["rename-helpers", str(tmp_path), "--complete-scope", "--rename-file", str(mapping)]
+    )
     assert result.status == 1
     assert result.stderr.startswith("Error: ")
     assert source.read_text() == HELPER

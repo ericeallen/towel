@@ -1,5 +1,7 @@
 # Proposal: reuse an existing function instead of extracting a redundant helper
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 Status: implemented for the whole-body case (2026-09-17) and withdrawn on
 2026-09-23 (commit c4bf39e): a function rewritten to call another looked that
 one up in its module at every call, so patching or rebinding it changed both

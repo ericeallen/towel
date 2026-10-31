@@ -1,0 +1,297 @@
+{
+  "scope": "Complete typed/formatted CLI with TOWEL_WORKERS=1; fresh input/output and owned checker workers each arm; current fixed source in both arms. Only block-query memo differs. ABBA two samples per arm; not a published-1.772 or corpus comparison.",
+  "runtime_tree": "792623860332f187d72fa263a9e2aeb6976d930c",
+  "python": "3.13.7 (main, Aug 14 2025, 11:12:11) [Clang 16.0.0 (clang-1600.0.26.6)]",
+  "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+  "rows": [
+    {
+      "case": 1,
+      "mode": "uncached",
+      "host_before": {
+        "load_average": [
+          10.97412109375,
+          12.07666015625,
+          14.1259765625
+        ],
+        "cpu_snapshots": [
+          "CPU usage: 22.31% user, 8.11% sys, 69.57% idle",
+          "CPU usage: 38.65% user, 9.17% sys, 52.16% idle"
+        ]
+      },
+      "seconds": 56.53257045894861,
+      "start_utc": "2026-10-07T03:29:38.501925+00:00",
+      "argv": [
+        "/Users/ericeallen/Code/towel-1792-performance/.venv/bin/python",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/cli_cache_arm.py",
+        "uncached",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/1-uncached/input",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/1-uncached/output"
+      ],
+      "cli_argv": [
+        "towel",
+        "dry",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/1-uncached/input",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/1-uncached/output",
+        "--no-interactive"
+      ],
+      "environment": {
+        "TOWEL_WORKERS": "1",
+        "PYTHONHASHSEED": "0"
+      },
+      "exit_code": 0,
+      "applications": 18,
+      "source_unchanged": true,
+      "python_output_sha256": {
+        "packaging/__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+        "packaging/_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+        "packaging/_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+        "packaging/_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+        "packaging/_parser.py": "88a348115209327497e453b635e5db099fd592f9335d710c7313b29cdb30c50c",
+        "packaging/_ranges.py": "4cb1ffef3c316c23fb48a8aee76368061e51b04c02ca29a034abf4242542e531",
+        "packaging/_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+        "packaging/_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+        "packaging/dependency_groups.py": "76b7bce758ebdb81dc1b5880957233974fcb402ca41cad93921b9153efa2e5d7",
+        "packaging/direct_url.py": "eeb466866b186408cc25723799c085cd60bf338f8ed8844cfe481f19a74bb412",
+        "packaging/errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+        "packaging/licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+        "packaging/licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+        "packaging/markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+        "packaging/metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+        "packaging/pylock.py": "bf06f6bf659a5946dae7627621992c6977d80aa14222457ae6b1a4c090073b3f",
+        "packaging/ranges.py": "3d809f38fff2897333c20258186fb8f6d2db18eb1e9891b3dbf0c280107a4a3a",
+        "packaging/requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+        "packaging/specifiers.py": "110fb53d3449092001285508d62b780456389c47a910269730ee38b7583464ba",
+        "packaging/tags.py": "48dd6b2cbe524c36d616faad273b028bebee155d8e475ccc18d9ebb345c0db0f",
+        "packaging/utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+        "packaging/version.py": "13fa7206b3033a5b74f6747d23d666af8875dcac8fba8390acfb4d1f1ba8e5b1"
+      }
+    },
+    {
+      "case": 2,
+      "mode": "cached",
+      "host_before": {
+        "load_average": [
+          8.20263671875,
+          11.0888671875,
+          13.62646484375
+        ],
+        "cpu_snapshots": [
+          "CPU usage: 21.80% user, 7.67% sys, 70.51% idle",
+          "CPU usage: 18.78% user, 2.85% sys, 78.36% idle"
+        ]
+      },
+      "seconds": 56.71086074993946,
+      "start_utc": "2026-10-07T03:30:37.177240+00:00",
+      "argv": [
+        "/Users/ericeallen/Code/towel-1792-performance/.venv/bin/python",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/cli_cache_arm.py",
+        "cached",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/2-cached/input",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/2-cached/output"
+      ],
+      "cli_argv": [
+        "towel",
+        "dry",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/2-cached/input",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/2-cached/output",
+        "--no-interactive"
+      ],
+      "environment": {
+        "TOWEL_WORKERS": "1",
+        "PYTHONHASHSEED": "0"
+      },
+      "exit_code": 0,
+      "applications": 18,
+      "source_unchanged": true,
+      "python_output_sha256": {
+        "packaging/__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+        "packaging/_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+        "packaging/_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+        "packaging/_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+        "packaging/_parser.py": "88a348115209327497e453b635e5db099fd592f9335d710c7313b29cdb30c50c",
+        "packaging/_ranges.py": "4cb1ffef3c316c23fb48a8aee76368061e51b04c02ca29a034abf4242542e531",
+        "packaging/_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+        "packaging/_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+        "packaging/dependency_groups.py": "76b7bce758ebdb81dc1b5880957233974fcb402ca41cad93921b9153efa2e5d7",
+        "packaging/direct_url.py": "eeb466866b186408cc25723799c085cd60bf338f8ed8844cfe481f19a74bb412",
+        "packaging/errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+        "packaging/licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+        "packaging/licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+        "packaging/markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+        "packaging/metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+        "packaging/pylock.py": "bf06f6bf659a5946dae7627621992c6977d80aa14222457ae6b1a4c090073b3f",
+        "packaging/ranges.py": "3d809f38fff2897333c20258186fb8f6d2db18eb1e9891b3dbf0c280107a4a3a",
+        "packaging/requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+        "packaging/specifiers.py": "110fb53d3449092001285508d62b780456389c47a910269730ee38b7583464ba",
+        "packaging/tags.py": "48dd6b2cbe524c36d616faad273b028bebee155d8e475ccc18d9ebb345c0db0f",
+        "packaging/utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+        "packaging/version.py": "13fa7206b3033a5b74f6747d23d666af8875dcac8fba8390acfb4d1f1ba8e5b1"
+      }
+    },
+    {
+      "case": 3,
+      "mode": "cached",
+      "host_before": {
+        "load_average": [
+          12.951171875,
+          11.70556640625,
+          13.66748046875
+        ],
+        "cpu_snapshots": [
+          "CPU usage: 21.74% user, 7.87% sys, 70.37% idle",
+          "CPU usage: 18.73% user, 2.87% sys, 78.38% idle"
+        ]
+      },
+      "seconds": 56.68757824995555,
+      "start_utc": "2026-10-07T03:31:36.047173+00:00",
+      "argv": [
+        "/Users/ericeallen/Code/towel-1792-performance/.venv/bin/python",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/cli_cache_arm.py",
+        "cached",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/3-cached/input",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/3-cached/output"
+      ],
+      "cli_argv": [
+        "towel",
+        "dry",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/3-cached/input",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/3-cached/output",
+        "--no-interactive"
+      ],
+      "environment": {
+        "TOWEL_WORKERS": "1",
+        "PYTHONHASHSEED": "0"
+      },
+      "exit_code": 0,
+      "applications": 18,
+      "source_unchanged": true,
+      "python_output_sha256": {
+        "packaging/__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+        "packaging/_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+        "packaging/_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+        "packaging/_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+        "packaging/_parser.py": "88a348115209327497e453b635e5db099fd592f9335d710c7313b29cdb30c50c",
+        "packaging/_ranges.py": "4cb1ffef3c316c23fb48a8aee76368061e51b04c02ca29a034abf4242542e531",
+        "packaging/_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+        "packaging/_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+        "packaging/dependency_groups.py": "76b7bce758ebdb81dc1b5880957233974fcb402ca41cad93921b9153efa2e5d7",
+        "packaging/direct_url.py": "eeb466866b186408cc25723799c085cd60bf338f8ed8844cfe481f19a74bb412",
+        "packaging/errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+        "packaging/licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+        "packaging/licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+        "packaging/markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+        "packaging/metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+        "packaging/pylock.py": "bf06f6bf659a5946dae7627621992c6977d80aa14222457ae6b1a4c090073b3f",
+        "packaging/ranges.py": "3d809f38fff2897333c20258186fb8f6d2db18eb1e9891b3dbf0c280107a4a3a",
+        "packaging/requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+        "packaging/specifiers.py": "110fb53d3449092001285508d62b780456389c47a910269730ee38b7583464ba",
+        "packaging/tags.py": "48dd6b2cbe524c36d616faad273b028bebee155d8e475ccc18d9ebb345c0db0f",
+        "packaging/utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+        "packaging/version.py": "13fa7206b3033a5b74f6747d23d666af8875dcac8fba8390acfb4d1f1ba8e5b1"
+      }
+    },
+    {
+      "case": 4,
+      "mode": "uncached",
+      "host_before": {
+        "load_average": [
+          9.08447265625,
+          10.82958984375,
+          13.205078125
+        ],
+        "cpu_snapshots": [
+          "CPU usage: 23.87% user, 7.90% sys, 68.21% idle",
+          "CPU usage: 18.49% user, 2.83% sys, 78.66% idle"
+        ]
+      },
+      "seconds": 56.9062036247924,
+      "start_utc": "2026-10-07T03:32:34.879143+00:00",
+      "argv": [
+        "/Users/ericeallen/Code/towel-1792-performance/.venv/bin/python",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/cli_cache_arm.py",
+        "uncached",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/4-uncached/input",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/4-uncached/output"
+      ],
+      "cli_argv": [
+        "towel",
+        "dry",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/4-uncached/input",
+        "/Users/ericeallen/Knowledge/handoffs/towel/20261007T013353Z-codex-audit-remediation/performance/4-uncached/output",
+        "--no-interactive"
+      ],
+      "environment": {
+        "TOWEL_WORKERS": "1",
+        "PYTHONHASHSEED": "0"
+      },
+      "exit_code": 0,
+      "applications": 18,
+      "source_unchanged": true,
+      "python_output_sha256": {
+        "packaging/__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+        "packaging/_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+        "packaging/_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+        "packaging/_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+        "packaging/_parser.py": "88a348115209327497e453b635e5db099fd592f9335d710c7313b29cdb30c50c",
+        "packaging/_ranges.py": "4cb1ffef3c316c23fb48a8aee76368061e51b04c02ca29a034abf4242542e531",
+        "packaging/_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+        "packaging/_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+        "packaging/dependency_groups.py": "76b7bce758ebdb81dc1b5880957233974fcb402ca41cad93921b9153efa2e5d7",
+        "packaging/direct_url.py": "eeb466866b186408cc25723799c085cd60bf338f8ed8844cfe481f19a74bb412",
+        "packaging/errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+        "packaging/licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+        "packaging/licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+        "packaging/markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+        "packaging/metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+        "packaging/pylock.py": "bf06f6bf659a5946dae7627621992c6977d80aa14222457ae6b1a4c090073b3f",
+        "packaging/ranges.py": "3d809f38fff2897333c20258186fb8f6d2db18eb1e9891b3dbf0c280107a4a3a",
+        "packaging/requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+        "packaging/specifiers.py": "110fb53d3449092001285508d62b780456389c47a910269730ee38b7583464ba",
+        "packaging/tags.py": "48dd6b2cbe524c36d616faad273b028bebee155d8e475ccc18d9ebb345c0db0f",
+        "packaging/utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+        "packaging/version.py": "13fa7206b3033a5b74f6747d23d666af8875dcac8fba8390acfb4d1f1ba8e5b1"
+      }
+    }
+  ],
+  "means_seconds": {
+    "cached": 56.6992194999475,
+    "uncached": 56.719387041870505
+  },
+  "all_python_outputs_identical": true,
+  "input_manifest": {
+    "packaging/__init__.py": "6e758cdd0028b2cad74c739b9adc9c9f06f054932306280b878bfe59d39219b5",
+    "packaging/_elffile.py": "1f025f54c573f1a85740c4fbd908cc1d1fb0c177c14377ebf5f09d6cd5368780",
+    "packaging/_manylinux.py": "5b6e84324c42538ab4cdb148e2430fdba36f04427b0efda55bea083a35fa6136",
+    "packaging/_musllinux.py": "0328fb827b1170c77df4c107d49be8df8d37262103490a61e8acad8a2f9cadff",
+    "packaging/_parser.py": "88a348115209327497e453b635e5db099fd592f9335d710c7313b29cdb30c50c",
+    "packaging/_ranges.py": "b7b595f2e692aeb3697c545b85c24cbbcb4552f2adc6d9059aa82d0877e816b7",
+    "packaging/_structures.py": "eb48d16c5efca7ccf930a9cd77a700a6b80e69d0891d5d03966526441a8565cb",
+    "packaging/_tokenizer.py": "cc25e57c0d564c89e15073471d6e1c264299ca946fb17c0e1e4af54ef7713ee6",
+    "packaging/dependency_groups.py": "5309cc564ca3022dfb594816e9d593bb09cdf34208c1fb8c5ec9afb6c670278c",
+    "packaging/direct_url.py": "843baa95d04cbb49288de9d9fd77ee946e862cb603123e7e46a69e171fa7d06b",
+    "packaging/errors.py": "ea17c461701ff2ffc817ae7e94569d24e30889e04fdb120ab721178c6d67188b",
+    "packaging/licenses/__init__.py": "590d12eee73ddbec53b4e9ee5bfc64d9cb3aacb4940e8ebcba260757ce56740b",
+    "packaging/licenses/_spdx.py": "596ec35e2ca0ebcba9fd8343ff0a51625af548786257815f24b41f7e08613314",
+    "packaging/markers.py": "6cbe860d35d98d2b599e7f0ec73feab124e015711b30be9045e678c92940d9cc",
+    "packaging/metadata.py": "934149f420a5449e6f376aa61d6f26a0823eb82cc7c6a1c8cde5aa7be43d0f63",
+    "packaging/pylock.py": "1bce0a9fe63e42b87e8ced05da272baf16a68aa704b3718405e2735a6112467c",
+    "packaging/ranges.py": "b4781ce913e5dff9e07906f20585c54c3028e1f7ff56341828e79d522ddbfab6",
+    "packaging/requirements.py": "459476eb2107fe30e6b1310051a5bdb44c7d3b7f78e0e87bada268282cba62f5",
+    "packaging/specifiers.py": "661ad31ddf45ffb861d2626734f4e3d66966029b8fdb79586bb105825d8d9d59",
+    "packaging/tags.py": "0e717a082a79620d79cf0321b420df15593c4916fcda03c27cb9d82e07ef5d6e",
+    "packaging/utils.py": "a13742cd9994eeca5adfb0249d126408c478026eb1f48cb97afbf2fe9f28ecc6",
+    "packaging/version.py": "558b2fb50fd198c660a4c082f96b8919c565911b6b4b6e07f34b6b60c074be97"
+  },
+  "input_non_python_manifest": {
+    "pyproject.toml": "f0614796cab0fd138f7bfd05db2d05e2dbeb28ab651dae54ea9a7367f3a06de9",
+    "packaging/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "tool_versions": {
+    "mypy": "2.3.1",
+    "pyright": "1.1.414",
+    "black": "26.5.1",
+    "ruff": "0.16.8",
+    "isort": "9.0.1"
+  },
+  "towel_import_verified_after": "/Users/ericeallen/Code/towel-1792-performance/src/towel/__init__.py"
+}

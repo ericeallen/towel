@@ -35,16 +35,21 @@ tree under test, the tools of Towel's two extras (mypy and pyright; Black, isort
 and ruff), each left as the project's own requirements installed it or installed
 at the version the project pins -- in its lock file, else as the revision of its
 pre-commit hook, else in a requirements file -- unless that version fails the
-extra's requirement, and the candidate: one wheel, built from ``--towel-src`` or
+extra's requirement. Otherwise a checker uses the first applicable version-bearing
+typing context declared by the project, constrained by the candidate's extra.
+Distinct typing contexts remain alternatives, and their provenance is recorded.
+The candidate is one wheel, built from ``--towel-src`` or
 named by ``--towel-wheel``, verified to be that source, and verified again in
 every environment it is installed into. Towel still picks the formatter from
 the project's configuration. Beside them go the requirements the project
 declares for its own type check -- dependency groups and extras named for
 typing, what its tox environments and nox sessions that run mypy or pyright
 install, its pre-commit mypy and pyright hooks' additional dependencies, and
-requirements files named for typing -- at its lock file's pins, adding to the
+requirements files named for typing, explicit uv default groups containing a
+checker, and literal workflow checker installs -- at its lock file's pins, adding to the
 environment without changing anything in it. The type checkers therefore see
-what the project's own type check sees, and Towel's import model sees the
+the declared dependencies that can be installed beside the selected tools; the
+record identifies incompatible or alternative requirements. Towel's import model sees the
 project installed from the tree it refactors, not an installed copy elsewhere.
 The editable install follows the tree each test run exercises -- the clone for
 the baseline, the refactored copy for Towel and the run after it, the original
@@ -87,7 +92,7 @@ intentional ``towel-main`` HEAD compatibility entry;
 ``--print-pins`` lists the commits the last run tested so the pins can be
 refreshed after review.
 
-    python scripts/ecosystem_check.py --run-untrusted-code --work /tmp/towel-ecosystem --workers 4
+    python scripts/ecosystem_check.py --run-untrusted-code --work /tmp/towel-ecosystem --workers 1
 """
 
 from __future__ import annotations
@@ -105,6 +110,7 @@ import hashlib
 import json
 import functools
 import os
+import platform
 import tempfile
 import signal
 import threading
@@ -137,7 +143,7 @@ from typing import (
 )
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_TEST = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+DEFAULT_TEST = ("{python}", "-m", "pytest", "-q")
 SUMMARY_PATTERNS = (
     re.compile(r"^=+ .*(passed|failed|error|skipped|no tests ran).* =+$"),
     re.compile(r"^\d+ (passed|failed|error).*$"),
@@ -151,13 +157,15 @@ RequirementsFile = NewType("RequirementsFile", str)
 """A requirements file of the project's, by its path in the tree: ``requirements/lint.txt``."""
 PinSource = Union[LockFile, PreCommitConfig, RequirementsFile]
 """A file of the project's that pins the version of one of Towel's tools."""
-ToolSource = Union[Literal["project", "towel[types]", "towel[format]"], PinSource]
+TypingContext = NewType("TypingContext", str)
+"""A selected typing environment, prefixed by ``typing context: `` in provenance."""
+ToolSource = Union[Literal["project", "towel[types]", "towel[format]"], PinSource, TypingContext]
 LOCK_FILES: Tuple[LockFile, ...] = ("uv.lock", "poetry.lock", "pdm.lock")
 """The lock files whose pins describe a project's own environment, in the order they are read."""
 PRE_COMMIT_CONFIG: PreCommitConfig = ".pre-commit-config.yaml"
 TOWEL_PACKAGE = "towel"
 """The import package the candidate wheel provides."""
-ENVIRONMENT_LAYOUT = 6
+ENVIRONMENT_LAYOUT = 7
 """What a project environment holds; raised when that changes, so an older one is rebuilt."""
 CROSS_MODULE_FLAG = "--cross-module"
 """The option that turns on extraction across modules, where the Towel under test has it."""
@@ -184,8 +192,14 @@ class Project:
     """Refactor with extraction across modules, which the corpus exists to exercise."""
     cross_module_reason: str = ""
     """Why this project turns ``cross_module`` off; required exactly when it does."""
+    post_install: Tuple[str, ...] = ()
+    """Literal argv run after installation and before baseline; {python} names that interpreter."""
 
     def __post_init__(self) -> None:
+        if type(self.post_install) is not tuple or any(
+            type(part) is not str or not part for part in self.post_install
+        ):
+            raise ValueError(f"{self.name}: post_install must be an argv array of nonempty strings")
         if not self.failure_exit_codes or any(
             type(code) is not int or not 1 <= code <= 255 for code in self.failure_exit_codes
         ):
@@ -210,6 +224,13 @@ class Phase:
     seconds: float
     summary: str
     log: str
+    timed_out: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class Preparation:
+    command: Tuple[str, ...]
+    phase: Phase
 
 
 @dataclasses.dataclass(frozen=True)
@@ -301,7 +322,7 @@ class CrossModule:
 
 @dataclasses.dataclass(frozen=True)
 class PreExistingErrors:
-    """What a typed refactor said, before it began, about the errors the project's check reports.
+    """The original check's reported errors and names it cannot type.
 
     Towel leaves them as they are and rejects a change only for an error they
     do not account for; the counts come from its report on standard error.
@@ -310,7 +331,7 @@ class PreExistingErrors:
     errors: int
     files: int
     names_any: int = 0
-    """How many of them leave a name the checker cannot type (an unresolved import and the like)."""
+    """Untyped names found in imports or errors, including checks with no reported errors."""
     declined_files: int = 0
     """Files of the refactored code holding one, which Towel declined to change."""
     declined_proposals: int = 0
@@ -346,19 +367,23 @@ class Result:
     fallback: str = ""
     """Why the typed attempt was declined, when the verdict came from a retry without types."""
     pre_existing: Optional[PreExistingErrors] = None
-    """The errors the project's check reported before the typed refactor, when it reported any."""
+    """The original check's errors or untyped-name warnings, absent when neither was reported."""
     unchecked: Optional[UncheckedCode] = None
     """Code the checker does not look at, when the typed refactor found any."""
     environment: Optional[Environment] = None
     """What Towel ran with; absent only when the environment could not be built."""
     cross_module: Optional[CrossModule] = None
     """Whether the refactor extracted across modules; absent when no refactor ran."""
+    post_install: Optional[Preparation] = None
 
 
 def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     projects = []
     for entry in data["project"]:
+        post_install = entry.get("post_install", [])
+        if type(post_install) is not list:
+            raise ValueError(f"{entry['name']}: post_install must be an argv array")
         project = Project(
             name=entry["name"],
             url=entry["url"],
@@ -368,6 +393,7 @@ def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
             deps=tuple(entry.get("deps", ())),
             test=tuple(entry.get("test", DEFAULT_TEST)),
             prepare=entry.get("prepare", ""),
+            post_install=tuple(post_install),
             install=bool(entry.get("install", True)),
             expect_broken=entry.get("expect_broken", ""),
             known_failures=tuple(entry.get("known_failures", [])),
@@ -398,7 +424,15 @@ def _end_group(pgid: int) -> None:
             time.sleep(0.2)
 
 
-def run(command: Sequence[str], cwd: Path, env: Dict[str, str], timeout: int, log: Path) -> Phase:
+def run(
+    command: Sequence[str],
+    cwd: Path,
+    env: Dict[str, str],
+    timeout: int,
+    log: Path,
+    *,
+    header: str = "",
+) -> Phase:
     """Run one phase, streaming its output to ``log`` so progress is visible while it runs.
 
     The phase leads its own process group, and the group is ended when the
@@ -410,7 +444,10 @@ def run(command: Sequence[str], cwd: Path, env: Dict[str, str], timeout: int, lo
     it (see ``_isolate_worker``).
     """
     start = time.monotonic()
+    timed_out = False
     with log.open("w", encoding="utf-8") as handle:
+        handle.write(header)
+        handle.flush()
         process = subprocess.Popen(
             list(command),
             cwd=cwd,
@@ -425,6 +462,7 @@ def run(command: Sequence[str], cwd: Path, env: Dict[str, str], timeout: int, lo
         try:
             returncode = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            timed_out = True
             handle.write("\nTIMEOUT\n")
             returncode = -9
         finally:
@@ -435,7 +473,7 @@ def run(command: Sequence[str], cwd: Path, env: Dict[str, str], timeout: int, lo
             with _PHASE_GROUPS_LOCK:
                 _PHASE_GROUPS.discard(process.pid)
     output = log.read_text(encoding="utf-8", errors="replace")
-    return Phase(returncode, time.monotonic() - start, summarize(output), str(log))
+    return Phase(returncode, time.monotonic() - start, summarize(output), str(log), timed_out)
 
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -467,14 +505,8 @@ def _normalize_summary(line: str) -> str:
     return re.sub(r",? \d+ warnings?\b", "", without_time).strip(", ")
 
 
-def _test_outcome(output: str) -> Optional[TestOutcome]:
-    """Recognize actual tallies; arbitrary command output is not a test result.
-
-    All-skipped or expected-failure suites still have collected tests. A
-    unittest run needs both its positive count and its closing OK/FAILED;
-    include every completed run for commands that chain multiple suites.
-    """
-    lines = _plain_lines(output)
+def _pytest_outcome(lines: Sequence[str]) -> Optional[TestOutcome]:
+    """The final pytest tally, including all-skipped or expected-failure suites."""
     for line in reversed(lines):
         summary = _normalize_summary(line)
         counts: Dict[str, int] = {}
@@ -495,6 +527,11 @@ def _test_outcome(output: str) -> Optional[TestOutcome]:
                     for label in ("failed", "error", "errors", "subtests failed")
                 )
                 return TestOutcome(summary, int(failed), tests)
+    return None
+
+
+def _unittest_outcome(lines: Sequence[str]) -> Optional[TestOutcome]:
+    """Require positive counts and closing records for every chained unittest run."""
     pending: Optional[int] = None
     completed: List[str] = []
     failed = False
@@ -515,6 +552,24 @@ def _test_outcome(output: str) -> Optional[TestOutcome]:
     if completed and pending is None:
         return TestOutcome(" | ".join(completed), int(failed), collected)
     return None
+
+
+def _test_outcome(output: str) -> Optional[TestOutcome]:
+    """Recognize a completed suite with an unambiguous runner protocol.
+
+    A suite can print another runner's output. Buffered stdout and stderr can
+    even reverse their completion order, so mixed protocols cannot establish
+    the outer suite's completion. An unfinished unittest count or result also
+    prevents a nested pytest tally from certifying a completed command.
+    """
+    lines = _plain_lines(output)
+    pytest_outcome = _pytest_outcome(lines)
+    unittest_context = any(
+        UNITTEST_COUNT.fullmatch(line) or UNITTEST_RESULT.fullmatch(line) for line in lines
+    )
+    if unittest_context:
+        return _unittest_outcome(lines) if pytest_outcome is None else None
+    return pytest_outcome
 
 
 def _completed_test_run(
@@ -569,9 +624,6 @@ def base_env(pythonpath: str, python_bin: Path) -> Dict[str, str]:
         "PYTHONHASHSEED": "0",
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
-        "TERM": "dumb",
-        "NO_COLOR": "1",
-        "PY_COLORS": "0",
     }
     return env
 
@@ -1158,7 +1210,8 @@ def tool_pins(python: Path, tree: Path, names: Sequence[str]) -> Dict[str, Tuple
     is the project's environment written down; then the revision of the tool's
     pre-commit hook (see ``pre_commit_pins``), the version the project's own checks
     run it at; then an exact pin in a requirements file (see ``requirement_pins``).
-    A tool none of them pins is left out, for the candidate's extra to supply.
+    A tool none of them pins is left out, for a typing context or the candidate's
+    extra to supply (see ``_install_tools``).
     """
     pins: Dict[str, Tuple[PinSource, str]] = {}
     lock, locked = lock_pins(tree, names)
@@ -1180,6 +1233,72 @@ class Choice:
 
     source: ToolSource
     overridden: str = ""
+    requirements: Tuple[str, ...] = ()
+    """The selected context and candidate extra, which the installed version must satisfy."""
+    version: str = ""
+    """The verified version, retained so reuse cannot silently change tool selection."""
+
+
+def _typing_tool_choices(python: Path, tree: Path, names: Sequence[str]) -> Dict[str, Choice]:
+    """The first applicable version-bearing typing context for each otherwise unselected tool.
+
+    Contexts follow ``typing_declarations`` order. Requirements reached through a
+    context's groups, extras and includes belong to it; independent environments
+    are alternatives, not constraints on each other.
+    """
+    declarations = [
+        declaration
+        for declaration in typing_declarations(tree, None)
+        if (match := _REQUIREMENT_NAME.match(declaration.requirement)) is not None
+        and _canonical(match[1]) in names
+    ]
+    if not declarations:
+        return {}
+    parsed = _parsed_declarations(python, declarations)
+    contexts: Dict[str, str] = {}
+    for declaration, requirement in zip(declarations, parsed):
+        if requirement is not None and requirement.applies and requirement.specifier:
+            contexts.setdefault(requirement.name, declaration.context)
+    return {
+        name: Choice(
+            TypingContext(f"typing context: {context}"),
+            requirements=tuple(
+                declaration.requirement
+                for declaration, requirement in zip(declarations, parsed)
+                if requirement is not None
+                and requirement.applies
+                and requirement.name == name
+                and declaration.context == context
+            ),
+        )
+        for name, context in contexts.items()
+    }
+
+
+def _choice_versions(
+    python: Path, choices: Mapping[str, Choice], versions: Mapping[str, Optional[str]]
+) -> Dict[str, Choice]:
+    """Verify every installed tool against its selected requirements before recording success."""
+    judged = [
+        (name, requirement, versions.get(name))
+        for name, choice in choices.items()
+        for requirement in choice.requirements
+    ]
+    for name, choice in choices.items():
+        if not choice.requirements or not versions.get(name):
+            raise EnvironmentFailure(f"{name} has no verified tool selection in {python}")
+    satisfies = _ask_packaging(
+        python, requirements=[(requirement, version or "") for _, requirement, version in judged]
+    ).satisfies
+    for (name, requirement, version), fits in zip(judged, satisfies):
+        if not fits:
+            raise EnvironmentFailure(
+                f"{name} {version} fails {requirement}, selected by {choices[name].source}"
+            )
+    return {
+        name: dataclasses.replace(choice, version=versions[name] or "")
+        for name, choice in choices.items()
+    }
 
 
 def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) -> Dict[str, Choice]:
@@ -1187,8 +1306,10 @@ def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) ->
 
     A tool the project's own requirements installed stays, and one the project pins
     (see ``tool_pins``) is installed at that version, so the project is checked and
-    formatted by the tools its own checks use. One the project leaves to Towel comes
-    from the candidate's extra at the version that resolves today, and so does one
+    formatted by that selected context's tools. An otherwise unselected tool
+    uses its first version-bearing typing context, resolved together with the
+    candidate's extra; conflicting requirements fail the build. One the project
+    leaves to Towel comes from the extra at the version that resolves today, and so does one
     whose chosen version fails the extra's requirement: ``pip install
     "code-towel[format,types]"`` would replace that version too, and the record says
     which it replaced.
@@ -1208,6 +1329,11 @@ def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) ->
             offered[name] = ("project", installed)
         elif name in pinned:
             offered[name] = pinned[name]
+    contexts = _typing_tool_choices(
+        python,
+        tree,
+        [name for name in names if name not in offered],
+    )
     judged = [(name, requirement) for name, requirement, _ in requested if name in offered]
     satisfied = (
         _ask_packaging(
@@ -1222,16 +1348,32 @@ def _install_tools(python: Path, candidate: Candidate, tree: Path, log: Path) ->
     for name, requirement, extra in requested:
         if name in acceptable:
             source, version = offered[name]
-            choices[name] = Choice(source)
+            choices[name] = Choice(source, requirements=(requirement, f"{name}=={version}"))
             if source != "project":
                 installs.append(f"{name}=={version}")
             continue
+        if name in contexts:
+            choice = contexts[name]
+            choices[name] = dataclasses.replace(
+                choice, requirements=(requirement, *choice.requirements)
+            )
+            installs.extend(choices[name].requirements)
+            continue
         overruled = offered.get(name)
-        choices[name] = Choice(extra, f"{overruled[0]} {overruled[1]}" if overruled else "")
+        choices[name] = Choice(
+            extra,
+            f"{overruled[0]} {overruled[1]}" if overruled else "",
+            requirements=(requirement,),
+        )
         installs.append(requirement)
     if installs:
+        with log.open("a", encoding="utf-8") as handle:
+            for name, choice in choices.items():
+                handle.write(
+                    f"# {name}: {choice.source}; requires {', '.join(choice.requirements)}\n"
+                )
         _install(python, log, *installs)
-    return choices
+    return _choice_versions(python, choices, probe_environment(python, names).versions)
 
 
 _TOOL_SOURCES: Mapping[str, ToolSource] = {
@@ -1249,6 +1391,11 @@ def _recorded_source(recorded: str) -> Optional[ToolSource]:
     """The source a provenance record names: one of ``_TOOL_SOURCES``, or a requirements file."""
     if recorded in _TOOL_SOURCES:
         return _TOOL_SOURCES[recorded]
+    if recorded.startswith("typing context: "):
+        context = recorded.removeprefix("typing context: ")
+        if context and not any(char in context for char in "\r\n"):
+            return TypingContext(recorded)
+        return None
     path = PurePosixPath(recorded)
     if path.is_absolute() or ".." in path.parts or path.suffix not in (".txt", ".in"):
         return None
@@ -1269,9 +1416,17 @@ def _read_provenance(path: Path) -> Optional[Dict[str, Choice]]:
             return None
         source = _recorded_source(str(entry.get("source")))
         overridden = entry.get("overridden", "")
-        if source is None or not isinstance(overridden, str):
+        requirements = entry.get("requirements", [])
+        version = entry.get("version", "")
+        if (
+            source is None
+            or not isinstance(overridden, str)
+            or not isinstance(requirements, list)
+            or not all(isinstance(item, str) for item in requirements)
+            or not isinstance(version, str)
+        ):
             return None
-        choices[str(name)] = Choice(source, overridden)
+        choices[str(name)] = Choice(source, overridden, tuple(requirements), version)
     return choices
 
 
@@ -1315,6 +1470,39 @@ class Declaration:
 
     requirement: str
     source: str
+    context: str
+    """The containing typing environment, before group/include provenance is appended."""
+    prerequisites: Tuple[str, ...] = ()
+    """Requirements reaching the project's extras, whose markers must also hold."""
+
+
+def _parsed_declarations(
+    python: Path, declarations: Sequence[Declaration]
+) -> Tuple[Optional[ParsedRequirement], ...]:
+    """Read requirements with the markers of every extra expansion that reached them."""
+    texts = tuple(
+        dict.fromkeys(
+            text
+            for declaration in declarations
+            for text in (declaration.requirement, *declaration.prerequisites)
+        )
+    )
+    parsed = dict(zip(texts, _ask_packaging(python, parse=texts).parsed))
+    result: List[Optional[ParsedRequirement]] = []
+    for declaration in declarations:
+        requirement = parsed[declaration.requirement]
+        prerequisites = [parsed[text] for text in declaration.prerequisites]
+        if requirement is None or any(item is None for item in prerequisites):
+            result.append(None)
+        else:
+            result.append(
+                dataclasses.replace(
+                    requirement,
+                    applies=requirement.applies
+                    and all(item is not None and item.applies for item in prerequisites),
+                )
+            )
+    return tuple(result)
 
 
 def _named_for_typing(name: str) -> bool:
@@ -1393,24 +1581,33 @@ class _Declarer:
         """Everything one source declares, its groups, extras and files resolved."""
         found: List[Declaration] = []
         for requirement in requirements:
-            found += self._expanded(requirement, source, frozenset())
+            found += self._expanded(requirement, source, source, frozenset())
         for group in groups:
             for requirement in self.group(group):
-                found += self._expanded(requirement, f"{source}, group {group}", frozenset())
+                found += self._expanded(
+                    requirement, f"{source}, group {group}", source, frozenset()
+                )
         for extra in extras:
             for requirement in self.optional_dependencies(extra):
                 found += self._expanded(
-                    requirement, f"{source}, through {self.name}[{extra}]", frozenset()
+                    requirement, f"{source}, through {self.name}[{extra}]", source, frozenset()
                 )
         for path in files:
             label = f"{source}, {path.relative_to(self.tree).as_posix()}"
             for requirement in _requirements_file(path, self.tree, frozenset()):
-                found += self._expanded(requirement, label, frozenset())
+                found += self._expanded(requirement, label, source, frozenset())
         return found
 
-    def _expanded(self, requirement: str, source: str, seen: FrozenSet[str]) -> List[Declaration]:
+    def _expanded(
+        self,
+        requirement: str,
+        source: str,
+        context: str,
+        seen: FrozenSet[str],
+        prerequisites: Tuple[str, ...] = (),
+    ) -> List[Declaration]:
         """The requirement, and, when it names the project with extras, what they hold."""
-        found = [Declaration(requirement, source)]
+        found = [Declaration(requirement, source, context, prerequisites)]
         match = _LEADING_NAME.match(requirement)
         if self.name is None or match is None or _canonical(match[1]) != self.name:
             return found
@@ -1420,7 +1617,9 @@ class _Declarer:
                     found += self._expanded(
                         inner,
                         f"{source}, through {self.name}[{extra}]",
+                        context,
                         seen | {_canonical(extra)},
+                        (*prerequisites, requirement),
                     )
         return found
 
@@ -1503,6 +1702,31 @@ def _group_declarations(declarer: _Declarer) -> List[Declaration]:
             f"pyproject.toml [dependency-groups] {name}", declarer.group(name)
         )
     ]
+
+
+def _uv_default_group_declarations(declarer: _Declarer) -> List[Declaration]:
+    """Explicit uv default groups that include a checker declare its supporting dependencies.
+
+    A development group is a typing context because its expanded requirements
+    name a checker, not because it is called ``dev``. Other default groups do not
+    become typing inputs. Only an explicit list is read; implicit defaults and
+    unsupported selectors are left alone.
+    """
+    defaults = _table(_table(declarer.pyproject.get("tool")).get("uv")).get("default-groups")
+    if not isinstance(defaults, list) or not all(isinstance(name, str) for name in defaults):
+        return []
+    found: List[Declaration] = []
+    for name in dict.fromkeys(defaults):
+        declarations = declarer.declared(
+            f"pyproject.toml [tool.uv] default-groups {name}", groups=(name,)
+        )
+        if any(
+            (match := _LEADING_NAME.match(item.requirement)) is not None
+            and _canonical(match[1]) in ("mypy", "pyright")
+            for item in declarations
+        ):
+            found += declarations
+    return found
 
 
 def _extra_declarations(declarer: _Declarer) -> List[Declaration]:
@@ -1967,12 +2191,281 @@ def _requirement_file_declarations(declarer: _Declarer) -> List[Declaration]:
     ]
 
 
+def _workflow_requirement_files(
+    path: Path, root: Path, ancestors: frozenset[Path]
+) -> tuple[Path, ...] | None:
+    """Establish the entire literal include graph before reading a workflow context.
+
+    A partial graph cannot prove which checker or support constraints pip installs.
+    Only ancestors on this branch reject recursion; repeated acyclic includes remain
+    valid. The older general requirements reader's behavior stays unchanged.
+    """
+    try:
+        resolved = path.resolve()
+        if not resolved.is_relative_to(root) or resolved in ancestors or not resolved.is_file():
+            return None
+        text = resolved.read_text(encoding="utf-8")
+    except (OSError, RuntimeError, UnicodeError):
+        return None
+    files = [resolved]
+    for line in text.replace("\\\n", " ").splitlines():
+        line = re.sub(r"(^|\s)#.*$", "", line).strip()
+        if not line or line == "--require-hashes" or not line.startswith("-"):
+            continue
+        included = re.fullmatch(r"(?:-r\s*|--requirement(?:=|\s+))(\S+)", line)
+        if included is None or any(character in included[1] for character in "$`%*?[]\"'"):
+            return None
+        filename = Path(included[1])
+        if filename.is_absolute():
+            return None
+        nested = _workflow_requirement_files(
+            resolved.parent / filename, root, ancestors | {resolved}
+        )
+        if nested is None:
+            return None
+        files.extend(nested)
+    return tuple(files)
+
+
+@dataclasses.dataclass(frozen=True)
+class WorkflowInstall:
+    requirements: tuple[str, ...] = ()
+    files: tuple[Path, ...] = ()
+
+
+def _literal_checker_installs(script: str, tree: Path) -> WorkflowInstall:
+    """Checker installs and referenced requirement files, without interpreting shell.
+
+    An unfamiliar command makes the whole step unreadable: an install inside an
+    ``if``, heredoc, echo or other shell construct is not an executed declaration.
+    Expansion, pipelines and redirection are likewise outside this small grammar.
+    Quoted requirement markers remain part of the requirement, not shell syntax.
+    """
+    requirements: list[str] = []
+    files: list[Path] = []
+    for line in script.replace("\\\n", " ").splitlines():
+        line = _without_comment(line).strip()
+        if not line:
+            continue
+        if any(character in line for character in "$`%*?[]"):
+            return WorkflowInstall()
+        try:
+            lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+            lexer.whitespace_split = True
+            tokens = list(lexer)
+        except ValueError:
+            return WorkflowInstall()
+        prefixes = (
+            ("python", "-m", "pip", "install"),
+            ("python3", "-m", "pip", "install"),
+            ("pip", "install"),
+            ("pip3", "install"),
+            ("uv", "pip", "install"),
+        )
+        prefix = next((value for value in prefixes if tokens[: len(value)] == list(value)), None)
+        if prefix is None:
+            return WorkflowInstall()
+        arguments = iter(tokens[len(prefix) :])
+        for argument in arguments:
+            if argument in (
+                "-U",
+                "--upgrade",
+                "--pre",
+                "--no-deps",
+                "--disable-pip-version-check",
+                "--require-hashes",
+            ):
+                continue
+            if argument in ("-r", "--requirement"):
+                filename = next(arguments, "")
+            elif argument.startswith("--requirement="):
+                filename = argument.partition("=")[2]
+            elif argument.startswith("-r"):
+                filename = argument[2:]
+            else:
+                filename = None
+            if filename is not None:
+                if not filename or Path(filename).is_absolute():
+                    return WorkflowInstall()
+                included_files = _workflow_requirement_files(
+                    tree / filename, tree.resolve(), frozenset()
+                )
+                if included_files is None:
+                    return WorkflowInstall()
+                files.extend(included_files)
+                requirements.extend(
+                    _requirements_file(included_files[0], tree.resolve(), frozenset())
+                )
+                continue
+            match = _LEADING_NAME.match(argument)
+            if (
+                match is None
+                or argument.startswith("-")
+                or argument in (";", "&&", "||", "|", "&", ">", "<")
+            ):
+                return WorkflowInstall()
+            if _canonical(match[1]) in CHECKER_COMMANDS:
+                requirements.append(argument)
+    return WorkflowInstall(tuple(requirements), tuple(files))
+
+
+def _workflow_files(tree: Path) -> tuple[Path, ...]:
+    return tuple(
+        sorted(
+            path
+            for path in (tree / ".github/workflows").glob("*")
+            if path.is_file() and path.suffix in (".yml", ".yaml")
+        )
+    )
+
+
+def _workflow_fields(lines: Sequence[str], indent: int) -> tuple[tuple[int, str, str], ...] | None:
+    """Unambiguous plain YAML keys at one indentation, excluding indentless lists."""
+    fields: list[tuple[int, str, str]] = []
+    for index, line in enumerate(lines):
+        if not line.strip() or len(line) - len(line.lstrip()) != indent:
+            continue
+        if line.lstrip().startswith("- "):
+            continue
+        match = re.fullmatch(r"\s*([A-Za-z_][\w-]*)\s*:\s*(.*)", line)
+        if match is None or any(key == match[1] for _, key, _ in fields):
+            return None
+        fields.append((index, match[1], match[2]))
+    return tuple(fields)
+
+
+def _workflow_job_installs(lines: Sequence[str], tree: Path) -> WorkflowInstall:
+    """Literal, unconditional install steps in one ordinary YAML workflow job."""
+    populated = [line for line in lines if line.strip()]
+    if not populated:
+        return WorkflowInstall()
+    indent = min(len(line) - len(line.lstrip()) for line in populated)
+    fields = _workflow_fields(lines, indent)
+    if fields is None or any(
+        key == "defaults" or (key == "if" and _yaml_scalar(value).lower() != "true")
+        for _, key, value in fields
+    ):
+        return WorkflowInstall()
+    start = next((index + 1 for index, key, value in fields if key == "steps" and not value), None)
+    if start is None:
+        return WorkflowInstall()
+    end = next((index for index, _, _ in fields if index >= start), len(lines))
+    steps = lines[start:end]
+    first = next((line for line in steps if line.strip()), "")
+    if not first.lstrip().startswith("- "):
+        return WorkflowInstall()
+    step_indent = len(first) - len(first.lstrip())
+    starts = [
+        index
+        for index, line in enumerate(steps)
+        if len(line) - len(line.lstrip()) == step_indent and line.lstrip().startswith("- ")
+    ]
+    found: list[str] = []
+    files: list[Path] = []
+    for at, stop in zip(starts, [*starts[1:], len(steps)]):
+        block = [" " * (step_indent + 2) + steps[at].lstrip()[2:], *steps[at + 1 : stop]]
+        keys = _workflow_fields(block, step_indent + 2)
+        if keys is None or any(
+            (key == "if" and _yaml_scalar(value).lower() != "true")
+            or key == "working-directory"
+            or (key == "shell" and _yaml_scalar(value) not in ("bash", "sh"))
+            for _, key, value in keys
+        ):
+            continue
+        runs = [(index, value) for index, key, value in keys if key == "run"]
+        if len(runs) != 1:
+            continue
+        index, value = runs[0]
+        if value in ("|", "|-", "|+"):
+            stop = next((at for at, _, _ in keys if at > index), len(block))
+            script = "\n".join(line.strip() for line in block[index + 1 : stop])
+        elif value.startswith(('"', "'")):
+            if value[0] == '"':
+                try:
+                    decoded: object = json.loads(value)
+                except ValueError:
+                    continue
+                if not isinstance(decoded, str):
+                    continue
+                script = decoded
+            elif len(value) > 1 and value[-1] == "'":
+                script = value[1:-1].replace("''", "'")
+            else:
+                continue
+        elif value and not value.startswith((">", "&", "*", "!")):
+            script = value
+        else:
+            continue
+        install = _literal_checker_installs(script, tree)
+        found.extend(install.requirements)
+        files.extend(install.files)
+    return WorkflowInstall(tuple(found), tuple(files))
+
+
+def _workflow_installs(tree: Path) -> list[tuple[str, WorkflowInstall]]:
+    """Read literal CI checker installs last; each workflow job is an alternative context.
+
+    Only ordinary block jobs and steps are recognized. No workflow expressions,
+    shell commands, aliases or YAML constructors are evaluated.
+    """
+    found: list[tuple[str, WorkflowInstall]] = []
+    for path in _workflow_files(tree):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        lines = [_without_comment(line) for line in text.splitlines()]
+        fields = _workflow_fields(lines, 0)
+        if "\t" in text or fields is None or any(key == "defaults" for _, key, _ in fields):
+            continue
+        start = next(
+            (index + 1 for index, key, value in fields if key == "jobs" and not value), None
+        )
+        if start is None:
+            continue
+        end = next(
+            (
+                index
+                for index in range(start, len(lines))
+                if lines[index] and not lines[index][0].isspace()
+            ),
+            len(lines),
+        )
+        body = lines[start:end]
+        indent = min((len(line) - len(line.lstrip()) for line in body if line.strip()), default=0)
+        jobs = [
+            (index, match[1])
+            for index, line in enumerate(body)
+            if len(line) - len(line.lstrip()) == indent
+            and (match := re.fullmatch(r"\s*([A-Za-z_][\w-]*):\s*", line)) is not None
+        ]
+        for (at, name), stop in zip(jobs, [*(index for index, _ in jobs[1:]), len(body)]):
+            source = f"{path.relative_to(tree).as_posix()} job {name}"
+            found.append((source, _workflow_job_installs(body[at + 1 : stop], tree)))
+    return found
+
+
+def _workflow_declarations(declarer: _Declarer) -> list[Declaration]:
+    return [
+        declaration
+        for context, install in _workflow_installs(declarer.tree)
+        if any(
+            (match := _LEADING_NAME.match(requirement)) is not None
+            and _canonical(match[1]) in CHECKER_COMMANDS
+            for requirement in install.requirements
+        )
+        for declaration in declarer.declared(context, install.requirements)
+    ]
+
+
 def typing_declarations(tree: Path, project: Optional[str]) -> List[Declaration]:
     """Every requirement ``tree`` declares for its own type check, and where.
 
     PEP 735 dependency groups and extras named for typing, the environments of tox
     and the sessions of nox that run mypy or pyright, pre-commit's mypy and pyright
-    hooks, and requirements files named for typing, in that order.
+    hooks, requirements files named for typing, explicit uv default groups that
+    contain a checker, and literal workflow checker installs, in that order.
+    Workflow jobs remain separate contexts.
     """
     pyproject = _read_toml(tree / "pyproject.toml")
     if project is None:
@@ -1986,6 +2479,8 @@ def typing_declarations(tree: Path, project: Optional[str]) -> List[Declaration]
         *_nox_declarations(declarer),
         *_pre_commit_declarations(declarer),
         *_requirement_file_declarations(declarer),
+        *_uv_default_group_declarations(declarer),
+        *_workflow_declarations(declarer),
     ]
 
 
@@ -2000,7 +2495,13 @@ def _reported(output: str, sign: str) -> List[str]:
 
 
 def _install_typing(
-    python: Path, tree: Path, distribution: Optional[str], tools: Sequence[str], log: Path
+    python: Path,
+    tree: Path,
+    distribution: Optional[str],
+    tools: Sequence[str],
+    log: Path,
+    *,
+    choices: Optional[Mapping[str, Choice]] = None,
 ) -> TypingDependencies:
     """Install what the project declares its own type check needs, adding only.
 
@@ -2015,9 +2516,7 @@ def _install_typing(
     declarations = typing_declarations(tree, distribution)
     if not declarations:
         return TypingDependencies()
-    parsed = _ask_packaging(
-        python, parse=[declaration.requirement for declaration in declarations]
-    ).parsed
+    parsed = _parsed_declarations(python, declarations)
     project = distribution or _canonical(
         str(_table(_read_toml(tree / "pyproject.toml").get("project")).get("name", ""))
     )
@@ -2046,6 +2545,11 @@ def _install_typing(
                 else "already installed at"
             )
             record = dataclasses.replace(record, skipped=f"{held} {requirement.name} {installed}")
+            if choices is not None and requirement.name in choices:
+                record = dataclasses.replace(
+                    record,
+                    skipped=f"{record.skipped}, selected by {choices[requirement.name].source}",
+                )
         else:
             pinned = (
                 applicable_version(python, lock, requirement.name, pins[requirement.name])
@@ -2138,6 +2642,55 @@ class ProjectEnvironment:
     record: Environment
 
 
+def _selection_inputs(tree: Path) -> str:
+    """A digest of the actual static configuration used to select tools and typing dependencies."""
+    filenames = (
+        *LOCK_FILES,
+        PRE_COMMIT_CONFIG,
+        "pyproject.toml",
+        "tox.ini",
+        "tox.toml",
+        "noxfile.py",
+        "setup.cfg",
+        "setup.py",
+        *(path.relative_to(tree).as_posix() for path in _workflow_files(tree)),
+        *(
+            path.relative_to(tree).as_posix()
+            for _, install in _workflow_installs(tree)
+            for path in install.files
+        ),
+    )
+    inputs = {
+        "files": {
+            name: hashlib.sha256((tree / name).read_bytes()).hexdigest()
+            for name in filenames
+            if (tree / name).is_file()
+        },
+        # Includes can live outside a conventional requirements directory. Their
+        # resolved requirements affect pins even when they are not typing inputs.
+        "requirements": {
+            path.relative_to(tree).as_posix(): _requirements_file(path, tree, frozenset())
+            for path in _requirements_files(tree)
+        },
+        "typing": [dataclasses.asdict(item) for item in typing_declarations(tree, None)],
+    }
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
+
+
+def _reusable_choices(python: Path, choices: Mapping[str, Choice]) -> bool:
+    """A reused environment must still hold the versions and constraints selected at its build."""
+    if any(not choice.version or not choice.requirements for choice in choices.values()):
+        return False
+    versions = probe_environment(python, list(choices)).versions
+    if any(versions.get(name) != choice.version for name, choice in choices.items()):
+        return False
+    try:
+        _choice_versions(python, choices, versions)
+    except EnvironmentFailure:
+        return False
+    return True
+
+
 def environment(
     project: Project, work: Path, source: Path, candidate: Candidate, log: Path
 ) -> ProjectEnvironment:
@@ -2147,7 +2700,8 @@ def environment(
     the checkers and formatters of Towel's extras (see ``_install_tools``), what the
     project declares its own type check needs (see ``_install_typing``), and the
     candidate, installed with ``--no-deps`` and then verified. It is built once and
-    reused while the manifest entry and the extras are unchanged. The candidate
+    reused while the manifest, configuration, interpreter and selected tools are
+    unchanged. The candidate
     is reinstalled on every use, and a reused environment is pointed back at
     ``source``: the last run left the project installed from its refactored copy.
     """
@@ -2163,6 +2717,9 @@ def environment(
             f"install={project.install}",
             *requirements,
             f"layout={ENVIRONMENT_LAYOUT}",
+            f"revision={project.rev}",
+            f"interpreter={sys.executable} {sys.version} {sys.platform} {platform.platform()}",
+            f"selection={_selection_inputs(source)}",
         ]
     )
     provenance = _read_provenance(provenance_file)
@@ -2174,6 +2731,7 @@ def environment(
         and provenance is not None
         and set(provenance) == {requirement_name(requirement) for requirement in requirements}
         and typing is not None
+        and _reusable_choices(python, provenance)
     )
     if not reusable and env_dir.exists():
         # The manifest or the layout changed, or an earlier build never finished.
@@ -2197,7 +2755,9 @@ def environment(
             encoding="utf-8",
         )
         # After Towel's tools, so what the project declares cannot displace them.
-        typing = _install_typing(python, source, distribution, list(provenance), log)
+        typing = _install_typing(
+            python, source, distribution, list(provenance), log, choices=provenance
+        )
         typing_file.write_text(json.dumps(dataclasses.asdict(typing)), encoding="utf-8")
         # Written last: an environment without it is one whose build never finished.
         fingerprint.write_text(wanted)
@@ -2215,6 +2775,9 @@ def environment(
         str(candidate.wheel),
     )
     probe = _verified(python, candidate, list(provenance))
+    verified_choices = _choice_versions(python, provenance, probe.versions)
+    if verified_choices != provenance:
+        raise EnvironmentFailure(f"a selected tool changed while installing into {env_dir}")
     tools: Dict[str, Tool] = {}
     for name, choice in provenance.items():
         version = probe.versions.get(name)
@@ -2358,21 +2921,47 @@ def _pytest_arguments_start(command: Sequence[str]) -> Optional[int]:
     return None
 
 
-def _prepare_test_command(command: Sequence[str]) -> List[str]:
-    """Request pytest tallies and identities after project reporting defaults.
+def _pytest_plugins(arguments: Sequence[str]) -> Tuple[str, ...]:
+    """Plugin arguments in pytest's pre-parser order, including after ``--``."""
+    remaining = iter(arguments)
+    plugins: List[str] = []
+    for argument in remaining:
+        if argument == "-p":
+            plugin = next(remaining, None)
+            if plugin is None:
+                break
+        elif argument.startswith("-p"):
+            plugin = argument[2:]
+        else:
+            continue
+        plugins.append(plugin.strip())
+    return tuple(plugins)
 
-    Keep selections and configuration intact. A literal ``--`` ends option
-    parsing, so insert the reporting option immediately before it. Other
-    runners are left alone and still need recognizable outcomes to qualify.
+
+def _prepare_test_command(command: Sequence[str]) -> List[str]:
+    """Request complete pytest reporting and fresh consumer cache state.
+
+    Keep the cache fixture and the project's cache directory available, but
+    clear managed values/directories before every baseline, after and retry.
+    Explicit plugin disables stay disabled. Pytest's plugin pre-parser also
+    reads arguments after ``--``, though new flags belong before it. Other
+    runners remain unchanged and still need recognizable outcomes.
     """
     prepared = list(command)
     start = _pytest_arguments_start(command)
     if start is None:
         return prepared
     end = prepared.index("--", start) if "--" in prepared[start:] else len(prepared)
+    disabled = False
+    for plugin in _pytest_plugins(prepared[start:]):
+        if plugin in {"cacheprovider", "no:cacheprovider"}:
+            disabled = plugin == "no:cacheprovider"
+    reset = [] if disabled or "--cache-clear" in prepared[start:end] else ["--cache-clear"]
     reporting = ["--verbosity=0", "-ra"]
-    if prepared[max(start, end - len(reporting)) : end] != reporting:
-        prepared[end:end] = reporting
+    if prepared[max(start, end - len(reporting)) : end] == reporting:
+        prepared[end - len(reporting) : end - len(reporting)] = reset
+    else:
+        prepared[end:end] = [*reset, *reporting]
     return prepared
 
 
@@ -2433,6 +3022,23 @@ def _setup_failed(result: Result, error: Exception) -> Result:
     return result
 
 
+def prepare_installed_project(
+    project: Project, python: Path, source: Path, env: Dict[str, str], timeout: int, log: Path
+) -> Preparation:
+    """Run explicit preparation with the installed project's interpreter, without a shell."""
+    command = tuple(part.replace("{python}", str(python)) for part in project.post_install)
+    header = f"command: {json.dumps(command)}\n"
+    start = time.monotonic()
+    try:
+        phase = run(command, source, env, timeout, log, header=header)
+    except OSError as error:
+        # The phase never spawned, but still needs an explicit failed receipt and log.
+        message = f"could not start post-install preparation: {error}"
+        log.write_text(header + message + "\n", encoding="utf-8")
+        phase = Phase(127, time.monotonic() - start, message, str(log))
+    return Preparation(command, phase)
+
+
 def check_project(
     project: Project, work: Path, candidate: Candidate, timeout: int, no_types: bool = False
 ) -> Result:
@@ -2453,6 +3059,18 @@ def check_project(
     python = installed.python
     test = _prepare_test_command([part.format(python=python) for part in project.test])
     env = base_env(project.pythonpath, python.parent)
+    if project.post_install:
+        result.post_install = prepare_installed_project(
+            project, python, source, env, timeout, logs / f"{project.name}-post-install.log"
+        )
+        if result.post_install.phase.returncode != 0:
+            return _setup_failed(
+                result,
+                EnvironmentFailure(
+                    f"post-install preparation failed (exit {result.post_install.phase.returncode}): "
+                    f"{result.post_install.phase.summary}; log: {result.post_install.phase.log}"
+                ),
+            )
     result.baseline = run(test, source, env, timeout, logs / f"{project.name}-before.log")
     baseline_outcome = _completed_test_run(result.baseline, project.failure_exit_codes)
     if baseline_outcome is None:
@@ -2481,6 +3099,9 @@ def check_project(
     # project's dependencies and its import model sees the project's installation.
     towel = python.parent / "towel"
     towel_env = {name: value for name, value in env.items() if name != "PYTHONPATH"}
+    # Keep Towel's logs plain without overriding the consumer's colour behavior.
+    # For example, NO_COLOR takes precedence over Sphinx tests' FORCE_COLOR.
+    towel_env.update(TERM="dumb", NO_COLOR="1", PY_COLORS="0")
     # Each refactor may fork workers for a large analysis; with several
     # projects in flight the caller caps that through TOWEL_WORKERS.
     if "TOWEL_WORKERS" in os.environ:
@@ -2540,7 +3161,7 @@ def check_project(
         # run said about them is kept whatever the attempt's outcome.
         result.pre_existing = _pre_existing_errors(logs / log_name)
         result.unchecked = _unchecked_code(logs / log_name)
-    if result.refactor.returncode != 0 and result.refactor.returncode != -9 and not no_types:
+    if result.refactor.returncode > 0 and not result.refactor.timed_out and not no_types:
         # A project whose checker cannot run at all is one Towel declines to
         # verify, which is the documented behaviour and not a defect. The
         # answer it gives its user is to rerun without types, so that is what
@@ -2561,9 +3182,13 @@ def check_project(
             result.typing_mode = "no-types"
             log_name = f"{project.name}-refactor-no-types.log"
             result.refactor = refactor(True, log_name)
-    if result.refactor.returncode == -9:
+    if result.refactor.timed_out:
         result.verdict = "TIMEOUT"
         result.detail = f"refactor exceeded {timeout}s"
+        return result
+    if result.refactor.returncode < 0:
+        result.verdict = "CRASH"
+        result.detail = f"refactor terminated by signal {-result.refactor.returncode}"
         return result
     if result.refactor.returncode != 0:
         refused = _refusal(logs / log_name)
@@ -2680,6 +3305,7 @@ _OPTIONS_WITH_VALUES = {
     "--durations-min",
 }
 _OPTIONS_WITHOUT_VALUES = {
+    "--cache-clear",
     "--verbose",
     "--quiet",
     "--disable-warnings",
@@ -2734,7 +3360,12 @@ def _retest_command(test: Sequence[str], test_ids: Sequence[str]) -> Optional[Li
         command.pop()
     if separator or any(identity.startswith("-") for identity in test_ids):
         command.append("--")
-    return _prepare_test_command([*command, *test_ids])
+    narrowed = [*command, *test_ids]
+    # Positional selectors can also act as plugin arguments in pytest's
+    # pre-parser. Narrowing must not change the consumer's plugin context.
+    if _pytest_plugins(test[start:]) != _pytest_plugins(narrowed[start:]):
+        return None
+    return _prepare_test_command(narrowed)
 
 
 def _retest_agrees(
@@ -2911,7 +3542,7 @@ def _unchecked_code(log_path: Path) -> Optional[UncheckedCode]:
 
 
 def _pre_existing_errors(log_path: Path) -> Optional[PreExistingErrors]:
-    """What a typed refactor reported about the errors the project's check already has.
+    """What a typed refactor reported about original errors and untyped imports.
 
     ``None`` when it reported none: a clean check, or a run that never got as
     far as checking.
@@ -2921,14 +3552,14 @@ def _pre_existing_errors(log_path: Path) -> Optional[PreExistingErrors]:
     except OSError:
         return None
     reported = PRE_EXISTING.search(text)
-    if reported is None:
-        return None
     names_any = NAMES_ANY.search(text)
+    if reported is None and names_any is None:
+        return None
     declined_files = NAMES_ANY_FILES.search(text)
     declined_proposals = UNVERIFIABLE.search(text)
     return PreExistingErrors(
-        errors=int(reported.group(1)),
-        files=int(reported.group(2)),
+        errors=int(reported.group(1)) if reported else 0,
+        files=int(reported.group(2)) if reported else 0,
         names_any=int(names_any.group(1)) if names_any else 0,
         declined_files=int(declined_files.group(1)) if declined_files else 0,
         declined_proposals=int(declined_proposals.group(1)) if declined_proposals else 0,
@@ -2966,12 +3597,19 @@ def _node_id(reported: str) -> str:
 
 def _failed_test_ids(output: str) -> Set[str]:
     """Full pytest node ids and unittest failure headers, without diagnostic suffixes."""
+    lines = _plain_lines(output)
+    # Captured subprocess diagnostics also begin with ERROR:. Recognize each
+    # family's complete protocol before treating its headers as identities.
+    # Mixed protocols retain diagnostic identities, but _test_outcome refuses
+    # to certify completion rather than guessing which suite produced them.
+    pytest_run = _pytest_outcome(lines) is not None
+    unittest_run = _unittest_outcome(lines) is not None
     identities: Set[str] = set()
-    for line in _plain_lines(output):
-        pytest_failure = FAILED_LINE.fullmatch(line)
+    for line in lines:
+        pytest_failure = FAILED_LINE.fullmatch(line) if pytest_run else None
         if pytest_failure is not None:
             identities.add(_node_id(pytest_failure[1]))
-        unittest_failure = UNITTEST_FAILED_LINE.fullmatch(line)
+        unittest_failure = UNITTEST_FAILED_LINE.fullmatch(line) if unittest_run else None
         if unittest_failure is not None:
             identities.add(f"unittest:{unittest_failure[1]}")
     return identities
@@ -3124,7 +3762,12 @@ def main() -> int:
         help="directory to clone and test in (default: a fresh private temporary directory; "
         "pass one to reuse clones or to read a previous run's report)",
     )
-    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Concurrent projects (default: 1); each project's tests and checkers share the memory budget",
+    )
     parser.add_argument("--only", nargs="*", default=[])
     parser.add_argument("--timeout", type=int, default=1800, help="seconds per phase")
     parser.add_argument(
@@ -3341,8 +3984,8 @@ def main() -> int:
     if pre_existing:
         lines += [
             "",
-            "Typed against pre-existing errors (errors, of them leaving a name the checker "
-            "cannot type, files and proposals declined for it): "
+            "Typed against pre-existing errors (errors, untyped names, "
+            "files and proposals declined for it): "
             + "; ".join(
                 f"{name} ({found.errors}, {found.names_any}, {found.declined_files}, "
                 f"{found.declined_proposals})"

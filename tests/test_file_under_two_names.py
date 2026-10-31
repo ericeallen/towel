@@ -210,8 +210,7 @@ def test_two_search_path_entries_are_a_stray_package_not_a_link(
         # Only a type-only import goes through it, and that never runs.
         (
             lambda root: _link(root, "src/alpha/compat.py", "src/alpha/impl.py"),
-            "import alpha.a\nfrom typing import TYPE_CHECKING\n"
-            "if TYPE_CHECKING:\n    import alpha.compat\n",
+            "import alpha.a\nif 0 > 1:\n    import alpha.compat\n",
         ),
         # A hard link no name reaches twice.
         (lambda root: _hard_link(root, "notes/a_copy.py", "src/alpha/a.py"), "import alpha.a\n"),

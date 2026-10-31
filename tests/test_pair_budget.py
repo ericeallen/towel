@@ -110,15 +110,15 @@ def test_a_negative_tuning_value_is_refused(capsys: pytest.CaptureFixture[str]) 
 def test_min_lines_from_the_command_line_changes_what_is_found(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
-            def a(x):
+            def a(x, delta=0):
                 y = x + 1
                 z = y * 2
-                return z
+                return z + delta
 
-            def b(x):
+            def b(x, delta=1):
                 y = x + 1
                 z = y * 2
-                return z + 1
+                return z + delta
             """))
     loose = UnificationRefactorEngine(min_lines=2, settings=SERIAL).analyze_file(str(path))
     strict = UnificationRefactorEngine(min_lines=4, settings=SERIAL).analyze_file(str(path))

@@ -16,9 +16,12 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
-from towel.unification.import_graph import imported_definition_sites
+import pytest
+
+from towel.unification.import_graph import imported_alias_sites, imported_definition_sites
 from towel.unification.import_graph import ImportGraphCache
 
 
@@ -78,3 +81,70 @@ def test_names_without_an_unconditional_import_resolve_to_nothing(tmp_path: Path
     )
     assert imported_definition_sites(str(module), "Base", ImportGraphCache()) is None
     assert imported_definition_sites(str(module), "Unbound", ImportGraphCache()) is None
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("from .base import *", {("one/base.py", "Contract.Inner")}),
+        ("from proj.two.base import *", {("two/base.py", "Contract.Inner")}),
+        ("from ..two.base import *", {("two/base.py", "Contract.Inner")}),
+        ("from . import *", {("one/__init__.py", "Contract.Inner")}),
+    ],
+)
+def test_star_import_names_a_module_not_an_attribute_of_its_parent(
+    tmp_path: Path, source: str, expected: set[tuple[str, str]]
+) -> None:
+    """Do not invent parent-package paths that expand forever through cyclic reexports.
+
+    The statement's module must be imported before its namespace is copied.
+    Unlike ``from package import name``, its last component cannot instead
+    name an ordinary attribute. This distinction caused the Pyparsing corpus
+    query to expand hundreds of thousands of impossible qualified names.
+    """
+    pkg = _project(tmp_path)
+    module = pkg / "one" / "user.py"
+    module.write_text(source + "\n")
+    statement = ast.parse(source).body[0]
+    assert isinstance(statement, ast.ImportFrom)
+    sites = imported_alias_sites(
+        str(module), statement, statement.names[0], "Contract.Inner", ImportGraphCache()
+    )
+    assert sites is not None
+    assert {(str(path.relative_to(pkg)), name) for path, name in sites} == expected
+
+
+def test_named_from_import_still_allows_an_attribute_or_a_submodule(tmp_path: Path) -> None:
+    """The star-import repair must not erase real ambiguity in ordinary imports."""
+    pkg = _project(tmp_path)
+    module = pkg / "one" / "user.py"
+    source = "from proj.two import base"
+    module.write_text(source + "\n")
+    statement = ast.parse(source).body[0]
+    assert isinstance(statement, ast.ImportFrom)
+    sites = imported_alias_sites(
+        str(module), statement, statement.names[0], "Base", ImportGraphCache()
+    )
+    assert sites is not None
+    assert {(str(path.relative_to(pkg)), name) for path, name in sites} == {
+        ("two/__init__.py", "base.Base"),
+        ("two/base.py", "Base"),
+    }
+
+
+def test_star_export_can_still_name_a_submodule(tmp_path: Path) -> None:
+    """Only prefixes shorter than the imported module are impossible; suffixes remain."""
+    pkg = _project(tmp_path)
+    module = pkg / "one" / "user.py"
+    source = "from proj.two import *"
+    module.write_text(source + "\n")
+    statement = ast.parse(source).body[0]
+    assert isinstance(statement, ast.ImportFrom)
+    sites = imported_alias_sites(
+        str(module), statement, statement.names[0], "base.Base", ImportGraphCache()
+    )
+    assert sites is not None
+    assert {(str(path.relative_to(pkg)), name) for path, name in sites} == {
+        ("two/__init__.py", "base.Base"),
+        ("two/base.py", "Base"),
+    }

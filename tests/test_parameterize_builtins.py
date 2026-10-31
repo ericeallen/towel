@@ -12,18 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``parameterize_builtins`` passes a builtin that may differ between sites instead of declining.
+"""``parameterize_builtins`` preserves caller lookups instead of declining.
 
-By default no helper takes a builtin as a parameter, and a pair is declined
-wherever a builtin its moved code reads may differ between its sites: one
-site's function binds ``len`` and the other reads the builtin, or, across
-modules, the program shows a participating module may hold the name. With
-``parameterize_builtins`` (``towel dry --parameterize-builtins``) exactly
-those builtins become ordinary parameters, each site passing its own binding,
-evaluated where the block read it, so a patch of either module still reaches
-that module's code. It permits nothing else: a builtin every site reads alike
-is still read bare, and blocks that differ in which builtin they use are still
-declined.
+By default cross-module builtin reads and mixed local/builtin sites decline.
+With the explicit opt-in, every original module lookup occurs at its original
+position via a caller-side thunk. A single leading lookup may be inlined when
+doing so preserves evaluation order and has an immutable result. Safe same-module
+builtin reads stay bare; definition-time mapping replacement declines separately.
+Reflection adds no checks, and blocks that differ in which builtin they use
+still decline.
 """
 
 from __future__ import annotations
@@ -82,6 +79,8 @@ def _refactor(target: Path, parameterize_builtins: bool) -> Tuple[int, Mapping[s
     """
     engine = UnificationRefactorEngine(
         min_lines=3,
+        # The complete body includes its header effect and argument owner.
+        max_parameters=6,
         parameterize_builtins=parameterize_builtins,
         cross_module_helpers=target.is_dir(),
     )
@@ -123,7 +122,10 @@ def _helpers(root: Path) -> List[ast.FunctionDef]:
 
 
 def _parameters(root: Path) -> List[List[str]]:
-    return [[argument.arg for argument in helper.args.args] for helper in _helpers(root)]
+    return [
+        [argument.arg for argument in helper.args.posonlyargs + helper.args.args]
+        for helper in _helpers(root)
+    ]
 
 
 def _calls(source: str) -> Dict[str, int]:
@@ -213,7 +215,7 @@ def test_a_site_reading_the_builtin_shares_with_one_binding_its_name_only_with_t
     applied, declined = _refactor(after / "m.py", parameterize_builtins=flag)
     if flag:
         assert applied == 1
-        assert _parameters(after) == [["__param_0", "len", "name", "rows"]]
+        assert _parameters(after) == [["__param_0", "__param_1", "name", "rows", "_towel_owner"]]
     else:
         assert applied == 0
         assert "builtin_argument" in declined
@@ -221,7 +223,7 @@ def test_a_site_reading_the_builtin_shares_with_one_binding_its_name_only_with_t
 
 
 @pytest.mark.parametrize("flag", [False, True])
-def test_a_clustered_site_reading_the_builtin_joins_only_with_the_flag(
+def test_local_owned_sites_do_not_reuse_their_eager_helper_for_a_builtin_site(
     tmp_path: Path, flag: bool
 ) -> None:
     before, after = tmp_path / "before", tmp_path / "after"
@@ -230,7 +232,9 @@ def test_a_clustered_site_reading_the_builtin_joins_only_with_the_flag(
     applied, _ = _refactor(after / "m.py", parameterize_builtins=flag)
     assert applied == 1
     calls = _calls((after / "m.py").read_text())
-    assert (calls["first"], calls["second"], calls["third"]) == (1, 1, 1 if flag else 0)
+    # The first two local sites establish an eager ABI. A builtin site cannot
+    # reuse that ABI: it requires caller lookups and a fresh ownership helper.
+    assert (calls["first"], calls["second"], calls["third"]) == (1, 1, 0)
     assert _run(after, "drive.py") == _run(before, "drive.py")
 
 
@@ -244,7 +248,7 @@ def _package(
     exports = "\n\n\n".join(
         part
         for part in (
-            "from pkg import reports  # exports already depends on reports",
+            "import pkg.reports as reports  # exports already depends on reports",
             textwrap.dedent(exports_prelude).strip(),
             _function(exports_header, "exports"),
         )
@@ -283,6 +287,9 @@ class _Evidence(TypedDict, total=False):
 
 # Each form of evidence that a builtin may differ between the modules, which
 # declines the pair by default and makes the builtin a parameter with the flag.
+# The definition-time rule additionally declines __builtins__ replacement and
+# wildcard imports whose exports are unproved: even a freshly created lookup
+# lambda can capture another mapping.
 EVIDENCE: Dict[str, _Evidence] = {
     "the_borrower_binds_it": {"exports_prelude": "def len(item):\n    return 7"},
     "the_host_binds_it": {"reports_prelude": "def len(item):\n    return 7"},
@@ -294,6 +301,25 @@ EVIDENCE: Dict[str, _Evidence] = {
     "rebound_builtins_namespace": {
         "exports_prelude": "import builtins\n__builtins__ = dict(vars(builtins), len=lambda i: 7)"
     },
+    "one_site_binds_it_locally": {
+        "exports_header": "export_size(rows, name, len=lambda value: 40)",
+    },
+    "direct_attribute_write_in_tests": {"extra": {"proj/tests/test_exports.py": """
+                from pkg import exports
+
+                def test_size():
+                    exports.len = lambda value: 100
+                    assert exports.export_size([1, 2], "ab") == 10001
+                """}},
+    "aliased_module_attribute_write": {"extra": {"proj/tests/test_exports.py": """
+                import pkg.exports as exports
+
+                exports.len = lambda value: 100
+                """}},
+}
+
+
+REFLECTIVE_OPERATIONS: Dict[str, _Evidence] = {
     "written_into_the_namespace": {"exports_prelude": 'vars()["len"] = lambda item: 7'},
     "patched_by_the_tests": {"extra": {"proj/tests/test_exports.py": """
                 from unittest import mock
@@ -309,9 +335,6 @@ EVIDENCE: Dict[str, _Evidence] = {
                 def test_size(monkeypatch):
                     monkeypatch.setattr(exports, "len", lambda value: 100, raising=False)
                 """}},
-    "one_site_binds_it_locally": {
-        "exports_header": "export_size(rows, name, len=lambda value: 40)",
-    },
 }
 
 
@@ -325,9 +348,26 @@ def test_across_modules_evidence_declines_or_passes_the_builtin(
     _write(before, files)
     _write(after, files)
     applied, declined = _refactor(after / "proj" / "pkg", parameterize_builtins=flag)
-    if flag:
+    if case in {
+        "rebound_builtins_namespace",
+        "star_import_in_the_project",
+        "star_import_outside_the_project",
+    }:
+        # The source-only guard does not prove a wildcard provider's runtime
+        # exports. __all__ may include __builtins__, so a later lookup thunk
+        # cannot establish the caller's captured mapping in these cases.
+        assert applied == 0
+        assert "builtin_mapping_replaced" in declined
+        assert _python_files(after / "proj") == _python_files(before / "proj")
+    elif flag:
         assert applied > 0
-        assert any("len" in parameters for parameters in _parameters(after / "proj"))
+        assert any(
+            isinstance(node, ast.Lambda)
+            and isinstance(node.body, ast.Name)
+            and node.body.id == "len"
+            for path in (after / "proj").rglob("*.py")
+            for node in ast.walk(ast.parse(path.read_text()))
+        )
     else:
         assert applied == 0
         assert {"builtin_may_differ_by_module", "builtin_argument"} & set(declined)
@@ -337,19 +377,37 @@ def test_across_modules_evidence_declines_or_passes_the_builtin(
     )
 
 
-def test_the_flag_passes_no_builtin_every_site_reads_alike(tmp_path: Path) -> None:
+@pytest.mark.parametrize("flag", [False, True])
+@pytest.mark.parametrize("case", sorted(REFLECTIVE_OPERATIONS))
+def test_reflection_does_not_request_builtin_parameterization(
+    tmp_path: Path, case: str, flag: bool
+) -> None:
+    _write(tmp_path, _package(**REFLECTIVE_OPERATIONS[case]))
+    project = tmp_path / "proj"
+    applied, declined = _refactor(project / "pkg", parameterize_builtins=flag)
+    assert bool(applied) is flag
+    assert all("len" not in parameters for parameters in _parameters(project))
+    if flag:
+        assert "builtin_may_differ_by_module" not in declined
+    else:
+        assert "builtin_may_differ_by_module" in declined
+
+
+def test_the_flag_preserves_cross_module_lookups_and_same_module_bare_reads(tmp_path: Path) -> None:
     files = _package()
     _write(tmp_path, files)
     applied, _ = _refactor(tmp_path / "proj" / "pkg", parameterize_builtins=True)
     assert applied > 0
-    assert _parameters(tmp_path / "proj") == [["__param_0", "name", "rows"]]
+    assert _parameters(tmp_path / "proj") == [
+        ["__param_0", "__param_1", "__param_2", "name", "rows", "_towel_owner"]
+    ]
     same_module = tmp_path / "same" / "m.py"
     _write(
         tmp_path / "same",
         {"m.py": _function("first(rows, name)", "a") + "\n\n\n" + _function("s(rows, name)", "b")},
     )
     assert _refactor(same_module, parameterize_builtins=True)[0] == 1
-    assert _parameters(tmp_path / "same") == [["__param_0", "name", "rows"]]
+    assert _parameters(tmp_path / "same") == [["__param_0", "name", "rows", "_towel_owner"]]
 
 
 DIFFERING_IN_A_BUILTIN = """
@@ -372,15 +430,29 @@ def second(value, rows, name, options):
 """
 
 
-def test_the_flag_still_declines_blocks_that_differ_in_a_builtin(tmp_path: Path) -> None:
+def test_the_flag_still_declines_blocks_that_differ_in_a_builtin(
+    tmp_path: Path,
+) -> None:
     _write(tmp_path, {"m.py": DIFFERING_IN_A_BUILTIN})
     applied, declined = _refactor(tmp_path / "m.py", parameterize_builtins=True)
     assert applied == 0
     assert "builtin_argument" in declined
 
 
-def test_the_flag_reaches_the_engine_from_the_command_line(tmp_path: Path) -> None:
+def test_the_flag_reaches_the_engine_from_the_command_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     parser = _build_parser()
+    for command in ("dry", "preview"):
+        with pytest.raises(SystemExit) as exit_info:
+            parser.parse_args([command, "--help"])
+        assert exit_info.value.code == 0
+        help_text = " ".join(capsys.readouterr().out.split())
+        assert "ordinary bindings, wildcard imports or __builtins__ attribute writes" in help_text
+        assert "elsewhere in the analyzed program may replace a module's mapping" in help_text
+        assert "captured global-fallback reads (including custom names)" in help_text
+        assert "implicit import/class operations decline even with this flag" in help_text
+        assert "an immutable lookup result" in help_text
     assert not DryOptions.from_namespace(parser.parse_args(["dry", "a", "b"])).parameterize_builtins
     dry = DryOptions.from_namespace(parser.parse_args(["dry", "a", "b", "--parameterize-builtins"]))
     assert dry.parameterize_builtins
@@ -413,38 +485,40 @@ def test_the_flag_reaches_the_engine_from_the_command_line(tmp_path: Path) -> No
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
     assert completed.returncode == 0, completed.stderr
-    assert _parameters(tmp_path) == [["__param_0", "len", "name", "rows"]]
+    assert _parameters(tmp_path) == [["__param_0", "__param_1", "name", "rows", "_towel_owner"]]
 
 
 # What the checker reveals for a builtin, and the annotation Towel writes.
+# Precise callable and class-object types remain whole strings so constructing
+# the helper cannot add subscription or operator effects at runtime.
 REVEALED = [
-    ("len", "def (typing.Sized) -> int", "Callable[..., int]"),
+    ("len", "def (typing.Sized) -> int", "'Callable[..., int]'"),
     (
         "print",
         "Overload(def (*values: object, sep: str | None =, end: str | None =, file: "
         "_typeshed.SupportsWrite[str] | None =, flush: Literal[False] =), def (*values: object, "
         "sep: str | None =, end: str | None =, file: _SupportsWriteAndFlush[str] | None =, "
         "flush: bool))",
-        "Callable[..., None]",
+        "'Callable[..., None]'",
     ),
     (
         "str",
         "Overload(def (object: object =) -> str, def (object: _collections_abc.Buffer, "
         "encoding: str =, errors: str =) -> str)",
-        "type[str]",
+        "'type[str]'",
     ),
     (
         "list",
         "Overload(def [_T] () -> list[_T], def [_T] (typing.Iterable[_T]) -> list[_T])",
-        "type[list]",
+        "'type[list]'",
     ),
-    ("repr", "def (object) -> str", "Callable[[object], str]"),
+    ("repr", "def (object) -> str", "'Callable[[object], str]'"),
     (
         "isinstance",
         "def (object, type | types.UnionType | tuple[..., ...]) -> bool",
-        "Callable[..., bool]",
+        "'Callable[..., bool]'",
     ),
-    ("IndexError", "def (*args: object) -> IndexError", "type[IndexError]"),
+    ("IndexError", "def (*args: object) -> IndexError", "'type[IndexError]'"),
     # Overloads returning different types, and a generic, have no annotation.
     (
         "open",
@@ -477,7 +551,7 @@ def test_the_checkers_own_spelling_wins_wherever_it_can_be_written() -> None:
         False,
         fallbacks=[builtin_object_revealed("filter", "def (builtins.object) -> builtins.str")],
     )
-    assert exact is not None and ast.unparse(exact) == "Callable[[object], str]"
+    assert exact is not None and ast.unparse(exact) == "'Callable[[object], str]'"
     # The builtin ``len``, whose exact type names a protocol the host lacks.
     loosened = _joined_revealed(
         ["def (typing.Sized) -> int"],
@@ -485,17 +559,18 @@ def test_the_checkers_own_spelling_wins_wherever_it_can_be_written() -> None:
         False,
         fallbacks=["def (*args: Any, **kwargs: Any) -> int"],
     )
-    assert loosened is not None and ast.unparse(loosened) == "Callable[..., int]"
+    assert loosened is not None and ast.unparse(loosened) == "'Callable[..., int]'"
 
 
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
 
 TYPED_EXPORTS = """
-from pkg import reports  # exports already depends on reports
+from builtins import len as len
+import pkg.reports as reports  # exports already depends on reports
 
 
-def export_size(rows: list[int], name: str) -> int:
-    print("exports", name)
+def export_size(rows: list[int], name: str, heading: bool = True) -> int:
+    print("exports", name) if heading else print("reports")
     width = len(name)
     height = len(rows)
     label = str(width) + name
@@ -504,8 +579,8 @@ def export_size(rows: list[int], name: str) -> int:
 """
 
 TYPED_REPORTS = """
-def report_size(rows: list[int], name: str) -> int:
-    print("reports")
+def report_size(rows: list[int], name: str, heading: bool = False) -> int:
+    print("exports", name) if heading else print("reports")
     width = len(name)
     height = len(rows)
     label = str(width) + name
@@ -514,19 +589,19 @@ def report_size(rows: list[int], name: str) -> int:
 """
 
 TYPED_TEST = """
-from unittest import mock
-
 import pkg.exports
 
 
 def test_size() -> None:
-    with mock.patch("pkg.exports.len", lambda value: 100, create=True):
-        assert pkg.exports.export_size([1, 2], "ab") == 10001
+    pkg.exports.len = lambda value: 100
+    assert pkg.exports.export_size([1, 2], "ab") == 10001
 """
 
 
 @requires_mypy
-def test_under_a_strict_checker_the_builtin_parameter_is_callable(tmp_path: Path) -> None:
+def test_under_a_strict_checker_the_builtin_parameter_is_callable(
+    tmp_path: Path,
+) -> None:
     _write(
         tmp_path,
         {
@@ -537,6 +612,13 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(tmp_path: Path
             "tests/test_exports.py": TYPED_TEST,
         },
     )
+    driver = (
+        "from pkg import exports, reports\n"
+        "print(exports.export_size([1, 2], 'ab'), reports.report_size([1, 2], 'ab'))\n"
+    )
+    (tmp_path / "check.py").write_text(driver)
+    expected = _run(tmp_path, "check.py")
+    assert expected == "exports ab\nmeasured 2ab\nreports\nmeasured 2ab\n5 5\n"
     completed = subprocess.run(
         [
             sys.executable,
@@ -550,6 +632,8 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(tmp_path: Path
             "--progress",
             "none",
             "--cross-module",
+            "--max-parameters",
+            "8",
             "--parameterize-builtins",
         ],
         cwd=tmp_path,
@@ -559,14 +643,76 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(tmp_path: Path
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
     assert completed.returncode == 0, completed.stderr
+    assert _run(tmp_path, "check.py") == expected
     (helper,) = _helpers(tmp_path / "pkg")
+    parameters = helper.args.posonlyargs + helper.args.args
+    assert helper.args.posonlyargs
+    assert all(parameter.arg.startswith("__param_") for parameter in helper.args.posonlyargs)
+    assert not any(parameter.arg.startswith("__param_") for parameter in helper.args.args)
     annotations = {
         argument.arg: (
             argument.annotation.value
             if isinstance(argument.annotation, ast.Constant)
             else ast.unparse(argument.annotation)
         )
-        for argument in helper.args.args
+        for argument in parameters
         if argument.annotation is not None
     }
-    assert annotations["len"] == "_typing.Callable[..., int]"
+    reports = ast.parse((tmp_path / "pkg/reports.py").read_text())
+    call = next(
+        node
+        for node in ast.walk(reports)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper.name
+    )
+    assert not call.keywords and len(call.args) == len(parameters)
+    lookups = {
+        argument.body.id: annotations[parameter.arg]
+        for parameter, argument in zip(parameters, call.args, strict=True)
+        if isinstance(argument, ast.Lambda) and isinstance(argument.body, ast.Name)
+    }
+    assert lookups == {
+        "len": "_typing.Callable[[], _typing.Callable[..., int]]",
+        "print": "_typing.Callable[[], _typing.Callable[..., None]]",
+        "str": "_typing.Callable[[], type[str]]",
+    }
+
+
+@pytest.mark.parametrize(
+    "expression, revealed, expected",
+    [
+        (
+            "lambda: len",
+            "def () -> def (typing.Sized) -> int",
+            "'Callable[[], Callable[..., int]]'",
+        ),
+        (
+            "lambda: print",
+            "def () -> Overload(def (*values: object, file: _typeshed.SupportsWrite[str]), "
+            "def (*values: object, flush: bool))",
+            "'Callable[[], Callable[..., None]]'",
+        ),
+        ("lambda: str", "def () -> def (object) -> str", "'Callable[[], type[str]]'"),
+        (
+            "lambda: repr",
+            "def () -> def (object) -> str",
+            "'Callable[[], Callable[[object], str]]'",
+        ),
+    ],
+)
+def test_deferred_builtin_lookups_retain_the_callable_result_type(
+    expression: str, revealed: str, expected: str
+) -> None:
+    annotation = annotation_from_revealed(
+        builtin_object_revealed(expression, revealed), None, False, {"Any", "Callable"}
+    )
+    assert annotation is not None and ast.unparse(annotation) == expected
+
+
+@pytest.mark.parametrize(
+    "expression", ["lambda value: len", "lambda: module.len", "lambda: measure"]
+)
+def test_builtin_thunk_fallback_does_not_widen_unrelated_expressions(expression: str) -> None:
+    revealed = "def () -> def (typing.Sized) -> int"
+    assert builtin_object_revealed(expression, revealed) == revealed

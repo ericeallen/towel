@@ -38,32 +38,32 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
 
 TWO_PAIRS = """\
-    def first(values: list[int]) -> int:
+    def first(values: list[int], extra: int = 0) -> int:
         total = 0
         for value in values:
             total += value * 2
-        return total
+        return total + extra
 
 
-    def second(values: list[int]) -> int:
+    def second(values: list[int], extra: int = 1) -> int:
         total = 0
         for value in values:
             total += value * 2
-        return total + 1
+        return total + extra
 
 
-    def third(names: list[str]) -> str:
+    def third(names: list[str], suffix: str = "") -> str:
         joined = ""
         for name in names:
             joined += name.upper()
-        return joined
+        return joined + suffix
 
 
-    def fourth(names: list[str]) -> str:
+    def fourth(names: list[str], suffix: str = "!") -> str:
         joined = ""
         for name in names:
             joined += name.upper()
-        return joined + "!"
+        return joined + suffix
     """
 
 

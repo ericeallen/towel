@@ -1,0 +1,177 @@
+[build-system]
+requires = [
+    "hatchling>=1.26",
+]
+build-backend = "hatchling.build"
+
+[project]
+name = "soupsieve"
+description = "A modern CSS selector implementation for Beautiful Soup."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Isaac Muse", email = "Isaac.Muse@gmail.com" },
+]
+keywords = [
+    "CSS",
+    "HTML",
+    "XML",
+    "selector",
+    "filter",
+    "query",
+    "soup"
+]
+dynamic = [
+    "classifiers",
+    "version",
+]
+
+[project.urls]
+Homepage = "https://github.com/facelessuser/soupsieve"
+
+[tool.hatch.version]
+source = "code"
+path = "soupsieve/__meta__.py"
+
+[tool.hatch.build.targets.wheel]
+include = [
+    "/soupsieve",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/docs/src/markdown/**/*.md",
+    "/docs/src/markdown/**/*.gif",
+    "/docs/src/markdown/**/*.png",
+    "/docs/src/markdown/dictionary/*.txt",
+    "/docs/theme/**/*.css",
+    "/docs/theme/**/*.js",
+    "/docs/theme/**/*.html",
+    "/requirements/*.txt",
+    "/soupsieve/**/*.py",
+    "/soupsieve/py.typed",
+    "/tests/**/*.py",
+    "/.pyspelling.yml",
+    "/.coveragerc",
+    "/zensical.yml"
+]
+
+[tool.mypy]
+files = [
+    "soupsieve"
+]
+strict = true
+show_error_codes = true
+
+[tool.hatch.metadata.hooks.custom]
+
+[tool.ruff]
+line-length = 120
+
+lint.select = [
+    "A",    # flake8-builtins
+    "B",    # flake8-bugbear
+    "D",    # pydocstyle
+    "C4",   # flake8-comprehensions
+    "N",    # pep8-naming
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "PGH",  # pygrep-hooks
+    "RUF",  # ruff
+    # "UP",   # pyupgrade
+    "W",    # pycodestyle
+    "YTT",  # flake8-2020,
+    "PERF"  # Perflint
+]
+
+lint.ignore = [
+    "E741",
+    "D202",
+    "D401",
+    "D212",
+    "D203",
+    "N802",
+    "N801",
+    "N803",
+    "N806",
+    "N818",
+    "RUF012",
+    "RUF005",
+    "PGH004",
+    "RUF100",
+    "RUF022",
+    "RUF023"
+]
+
+[tool.coverage.report]
+# Regexes for lines to exclude from consideration
+exclude_lines = [
+    "pragma: no cover",
+    "@overload"
+]
+
+[tool.hatch.envs.dev]
+dependencies = [
+    "pytest",
+    "pytest-cov",
+    "coverage",
+    "mypy",
+    "ruff",
+    "build",
+    "beautifulsoup4",
+    "lxml",
+    "html5lib"
+]
+
+[tool.hatch.envs.dev-stdlib]
+dependencies = [
+    "pytest",
+    "pytest-cov",
+    "coverage",
+    "build",
+    "beautifulsoup4"
+]
+
+[tool.hatch.envs.docs]
+dependencies = [
+    "zensical",
+    "markdown",
+    "pymdown-extensions",
+    "pymdown_lexers @ git+https://github.com/facelessuser/pymdown-lexers.git",
+    "pyspelling",
+    "build",
+    "python-minifier"
+]
+
+[[tool.hatch.envs.dev.matrix]]
+python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+[[tool.hatch.envs.dev-stdlib.matrix]]
+python = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+[tool.hatch.envs.dev.scripts]
+types = "mypy"
+tests = "pytest --cov soupsieve --cov-append --cov-report term-missing --cov-report xml --cov-report html:.cov tests"
+lint = 'ruff check .'
+
+[tool.hatch.envs.dev-stdlib.scripts]
+tests = "pytest --cov soupsieve --cov-append --cov-report term-missing --cov-report xml --cov-report html:.cov tests"
+
+[tool.hatch.envs.docs.scripts]
+spellcheck = [
+    "python -m zensical.main build -f zensical.yml --clean --strict; pyspelling"
+]
+clean = [
+    "python -m zensical.main build -f zensical.yml --clean"
+]
+serve = [
+    "python -m zensical.main serve -f zensical.yml"
+]
+build = [
+    "python -m zensical.main build -f zensical.yml --clean"
+]
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:The 'strip_cdata':DeprecationWarning"
+]

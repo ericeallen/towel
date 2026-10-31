@@ -27,6 +27,31 @@ functions and unittest methods need no signatures (the `tests.*` override in
 `pyproject.toml`), and every `# type: ignore` must be needed and name its
 error code.
 
+For version 1.947, the audit-repair families include
+`test_rename_audit_regressions.py`, `test_rename_unicode_identifiers.py` and
+`test_rename_consumer_scope.py` for stored binding identity, token spans and
+consumer boundaries; `test_pair_partner_eligibility.py` and
+`test_interval_prefix_facts.py` for bounded enumeration work;
+`test_definition_time_builtins.py` for captured builtin mappings,
+`test_module_header_bindings.py` for enclosing-scope definition expressions,
+and `test_builtin_mapping_memo.py` for bounded source-only verdict reuse; and
+`test_formatter_file_context.py`/`test_ruff_effective_configuration.py` for
+per-file policies and retry after unresolved Ruff queries. These supplement
+the adversarial renaming and robustness suites, not replace them.
+
+The 1.946 capability families continue to cover exact constant
+occurrences and literal pools, eligible thunk ordering and result lifetimes,
+fresh IF-local outputs and original-source certificates, Optional-aware caller
+contracts, captured comprehension cells, and bounded lexical/source caches.
+Representative complete-CLI controls are `test_occurrence_constant_cli.py`,
+`test_thunk_ordering_cli.py`, `test_if_fresh_bindings_cli.py` and
+`test_comprehension_cell_capture_cli.py`. These coexist with the standing
+positive and hostile batteries; no reduced suite replaces the full check.
+See [the 1.947 overview](../docs/RELEASE_1_947.md), the
+[1.946 capability overview](../docs/RELEASE_1_946.md) and the
+[readiness report](../docs/PRODUCTION_READINESS.md) for the distinction between
+source-bound development checks and each versioned release campaign.
+
 ## Test Structure
 
 ### Unit Tests (`tests/`)
@@ -202,6 +227,12 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   (`hostile_execution.ScopeWatch`): a name a kept function still reads must
   keep its scope, which a program's output shows only on the path that
   reads it.
+  Fresh unread retention slots are exempt only after an independent AST
+  comparison pairs the original removed block with its generated helper,
+  including caller inputs, local binders, nested shadowing and every return
+  slot. CPython supplies the original function-local names. Retention-name
+  prefixes alone never exempt a binding; changed producers, redirected helpers
+  and unproved syntax remain visible as scope changes.
 - **Property-based tests** — `test_properties.py` generates programs from
   small grammars with Hypothesis (300 deterministic examples for the pure
   properties, 60 for each engine property, no deadline). The pure properties:
@@ -256,6 +287,27 @@ second module repeating its base class's method body),
 `test_examples_crossfile_expected_output/`; regenerate them only after
 verifying the new output (`just regenerate-baseline`) and review the diff,
 since regeneration is not validation.
+
+Four single-file examples also have reviewed `parameter_cells/` goldens. Their
+original parameter cell sets determine selection independently of interpreter
+version: comprehensions compiled as separate scopes retain twelve original
+functions, while cell-free compilation permits their whole-body extraction.
+The selector requires the exact reviewed sets (or uniformly cell-free sets)
+and fails for unknown or mixed facts. Existing useful/unchanged classifications
+and AST comparisons still apply. Broad baseline generation refuses a
+parameter-cell compiler before any writes, so it cannot overwrite the
+cell-free goldens. Generate affected outputs externally and review exact
+original-body restoration, remaining helper changes, and concrete return/effect
+equivalence before adopting a compiler-profile golden.
+
+The September 27 helper cleanup changes three goldens intentionally: the
+class example drops `self` once its only uses are captured by a caller-side
+thunk; the functional example similarly drops the unused `result` argument;
+and `multi_level/api/checkout.py` reuses the generated validation helper
+without inserting a forwarding layer. These expectations protect helper
+quality as well as behavior. Restore neither unused inputs nor forwarding
+layers merely to match a later implementation; check the focused helper
+parameter and generated reuse regressions when changing them.
 
 Three goldens are byte-identical to their inputs because single-file mode
 finds nothing to extract in them. `EXPECTED_UNCHANGED_EXAMPLES` in

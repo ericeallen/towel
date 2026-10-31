@@ -44,8 +44,11 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 SERIAL = Settings.from_environ({"TOWEL_WORKERS": "1"})
 
 _BLOCK = """
+from builtins import print as emit
+
+
 def {name}(values):
-    print({tag!r})
+    emit({tag!r})
     total = 0
     for value in values:
         if value > 1:
@@ -72,7 +75,8 @@ def _package(root: Path) -> Path:
         {
             "zzshared/__init__.py": "",
             "zzshared/first.py": _BLOCK.format(name="total_first", tag="first"),
-            "zzshared/second.py": _BLOCK.format(name="total_second", tag="second"),
+            "zzshared/second.py": "import zzshared.first\n"
+            + _BLOCK.format(name="total_second", tag="second"),
         },
     )
 

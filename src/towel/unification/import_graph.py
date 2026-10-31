@@ -28,8 +28,11 @@ from __future__ import annotations
 
 import ast
 import builtins
+import hashlib
+import os
 import re
-import warnings
+import sys
+import sysconfig
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -48,12 +51,13 @@ from typing import (
 )
 
 from .bounded_cache import BoundedCache, memoizing
-from .exceptions import ProjectScanLimitError
-from .known_bases import (
-    ANCESTOR_CLASS_DECORATORS,
-    KNOWN_BASE_ORIGINS,
-    KNOWN_SUBSCRIPTED_BASE_ORIGINS,
+from ..analysis_sources import (
+    ParserConfiguration,
+    parse_analysis_source,
+    parser_configuration,
+    parsing_is_pure,
 )
+from .exceptions import ProjectScanLimitError
 from .known_platforms import platform_only, stdlib_everywhere
 from ..import_model import NameStatus
 from ..declared_requirements import (
@@ -68,14 +72,11 @@ from .module_bindings import (
     ModuleBindings,
     dotted_name,
     global_bindings,
-    import_origin,
 )
 from .program_imports import ProgramImports, program_imports
-from .statement_facts import (
-    bindings_of,
-    imported_binding_name,
-)
+from .statement_facts import imported_binding_name
 from ..source_text import read_source
+from ..runtime_guards import module_false_guards
 
 
 @dataclass(frozen=True)
@@ -87,15 +88,34 @@ class _Edges:
     """Some import enters a directory the model did not read (``ProgramImports.reached``)."""
 
 
+_SourceKey = Tuple[Path, bytes, ParserConfiguration]
+
+
+def _current_source(path: Path) -> Tuple[str, Optional[_SourceKey]]:
+    """Current text and its diagnostic-free parse key, from the same file read.
+
+    File metadata does not identify content: a same-size replacement can keep
+    its timestamp. Decoding runs on every request, and warning-capable syntax
+    has no key so parsing observes the caller's current diagnostic policy.
+    """
+    source = read_source(path)
+    key = (
+        (path.absolute(), hashlib.sha256(source.encode("utf-8")).digest(), parser_configuration())
+        if parsing_is_pure(source)
+        else None
+    )
+    return source, key
+
+
 class ImportGraphCache:
     """What one run has learned about the project's import graph.
 
     A cross-file pair asks whether hosting a helper would close an import
     cycle, and answering re-reads every reachable module unless the edges are
-    remembered (Sphinx: 243 modules per pair). Edges and import bindings are
-    keyed by path, modification time, and size, so a rewritten file is
-    re-read. Every table is bounded, and the engine owns one instance per
-    run; a caller with no engine makes its own.
+    remembered (Sphinx: 243 modules per pair). Parser-derived facts are
+    keyed by absolute path, current source digest, and parser configuration;
+    warning-capable syntax is always reparsed. Every table is bounded, and the
+    engine owns one instance per run; a caller with no engine makes its own.
 
     What an import names comes from the program's imports
     (:meth:`program_for`): the model of the project a path belongs to, read
@@ -112,19 +132,17 @@ class ImportGraphCache:
         self._declared: Dict[Path, FrozenSet[str]] = {}
         # The project root of each resolved path asked about (``project_root``).
         self._roots: Dict[Path, Path] = {}
-        self.edges: BoundedCache[Tuple[Path, int, int, str], Optional[_Edges]] = BoundedCache(limit)
-        self.bindings: BoundedCache[Tuple[Path, int, int], Optional[Dict[str, Tuple[str, ...]]]] = (
+        self.edges: BoundedCache[Tuple[_SourceKey, str], Optional[_Edges]] = BoundedCache(limit)
+        self.bindings: BoundedCache[_SourceKey, Optional[Dict[str, Tuple[str, ...]]]] = (
             BoundedCache(limit)
         )
         # Whether a module runs code at import, keyed like the edges.
-        self.effects: BoundedCache[Tuple[Path, int, int], bool] = BoundedCache(limit)
+        self.effects: BoundedCache[_SourceKey, bool] = BoundedCache(limit)
         # Whether subclassing a module's class runs only Python's class
         # machinery, keyed like the edges plus the class's name.
-        self.quiet_classes: BoundedCache[Tuple[Path, int, int, str], bool] = BoundedCache(limit)
+        self.quiet_classes: BoundedCache[Tuple[_SourceKey, str], bool] = BoundedCache(limit)
         # The top-level names a module imports unconditionally, keyed like the edges.
-        self.required_imports: BoundedCache[Tuple[Path, int, int], FrozenSet[str]] = BoundedCache(
-            limit
-        )
+        self.required_imports: BoundedCache[_SourceKey, FrozenSet[str]] = BoundedCache(limit)
         # Resolving a path walks the filesystem; the class-hierarchy lookup
         # resolves every class's file per base-class reference.
         self.resolved_paths: BoundedCache[str, Path] = BoundedCache(limit)
@@ -135,9 +153,10 @@ class ImportGraphCache:
 
     def resolve(self, path: str) -> Path:
         """``Path(path).resolve()``, once per spelling for the life of the cache."""
-        resolved = self.resolved_paths.get(path)
+        absolute = os.path.abspath(path)
+        resolved = self.resolved_paths.get(absolute)
         if resolved is None:
-            resolved = self.resolved_paths.put(path, Path(path).resolve())
+            resolved = self.resolved_paths.put(absolute, Path(path).resolve())
         return resolved
 
     def begin_run(
@@ -160,7 +179,14 @@ class ImportGraphCache:
         self._roots = {}
         self._conditional = {}
         self._distributions = {}
-        for table in (self.edges, self.effects, self.quiet_classes):
+        for table in (
+            self.edges,
+            self.bindings,
+            self.effects,
+            self.quiet_classes,
+            self.required_imports,
+            self.resolved_paths,
+        ):
             table.clear()
 
     def project_root(self, resolved: Path) -> Path:
@@ -256,7 +282,9 @@ def _installed_everywhere(root: Path) -> FrozenSet[str]:
         for requirement in declared_requirements(root)
         if requirement.with_the_project and ";" in requirement.declared
     }
-    dependencies = load_pyproject(root).get("tool", {}).get("poetry", {}).get("dependencies", {})
+    dependencies: object = load_pyproject(root)
+    for field in ("tool", "poetry", "dependencies"):
+        dependencies = dependencies.get(field) if isinstance(dependencies, dict) else None
     if isinstance(dependencies, dict):
         for name, specification in dependencies.items():
             tables = specification if isinstance(specification, list) else [specification]
@@ -306,118 +334,34 @@ def relative_imports_resolve_alike(files: Iterable[str], levels: Iterable[int]) 
 # which must not miss an edge), the ones its top level can run as it is
 # imported (in any branch, but not in a function body), or only those its top
 # level runs on every path (statements of the module body itself).
-ImportExtent = Literal["everywhere", "at_import", "unconditionally"]
-
-
-_TYPE_CHECKING = frozenset({"typing.TYPE_CHECKING", "typing_extensions.TYPE_CHECKING"})
+ImportExtent = Literal["everywhere", "at_import", "unconditionally", "leading"]
 
 
 class TypeCheckingGuards:
-    """Which ``if`` tests of one module are ``TYPE_CHECKING``, false wherever the module runs.
+    """Module-level guards whose bodies are locally proved never to execute.
 
-    A body under ``if TYPE_CHECKING:`` is for a checker, which reads it, and
-    never runs: Towel writes imports there on exactly that premise, and every
-    question about what a module runs, imports or requires answers it the same
-    way, through this one test. A test is such a guard when its name, resolved
-    by the module's own bindings, is ``typing.TYPE_CHECKING`` or
-    ``typing_extensions.TYPE_CHECKING`` however it is imported or aliased, or
-    the module's own ``TYPE_CHECKING = False``. It is resolved where the
-    statement holding the test runs when that is known, and otherwise only
-    when every binding the module ever gives the name is one of those, which
-    also covers ``try: from typing import TYPE_CHECKING`` with an ``except``
-    that binds ``False``. Anything else runs: a name a function or class scope
-    binds for itself (a local ``TYPE_CHECKING = True``), a name a function
-    declares ``global``, a module with a star import, an expression other
-    than the name (``not TYPE_CHECKING``), and an unresolvable one. Only the
-    guarded body is skipped; its ``else`` runs.
+    Imported TYPE_CHECKING flags are ordinary mutable bindings. Only a
+    literal False test or the immutable integer comparison 0 > 1 is a
+    runtime proof; see ``module_false_guards``.
     """
 
-    def __init__(self, tree: ast.Module, bindings: Optional[ModuleBindings]) -> None:
+    def __init__(self, tree: ast.Module) -> None:
         self._tree = tree
-        self._bindings = bindings
-
-    @classmethod
-    def of(cls, source: str, tree: ast.Module) -> "TypeCheckingGuards":
-        """The guards of the module ``tree`` parsed from ``source``."""
-        return cls(tree, global_bindings(source))
+        self._tests = module_false_guards(tree)
 
     def never_true(
         self, test: ast.expr, shadowed: FrozenSet[str] = frozenset(), order: Optional[int] = None
     ) -> bool:
-        """Whether ``test`` is a guard, where the names ``shadowed`` are the enclosing scopes' own.
-
-        ``order`` is the index of the top-level statement the test runs in,
-        when it runs as the module is imported; None for a test in a
-        function body, which runs when the module's bindings are all made.
-        """
-        dotted = dotted_name(test)
-        if dotted is None or self._bindings is None or dotted.split(".")[0] in shadowed:
+        """Whether this exact module-level test is false at its statement's position."""
+        if order is None or not 0 <= order < len(self._tree.body):
             return False
-        if order is not None and self._in_effect(dotted, order):
-            return True
-        return self._always_guard(dotted, 0)
-
-    def _in_effect(self, dotted: str, order: int) -> bool:
-        """Whether ``dotted`` is a guard by the binding certainly in effect at ``order``."""
-        assert self._bindings is not None
-        if self._bindings.resolve(dotted, order) in _TYPE_CHECKING:
-            return True
-        if "." in dotted:
-            return False
-        binding = self._bindings.in_effect(dotted, order)
-        if binding is None or len(self._bindings.bindings.get(dotted, ())) != 1:
-            return False
-        return _binds_false(self._tree.body[binding.order], dotted)
-
-    def _always_guard(self, dotted: str, depth: int) -> bool:
-        """Whether every binding the module's own scope ever gives ``dotted``'s head makes it one."""
-        assert self._bindings is not None
-        head, _, rest = dotted.partition(".")
-        bindings = self._bindings
-        if (
-            depth > 8
-            or bindings.star_imports
-            or head in bindings.rebound_by_global
-            or not bindings.bindings.get(head)
-        ):
-            return False
-        sources = list(_module_scope_bindings(self._tree, head))
-        if not sources:
-            return False
-        for statement, alias in sources:
-            if alias is not None and isinstance(statement, (ast.Import, ast.ImportFrom)):
-                origin = import_origin(statement, alias)
-                if origin is None or (f"{origin}.{rest}" if rest else origin) not in _TYPE_CHECKING:
-                    return False
-            elif not rest and _binds_false(statement, head):
-                continue
-            elif (
-                isinstance(statement, ast.Assign)
-                and all(isinstance(target, ast.Name) for target in statement.targets)
-                and (aliased := dotted_name(statement.value)) is not None
-            ):
-                if not self._always_guard(f"{aliased}.{rest}" if rest else aliased, depth + 1):
-                    return False
-            else:
-                return False
-        return True
-
-
-def _binds_false(statement: ast.AST, name: str) -> bool:
-    """``name = False`` or ``name: bool = False``, and nothing else."""
-    if isinstance(statement, ast.Assign):
-        targets, value = statement.targets, statement.value
-    elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
-        targets, value = [statement.target], statement.value
-    else:
-        return False
-    return (
-        len(targets) == 1
-        and isinstance(targets[0], ast.Name)
-        and targets[0].id == name
-        and isinstance(value, ast.Constant)
-        and value.value is False
-    )
+        statement = self._tree.body[order]
+        return (
+            test in self._tests
+            and isinstance(statement, ast.If)
+            and statement.test is test
+            and not (isinstance(test, ast.Name) and test.id in shadowed)
+        )
 
 
 def _module_scope_bindings(
@@ -475,61 +419,23 @@ def _header_nodes(
     ]
 
 
-def _function_scope_names(function: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> FrozenSet[str]:
-    """The names a function's body resolves in its own scope, not the module's."""
-    arguments = function.args
-    names = {
-        argument.arg
-        for argument in (
-            *arguments.posonlyargs,
-            *arguments.args,
-            *arguments.kwonlyargs,
-            *((arguments.vararg,) if arguments.vararg else ()),
-            *((arguments.kwarg,) if arguments.kwarg else ()),
-        )
-    }
-    for statement in function.body:
-        names |= bindings_of(statement, into_nested_scopes=False)
-        # A declaration hands the name to another scope, which this cannot resolve.
-        names |= {
-            name
-            for node in ast.walk(statement)
-            if isinstance(node, (ast.Global, ast.Nonlocal))
-            for name in node.names
-        }
-    return frozenset(names)
-
-
-def _class_scope_names(klass: ast.ClassDef) -> FrozenSet[str]:
-    """The names a class body binds, which its own statements resolve before the module's."""
-    return frozenset(
-        name
-        for statement in klass.body
-        for name in bindings_of(statement, into_nested_scopes=False)
-    )
-
-
 def _import_statements(
     tree: ast.Module, extent: ImportExtent, guards: TypeCheckingGuards
 ) -> List[Union[ast.Import, ast.ImportFrom]]:
     """The import statements of ``tree`` that ``extent`` counts.
 
-    None under a ``TYPE_CHECKING`` guard (``TypeCheckingGuards``) counts:
-    such an import never runs, in any body.
+    A module-level body locally proved false (``TypeCheckingGuards``) is
+    skipped. Its literal tests do not depend on bindings in enclosing scopes.
+    Imported TYPE_CHECKING flags are mutable and prove nothing.
     """
+    if extent == "leading":
+        return leading_imports(tree)
     if extent == "unconditionally":
         return [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
     found: List[Union[ast.Import, ast.ImportFrom]] = []
 
-    def visit(
-        statements: Sequence[ast.stmt],
-        outer: FrozenSet[str],
-        own: FrozenSet[str],
-        order: Optional[int],
-    ) -> None:
-        """``outer`` names the enclosing functions bind, ``own`` those of a class body here.
-
-        ``order`` is the top-level statement these run in as the module is
+    def visit(statements: Sequence[ast.stmt], order: Optional[int]) -> None:
+        """``order`` is the top-level statement these run in as the module is
         imported, or None inside a function body.
         """
         for position, statement in enumerate(statements):
@@ -539,25 +445,21 @@ def _import_statements(
             elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 # A function body runs only when it is called.
                 if extent == "everywhere":
-                    visit(
-                        statement.body, outer | _function_scope_names(statement), frozenset(), None
-                    )
+                    visit(statement.body, None)
             elif isinstance(statement, ast.ClassDef):
-                visit(statement.body, outer, _class_scope_names(statement), where)
-            elif isinstance(statement, ast.If) and guards.never_true(
-                statement.test, outer | own, where
-            ):
-                visit(statement.orelse, outer, own, where)
+                visit(statement.body, where)
+            elif isinstance(statement, ast.If) and guards.never_true(statement.test, order=where):
+                visit(statement.orelse, where)
             else:
                 for field in ("body", "orelse", "finalbody"):
-                    visit(getattr(statement, field, []), outer, own, where)
+                    visit(getattr(statement, field, []), where)
                 for clause in (
                     *getattr(statement, "handlers", []),
                     *getattr(statement, "cases", []),
                 ):
-                    visit(clause.body, outer, own, where)
+                    visit(clause.body, where)
 
-    visit(tree.body, frozenset(), frozenset(), None)
+    visit(tree.body, None)
     return found
 
 
@@ -567,42 +469,52 @@ def _import_edges(
     cache: ImportGraphCache,
     extent: ImportExtent = "everywhere",
 ) -> Optional[_Edges]:
-    """What the imports of ``current``, a module in the model's paths, may execute.
+    """What the imports of ``current``, a module in the model's paths, may or must execute.
 
     The module is read where the run keeps it (``ProgramImports.in_run``),
     so an import an earlier extraction added is an edge like any other, and
     each import is resolved as the program's import model resolves it
     (``ImportModel.files_reached``): package initializers on the way
-    included, and every candidate location of an ambiguous name. None when
-    the module cannot be read.
+    included, and for possible reach every candidate location of an ambiguous name. None when
+    the module cannot be read. The guaranteed extents count only an
+    ImportFrom's explicit module: its imported members can be attributes
+    already present on that module, without loading any submodule. An
+    ambiguous absolute name guarantees no particular local location.
     """
     path = program.in_run(current)
     try:
-        stat = path.stat()
-    except OSError:
+        source, version = _current_source(path)
+    except (OSError, UnicodeError, SyntaxError):
         return None
-    key = (path, stat.st_mtime_ns, stat.st_size, extent)
-    if key in cache.edges:
+    key = (version, extent) if version is not None else None
+    if key is not None and key in cache.edges:
         return cache.edges.get(key)
     try:
-        source = read_source(path)
         tree = ast.parse(source)
-    except (OSError, UnicodeError, SyntaxError):
-        return cache.edges.put(key, None)
+    except SyntaxError:
+        return cache.edges.put(key, None) if key is not None else None
     files: Set[Path] = set()
     unseen = False
-    for node in _import_statements(tree, extent, TypeCheckingGuards.of(source, tree)):
-        for level, module, names in _import_requests(node):
+    guaranteed = extent in {"leading", "unconditionally"}
+    for node in _import_statements(tree, extent, TypeCheckingGuards(tree)):
+        for level, module, names in _import_requests(node, guaranteed=guaranteed):
+            if guaranteed and level == 0:
+                info = program.model.names.get(module.partition(".")[0]) if module else None
+                if info is None or not info.trusted:
+                    continue
             reached = program.reached(current, level, module, names)
             if reached is None:
                 unseen = True
             else:
                 files.update(reached)
-    return cache.edges.put(key, _Edges(frozenset(files), unseen))
+    result = _Edges(frozenset(files), unseen)
+    return cache.edges.put(key, result) if key is not None else result
 
 
 def _import_requests(
     node: Union[ast.Import, ast.ImportFrom],
+    *,
+    guaranteed: bool = False,
 ) -> Iterator[Tuple[int, Optional[str], Tuple[str, ...]]]:
     """``(level, module, names)`` for each module one import statement imports.
 
@@ -616,7 +528,8 @@ def _import_requests(
         for alias in node.names:
             yield 0, alias.name, ()
         return
-    yield node.level, node.module, tuple(alias.name for alias in node.names if alias.name != "*")
+    names = () if guaranteed else tuple(alias.name for alias in node.names if alias.name != "*")
+    yield node.level, node.module, names
 
 
 def _module_level_import_bindings(
@@ -631,20 +544,17 @@ def _module_level_import_bindings(
     when the module cannot be parsed.
     """
     try:
-        stat = current.stat()
-    except OSError:
-        return None
-    key = (current, stat.st_mtime_ns, stat.st_size)
-    if key in cache.bindings:
-        return cache.bindings.get(key)
-    # A bare parse: this runs on the import-graph walk, which reaches modules
-    # outside the analysis through the graph cache alone and has no engine,
-    # so it cannot share the engine's parse memo. The bindings are remembered
-    # per (path, mtime, size) above, so each file version is parsed once.
-    try:
-        tree = ast.parse(read_source(current))
+        source, key = _current_source(current)
     except (OSError, UnicodeError, SyntaxError):
-        return cache.bindings.put(key, None)
+        return None
+    if key is not None and key in cache.bindings:
+        return cache.bindings.get(key)
+    # Share read-only syntax with the other analyses in the current run.
+    # Standalone queries still parse current source without retaining a tree.
+    try:
+        tree = parse_analysis_source(source, str(current))
+    except SyntaxError:
+        return cache.bindings.put(key, None) if key is not None else None
     bindings: Dict[str, Tuple[str, ...]] = {}
     for node in tree.body:
         if isinstance(node, ast.Import):
@@ -664,7 +574,7 @@ def _module_level_import_bindings(
                 bound = imported_binding_name(alias)
                 if bound is not None:
                     bindings[bound] = (*prefix, *module, alias.name)
-    return cache.bindings.put(key, bindings)
+    return cache.bindings.put(key, bindings) if key is not None else bindings
 
 
 def _module_definition_file(base: Path, parts: Tuple[str, ...]) -> Optional[Path]:
@@ -718,10 +628,53 @@ def imported_definition_sites(
     if bound is None:
         return None
     target, remainder = bound
+    return _imported_sites(current, target, remainder, cache)
+
+
+def imported_alias_sites(
+    current_file: str,
+    statement: Union[ast.Import, ast.ImportFrom],
+    alias: ast.alias,
+    remainder: str,
+    cache: ImportGraphCache,
+) -> Optional[FrozenSet[Tuple[Path, str]]]:
+    """Where one explicit import binding leads, including a binding inside a branch.
+
+    Unlike ``imported_definition_sites``, the caller supplies the exact import
+    statement instead of requiring an unconditional module binding. A star
+    import with ``remainder`` asks where that exported name may be defined.
+    """
+    if isinstance(statement, ast.Import):
+        target = tuple(alias.name.split(".")) if alias.asname else (alias.name.split(".")[0],)
+    else:
+        prefix: Tuple[str, ...] = ("." * statement.level,) if statement.level else ()
+        module = tuple(statement.module.split(".")) if statement.module else ()
+        target = (*prefix, *module, *((alias.name,) if alias.name != "*" else ()))
+    return _imported_sites(
+        Path(current_file).resolve(),
+        target,
+        tuple(remainder.split(".")) if remainder else (),
+        cache,
+        module_target=isinstance(statement, ast.ImportFrom) and alias.name == "*",
+    )
+
+
+def _imported_sites(
+    current: Path,
+    target: Tuple[str, ...],
+    remainder: Tuple[str, ...],
+    cache: ImportGraphCache,
+    *,
+    module_target: bool = False,
+) -> Optional[FrozenSet[Tuple[Path, str]]]:
+    """Resolve an import target and its attribute suffix through the program's imports."""
     full = (*target, *remainder)
-    # ``target`` may end in an attribute rather than a module, so every
-    # split at or after the bound module's own length is tried.
-    splits = range(max(1, len(target) - 1), len(full))
+    # An ordinary ``from m import x`` may name an attribute or a submodule.
+    # In ``from m import *``, however, m itself must be a module. Trying its
+    # parent as an attribute host invents qualified names that grow through
+    # cyclic reexports (the Pyparsing Protocol-base performance regression).
+    minimum = len(target) if module_target else max(1, len(target) - 1)
+    splits = range(minimum, len(full))
     if set(full[0]) == {"."}:
         base = current.parent
         for _ in range(len(full[0]) - 1):
@@ -757,15 +710,23 @@ def _reachable_modules(
     extent: ImportExtent,
     *,
     sees_all: bool,
+    before_definitions: Optional[Path] = None,
+    unfinished: FrozenSet[Path] = frozenset(),
+    transitive: bool = True,
 ) -> Optional[Set[Path]]:
     """Every project module importing ``start`` may run, ``start`` included, in the model's paths.
 
     ``extent`` says which of each module's imports count (``ImportExtent``):
-    ``"unconditionally"`` gives the modules importing ``start`` certainly
-    loads, ``"at_import"`` those it may. None when some module cannot be
+    ``"unconditionally"`` follows explicit top-level module loads,
+    ``"at_import"`` includes conditional loads. None when some module cannot be
     read, or, with ``sees_all``, when some import may run what the model did
     not read. Without it such an import is taken to run nothing, which only
-    ever leaves modules out.
+    ever leaves modules out. ``before_definitions`` restricts that module
+    to imports before its first definition, where a new helper import goes;
+    ``transitive=False`` counts only direct edges: a completed import may
+    return a partially initialized module whose later imports have not run. Modules
+    in ``unfinished`` may already be initializing: neither their completion
+    nor imports later in their bodies follow from encountering them again.
     """
     pending = list(start)
     visited: Set[Path] = set()
@@ -774,10 +735,20 @@ def _reachable_modules(
         if current in visited:
             continue
         visited.add(current)
-        edges = _import_edges(current, program, cache, extent)
+        if current in unfinished:
+            # The package object is present, but its remaining imports have
+            # not necessarily run. Helper placement separately establishes
+            # availability when this partially initialized package is a host.
+            continue
+        edges = _import_edges(
+            current, program, cache, "leading" if current == before_definitions else extent
+        )
         if edges is None or (sees_all and edges.unseen):
             return None
-        pending.extend(edges.files - visited)
+        if transitive:
+            pending.extend(edges.files - visited)
+        else:
+            visited.update(edges.files)
     return visited
 
 
@@ -863,73 +834,8 @@ _QUIET_SUBSCRIPTED_BASES = frozenset(
 )
 _QUIET_METACLASSES = frozenset({"abc.ABCMeta", "builtins.type"})
 
-# Class machinery known to leave a plain function of the class body in place,
-# unwrapped and unregistered, while it builds the class; each is checked in
-# tests/test_method_host_machinery.py. ``type`` and ``ABCMeta`` keep the
-# namespace as given, ``Generic`` and ``object`` define the only
-# ``__init_subclass__`` their subclasses run, and the enum metaclass makes
-# members of the body's other values but never of a function. ``Protocol``
-# is absent: a function in a protocol's body becomes one of its members.
-_ENUM_BASES = frozenset(
-    {"enum.Enum", "enum.Flag", "enum.IntEnum", "enum.IntFlag", "enum.ReprEnum", "enum.StrEnum"}
-)
-_ENUM_METACLASSES = frozenset({"enum.EnumMeta", "enum.EnumType"})
-
 _BUILTIN_CLASSES = frozenset(
     f"builtins.{name}" for name, value in vars(builtins).items() if isinstance(value, type)
-)
-
-# The builtin classes whose instances are not looked up by ``object``'s own
-# ``__getattribute__``: an instance of ``type`` is a class, looked up through
-# its metaclass first, and ``super`` answers for the next class on an order.
-# Every other builtin class runs that generic lookup; before CPython 3.14 many
-# carry a ``__getattribute__`` slot of their own that wraps it
-# (tests/test_method_host_machinery.py checks both against the interpreter).
-_OWN_ATTRIBUTE_LOOKUP = frozenset({"builtins.type", "builtins.super"})
-
-
-@dataclass(frozen=True)
-class _ClassMachinery:
-    """The bases, metaclasses and class members one judgment of a class takes as Python's own.
-
-    ``builtin_bases`` are the builtin classes it accepts as bases, and
-    ``forbidden_members`` the names no class on the order it accepts may bind.
-    A class of the project on the order may carry only ``ancestor_decorators``,
-    each spelled bare, or called too when ``called_decorators``.
-    """
-
-    label: str
-    bases: FrozenSet[str]
-    subscripted_bases: FrozenSet[str]
-    metaclasses: FrozenSet[str]
-    builtin_bases: FrozenSet[str] = _BUILTIN_CLASSES
-    forbidden_members: FrozenSet[str] = frozenset({"__init_subclass__"})
-    ancestor_decorators: FrozenSet[str] = NAMESPACE_PRESERVING_DECORATORS
-    called_decorators: bool = False
-
-
-# Subclassing runs only Python's class machinery: nothing of the project runs.
-_RUNS_NO_CODE = _ClassMachinery(
-    "runs-no-code", _QUIET_BASES, _QUIET_SUBSCRIPTED_BASES, _QUIET_METACLASSES
-)
-# A method helper stays what its class's methods reach: building the class
-# leaves every plain function of its body a plain member, and looking up
-# ``self.__extracted_func_0`` is Python's own, so that no class on the order
-# defines ``__getattribute__``, which intercepts every lookup and, in a proxy,
-# answers it from another object. ``__getattr__`` runs only when normal lookup
-# fails, and nothing spells the helper's stored name, so it is allowed.
-# The library classes read to build a subclass with Python's own machinery
-# count as such bases, and the class decorators read to add none of it keep
-# an ancestor of the project quiet, called or not (``known_bases``).
-_HOSTS_METHOD_HELPERS = _ClassMachinery(
-    "hosts-method-helpers",
-    frozenset({"abc.ABC"}) | _ENUM_BASES | KNOWN_BASE_ORIGINS,
-    frozenset({"typing.Generic"}) | KNOWN_SUBSCRIPTED_BASE_ORIGINS,
-    _QUIET_METACLASSES | _ENUM_METACLASSES,
-    builtin_bases=_BUILTIN_CLASSES - _OWN_ATTRIBUTE_LOOKUP,
-    forbidden_members=frozenset({"__init_subclass__", "__getattribute__"}),
-    ancestor_decorators=NAMESPACE_PRESERVING_DECORATORS | ANCESTOR_CLASS_DECORATORS,
-    called_decorators=True,
 )
 
 # Where the names an evaluated annotation subscripts may come from.
@@ -977,7 +883,7 @@ class ImportTimeCode:
     whose decorators keep it, whose metaclass is ``type`` or ``ABCMeta``,
     which defines no ``__init_subclass__``, and whose own bases are quiet; one
     imported from another module is followed there when ``path`` and
-    ``cache`` locate it. A body guarded by a resolved ``TYPE_CHECKING`` never
+    ``cache`` locate it. A body guarded by a locally proved False test never
     runs, nor one guarded by ``__name__ == "__main__"`` when the module is
     imported rather than run.
     """
@@ -992,12 +898,13 @@ class ImportTimeCode:
     ) -> None:
         self._tree = ast.parse(source)
         self._bindings = global_bindings(source)
-        self._guards = TypeCheckingGuards(self._tree, self._bindings)
+        self._guards = TypeCheckingGuards(self._tree)
         self._path = path
         self._cache = cache
         self._depth = depth
         self._postponed = any(
             isinstance(statement, ast.ImportFrom)
+            and statement.level == 0
             and statement.module == "__future__"
             and any(alias.name == "annotations" for alias in statement.names)
             for statement in self._tree.body
@@ -1245,43 +1152,11 @@ class ImportTimeCode:
         self,
         keywords: Sequence[ast.keyword],
         order: int,
-        machinery: _ClassMachinery = _RUNS_NO_CODE,
     ) -> bool:
         return all(
             keyword.arg == "metaclass"
-            and self._origin(keyword.value, order, None) in machinery.metaclasses
+            and self._origin(keyword.value, order, None) in _QUIET_METACLASSES
             for keyword in keywords
-        )
-
-    def hosts_method_helpers(self, name: str) -> bool:
-        """Whether a method helper placed in the top-level class ``name`` is what its methods reach.
-
-        A helper placed in the body is seen by the class's metaclass, which
-        builds the class from the namespace, and by the ``__init_subclass__``
-        of every class on its method resolution order, its own included for
-        each subclass: any of them may wrap it, register it, or drop it. And
-        every call of it is an attribute lookup, which a ``__getattribute__``
-        anywhere on that order intercepts: a forwarding proxy answers it from
-        another object. So the metaclass must be ``type``, ``abc.ABCMeta`` or
-        the enum metaclass, the class must bind neither ``__init_subclass__``
-        nor ``__getattribute__``, and every base must be a builtin class other
-        than ``type`` and ``super``, ``abc.ABC``, ``typing.Generic[...]``, an
-        enum, or a class of the project that qualifies in turn, each resolved
-        through the module's imports (``_HOSTS_METHOD_HELPERS``). The class's
-        decorators are :meth:`ModuleBindings.keeps_namespace`'s question.
-        """
-        if self._bindings is None:
-            return False
-        order = self._bindings.class_orders.get(name)
-        if order is None:
-            return False
-        node = self._tree.body[order]
-        return (
-            isinstance(node, ast.ClassDef)
-            and node.name == name
-            and self._quiet_keywords(node.keywords, order, _HOSTS_METHOD_HELPERS)
-            and not _binds_any(node, _HOSTS_METHOD_HELPERS.forbidden_members)
-            and all(self._quiet_base(base, order, _HOSTS_METHOD_HELPERS) for base in node.bases)
         )
 
     def _quiet_call(self, call: ast.Call, order: int, body: Optional[_ClassBody]) -> bool:
@@ -1324,8 +1199,9 @@ class ImportTimeCode:
         """``re.compile`` of a constant pattern that compiles here without a warning.
 
         Compiling a pattern runs only the regular expression compiler, but a
-        pattern it rejects raises at import and one it doubts warns, so the
-        pattern is compiled here, once, to see which it is.
+        pattern it rejects raises at import and one it doubts warns. Reject
+        syntax that can warn before compiling: ``re``'s own cache can hide
+        a warning on subsequent calls. Never change the caller's filters.
         """
         if call.keywords or not 1 <= len(call.args) <= 2:
             return False
@@ -1333,13 +1209,23 @@ class ImportTimeCode:
         flags = self._regex_flags(call.args[1], order, body) if len(call.args) == 2 else 0
         if pattern is None or flags is None:
             return False
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            try:
-                re.compile(pattern, flags)
-            except (re.error, TypeError, ValueError, OverflowError, RecursionError):
-                return False
-        return not caught
+        # CPython 3.11--3.14 warns about nested sets, possible set operations,
+        # some conditional group names, and the obsolete TEMPLATE flag.
+        # TEMPLATE's bit is 1; its public name was removed in Python 3.13.
+        # Overmatching an escaped spelling only loses a quiet classification.
+        # Unknown compilers stay unknown.
+        if (
+            sys.implementation.name != "cpython"
+            or not (3, 11) <= sys.version_info[:2] <= (3, 14)
+            or flags & (re.DEBUG | 1)
+            or any(spelling in pattern for spelling in ("[[", "--", "&&", "~~", "||", "(?("))
+        ):
+            return False
+        try:
+            re.compile(pattern, flags)
+        except (re.error, TypeError, ValueError, OverflowError, RecursionError):
+            return False
+        return True
 
     def _constant_text(
         self, node: ast.expr, order: int, body: Optional[_ClassBody]
@@ -1410,18 +1296,16 @@ class ImportTimeCode:
             return not statement.decorator_list
         return isinstance(statement, ast.Assign) and _is_constant(statement.value)
 
-    def _quiet_base(
-        self, base: ast.expr, order: int, machinery: _ClassMachinery = _RUNS_NO_CODE
-    ) -> bool:
-        """Whether subclassing ``base`` runs only the class machinery ``machinery`` accepts."""
+    def _quiet_base(self, base: ast.expr, order: int) -> bool:
+        """Whether subclassing ``base`` runs only Python's own class machinery."""
         if isinstance(base, ast.Subscript):
             # ``Generic[K, V]`` evaluates each of its arguments as an annotation.
             parts = base.slice.elts if isinstance(base.slice, ast.Tuple) else [base.slice]
-            return self._origin(base.value, order, None) in machinery.subscripted_bases and not any(
+            return self._origin(base.value, order, None) in _QUIET_SUBSCRIPTED_BASES and not any(
                 self._annotation(part, order, None) for part in parts
             )
         origin = self._origin(base, order, None)
-        if origin in machinery.bases or origin in machinery.builtin_bases:
+        if origin in _QUIET_BASES or origin in _BUILTIN_CLASSES:
             return True
         dotted = dotted_name(base)
         if dotted is None or self._bindings is None or self._depth > 8:
@@ -1431,39 +1315,24 @@ class ImportTimeCode:
             return False
         if binding.class_qualname is not None and binding.class_qualname == dotted:
             node = self._tree.body[binding.order]
-            return isinstance(node, ast.ClassDef) and self._quiet_ancestor(
-                node, binding.order, machinery
-            )
+            return isinstance(node, ast.ClassDef) and self._quiet_ancestor(node, binding.order)
         if binding.is_import:
-            return self._quiet_imported_class(dotted, machinery)
+            return self._quiet_imported_class(dotted)
         return False
 
-    def _quiet_ancestor(
-        self, node: ast.ClassDef, order: int, machinery: _ClassMachinery = _RUNS_NO_CODE
-    ) -> bool:
-        """A class of this module whose decorators, machinery and members ``machinery`` accepts."""
+    def _quiet_ancestor(self, node: ast.ClassDef, order: int) -> bool:
+        """A class whose creation and subclass hooks run no project code."""
         return (
             all(
-                self._origin(
-                    (
-                        decorator.func
-                        if machinery.called_decorators and isinstance(decorator, ast.Call)
-                        else decorator
-                    ),
-                    order,
-                    None,
-                )
-                in machinery.ancestor_decorators
+                self._origin(decorator, order, None) in NAMESPACE_PRESERVING_DECORATORS
                 for decorator in node.decorator_list
             )
-            and self._quiet_keywords(node.keywords, order, machinery)
-            and not _binds_any(node, machinery.forbidden_members)
-            and all(self._quiet_base(base, order, machinery) for base in node.bases)
+            and self._quiet_keywords(node.keywords, order)
+            and not _binds_any(node, frozenset({"__init_subclass__"}))
+            and all(self._quiet_base(base, order) for base in node.bases)
         )
 
-    def _quiet_imported_class(
-        self, dotted: str, machinery: _ClassMachinery = _RUNS_NO_CODE
-    ) -> bool:
+    def _quiet_imported_class(self, dotted: str) -> bool:
         """An imported class of the project, judged in the module that defines it."""
         if self._path is None or self._cache is None:
             return False
@@ -1474,24 +1343,23 @@ class ImportTimeCode:
         if "." in qualname:
             return False
         try:
-            stat = module.stat()
-        except OSError:
+            source, version = _current_source(module)
+        except (OSError, UnicodeError, SyntaxError):
             return False
-        key = (module, stat.st_mtime_ns, stat.st_size, f"{qualname} {machinery.label}")
-        known = self._cache.quiet_classes.get(key)
+        key = (version, qualname) if version is not None else None
+        known = self._cache.quiet_classes.get(key) if key is not None else None
         if known is not None:
             return known
         try:
-            other = ImportTimeCode(
-                read_source(module), path=module, cache=self._cache, depth=self._depth + 1
-            )
-        except (OSError, UnicodeError, SyntaxError, ValueError):
-            return self._cache.quiet_classes.put(key, False)
-        return self._cache.quiet_classes.put(key, other._quiet_named_class(qualname, machinery))
+            other = ImportTimeCode(source, path=module, cache=self._cache, depth=self._depth + 1)
+        except (SyntaxError, ValueError):
+            return self._cache.quiet_classes.put(key, False) if key is not None else False
+        result = other._quiet_named_class(qualname)
+        return self._cache.quiet_classes.put(key, result) if key is not None else result
 
-    def _quiet_named_class(self, name: str, machinery: _ClassMachinery) -> bool:
+    def _quiet_named_class(self, name: str) -> bool:
         """Whether the class the module binds to ``name`` once it has run is quiet to subclass."""
-        return self._quiet_base(ast.Name(id=name, ctx=ast.Load()), len(self._tree.body), machinery)
+        return self._quiet_base(ast.Name(id=name, ctx=ast.Load()), len(self._tree.body))
 
 
 def _builtin_on_every_path(bindings: ModuleBindings, name: str) -> bool:
@@ -1601,18 +1469,45 @@ def _statement_binds(statement: ast.stmt) -> FrozenSet[str]:
 def _has_import_time_effects(module: Path, cache: ImportGraphCache) -> bool:
     """Whether importing ``module`` can run code beyond Python's own (``ImportTimeCode``)."""
     try:
-        stat = module.stat()
-    except OSError:
+        source, key = _current_source(module)
+    except (OSError, UnicodeError, SyntaxError):
         return True
-    key = (module, stat.st_mtime_ns, stat.st_size)
-    known = cache.effects.get(key)
+    known = cache.effects.get(key) if key is not None else None
     if known is not None:
         return known
     try:
-        code = ImportTimeCode(read_source(module), path=module, cache=cache)
-    except (OSError, UnicodeError, SyntaxError, ValueError):
-        return cache.effects.put(key, True)
-    return cache.effects.put(key, any(code.statements()))
+        code = ImportTimeCode(source, path=module, cache=cache)
+    except (SyntaxError, ValueError):
+        return cache.effects.put(key, True) if key is not None else True
+    result = any(code.statements())
+    return cache.effects.put(key, result) if key is not None else result
+
+
+def inert_function_definition(
+    function: Union[ast.FunctionDef, ast.AsyncFunctionDef], *, postponed: bool = False
+) -> bool:
+    """Whether defining this function executes no user code or binding lookup."""
+    arguments = function.args
+    annotations = [
+        argument.annotation
+        for argument in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            *filter(None, (arguments.vararg, arguments.kwarg)),
+        )
+    ] + [function.returns]
+    return not (
+        function.decorator_list
+        or arguments.defaults
+        or any(default is not None for default in arguments.kw_defaults)
+        or bool(getattr(function, "type_params", ()))
+        or not postponed
+        and any(
+            annotation is not None and not isinstance(annotation, ast.Constant)
+            for annotation in annotations
+        )
+    )
 
 
 class ImportChange(Enum):
@@ -1620,6 +1515,8 @@ class ImportChange(Enum):
 
     UNKNOWN = "the imports cannot be inspected"
     RUNS_CODE = "a module the new import loads runs code at import"
+    IMPORT_ORDER = "the new helper import would advance a module load past definitions"
+    PACKAGE_BINDING = "loading the host would replace an attribute of its parent package"
     CONDITIONAL_HOST = "the program imports the host, or a package it is in, only under a condition"
     OTHER_DISTRIBUTION = "the host belongs to another distribution than the borrower"
     NEW_REQUIREMENT = "a module the new import loads requires a package that may be absent"
@@ -1629,9 +1526,92 @@ class ImportChange(Enum):
     RUN_BY_PATH = "the borrower runs as a script, where the new import would not resolve"
 
 
+def future_imports_are_standard(tree: ast.Module, path: Path, cache: ImportGraphCache) -> bool:
+    """Whether the imports an early helper must follow cannot reenter its host.
+
+    An absolute future directive is also an executable import. A shadowing
+    module can import the borrower before the helper exists, and Python does
+    not permit moving the helper ahead of that directive. Reuse the run's
+    import provenance instead of scanning the shadow's possible callees.
+    Relative imports named __future__ are ordinary imports, not directives.
+    """
+    if not any(
+        isinstance(statement, ast.ImportFrom)
+        and statement.level == 0
+        and statement.module == "__future__"
+        for statement in tree.body
+    ):
+        return True
+    future = cache.program_for(path).model.names.get("__future__")
+    if future is None or future.status is not NameStatus.EXTERNAL or future.installed is None:
+        return False
+    if future.installed in {"a built-in module", "a frozen module"}:
+        return True
+    provider = Path(future.installed)
+    return provider.is_absolute() and provider.resolve() in {
+        (Path(sysconfig.get_path(name)) / "__future__.py").resolve()
+        for name in ("stdlib", "platstdlib")
+    }
+
+
+def _closed_inert_module(module: Path, cache: ImportGraphCache) -> bool:
+    """Whether a new top-level module can finish without executing other project code.
+
+    Absence of calls is insufficient: eager name reads and arithmetic can
+    raise. Only literal bindings and inert definition headers qualify, with
+    no imports except future directives from the standard library. This
+    establishes nothing about parent-package bindings or import order;
+    callers must separately exclude new submodule loads and advanced loads.
+    """
+    try:
+        tree = parse_analysis_source(read_source(module), filename=str(module))
+    except (OSError, UnicodeError, SyntaxError, ValueError):
+        return False
+    if not future_imports_are_standard(tree, module, cache):
+        return False
+    postponed = any(
+        isinstance(statement, ast.ImportFrom)
+        and statement.level == 0
+        and statement.module == "__future__"
+        and any(alias.name == "annotations" for alias in statement.names)
+        for statement in tree.body
+    )
+    for statement in tree.body:
+        if isinstance(statement, ast.Pass) or (
+            isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)
+        ):
+            continue
+        if (
+            isinstance(statement, ast.Assign)
+            and isinstance(statement.value, ast.Constant)
+            and all(isinstance(target, ast.Name) for target in statement.targets)
+        ):
+            continue
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if inert_function_definition(statement, postponed=postponed):
+                continue
+        elif (
+            isinstance(statement, ast.ImportFrom)
+            and statement.level == 0
+            and statement.module == "__future__"
+        ):
+            continue
+        return False
+    return True
+
+
 def import_runs_new_code(host_file: str, borrower_file: str, cache: ImportGraphCache) -> bool:
     """Whether ``borrower`` importing ``host`` would change what importing the borrower does."""
     return import_change(host_file, borrower_file, cache) is not None
+
+
+def _has_parent_package(module: Path, program: ProgramImports) -> bool:
+    """Whether loading this module binds an attribute on a parent, including a namespace package."""
+    name = program.model.module_name(module)
+    if name is not None:
+        return "." in name
+    context = program.model.context_of(module)
+    return context is not None and context != module and module != context / "__init__.py"
 
 
 def import_change(
@@ -1644,7 +1624,18 @@ def import_change(
     borrower that belongs to a distribution borrows only from a host in the
     same one: a monorepo's beta may be installed against the released
     alpha, which lacks the helper. If the
-    borrower's import already certainly loads the host, nothing new runs.
+    borrower's leading imports already certainly load the host, nothing new runs.
+    Its enclosing packages and directly imported modules may still be
+    running, so encountering them does not prove their own imports completed.
+    A host loaded only after definitions is not already available at the
+    new helper import: advancing that load can expose an incomplete module
+    or reorder effects. Such a host is refused even when its eventual load
+    is unconditional.
+    A newly loaded submodule also replaces an attribute on its parent
+    package, even when its body is inert; nothing here assumes that
+    ordinary code outside the analyzed files has left that attribute free.
+    A new top-level host must have a closed inert body; even a name read or
+    arithmetic expression can fail when no original import would run it.
     Otherwise every
     module the new import may load that the borrower's does not certainly
     load already must run no code at import (``ImportTimeCode``), require
@@ -1669,11 +1660,29 @@ def import_change(
         cache,
         "unconditionally",
         sees_all=False,
+        before_definitions=borrower,
+        unfinished=frozenset(program.package_initializers(borrower)),
+        transitive=False,
     )
     if already is None:
         return ImportChange.UNKNOWN
     added: Set[Path] = set()
     if host not in already:
+        eventual = _reachable_modules(
+            [borrower, *program.package_initializers(borrower)],
+            program,
+            cache,
+            "unconditionally",
+            sees_all=False,
+        )
+        if eventual is None:
+            return ImportChange.UNKNOWN
+        if host in eventual:
+            return ImportChange.IMPORT_ORDER
+        if _has_parent_package(host, program):
+            return ImportChange.PACKAGE_BINDING
+        if not _closed_inert_module(program.in_run(host), cache):
+            return ImportChange.RUNS_CODE
         loaded = _reachable_modules(
             [host, *program.package_initializers(host)], program, cache, "at_import", sees_all=True
         )
@@ -1708,7 +1717,7 @@ def conditionally_imported(program: ProgramImports, cache: ImportGraphCache) -> 
     is not a statement of its module's top level is conditional: one under
     an ``if`` (a ``sys.platform``, ``os.name`` or ``platform.system()`` test,
     or any other), in a ``try`` (``except ImportError`` included), a loop or
-    a ``with``, or in a function body. One under ``TYPE_CHECKING`` never runs
+    a ``with``, or in a function body. One under a locally proved False guard never runs
     and is no import at all.
 
     A module is conditional when some import of it is, and every other
@@ -2026,26 +2035,24 @@ def _required_names(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:
     ``import a.b`` requires ``a`` and ``a.b``, and ``from a import b``
     requires ``a`` and ``a.b``, a submodule or an attribute. Either branch of an ``if`` may
     be the one that runs, and an import there is required there; under
-    ``TYPE_CHECKING`` only the ``else`` ever runs. An import in a ``try``
+    a locally proved False guard only the ``else`` ever runs. An import in a ``try``
     whose handlers catch ``ImportError`` requires nothing, since the module
     goes on without it, but one in the handler, the ``else`` or the
     ``finally`` does, and so does one in a ``try`` that lets the error
     through. An import in a function runs only when it is called.
     """
     try:
-        stat = module.stat()
-    except OSError:
+        source, key = _current_source(module)
+    except (OSError, UnicodeError, SyntaxError):
         return frozenset()
-    key = (module, stat.st_mtime_ns, stat.st_size)
-    known = cache.required_imports.get(key)
+    known = cache.required_imports.get(key) if key is not None else None
     if known is not None:
         return known
     try:
-        source = read_source(module)
         tree = ast.parse(source)
-    except (OSError, UnicodeError, SyntaxError):
-        return cache.required_imports.put(key, frozenset())
-    guards = TypeCheckingGuards.of(source, tree)
+    except SyntaxError:
+        return cache.required_imports.put(key, frozenset()) if key is not None else frozenset()
+    guards = TypeCheckingGuards(tree)
     names: Set[str] = set()
     pending: List[Tuple[ast.stmt, int]] = [(node, order) for order, node in enumerate(tree.body)]
     while pending:
@@ -2071,7 +2078,8 @@ def _required_names(module: Path, cache: ImportGraphCache) -> FrozenSet[str]:
                 (inner, order)
                 for inner in (*ran, *handled, *statement.orelse, *statement.finalbody)
             )
-    return cache.required_imports.put(key, frozenset(names))
+    result = frozenset(names)
+    return cache.required_imports.put(key, result) if key is not None else result
 
 
 def would_create_import_cycle(

@@ -34,7 +34,7 @@ An annotation is written unquoted only when it evaluates where the helper is
 defined: every name is a builtin, a ``typing`` name the caller imports, a
 definition the helper is placed after (:func:`respell_bare`), or, in the
 same module, a name bound by a module-level import; and only when evaluating
-it is both safe and inert (:func:`_evaluates_at_runtime`, :func:`_is_inert`).
+it is both safe and inert (:func:`_evaluates_at_runtime`).
 Otherwise it is a string, which never evaluates and which type checkers
 resolve in the module. Across modules only builtin names and the caller's
 ``typing`` names are used, since a site's imports are not the host's.
@@ -60,14 +60,28 @@ import builtins
 import copy
 import textwrap
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, cast
+from typing import (
+    Callable,
+    Dict,
+    FrozenSet,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    cast,
+)
 
 from ..canonical_ast import canonical_dump
+from ..runtime_guards import module_false_guards
+from .bounded_cache import memoizing
 from .revealed_types import parse_revealed
 from .semantic_safety import walk_own_scope
 from ..type_inference import RevealRequest, Subtyping, TypeOracle
 from .models import FunctionNode
-from .statement_facts import import_binding_names, imported_binding_name
+from .statement_facts import import_binding_names
 from ..diagnostics import TYPES, debugging
 from ..source_text import source_lines
 
@@ -329,6 +343,33 @@ def oracle_subtypes(oracle: TypeOracle, file_path: str, source: str) -> _Subtype
     return relation
 
 
+def _inference_subtypes(oracle: TypeOracle, file_path: str, source: str) -> _Subtypes:
+    """Reuse definite verdicts only while one helper's annotations are inferred.
+
+    The inference does not write project files, so its questions share one
+    module context. A later inference must ask again: imports or checker
+    configuration may have changed even when this module's text has not.
+    Only structural strings and immutable verdicts survive a batch, never
+    its input trees. Unknown answers are retried because a failed or
+    unanswered probe supplies no reusable evidence.
+    """
+    relation = oracle_subtypes(oracle, file_path, source)
+    known: Dict[Tuple[str, str], Subtyping] = {}
+
+    def memoized(pairs: Sequence[Tuple[ast.expr, ast.expr]]) -> Sequence[Subtyping]:
+        if not memoizing():
+            return relation(pairs)
+        keys = [(canonical_dump(narrow), canonical_dump(wide)) for narrow, wide in pairs]
+        pending = {key: pair for key, pair in zip(keys, pairs) if key not in known}
+        answered = dict(zip(pending, relation(list(pending.values()))))
+        known.update(
+            (key, verdict) for key, verdict in answered.items() if verdict is not Subtyping.UNKNOWN
+        )
+        return [known.get(key, answered.get(key, Subtyping.UNKNOWN)) for key in keys]
+
+    return memoized
+
+
 def _met(
     candidates: Sequence[Optional[ast.expr]],
     host: Optional[ast.Module],
@@ -474,7 +515,7 @@ def _spelled_for_host(
     if host is not None and _defers_annotations(host):
         return expression
     if names <= resolved:
-        if _evaluates_at_runtime(expression, host):
+        if _evaluates_at_runtime(expression):
             return expression
         return annotation if quoted else ast.Constant(value=ast.unparse(expression))
     if not same_module or host is None:
@@ -484,103 +525,31 @@ def _spelled_for_host(
         if names - resolved <= _dotted_heads(expression):
             return annotation if quoted else ast.Constant(value=ast.unparse(expression))
         return None
-    if names - resolved <= _import_bound_names(host) and _evaluates_at_runtime(expression, host):
+    if names - resolved <= _import_bound_names(host) and _evaluates_at_runtime(expression):
         return expression
     return annotation if quoted else ast.Constant(value=ast.unparse(expression))
 
 
 _RUNTIME_GENERICS = frozenset({"list", "dict", "set", "frozenset", "tuple", "type"})
-_TYPING_MODULES = frozenset({"typing", "typing_extensions", "collections.abc"})
-
-_INERT_OPERATORS = (ast.BitOr, ast.USub, ast.UAdd, ast.Invert)
-"""The only operators an annotation may apply bare: union, and a negated literal."""
-
-_INERT_NODES = (
-    ast.Name,
-    ast.Attribute,
-    ast.Subscript,
-    ast.Slice,
-    ast.Tuple,
-    ast.List,
-    ast.Starred,
-    ast.Constant,
-    ast.Load,
-) + _INERT_OPERATORS
-"""Node kinds whose evaluation cannot reach a statement of the project's own."""
 
 
-def _is_inert(expression: ast.expr) -> bool:
-    """Whether evaluating the annotation runs none of the program's own code.
+def _evaluates_at_runtime(expression: ast.expr) -> bool:
+    """Whether evaluating a generated annotation is inert once its names resolve.
 
-    Copying an annotation copies an expression, and the copy is evaluated
-    where the helper is defined: once more than the program evaluated it, or,
-    where the source quoted the annotation, once where the program never
-    evaluated it at all. ``Annotated[int, mark('a')]`` calls ``mark`` again;
-    so do ``Field(...)``, ``Depends(...)`` and every other annotation whose
-    metadata is built by a call. The extra call is an observable change in
-    behaviour that no type checker reports, because a checker reads the
-    annotation for its type and never runs it.
+    Only atoms are proved inert here. Every compound expression stays wholly
+    quoted: operators can invoke a metaclass, subscription can invoke
+    ``__class_getitem__``, and attributes can invoke ``__getattr__`` or refer
+    to a module/class still being initialized. A familiar builtin or typing
+    spelling does not establish the binding's identity; an import or local
+    definition may shadow it. Even trusted generic constructors can dispatch
+    to the program's code on their arguments.
 
-    Only a shape that resolves names and asks the type system to subscript,
-    union or spell them is inert: anything else -- a call, a lambda, a
-    comprehension, a conditional, an f-string, a walrus -- is written as a
-    string instead, which a checker resolves identically and the interpreter
-    never evaluates.
+    Quoting keeps the complete type visible to the checker without adding
+    runtime evaluation, so no binding resolver or compound allowlist is
+    needed. Existing source annotations are left untouched. Hosts that already
+    defer annotations need no quotation and are handled by the caller.
     """
-    for node in ast.walk(expression):
-        if isinstance(node, (ast.BinOp, ast.UnaryOp)):
-            if not isinstance(node.op, _INERT_OPERATORS):
-                return False
-        elif not isinstance(node, _INERT_NODES):
-            return False
-    return True
-
-
-def _evaluates_at_runtime(expression: ast.expr, host: Optional[ast.Module]) -> bool:
-    """Whether the annotation can be written bare where the helper is defined.
-
-    Two things have to hold, and a failure of either is written as a string.
-
-    Evaluating it must be inert (:func:`_is_inert`): a copied annotation is
-    evaluated one more time than the program evaluated the original, so an
-    annotation carrying a call would run that call again at import.
-
-    And it must not raise. Every name resolving is not enough:
-    ``memoryview[int]`` resolves and raises ``TypeError`` at definition time
-    on interpreters where ``memoryview`` is not generic (tornado). A
-    subscript is trusted only on a PEP 585 builtin generic, on a name
-    imported from ``typing`` or ``collections.abc``, or on ``typing.X`` with
-    ``typing`` imported.
-    """
-    if not _is_inert(expression):
-        return False
-    generic_names = set(_RUNTIME_GENERICS) | set(_TYPING_NAMES)
-    typing_modules: Set[str] = set()
-    if host is not None:
-        for node in host.body:
-            if isinstance(node, ast.ImportFrom) and node.module in _TYPING_MODULES:
-                generic_names.update(import_binding_names(node))
-            elif isinstance(node, ast.Import):
-                typing_modules.update(
-                    bound
-                    for alias in node.names
-                    if alias.name in _TYPING_MODULES
-                    and (bound := imported_binding_name(alias)) is not None
-                )
-    for sub in ast.walk(expression):
-        if not isinstance(sub, ast.Subscript):
-            continue
-        head = sub.value
-        if isinstance(head, ast.Name) and head.id in generic_names:
-            continue
-        if (
-            isinstance(head, ast.Attribute)
-            and isinstance(head.value, ast.Name)
-            and head.value.id in typing_modules
-        ):
-            continue
-        return False
-    return True
+    return isinstance(expression, (ast.Name, ast.Constant))
 
 
 def _referenced_names(expression: ast.expr) -> Set[str]:
@@ -710,7 +679,7 @@ def written_for_python(
     module raise ``TypeError`` on import under Python 3.9, however clean the
     checker, which runs on a newer interpreter, found it. A string is never
     evaluated and a checker reads it as the type it spells: the quotation that
-    keeps an annotation's calls from running (``_is_inert``) is the whole cure.
+    keeps generated annotations inert (``_evaluates_at_runtime``) is the whole cure.
     """
     written = copy.deepcopy(helper)
     if host is not None and _defers_annotations(host):
@@ -734,6 +703,7 @@ def written_for_python(
 def _defers_annotations(module: ast.Module) -> bool:
     return any(
         isinstance(node, ast.ImportFrom)
+        and node.level == 0
         and node.module == "__future__"
         and any(alias.name == "annotations" for alias in node.names)
         for node in module.body
@@ -879,12 +849,15 @@ def _reduce_dotted_names(expression: ast.expr, host: Optional[ast.Module]) -> as
 def _type_only_bound_names(module: ast.Module) -> Set[str]:
     """What the imports under the module's own ``if TYPE_CHECKING:`` bind, for the checker alone."""
     bound: Set[str] = set()
+    false_guards = module_false_guards(module)
     for node in module.body:
         if not isinstance(node, ast.If):
             continue
         test = node.test
-        guarded = (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
-            isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+        guarded = (
+            (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING")
+            or (isinstance(test, ast.Compare) and test in false_guards)
+            or (isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING")
         )
         if guarded:
             for statement in node.body:
@@ -938,6 +911,8 @@ class _InferredHelper:
 
     helper: ast.FunctionDef
     required_imports: Tuple[Tuple[str, str], ...]
+    observed_return_any: bool = False
+    """Any was actually revealed in a result, rather than substituted for missing information."""
 
 
 def qualified_names_in_annotations(helper: ast.FunctionDef) -> List[str]:
@@ -1109,7 +1084,7 @@ def respell_bare(
         expression = _unquoted(annotation)
         if expression is annotation or not _referenced_names(expression) <= resolved:
             return annotation
-        if not _evaluates_at_runtime(expression, host):
+        if not _evaluates_at_runtime(expression):
             return annotation
         return expression
 
@@ -1154,6 +1129,8 @@ def infer_missing_annotations(
     inferrer: TypeOracle,
     bare_ok: Optional[Set[str]] = None,
     receiver: Optional[str] = None,
+    *,
+    return_as_any: FrozenSet[str] = frozenset(),
 ) -> _InferredHelper:
     """A copy of ``helper`` with its annotations completed and normalized by a type checker.
 
@@ -1210,7 +1187,7 @@ def infer_missing_annotations(
     allowed = set(_TYPING_NAMES) | (bare_ok or set())
     host_site = next((site for site in sites if site.file_path == host_file), None)
     subtypes: _Subtypes = (
-        oracle_subtypes(inferrer, host_site.file_path, host_site.source)
+        _inference_subtypes(inferrer, host_site.file_path, host_site.source)
         if host_site is not None
         else _unknown_subtypes
     )
@@ -1269,26 +1246,39 @@ def infer_missing_annotations(
             parameter.annotation = _renormalized(
                 parameter.annotation, host, same_module, subtypes, allowed
             )
+    observed_return_any = False
     if want_return:
         texts = [
             revealed.get((path, line, offset))
             for path, line, count in return_probes
             for offset in range(count)
         ]
+        # A checker's type for an expression can differ in a return context.
+        # mypy reveals NotImplementedType but treats it as Any when returned.
+        texts = ["Any" if text in return_as_any else text for text in texts]
+        observed_return_any = any(text == "Any" for text in texts)
         revealed_return: Optional[ast.expr] = None
         if return_variables and len(return_variables) > 1:
             revealed_return = _joined_tuple(
                 texts, len(return_variables), host, same_module, subtypes, allowed
             )
         elif texts:
-            revealed_return = _joined_revealed(texts, host, same_module, subtypes, allowed)
-        if returns_call and any(d is not None for d in declared):
+            revealed_return = _joined_revealed(
+                texts, host, same_module, subtypes, allowed, preserve_any=True
+            )
+        if observed_return_any and revealed_return is not None:
+            # Subtype probes deliberately cannot establish a relation through
+            # Any. Meeting the callers' declarations would therefore erase an
+            # actual result alternative and create a known-invalid signature.
+            # Keep the observed union; project validation checks its callers.
+            annotated.returns = revealed_return
+        elif returns_call and any(d is not None for d in declared):
             annotated.returns = _return_under_declarations(
                 revealed_return, declared, host, same_module, subtypes
             )
         elif revealed_return is not None or annotated.returns is None:
             annotated.returns = revealed_return
-    return _InferredHelper(annotated, typing_imports_needed(annotated, host))
+    return _InferredHelper(annotated, typing_imports_needed(annotated, host), observed_return_any)
 
 
 def _narrower(declared: ast.expr, seen: ast.expr, subtypes: _Subtypes) -> ast.expr:
@@ -1309,15 +1299,16 @@ def _return_under_declarations(
     same_module: bool,
     subtypes: _Subtypes,
 ) -> Optional[ast.expr]:
-    """The helper's return type given that every site returns it under a declared type.
+    """The helper's return type under the sites' declared return constraints.
 
-    The revealed type is the most precise statement of what the helper
-    returns, and it keeps every site type-checking exactly when it is a
-    subtype of each declared type, which the checker confirms. Otherwise the
+    An unannotated caller imposes no return constraint. The revealed type is
+    the most precise statement of what the helper returns, and it keeps every
+    site type-checking exactly when it is a subtype of each declared type,
+    which the checker confirms. Otherwise the
     declared types' own greatest lower bound, when one of them is it.
     """
     constraints = [d for d in declared if d is not None]
-    if revealed is not None and len(constraints) == len(declared):
+    if revealed is not None:
         verdicts = subtypes([(_unquoted(revealed), _unquoted(d)) for d in constraints])
         if all(verdict is Subtyping.YES for verdict in verdicts):
             return revealed
@@ -1481,7 +1472,10 @@ def _constructed_class(revealed: str) -> Optional[str]:
 def builtin_object_revealed(expression: str, revealed: str) -> str:
     """``revealed`` loosened so an annotation can say it, where ``expression`` is spelled as a builtin.
 
-    Only ``parameterize_builtins`` passes a builtin to a helper, and a
+    A deferred builtin lookup keeps this callable result inside its
+    zero-argument Callable; ``lambda: len`` returns a callable returning int,
+    rather than losing both layers to Any. Only ``parameterize_builtins``
+    passes a builtin to a helper, and a
     builtin's signature is written in terms the helper's module seldom can
     name: typeshed's protocols (``def (typing.Sized) -> int`` for ``len``)
     or an ``Overload(...)`` of several (``print``, ``str``). The helper calls
@@ -1495,6 +1489,15 @@ def builtin_object_revealed(expression: str, revealed: str) -> str:
     own spelling is used wherever it can be written, so a local of the site
     that is spelled as a builtin loses no precision to it.
     """
+    if expression.startswith("lambda:") and revealed.startswith("def () -> "):
+        try:
+            thunk = ast.parse(expression, mode="eval").body
+        except SyntaxError:
+            return revealed
+        if isinstance(thunk, ast.Lambda) and isinstance(thunk.body, ast.Name):
+            prefix = "def () -> "
+            result = builtin_object_revealed(thunk.body.id, revealed[len(prefix) :])
+            return prefix + result
     if expression not in _BUILTIN_NAMES:
         return revealed
     text = revealed.strip()
@@ -1550,6 +1553,8 @@ def _joined_revealed(
     subtypes: _Subtypes = _unknown_subtypes,
     allowed: Optional[Set[str]] = None,
     fallbacks: Sequence[Optional[str]] = (),
+    *,
+    preserve_any: bool = False,
 ) -> Optional[ast.expr]:
     """The normalized union of what mypy revealed at every site, when all of it can be written.
 
@@ -1569,6 +1574,7 @@ def _joined_revealed(
     if not present or len(present) != len(texts):
         return None
     known = [index for index, text in enumerate(present) if text.strip() != "Any"]
+    returned_any = preserve_any and bool(known) and len(known) != len(present)
     if known and len(known) != len(present):
         spare_by_index = list(fallbacks) + [None] * (len(present) - len(fallbacks))
         present = [present[index] for index in known]
@@ -1585,9 +1591,25 @@ def _joined_revealed(
     ]
     if any(candidate is None for candidate in candidates):
         return None
-    return _joined(
+    joined = _joined(
         [_unquoted(c) for c in candidates if c is not None], host, same_module, extra, subtypes
     )
+    if returned_any and joined is not None:
+        # Any at an input can be accepted by a concrete parameter. Any actually
+        # returned is an output alternative, not evidence of that concrete
+        # result. In particular mypy treats NotImplemented as Any and grants a
+        # special return exception to __eq__, but not to its extracted helper.
+        # Joining must not undo the runtime quotation of a qualified or
+        # otherwise forward-referenced result. Spell the whole union again.
+        return _spelled_for_host(
+            ast.BinOp(
+                left=_unquoted(joined), op=ast.BitOr(), right=ast.Name(id="Any", ctx=ast.Load())
+            ),
+            host,
+            same_module,
+            extra | {"Any"},
+        )
+    return joined
 
 
 def _written_or_fallback(
@@ -1621,12 +1643,25 @@ def _joined_tuple(
         return None
     columns = [texts[offset::width] for offset in range(width)]
     elements = [
-        _joined_revealed(column, host, same_module, subtypes, allowed) for column in columns
+        (
+            ast.Name(id="Any", ctx=ast.Load())
+            if column and all(text == "Any" for text in column)
+            else _joined_revealed(column, host, same_module, subtypes, allowed, preserve_any=True)
+        )
+        for column in columns
     ]
     if any(element is None for element in elements):
         return None
-    return ast.Subscript(
-        value=ast.Name(id="tuple", ctx=ast.Load()),
-        slice=ast.Tuple(elts=[e for e in elements if e is not None], ctx=ast.Load()),
-        ctx=ast.Load(),
+    # The outer subscription is new evaluation even when every element is
+    # inert. Compose the types first, then spell the complete annotation by
+    # the same runtime policy as a directly revealed tuple.
+    return _spelled_for_host(
+        ast.Subscript(
+            value=ast.Name(id="tuple", ctx=ast.Load()),
+            slice=ast.Tuple(elts=[_unquoted(e) for e in elements if e is not None], ctx=ast.Load()),
+            ctx=ast.Load(),
+        ),
+        host,
+        same_module,
+        allowed if allowed is not None else set(_TYPING_NAMES),
     )

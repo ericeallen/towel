@@ -1,6 +1,6 @@
 # Towel — command runner
 #
-# Recipes use `uv run --frozen`, matching the README, CONTRIBUTING, and CI, so
+# Recipes use `uv run --frozen`, matching CONTRIBUTING and CI, so
 # `just` and CI run the same commands. Run `just` or `just --list` for the list.
 
 # Show the available recipes
@@ -92,7 +92,7 @@ test-file FILENAME:
 # unless you pass the opt-in yourself: `just ecosystem --run-untrusted-code`, on a
 # disposable machine or container. The recipe forwards only what you give it.
 ecosystem *ARGS:
-    uv run --frozen python scripts/ecosystem_check.py --work /tmp/towel-ecosystem --workers 3 {{ARGS}}
+    uv run --frozen python scripts/ecosystem_check.py --work /tmp/towel-ecosystem --workers 1 {{ARGS}}
 
 # DANGER: overwrite the regression baselines (asks for confirmation)
 regenerate-baseline:
@@ -169,14 +169,19 @@ bump-version VERSION:
 build:
     uv run --frozen python -m build
 
-# Prepare a local release: bump, full checks, tests, build (does not publish or tag)
-release VERSION:
-    just bump-version {{quote(VERSION)}}
-    just check
-    just audit-dependencies
-    just test
-    just build
-    @echo "Local distributions built. Review the audit and artifacts before publication."
+# Check completed local validation without declaring the artifacts publishable
+verify-release-evidence VERSION EVIDENCE:
+    uv run --frozen python scripts/verify_release_evidence.py {{quote(VERSION)}} {{quote(EVIDENCE)}} --validation-only
+
+# Verify local artifacts AND the live GitHub default branch before publication.
+# Local-only validation above remains available before pushing the candidate.
+release VERSION EVIDENCE:
+    uv run --frozen python scripts/verify_release_evidence.py {{quote(VERSION)}} {{quote(EVIDENCE)}}
+    uv run --frozen python scripts/verify_release_visibility.py {{quote(VERSION)}} --evidence {{quote(EVIDENCE)}}
+
+# Check the GitHub front page, source ancestry and documentation without uploading.
+verify-release-visibility VERSION COMMIT:
+    uv run --frozen python scripts/verify_release_visibility.py {{quote(VERSION)}} --commit {{quote(COMMIT)}}
 
 # Everything CI runs: quality gates, tests, coverage gate, build
 ci: check audit-dependencies coverage build

@@ -93,17 +93,18 @@ def test_option_b_promotes_equal_literals_in_higher_order_factories(tmp_path):
     # Equal literals in make_validator calls should be promoted and threaded as parameters
     # into the extracted helper (Option B policy).
     src = """
+    def make_validator(limit):
+        return lambda x: x > limit
+
     def c(data):
-        def make_validator(limit):
-            return lambda x: x > limit
         validator = make_validator(5)
-        return list(filter(validator, data))
+        filtered = filter(validator, data)
+        return list(filtered)
 
     def d(data):
-        def make_validator(limit):
-            return lambda x: x > limit
         validator = make_validator(5)
-        return list(filter(validator, data))
+        filtered = filter(validator, data)
+        return list(filtered)
     """
     # Enable Option B promotion explicitly for this test
     engine = _engine(min_lines=2, promote_equal_hof_literals=True)
@@ -112,6 +113,10 @@ def test_option_b_promotes_equal_literals_in_higher_order_factories(tmp_path):
     props = engine.analyze_files([str(file_path)])
     assert props, "Expected a proposal for identical higher-order patterns"
     out = engine.apply_refactoring(str(file_path), props[0])
+    namespace: dict[str, Any] = {}
+    exec(out, namespace)
+    assert namespace["c"]([1, 5, 6, 10]) == [6, 10]
+    assert namespace["d"]([1, 5, 6, 10]) == [6, 10]
 
     # Extracted helper should take a parameter (e.g., __param_0) and use it when calling make_validator
     mod = ast.parse(out)
@@ -148,17 +153,18 @@ def test_option_b_promotes_equal_literals_in_higher_order_factories(tmp_path):
 
 def test_option_b_disabled_keeps_equal_literals_inline(tmp_path):
     src = """
+    def make_validator(limit):
+        return lambda x: x > limit
+
     def c(data):
-        def make_validator(limit):
-            return lambda x: x > limit
         validator = make_validator(5)
-        return list(filter(validator, data))
+        filtered = filter(validator, data)
+        return list(filtered)
 
     def d(data):
-        def make_validator(limit):
-            return lambda x: x > limit
         validator = make_validator(5)
-        return list(filter(validator, data))
+        filtered = filter(validator, data)
+        return list(filtered)
     """
     engine = _engine(min_lines=2, promote_equal_hof_literals=False)
     file_path = tmp_path / "mod.py"
@@ -166,6 +172,10 @@ def test_option_b_disabled_keeps_equal_literals_inline(tmp_path):
     props = engine.analyze_files([str(file_path)])
     assert props, "Expected a proposal for identical higher-order patterns"
     out = engine.apply_refactoring(str(file_path), props[0])
+    namespace: dict[str, Any] = {}
+    exec(out, namespace)
+    assert namespace["c"]([1, 5, 6, 10]) == [6, 10]
+    assert namespace["d"]([1, 5, 6, 10]) == [6, 10]
 
     mod = ast.parse(out)
     helpers = [
@@ -205,3 +215,12 @@ def test_promotion_failure_is_a_bug_not_a_warning():
     with patch.object(Unifier, "_promote_hof_literals", boom):
         with pytest.raises(TypeError, match="promotion blew up"):
             unifier.unify_blocks([b[:] for b in blocks], [{}, {}])
+
+
+@pytest.mark.parametrize("promote", [False, True])
+def test_original_nested_factory_with_owned_arguments_is_refused(tmp_path, promote):
+    source = "\n    def c(data):\n        def make_validator(limit):\n            return lambda x: x > limit\n        validator = make_validator(5)\n        return list(filter(validator, data))\n\n    def d(data):\n        def make_validator(limit):\n            return lambda x: x > limit\n        validator = make_validator(5)\n        return list(filter(validator, data))\n    "
+    path = tmp_path / "owned.py"
+    path.write_text(textwrap.dedent(source))
+    engine = _engine(promote_equal_hof_literals=promote)
+    assert engine.analyze_file(str(path)) == []

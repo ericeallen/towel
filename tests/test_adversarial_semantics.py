@@ -18,6 +18,7 @@ import ast
 import contextlib
 import io
 from pathlib import Path
+from types import FunctionType
 from typing import Callable, cast
 
 import pytest
@@ -60,6 +61,13 @@ def test_comprehension_iterable_uses_containing_scope(tmp_path: Path, comprehens
     exec(source, original)
     expected = cast(Callable[..., object], original["first"])([1, 2], [3, 4])
     outputs = _rewrites(tmp_path, source)
+    function = original["first"]
+    assert isinstance(function, FunctionType)
+    if set(function.__code__.co_cellvars) & {"xs", "ys"}:
+        # On Python 3.11, the inner iterable of a nested comprehension
+        # captures ys. Whole-body ownership transfer cannot certify cells.
+        assert not outputs, "Cell-bound parameters must retain their ownership refusal"
+        return
     assert outputs, "Self-contained comprehension extraction should remain useful"
     for output in outputs:
         namespace: dict[str, object] = {}
@@ -234,9 +242,14 @@ def test_external_rebinding_is_not_snapshotted(tmp_path: Path, closure: bool) ->
 
 
 @pytest.mark.parametrize(
-    "hazard", ["", "def update():\n    global value\n    value = 42\n", "globals()['value'] = 42\n"]
+    "hazard, expected",
+    [
+        ("", False),
+        ("def update():\n    global value\n    value = 42\n", True),
+        ("globals()['value'] = 42\n", False),
+    ],
 )
-def test_visible_external_rebinding_guard(hazard: str) -> None:
+def test_visible_external_rebinding_guard(hazard: str, expected: bool) -> None:
     from towel.unification.semantic_safety import snapshots_rebound_external_names
 
     tree = ast.parse(
@@ -246,7 +259,7 @@ def test_visible_external_rebinding_guard(hazard: str) -> None:
     analyzer.analyze(tree)
     function = tree.body[-1]
     assert isinstance(function, ast.FunctionDef)
-    assert snapshots_rebound_external_names(analyzer, function, function.body) == bool(hazard)
+    assert snapshots_rebound_external_names(analyzer, function, function.body) is expected
 
 
 def test_readonly_closure_remains_extractable(tmp_path: Path) -> None:
@@ -301,7 +314,7 @@ def test_external_hazard_summary_is_owned_reused_and_reset() -> None:
         assert not snapshots_rebound_external_names(analyzer, function, function.body)
         assert analyzer.external_binding_hazards is summary
     with pytest.raises(FrozenInstanceError):
-        setattr(summary, "reflective", True)
+        setattr(summary, "unresolved_nonlocal", True)
 
     analyzer.analyze(tree)
     assert analyzer.external_binding_hazards is not summary
@@ -361,22 +374,19 @@ def f(items, flag):
 
 
 @pytest.mark.parametrize(
-    "before, after, read",
+    "before, after",
     [
-        ("frame = sys._getframe()", "print(frame.f_locals)", True),
-        ("pass", "print(sorted(locals()))", True),
-        ("seen = sorted(locals()) if flag else []", "print(seen)", True),
-        ("pass", "print(item)", False),
+        ("frame = sys._getframe()", "print(frame.f_locals)"),
+        ("pass", "print(sorted(locals()))"),
+        ("seen = sorted(locals()) if flag else []", "print(seen)"),
+        ("pass", "print(item)"),
     ],
     ids=["handle-before", "locals-after", "locals-before-in-the-loop", "no-frame-read"],
 )
-def test_frame_reads_beside_a_nested_block_are_seen(before: str, after: str, read: bool) -> None:
-    """A frame read in the loop that holds the block counts, before the block as after it.
-
-    A handle taken before the block sees its locals once it has run, and a
-    ``locals()`` earlier in the loop body sees them on the next iteration.
-    The walk once stopped at the block and never reached what preceded it.
-    """
+def test_frame_reads_beside_a_nested_block_are_outside_the_contract(
+    before: str, after: str
+) -> None:
+    """Reflection before or after a block does not protect its local layout."""
     tree = ast.parse(FRAME_AROUND_A_NESTED_BLOCK.format(before=before, after=after))
     analyzer = ScopeAnalyzer()
     analyzer.analyze(tree)
@@ -384,4 +394,4 @@ def test_frame_reads_beside_a_nested_block_are_seen(before: str, after: str, rea
     assert isinstance(function, ast.FunctionDef)
     loop = function.body[0]
     assert isinstance(loop, ast.For)
-    assert frame_read_outside_block(analyzer, function, loop.body[1:4]) is read
+    assert not frame_read_outside_block(analyzer, function, loop.body[1:4])

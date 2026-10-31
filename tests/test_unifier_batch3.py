@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ast
 import unittest
 
 from tests.test_helpers import parse_block
@@ -40,8 +41,8 @@ class TestUnifierBatch3(unittest.TestCase):
         # Should parameterize two differing constant groups (2 vs 5) and (3 vs 7)
         self.assertEqual(len(subst.param_expressions), 2)
 
-    def test_multi_occurrence_constants_misaligned_fail(self) -> None:
-        # 2 appears twice in block0; block1 differs only once (inconsistent) -> reject
+    def test_multi_occurrence_constants_leave_the_equal_columns_fixed(self) -> None:
+        # The first 2 differs; the other 2 and the final 4 stay fixed.
         b0 = parse_block("""
         x = a * 2
         y = b + 2
@@ -53,7 +54,21 @@ class TestUnifierBatch3(unittest.TestCase):
         z = c * 4
         """)
         uni = Unifier()
-        self.assertIsNone(uni.unify_blocks([b0, b1], [{}, {}]))
+        subst = uni.unify_blocks([b0, b1], [{}, {}])
+        self.assertIsNotNone(subst)
+        assert subst is not None
+        self.assertEqual(len(subst.param_expressions), 1)
+        for index, block in enumerate((b0, b1)):
+            for position, statement in enumerate(block):
+                assert isinstance(statement, ast.Assign)
+                assert isinstance(statement.value, ast.BinOp)
+                operand = statement.value.right
+                if position == 0:
+                    self.assertIsNotNone(subst.get_param_for_expr(index, operand))
+                else:
+                    self.assertIsNone(subst.get_param_for_expr(index, operand))
+                    assert isinstance(operand, ast.Constant)
+                    self.assertEqual(operand.value, 2 if position == 1 else 4)
 
     def test_with_type_comment_mismatch_fail(self) -> None:
         # Python's parser does not attach trailing '# type:' comments as type_comment on With.

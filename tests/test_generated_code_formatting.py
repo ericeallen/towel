@@ -41,9 +41,11 @@ from towel.formatting import (
     SnippetFormatter,
     black_formatter,
     checked,
+    format_at_indentation,
     ruff_formatter,
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.splicing import BlockColumns, splice_block
 
 DUPLICATED_STRINGS = textwrap.dedent("""
     def first(name, a_rather_long_parameter_name, another_long_parameter_name):
@@ -174,8 +176,8 @@ def test_dry_formats_by_default_and_not_with_no_format(tmp_path: Path) -> None:
 
 
 R9P2_DOCSTRING_BLOCK = textwrap.dedent("""
-    def first(a):
-        if a:
+    def first():
+        if True:
             x = 1
         else:
             x = 2
@@ -186,8 +188,8 @@ R9P2_DOCSTRING_BLOCK = textwrap.dedent("""
         return z * 10
 
 
-    def second(b):
-        x = len(b)
+    def second():
+        x = 3
         "  explain the next steps  "
         y = x * 2
         z = y - 3
@@ -281,7 +283,18 @@ def test_r9p2_a_formatter_that_fails_declines_the_proposal_not_the_directory_run
     source.mkdir()
     (source / "__init__.py").write_text("")
     (source / "docstring.py").write_text(R9P2_DOCSTRING_BLOCK)
-    (source / "strings.py").write_text(DUPLICATED_STRINGS)
+    # Custom formatters do not carry an ownership certificate. No-argument
+    # twins with literal inputs still exercise successful formatting alongside
+    # the failed partial, without any competing caller owner.
+    strings = DUPLICATED_STRINGS.replace(
+        "name, a_rather_long_parameter_name, another_long_parameter_name",
+        "",
+    ).replace(
+        "    prefix =",
+        "    name = 'x'\n    a_rather_long_parameter_name = '-y'\n"
+        "    another_long_parameter_name = '-z'\n    prefix =",
+    )
+    (source / "strings.py").write_text(strings)
     engine = UnificationRefactorEngine(min_lines=2, snippet_formatter=failing(monkeypatch, source))
     output = tmp_path / "out"
     results, _ = engine.refactor_directory_to_fixed_point(str(source), str(output), progress="none")
@@ -340,6 +353,170 @@ def test_black_is_the_formatter_without_ruff_configuration(tmp_path: Path) -> No
     choice = formatter_for_project(tmp_path / "m.py")
     formatter, note = choice.tool, choice.note
     assert formatter is not None and note == "Black"
+
+
+@pytest.mark.parametrize("tool", ["black", "ruff"])
+@pytest.mark.parametrize("prefix", ["    ", "        ", "\t\t"])
+def test_r1792_snippets_respect_destination_indentation(
+    tmp_path: Path, tool: str, prefix: str
+) -> None:
+    """Inflect's generated calls must already satisfy its formatter after insertion."""
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff]\n[tool.ruff.format]\npreview = true\n")
+    formatter = (
+        ruff_formatter(tmp_path / "module.py")
+        if tool == "ruff"
+        else black_formatter(BlackSettings())
+    )
+    source = (
+        "return _extracted_func_0(lambda: self._plnoun(word, count), post, pre, self, text, word)"
+    )
+    formatted = format_at_indentation(formatter, source, prefix)
+    assert ast.dump(ast.parse(formatted)) == ast.dump(ast.parse(source))
+    depth = len(prefix.expandtabs(4)) // 4
+    context = "\n".join(
+        [
+            *("    " * level + "if True:" for level in range(depth)),
+            *("    " * depth + line for line in formatted.splitlines()),
+        ]
+    )
+    assert formatter(context) == context
+
+
+@pytest.mark.parametrize("tool", ["black", "ruff"])
+def test_r1792_engine_output_stays_formatted_after_insertion(tmp_path: Path, tool: str) -> None:
+    """A formatter-clean input must retain useful extraction and pass the same formatter."""
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff]\nline-length = 75\n")
+    path = tmp_path / "module.py"
+    formatter = (
+        ruff_formatter(path) if tool == "ruff" else black_formatter(BlackSettings(line_length=75))
+    )
+    fixture = Path(__file__).parent / "hostile_cases/r1792_formatting_destination_indentation.py"
+    original = formatter(fixture.read_text()) + "\n"
+    path.write_text(original)
+    result = _refactor(path, snippet_formatter=formatter)
+    assert formatter(result) == result.rstrip("\n")
+    assert _evaluate(result) == _evaluate(original)
+    assert result != original
+
+
+@pytest.mark.parametrize("prefix", ["    ", "        ", "\t"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def helper(value: str) -> str:\n    return value",
+        "# carried comment\ndef helper(value: str) -> str:  # noqa: ANN001\n    return value",
+        "@decorator\ndef helper(value: str) -> str:\n    return value",
+    ],
+)
+def test_ruff_context_does_not_export_its_suite_spacing(
+    tmp_path: Path, prefix: str, source: str
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff]\n")
+    formatted = format_at_indentation(ruff_formatter(tmp_path / "module.py"), source, prefix)
+    assert not formatted.startswith("\n")
+    assert ast.dump(ast.parse(formatted)) == ast.dump(ast.parse(source))
+    assert [line.strip() for line in formatted.splitlines() if "#" in line] == [
+        line.strip() for line in source.splitlines() if "#" in line
+    ]
+
+
+def test_context_unwrapping_keeps_original_leading_blank_lines() -> None:
+    source = "\n\n# carried comment\ndef helper():\n    return 1"
+    # An identity formatter keeps the snippet's own blank lines inside the wrapper.
+    assert format_at_indentation(checked(lambda text: text), source, "    ") == source
+
+
+def test_ruff_method_helper_materialization_is_already_formatted(tmp_path: Path) -> None:
+    """MarkdownIt's useful method helpers must pass its complete-file Ruff format check."""
+    (tmp_path / "pyproject.toml").write_text("[tool.ruff]\nline-length = 75\n")
+    path = tmp_path / "module.py"
+    formatter = ruff_formatter(path)
+    original = formatter(textwrap.dedent("""
+        class Greeter:
+            suffix = "!"
+
+            def first(self, name):
+                prefix = "Mr. "
+                greeting = prefix + name + self.suffix
+                return greeting.strip()
+
+            def second(self, name):
+                prefix = "Dr. "
+                greeting = prefix + name + self.suffix
+                return greeting.strip()
+        """)) + "\n"
+    path.write_text(original)
+    result = _refactor(path, snippet_formatter=formatter)
+    (owner,) = ast.parse(result).body
+    assert isinstance(owner, ast.ClassDef)
+    (helper,) = [
+        node
+        for node in owner.body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func_")
+    ]
+    assert helper.args.args[0].arg == "self"
+    assert (
+        sum(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == helper.name
+            for node in ast.walk(owner)
+        )
+        == 2
+    )
+    assert formatter(result) == result.rstrip("\n")
+    assert path.read_text() == original
+
+
+def test_r1792_contextual_formatting_still_refuses_semantic_changes() -> None:
+    formatter = checked(lambda source: source.replace("+", "-"))
+    with pytest.raises(FormattingChangedCode):
+        format_at_indentation(formatter, "return first + second", "        ")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'return """first\n    second\nlast"""',
+        'def helper():\n    return """first\n\tsecond\nlast"""',
+    ],
+)
+def test_r1792_context_unwrapping_preserves_multiline_literal_contents(source: str) -> None:
+    formatter = black_formatter(BlackSettings())
+    formatted = format_at_indentation(formatter, source, "        ")
+    assert ast.dump(ast.parse(formatted)) == ast.dump(ast.parse(source))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def first():\n    marker = 1; value = 2; done = 3\n",
+        "def first(flag):\n    if flag: marker = 1; value = 2; done = 3\n",
+        "def first(flag):\n\tif flag: marker = 1; value = 2; done = 3\n",
+    ],
+)
+def test_r1792_formatted_call_splices_preserve_inline_suites_and_semicolons(source: str) -> None:
+    formatter = black_formatter(BlackSettings(line_length=60))
+    tree = ast.parse(source)
+    (target,) = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "value"
+    ]
+    lines = source.splitlines(keepends=True)
+    line = lines[target.lineno - 1]
+    prefix = line[: len(line) - len(line.lstrip())]
+    code = "value = generated_helper(first_argument, second_argument, third_argument)"
+    formatted = format_at_indentation(formatter, code, prefix)
+    splice = splice_block([line], BlockColumns.of([target]), formatted)
+    lines[target.lineno - 1 : target.lineno] = splice.lines
+    for node in ast.walk(tree):
+        for _, field in ast.iter_fields(node):
+            if isinstance(field, list) and target in field:
+                field[field.index(target)] = ast.parse(code).body[0]
+    assert ast.dump(ast.parse("".join(lines))) == ast.dump(tree)
 
 
 def test_isort_sorts_the_inserted_import_when_configured(tmp_path: Path) -> None:

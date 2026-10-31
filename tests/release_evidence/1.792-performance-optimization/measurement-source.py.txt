@@ -1,0 +1,114 @@
+"""Freeze committed wheels and compare complete fresh production CLI runs."""
+from pathlib import Path
+import difflib, hashlib, json, os, re, resource, shutil, subprocess, sys, tarfile, time, statistics
+
+ROOT=Path(__file__).resolve().parent
+REPO=Path('/Users/ericeallen/Code/towel-1792-performance')
+ENV=Path('/Users/ericeallen/Knowledge/handoffs/towel/20261005-release-audit-fixes/validated-c5311b4/wheel-smoke/3.13-extras/venv')
+INPUT=Path('/Users/ericeallen/Knowledge/handoffs/towel/20261006T030201Z-codex-1792-performance-and-audit/trace-current/input')
+
+def hashes(root):
+    return {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.rglob('*')) if p.is_file() and '__pycache__' not in p.parts and '.mypy_cache' not in p.parts}
+
+def save(path,value):
+    path.write_text(json.dumps(value,indent=2)+'\n')
+
+def checked(args,**kw):
+    run=subprocess.run(args,check=True,text=True,capture_output=True,**kw)
+    return run.stdout
+
+def freeze(name, control="optimized"):
+    if control not in {"optimized", "no-lifetime-memo", "no-any-pruning", "no-lifetime-memo-no-any-pruning", "no-rehearing-retention"}: raise ValueError(control)
+    stage=ROOT/name; stage.mkdir()
+    commit=checked(['git','rev-parse','HEAD'],cwd=REPO).strip()
+    status=checked(['git','status','--porcelain'],cwd=REPO)
+    if status: raise RuntimeError('Source must be committed before freezing: '+status)
+    archive=stage/'source.tar'
+    checked(['git','archive','--format=tar',f'--output={archive}',commit],cwd=REPO)
+    source=stage/'source'; source.mkdir()
+    with tarfile.open(archive) as tf: tf.extractall(source,filter='data')
+    overlays=[]
+    if "no-lifetime-memo" in control:
+        path=source/'src/towel/unification/block_analysis.py'
+        prior=checked(['git','show','3fdce9da3db9ac0148d8423b72fa85c20e832372:src/towel/unification/block_analysis.py'],cwd=REPO)
+        original=path.read_text()
+        start=original.index('def lifetime_bound_names('); end=original.index('_POSITIONED_BINDINGS:',start)
+        old_start=prior.index('def lifetime_bound_names('); old_end=prior.index('_POSITIONED_BINDINGS:',old_start)
+        replaced=original[:start]+prior[old_start:old_end]+original[end:]
+        path.write_text(replaced)
+        overlays.append(''.join(difflib.unified_diff(original.splitlines(True),replaced.splitlines(True),fromfile=str(path.relative_to(source)),tofile=str(path.relative_to(source)))))
+    if "no-any-pruning" in control:
+        path=source/'src/towel/unification/annotation_wiring.py'
+        original=path.read_text()
+        marker='    def _fixed_any_result(self, policy: _LadderPolicy, file_path: str) -> bool:\n'
+        if original.count(marker)!=1: raise RuntimeError('Pruning control boundary changed')
+        replaced=original.replace(marker,marker+'        return False  # Diagnostic control: retain every normal annotation attempt.\n',1)
+        path.write_text(replaced)
+        overlays.append(''.join(difflib.unified_diff(original.splitlines(True),replaced.splitlines(True),fromfile=str(path.relative_to(source)),tofile=str(path.relative_to(source)))))
+    if control == "no-rehearing-retention":
+        path=source/'src/towel/unification/rehearing.py'
+        original=path.read_text()
+        marker='def execution_context(engine: "EngineState") -> Optional[str]:\n'
+        if original.count(marker)!=1: raise RuntimeError('Rehearing context boundary changed')
+        replaced=original.replace(marker,marker+'    return None  # Diagnostic control: rehear every prior refusal normally.\n',1)
+        path.write_text(replaced)
+        overlays.append(''.join(difflib.unified_diff(original.splitlines(True),replaced.splitlines(True),fromfile=str(path.relative_to(source)),tofile=str(path.relative_to(source)))))
+    (stage/'diagnostic-control.patch').write_text(''.join(overlays))
+    dist=stage/'dist' 
+    build=checked(['/opt/homebrew/bin/uv','build','--wheel','--out-dir',str(dist)],cwd=source)
+    (stage/'build.log').write_text(build)
+    wheel,=dist.glob('*.whl')
+    env=stage/'venv'; shutil.copytree(ENV,env,symlinks=True)
+    install=checked(['/opt/homebrew/bin/uv','pip','install','--python',str(env/'bin/python'),'--no-deps','--reinstall',str(wheel)])
+    (stage/'install.log').write_text(install)
+    query="import importlib.metadata as m,json,towel,pathlib; print(json.dumps({'dependencies':dict(sorted((d.metadata['Name'],d.version) for d in m.distributions())), 'runtime':str(pathlib.Path(towel.__file__).parent)}))"
+    meta=json.loads(checked([str(env/'bin/python'),'-I','-c',query],cwd=stage))
+    installed=hashes(Path(meta['runtime']))
+    expected=hashes(source/'src/towel')
+    if installed != expected: raise RuntimeError('Installed wheel differs from frozen runtime')
+    save(stage/'freeze.json',{'commit':commit,'control':control,'diagnostic_control_sha256':hashlib.sha256((stage/'diagnostic-control.patch').read_bytes()).hexdigest(),'runtime':expected,'wheel_sha256':hashlib.sha256(wheel.read_bytes()).hexdigest(),**meta})
+    print('FROZEN',name,commit,flush=True)
+
+def compare(before,after,name):
+    out=ROOT/name; out.mkdir()
+    shutil.copyfile(Path(__file__),out/'measurement-source.py')
+    a=json.loads((ROOT/before/'freeze.json').read_text()); b=json.loads((ROOT/after/'freeze.json').read_text())
+    if a['dependencies'] != b['dependencies']: raise RuntimeError('Dependency mismatch')
+    initial=hashes(INPUT)
+    if len(initial)!=24: raise RuntimeError(f'Unexpected input count: {len(initial)}')
+    results=[]
+    for ordinal,arm in enumerate((before,after,after,before),1):
+        dest=out/f'{ordinal}-{arm}'; dest.mkdir(); shutil.copytree(INPUT,dest/'input')
+        runenv={k:v for k,v in os.environ.items() if not k.startswith('TOWEL_') and k!='PYTHONPATH'}
+        command=[str(ROOT/arm/'venv/bin/towel'),'dry',str(dest/'input/packaging'),str(dest/'output'),'--no-interactive','--progress','detail']
+        print('START',ordinal,arm,'load',os.getloadavg(),flush=True)
+        usage_before=resource.getrusage(resource.RUSAGE_CHILDREN)
+        start=time.perf_counter(); load_before=os.getloadavg()
+        with (dest/'cli.log').open('w') as log:
+            process=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT,env=runenv,cwd=dest)
+            observations=[]
+            while process.poll() is None:
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
+                observations.append({'elapsed':time.perf_counter()-start,'load':os.getloadavg()})
+        elapsed=time.perf_counter()-start
+        usage_after=resource.getrusage(resource.RUSAGE_CHILDREN)
+        child_cpu=(usage_after.ru_utime+usage_after.ru_stime)-(usage_before.ru_utime+usage_before.ru_stime)
+        text=(dest/'cli.log').read_text()
+        applications=re.findall(r'Applied (\d+) refactoring\(s\) across (\d+) file\(s\)',text)
+        row={'ordinal':ordinal,'stage':arm,'wall':elapsed,'child_cpu':child_cpu,'command':command,'exit_code':process.returncode,'applications':applications,'load_before':load_before,'load_after':os.getloadavg(),'observations':observations,'input_sha256':hashes(dest/'input'),'output_sha256':hashes(dest/'output')}
+        save(dest/'result.json',row); results.append(row); save(out/'results.json',results)
+        if process.returncode or row['input_sha256']!=initial or not applications: raise RuntimeError(f'Invalid measurement: {dest}')
+        print('DONE',ordinal,arm,round(elapsed,3),applications,flush=True)
+    outputs=[r['output_sha256'] for r in results]
+    if not all(value==outputs[0] for value in outputs): raise RuntimeError('Optimization output changed')
+    means={arm:statistics.mean(r['wall'] for r in results if r['stage']==arm) for arm in (before,after)}
+    summary={'samples_per_arm':2,'order':'ABBA','means':means,'child_cpu_means':{arm:statistics.mean(r['child_cpu'] for r in results if r['stage']==arm) for arm in (before,after)},'improvement_percent':100*(1-means[after]/means[before]),'identical_output':True,'applications':results[0]['applications'],'scope':'One Packaging 26.3 slice; full default typed/formatted installed CLI; preliminary two samples per arm; no matrix/corpus.'}
+    save(out/'summary.json',summary); print(json.dumps(summary),flush=True)
+
+if __name__=='__main__':
+    if sys.argv[1]=='freeze': freeze(*sys.argv[2:])
+    elif sys.argv[1]=='compare': compare(*sys.argv[2:])
+    else: raise ValueError(sys.argv)

@@ -46,6 +46,8 @@ import ast
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
+from tests.test_helpers import method_helper_calls
+
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 _SHARED_BLOCK = (
@@ -80,6 +82,49 @@ def _outcome(source: str) -> Any:
 
 def _refactored(tmp_path: Path, source: str) -> Tuple[str, Any]:
     """Towel's output for ``source``, run the way ``towel dry`` runs it, and what it does."""
+    original_outcome = _outcome(source)
+    original_path = tmp_path / "original.py"
+    original_path.write_text(source)
+    original_engine = UnificationRefactorEngine()
+    initial_proposals = original_engine.analyze_file(str(original_path))
+    if "self.offset" in source:
+        assert initial_proposals == []
+    else:
+        # Occurrence-specific offsets now recover these complete bodies too.
+        assert len(initial_proposals) == 1
+        proposal = initial_proposals[0]
+        assert proposal.method_kind is None and proposal.method_param_name is None
+        parameters = proposal.extracted_function.args
+        assert all(
+            argument.arg != "self"
+            for argument in [*parameters.posonlyargs, *parameters.args, *parameters.kwonlyargs]
+        )
+        assert not any(
+            isinstance(node, ast.Name) and node.id == "self"
+            for node in ast.walk(proposal.extracted_function)
+        )
+        assert all(
+            isinstance(replacement.node, ast.Return)
+            and isinstance(replacement.node.value, ast.Call)
+            and isinstance(replacement.node.value.func, ast.Name)
+            and replacement.node.value.func.id == proposal.extracted_function.name
+            for replacement in proposal.replacements
+        )
+    # Equal complete bodies keep the receiver policy meaningful without moving
+    # caller-owned arguments beside newly-owned arithmetic locals.
+    source = source.replace("def a(self, value):", "def a(self, value, extra=1):").replace(
+        "def b(self, value):", "def b(self, value, extra=2):"
+    )
+    if "self.offset" in source:
+        source = source.replace("extra=1", "extra=0").replace("extra=2", "extra=1")
+        source = source.replace(
+            "return third + self.offset + 1", "return third + self.offset + extra"
+        ).replace("return third + self.offset\n", "return third + self.offset + extra\n")
+    else:
+        source = source.replace("return third + 1", "return third + extra").replace(
+            "return third + 2", "return third + extra"
+        )
+    assert _outcome(source) == original_outcome
     project = tmp_path / "input"
     project.mkdir()
     (project / "program.py").write_text(source)
@@ -129,4 +174,8 @@ def test_a_method_that_uses_its_receiver_still_gets_an_instance_helper(tmp_path:
     )
     assert not helper.decorator_list, written
     assert helper.args.args[0].arg == "self", written
-    assert f"self.{helper.name}(" in written, written
+    calls = method_helper_calls(written)
+    assert len(calls) == 2
+    assert all(
+        isinstance(call.func, ast.Attribute) and call.func.attr == helper.name for call in calls
+    )

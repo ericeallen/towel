@@ -1,0 +1,154 @@
+{
+  "schema": 1,
+  "scope": "Documentation evidence subset, not a complete release-verification bundle or publication approval",
+  "observed_commit": "00b4f4f27eeb45a17236fc7af4e74a3881339b23",
+  "runtime_tree": "2b1181b59a50599f339b9dc552b383836e441c3d",
+  "retained_raw": {
+    "performance--results.json.gz": {
+      "record": "performance/results.json",
+      "bytes": 63762,
+      "sha256": "5205c388bf3dfffcaafa8438fe51cba6db1ead23157093a69c4c104f1b6dfaef"
+    },
+    "performance--attempt.json.gz": {
+      "record": "performance/attempt.json",
+      "bytes": 3960,
+      "sha256": "bd93b38ee1182203ace25683d95581db09991830ca10c14b1d977bcc6b18e8ae"
+    },
+    "performance--summary.json.gz": {
+      "record": "performance/summary.json",
+      "bytes": 495,
+      "sha256": "d8347a79117ef02bf1f75f830f9a339c3fe4c39829fe7959ce456d7b3ba16359"
+    },
+    "performance--completion.json.gz": {
+      "record": "performance/completion.json",
+      "bytes": 134,
+      "sha256": "726275bcdf386e25297e3a3fb0ffa0c1840b498014361c6171f82474590fc223"
+    },
+    "performance--preflight-runtimes.json.gz": {
+      "record": "performance/preflight-runtimes.json",
+      "bytes": 35044,
+      "sha256": "36ad33d8bb2ff19f191b0531266998249cd416fa798273437cef2a143b8583a0"
+    },
+    "CAPACITY-ASSESSMENT.json.gz": {
+      "record": "CAPACITY-ASSESSMENT.json",
+      "bytes": 3670,
+      "sha256": "39ee74ac9ed39a6d47473ea1cd13fc1140b1f09364898b42ed486235343ad6f4"
+    },
+    "CAPACITY-EXPERIMENT.json.gz": {
+      "record": "CAPACITY-EXPERIMENT.json",
+      "bytes": 1062,
+      "sha256": "d1092954f66a96d5d4d70e2a06bdfa312345422f7e6e3bdc216014ffd6a494af"
+    },
+    "source.json.gz": {
+      "record": "source.json",
+      "bytes": 362426,
+      "sha256": "7c7dd17b177cc427f0d615be250c4d426a79878d6e40d65a08eb6cae57acaea9"
+    },
+    "artifacts.json.gz": {
+      "record": "artifacts.json",
+      "bytes": 554,
+      "sha256": "072702af6756f67ab247de8affedf95ae1533b15b48dda0a734c6ee0397de307"
+    },
+    "corpus-verified-outcomes.json.gz": {
+      "record": "corpus-verified-outcomes.json",
+      "bytes": 3814,
+      "sha256": "9561f04e911f1cb90efaf8afee1f8361b54e54cd4dd94fd1df6beea26f692c24"
+    },
+    "corpus-reviewed-dispositions.json.gz": {
+      "record": "corpus-reviewed-dispositions.json",
+      "bytes": 31068,
+      "sha256": "d2fb8d5f1ba5699bb14d31966a127665c1c61623cf0d9ed81ba81c02e222487d"
+    },
+    "fresh-refusal-integrity.json.gz": {
+      "record": "fresh-refusal-integrity.json",
+      "bytes": 28823,
+      "sha256": "b041f20cb55c9f169f4cb081ba8509ca3d1336105053ee33a7b49cbeb99de19a"
+    },
+    "fresh-corpus-driver-completion.json.gz": {
+      "record": "fresh-corpus-driver-completion.json",
+      "bytes": 156,
+      "sha256": "5bc8c17376822474dedf81fb9938e3b5ebc094cc630d723de7cabff3dc1f5bfe"
+    },
+    "corpus-exit.json.gz": {
+      "record": "corpus-exit.json",
+      "bytes": 91,
+      "sha256": "ac78208eeb974bdddbbb32efd50e3198c81d459e2759ce5db062277789ce6052"
+    },
+    "CORPUS-PREREQUISITES.json.gz": {
+      "record": "CORPUS-PREREQUISITES.json",
+      "bytes": 964,
+      "sha256": "f3106fc383c6d7fc01d899e6aff2ec0ed9449932634b9c69285234e4ec978f75"
+    },
+    "corpus-report--summary.json.gz": {
+      "record": "corpus-report/summary.json",
+      "bytes": 582243,
+      "sha256": "d1fbacdd424981a4ff93c55d947c7f276d06fba75b1e9989abdf0990dc014e52"
+    },
+    "performance--1-published--cli.log.gz": {
+      "record": "performance/1-published/cli.log",
+      "bytes": 11903,
+      "sha256": "b87cf903410dbde4763dc13ede1c3279b034c3c6dbf4bcd29bd240720cb2ab66"
+    },
+    "performance--2-previous--cli.log.gz": {
+      "record": "performance/2-previous/cli.log",
+      "bytes": 11334,
+      "sha256": "f4c6bf022db7a2d5f703439e8c4795e161b5c4ac140cf057c42fbdffc764cda9"
+    },
+    "performance--3-candidate--cli.log.gz": {
+      "record": "performance/3-candidate/cli.log",
+      "bytes": 12731,
+      "sha256": "865188530c2c19685266566d1a24a7895c2c8af1f3972ef2e2a926fd4c350218"
+    },
+    "performance--4-candidate--cli.log.gz": {
+      "record": "performance/4-candidate/cli.log",
+      "bytes": 12731,
+      "sha256": "fd49aca8c59e33ee8d31ecdc0f6de6bb0774d18cd265829231d07396009eecf4"
+    },
+    "performance--5-previous--cli.log.gz": {
+      "record": "performance/5-previous/cli.log",
+      "bytes": 11334,
+      "sha256": "51916039daeb4eeb69a00b797a77a9e5788071b7f61f5a153dd3c42354ac7a36"
+    },
+    "performance--6-published--cli.log.gz": {
+      "record": "performance/6-published/cli.log",
+      "bytes": 11903,
+      "sha256": "5df04779a05d748158687bcabc30b87244b4b9ec57e2c5e4efd4934394118dd8"
+    },
+    "performance--7-published--cli.log.gz": {
+      "record": "performance/7-published/cli.log",
+      "bytes": 11903,
+      "sha256": "851487cf853859db1096963dce544eb0e73bb74d787d09ae75c78c7df515af72"
+    },
+    "performance--8-previous--cli.log.gz": {
+      "record": "performance/8-previous/cli.log",
+      "bytes": 11334,
+      "sha256": "c6f34fa9e0dab76ffd605a19a375343c6f6a31c6a4ac41fdf6fb8fe82107323f"
+    },
+    "performance--9-candidate--cli.log.gz": {
+      "record": "performance/9-candidate/cli.log",
+      "bytes": 12731,
+      "sha256": "3eaace29baf89681972b05bdbcaf4e738b1677b318bf7866602b837a838dc93d"
+    },
+    "performance--10-candidate--cli.log.gz": {
+      "record": "performance/10-candidate/cli.log",
+      "bytes": 12744,
+      "sha256": "38ca2e9bf99c1c28ee84e5dcb730c53972dce664b7931f371258614ba62330b8"
+    },
+    "performance--11-previous--cli.log.gz": {
+      "record": "performance/11-previous/cli.log",
+      "bytes": 11347,
+      "sha256": "f3d49c7293e04a2b88e58ec939d02aeede117c43bc18dbaa2cfe8e0ef8b082b8"
+    },
+    "performance--12-published--cli.log.gz": {
+      "record": "performance/12-published/cli.log",
+      "bytes": 11915,
+      "sha256": "52f1071371845acb133f4837fb01e20247f2063419a2866e77bd199e3b034f6c"
+    },
+    "PREPARATION-VERIFIED.json.gz": {
+      "record": "PREPARATION-VERIFIED.json",
+      "bytes": 1276,
+      "sha256": "b70f577e8906ef80711ab566028d18db1195c409b8b7429417731b366b313986"
+    }
+  },
+  "omitted": "Full matrix/native/fuzz/self records, corpus per-project reports/raw phase logs and performance background-load samples remain in their original external handoffs."
+}

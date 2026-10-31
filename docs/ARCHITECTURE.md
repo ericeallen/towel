@@ -1,14 +1,32 @@
 # Towel refactoring architecture
 
+[Documentation index](README.md)
+
 Towel finds repeated Python code by unifying statement blocks, extracts each
 family of duplicates into one helper function, and rewrites the duplicates as
 calls. It is a source-to-source transformation tool. Its design goal is not to
 transform as much as possible; it is to transform only where a syntactic,
-local argument shows the result is preserved, and to reject everything else.
+local argument shows the result is preserved within the documented contract.
 The checks below are all syntactic and lexical: they do not establish general
 behavioral equivalence for programs that observe their own frames, names, or
 source, so the intended use is preview, review the diff, and run the project's
 own tests.
+
+Start with the pipeline for the overall flow, or use the module map to find the implementation.
+
+**Contents**
+
+- [Pipeline](#the-pipeline) · [Core algorithm](#the-core-algorithm-anti-unification-into-a-helper)
+- [Soundness invariant](#the-soundness-invariant) · [Scope and liveness](#scope-binding-and-liveness) · [Guards](#guards)
+- [Helper placement](#helper-placement) · [Reuse](#reusing-an-existing-function) · [Annotations](#helper-annotations)
+- [Formatting](#generated-code-formatting) · [Comments](#comments-of-moved-code)
+- [Cross-file behavior](#cross-file-behavior) · [Clustering](#the-clustering-pass)
+- [Reflection boundary](#reflection-boundary)
+- [Fixed-point loop](#the-fixed-point-loop) · [Incremental global passes](#incremental-global-passes-and-why-they-are-exact)
+- [Performance](#performance-architecture) · [Measurement environment](#measurement-environment)
+- [Diagnostics and settings](#diagnostics-and-settings) · [Application and recovery](#application-and-recovery)
+- [Helper naming](#helper-naming) · [Verification and evidence](#verification-and-evidence)
+- [References](#references) · [Module map](#module-map)
 
 The engine is `UnificationRefactorEngine` in
 [`refactor_engine.py`](../src/towel/unification/refactor_engine.py). It is
@@ -66,9 +84,17 @@ flowchart TD
    `assignment_analyzer.py`, and `visitors.py` build the module, class, and
    function scopes and record where every name is bound, read, deleted, or
    declared `global`/`nonlocal`.
-3. **Enumerate candidate blocks.** Contiguous runs of statements inside each
-   function body become candidate blocks. Blocks that can never be accepted are
-   never enumerated (see *Enumeration filter*).
+3. **Enumerate candidate blocks.** Establish structural function partners
+   before materializing blocks: a function without another function in its
+   module is skipped unless cross-module sharing supplies a partner.
+   Contiguous runs inside participating function bodies become candidate blocks.
+   Blocks known to be inadmissible from the enumeration filters are omitted
+   (see *Enumeration filter*). The caller-narrowing filter
+   in `narrowing.py` keeps recognized non-None guards and assignments at the
+   call site when later operations need the refinement. It runs before
+   maximal-block pairing so a larger invalid window cannot hide a smaller
+   valid extraction inside the guarded region. This is not a ban on moving
+   a guard together with all its dependent code.
 4. **Pair.** `block_signature.py` computes a cheap structural signature per
    block; `find_block_pairs` buckets blocks on their statement-type sequence
    and rejects incompatible pairs before the expensive step, and, when the
@@ -81,8 +107,8 @@ flowchart TD
    against the budget.
 5. **Decide each pair.** `pair_evaluation.py` runs eleven stages, each
    returning a typed result or a traced rejection:
-   1. guards on the blocks themselves (`semantic_safety.py`: frame use in
-      the block or elsewhere in its function, async comprehensions, loop
+   1. guards on the blocks themselves (`semantic_safety.py`: required class
+      context, async comprehensions, loop
       transfers, closures over a rebound name, moved `global`/`nonlocal`
       declarations; see *Guards*);
    2. binding analysis of each block within its function, and the variables
@@ -182,6 +208,20 @@ that can be abstracted safely. Binder names (loop variables, comprehension
 targets, `with`/`except` names) are matched up to consistent renaming rather
 than turned into parameters.
 
+Differing constants use the AST field/index path of each occurrence, rather than
+replacing every literal with the same value. For `x + 1 + x * 2` against
+`x + 2 + x * 2`, one parameter replaces the offset while the multiplier stays
+`2`. Differing columns share a parameter only when their complete ordered
+vectors agree in both type and value across all callers. `False`, `0` and `0.0`
+remain distinct; signed floating zero retains its sign.
+
+Source nodes and the copied helper have separate transient path indexes. The
+structural memo stores immutable occurrence paths and rebinds its argument nodes
+to each newly parsed block. Common caller literals likewise have exact occurrence
+selectors into their immutable carrier. Compiler-pooled compound literals stay
+whole, and grammar/type metadata remains pinned. This precision preserves the
+existing parameter budget and independent materialization proof.
+
 Each parameter is passed in the way that preserves the original evaluation:
 
 - **Value.** A literal, a signed or negated literal (`-1`, `not True`), a
@@ -213,17 +253,41 @@ Each parameter is passed in the way that preserves the original evaluation:
   original evaluated twice, or not at all on some path, is evaluated the same
   number of times under the same conditions. As an optimization, a thunk the
   helper would evaluate first, once, and unconditionally is passed eagerly
-  instead, because nothing can observe the difference. "First" means that
+  only when every caller also proves an immutable result. An eager parameter
+  owns its value until the helper returns; retaining a factory result, attribute,
+  subscript or unknown name can change temporary release and exception cleanup.
+  Those expressions stay deferred. "First" means that
   every step before it can neither run code nor raise, by an allowlist over
   the expression forms (`thunk_inlining.effect_free`): a name read is such a
   step only for a helper parameter or a name the helper already bound, and
   hashing an element that is not a constant, `*`, `**` and target unpacking
   are effects.
+  The complete eligible prefix is discovered independently of parameter
+  discovery order. Before inlining, contiguous eligible thunk slots are ordered
+  by that evaluation sequence within each positional signature segment. Other
+  parameters keep their positions, as does the positional-only boundary; the
+  argument nodes retain their annotations and locations. Reordering leaves
+  defaulted, variadic and keyword-only signatures alone. The complete position
+  map includes free variables, and pair and cluster reconstruction use the same
+  pass before the existing increasing-order inliner and final safety checks.
 - **Lifted.** An expression that reads a name bound *inside* the block is
   lambda-lifted [Johnsson 1985]: the lambda takes those names as arguments so it still refers
   to the block-local values, not to whatever the helper's scope binds.
-- **Receiver.** When the helper becomes a method, the instance or class is
-  passed as the receiver (see *Helper placement*).
+- **Receiver.** The completed helper's runtime receiver or class-frame needs
+  determine whether it becomes a method. An original `self` or `cls` read moved
+  into a caller-side supplier does not require an unread method receiver. Real
+  receiver reads and `super()` retain their class-context checks (see *Helper
+  placement*). The final ownership budget includes any actual receiver and holder.
+
+Parameter identity is a substitution proof, not printed-name or initial-value
+comparison. In particular, class aliases in separate caller namespaces keep
+caller-side suppliers and repeated reads. An ownership holder is a physical
+lifetime argument, even when no helper expression loads its name. Equal
+higher-order factory literals stay fixed unless the explicit API promotion
+option is enabled. Lambda constant differences and deferred expressions can
+produce different kinds of arguments in one substitution; downstream guards
+still determine whether a complete candidate is emitted. See
+[the argument guide](GENERATED_CODE.md#equal-looking-and-unused-arguments).
 
 The result is a `Substitution` (in `substitution.py`): the template, the ordered
 parameters, and, per parameter, the argument expression at each call site and
@@ -237,7 +301,23 @@ object, however it is imported (`typing_forms.py`), so `t.cast(Alpha, v)`
 after `import typing as t` is one and sqlglot's own `exp.cast(column, to)`
 is not.
 
+The output-quality rule in `profitability.py` is separate from that soundness
+proof. For at most two meaningful straight-line statements, it compares the
+complete interface (receiver/holder included) and rendered call-site lambda cost
+after ownership rewriting
+with work shared by all sites. Control flow and nested computation are outside
+this narrow calibration. [The decision](DECISIONS.md#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
+records its exact formula and API compatibility switch; physical wrapping does
+not add benefit.
+
 ## The soundness invariant
+
+For a program that does not use reflection or self-instrumentation, including
+through code it calls, every accepted transformation must preserve behavior.
+All checks below serve this requirement. A change to ordinary binding, effects,
+control flow, dispatch or interfaces is a soundness defect even if a similar
+case involving reflection is excluded. Fix the transformation or refuse it;
+do not broaden the reflection exclusion to cover the counterexample.
 
 Acceptance never trusts the algorithm; it checks the result.
 `instantiation.py` takes the generated helper, substitutes each call site's
@@ -274,13 +354,75 @@ treated as orphaned and the block is rejected. `extractor.py`'s
 return on every path before it may be called as `return helper(...)`, using
 both the rendered shape and the all-paths-exit property.
 
-A name the block binds to a class instantiation (a capitalized callee) or to
-one of a short list of resource factories (`open`, `connect`, `socket`,
-`mkdtemp`, `Popen`, `urlopen`, ...) is returned from the helper and rebound
-at the site whether or not later code reads it, so the object is not
-finalized when the helper's frame ends: a temporary file read after the
-block, a weak reference, a `__del__` (`lifetime_bound_names` in
-`block_analysis.py`). A factory outside that list is not detected.
+A name bound from any nonconstant expression can own a finalizable value:
+properties, subscriptions, operators and aliases are as opaque as calls.
+Iteration and context-manager targets can own values too. For ordinary
+non-value-producing blocks these names are returned and rebound even when
+later code does not read them. `lifetime_bound_names` in `block_analysis.py`
+folds immutable per-statement ownership facts, weakly memoized for the parsed
+AST's lifetime. It returns a fresh set for each caller. Initial bindings and
+later reads use their actual source positions, including nested compounds.
+
+`if_binding_transfer.py` admits a bounded exception to the nested-binding
+refusal for pair reconstruction: a contiguous slice inside a suite reached only
+through IF statements may initialize fresh local names. The certificate stores
+immutable source locations and binding facts, never AST owners. Each admitted
+site must correspond to the original module source, initialize every output on
+normal exit, and avoid prior reads, other bindings, captures and repeated writes.
+The helper returns every later-read and lifetime-required name. After return
+alignment, the engine independently reproves the complete output tuple; a cached
+block verdict cannot replace this proof. Loop, handler, manager and match
+ancestry remain ineligible, as do additional nested callers during initial
+cluster extension. Existing reuse paths retain their ordinary safety checks.
+Cycle-safe function and selected-tree checks precede local binding and flow
+analysis. Those facts can only refuse a candidate; refusals do not parse,
+compare or map unrelated module syntax. Every admission still requires fresh
+exact whole-module correspondence and original function membership. The
+verification path performs the same proof without caching an AST verdict.
+All frame, exception, lifetime and eager-evaluation guards still apply, so a
+binding certificate alone does not establish that a block can move.
+
+A helper must also preserve cleanup relative to locals left in the caller.
+`frame_ownership.py` counts every parameter and every opaque outside binding
+as potentially owning a value. Splitting ownership across frames is declined
+unless a whole-body extraction has a verified argument transfer. On CPython,
+`argument_ownership.py` certifies the original compiled parameter order,
+immutable bindings and nonescaping generated thunks against exact source.
+The caller places its parameters in a fresh box, deletes their bindings, and
+passes the box's tuple as the final helper argument. That holder releases the
+original parameters before helper locals, including on exceptions. Original
+parameter cells, rebinding, escaping thunks and unsupported runtime evidence
+are refused. Materialization revalidates the certificate and modifies only
+an owned rendering copy after annotation inference. Unregistered formatter
+callbacks must preserve the exact rendered AST. They remain ineligible for
+performance caches; the normal checker and lint gates still apply.
+Partial blocks under an outside exception handler or manager that might
+observe new locals are also refused.
+When multiple retained values are returned, the helper result and caller
+assignment preserve their relative order in the original compiler's local
+slots, including cell variables. The original module AST is compiled without
+executing it, and that immutable evidence is shared for the AST's lifetime.
+Incompatible orders or insufficient compiler evidence decline the occurrence.
+
+An inlined comprehension target captured by a nested scope can share a
+same-named outer free binding in CPython's compiler cell layout. Moving that
+comprehension into a helper changes restoration of the original cell and can
+alter reads in unchanged continuation code, including its exceptions. Pair
+and cluster reconstruction keep such sites in the original function. Ordinary
+uncaptured targets and independently bound names retain their existing proofs.
+The check follows lambdas and nested generators that capture the inlined target,
+including those in evaluated defaults and decorators. It examines definition
+heads, class bases and keyword values in the containing frame, and annotations
+only when the module evaluates them there. Separate function and lambda bodies
+are not traversed as part of that frame; an outer generator's first iterable is.
+
+All `with` and `async with` managers are treated as potentially suppressing
+exceptions. Their bodies therefore establish no new definite bindings after
+the statement: suppression can skip an assignment, and an earlier manager can
+suppress a later manager's entry failure. Binder-observability analysis still
+inspects body reads but exports no new bindings. This keeps a conditional read
+of a possibly unbound local at its original site rather than evaluating it
+eagerly as a helper argument.
 
 ### The visitors
 
@@ -307,32 +449,11 @@ and says why.
 `semantic_safety.py` rejects a block, before verification, when moving it into
 a helper could change behavior even if the shapes match:
 
-- **Frames and suspension.** `yield`, `await`, `async for`/`with`, an async
-  comprehension, `locals()`, `globals()`, no-argument `vars()`/`dir()`,
-  `super()` reached through another name (`s = super; s()`,
-  `builtins.super()`), `eval`/`exec`, direct frame or stack inspection, and
-  `warnings.warn` (with a `stacklevel`, or without one, since the helper's
-  frame would then be the one attributed) — a helper adds a frame these
-  would observe. The frame-reading builtins and `eval`/`exec` decline the
-  block when they appear anywhere in the enclosing function, not only
-  inside the block: a `locals()` after the block sees the names the block
-  bound, which a helper would bind in its own frame; a `sys._getframe()` or
-  `inspect.currentframe()` outside the block is a handle to those locals
-  and declines the same way (`frame_read_outside_block`). A name that
-  reaches one of these through a binding is resolved through the module's
-  bindings, so the alias is caught as the builtin would be: aliases include
-  imports (`import builtins as bi`, `from warnings import warn as w`) and
-  assignments (`e = eval`, `warn = warnings.warn`, `gf = sys._getframe`),
-  followed to a fixed point over the module, so an alias of an alias is
-  one; any call with a `stacklevel=` keyword counts as a warning. A
-  `break` or `continue` whose loop lies outside the block would leave the
-  helper instead of the loop.
-- **inline-snapshot.** `source_readers.py` declines a block that refers to a
-  callee of `known_source_readers.py`, which lists the inline-snapshot
-  entry points that read the source or position of their call
-  (`snapshot()`, `external()`, `snapshot_arg()`), however the module binds
-  the name (`source_reading_callee`). Every other callee that reads its
-  caller's frame is reflection, outside the model.
+- **Control flow and suspension.** `yield`, `await`, `async for`/`with` and
+  async comprehensions require delegation that the current helper form does
+  not provide. A `break` or `continue` whose loop lies outside the block would
+  leave the helper instead of that loop. These ordinary control-flow guards
+  remain independent of the reflection boundary.
 - **The class cell.** Zero-argument `super()` reads the `__class__` cell of
   the function calling it and that frame's first argument, so code using it
   needs its class body (`needs_class_body`). The guard stage marks the pair;
@@ -355,10 +476,11 @@ a helper could change behavior even if the shapes match:
 - **Import cycles.** A cross-file helper whose new import would close a static
   import cycle (see *Cross-file*).
 
-Only constructs written in the block or its enclosing function, directly or
-through an alias the bindings resolve, are caught here; frame use reached
-through a callee is handled by the pre-run scan (below), and reflection
-reached through a callee or a dynamic lookup is outside the model.
+Source, AST, bytecode, frame and namespace inspection are outside the
+preservation contract. The guard stage performs no reflection scan and does
+not refuse or warn on those behaviors. This includes source-reading callees,
+warning attribution and reflective body/class instrumentation. See the
+[October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract).
 
 ## Helper placement
 
@@ -372,17 +494,27 @@ decides:
   other (docs/DECISIONS.md, "A method helper lives in the class that holds
   both duplicates"). Its name is class-private, `__extracted_func_0`, which
   the class stores as `_A__extracted_func_0` and its methods call as
-  `self.__extracted_func_0()`, so no subclass, inside the project or outside
-  it, can override it or collide with it; `class_private.py` holds CPython's
+  `self.__extracted_func_0()`, protecting it from accidental overrides by
+  ordinary subclass methods; `class_private.py` holds CPython's
   mangling rule, which allocation, the project scan and renaming share. The
-  class must keep the helper what its methods reach: not a `Protocol`, no
-  decorator beyond the known namespace-preserving ones, a body below its
-  header, a metaclass and every `__init_subclass__` on its order known to
-  leave a plain function alone, no `__getattribute__` on that order (which
-  intercepts the helper's own lookup), no builtin base but those that look
-  attributes up as `object` does, a name that mangles (not only
+  class's declared contract must permit adding a private helper: not a
+  `Protocol`, a body below its header, a name that mangles (not only
   underscores), and receivers annotated, if at all, as the class
-  (`ImportTimeCode.hosts_method_helpers`, `ModuleBindings.refuses_helper`).
+  (`ModuleBindings.refuses_helper`). An unknown class decorator does not
+  itself veto adding the helper.
+  Namespace scans and lookup hooks observing the added private helper are
+  reflection, outside the preservation contract. The engine therefore does
+  not walk the ancestry to approve class machinery or require a base-class
+  allowlist. Reflective body instrumentation is also outside the guarantee,
+  whether reached through decorators, ordinary calls or class hooks; there
+  is no project-wide instrumenter flow or body-transformer allowlist.
+  A `Protocol` cannot gain a required member. Decorator classifications still
+  serve ordinary Protocol resolution and import-time effect analysis; they
+  are not a body-instrumentation preservation check.
+  `protocol_bases.py` follows direct-base aliases through project imports
+  and conditional expressions. It stops at class definitions, since a
+  concrete implementation of a protocol may host a helper. An unresolved
+  computed base takes a module helper instead.
   A source method that never reads an attribute of its receiver, and a
   `staticmethod`, get a module-level helper instead: such a method runs when
   it is called through its class with anything in the receiver's place, and a
@@ -413,25 +545,36 @@ decides:
   did, made them members of every subclass of a base that was often public
   API, needed a base-name resolution that twice went wrong, and moved code
   into modules that held none of it.
-- **After the definitions its annotations name.** A module-level helper goes
+- **Same-file annotation dependencies.** A module-level helper used within one file goes
   before the module's first definition, after its imports and docstring.
   When its annotations name classes or functions of the module, it goes
   after the last of them instead, so the names are written bare rather than
   as quoted forward references; this is done only when every statement
   before that point is a definition, import, assignment, or docstring, or
-  an `if` or `try` made only of those (a `TYPE_CHECKING` guard, an optional
+  an `if` or `try` made only of those (an immutable false guard, an optional
   import), so no statement that could call into the module at import time
   is reordered relative to the helper (`placeable_after`). Otherwise the
   helper stays at the top and the names are quoted.
+- **Before ordinary imports when shared across files.** A new shared helper
+  follows the header, docstring and verified standard-library future imports,
+  with quoted annotations and an inert definition. This makes it available
+  when an import reenters its partially initialized host. Generated type
+  declarations retain their dependency-safe position; a helper whose body
+  needs them before that position cannot be shared. Existing functions are
+  never moved, so reuse must establish availability at their original
+  position. Wildcard imports that could overwrite the helper binding refuse
+  sharing. The borrower's helper import uses its original import boundary,
+  before replacements can turn an early definition into an alias.
 
-A generated name is also kept clear of what the project's other sources
-already define where the helper would live (`HelperNameClaims`): for a
-module-level helper, a name some file writes into a namespace (an attribute
-store, `setattr`, a subscript store); for a method helper, the stored name
-`_A__extracted_func_0` as any class member, attribute store or namespace
-write, which is what an explicit spelling of it, or `__extracted_func_0` in
-another class named `A`, would define. The project is read once per engine
-from the nearest directory with packaging metadata above the input.
+Generated names avoid existing identifiers at their insertion site and
+explicit attribute stores or deletions in other project sources
+(`HelperNameClaims`). For a method helper, the scan also reserves class-member
+identifiers in their mangled form: `_A__extracted_func_0` spelled explicitly,
+or `__extracted_func_0` defined in another class named `A`, can collide.
+Reflective names supplied through `setattr`, namespace subscripts or a
+`type(...)` namespace dictionary are outside the guarantee and are not
+reserved. The project is read once per engine from the nearest directory with
+packaging metadata above the input.
 
 ## Reusing an existing function
 
@@ -443,13 +586,18 @@ module every time, so patching or rebinding it (`mock.patch("mod.f1")`)
 changed the forwarder too (audit `r06`). Since commit `c4bf39e` every
 whole-body site is extracted like any other: both functions become calls of
 one new helper, which nothing outside can know to patch, and each existing
-function keeps depending only on itself. `reuse.py` keeps only the rule that
-declines reducing an earlier pass's helper to a forwarder while another site
-is only part of its function, and the arity check for a proposal built by
-other means that names an existing function. That left
-`reuse_existing_functions` with no effect; the engine still accepts it,
-deprecated, so existing callers keep working until a later release removes
-it.
+function retains its independent binding. `reuse.py` distinguishes those input
+functions from compatible plain module helpers generated earlier in the same
+staged run. A duplicate can call such a generated helper with its original
+signature and safe host, avoiding another forwarding helper. Equivalent helpers
+generated in separate batches can become aliases in a safe module when their
+plain positional signatures and bodies match, annotations are inert, generated
+provenance is known, and the exact earlier helper import is verified. Existing
+input names, including helper-shaped names, never gain that provenance merely
+from their spelling. General redirection of consumers, same-name collisions and
+same-module consolidation remain outside this reuse rule. The public
+`reuse_existing_functions` option remains deprecated and has no effect; it does
+not enable redirection to arbitrary input functions.
 
 ## Helper annotations
 
@@ -648,8 +796,9 @@ lattice ones:
   helper returns their meet: Python has no intersection type, so the meet is
   the declaration that is a subtype of all the others, or, when the oracle
   confirms the helper's revealed return type is a subtype of every
-  declaration, that revealed type. Declarations with no such member leave
-  the return bare.
+  declaration, that revealed type. An unannotated caller adds no declared
+  return constraint and does not discard a proven revealed type. Declarations
+  with no such member leave the return bare.
 - Thunk and lifted parameters take `Callable[[], T]` and
   `Callable[[A, B], T]` from the oracle's callable spelling.
 - A revealed type is written only when every name in it resolves where the
@@ -689,6 +838,15 @@ or constraints and receive fresh invariant function binders. There are at most
 two generic candidates. Unsupported or conflicting domains are declined rather
 than replaced with invented bounds. The helper body and calls decide whether
 these candidate relationships are valid through the project's checkers.
+
+Within one helper's annotation inference, repeated subtype questions share
+definite checker verdicts. The keys are immutable structural spellings, and
+the values are `Subtyping` enums; neither retains an input AST. Each batch
+deduplicates its unanswered pairs and restores the requested answer order.
+Unknown answers are retried, and every fresh checker build retains the
+untyped-type and reachability probes. The memo ends with the inference call:
+later calls must observe changes to imports and checker configuration even
+when the host module's text is unchanged.
 
 Generic inference applies to new module-level helpers and instance and class
 helper methods. An instance or class method keeps parameters bound by its
@@ -817,15 +975,44 @@ after the call; a lambda at the call needed a test's narrowing; the block's
 assignments declared its class's attributes; the block completed its caller's
 partial type (mypy only); or only the unannotated helper is left in a module
 whose every function is annotated, which a stricter check than the
-configuration Towel reads would refuse. The lambda and partial-type cases are
-read off the proposal and cost no check; the others need the checker's verdict
-and cost the one refusal that shows them. Each rung is rendered with the
+configuration Towel reads would refuse. The partial-type case is read off the
+proposal and costs no check. Reading a predicate's subject does not establish
+that a lambda needs its refinement: Optional-aware consumers may remain fully
+precise. The checker must witness a rejected nullable operand, tied to the
+original caller expression or the helper's predicate-governed result, before
+this judgment ends the ladder. Generated zero-argument predicates use only
+exact default-free caller lambdas for that correspondence. The supported
+diagnostics identify named or positional arguments, operator operands and
+Optional receivers; reflected mypy comparisons map back to source operand
+order. An ambiguous diagnostic location does not establish this judgment.
+Return and annotated-assignment diagnostics also identify scalar or fixed-tuple
+value flows. Their rejected nullable component must correspond to the deferred
+caller expression and to a matching declared obligation in that original caller.
+An interim helper annotation alone cannot establish the obligation: a caller
+whose declared result accepts `None` may need a later precise generic signature.
+Original return declarations govern each matching returned component, including
+early returns and repeated branch returns. An annotated assignment supplies its
+own declaration, including inside a conditional suite; its caller's return type
+does not substitute for that declaration. Both use the same exact scalar or
+fixed-tuple projection through unchanged local aliases. The rejected value must
+be a direct generated zero-argument getter matching the original declared
+component. This correspondence does not require a helper predicate branch and
+does not infer additional control flow or effects of arbitrary calls.
+Known caller narrowing boundaries are filtered during discovery; the
+remaining cases cost the checker refusals needed to establish them. Each rung is rendered with the
 comments of the moved code woven in, and with only the imports its own
-annotations name. A variant rendered again with nothing it could depend on
-changed -- its files as rendered, comments and imports included, but for the
-helper's generated name; those files as they stood, the files its errors lie
-in, and everything those import; and the errors the run already counts as the
-project's own there -- has its refusal replayed rather than checked again.
+annotations name. Every rendered variant submitted to project checking calls
+`_new_type_errors` again. Towel keeps no inner rendered-variant refusal memo:
+matching configuration, known errors and the files those errors name does not
+certify all checker inputs. A changed `.pyi`, a previously absent provider or an
+external stub root can change an answer while that incomplete key stays equal.
+The checker may still maintain its own incremental session; a fresh request is
+not a promise of a fresh process. Final project confirmation remains required.
+
+The separate outer completed-proposal rehearing cache has its own exact
+candidate, whole-project revision and recognized checker/rendering-context
+requirements (below). That qualified checkpoint optimization is not an inner
+variant cache or a proof that arbitrary checker dependency closure is known.
 
 Checker failure, or a remaining new error, declines the proposal. `close()`
 releases checker resources, and the CLI calls it in a `finally` block. Without
@@ -842,7 +1029,8 @@ restore narrowing lost by moving a guard away from a captured lambda.
 `ast.unparse` renders a helper on one line per statement with single-quoted
 strings. [`formatting.py`](../src/towel/formatting.py) supplies a
 `SnippetFormatter` from the project's own configuration: `ruff format` when
-the project has `[tool.ruff]` or `ruff.toml` and ruff is installed, else
+the file has an enclosing `[tool.ruff]`, `ruff.toml` or `.ruff.toml`
+configuration and ruff is installed, else
 Black, at the line length the project declares anywhere (`[tool.black]`,
 `[tool.ruff]`, `[tool.pycodestyle]`, or a `[flake8]`/`[pycodestyle]`
 section of `setup.cfg`, `tox.ini`, or `.flake8`). Only the generated helper
@@ -851,8 +1039,39 @@ file, and every formatter is wrapped by `checked`, which compares each
 snippet's syntax tree before and after and raises if formatting changed
 it. The proposal is then declined, under "the formatter changed its code or
 failed", and the run goes on: Black normalizing a moved string that becomes
-the helper's docstring is enough. A `FileFinisher` sorts the imports of each modified file the way the
-project does, with ruff's `I` rules when selected or isort when configured.
+the helper's docstring is enough.
+
+The CLI supplies `snippet_formatter_for_file`, a narrow factory from an
+original source-file path to its `SnippetFormatter` or `None`. Materialization
+passes the destination of every helper, declaration and rewritten call;
+`_origin_of` translates staged paths back to their original project paths.
+Nested configuration and exclusions therefore apply separately to each
+modified file. Library callers can continue supplying one `snippet_formatter`
+for all snippets; the two options are mutually exclusive. Built-in factories
+retain their selected workers for one run and propagate their repeatability;
+unregistered factories cannot justify cached annotation refusals.
+
+Each formatter factory lazily owns at most one Black worker, and each directory
+import-sorter factory at most one isort worker. Policy selection remains
+file-specific: requests carry the selected Black settings or isort configuration
+root and source path. Factories do not share workers with one another. Selecting
+an excluded file does not close a shared worker; a failed worker remains failed
+and invalidates repeatability rather than being replaced when another file is
+selected. The last owning factory or selected callback releases the worker.
+Ruff's subprocess path is unchanged.
+
+A `FileFinisher` selects import sorting separately for each modified file,
+with ruff's `I` rules when selected or isort when configured. Ruff chooses
+the nearest configuration, preferring `.ruff.toml`, then `ruff.toml`, then
+an enclosing `pyproject.toml` with a Ruff table; a pyproject without that
+table does not stop discovery. Towel reads enabled rules through
+`ruff check --show-settings`, leaving `extend`, rule selection and ignores
+to Ruff. Sorting uses `--fix-only --fixable I` without overriding selected
+rules; Ruff's per-file ignores and exclusions still govern the actual
+source path. An unavailable or unrecognized settings query logs the failure
+and leaves imports as assembled for that attempt. This unresolved result is
+not cached as a disabled policy: the directory finisher retries on a later
+call, and the failed measurement cannot certify formatting repeatability.
 An import runs its module where it stands, so the order of a file's own
 imports is the order of their import-time effects, which no binding check
 can show to commute; the finisher therefore moves only the imports Towel
@@ -867,7 +1086,7 @@ ordered providers, with wildcard imports, future imports and other
 statements as barriers, and must bind the file's own imports in their
 original order; otherwise the file stays as Towel assembled it, and a file
 left unsorted is logged once. The formatters leave the code they are given
-unformatted where their configuration excludes the path the run was given
+unformatted where their configuration excludes the modified source file
 (`--force-exclude` for `ruff format`; Black's `exclude`, `extend-exclude`,
 `force-exclude`). The tools are optional (`code-towel[format]`);
 without them code is inserted as rendered, and the CLI says so.
@@ -923,6 +1142,11 @@ a file-wide one (`flake8: noqa`, `mypy:`) must stay in its module
 (`directive_outlives_block`). A clustered site whose directives differ is
 left out of the cluster.
 
+Generated calls and helpers are formatted at their destination indentation.
+Temporary enclosing suites give the snippet formatter that depth; they are
+removed before insertion, and the unwrapped snippet must retain its original
+AST. Existing consumer source is not reformatted by this step.
+
 Materialization writes the comments into the unparsed helper before the
 formatter runs (`weave_comments`): at the end of the line holding their code,
 inside the brackets they stood in, or on lines of their own before or after
@@ -977,12 +1201,15 @@ The model answers three kinds of question:
   `unproven_import`; `materialize.py` writes the spelling and refuses a
   proposal built by other means that has none. `annotation_wiring.py` spells
   the type-only import a helper's annotation needs by `split_qualified` and
-  `spelling` in either mode, under `TYPE_CHECKING`, where it never runs.
+  `spelling` in either mode, under `if 0 > 1`, where it never runs while
+  both supported checkers still read its types.
 - **What an import executes** (`ImportModel.files_reached`, through
   `ProgramImports.reached`): the project files an import statement may run,
   package initializers on the way included and every candidate of an
-  ambiguous name. An import under a `TYPE_CHECKING` guard is no edge
-  (`TypeCheckingGuards`, the effects analysis's own test). The cycle guard
+  ambiguous name. Only an immutable false guard hides a runtime edge
+  (`TypeCheckingGuards`, sharing `runtime_guards` with the import model).
+  Imported `TYPE_CHECKING` flags remain mutable runtime conditions;
+  conditional imports do not attest unconditional availability. The cycle guard
   (`would_create_import_cycle`) walks these
   edges from the host and the initializers of its packages, reading each
   file where the run keeps it so that an import an earlier extraction added
@@ -998,6 +1225,17 @@ The model answers three kinds of question:
   import of a project module to the file that defines the name, for the
   typing-form and quiet-base lookups, and takes one of no project module at
   its word.
+
+Possible reachability does not establish that a module has already loaded.
+For that proof, `import_change` uses only the borrower's leading, explicit
+imports with unambiguous providers. `from pkg import a` can read a package
+attribute without loading `pkg.a`. Directly imported modules and enclosing
+packages may still be initializing, so their own import edges are not
+followed for this proof. Loading a new submodule can overwrite an ordinary
+parent-package attribute and is refused. A new top-level host must instead
+have a closed inert body: literal bindings, inert function definitions and
+verified future directives. Existing later imports are never advanced under
+that permission.
 
 The `dry` and `preview` commands, with `--cross-module`, read the model
 before the engine starts and report every problem with its remedy
@@ -1054,18 +1292,20 @@ that helper would keep only the new call, one more layer with no logic of
 its own. A user-named function may still become a one-line specialization
 of the new helper.
 
-## Pre-run frame- and source-sensitivity scan
+## Reflection boundary
 
-Because a callee's frame use is invisible to the block-level guard, directory
-mode scans every module before refactoring and prints a stderr diagnostic
-naming files that inspect call frames or tracebacks, attribute warnings by
-`stacklevel`, or read source through `inspect.getsource`
-(`frame_sensitivity_markers` in `semantic_safety.py`). It is a warning to
-review those diffs or `--exclude` them, not a refusal; it deliberately does not
-flag patterns indistinguishable from safe code, such as reading a sibling's
-`.py` source through a plain `open`. See
-[KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for what it does and does not
-catch.
+The boundary specifies which programs the soundness requirement covers:
+programs that do not use reflection or self-instrumentation must retain their
+behavior. It does not make ordinary semantics optional or permit checks to
+be dropped merely because they also protect a reflective case.
+
+Directory analysis does not scan for frame/source sensitivity or issue
+reflection warnings. Moving code can change source-reader results, traceback
+shape, warning attribution and instrumentation, including inline-snapshot,
+pytest assertion rewriting and body compilers. These behaviors are outside
+the guarantee, not additional refusal categories. Source-position constraints
+imposed by external type and build tools remain in `static_positions.py` and
+`typing_forms.py`; they protect type declarations and catalog extraction.
 
 ## The fixed-point loop
 
@@ -1086,7 +1326,7 @@ flowchart TD
     queue -- "no" --> global["global pass:<br/>re-pair the files changed<br/>since the last one"]
     global -- "found something" --> queue
     global -- "found nothing" --> pending{"anything declined, and<br/>something applied since<br/>the last rehearing?"}
-    pending -- "yes" --> rehear["rehearing: forget every<br/>declined proposal and<br/>re-pair the whole project"]
+    pending -- "yes" --> rehear["rehearing: retain certified<br/>current-revision refusals and<br/>re-pair the whole project"]
     rehear --> queue
     pending -- "no" --> done["fixed point"]
 ```
@@ -1104,11 +1344,25 @@ pass re-pairs the whole project, because a change in one file can create a
 cross-file duplicate with a file the localized pass never looked at. The
 loop ends after a rehearing: when nothing more applies and something was
 declined that the project has changed under since, the memory of declined
-proposals is cleared and the whole project analysed once more, so each is
-heard against the project as it now stands. Only a rehearing that applies
+proposals from older revisions is cleared and the whole project analysed
+once more. A completed checker refusal can survive this unchanged-revision
+rehearing only for its exact candidate, checker and rendering context. Only a rehearing that applies
 nothing ends the run, and one needs an application since the previous
 rehearing, so a proposal the project keeps refusing cannot make the run
 circle.
+
+`rehearing.py` includes every proposal field and AST attribute in the candidate
+key, serializing its typed projection once. Unknown metadata disables retention.
+The execution context includes built-in checker identities, explicit plugin-free
+configuration bytes, registered live formatters and their configuration, engine
+options, naming state, baseline errors, environment and working directory. Custom
+oracles/callbacks and transient or unknown failures are retried. Every accepted
+source application or stale-source recovery advances the whole-project revision;
+no approximate import-dependency subset substitutes for that revision. Installed
+tools and installed support dependencies remain fixed during a run. An
+unknown or changed context does not justify retaining a completed refusal;
+this outer checkpoint rule does not revive the removed inner variant memo.
+Final project verification remains required.
 
 A global pass after the first re-pairs only functions in files rewritten
 since the previous global pass, together with files of proposals deferred by
@@ -1122,15 +1376,18 @@ previous pass produced from them has since been consumed:
 1. *What a verdict depends on.* `_try_refactor_pair_multi_file` decides a
    pair from the two functions' syntax trees and the scope analyses of their
    modules; from the same-file clustering scan (`_add_clustered_replacements`
-   looks only at the pair's own file); from the class hierarchy (whether the
-   class holding both methods can take a method helper); and from the
-   project's import graph (the
-   cycle guard). Nothing else. Proposal priority is a pure function of the
+   looks only at the pair's own file); from the classes and receiver types
+   holding the methods (whether both can call a private helper in the same
+   class); and from the
+   project's import graph (the cycle guard); and from the project-wide
+   builtin-mapping hazard described below. A changed root or hazard invalidates
+   the incremental restriction. Proposal priority is a pure function of the
    proposals themselves (size, then position).
 2. *Unchanged files, unchanged scans.* An unchanged file has the same
    syntax tree, the same scope analysis, and the same clustering scan, since
-   the analysis session reuses the parsed module.
-3. *The class hierarchy is invariant.* Refactoring inserts helper functions
+   the analysis session reuses the parsed module. This assumes unchanged
+   project dependency facts; changes to those facts force a full re-pair.
+3. *The class identities are invariant.* Refactoring inserts helper functions
    and methods and rewrites call sites; it never adds, removes, or renames a
    class, and never changes a base list. `ClassInfo` for every module is
    therefore the same in every pass.
@@ -1157,8 +1414,8 @@ previous pass produced from them has since been consumed:
    files are explicitly retained as deferred paths, and the proposal itself is
    remembered for the rest of the run, so no later analysis retries it. One
    further global pass does run on an unchanged revision: the rehearing, which
-   clears that memory and reconsiders the whole project rather than only the
-   files that changed.
+   clears older-revision and uncertified failures and reconsiders the whole
+   project rather than only the files that changed.
 6. *Rejections stand.* A pair rejected by the previous pass is rejected by
    the same guards on the same inputs (1 to 3), except for the cycle guard,
    whose input grew monotonically (4).
@@ -1172,6 +1429,63 @@ argument is byte-identical `dry` output with the restriction on and off
 reference behavior.
 
 ## Performance architecture
+
+Return-variable queries reuse immutable statement read facts for an engine's
+original, read-only source functions. One analysis retains at most 2,048 function
+entries, each containing source line numbers, statement class names and frozen
+read-name sets. The internal scope carries the engine owner; queries outside
+that scope, under another owner, with zero entries or with memoization disabled
+keep the original lazy line-filtered traversal. Cached facts do not include a
+returned mutable set or an AST node value. Every query still calculates lifetime
+outputs and emits its requested diagnostic records, and constructs a fresh
+result set. Scope exit clears the function keys and facts, restoring a nested
+parent on normal return or failure.
+
+Warning eligibility also checks its existing bounded lexical cache before
+searching source text. Cache misses and disabled or oversized inputs use the
+same lexical predicate. Answers are immutable booleans; warning-capable answers
+continue to force native parsing under the caller's current warning policy.
+The existing character, entry and source-storage bounds, synchronized updates
+and process-local reset after a fork also cover warning-impossible text.
+
+Formatted-string warning classification tracks each string's raw prefix and
+OP-brace depth. Literal text, quoted strings and comments do not change that
+depth; nested formatted strings have independent frames. CPython 3.12 decodes
+escapes in raw format specifications, so their middle tokens still require
+escape checks while raw literal text outside replacement fields can be shared.
+Nonraw middle tokens and nested nonraw strings retain their warning checks.
+This classifies lexical warning freedom only: parser-limit keys, native error
+behavior, and current-module admission proofs remain separate.
+
+An analysis also owns the IF-transfer source facts and compiler-literal summaries.
+The IF memo holds private syntax freshly parsed from original source, exact
+spellings and frozen local facts; it never borrows a caller's mutable tree. Its
+64 source entries retain at most 8 MiB of source and exact spelling bytes (the
+budget does not measure AST heap size), and its 2,048 local entries contain only
+paths, coordinates, names and binding facts. Parser limits are part of each
+source key. A cold locally ineligible candidate does not initialize source
+planning, and a current-tree refusal is never cached. Warning-capable source,
+oversized source, zero budgets and disabled memoization retain the native path.
+The pipeline additionally registers its explicitly owned module/source pairs
+for one analysis. A successful uniqueness and exact source-correspondence proof
+can be reused only for those immutable trees, the same source and current parser
+configuration. Caller trees and materialization still get fresh proofs. With
+AST immutability checking enabled, a warmed owner's uniqueness and exact spelling
+are checked before reuse and mutation raises an error. Warning-capable sources
+and disabled memoization bypass this cache. Every admission still resolves the
+actual function and selected suite by identity. Nested analysis scopes restore
+their parent, and exit releases all registered owners and proof entries along
+with the private source syntax and local facts.
+
+Compiler-literal summaries hold weak statement owners and immutable boolean or
+integer-set answers. The engine's original statement trees remain read-only;
+unstable-pool results combine by disjunction and runtime byte values by union,
+retaining the existing local-versus-class annotation execution rules. These new
+summaries last only for the analysis context. Direct library calls recompute
+outside it, and `memoization_disabled` forces recomputation inside it. The final
+byte-provenance and interpreter checks, and literal checks on generated helpers,
+still run afresh.
+
 
 Analysis and verification are separate cost centres, and on an annotated
 project the second dominates. What keeps it bounded is described under *Helper
@@ -1190,6 +1504,16 @@ proposal construction is cubic there until the first application collapses
 them; the engine spends its effort avoiding and reusing comparisons. Every
 measure is exact and changes no proposal.
 
+- **Partner eligibility and interval prefixes.** `_Partners` is built before
+  `_signed_blocks`; functions without a structural partner contribute no
+  blocks. The budget still precedes incremental changed-file filtering.
+  `BlockSignatureIndex` and per-suite prefixes reuse additive statement facts
+  for signatures, nested definitions, unspellable integers, returns and the
+  necessary narrowing condition. Positive caller-sensitive guards still run
+  in full. Exact statement slices and type-sequence tuples remain owned by
+  each enumerated interval, so this removes repeated scans without bounding
+  aggregate block storage. Singleton blocks no longer inflate a budget
+  warning's similar-block count.
 - **Enumeration filter.** A block that returns on some path but not all, or a
   lone expression statement, can never be accepted and is never enumerated.
 - **One proposal per refactoring.** Pair evaluation keeps the first proposal
@@ -1203,6 +1527,13 @@ measure is exact and changes no proposal.
   rule). The candidate-pair budget itself (`max_candidate_pairs`, the CLI's
   `--max-pairs`, 20,000,000 by default) bounds what one analysis evaluates by
   leaving out the largest statement-sequence buckets with a warning.
+- **One-unification block facts.** Free-variable queries in `parameterization.py`
+  reuse immutable `frozenset` results for the current immutable input blocks.
+  Every caller receives a fresh mutable set. Resetting the unification or
+  releasing its blocks clears these entries, including cached empty results;
+  they do not survive a later rewrite or pin an earlier analysis indefinitely.
+  This lifetime is narrower than the engine's structural caches and makes no
+  whole-command speedup claim.
 - **Instantiation memo.** The verdict of the instantiation check is memoized
   on the helper's dump, the call, and the block's structure, since the same
   helper meets the same block through every pair the block forms
@@ -1252,6 +1583,21 @@ measure is exact and changes no proposal.
   read-only; `TOWEL_CHECK_AST_IMMUTABLE=1` verifies that on every reuse by
   comparing an AST digest and raising if the tree changed. A session is owned
   by one caller and is not thread-safe.
+- **Shared read-only syntax.** During one `analyze_files` call,
+  `analysis_sources.py` shares parsed trees between the pipeline,
+  namespace-write scanning and import analysis. Its LRU is bounded
+  by 2,048 entries and 8 MiB of source; the byte limit bounds retained input,
+  not the full Python object graph. Readers supply current source, and keys
+  retain both file identity and source content. Equal text in different files
+  never shares AST identity. The context ends with the analysis. Binding maps
+  are immutable; import summaries depend only on a read-only tree and its path
+  and are weakly cached without retaining the tree. Warning-producing parses
+  bypass sharing to preserve warnings-as-errors behavior. The immutability
+  diagnostic checks structure and source positions, including deep expressions.
+  `tests/test_analysis_sources.py` checks sharing, file isolation, invalidation,
+  diagnostics and lifetime. A new analysis releases its
+  predecessor's function index and last unification's inputs even when no
+  candidate pairs remain.
 - **Import-edge cache.** The import-cycle check parses each reachable module
   once per analysis and caches its edges, instead of re-parsing per pair.
 - **Per-function facts.** Facts that depend only on the enclosing function,
@@ -1269,7 +1615,7 @@ measure is exact and changes no proposal.
   statement's subtree is computed once per statement in a weak memo
   (`statement_facts.py`: `memoized_per_node`, the signature counts,
   `contains_return`, the node-type histogram, mentioned names; the
-  frame-sensitivity, bound-name and deleted-name guards in
+  control-flow, bound-name and deleted-name guards in
   `semantic_safety.py`; walrus targets in `parameterization.py`; the
   substitution's structural key) and folded over the block: counts add,
   booleans disjoin, sets union, digests concatenate. The bound-variable
@@ -1278,6 +1624,12 @@ measure is exact and changes no proposal.
   pairs with. `tests/test_statement_facts.py`,
   `tests/test_binding_context_memo.py` and `tests/test_substitution_keys.py`
   compare each fold with the whole-block walk on Towel's own source.
+  Narrowing guards likewise compose frozen sets of tested, asserted and
+  stored references. Their weak-keyed values contain strings only and cannot
+  retain source trees. Context-dependent continuation decisions still run
+  for each block. Generated helper trees can change during construction,
+  so their store analysis remains fresh. These summaries and inference-local
+  subtype verdicts honor the cache-disabled verification context.
 - **Statement-sequence buckets.** `block_signature.py` buckets candidate
   blocks on their whole statement-type sequence, which the unifier requires
   equal, so pairs with different shapes are never formed; each block's
@@ -1337,12 +1689,15 @@ on Towel's source fell from 464 million to 246 million (September 18,
 Python 3.12, one other single-core job running), `towel dry src/towel` on
 that day's source (22,690 lines, 15 applied) took 8.4 s with a peak
 resident size of 174 MB under `--no-types --no-format`, and 11.9 s and
-894 MB with the defaults. The current figure is at `8cb8b8c`, September 24,
+894 MB with the defaults. A later historical figure is at `8cb8b8c`, September 24,
 2026 (the same machine and settings, other work loading it to a load
 average of 11 to 13): on 46,165 lines it takes 35 s under `--no-types
 --no-format` (22 applied) and 138 s with the defaults (21 applied). The tables in
 [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#performance) give the
-per-project figures.
+per-project figures. The [published-wheel comparison](proposals/published-1772-comparison.md)
+records the later first-Pyright-reveal improvement and Packaging full-command
+result with their separate timing boundaries; it establishes no complete-Sphinx
+or whole-corpus speedup.
 
 ## Diagnostics and settings
 
@@ -1426,6 +1781,12 @@ run ends. Every path the run reports -- progress and dropped-proposal messages,
 the per-file summary, the `.towel-helpers.json` sidecar -- is rewritten from
 the stage to `OUT` (or, outside the target, to the original project).
 
+The naming sidecar is optional metadata written after source publication. An
+`OSError` or `ValueError` writing it produces a warning and a successful command
+exit; helper inventory and renaming remain available without the before/after
+context. Existing collisions and symlink targets are preserved. Failures of
+source validation or publication retain their failure semantics.
+
 During that run `relocate_oracle` maps the staged target back onto the
 original target, which preserves the input project's tool configuration and
 module identities. It overlays every current staged target source and stub,
@@ -1451,8 +1812,18 @@ only in that class's body, where the compiler stores it as
 written there, to a name that must be class-private too, and refuses the batch
 when the stored name is spelled anywhere else (explicitly, as a string, or as
 `__extracted_func_0` in another class of the same name) or when the class's
-body looks attributes up by a computed name. See the README for the end-to-end
+body looks attributes up by a computed name. See the [naming guide](NAMING.md) for the end-to-end
 workflow.
+
+The selected definition is separate from its consumer-analysis scope.
+`plan_renames` reads ordinary consumers in the enclosing discovered project
+and refuses before writing when a consumer outside the target needs an edit.
+The CLI requires `--complete-scope` for an unmarked root; that acknowledgement
+cannot bypass a known outside consumer or permit writes beyond the target.
+Stored class-private identity and NFKC-normalized name identity govern
+resolution and collision checks, while the edits use physical source-token
+spans. A proposed parameter name that captures a previously distinct mangled
+reference refuses the whole batch.
 
 ## Verification and evidence
 
@@ -1528,20 +1899,22 @@ but the ideas and their names are from the literature.
 | Writing a call in place of exactly its block's text | `splicing.py` |
 | Clustering further call sites | `clustering.py` |
 | Fork-based parallel evaluation | `parallel.py` |
-| Fixed-point drivers and the frame-sensitivity warning | `fixed_point.py` |
+| Fixed-point drivers | `fixed_point.py` |
 | Overlap filtering | `overlap.py` |
 | Parse/analyze cache, pair-processor protocol | `pipeline.py` |
 | Loggers and settings | `diagnostics.py` (at `src/towel/`) |
 | Anti-unification | `unifier.py` over `unifier_state.py`, with `constant_consistency.py`, `parameterization.py`, `hof_promotion.py`; `substitution.py`, `binding_context.py` |
 | What a tool reads where it stands, and what a block's callees denote among the typing forms | `static_positions.py`, `typing_forms.py` |
-| The inline-snapshot callees that read their call site, and what a block's names denote among them | `known_source_readers.py`, `source_readers.py` |
 | Pair pre-filter | `block_signature.py` |
 | Per-statement facts and the weak per-node memo | `statement_facts.py` |
 | Verification | `instantiation.py` |
+| Exact occurrence paths and compiler literal pools | `ast_paths.py`, `compiler_literals.py`, `constant_consistency.py` |
+| Source-bound fresh IF outputs and their scoped original-source facts | `if_binding_transfer.py` |
+| Scoped immutable return-read facts | `return_source_uses.py` |
 | Scope and bindings | `scope_analyzer.py`, `binding_detector.py`, `assignment_analyzer.py`, `function_scope.py` |
 | Visitor bases (Template Method) and shared visitors | `visitors.py` |
 | Liveness and orphans | `definite_assignment.py`, `orphan_detector.py` |
-| Safety guards and the pre-scan | `semantic_safety.py` |
+| Control-flow, binding and lifetime safety guards | `semantic_safety.py` |
 | Import-graph resolution and the cycle guard | `import_graph.py` |
 | Helper and call-site rendering | `extractor.py`, `thunk_inlining.py` |
 | The comments of moved blocks, and where they go in the helper | `block_comments.py` |
@@ -1559,6 +1932,8 @@ but the ideas and their names are from the literature.
 | The bounded LRU mapping behind every id-keyed cache | `bounded_cache.py` |
 | Engine and CLI defaults (parameters, lines, iterations) | `defaults.py` |
 | Decoding and re-encoding sources (BOM, cookie, newline) | `source_text.py` (at `src/towel/`) |
+| Read-only syntax shared between analyses during one call | `analysis_sources.py` (at `src/towel/`) |
+| Native warning eligibility and bounded lexical booleans | `parsing_warnings.py` (at `src/towel/`) |
 | The names the program's imports give its modules | `import_model.py` (at `src/towel/`); `unification/program_imports.py` asks it in a run's paths |
 | Project root, `pyproject.toml`, package chain | `project_layout.py` (at `src/towel/`); `unification/project_layout.py` re-exports it for the old import path |
 | Data model | `models.py` |
@@ -1575,11 +1950,10 @@ but the ideas and their names are from the literature.
 | Reading a type checker's spelling of a type as the annotation it means | `revealed_types.py` |
 | The errors a project's type check already reports, and what a later check adds | `type_baseline.py` (at `src/towel/`) |
 | Where to ask the type checker whether it looks at a statement at all | `reachability.py` (at `src/towel/`) |
-| Whether everything that can reach a function's body, decorators and class machinery, is known to leave it alone | `decorator_reach.py` |
-| The decorators and library base classes read in their source and found safe | `known_decorators.py`, `known_bases.py` |
-| Whether pytest rewrites a module's `assert` statements, as the project configures it | `assert_rewriting.py` |
-| Where a program may write into a module's namespace (builtins patched, decorators rebound) | `namespace_writes.py` |
+| Whether a direct base resolves to `Protocol`, including project aliases and reexports | `protocol_bases.py` |
+| Module namespace writes relevant to ordinary binding analysis | `namespace_writes.py` |
 | What a module's top level binds, statement by statement | `module_bindings.py` |
+| Ordinary attribute stores/deletions that may replace any module's builtin mapping | `builtin_mapping_writes.py` |
 | The names each Python scope binds, and which scope a name resolves in | `lexical_scopes.py` |
 | The standard library some platform or supported Python lacks, per its documentation | `known_platforms.py` |
 | Which modules a project's build configuration leaves out of what it ships | `shipped_files.py` (at `src/towel/`) |
@@ -1587,3 +1961,89 @@ but the ideas and their names are from the literature.
 | The modules a change can reach: what imports the packages under refactoring | `consumers.py` (at `src/towel/`) |
 | Discovering a project's Python sources under one exclusion policy | `source_files.py` (at `src/towel/`) |
 | A syntax tree's structure as one string, the same for every builder and Python | `canonical_ast.py` (at `src/towel/`) |
+
+### Scheduling fresh IF source proofs
+
+`analyze_files` scopes IF proof scheduling to the engine that owns its read-only
+original source functions. A pair can defer its initial nested-binding proof only
+when both functions, analyzers and source-string identities match their indexed
+artifacts, the artifacts carry the recorded source digests, and parsing both
+sources is pure under the current parser configuration. These checks choose
+when to run a proof; they do not certify correspondence or cache its verdict.
+
+Eligible pairs first pass binding, shape and unification checks. Successful
+unification then runs the same original-source proof before helper construction,
+and the aligned-output proof remains fresh. Direct calls, unmatched ownership
+and warning-capable sources retain the early proof order. The scheduling context
+restores its parent on exit, including exceptions, and forked pair workers inherit
+the owning engine and its read-only sources.
+
+When a deferred pair violates several conditions, its rejection trace can name
+a binding, shape or unification failure before the nested-binding condition.
+Additional rejected pairs can populate existing bounded fact caches; parameter
+counters still reset for each unification, and source trees are never rewritten.
+
+The bounded cache snapshots keys when an iteration starts. Inherited mapping
+item/value views read through `__getitem__`, which promotes each entry in the
+LRU order; a live `OrderedDict` iterator would otherwise fail on that read.
+The snapshot owns only keys, and ordinary lookups still determine values and
+eviction. An iterator retained by a caller can retain its key references until
+it is consumed or released, independently of the analysis cache's cleanup.
+
+IF proof scheduling has a separate lexical-answer table scoped to one owned
+analysis: at most 64 native source strings and 8 MiB of counted string storage,
+including the lexical cache's conservative possible UTF-8 reserve. The value
+is only the immutable boolean returned by `parsing_is_pure`, whose lexical
+classification depends on source text and interpreter semantics rather than
+parser limits or warning filters. Both True and False can be reused; False
+still selects the original early proof path and its native diagnostics.
+
+This avoids repeated tokenization of a large original module for each candidate
+pair without enlarging the process-wide lexical cache's 128 KiB character or
+16 MiB storage limits. Source strings above the scoped byte cap, string
+subclasses, disabled memoization, zero limits, and unowned calls use the original
+predicate. Scope exit clears retained answers even while memoization is
+disabled; nested scopes restore their parent's table. Forked processes share
+only the inherited immutable classifications and independently own their
+table bookkeeping. Every scheduling decision still checks the current owner,
+artifact function, analyzer, source-object identity, and nonempty digest against
+its site. A warm lexical answer provides no source correspondence or AST
+authority. Only the separately registered immutable analysis owners can reuse
+source correspondence; aligned-output and materialization proofs remain fresh.
+
+Captured-mapping safety takes a fresh project-wide hazard boolean once per
+analysis before workers start. Any ordinary AST attribute store/deletion named
+`__builtins__` can reach a module through an unknown receiver alias, so it makes
+every module uncertain. Excluded runnable files remain evidence; unreadable
+files/directories and the file limit select a hazard rather than prove absence.
+Existing unparsed-program refusal rules and excluded non-parsing-file treatment
+remain unchanged. This scan does not inspect reflective namespace operations
+or retain source/ASTs in its boolean. The source-local module-binding facts
+include the same attribute-write condition. That boolean is separate from the
+bounded per-analyzer source-verdict memo; the [performance guide](PERFORMANCE.md#1947-large-module-builtin-guard-repair)
+records its storage and warning-policy limits. Both pair and clustered-site
+checks apply the [captured-mapping dependency policy](GENERATED_CODE.md#arguments-and-evaluation).
+
+The current per-file hazard lookup is separate from bounded historical
+`(project root, hazard)` observations. A local refresh visits only rewritten
+files; shrinking and later expanding that file set does not itself change the
+dependency. Each visited file is compared with its historical observation.
+A changed root or boolean, or a missing observation after eviction, clears the
+clustering scan cache and invalidates the changed-files pairing restriction. Keeping
+the history separate prevents a full/local/full sequence from needlessly
+re-pairing unchanged files while preserving conservative invalidation.
+
+Lexical and shared parsing eligibility requires native `str`/`bytes` values.
+String and byte subclasses use the native parsing path; their hashing, sizing,
+or encoding methods are not cache-key operations. The lexical predicate itself
+can classify a string subclass without retaining it. The decorated source
+analyses and manual module-binding, typing-form, and namespace syntax tables
+also avoid subclass keys, so user-defined equality cannot alias two source texts.
+
+Typing-form and namespace syntax tables include the current integer-digit and
+recursion limits in their keys. They retain only lexically warning-free source
+results; warning-capable inputs execute their original native parse operations
+on every call, including when warning filters change. Ordinary native cache
+hits, size/entry limits, and memo-disabled behavior remain unchanged. The module
+binding table can reuse immutable facts of an already parsed native source:
+its caller has already performed the native parse and diagnostics.

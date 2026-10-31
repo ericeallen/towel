@@ -41,33 +41,36 @@ None for a rejection that was already traced through ``_debug_reject``:
 from __future__ import annotations
 
 import ast
+import copy
 import dataclasses
 import os
+import sys
 import symtable
 from dataclasses import dataclass
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, FrozenSet
+from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, FrozenSet, Iterator
 
 from ..canonical_ast import canonical_dump
+from ..analysis_sources import parsing_is_pure
 from ..diagnostics import VALIDATION, debugging
-from ..source_text import read_source
-from .assert_rewriting import rewritten_alike
-from .decorator_reach import (
-    Definition,
-    DecoratorRefusal,
-    ModuleSource,
-    class_named,
-    decorator_refusal,
-)
+from .bounded_cache import BoundedCache, memoizing
 from .definite_assignment import definitely_bound_after
-from .function_scope import function_names
+from .function_scope import code_names, function_names
 from .statement_facts import bindings_of, loaded_names
 from .assignment_analyzer import (
     has_reassignments_without_bindings,
     own_scope_bindings,
     scope_declarations,
 )
-from .block_analysis import align_return_variables
+from .block_analysis import (
+    owned_binding_crosses_exception_boundary,
+    align_return_variables,
+    lifetime_bound_names,
+    lifetime_order_preserved,
+    local_cleanup_order,
+)
 from .block_comments import (
     CommentConflict,
     call_argument_lines,
@@ -77,8 +80,10 @@ from .block_comments import (
 )
 from .builtins import BUILTIN_NAMES, CALL_ARGUMENT_BUILTINS
 from .semantic_safety import (
+    captured_comprehension_changes_enclosing_cell,
     available_argument_names,
     builtins_passed,
+    builtin_mapping_reads,
     function_scope_names,
     module_resolved_names,
     defer_impure_parameters,
@@ -89,18 +94,23 @@ from .semantic_safety import (
 from .clustering import Clustering
 from .reuse import ExistingFunctionReuse
 from .annotation_wiring import HelperAnnotationWiring
-from .placement import HelperPlacement
+from .placement import HelperPlacement, _helper_reads_class_private_names
+from .profitability import worthwhile_helper
 from .block_analysis import BlockAnalysis
 from .engine_state import BlockSite
 from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
-from .narrowing import narrowing_lost_at_call_site
-from .namespace_writes import ProjectWrites, builtin_rebinding, scan_project_writes
+from .retained_bindings import spell_retained_bindings
+from .argument_ownership import argument_handoff_fits
+from .narrowing import (
+    caller_narrowing_leaves_with_block,
+    narrowing_lost_at_call_site,
+    parameterized_narrowing_lost,
+)
 from .models import (
     HelperHome,
     proposal_identity,
-    span_contains,
     BlockBindingSnapshot,
     ClassInfo,
     ClusterContext,
@@ -125,7 +135,6 @@ from .semantic_safety import (
     frame_read_outside_block,
     needs_class_body,
     unbinds_external_name,
-    uses_class_private_names,
 )
 from .import_graph import (
     ImportChange,
@@ -135,12 +144,79 @@ from .import_graph import (
     relative_imports_resolve_alike,
     would_create_import_cycle,
 )
-from .source_readers import calls_source_reader, source_reader_in
 from .splicing import BlockColumns
-from .thunk_inlining import inline_leading_thunks
+from .thunk_inlining import inline_leading_thunks, reorder_eligible_thunk_parameters
 from .typing_forms import ModuleText
-from .substitution import Substitution
+from .compiler_literals import (
+    retained_literal_pool,
+    unsafe_byte_literal_moves,
+    unstable_literal_pool,
+)
+from .substitution import LiteralPool, Substitution
 from .visitors import FreeNameCollector, body_without_docstring
+
+_IF_PROOF_OWNER: ContextVar[Optional[object]] = ContextVar("pair_if_proof_owner", default=None)
+
+
+@dataclass(frozen=True)
+class _ParsePurity:
+    pure: bool
+    source_bytes: int
+
+
+class _SchedulingSources:
+    def __init__(self, owner: object, entries: int, source_bytes: int) -> None:
+        self.owner = owner
+        self.enabled = entries > 0 and source_bytes > 0
+        self.source_bytes = source_bytes
+        self.answers: BoundedCache[str, _ParsePurity] = BoundedCache(
+            entries, weight=lambda answer: answer.source_bytes, weight_limit=source_bytes
+        )
+
+
+_IF_SCHEDULING_SOURCES: ContextVar[Optional[_SchedulingSources]] = ContextVar(
+    "pair_if_scheduling_sources", default=None
+)
+
+
+@contextmanager
+def deferring_pair_if_proofs(
+    owner: object, *, entries: int = 64, source_bytes: int = 8 * 1024 * 1024
+) -> Iterator[None]:
+    """Schedule proofs later only inside the engine's read-only original-source analysis."""
+    if entries < 0 or source_bytes < 0:
+        raise ValueError("Scheduling source cache limits must be nonnegative")
+    sources = _SchedulingSources(owner, entries, source_bytes)
+    token = _IF_PROOF_OWNER.set(owner)
+    source_token = _IF_SCHEDULING_SOURCES.set(sources)
+    try:
+        yield
+    finally:
+        _IF_SCHEDULING_SOURCES.reset(source_token)
+        _IF_PROOF_OWNER.reset(token)
+        sources.answers.clear()
+
+
+def _scheduling_parse_is_pure(owner: object, source: str) -> bool:
+    """Share only immutable lexical classification, never source ownership or AST proof."""
+    sources = _IF_SCHEDULING_SOURCES.get()
+    if (
+        sources is None
+        or sources.owner is not owner
+        or not sources.enabled
+        or not memoizing()
+        or type(source) is not str
+    ):
+        return parsing_is_pure(source)
+    known = sources.answers.get(source)
+    if known is not None:
+        return known.pure
+    # Match the lexical cache's conservative string/possible UTF-8 storage accounting.
+    weight = sys.getsizeof(source) + (0 if source.isascii() else 4 * len(source) + 1)
+    answer = parsing_is_pure(source)
+    if weight <= sources.source_bytes:
+        sources.answers[source] = _ParsePurity(answer, weight)
+    return answer
 
 
 @dataclass(frozen=True)
@@ -153,6 +229,7 @@ class _PairSetup:
     # A block uses zero-argument ``super()`` (``needs_class_body``): the helper
     # must be a method of the class holding both blocks, or nothing.
     needs_class_body: bool = False
+    defer_nested_binding_proof: bool = False
 
 
 @dataclass(frozen=True)
@@ -243,8 +320,42 @@ class _Placed:
     placement: _Placement
     # Names the helper reads bare from its host's namespace that a site in
     # another module resolves in its own (``_host_namespace_reads``): module
-    # names, and with ``parameterize_builtins`` builtins a module may hold.
+    # names, and with ``parameterize_builtins`` every builtin spelling.
     differing_reads: FrozenSet[str] = frozenset()
+
+
+class _RuntimeAnnotations(ast.NodeTransformer):
+    """Hide non-evaluated local annotations from CPython's symbolic read set.
+
+    The symbol table lists their names even though function bodies never
+    evaluate them. Keep the annotated assignment itself: a bare annotation
+    still establishes a local binding. Class annotations and nested function
+    signatures can evaluate, and remain intact.
+    """
+
+    def __init__(self) -> None:
+        self.in_function = False
+
+    def _scope(self, node: ast.AST, *, function: bool) -> ast.AST:
+        outer, self.in_function = self.in_function, function
+        try:
+            return self.generic_visit(node)
+        finally:
+            self.in_function = outer
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        return self._scope(node, function=True)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        return self._scope(node, function=True)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
+        return self._scope(node, function=False)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AST:
+        if self.in_function:
+            node.annotation = ast.copy_location(ast.Constant(value=None), node.annotation)
+        return self.generic_visit(node)
 
 
 def _module_namespace_names(
@@ -255,10 +366,12 @@ def _module_namespace_names(
     CPython's own symbol table answers, so a name read inside a lambda or a
     comprehension of the helper that nothing in the helper binds is among
     them, and a parameter or a local is not. None when the helper does not
-    compile to a table.
+    compile to a table. Local-variable annotations do not run, although the
+    symbol table lists their names; hide those annotations before asking it.
     """
     try:
-        table = symtable.symtable(ast.unparse(helper), "<helper>", "exec")
+        runtime = _RuntimeAnnotations().visit(copy.deepcopy(helper))
+        table = symtable.symtable(ast.unparse(runtime), "<helper>", "exec")
     except SyntaxError:
         return None
     names: Set[str] = set()
@@ -279,6 +392,8 @@ def _module_namespace_names(
 _IMPORT_CHANGE_REASONS = {
     ImportChange.UNKNOWN: RejectReason.IMPORT_TIME_EFFECTS,
     ImportChange.RUNS_CODE: RejectReason.IMPORT_TIME_EFFECTS,
+    ImportChange.IMPORT_ORDER: RejectReason.IMPORT_TIME_EFFECTS,
+    ImportChange.PACKAGE_BINDING: RejectReason.IMPORT_TIME_EFFECTS,
     ImportChange.NEW_REQUIREMENT: RejectReason.NEW_IMPORT_REQUIREMENT,
     ImportChange.CONDITIONAL_HOST: RejectReason.CONDITIONALLY_IMPORTED_HOST,
     ImportChange.OTHER_DISTRIBUTION: RejectReason.OTHER_DISTRIBUTION,
@@ -291,6 +406,15 @@ def _analyzed_module(analyzer: Optional[ScopeAnalyzer]) -> Optional[ast.Module]:
     """The module ``analyzer`` analyzed, when it analyzed a whole module."""
     tree = analyzer.analyzed_tree if analyzer is not None else None
     return tree if isinstance(tree, ast.Module) else None
+
+
+def _touches_nonlocal(function: FunctionNode, block: Sequence[ast.stmt]) -> bool:
+    """Whether this block, rather than unrelated caller code, uses a nonlocal cell."""
+    declared = function_names(function).declared_nonlocal
+    if not declared:
+        return False
+    names = code_names(block)
+    return bool(declared & (names.references.keys() | names.bound.keys() | names.declared_nonlocal))
 
 
 @dataclass(frozen=True)
@@ -355,6 +479,7 @@ def _thunk_uncertain_free_variables(
     blocks: Sequence[Tuple[FunctionNode, Sequence[ast.stmt]]],
     renames: Sequence[Dict[str, str]],
     available: Sequence[AbstractSet[str]],
+    deferred_names: Sequence[AbstractSet[str]],
 ) -> Set[str]:
     """Pass free variables that the call site may not resolve as thunks.
 
@@ -364,7 +489,8 @@ def _thunk_uncertain_free_variables(
     some path before the block, a module name the module binds later or
     nowhere, or a cell of an enclosing function not yet filled would raise
     at the eager call where the block raised only on the path that read it.
-    The thunk keeps the timing.
+    The thunk keeps the timing. Module lookups are also deferred even when
+    currently bound: ordinary callees can rebind or delete them between reads.
     """
     template_renames = renames[0] if renames else {}
     canonical_to_block = [
@@ -380,7 +506,7 @@ def _thunk_uncertain_free_variables(
         return canonical_to_block[index].get(canonical, canonical)
 
     def uncertain(index: int, spelled: str) -> bool:
-        return spelled not in available[index]
+        return spelled in deferred_names[index] or spelled not in available[index]
 
     # A parameter whose argument is a bare local name is read eagerly too.
     deferred = set(substitution.function_params) | set(substitution.params_used_as_callee)
@@ -473,7 +599,7 @@ class PairEvaluation(
         if placed is not None and placed.differing_reads:
             # The helper would read a name bare in its host's namespace that a
             # site in another module read in its own: a module name, or a
-            # builtin a module may hold, which ``parameterize_builtins`` passes.
+            # builtin spelling, which ``parameterize_builtins`` passes lazily.
             # Decide the pair again with those names parameters. Unification
             # runs again because the later stages rewrite the substitution in
             # place.
@@ -512,7 +638,11 @@ class PairEvaluation(
     ) -> Optional[_Placed]:
         """Stages 4 to 10; every name in ``forced_parameters`` the template reads is a parameter."""
         ctx = setup.ctx
-        unified = self._unify_pair(pair, analysis)
+        unified = (
+            self._unify_pair(pair, analysis, ctx, defer_nested_binding_proof=True)
+            if setup.defer_nested_binding_proof
+            else self._unify_pair(pair, analysis, ctx)
+        )
         if unified is None:
             return None
         scope = self._helper_scope(pair, ctx, functions)
@@ -536,7 +666,16 @@ class PairEvaluation(
         )
         if sites is None:
             return None
-        placement = self._place_helper(pair, setup, scope, sites, functions, class_infos)
+        placement = self._place_helper(
+            pair,
+            setup,
+            scope,
+            sites,
+            rendered.func_def,
+            functions,
+            class_infos,
+            literal_pool=unified.substitution.literal_pool,
+        )
         if placement is None:
             return None
         reads = self._host_namespace_reads(placement, rendered.func_def)
@@ -544,16 +683,17 @@ class PairEvaluation(
             self._debug_reject(RejectReason.BARE_NAME_DIFFERS_BY_MODULE, pair)
             return None
         differing, builtin_reads = reads
-        evidence = self._builtin_evidence(pair, placement, builtin_reads)
-        if evidence and not self.parameterize_builtins:
+        if builtin_reads and not self.parameterize_builtins:
             self._debug_reject(
-                RejectReason.BUILTIN_MAY_DIFFER_BY_MODULE, pair, detail=evidence[min(evidence)]
+                RejectReason.BUILTIN_MAY_DIFFER_BY_MODULE,
+                pair,
+                detail=f"caller module lookup required for {sorted(builtin_reads)}",
             )
             return None
-        # With ``parameterize_builtins`` each builtin a module may hold is
-        # decided again as a parameter, which every site fills from its own
-        # module; one no module can hold is still read bare.
-        return _Placed(unified, rendered, placement, differing | frozenset(evidence))
+        # Any ordinary callee, including external code, can bind a module's
+        # builtin spelling. Preserve each lookup at its caller; absence of a
+        # write in the project's source cannot establish equal namespaces.
+        return _Placed(unified, rendered, placement, differing | builtin_reads)
 
     @staticmethod
     def _host_namespace_reads(
@@ -566,11 +706,12 @@ class PairEvaluation(
         a site in another module a module name, or a dunder every module
         defines for itself, is another lookup, and these come first: the pair
         is decided again with them as parameters. The builtins come second.
-        No helper takes a builtin as a parameter, so each is read bare where
-        no participating module may hold it and the pair is declined where
-        one may (``_builtin_evidence``); ``__debug__``, which the compiler
+        By default a helper takes no builtin parameter, so these pairs decline.
+        With the opt-in every builtin lookup stays at its caller via a thunk.
+        ``__debug__``, which the compiler
         replaces by a constant, is neither. Both are empty when every site is
-        in the host. None when the helper's names cannot be listed, or when
+        in the host: pair and cluster admission already guard definition-time
+        ``__builtins__`` replacement. None when the helper's names cannot be listed, or when
         one it reads is declared ``global`` and so cannot be a parameter.
         """
         host = placement.home.file_path
@@ -586,94 +727,59 @@ class PairEvaluation(
         builtin_reads = (names & BUILTIN_NAMES) - {"__debug__"}
         return names - BUILTIN_NAMES, builtin_reads
 
-    def _builtin_evidence(
-        self, pair: CodeBlockPair, placement: _Placement, names: FrozenSet[str]
-    ) -> Dict[str, str]:
-        """Each builtin in ``names`` that may not be the same lookup from every participating module, with why.
-
-        Each participating module, the host included, is asked whether it
-        may hold one in its namespace (``namespace_writes.builtin_rebinding``):
-        by a statement of its own scope, a ``global``, a star import, a write
-        at run time, or a patch anywhere in the project's own code. Each is
-        read where the project stands, which for a copy being refactored is
-        the original's location. Empty when no module may.
-        """
-        found: Dict[str, str] = {}
-        if not names:
-            return found
-        host = placement.home.file_path
-        paths = {host} | {replacement.file_path or host for replacement in placement.replacements}
-        sources = {pair.file_path: pair.source1, pair.file_path2: pair.source2}
-        for path in sorted(paths):
-            origin = self._origin_in_run(path)
-            source = sources.get(path)
-            if source is None:
-                try:
-                    source = read_source(path)
-                except (OSError, UnicodeError, ValueError):
-                    unreadable = f"{Path(path).name} cannot be read"
-                    found.update({name: unreadable for name in names if name not in found})
-                    continue
-            rebound = builtin_rebinding(origin, source, names, self._project_writes(path))
-            found.update({name: why for name, why in rebound.items() if name not in found})
-        return found
-
-    def _project_writes(self, path: str) -> ProjectWrites:
-        """The own writes into module namespaces of the project holding ``path``, read once per engine.
-
-        What the run excludes is read too; a file it excludes that does not parse is passed over.
-        """
-        root = self._project_root_in_run(path)
-        writes = self._namespace_writes.get(str(root))
-        if writes is None:
-            writes = self._namespace_writes[str(root)] = scan_project_writes(
-                root, self.import_graph.excluded_names
-            )
-        return writes
-
     # -- 1 ---------------------------------------------------------------------
-
-    def _decorator_refusal(
-        self,
-        definition: Definition,
-        file_path: str,
-        source: str,
-        analyzer: Optional[ScopeAnalyzer],
-    ) -> Optional[DecoratorRefusal]:
-        """A decorator reaching ``definition`` not known to leave its body alone (``decorator_reach``)."""
-        tree = _analyzed_module(analyzer)
-        if tree is None:
-            return DecoratorRefusal("(no module to resolve it in)", definition.name)
-        return decorator_refusal(
-            definition, ModuleSource(file_path, source, tree), self.import_graph
-        )
-
-    def _reject_decorated(self, pair: CodeBlockPair, refusal: DecoratorRefusal) -> None:
-        reason = (
-            RejectReason.CLASS_MACHINERY_MAY_TRANSFORM_METHODS
-            if refusal.kind == "machinery"
-            else RejectReason.DECORATOR_MAY_TRANSFORM_BODY
-        )
-        self._debug_reject(reason, pair, detail=refusal.detail, subject=refusal.decorator)
 
     def _guard_pair(self, pair: CodeBlockPair, functions: FunctionIndex) -> Optional[_PairSetup]:
         """Reject a pair whose blocks cannot move at all; otherwise resolve their context."""
         ctx = self._resolve_pair_context(pair, functions)
-        # A decorator that compiles or instruments a body would lose the moved
-        # code, or see a call where it saw the code (docs/KNOWN_LIMITATIONS.md).
-        for function, file_path, source, analyzer in (
-            (ctx.func1, pair.file_path, pair.source1, ctx.scope_analyzer),
-            (ctx.func2, pair.file_path2, pair.source2, ctx.scope_analyzer2),
-        ):
-            refusal = self._decorator_refusal(function, file_path, source, analyzer)
-            if refusal is not None:
-                self._reject_decorated(pair, refusal)
-                return None
         blocks = (
-            (pair.block1_nodes, ctx.func1, ctx.scope_analyzer, ctx.site1),
-            (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, ctx.site2),
+            (
+                pair.block1_nodes,
+                ctx.func1,
+                ctx.scope_analyzer,
+                ctx.site1,
+                pair.source1,
+                pair.file_path,
+            ),
+            (
+                pair.block2_nodes,
+                ctx.func2,
+                ctx.scope_analyzer2,
+                ctx.site2,
+                pair.source2,
+                pair.file_path2 or pair.file_path,
+            ),
         )
-        for nodes, function, analyzer, site in blocks:
+        for nodes, function, analyzer, site, source, file_path in blocks:
+            mapping_reads = builtin_mapping_reads(
+                function,
+                nodes,
+                analyzer,
+                source,
+                project_may_replace=self._project_may_replace_builtin_mapping(file_path),
+            )
+            if mapping_reads:
+                self._debug_reject(
+                    RejectReason.BUILTIN_MAPPING_REPLACED,
+                    pair,
+                    detail=f"__builtins__ replacement changes captured lookups: {sorted(mapping_reads)}",
+                )
+                return None
+            if self._block_rejected(
+                captured_comprehension_changes_enclosing_cell, nodes, function, analyzer, site=site
+            ):
+                self._debug_reject(RejectReason.CLOSURE_CROSSES_BLOCK_BOUNDARY, pair)
+                return None
+            if unstable_literal_pool(nodes) or unsafe_byte_literal_moves(
+                nodes, _analyzed_module(analyzer)
+            ):
+                self._debug_reject(RejectReason.LITERAL_POOL_BOUNDARY, pair)
+                return None
+            if self._block_rejected(
+                owned_binding_crosses_exception_boundary, nodes, function, site=site
+            ):
+                self._debug_reject(RejectReason.OWNED_BINDING_EXCEPTION_BOUNDARY, pair)
+                return None
             if self._block_rejected(
                 block_requires_original_frame,
                 nodes,
@@ -682,15 +788,6 @@ class PairEvaluation(
                 site=site,
             ):
                 self._debug_reject(RejectReason.FRAME_SENSITIVE_BLOCK, pair)
-                return None
-            # A callee that reads the source or position of its call reads the
-            # helper's once the call moves (docs/KNOWN_LIMITATIONS.md).
-            if self._block_rejected(calls_source_reader, nodes, function, analyzer, site=site):
-                self._debug_reject(
-                    RejectReason.SOURCE_READING_CALLEE,
-                    pair,
-                    subject=source_reader_in(analyzer, nodes),
-                )
                 return None
             if self._block_rejected(
                 frame_read_outside_block,
@@ -735,7 +832,7 @@ class PairEvaluation(
         )
 
         for guard, reason in (
-            (nested_bindings_escape, RejectReason.NESTED_BINDING_ESCAPES),
+            (caller_narrowing_leaves_with_block, RejectReason.NARROWING_LOST_AT_CALL_SITE),
             (nested_scopes_cross_block_boundary, RejectReason.CLOSURE_CROSSES_BLOCK_BOUNDARY),
             (moves_scope_declaration, RejectReason.MOVES_SCOPE_DECLARATION),
         ):
@@ -744,13 +841,53 @@ class PairEvaluation(
             ):
                 self._debug_reject(reason, pair)
                 return None
+        defer_binding_proof = self._can_defer_nested_binding_proof(pair, ctx, functions)
+        if not defer_binding_proof and self._nested_pair_binding_rejected(pair, ctx):
+            return None
         return _PairSetup(
             ctx=ctx,
             method_info1=method_info1,
             method_info2=method_info2,
             needs_class_body=needs_class_body(pair.block1_nodes)
             or needs_class_body(pair.block2_nodes),
+            defer_nested_binding_proof=defer_binding_proof,
         )
+
+    def _can_defer_nested_binding_proof(
+        self, pair: CodeBlockPair, ctx: "_PairContext", functions: FunctionIndex
+    ) -> bool:
+        """Scheduling only: source ownership never replaces a fresh admission certificate."""
+        if _IF_PROOF_OWNER.get() is not self:
+            return False
+        for function, source, analyzer, site, path in (
+            (ctx.func1, pair.source1, ctx.scope_analyzer, ctx.site1, pair.file_path),
+            (ctx.func2, pair.source2, ctx.scope_analyzer2, ctx.site2, pair.file_path2),
+        ):
+            if site is None or not _scheduling_parse_is_pure(self, source):
+                return False
+            name = getattr(function, "name", None)
+            if not isinstance(name, str) or not any(
+                artifact.node is function
+                and artifact.scope_analyzer is analyzer
+                and artifact.source is source
+                and bool(artifact.source_digest)
+                and artifact.source_digest == site.module_digest
+                for artifact in functions.named(path, name)
+            ):
+                return False
+        return True
+
+    def _nested_pair_binding_rejected(self, pair: CodeBlockPair, ctx: "_PairContext") -> bool:
+        for function, nodes, source, analyzer, site in (
+            (ctx.func1, pair.block1_nodes, pair.source1, ctx.scope_analyzer, ctx.site1),
+            (ctx.func2, pair.block2_nodes, pair.source2, ctx.scope_analyzer2, ctx.site2),
+        ):
+            if self._nested_bindings_rejected(
+                function, nodes, source, analyzer, site=site, allow_if_transfer=True
+            ):
+                self._debug_reject(RejectReason.NESTED_BINDING_ESCAPES, pair)
+                return True
+        return False
 
     # -- 2 ---------------------------------------------------------------------
 
@@ -894,7 +1031,14 @@ class PairEvaluation(
 
     # -- 4 ---------------------------------------------------------------------
 
-    def _unify_pair(self, pair: CodeBlockPair, analysis: _BindingAnalysis) -> Optional[_Unified]:
+    def _unify_pair(
+        self,
+        pair: CodeBlockPair,
+        analysis: _BindingAnalysis,
+        ctx: _PairContext,
+        *,
+        defer_nested_binding_proof: bool = False,
+    ) -> Optional[_Unified]:
         """Anti-unify the blocks and align the variables each must return."""
         debug_enabled = debugging(VALIDATION)
         blocks = [pair.block1_nodes, pair.block2_nodes]
@@ -905,6 +1049,8 @@ class PairEvaluation(
             blocks,
             hygienic_renames,
             (ModuleText(pair.file_path, pair.source1), ModuleText(pair.file_path2, pair.source2)),
+            thread_literal_pools=os.path.abspath(pair.file_path)
+            != os.path.abspath(pair.file_path2),
         )
         if not substitution:
             self._reject(
@@ -912,6 +1058,8 @@ class PairEvaluation(
                 RejectReason.UNIFICATION_FAILED,
                 trace="  REJECTED: Unification failed (no substitution)",
             )
+            return None
+        if defer_nested_binding_proof and self._nested_pair_binding_rejected(pair, ctx):
             return None
         if debug_enabled:
             VALIDATION.debug("  ✓ Unification successful")
@@ -922,10 +1070,46 @@ class PairEvaluation(
             analysis.snapshot1.bound_in_block,
             analysis.snapshot2.bound_in_block,
             hygienic_renames,
+            template_order=(
+                local_cleanup_order(ctx.func1, ctx.scope_analyzer)
+                if len(lifetime_bound_names(pair.block1_nodes, analysis.return_variables1)) > 1
+                else ()
+            ),
         )
-        if aligned is None:
+        if aligned is None or not all(
+            lifetime_order_preserved(nodes, function, analyzer, returned)
+            for nodes, function, analyzer, returned in (
+                (pair.block1_nodes, ctx.func1, ctx.scope_analyzer, aligned[0]),
+                (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, aligned[1]),
+            )
+        ):
             self._debug_reject(RejectReason.RETURN_VARIABLES_NOT_ALIGNED, pair)
             return None
+        for function, nodes, source, analyzer, site, returned in (
+            (ctx.func1, pair.block1_nodes, pair.source1, ctx.scope_analyzer, ctx.site1, aligned[0]),
+            (
+                ctx.func2,
+                pair.block2_nodes,
+                pair.source2,
+                ctx.scope_analyzer2,
+                ctx.site2,
+                aligned[1],
+            ),
+        ):
+            if (
+                nested_bindings_escape(function, nodes)
+                and self._if_binding_transfer(
+                    function,
+                    nodes,
+                    source,
+                    analyzer,
+                    site=site,
+                    returned=returned,
+                )
+                is None
+            ):
+                self._debug_reject(RejectReason.RETURN_VARIABLES_NOT_ALIGNED, pair)
+                return None
         if aligned[0] and (
             self._is_value_producing(pair.block1_nodes)
             or self._is_value_producing(pair.block2_nodes)
@@ -1068,7 +1252,6 @@ class PairEvaluation(
 
         substitution = unified.substitution
         aug_assign_vars = self._reserve_augassign_params(pair, substitution)
-        self._strip_fstring_params(substitution)
         spellings = self._builtin_spellings(pair, ctx, free_vars1 | free_vars2)
         if spellings is None:
             return None
@@ -1113,6 +1296,13 @@ class PairEvaluation(
             ((ctx.func1, pair.block1_nodes), (ctx.func2, pair.block2_nodes)),
             unified.hygienic_renames,
             available,
+            tuple(
+                module_resolved_names(function, analyzer, set().union(*map(loaded_names, nodes)))
+                for function, nodes, analyzer in (
+                    (ctx.func1, pair.block1_nodes, scope_analyzer),
+                    (ctx.func2, pair.block2_nodes, scope_analyzer2),
+                )
+            ),
         )
         return _FreeVariables(
             free_vars,
@@ -1133,8 +1323,8 @@ class PairEvaluation(
         some scope of that module binds the name, so across modules the two
         blocks can disagree about one both read. A spelling both sites
         resolve at module scope, or nowhere, is a builtin to the helper, read
-        bare wherever it is placed; whether a participating module may hold
-        it is placement's question (``_builtin_evidence``). One both sites'
+        bare in a same-module helper; across modules it requires a caller
+        lookup thunk under the explicit opt-in. One both sites'
         functions bind, as a local or a cell, stays an ordinary parameter, each
         site passing its own. One that only one site's function binds is what
         a builtin parameter would have to carry: the pair is declined, unless
@@ -1220,6 +1410,7 @@ class PairEvaluation(
         except UnsupportedExtraction as error:
             self._debug_reject(RejectReason.UNSUPPORTED_EXTRACTION, pair, detail=str(error))
             return None
+        param_order = reorder_eligible_thunk_parameters(func_def, unified.substitution, param_order)
         inline_leading_thunks(func_def, unified.substitution, param_order)
         if has_impure_eager_parameters(unified.substitution, free.available_names):
             self._debug_reject(RejectReason.IMPURE_EAGER_PARAMETER, pair)
@@ -1474,10 +1665,28 @@ class PairEvaluation(
                 RejectReason.BUILTIN_ARGUMENT, pair, detail=f"block{block_idx+1}: {sorted(handed)}"
             )
             return None
+        safe_call = spell_retained_bindings(function, nodes, call_node)
+        ownership = self._frame_ownership(function, nodes, site=site)
+        handoff = (
+            self._argument_handoff_plan(function, nodes, analyzer, safe_call, func_def)
+            if ownership.split and ownership.whole_body
+            else None
+        )
+        if handoff is not None and not argument_handoff_fits(func_def, self.unifier.max_parameters):
+            self._debug_reject(RejectReason.OWNERSHIP_PARAMETER_BUDGET, pair)
+            return None
+        if ownership.split and handoff is None:
+            self._debug_reject(
+                RejectReason.OWNED_BINDING_FRAME_BOUNDARY,
+                pair,
+                detail=f"block{block_idx+1}: inside={sorted(ownership.inside)}, outside={sorted(ownership.outside)}",
+            )
+            return None
         return Replacement(
             line_range=block_range,
             columns=BlockColumns.of(nodes),
-            node=call_node,
+            node=safe_call,
+            argument_handoff=handoff,
             file_path=file_path,
             class_name=class_name,
             method_kind=method_info.kind,
@@ -1498,18 +1707,15 @@ class PairEvaluation(
         setup: _PairSetup,
         scope: _HelperScope,
         sites: _CallSites,
+        helper: ast.FunctionDef,
         functions: FunctionIndex,
         class_infos: List[ClassInfo],
+        *,
+        literal_pool: Optional[LiteralPool] = None,
     ) -> Optional[_Placement]:
         """Where the helper lives: a unique enclosing function, a class, or a module that closes no cycle."""
         ctx = setup.ctx
-        home = self._helper_home(pair, setup, scope, functions, class_infos)
-        host_refusal = self._host_refusal(pair, home, scope)
-        if host_refusal is not None:
-            # A helper inside a function or class whose decorator instruments
-            # bodies would be instrumented where the code it replaced was not.
-            self._reject_decorated(pair, host_refusal)
-            return None
+        home = self._helper_home(pair, setup, scope, helper, functions, class_infos)
         if setup.needs_class_body and home.insert_into_class is None:
             # Zero-argument ``super()`` means what it meant only in a helper
             # compiled in the class body that holds both blocks; a module or
@@ -1517,6 +1723,15 @@ class PairEvaluation(
             self._debug_reject(RejectReason.NEEDS_CLASS_BODY, pair)
             return None
         replacements = sites.replacements
+        if any(replacement.argument_handoff is not None for replacement in replacements):
+            placed_helper = copy.deepcopy(helper)
+            if home.insert_into_class is not None:
+                self._prepare_extracted_method_signature(
+                    placed_helper, home.method_kind or "instance", home.method_param_name
+                )
+            if not argument_handoff_fits(placed_helper, self.unifier.max_parameters):
+                self._debug_reject(RejectReason.OWNERSHIP_PARAMETER_BUDGET, pair)
+                return None
         if home.insert_into_class is not None and sites.cluster_contexts:
             # The helper is a method called through the receiver. A clustered
             # block in another class, in a module-level function, or in a
@@ -1531,14 +1746,24 @@ class PairEvaluation(
                     and sites.cluster_contexts[index].method == setup.method_info1
                 )
             ]
-        # Closures with nonlocal variables are left alone.
-        if self._declares_nonlocal(ctx.func1, ctx.scope_analyzer) or self._declares_nonlocal(
-            ctx.func2, ctx.scope_analyzer2
+        # Only moving the cell's reads, writes or declaration needs this guard.
+        if _touches_nonlocal(ctx.func1, pair.block1_nodes) or _touches_nonlocal(
+            ctx.func2, pair.block2_nodes
         ):
             self._debug_reject(RejectReason.NONLOCAL_SAFETY_SKIP, pair)
             return None
         canonical_file = self._safe_home_across_modules(pair, home, replacements, functions)
         if canonical_file is None:
+            return None
+        projection = (
+            None if literal_pool is None else (literal_pool.parameter, len(literal_pool.keys))
+        )
+        if retained_literal_pool(helper.body, trusted_projection=projection) and any(
+            os.path.abspath(replacement.file_path or home.file_path)
+            != os.path.abspath(canonical_file)
+            for replacement in replacements
+        ):
+            self._debug_reject(RejectReason.LITERAL_POOL_BOUNDARY, pair)
             return None
         destination_class = home.insert_into_class
         if home.insert_into_function:
@@ -1546,48 +1771,23 @@ class PairEvaluation(
                 a.class_name for a in functions.named(canonical_file, home.insert_into_function)
             }
             destination_class = next(iter(destinations)) if len(destinations) == 1 else None
-        # A site's block lies somewhere in its function's body, and moves out
-        # of its class; the function's own name and signature stay behind.
-        for replacement in replacements:
-            if replacement.class_name and replacement.class_name != destination_class:
-                source_path = replacement.file_path or canonical_file
-                for a in functions.in_file(source_path):
-                    if (
-                        a.class_name == replacement.class_name
-                        and span_contains(a.node, replacement.line_range)
-                        and uses_class_private_names(a.node.body)
-                    ):
-                        self._debug_reject(RejectReason.PRIVATE_NAME_LEXICAL_CLASS, pair)
-                        return None
+        # Only the helper's remaining private reads move. A substituted
+        # receiver expression in a caller thunk keeps the caller's mangling.
+        if _helper_reads_class_private_names(helper) and any(
+            replacement.class_name and replacement.class_name != destination_class
+            for replacement in replacements
+        ):
+            self._debug_reject(RejectReason.PRIVATE_NAME_LEXICAL_CLASS, pair)
+            return None
         # The cross-module check may move the helper to another file.
         return _Placement(dataclasses.replace(home, file_path=canonical_file), replacements)
-
-    def _host_refusal(
-        self, pair: CodeBlockPair, home: "HelperHome", scope: _HelperScope
-    ) -> Optional[DecoratorRefusal]:
-        """A decorator reaching the function or class the helper goes into, not known to leave it alone.
-
-        A helper placed at module level is reached by none. Hosts are
-        chosen in the pair's first module.
-        """
-        host: Optional[Definition] = None
-        if home.insert_into_function is not None:
-            host = scope.dce_node
-        elif home.insert_into_class is not None:
-            tree = _analyzed_module(pair.scope_analyzer1)
-            host = None if tree is None else class_named(tree, home.insert_into_class)
-        else:
-            return None
-        if host is None:
-            name = home.insert_into_function or home.insert_into_class or "?"
-            return DecoratorRefusal("(host not found)", name)
-        return self._decorator_refusal(host, pair.file_path, pair.source1, pair.scope_analyzer1)
 
     def _helper_home(
         self,
         pair: CodeBlockPair,
         setup: _PairSetup,
         scope: _HelperScope,
+        helper: ast.FunctionDef,
         functions: FunctionIndex,
         class_infos: List[ClassInfo],
     ) -> "HelperHome":
@@ -1605,7 +1805,7 @@ class PairEvaluation(
             if len(functions.named(canonical_file, scope.dce_insert_func)) == 1:
                 return HelperHome(canonical_file, None, scope.dce_insert_func, None, None)
         class_plan = self._choose_class_insertion(
-            pair, setup.method_info1, setup.method_info2, class_infos
+            pair, setup.method_info1, setup.method_info2, class_infos, helper
         )
         if class_plan is not None:
             return HelperHome(
@@ -1642,18 +1842,6 @@ class PairEvaluation(
             return canonical_file
         if any(functions.declares_global(path) for path in participating):
             self._debug_reject(RejectReason.CROSS_MODULE_GLOBAL_DECLARATION, pair)
-            return None
-        # A failing assert pytest rewrote says more than one it did not
-        # (``assert_rewriting``), so the helper's module must be rewritten
-        # exactly as every site's is.
-        if any(
-            isinstance(node, ast.Assert)
-            for statement in pair.block1_nodes
-            for node in ast.walk(statement)
-        ) and not rewritten_alike(
-            sorted(participating), self.import_graph.project_root, self.import_graph.excluded_names
-        ):
-            self._debug_reject(RejectReason.ASSERT_REWRITING_DIFFERS, pair)
             return None
         # The helper runs the template's imports in whichever module hosts
         # it, and every participating module is a candidate host, so each
@@ -1779,10 +1967,20 @@ class PairEvaluation(
             helper_comments=comments,
         )
         separated = narrowing_lost_at_call_site(rendered.func_def, placement.replacements)
+        if separated is None:
+            separated = parameterized_narrowing_lost(
+                rendered.func_def,
+                placement.replacements,
+                functions,
+                home.file_path,
+                self._parse_source,
+                self.import_graph,
+            )
         if separated is not None:
-            # Both halves are well typed where they were written and the pair
-            # is not; no signature on the helper can repair it. Refusing here
-            # spares a whole-project check per candidate signature.
+            # A thunk outside its test cannot be repaired by a helper signature.
+            # An erased predicate can instead force Any on a separately passed
+            # subject; retain its original refinement rather than erase types.
+            # Both constructions can be recognized before project validation.
             self._debug_reject(RejectReason.NARROWING_LOST_AT_CALL_SITE, pair, detail=separated)
             return None
         identity = proposal_identity(proposal)
@@ -1795,11 +1993,22 @@ class PairEvaluation(
             return None
         self._seen_proposals.add(identity)
         if self.skip_trivial_helpers:
+            # A handoff changes the owned render copy's signature. An existing
+            # provider must keep its bookkeeping and every original consumer.
+            needs_handoff = any(rep.argument_handoff is not None for rep in proposal.replacements)
+            reused = None if needs_handoff else self._reusing_generated_helper(proposal, functions)
+            if reused is not None:
+                return reused
             forwarder = self._helper_reduced_to_forwarder(proposal, functions)
             if forwarder is not None:
                 self._debug_reject(
                     RejectReason.EXISTING_HELPER_BECOMES_FORWARDER, pair, detail=forwarder
                 )
+                return None
+        if self.skip_trivial_helpers and proposal.reused_function is None:
+            helper = self._prepare_helper_interface(proposal, reserve_ownership_holder=True)
+            if not worthwhile_helper(helper, self._profitability_sites(proposal)):
+                self._debug_reject(RejectReason.UNPROFITABLE_HELPER, pair)
                 return None
         if self.annotate_helpers:
             proposal = self._with_helper_annotations(proposal, functions)

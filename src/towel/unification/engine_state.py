@@ -28,6 +28,7 @@ implements it.
 from __future__ import annotations
 
 import ast
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
@@ -48,12 +49,14 @@ from typing import (
 )
 from weakref import WeakKeyDictionary
 
+from ..analysis_sources import ParserConfiguration
 from ..coverage_config import CoverageExclusion, coverage_exclusion
 from ..diagnostics import LOG, Settings
 from ..type_baseline import CheckedChange, KnownErrors
 from ..type_inference import CheckResult, TypeDiagnostic, TypeOracle
 from .block_signature import BlockSignature
 from .bounded_cache import BoundedCache, memoizing
+from .argument_ownership import ArgumentHandoffMemo
 from .extractor import HygienicExtractor
 from .function_index import FunctionIndex
 from .models import (
@@ -63,6 +66,7 @@ from .models import (
     CodeBlockPair,
     FunctionArtifact,
     FunctionNode,
+    PairTally,
     PairVerdict,
     RefactoringProposal,
     RejectReason,
@@ -73,7 +77,6 @@ from .structural_memo import StoredSubstitution
 from .unifier import Unifier
 from .progress import DEFAULT_PROGRESS, ProgressMode
 from .import_graph import ImportGraphCache
-from .namespace_writes import ProjectWrites
 
 
 class BlockSite(NamedTuple):
@@ -83,7 +86,7 @@ class BlockSite(NamedTuple):
     the function's other statements, where in them the block stands (what
     is bound before and after it, whether it is nested in a loop), the
     scopes enclosing the function, and the module's hazards (``global`` and
-    ``nonlocal`` rebinding, reflection) and aliases. The module's source
+    ``nonlocal`` rebinding) and aliases. The module's source
     fixes its tree, and so all of these; the positions pick out the function
     and the block's statements in that tree. Two blocks of the same code in
     other places are other sites, however alike their structure.
@@ -123,6 +126,7 @@ class UnifyKey(NamedTuple):
     block2_id: str
     forms1: TypingForms
     forms2: TypingForms
+    thread_literal_pools: bool = False
 
 
 class TemplateKey(NamedTuple):
@@ -167,9 +171,8 @@ class HelperNameClaims:
 
     Each is the name as Python stores it, so ``def __extracted_func_0`` in
     ``class A`` is ``_A__extracted_func_0``. ``namespace`` holds what an
-    attribute store, ``setattr`` or a namespace subscript writes, any of
-    which could replace a module-level helper; ``members`` holds those and
-    every class member, and a ``type(...)`` namespace's keys, which could
+    explicit attribute store writes, which could replace a module-level
+    helper; ``members`` holds those and every class member, which could
     override or shadow a method helper stored under the same name.
     """
 
@@ -202,23 +205,32 @@ class EngineState:
     """Next helper number per file, so generated names are unique across a run."""
     _project_helper_names: Dict[str, HelperNameClaims]
     """The helper-shaped names each project root's sources already define, by root."""
-    _namespace_writes: Dict[str, ProjectWrites]
-    """The writes into module namespaces each project root's sources make, by root."""
     _coverage_exclusions: Dict[str, CoverageExclusion]
     """What each project root's coverage.py excludes lines by, read once per engine."""
     _origins_in_run: Dict[Tuple[str, Optional[Tuple[Path, Path]]], Path]
     """Where each file of the run stands in the project, by the file and the
     run's ``_output_origin``: kept for one run, in which it does not change,
     since every call site of every pair asks (``_origin_in_run``)."""
+    _project_builtin_mapping_replacements: Mapping[str, bool]
+    """Whether each analyzed file's project may replace module builtin mappings.
+
+    A fresh project snapshot is installed before each analysis and worker fork.
+    """
     # Identities of the proposals this analysis has finished; a pair whose
     # proposal repeats one is declined before reuse, filtering and annotation.
     _seen_proposals: Set[Hashable]
     _pair_rejection: Optional[RejectReason]
     """The reason the pair being decided was last declined for, or None."""
     _pair_rejection_subject: Optional[str]
-    """What that reason names, counted with it (``decorator_may_transform_body[numba.njit]``)."""
+    """What that reason names, counted with it (``builtin_may_differ_by_module[len]``)."""
     _pair_rejections: Dict[str, int]
     """How many candidate pairs the latest analysis declined, by reason."""
+    _duplicate_pairs: int
+    """How many of the latest analysis's pairs only repeated an earlier pair's proposal."""
+    _proposing_pairs: int
+    """How many of the latest analysis's pairs settled with a proposal, repeats included."""
+    _pair_tally: PairTally
+    """How the latest analysis's candidate pairs ended, apart from the declined ones."""
     _pair_identity: Optional[Hashable]
     """What the pair being decided proposed, once it reached the duplicate check; else None."""
     _trace_at_identity: int
@@ -266,6 +278,9 @@ class EngineState:
     snippet_formatter: Optional[Callable[[str], str]]
     """Formats each inserted snippet, or None to insert the rendering as is."""
 
+    snippet_formatter_for_file: Optional[Callable[[str], Optional[Callable[[str], str]]]]
+    """Selects a formatter using the original source path of each modified file."""
+
     file_finisher: Optional[Callable[[str, str], str]]
     """Finishes each modified file (imports sorted), or None."""
 
@@ -302,6 +317,8 @@ class EngineState:
     # Every function of the current analysis, keyed by its node, to the file
     # it was parsed from.
     _function_paths: WeakKeyDictionary[FunctionNode, str]
+    _extraction_exclusions: WeakKeyDictionary[FunctionNode, Tuple[Tuple[int, int], ...]]
+    """Explicit marked definition spans in each function's original module."""
     # Memoization caches keyed by the identity of AST nodes parsed for this
     # engine run; the weak ones vanish with their trees.
     _assignment_cache: WeakKeyDictionary[ast.AST, Dict[int, bool]]
@@ -319,9 +336,11 @@ class EngineState:
     _unify_cache: BoundedCache[UnifyKey, Optional[StoredSubstitution]]
     # Per-block analyses of several result types; ``_per_block`` narrows each.
     _per_block_cache: BoundedCache[PerBlockKey, object]
+    _argument_handoff_memo: ArgumentHandoffMemo
+    """Exact immutable ownership certificates and compiler facts, scoped to this engine."""
     # The last few parsed sources of the apply path, which parses each modified
     # file several times per proposal.
-    _parse_cache: BoundedCache[str, ast.Module]
+    _parse_cache: BoundedCache[Tuple[str, ParserConfiguration], ast.Module]
 
     def _get_indent(self, line: str) -> str:
         """The indentation of a line; provided by InsertionPoints."""
@@ -425,6 +444,10 @@ class EngineState:
         cross-module questions ask too.
         """
         return self.import_graph.project_root(self._origin_in_run(path))
+
+    def _project_may_replace_builtin_mapping(self, path: str) -> bool:
+        """The precomputed project fact for an analyzed file, without filesystem work."""
+        return self._project_builtin_mapping_replacements.get(os.path.abspath(path), False)
 
     def _forget_run_lookups(self) -> None:
         """Begin or end a run: forget where the files of the last one stood."""

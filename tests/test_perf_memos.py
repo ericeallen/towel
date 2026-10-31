@@ -105,11 +105,14 @@ def test_each_pair_takes_every_other_site_from_the_shared_scan(tmp_path: Path) -
     functions = list(analysis.functions)
     classes = list(analysis.module.class_infos)
     pairs = engine.find_block_pairs(functions, progress="none")
-    proposals = [
-        proposal
-        for pair in pairs
-        if (proposal := engine._try_refactor_pair_multi_file(pair, functions, classes))
-    ]
+    proposals = []
+    for pair in pairs:
+        # Judge each pair independently of proposal deduplication, while
+        # retaining the shared site-scan memo this test exercises.
+        engine._seen_proposals.clear()
+        proposal = engine._try_refactor_pair_multi_file(pair, functions, classes)
+        if proposal is not None:
+            proposals.append(proposal)
     assert len(proposals) > 1, "every pair of similar functions proposes"
     for proposal in proposals:
         starts = sorted(r.line_range[0] for r in proposal.replacements)

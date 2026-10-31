@@ -23,6 +23,7 @@ would start running that module's import-time code.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import os
@@ -32,9 +33,12 @@ import sys
 import textwrap
 from typing import Mapping
 
+import pytest
+
 from towel.unification.import_graph import (
     ImportChange,
     ImportGraphCache,
+    _import_edges,
     import_change,
     would_create_import_cycle,
 )
@@ -62,20 +66,27 @@ def _write(root: Path, files: Mapping[str, str]) -> Path:
     return root
 
 
-def _vendoring(root: Path) -> Path:
+def _vendoring(root: Path, *, safe: bool = False) -> Path:
     """A package whose first module loads a vendored module that prints as it is imported.
 
     ``a_host`` sorts first, so it is the pair's own file and the host tried first.
     """
+    block = (
+        _BLOCK.replace("(values):", "(values, offset={offset}):")
+        .replace("    for value", "    value = 0\n    for value")
+        .replace("total + {offset}", "total + offset")
+        if safe
+        else _BLOCK
+    )
     return _write(
         root,
         {
             "pkg/__init__.py": "",
             "pkg/_vendor/__init__.py": "",
             "pkg/_vendor/noisy.py": 'print("loading noisy")\n',
-            "pkg/a_host.py": "from pkg._vendor import noisy\n\n"
-            + _BLOCK.format(name="fa", offset=1),
-            "pkg/b_borrower.py": _BLOCK.format(name="fb", offset=2),
+            "pkg/a_host.py": "import pkg.b_borrower\nfrom pkg._vendor import noisy\n\n"
+            + block.format(name="fa", offset=1),
+            "pkg/b_borrower.py": block.format(name="fb", offset=2),
             "tests/test_pkg.py": "import pkg.a_host\nimport pkg.b_borrower\n",
         },
     )
@@ -84,26 +95,33 @@ def _vendoring(root: Path) -> Path:
 def test_an_import_into_an_excluded_directory_is_unknown_not_empty(tmp_path: Path) -> None:
     root = _vendoring(tmp_path / "project")
     host, borrower = str(root / "pkg/a_host.py"), str(root / "pkg/b_borrower.py")
-    assert import_change(host, borrower, ImportGraphCache()) is ImportChange.RUNS_CODE
+    # Neither a quiet body nor an unread vendored dependency authorizes a
+    # new submodule load: it would also replace the parent's ordinary value.
+    assert import_change(host, borrower, ImportGraphCache()) is ImportChange.PACKAGE_BINDING
     excluded = ImportGraphCache(excluded_names=["_vendor"])
-    assert import_change(host, borrower, excluded) is ImportChange.UNKNOWN
+    assert import_change(host, borrower, excluded) is ImportChange.PACKAGE_BINDING
+    edges = _import_edges(Path(host), excluded.program_for(Path(host)), excluded, "at_import")
+    assert edges is not None and edges.unseen
     assert would_create_import_cycle(host, {borrower}, excluded)
     # The other way round nothing enters the vendored directory.
     assert import_change(borrower, host, excluded) is None
     assert not would_create_import_cycle(borrower, {host}, excluded)
 
 
-def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(tmp_path: Path) -> None:
-    root = _vendoring(tmp_path / "project")
+@pytest.mark.parametrize("safe", [False, True])
+def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(
+    tmp_path: Path, safe: bool
+) -> None:
+    root = _vendoring(tmp_path / "project", safe=safe)
 
-    def imported() -> str:
+    def imported(exercise: str = "import pkg.b_borrower\n") -> str:
         completed = subprocess.run(
             [
                 sys.executable,
                 "-I",
                 "-B",
                 "-c",
-                f"import sys\nsys.path.insert(0, {str(root)!r})\nimport pkg.b_borrower\n",
+                f"import sys\nsys.path.insert(0, {str(root)!r})\n" + exercise,
             ],
             capture_output=True,
             text=True,
@@ -115,6 +133,21 @@ def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(tmp_path:
         return completed.stdout
 
     before = imported()
+    host_observations = textwrap.dedent("""
+        import pkg.a_host as host
+        import pkg.b_borrower as borrower
+        for function in (host.fa, borrower.fb):
+            for values in ([], [0, 1, 2, 3], ['bad'], None):
+                try:
+                    result = function(values)
+                    print(type(result).__name__, repr(result))
+                except Exception as error:
+                    print(type(error).__name__, str(error))
+        """)
+    before_calls = imported(host_observations)
+    assert before_calls.startswith("loading noisy\n")
+    original = ast.parse((root / "pkg/b_borrower.py").read_text()).body[0]
+    assert isinstance(original, ast.FunctionDef)
     engine = UnificationRefactorEngine(
         min_lines=3, cross_module_helpers=True, excluded_directories=["_vendor"]
     )
@@ -122,9 +155,51 @@ def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(tmp_path:
         results, _ = engine.refactor_directory_to_fixed_point(
             str(root / "pkg"), str(root / "pkg"), progress="none"
         )
-    assert results, "the duplicate must still be shared, from the module that loads nothing"
-    assert "def __extracted_func_0(" in (root / "pkg/b_borrower.py").read_text()
+    assert set(results) == {
+        str(root / "pkg/a_host.py"),
+        str(root / "pkg/b_borrower.py"),
+    }
+    host_tree = ast.parse((root / "pkg/a_host.py").read_text())
+    borrower_tree = ast.parse((root / "pkg/b_borrower.py").read_text())
+    helper = next(
+        node
+        for node in borrower_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func_")
+    )
+    # The complete loop body moves to the quiet borrower, never to the noisy host.
+    assert not any(
+        isinstance(node, ast.FunctionDef) and node.name == helper.name for node in host_tree.body
+    )
+    assert [ast.dump(node) for node in helper.body[:-2]] == [
+        ast.dump(node) for node in original.body[:-2]
+    ]
+    assert ast.dump(helper.body[-1]) == ast.dump(original.body[-1])
+    assert any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "pkg.b_borrower"
+        and any(alias.name == helper.name for alias in node.names)
+        for node in host_tree.body
+    )
+    for tree, name in ((host_tree, "fa"), (borrower_tree, "fb")):
+        function = next(
+            node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name
+        )
+        returned = function.body[-1]
+        assert isinstance(returned, ast.Return)
+        assert isinstance(returned.value, ast.Call)
+        assert isinstance(returned.value.func, ast.Name)
+        assert returned.value.func.id == helper.name
+        assert not any(isinstance(node, ast.For) for node in ast.walk(function))
+        # Whole-body parameter handoff ends the wrapper's original ownership.
+        assert {
+            target.id
+            for node in function.body
+            if isinstance(node, ast.Delete)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        } == {argument.arg for argument in function.args.args}
     assert imported() == before == ""
+    assert imported(host_observations) == before_calls
 
 
 def test_a_stage_is_answered_from_the_project_it_copies(tmp_path: Path) -> None:

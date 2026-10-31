@@ -26,11 +26,17 @@ from __future__ import annotations
 import ast
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Dict, FrozenSet, Iterator, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from .bounded_cache import BoundedCache
 from .statement_facts import imported_binding_name
-from .visitors import body_shares_header_line
+from .visitors import (
+    annotation_expressions,
+    body_shares_header_line,
+    evaluated_before_definition,
+)
+from ..analysis_sources import ParserConfiguration, parser_configuration, parsing_is_pure
 from ..source_text import source_lines
 
 
@@ -99,6 +105,12 @@ class ModuleBindings:
     rebound_by_global: FrozenSet[str]
     star_imports: Tuple[int, ...]
     class_hosts: Mapping[str, ClassHost]
+    builtin_mapping_attribute_write: bool = False
+    """An ordinary attribute store/deletion may replace any module's captured mapping.
+
+    The receiver may be passed through arbitrary ordinary aliases, so this
+    deliberately does not attempt to identify which module it denotes.
+    """
 
     def in_effect(self, name: str, order: int) -> Optional[GlobalBinding]:
         """The binding ``name`` holds where top-level statement ``order`` runs.
@@ -189,9 +201,7 @@ class ModuleBindings:
     def refuses_helper(self, qualname: str) -> Optional[str]:
         """Why the module-level class ``qualname`` cannot take a helper into its body, if it cannot.
 
-        A body on the header's line takes no statement after it. A decorator
-        not known to preserve the namespace may drop the helper, wrap it, or
-        bind the class's name to something else entirely. And a helper placed
+        A body on the header's line takes no statement after it. A helper placed
         in a ``Protocol`` becomes one of its members, which every structural
         implementer lacks: an ``isinstance`` check against a runtime-checkable
         protocol turns false, and the checker stops accepting implementers
@@ -205,8 +215,6 @@ class ModuleBindings:
             return "unknown class"
         if host.body_on_header_line:
             return "body on the header line"
-        if not self.keeps_namespace(qualname):
-            return "decorator"
         for base in host.bases:
             if base is None:
                 continue
@@ -226,7 +234,9 @@ _SUITE_FIELDS = frozenset({"body", "orelse", "finalbody", "handlers", "cases"})
 # rewritten module never answers from the version it replaced. Placement asks
 # the same few modules once per candidate helper home, and each answer is a
 # pure function of the text it was built from.
-_MODULE_BINDINGS: BoundedCache[str, Optional[ModuleBindings]] = BoundedCache(128)
+_MODULE_BINDINGS: BoundedCache[Tuple[str, ParserConfiguration], Optional[ModuleBindings]] = (
+    BoundedCache(128)
+)
 
 
 def _child_nodes(value: object) -> Iterator[ast.AST]:
@@ -267,20 +277,27 @@ class _Collector:
             self._order = order
             self._statement(stmt, True, ())
         return ModuleBindings(
-            bindings={name: tuple(events) for name, events in self._bindings.items()},
+            builtin_mapping_attribute_write=writes_builtin_mapping_attribute(tree),
+            bindings=MappingProxyType(
+                {name: tuple(events) for name, events in self._bindings.items()}
+            ),
             # A qualname two classes share identifies neither of them.
-            class_orders={
-                qualname: order
-                for qualname, order in self._class_orders.items()
-                if self._class_counts[qualname] == 1
-            },
+            class_orders=MappingProxyType(
+                {
+                    qualname: order
+                    for qualname, order in self._class_orders.items()
+                    if self._class_counts[qualname] == 1
+                }
+            ),
             rebound_by_global=frozenset(self._rebound_by_global),
             star_imports=tuple(self._star_imports),
-            class_hosts={
-                qualname: host
-                for qualname, host in self._class_hosts.items()
-                if self._class_counts[qualname] == 1
-            },
+            class_hosts=MappingProxyType(
+                {
+                    qualname: host
+                    for qualname, host in self._class_hosts.items()
+                    if self._class_counts[qualname] == 1
+                }
+            ),
         )
 
     def _bind(
@@ -329,8 +346,11 @@ class _Collector:
             self._bind(stmt.name, certain, class_qualname=qualname)
             return
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for decorator in stmt.decorator_list:
-                self._expression(decorator, certain)
+            for expression in (
+                *evaluated_before_definition(stmt),
+                *annotation_expressions(stmt),
+            ):
+                self._expression(expression, certain)
             self._nested_scope(stmt.body, class_stack)
             self._bind(stmt.name, certain)
             return
@@ -387,7 +407,12 @@ class _Collector:
             if isinstance(node.ctx, (ast.Store, ast.Del)):
                 self._bind(node.id, certain)
             return
-        if isinstance(node, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if isinstance(node, ast.Lambda):
+            # Defaults execute here; the body executes in the lambda's own scope.
+            for expression in evaluated_before_definition(node):
+                self._expression(expression, certain)
+            return
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             return  # Whatever their bodies bind belongs to a scope of their own.
         if isinstance(node, (ast.MatchAs, ast.MatchStar)):
             if node.name:
@@ -447,12 +472,46 @@ def import_origin(stmt: Union[ast.Import, ast.ImportFrom], alias: ast.alias) -> 
     return f"{stmt.module}.{alias.name}"
 
 
+def writes_builtin_mapping_attribute(tree: ast.AST) -> bool:
+    """Whether ordinary code can replace a module's ``__builtins__`` attribute."""
+    # ``receiver.attribute: T`` evaluates its receiver but does not store the
+    # attribute. Its target still carries Store in the AST. Nested expressions
+    # of that receiver can contain real stores and remain part of the walk.
+    annotation_only = {
+        id(node.target)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AnnAssign) and node.value is None
+    }
+    return any(
+        isinstance(node, ast.Attribute)
+        and node.attr == "__builtins__"
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and id(node) not in annotation_only
+        for node in ast.walk(tree)
+    )
+
+
 def global_bindings(source: str) -> Optional[ModuleBindings]:
     """What ``source`` binds at its top level, or None when it will not parse."""
-    if source in _MODULE_BINDINGS:
-        return _MODULE_BINDINGS[source]
+    key = source, parser_configuration()
+    cacheable = parsing_is_pure(source)
+    if cacheable and key in _MODULE_BINDINGS:
+        return _MODULE_BINDINGS[key]
     try:
         tree = ast.parse(source)
     except (SyntaxError, ValueError):
-        return _MODULE_BINDINGS.put(source, None)
-    return _MODULE_BINDINGS.put(source, _Collector(source_lines(source)).collect(tree))
+        return _MODULE_BINDINGS.put(key, None) if cacheable else None
+    return bindings_from_tree(source, tree)
+
+
+def bindings_from_tree(source: str, tree: ast.Module) -> ModuleBindings:
+    """Immutable bindings of source already parsed into tree, without parsing it again."""
+    if type(source) is not str:
+        return _Collector(source_lines(source)).collect(tree)
+    key = source, parser_configuration()
+    known = _MODULE_BINDINGS.get(key)
+    if known is not None:
+        return known
+    result = _Collector(source_lines(source)).collect(tree)
+    _MODULE_BINDINGS.put(key, result)
+    return result

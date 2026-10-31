@@ -72,7 +72,9 @@ def _refactor(target: Path) -> Tuple[int, Mapping[str, int]]:
     A package's modules share helpers only on request (``cross_module_helpers``),
     which its cases make; a module is refactored in the default mode.
     """
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=target.is_dir())
+    engine = UnificationRefactorEngine(
+        min_lines=3, max_parameters=6, cross_module_helpers=target.is_dir()
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         if target.is_dir():
             results, _ = engine.refactor_directory_to_fixed_point(
@@ -217,7 +219,19 @@ def test_two_sites_binding_the_name_each_pass_their_own(tmp_path: Path) -> None:
     assert applied == 1
     calls = _helper_calls((after / "m.py").read_text())
     assert [len(calls["first"]), len(calls["second"])] == [1, 1]
-    assert all(", len, " in call for call in calls["first"] + calls["second"])
+    functions = {
+        node.name: node
+        for node in ast.parse((after / "m.py").read_text()).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    for name in ("first", "second"):
+        storage = functions[name].body[0]
+        assert isinstance(storage, ast.Assign) and isinstance(storage.targets[0], ast.Name)
+        box = storage.targets[0].id
+        assert ast.dump(storage.value) == ast.dump(
+            ast.parse("[(len, name, rows)]", mode="eval").body
+        )
+        assert all(f"{box}[0][0]" in call and f"{box}.pop()" in call for call in calls[name])
     assert _handed_builtins(_python_files(after)) == []
     assert _run(after, "drive.py") == _run(before, "drive.py")
 
@@ -350,7 +364,7 @@ def _package(exports_header: str, reports_header: str) -> Dict[str, str]:
     return {
         "pyproject.toml": '[project]\nname = "pkg"\nversion = "0"\n',
         "pkg/__init__.py": "",
-        "pkg/exports.py": "from pkg import reports  # exports already depends on reports\n\n\n"
+        "pkg/exports.py": "import pkg.reports as reports  # exports already depends on reports\n\n\n"
         + _function(exports_header, "exports")
         + "\n",
         "pkg/reports.py": _function(reports_header, "reports") + "\n",
@@ -375,6 +389,18 @@ def test_across_modules_two_sites_binding_the_name_each_pass_their_own(tmp_path:
         "report_size(rows, name, len=lambda value: 30)",
     )
     _write(tmp_path, files)
+    original = _python_files(tmp_path)
+    assert _refactor(tmp_path / "pkg")[0] == 0
+    assert _python_files(tmp_path) == original
+    files = {
+        path: (
+            ("from builtins import print as emit\n" + text.replace("print(", "emit("))
+            if path.endswith(("exports.py", "reports.py"))
+            else text
+        )
+        for path, text in files.items()
+    }
+    _write(tmp_path, files)
     applied, _ = _refactor(tmp_path / "pkg")
     assert applied > 0
     assert _handed_builtins(_python_files(tmp_path)) == []
@@ -397,7 +423,7 @@ def test_across_modules_blocks_differing_in_a_builtin_hand_over_none(
         "pyproject.toml": '[project]\nname = "pkg"\nversion = "0"\n',
         "pkg/__init__.py": "",
         "pkg/exports.py": "\n\n\n".join(
-            ["from pkg import reports  # exports already depends on reports", *shared]
+            ["import pkg.reports as reports  # exports already depends on reports", *shared]
             + [ast.unparse(functions["second"])]
         )
         + "\n",

@@ -20,7 +20,9 @@ confirmation included. An out-of-place run then publishes the target's
 counterpart to the output (``copy_project``), all at once; an in-place run
 applies the combined change to the project as one journaled plan
 (``staged_changes``). A run that fails, or is interrupted, leaves the project
-and the output path as they were.
+and the output path as they were. The CLI's optional naming sidecar is
+written after successful source publication; its failure is a warning,
+not a failed source transaction.
 """
 
 from __future__ import annotations

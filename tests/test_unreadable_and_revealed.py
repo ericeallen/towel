@@ -129,16 +129,19 @@ ROW = textwrap.dedent("""\
 
     def first(k: int) -> int:
         row = make_row(k)
+        if row.n < 0:
+            raise ValueError("negative row")
         print("first row", row.n)
-        total = row.n * 2
-        return total
+        assert isinstance(row.n, int)
+        return row.n * 2
 
 
     def second(k: int) -> int:
         row = make_row(k + 1)
+        assert row.n >= 0
         print("second row", row.n)
-        total = row.n * 2
-        return total
+        assert isinstance(row.n, int)
+        return row.n * 2
     """)
 
 MODELS = textwrap.dedent("""\
@@ -153,7 +156,13 @@ MODELS = textwrap.dedent("""\
 
 
 def test_a_class_revealed_by_its_whole_path_is_imported_for_the_checker(tmp_path: Path) -> None:
-    """D13: ``pkg.models.Row``, which report.py does not import, is named ``"Row"``."""
+    """D13: name an actually required Row input through its private type import.
+
+    The distinct caller guards keep row construction outside the shared suffix.
+    Without them, expression unification legitimately moves construction into
+    the helper and no Row input needs annotating, so the fixture no longer
+    exercises D13. Retain the original private-import and annotation checks.
+    """
     package = tmp_path / "pkg"
     package.mkdir()
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "pkg"\nversion = "0"\n')
@@ -187,3 +196,14 @@ def test_a_whole_path_the_host_cannot_import_is_written_any() -> None:
     assert isinstance(helper, ast.FunctionDef)
     assert unwritten_as_any(helper, host) == (("typing", "Any"),)
     assert ast.unparse(helper.args) == "stream: Any, path: 'os.PathLike[str]'"
+
+
+def test_original_row_suffix_with_new_owned_total_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "row.py"
+    path.write_text(
+        textwrap.dedent(
+            '    from pkg.models import make_row\n\n\n    def first(k: int) -> int:\n        row = make_row(k)\n        if row.n < 0:\n            raise ValueError("negative row")\n        print("first row", row.n)\n        total = row.n * 2\n        return total\n\n\n    def second(k: int) -> int:\n        row = make_row(k + 1)\n        assert row.n >= 0\n        print("second row", row.n)\n        total = row.n * 2\n        return total\n    '
+        )
+    )
+    engine = UnificationRefactorEngine()
+    assert engine.analyze_file(str(path)) == []

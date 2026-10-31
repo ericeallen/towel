@@ -13,12 +13,15 @@
 # limitations under the License.
 
 import ast
+import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
-from typing import Any, FrozenSet, List, Optional
+from typing import FrozenSet, List, Optional
 
+from towel.unification.exceptions import RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import TemporaryModuleTestCase
 from towel.unification.overlap import filter_overlapping_proposals
@@ -136,36 +139,77 @@ class TestRefactorEngineTargetedBranches(TemporaryModuleTestCase):
         # Should reject due to missing complete return coverage
         self.assertFalse(proposals, "Expected no proposals due to incomplete return coverage")
 
-    def test_global_assignment_promotes_declaration(self):
-        # Global variable assigned in both blocks should be declared in extracted function
+    def test_global_writes_decline_and_shared_global_reads_remain_live(self) -> None:
         code = textwrap.dedent("""
             G = 0
             def f1():
+                global G
                 G = G + 1
                 x = 2
                 y = x + G
                 return y
 
             def f2():
-                G = G + 2
-                a = 3
+                global G
+                G = G + 1
+                a = 2
                 b = a + G
                 return b
             """)
+
+        def observed(source: str, driver: str) -> str:
+            return subprocess.run(
+                [sys.executable, "-I", "-B", "-c", source + "\n" + driver],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            ).stdout
+
+        # The original missing global declaration raises, rather than passing
+        # G through a helper parameter as the former fallback allowed.
+        local = code.replace("    global G\n", "")
+        with self.assertRaises(subprocess.CalledProcessError) as failure:
+            observed(local, "f1()")
+        self.assertIn("UnboundLocalError", failure.exception.stderr)
         path = self._write_temp(code)
         engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+        self.assertEqual(engine.analyze_file(path), [])
+        self.assertEqual(Path(path).read_text(), code)
+        self.assertEqual(observed(code, "print(f1(), f2(), G)"), "3 4 2\n")
+        safe = textwrap.dedent("""
+            G = 0
+            def f1():
+                G
+                G * 2
+                return G + 2
+            def f2():
+                G
+                G * 2
+                return G + 2
+            def advance():
+                global G
+                G += 1
+            """)
+        path = self._write_temp(safe)
         proposals = engine.analyze_file(path)
-        self.assertTrue(proposals, "Expected proposal for global assignment blocks")
+        self.assertTrue(proposals, "shared module reads must still extract")
         modified = engine.apply_refactoring(path, proposals[0])
-        # Depending on current engine behavior, global may or may not be promoted.
-        # Accept either explicit global declaration or implicit pass-through of G as parameter.
-        if "global G" in modified:
-            self.assertIn("global G", modified)
-        else:
-            # Fallback: ensure helper exists referencing G
-            self.assertIn("def __extracted_func", modified)
-            # Extracted function signature should include G or body should assign to G.
-            self.assertRegex(modified, r"def (?:__)?extracted_func\([^)]*G[^)]*\):|G = G \+")
+        driver = "print(f1(), f2(), G); advance(); print(f1(), f2(), G)"
+        self.assertEqual(observed(modified, driver), observed(safe, driver))
+        self.assertEqual(observed(modified, driver), "2 2 0\n3 3 1\n")
+        helper = next(
+            node
+            for node in ast.parse(modified).body
+            if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+        )
+        self.assertFalse(helper.args.args or helper.args.posonlyargs)
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Name) and node.id == "G" and isinstance(node.ctx, ast.Load)
+                for node in ast.walk(helper)
+            )
+        )
 
     def test_nonlocal_in_enclosing_functions_skips_proposal(self):
         # Nonlocal variables in enclosing function should cause engine to skip proposal
@@ -224,16 +268,102 @@ class TestRefactorEngineTargetedBranches(TemporaryModuleTestCase):
         )
         proposal.insert_into_class = "Example"
 
-        modified = engine.apply_refactoring_multi_file(proposal)
-        updated_code = modified[path]
+        # Keep the original unshared/unread-receiver proposal as a refusal.
+        with self.assertRaisesRegex(RefactoringError, "interface outweighs"):
+            engine.apply_refactoring_multi_file(proposal)
+        self.assertEqual(Path(path).read_text(), code)
 
-        # A caller's own name for a method helper is made class-private, as
-        # every method helper's is.
+        positive = textwrap.dedent("""
+            events=[]
+            class Example:
+                def __init__(self, offset): self._offset=offset
+                @property
+                def offset(self):
+                    events.append('offset:'+str(self._offset))
+                    return self._offset
+                def method(self, value):
+                    interim=value+self.offset
+                    return interim
+                def other(self, value):
+                    interim=value+self.offset
+                    return interim
+            """).lstrip("\n")
+        path = self._write_temp(positive, name="method_positive.py")
+        engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
+        helper_func = ast.parse("def helper(self, value):\n    return value + self.offset\n").body[
+            0
+        ]
+        assert isinstance(helper_func, ast.FunctionDef)
+        klass = next(node for node in ast.parse(positive).body if isinstance(node, ast.ClassDef))
+        methods = [
+            node
+            for node in klass.body
+            if isinstance(node, ast.FunctionDef) and node.name in {"method", "other"}
+        ]
+        self.assertEqual(len(methods), 2)
+        replacements = []
+        for method in methods:
+            last_line = method.body[-1].end_lineno
+            assert last_line is not None
+            replacements.append(
+                Replacement(
+                    line_range=(method.body[0].lineno, last_line),
+                    node=ast.parse("return helper(self, value)").body[0],
+                    file_path=path,
+                    class_name="Example",
+                    method_kind="instance",
+                    implicit_param="self",
+                )
+            )
+        proposal = RefactoringProposal(
+            file_path=path,
+            extracted_function=helper_func,
+            replacements=replacements,
+            description="Insert a shared method with a required receiver",
+            parameters_count=1,
+            insert_into_class="Example",
+            method_kind="instance",
+            method_param_name="self",
+        )
+        updated_code = engine.apply_refactoring_multi_file(proposal)[path]
         self.assertIn("def __helper(self, value):", updated_code)
-        self.assertIn("return self.__helper(value)", updated_code)
-        namespace: dict[str, Any] = {}
-        exec(compile(updated_code, path, "exec"), namespace)
-        self.assertEqual(namespace["Example"]().method(10), 11)
+        self.assertEqual(updated_code.count("return self.__helper(value)"), 2)
+        generated_class = next(
+            node for node in ast.parse(updated_code).body if isinstance(node, ast.ClassDef)
+        )
+        inserted = next(
+            node
+            for node in generated_class.body
+            if isinstance(node, ast.FunctionDef) and node.name == "__helper"
+        )
+        self.assertEqual([arg.arg for arg in inserted.args.args], ["self", "value"])
+        self.assertTrue(
+            any(
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+                and node.attr == "offset"
+                for node in ast.walk(inserted)
+            )
+        )
+        driver = """
+item=Example(1)
+first=item.method(10)
+item._offset=3
+second=item.other(20)
+print((first,second,events))
+"""
+        for source in (positive, updated_code):
+            result = subprocess.run(
+                [sys.executable, "-B", "-c", source + "\n" + driver],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            self.assertEqual(result.stderr, "")
+            self.assertEqual(ast.literal_eval(result.stdout), (11, 23, ["offset:1", "offset:3"]))
+        self.assertEqual(Path(path).read_text(), positive)
 
     def test_apply_refactoring_multi_file_adds_crossfile_import(self):
         with tempfile.TemporaryDirectory() as tmpdir:

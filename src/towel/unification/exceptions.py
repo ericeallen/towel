@@ -33,6 +33,15 @@ class RefactoringError(TowelError):
     """
 
 
+class TypeRejectedExtraction(RefactoringError):
+    """Every offered helper variant completed checking and introduced type errors.
+
+    A failed tool, rendering, inference, or unverifiable code raises a different
+    exception. This verdict may be retained only for the exact candidate and
+    unchanged project/checker context.
+    """
+
+
 class CheckerUnavailableError(RefactoringError):
     """The type checker could not judge a candidate: it timed out, crashed, or could not start.
 

@@ -77,10 +77,22 @@ def _bound_at_marker(source: str) -> set[str]:
         ("def f(xs):\n    for i in xs:\n        marker()\n", {"i"}, set()),
         (
             "def f(cm):\n    with cm as h:\n        data = h.read()\n    marker()\n",
-            {"h", "data"},
             set(),
+            {"h", "data"},
         ),
         ("def f(cm):\n    with suppress(E):\n        data = 1\n    marker()\n", set(), {"data"}),
+        ("def f(cm):\n    with absorb(E):\n        data = 1\n    marker()\n", set(), {"data"}),
+        (
+            "def f(cm):\n    with cm as first, failing() as second:\n"
+            "        data = 1\n    marker()\n",
+            set(),
+            {"first", "second", "data"},
+        ),
+        (
+            "async def f(cm):\n    async with cm as h:\n        data = h.read()\n    marker()\n",
+            set(),
+            {"h", "data"},
+        ),
         (
             "def f(v):\n    match v:\n        case [a]:\n            r = 1\n        case _:\n            r = 2\n    marker()\n",
             {"r"},

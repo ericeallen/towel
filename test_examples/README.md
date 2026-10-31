@@ -62,7 +62,7 @@ and challenging scenarios that might break naive duplicate detection systems.
 ### 4. F-String and Constants
 
 #### `fstrings_constants.py`
-- F-string handling (never parameterize literal parts)
+- F-string structure, literal pools and differing formatted expressions
 - Constant parameterization
 - Tests: AST manipulation of format strings
 
@@ -377,7 +377,7 @@ functions, decorated classes or keyword-only parameters among the goldens.
 | Annotated, Generator and Async | 2 |
 | **TOTAL** | **28** |
 
-## What These Tests Validate
+## What These Fixtures Exercise
 
 ### Unification Algorithm
 - ✅ Correctly identifies structural similarity
@@ -403,11 +403,14 @@ functions, decorated classes or keyword-only parameters among the goldens.
 - ✅ Handles comprehension variable scoping
 - ✅ Detects orphan variables (would-be undefined refs)
 
-### Safety Guarantees
-- ✅ Never extracts code that would create orphan variables
-- ✅ Propagates return values correctly
-- ✅ Preserves side effects and their ordering
-- ✅ Maintains exception handling semantics
+### Behavioral checks
+The automatic harness executes affected callables on generated inputs and
+compares values, output and errors. Unsupported targets are reported rather
+than counted as verified. These fixtures exercise orphan-variable, return,
+effect-order and exception boundaries; finite sampled inputs do not establish
+universal preservation. Focused regressions under `tests/` additionally cover
+exact constant occurrences, compiler literal identity, thunk result lifetimes,
+branch-local outputs and captured comprehension cells.
 
 ## Usage
 
@@ -436,20 +439,25 @@ just verify-examples
 
 ## Maintaining Examples
 
-All example files have pristine templates in `.templates/` directory:
-- **Adding new examples:** Create in `test_examples/`, copy to `.templates/`, update justfile
+The repository-root `.templates/` directory holds pristine copies for the
+examples covered by the integrity script:
+- **Adding new examples:** Create in `test_examples/` and add the corresponding
+  root `.templates/` copy when it belongs to the reset/integrity set.
 - **Verifying integrity:** Run `just verify-examples`
 - **Resetting corrupted files:** Run `just reset-examples`
 
-## Expected Behavior
+## Interpreting a preview
 
-When running `just preview test_examples/`:
+`just preview test_examples/` runs the complete preview pipeline with its normal
+within-module defaults. To exercise cross-module sharing, use the existing dry
+recipe with explicit options, for example:
 
-3. **Filtering Rate:** ~23% (removes ~199 overlapping proposals)
+```bash
+just dry test_examples/ test_examples_refactored/ --no-interactive --cross-module --parameterize-builtins
+```
 
-This high number of overlapping proposals is expected because:
-- The engine extracts ALL possible contiguous sub-blocks
-- A 10-line function generates proposals for blocks of length 10, 9, 8, ..., down to min_lines
-- Overlap filtering keeps only the largest non-overlapping proposals
-
-The fact that the system handles this gracefully validates the overlap filtering mechanism!
+Candidate enumeration includes overlapping contiguous blocks; a complete run
+selects compatible proposals and reanalyzes the changed source. Opportunity
+counts depend on configuration, semantic refusals and follow-up passes. The
+illustrative counts above are historical and must not be treated as current
+expected output.

@@ -30,8 +30,10 @@ method form and the helper signature to match.
 from __future__ import annotations
 
 import ast
+import copy
+from dataclasses import replace
 
-from pathlib import Path
+from weakref import WeakKeyDictionary
 from typing import (
     Dict,
     FrozenSet,
@@ -40,6 +42,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Tuple,
     cast,
 )
 from .models import (
@@ -49,12 +52,19 @@ from .models import (
     FunctionNode,
     MethodInfo,
     MethodKind,
+    RefactoringProposal,
+    Replacement,
 )
-from .class_private import mangling_prefix
+from .class_private import is_class_private, mangling_prefix, rewritten_identifiers
 from .scope_analyzer import ScopeAnalyzer
+from .semantic_safety import needs_class_body
+from .argument_ownership import render_argument_handoff
+from .function_scope import identifiers
+from .exceptions import RefactoringError
 from .module_bindings import ModuleBindings, dotted_name, global_bindings, import_origin
-from .import_graph import ImportTimeCode, module_scope_statements
-from .statement_facts import imported_binding_name
+from .import_graph import module_scope_statements
+from .protocol_bases import bases_allow_private_helpers
+from .statement_facts import imported_binding_name, memoized_per_node
 from .visitors import MethodCallRewriter, visit_as
 from ..source_text import read_source
 
@@ -88,6 +98,19 @@ _IMPLICIT_RECEIVER_SPECIAL_METHODS = frozenset(
 )
 
 
+_DISPATCHED_NAMES: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
+"""Names whose attributes a method reads, kept only while its immutable AST lives."""
+
+
+def _dispatched_names(node: ast.AST) -> FrozenSet[str]:
+    """All names used as the base of an attribute, computed in one walk of the method."""
+    return frozenset(
+        child.value.id
+        for child in ast.walk(node)
+        if isinstance(child, ast.Attribute) and isinstance(child.value, ast.Name)
+    )
+
+
 def _dispatches_on(func: FunctionNode, implicit_param: str) -> bool:
     """Whether the method ever asks anything of its own receiver.
 
@@ -111,12 +134,7 @@ def _dispatches_on(func: FunctionNode, implicit_param: str) -> bool:
     passes ``self`` on still works with ``None``, and the helper still
     receives it as an ordinary argument.
     """
-    return any(
-        isinstance(node, ast.Attribute)
-        and isinstance(node.value, ast.Name)
-        and node.value.id == implicit_param
-        for node in ast.walk(func)
-    )
+    return implicit_param in memoized_per_node(_DISPATCHED_NAMES, func, _dispatched_names)
 
 
 def _implicit_param_for(kind: MethodKind, first: MethodInfo, second: MethodInfo) -> Optional[str]:
@@ -251,7 +269,7 @@ def _imported_origin(statement: ast.stmt, name: str) -> Optional[str]:
     return origins.pop() if len(origins) == 1 else None
 
 
-def _module_scope_bindings(module: ast.Module, name: str) -> List[ast.stmt]:
+def _find_module_scope_bindings(module: ast.Module, name: str) -> Tuple[ast.stmt, ...]:
     """Every statement of the module's own scope that may bind ``name``, however conditionally.
 
     A star import may bind any name. A compound statement counts when
@@ -270,6 +288,25 @@ def _module_scope_bindings(module: ast.Module, name: str) -> List[ast.stmt]:
             )
         if binds:
             found.append(statement)
+    return tuple(found)
+
+
+_MODULE_SCOPE_BINDINGS: "WeakKeyDictionary[ast.AST, Dict[str, Tuple[ast.stmt, ...]]]" = (
+    WeakKeyDictionary()
+)
+
+
+def _module_scope_bindings(module: ast.Module, name: str) -> Tuple[ast.stmt, ...]:
+    """The module's possible bindings of ``name``, once per name and immutable module tree.
+
+    The statements retain no parent reference, so the tuple does not keep
+    the weakly keyed module alive. Callers only inspect these shared nodes.
+    """
+    by_name = memoized_per_node(_MODULE_SCOPE_BINDINGS, module, lambda _: {})
+    found = by_name.get(name)
+    if found is None:
+        found = _find_module_scope_bindings(module, name)
+        by_name[name] = found
     return found
 
 
@@ -452,6 +489,23 @@ class _CallRenamer(ast.NodeTransformer):
         return updated
 
 
+def _helper_reads_class_private_names(helper: ast.FunctionDef) -> bool:
+    """Private names that still need the original lexical class after substitution.
+
+    Generated formal names can be mangled consistently in either home. An
+    attribute's spelling or a remaining global/local private binding cannot.
+    Reads moved into a caller thunk stay in the caller's lexical class.
+    """
+    parameters = {argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)}
+    return any(
+        is_class_private(name)
+        for statement in helper.body
+        for node in ast.walk(statement)
+        for name in rewritten_identifiers(node)
+        if not isinstance(node, (ast.Name, ast.arg)) or name not in parameters
+    )
+
+
 class HelperPlacement(EngineState):
     """Helper Placement methods of the engine; see the module docstring."""
 
@@ -515,11 +569,11 @@ class HelperPlacement(EngineState):
 
     @staticmethod
     def _ensure_leading_param(fn: ast.FunctionDef, param_name: str) -> None:
-        """Ensure the positional-args list starts with ``param_name`` (preserving annotations)."""
+        """Put the receiver first, preserving annotations and positional-only arguments."""
 
         existing: Optional[ast.arg] = None
         remaining: List[ast.arg] = []
-        for arg in fn.args.args:
+        for arg in (*fn.args.posonlyargs, *fn.args.args):
             if arg.arg == param_name and existing is None:
                 existing = arg
                 continue
@@ -531,7 +585,16 @@ class HelperPlacement(EngineState):
         if existing is None:
             existing = ast.arg(arg=param_name)
 
-        fn.args.args = [existing] + remaining
+        positional_only_names = {argument.arg for argument in fn.args.posonlyargs}
+        if fn.args.posonlyargs:
+            fn.args.posonlyargs = [existing] + [
+                argument for argument in remaining if argument.arg in positional_only_names
+            ]
+            fn.args.args = [
+                argument for argument in remaining if argument.arg not in positional_only_names
+            ]
+        else:
+            fn.args.args = [existing] + remaining
 
     @staticmethod
     def _retarget_helper_calls(node: ast.AST, original_name: str, final_name: str) -> ast.AST:
@@ -540,6 +603,71 @@ class HelperPlacement(EngineState):
         if original_name == final_name:
             return node
         return visit_as(_CallRenamer(original_name, final_name), node)
+
+    @staticmethod
+    def _append_holder_parameter(helper: ast.FunctionDef) -> None:
+        """Append the same hygienic holder to an owned signature or interface preview."""
+        arguments = helper.args
+        taken = identifiers((helper,))
+        name = "_towel_owner"
+        index = 0
+        while name in taken:
+            index += 1
+            name = f"_towel_owner_{index}"
+        annotated = helper.returns is not None or any(
+            parameter.annotation is not None
+            for parameter in (*arguments.posonlyargs, *arguments.args)
+        )
+        # Adding the only annotation would change which untyped bodies mypy checks.
+        arguments.args.append(
+            ast.arg(arg=name, annotation=ast.Constant(value="object") if annotated else None)
+        )
+
+    def _prepare_helper_interface(
+        self, proposal: RefactoringProposal, *, reserve_ownership_holder: bool = False
+    ) -> ast.FunctionDef:
+        """The emitted interface, without changing the original call-argument mapping.
+
+        Call sites still address the unplaced parameter order. Class insertion
+        normalizes the rendering after those calls have been rewritten; guards
+        need the same normalization on an owned copy before publication.
+        """
+        helper = copy.deepcopy(proposal.extracted_function)
+        if proposal.reused_function is not None:
+            return helper
+        has_handoff = any(
+            replacement.argument_handoff is not None for replacement in proposal.replacements
+        )
+        if reserve_ownership_holder and has_handoff:
+            self._append_holder_parameter(helper)
+        if proposal.insert_into_class is not None:
+            self._prepare_extracted_method_signature(
+                helper, proposal.method_kind or "instance", proposal.method_param_name
+            )
+        if has_handoff:
+            args = helper.args
+            if len(args.posonlyargs) + len(args.args) > self.unifier.max_parameters:
+                raise RefactoringError("The final helper exceeds the ownership parameter budget")
+        return helper
+
+    @staticmethod
+    def _profitability_sites(proposal: RefactoringProposal) -> List[Replacement]:
+        """Actual ownership capture wrappers, without publishing or changing a proposal."""
+        return [
+            (
+                replace(
+                    replacement,
+                    node=render_argument_handoff(
+                        replacement.node,
+                        replacement.argument_handoff,
+                        proposal.extracted_function.name,
+                    ).body[-1],
+                )
+                if replacement.argument_handoff is not None
+                else replacement
+            )
+            for replacement in proposal.replacements
+        ]
 
     def _prepare_extracted_method_signature(
         self,
@@ -726,34 +854,24 @@ class HelperPlacement(EngineState):
         return global_bindings(source)
 
     def _can_host(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
-        """Whether a helper placed in ``info``'s body stays a plain member of the class.
+        """Whether the class's declared contract and decorators permit a helper.
 
         See :meth:`ModuleBindings.refuses_helper` for what rules a class out.
         """
         table = self._module_bindings(info.file_path, sources)
-        return table is not None and table.refuses_helper(info.qualname) is None
-
-    def _hosts_method_helpers(self, info: ClassInfo, sources: Mapping[str, str]) -> bool:
-        """Whether a helper placed in the class's body stays what its methods reach.
-
-        A metaclass that wraps every callable of the namespace, or a base whose
-        ``__init_subclass__`` registers them, would wrap or register the helper
-        too, and a ``__getattribute__`` on the class's method resolution order
-        intercepts ``self.__extracted_func_0`` itself: a forwarding proxy looks
-        it up on another object (:meth:`ImportTimeCode.hosts_method_helpers`).
-        The helper then stays at module level and takes the receiver as an
-        argument.
-        """
+        if table is None or table.refuses_helper(info.qualname) is not None:
+            return False
         source = sources.get(info.file_path)
         try:
-            code = ImportTimeCode(
-                source if source is not None else read_source(info.file_path),
-                path=Path(info.file_path),
-                cache=self.import_graph,
-            )
+            if source is None:
+                source = read_source(info.file_path)
+            tree = self._parse_source(source)
         except (OSError, UnicodeError, SyntaxError, ValueError):
             return False
-        return code.hosts_method_helpers(info.qualname)
+        klass = tree.body[table.class_orders[info.qualname]]
+        return isinstance(klass, ast.ClassDef) and bases_allow_private_helpers(
+            klass, tree, table, info.file_path, self.import_graph, self._parse_source
+        )
 
     def _choose_class_insertion(
         self,
@@ -761,6 +879,7 @@ class HelperPlacement(EngineState):
         method_info1: MethodInfo,
         method_info2: MethodInfo,
         class_infos: List[ClassInfo],
+        helper: ast.FunctionDef,
     ) -> Optional[ClassInsertionPlan]:
         """The class whose method the helper becomes, or None for a module-level helper.
 
@@ -806,6 +925,16 @@ class HelperPlacement(EngineState):
             return None
         if k1 != k2:
             return None
+        receiver = _implicit_param_for(k1, method_info1, method_info2)
+        # Original receiver reads may now live only in caller-side thunks.
+        # Placement uses the completed helper, not those earlier reads. Do not
+        # memoize its mutable construction AST as an original function.
+        if not (
+            receiver in _dispatched_names(helper)
+            or needs_class_body(helper.body)
+            or _helper_reads_class_private_names(helper)
+        ):
+            return None
         if mangling_prefix(class_name) is None:
             # The helper is class-private, ``__extracted_func_0``, so that no
             # subclass can reach it; a class named only with underscores
@@ -813,7 +942,7 @@ class HelperPlacement(EngineState):
             # ordinary member any subclass may override.
             return None
         sources = {pair.file_path: pair.source1}
-        if not self._can_host(host, sources) or not self._hosts_method_helpers(host, sources):
+        if not self._can_host(host, sources):
             return None
         return ClassInsertionPlan(
             class_name=class_name,

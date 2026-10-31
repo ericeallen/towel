@@ -1,0 +1,5 @@
+ecosystem check: 1 projects, towel 29454ab5b682, candidate code_towel-1.772-py3-none-any.whl (sha256 ee3f7db60b42), typing mode: default
+PASS            sphinx             files=55  refactor=5659.6s 
+Totals: PASS 1
+Code the type checker does not look at (regions, proposals declined for it): sphinx (67, 0)
+Cross-module extraction off: none

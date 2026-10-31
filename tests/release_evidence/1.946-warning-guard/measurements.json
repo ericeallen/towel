@@ -1,0 +1,669 @@
+{
+  "schema": 1,
+  "status": "TWO_COMPLETE_COHORTS_EIGHT_SHARED_HOST_OBSERVATIONS_NOT_RELEASE_ACCEPTANCE",
+  "created_date": "2026-10-10",
+  "roles": {
+    "release": {
+      "source_commit": "44d779563578a32e24f8213fba96f43c6698ab43",
+      "wheel_filename": "code_towel-1.792-py3-none-any.whl",
+      "wheel_sha256": "218516ae6e5ac86919d8bf43aa314d32a6008283dd982a33fa23c1442d7738c8",
+      "version": "1.792",
+      "runtime_payload_count": 103
+    },
+    "fixed": {
+      "source_commit": "a6dc6ed4c75fa9c1b65aa9029f2a6361ec7dce77",
+      "wheel_filename": "code_towel-1.946-py3-none-any.whl",
+      "wheel_sha256": "651223745a52155b6cccabaa4435f9ea75a3a937c4e64ac154ff2997443ece97",
+      "version": "1.946",
+      "runtime_payload_count": 107
+    }
+  },
+  "workloads": {
+    "click": {
+      "pin": "6aabf099bfdd4c1e75fe8d0e0d4241372b988ab1",
+      "repository": "https://github.com/pallets/click.git",
+      "expected_tools": {
+        "mypy": "1.20.0",
+        "pyright": "1.1.408",
+        "black": "26.5.1",
+        "isort": "9.0.2",
+        "ruff": "0.15.9",
+        "pytest": "9.1.1"
+      }
+    },
+    "voluptuous": {
+      "pin": "44593ce7c330faf9418252c4b5448f4736144a7f",
+      "repository": "https://github.com/alecthomas/voluptuous.git",
+      "expected_tools": {
+        "mypy": "2.4.0",
+        "pyright": "1.1.414",
+        "black": "26.5.1",
+        "isort": "9.0.2",
+        "ruff": "0.16.10",
+        "pytest": "9.1.1"
+      }
+    }
+  },
+  "resources": {
+    "cpus": 2,
+    "RAM_bytes": 6442450944,
+    "combined_RAM_swap_bytes": 12884901888,
+    "network": "none",
+    "user": "runner",
+    "readonly_rootfs": false,
+    "tmpfs": null,
+    "workers": 1
+  },
+  "image": "sha256:47fe32ba90ea4d65f85dd24fb3a93f754e8e3fa922a58930f88e8e0461b6d6d8",
+  "measurement": "Full cold installed default production CLI including typed/format/cross-module/fixed-point/final checking; setup, settling and original before/after tests excluded from CLI wall time. Dependency caches reused, hardware page caches not flushed. No profiler or census inside these eight samples.",
+  "protocol": {
+    "order_by_cohort": "RFFR",
+    "preflight_seconds": 20,
+    "preflight_minimum_aggregate_idle": 80,
+    "runtime_idle_reference": 70,
+    "runtime_shortfalls": "retained context, not automatic veto or evidence of unrelated contention",
+    "CPU_interval_seconds": 1,
+    "native_container_context_seconds": 10,
+    "context_freshness_seconds": 15,
+    "fatal": "instrumentation, known-heavy job, unexpected container, resource, source, installed artifact, input, original test delta, generated output or closure failure",
+    "no_replacements_or_fallbacks": true,
+    "RAM_swap_difference_from_old_measurements": "Current whole series12GiBcombined; historical9d57 series6GiBcombined. Do not mix cohorts."
+  },
+  "cohorts": {
+    "voluptuous": {
+      "order": "RFFR",
+      "n_per_role": 2,
+      "means_seconds": {
+        "release": 90.9838115000166,
+        "fixed": 87.56856235250598
+      },
+      "ranges_seconds": {
+        "release": [
+          90.57178191601997,
+          91.39584108401323
+        ],
+        "fixed": [
+          87.5216212910018,
+          87.61550341401016
+        ]
+      },
+      "fixed_over_release_ratio": 0.9624631119404137,
+      "percent_change": -3.7536888059586326,
+      "paired_ratios": [
+        0.9576105460920245,
+        0.9673598284203911
+      ]
+    },
+    "click": {
+      "order": "RFFR",
+      "n_per_role": 2,
+      "means_seconds": {
+        "release": 47.164908209000714,
+        "fixed": 58.19498740200652
+      },
+      "ranges_seconds": {
+        "release": [
+          46.81592402100796,
+          47.51389239699347
+        ],
+        "fixed": [
+          57.338266235019546,
+          59.05170856899349
+        ]
+      },
+      "fixed_over_release_ratio": 1.233861987902711,
+      "percent_change": 23.386198790271106,
+      "paired_ratios": [
+        1.206768449024137,
+        1.261359458429036
+      ]
+    }
+  },
+  "samples": [
+    {
+      "workload": "voluptuous",
+      "slot": "voluptuous-01-release",
+      "role": "release",
+      "series": "matched-series-r04",
+      "wall_seconds": 91.39584108401323,
+      "CLI_waited_child_CPU_seconds": null,
+      "source_commit": "44d779563578a32e24f8213fba96f43c6698ab43",
+      "wheel_sha256": "218516ae6e5ac86919d8bf43aa314d32a6008283dd982a33fa23c1442d7738c8",
+      "runtime_payload_count": 103,
+      "python": "3.12.14",
+      "tools": {
+        "mypy": "2.4.0",
+        "pyright": "1.1.414",
+        "black": "26.5.1",
+        "isort": "9.0.2",
+        "ruff": "0.16.10",
+        "pytest": "9.1.1"
+      },
+      "tracked_input_files": 41,
+      "generated_Python_files": 10,
+      "applications": 39,
+      "changed_files": 4,
+      "original_and_after_summary": "182 passed",
+      "original_and_after_returncode": 0,
+      "collected": 182,
+      "failed_ids": [],
+      "introduced_failed_ids": [],
+      "same_role_output_exact": true,
+      "owned_workers_closed": true,
+      "container_exit_code": 0,
+      "container_PID_after": 0,
+      "container_OOM": false,
+      "finished_utc": "2026-10-10T16:54:46.967233+00:00",
+      "whole_container_telemetry": {
+        "idle_min": 46.0,
+        "idle_mean": 74.60833333333333,
+        "under70_intervals": 15,
+        "intervals": 120,
+        "under70_percent": 12.5
+      },
+      "external_receipts_sha256": {
+        "slot-terminal.json": "73a0dda0e0c5e791c54196785f712f85bafecdce9ef55e4b343a2d6a89ba0e70",
+        "independent-native-readback.json": "c465f6e0ff899dd1922e35f7ab88467a2fcecfbde601b484ae09b65180dce3d5",
+        "prepared-context.json": "f68228af09a7945b5a0d24d3616b830db3078f273302cf5f00db80d54b413014",
+        "production-terminal.json": "649d5bba90c11ad3f6bbb8803eb89d73dbdf50cc0eb584fa2fcbe67fe8d61a4a",
+        "slot-binding.json": "ae91f258604a94e88c4a97fe20cb44fdec772ab50290b92e12b631e9197cef95",
+        "telemetry/terminal.json": "900cd910df45773e7b3029ec1be1ace31208dc4bd75c168683e4956cdf5f6aac"
+      },
+      "report_sha256": "c399ed9b6d356600e95155666cf2182cde15533bbc261a591413834c3ead6f6e",
+      "generated_source_payloads": 12
+    },
+    {
+      "workload": "voluptuous",
+      "slot": "voluptuous-02-fixed",
+      "role": "fixed",
+      "series": "matched-series-r04",
+      "wall_seconds": 87.5216212910018,
+      "CLI_waited_child_CPU_seconds": null,
+      "source_commit": "a6dc6ed4c75fa9c1b65aa9029f2a6361ec7dce77",
+      "wheel_sha256": "651223745a52155b6cccabaa4435f9ea75a3a937c4e64ac154ff2997443ece97",
+      "runtime_payload_count": 107,
+      "python": "3.12.14",
+      "tools": {
+        "mypy": "2.4.0",
+        "pyright": "1.1.414",
+        "black": "26.5.1",
+        "isort": "9.0.2",
+        "ruff": "0.16.10",
+        "pytest": "9.1.1"
+      },
+      "tracked_input_files": 41,
+      "generated_Python_files": 10,
+      "applications": 40,
+      "changed_files": 4,
+      "original_and_after_summary": "182 passed",
+      "original_and_after_returncode": 0,
+      "collected": 182,
+      "failed_ids": [],
+      "introduced_failed_ids": [],
+      "same_role_output_exact": true,
+      "owned_workers_closed": true,
+      "container_exit_code": 0,
+      "container_PID_after": 0,
+      "container_OOM": false,
+      "finished_utc": "2026-10-10T16:58:35.687533+00:00",
+      "whole_container_telemetry": {
+        "idle_min": 48.0,
+        "idle_mean": 74.88135593220339,
+        "under70_intervals": 12,
+        "intervals": 118,
+        "under70_percent": 10.169491525423728
+      },
+      "external_receipts_sha256": {
+        "slot-terminal.json": "6571c86b1900b4be2002954e8b49a9d87ccd78fc49c8b75df46011ba43d7846f",
+        "independent-native-readback.json": "71948ecea1d7a1fba7600a471ed8d2de35ddd16012b9336e004935fa02762054",
+        "prepared-context.json": "4c9f6d7f9aabb9db387599884cb0d162b106f6861185287e2a7066cc2bd1f942",
+        "production-terminal.json": "7d4292ad495e7e99b82ddf56faeb37c20fe3ba6b591fda1fc2a38c1df0100360",
+        "slot-binding.json": "737037d9aa7f8ba20805e5271f35825b5cc78b0fc8dff0019f736e0ef7c53712",
+        "telemetry/terminal.json": "3d21ffe3fa20605930f03c52e2bb48089cd05582f655dbdefce99a933ffdd053"
+      },
+      "report_sha256": "a8cf20998d099dfb411db2ca2e2c0db23072c1dbfa35bac4593a2b9fed9968da",
+      "generated_source_payloads": 12
+    },
+    {
+      "workload": "voluptuous",
+      "slot": "voluptuous-03-fixed",
+      "role": "fixed",
+      "series": "matched-series-r04",
+      "wall_seconds": 87.61550341401016,
+      "CLI_waited_child_CPU_seconds": null,
+      "source_commit": "a6dc6ed4c75fa9c1b65aa9029f2a6361ec7dce77",
+      "wheel_sha256": "651223745a52155b6cccabaa4435f9ea75a3a937c4e64ac154ff2997443ece97",
+      "runtime_payload_count": 107,
+      "python": "3.12.14",
+      "tools": {
+        "mypy": "2.4.0",
+        "pyright": "1.1.414",
+        "black": "26.5.1",
+        "isort": "9.0.2",
+        "ruff": "0.16.10",
+        "pytest": "9.1.1"
+      },
+      "tracked_input_files": 41,
+      "generated_Python_files": 10,
+      "applications": 40,
+      "changed_files": 4,
+      "original_and_after_summary": "182 passed",
+      "original_and_after_returncode": 0,
+      "collected": 182,
+      "failed_ids": [],
+      "introduced_failed_ids": [],
+      "same_role_output_exact": true,
+      "owned_workers_closed": true,
+      "container_exit_code": 0,
+      "container_PID_after": 0,
+      "container_OOM": false,
+      "finished_utc": "2026-10-10T17:01:42.235587+00:00",
+      "whole_container_telemetry": {
+        "idle_min": 48.0,
+        "idle_mean": 72.50833333333334,
+        "under70_intervals": 21,
+        "intervals": 120,
+        "under70_percent": 17.5
+      },
+      "external_receipts_sha256": {
+        "slot-terminal.json": "5c8eb71bbc3bbb5c929d4fa9c4c55371b29237d812d0e597b2ad208f7093fa11",
+        "independent-native-readback.json": "0cbaef029da2b3e0a1877d1363fec1f01546d939438ebe0e4a83f61a60ad7ac4",
+        "prepared-context.json": "fb565348885352c75903c3b5605486aa07cdaf0e863d860b0b16f0954499415f",
+        "production-terminal.json": "10425f30a5f294158fcf2a0762a3e312362d137094b68061f55ac21c5569410b",
+        "slot-binding.json": "bbd440e0ec44877f30bd1f784f62bb1c3f892e9556bf4895d979f7c204a48fc2",
+        "telemetry/terminal.json": "73992ac768c5e0ba118cbf700bd85264e4a3afe391a68762fccf6ea6044420c9"
+      },
+      "report_sha256": "2f94dd469a97114a99bcd8a4add010ab7dbaa9799aa940b189407bbe59203796",
+      "generated_source_payloads": 12
+    },
+    {
+      "workload": "voluptuous",
+      "slot": "voluptuous-04-release",
+      "role": "release",
+      "series": "matched-series-r04",
+      "wall_seconds": 90.57178191601997,
+      "CLI_waited_child_CPU_seconds": null,
+      "source_commit": "44d779563578a32e24f8213fba96f43c6698ab43",
+      "wheel_sha256": "218516ae6e5ac86919d8bf43aa314d32a6008283dd982a33fa23c1442d7738c8",
+      "runtime_payload_count": 103,
+      "python": "3.12.14",
+      "tools": {
+        "mypy": "2.4.0",
+        "pyright": "1.1.414",
+        "black": "26.5.1",
+        "isort": "9.0.2",
+        "ruff": "0.16.10",
+        "pytest": "9.1.1"
+      },
+      "tracked_input_files": 41,
+      "generated_Python_files": 10,
+      "applications": 39,
+      "changed_files": 4,
+      "original_and_after_summary": "182 passed",
+      "original_and_after_returncode": 0,
+      "collected": 182,
+      "failed_ids": [],
+      "introduced_failed_ids": [],
+      "same_role_output_exact": true,
+      "owned_workers_closed": true,
+      "container_exit_code": 0,
+      "container_PID_after": 0,
+      "container_OOM": false,
+      "finished_utc": "2026-10-10T17:05:41.055386+00:00",
+      "whole_container_telemetry": {
+        "idle_min": 42.0,
+        "idle_mean": 70.27868852459017,
+        "under70_intervals": 17,
+        "intervals": 122,
+        "under70_percent": 13.934426229508198
+      },
+      "external_receipts_sha256": {
+        "slot-terminal.json": "87abcb1a5ec473392df4b6f0de7b2e3b99e5004fb210fbd88aa2efa181b12e7d",
+        "independent-native-readback.json": "dbbeb88999b163566685dc68cdc6990d8763055a1a579781f90ce9d76daa8afc",
+        "prepared-context.json": "761f3f8b95d689b99b3cf4aebdbdff69147ccca34adee56b5e71f1700afc75b4",
+        "production-terminal.json": "590667c92af1103fe35069c9549d5e97abb1cb8968d2f887eaff771b2118136b",
+        "slot-binding.json": "738098f66963adc284fd4fba6a1a89d3dd4d46949b68589a3146f42dbbde9fb6",
+        "telemetry/terminal.json": "7a010f2b7e4454e6c6d5bef29dc120a6f80baf2441a9ddc93812e02736cde519"
+      },
+      "report_sha256": "ff65cadb9e55b5d839938c50fcd94542ed0aff63615e8184bcf20005bd5e1486",
+      "generated_source_payloads": 12
+    },
+    {
+      "workload": "click",
+      "slot": "click-01-release",
+      "role": "release",
+      "series": "matched-series-r04",
+      "wall_seconds": 47.51389239699347,
+      "CLI_waited_child_CPU_seconds": null,
+      "source_commit": "44d779563578a32e24f8213fba96f43c6698ab43",
+      "wheel_sha256": "218516ae6e5ac86919d8bf43aa314d32a6008283dd982a33fa23c1442d7738c8",
+      "runtime_payload_count": 103,
+      "python": "3.12.14",
+      "tools": {
+        "mypy": "1.20.0",
+        "pyright": "1.1.408",
+        "black": "26.5.1",
+        "isort": "9.0.2",
+        "ruff": "0.15.9",
+        "pytest": "9.1.1"
+      },
+      "tracked_input_files": 177,
+      "generated_Python_files": 17,
+      "applications": 4,
+      "changed_files": 3,
+      "original_and_after_summary": "24 failed, 2035 passed, 24 skipped, 31000 deselected, 1 xfailed",
+      "original_and_after_returncode": 1,
+      "collected": 2084,
+      "failed_ids": [
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test0- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test0- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test0-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test1- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test1- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test1-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test2- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test2- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test2-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test3- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test3- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test3-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test4- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test4- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test4-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test7- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test7- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test7-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test8- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test8- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test8-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test9- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test9- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test9-less]"
+      ],
+      "introduced_failed_ids": [],
+      "same_role_output_exact": true,
+      "owned_workers_closed": true,
+      "container_exit_code": 0,
+      "container_PID_after": 0,
+      "container_OOM": false,
+      "finished_utc": "2026-10-10T17:08:21.491810+00:00",
+      "whole_container_telemetry": {
+        "idle_min": 47.0,
+        "idle_mean": 71.21176470588236,
+        "under70_intervals": 22,
+        "intervals": 85,
+        "under70_percent": 25.88235294117647
+      },
+      "external_receipts_sha256": {
+        "slot-terminal.json": "c55b92aa4c67abc16235db863dc2f8deb5d691dbddcfc580eae65bfd6e3913c8",
+        "independent-native-readback.json": "c74469d59a188358832364ba3997c09e6d920f65ccf3ac3ac477ea9f493f7bea",
+        "prepared-context.json": "81b3e94ed31d2104b32d54e991d1d2039da2e6307d295c3ab1ca537e65b3307e",
+        "production-terminal.json": "e6e0d100fe205d8f0fc588a02a79c84739df972a14be15807c5e57d0cc4d9541",
+        "slot-binding.json": "4b4e4f3b3a26a6afd9fad299b6491e1a95c4ea041f87c56791d4f3ebe107a8a2",
+        "telemetry/terminal.json": "0bfca8b5ad908caf7037875b69fd0b3ba4a210ecc2d07948bb0a30915aa26e0c"
+      },
+      "report_sha256": "f82353186ab5276ea502a78abc45d27fc6df1126287ac9896f831e7e5c234fb7",
+      "generated_source_payloads": 18
+    },
+    {
+      "workload": "click",
+      "slot": "click-02-fixed",
+      "role": "fixed",
+      "series": "matched-series-r04",
+      "wall_seconds": 57.338266235019546,
+      "CLI_waited_child_CPU_seconds": null,
+      "source_commit": "a6dc6ed4c75fa9c1b65aa9029f2a6361ec7dce77",
+      "wheel_sha256": "651223745a52155b6cccabaa4435f9ea75a3a937c4e64ac154ff2997443ece97",
+      "runtime_payload_count": 107,
+      "python": "3.12.14",
+      "tools": {
+        "mypy": "1.20.0",
+        "pyright": "1.1.408",
+        "black": "26.5.1",
+        "isort": "9.0.2",
+        "ruff": "0.15.9",
+        "pytest": "9.1.1"
+      },
+      "tracked_input_files": 177,
+      "generated_Python_files": 17,
+      "applications": 5,
+      "changed_files": 3,
+      "original_and_after_summary": "24 failed, 2035 passed, 24 skipped, 31000 deselected, 1 xfailed",
+      "original_and_after_returncode": 1,
+      "collected": 2084,
+      "failed_ids": [
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test0- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test0- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test0-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test1- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test1- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test1-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test2- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test2- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test2-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test3- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test3- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test3-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test4- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test4- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test4-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test7- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test7- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test7-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test8- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test8- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test8-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test9- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test9- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test9-less]"
+      ],
+      "introduced_failed_ids": [],
+      "same_role_output_exact": true,
+      "owned_workers_closed": true,
+      "container_exit_code": 0,
+      "container_PID_after": 0,
+      "container_OOM": false,
+      "finished_utc": "2026-10-10T17:12:14.402590+00:00",
+      "whole_container_telemetry": {
+        "idle_min": 43.0,
+        "idle_mean": 70.4375,
+        "under70_intervals": 33,
+        "intervals": 96,
+        "under70_percent": 34.375
+      },
+      "external_receipts_sha256": {
+        "slot-terminal.json": "7b47944b2a31dc71bcb7ea3d96b6acc2f01d5686b2d8fd8609cd3e179259151d",
+        "independent-native-readback.json": "0a16fe91ebcb2cc18d8938ba1bdaa4da8f448029e8aeae5aec90e85b45e33eb1",
+        "prepared-context.json": "e599d622881077059e5cb96def852e62dae4fa677b9723a07386bf11325f7417",
+        "production-terminal.json": "7d4a7dfcd0990a6f74c517f232cc10b592c77bdaedaa1674e9401fdf95c55311",
+        "slot-binding.json": "a8345aac07c822bf819c1b0bf91c8aa81968021dbcfe1e66a2c1466ec9561ed5",
+        "telemetry/terminal.json": "c8b871136fbe33f1132d13b0953d41a70cfd6c7e470d2fde1fdcc2e55deb2290"
+      },
+      "report_sha256": "e924e73e372dff852828baadbba34c575b02d673b5f681cc6dd154871a06dd9c",
+      "generated_source_payloads": 18
+    },
+    {
+      "workload": "click",
+      "slot": "click-03-fixed",
+      "role": "fixed",
+      "series": "matched-series-r04",
+      "wall_seconds": 59.05170856899349,
+      "CLI_waited_child_CPU_seconds": null,
+      "source_commit": "a6dc6ed4c75fa9c1b65aa9029f2a6361ec7dce77",
+      "wheel_sha256": "651223745a52155b6cccabaa4435f9ea75a3a937c4e64ac154ff2997443ece97",
+      "runtime_payload_count": 107,
+      "python": "3.12.14",
+      "tools": {
+        "mypy": "1.20.0",
+        "pyright": "1.1.408",
+        "black": "26.5.1",
+        "isort": "9.0.2",
+        "ruff": "0.15.9",
+        "pytest": "9.1.1"
+      },
+      "tracked_input_files": 177,
+      "generated_Python_files": 17,
+      "applications": 5,
+      "changed_files": 3,
+      "original_and_after_summary": "24 failed, 2035 passed, 24 skipped, 31000 deselected, 1 xfailed",
+      "original_and_after_returncode": 1,
+      "collected": 2084,
+      "failed_ids": [
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test0- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test0- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test0-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test1- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test1- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test1-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test2- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test2- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test2-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test3- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test3- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test3-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test4- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test4- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test4-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test7- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test7- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test7-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test8- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test8- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test8-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test9- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test9- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test9-less]"
+      ],
+      "introduced_failed_ids": [],
+      "same_role_output_exact": true,
+      "owned_workers_closed": true,
+      "container_exit_code": 0,
+      "container_PID_after": 0,
+      "container_OOM": false,
+      "finished_utc": "2026-10-10T17:15:14.939696+00:00",
+      "whole_container_telemetry": {
+        "idle_min": 43.0,
+        "idle_mean": 69.44329896907216,
+        "under70_intervals": 29,
+        "intervals": 97,
+        "under70_percent": 29.896907216494846
+      },
+      "external_receipts_sha256": {
+        "slot-terminal.json": "bc6cc7ff87a2a4b38dbbfe44c08a7a65066187e77b8729acf16250f573425fca",
+        "independent-native-readback.json": "6039625763903e2255115dfe91c191bfcfa72c0e415d7347cd2ddd483bf3a000",
+        "prepared-context.json": "a82a4f6935902b78585ea1ea032ae004bf9e1fcd69e0ec6cf908814025cbc391",
+        "production-terminal.json": "034e5a5523180aedd6e9d286fc2ff7395fe0d26a0d0f7ff2652ef9b436b77884",
+        "slot-binding.json": "152695f679aa85bf200dd023f986b812b07463ee2abed332c65ab48294ad6d37",
+        "telemetry/terminal.json": "774b1e2d5e026e1cfdf84a1bc3e4f4ce54c7e4dc9f51a0622101ac0e6d9f100e"
+      },
+      "report_sha256": "35284a10d2d729248c057310bf777d995d5079864f8abd0436fb6e2a4db091e9",
+      "generated_source_payloads": 18
+    },
+    {
+      "workload": "click",
+      "slot": "click-04-release",
+      "role": "release",
+      "series": "matched-series-r05",
+      "wall_seconds": 46.81592402100796,
+      "CLI_waited_child_CPU_seconds": null,
+      "source_commit": "44d779563578a32e24f8213fba96f43c6698ab43",
+      "wheel_sha256": "218516ae6e5ac86919d8bf43aa314d32a6008283dd982a33fa23c1442d7738c8",
+      "runtime_payload_count": 103,
+      "python": "3.12.14",
+      "tools": {
+        "mypy": "1.20.0",
+        "pyright": "1.1.408",
+        "black": "26.5.1",
+        "isort": "9.0.2",
+        "ruff": "0.15.9",
+        "pytest": "9.1.1"
+      },
+      "tracked_input_files": 177,
+      "generated_Python_files": 17,
+      "applications": 4,
+      "changed_files": 3,
+      "original_and_after_summary": "24 failed, 2035 passed, 24 skipped, 31000 deselected, 1 xfailed",
+      "original_and_after_returncode": 1,
+      "collected": 2084,
+      "failed_ids": [
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test0- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test0- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test0-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test1- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test1- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test1-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test2- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test2- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test2-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test3- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test3- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test3-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test4- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test4- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test4-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test7- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test7- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test7-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test8- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test8- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test8-less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test9- less ]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test9- less]",
+        "tests/test_utils/test_echo_via_pager.py::test_echo_via_pager[test9-less]"
+      ],
+      "introduced_failed_ids": [],
+      "same_role_output_exact": true,
+      "owned_workers_closed": true,
+      "container_exit_code": 0,
+      "container_PID_after": 0,
+      "container_OOM": false,
+      "finished_utc": "2026-10-10T17:21:35.402698+00:00",
+      "whole_container_telemetry": {
+        "idle_min": 44.0,
+        "idle_mean": 72.9873417721519,
+        "under70_intervals": 13,
+        "intervals": 79,
+        "under70_percent": 16.455696202531644
+      },
+      "external_receipts_sha256": {
+        "slot-terminal.json": "3d09678ccc85b620612e2666db8ad609b17743a33da74d4cd4adac0d9744207f",
+        "independent-native-readback.json": "f6a7cba731d7e7e2c93755bcfac654047fff246be4333f8a34a7bda00e9c3e04",
+        "prepared-context.json": "52e791cf78f2196536dbdffc4ecb03acdea012df5d5ed8d22540648e95eebc13",
+        "production-terminal.json": "659608243b4b163431ccbfe38732310b6a5adbb2acfffe21bab1d477768cbea5",
+        "slot-binding.json": "827aa969d51b76f8fd2c3bda8d67bafe8dba8c3c5ee9a239675bd56396594840",
+        "telemetry/terminal.json": "3cb8623c8de2e60b61908f53fadc31dca7bad3f5bfa489d9aaf6aa7ce54ead03"
+      },
+      "report_sha256": "00db86deb770cdbd85977fe2b382274ec4ae65ceb005496f31347fa838910338",
+      "generated_source_payloads": 18
+    }
+  ],
+  "click_baseline_failure_payloads": {
+    "record_count_each_phase": 24,
+    "visible_E_lines_and_headers_equal_before_after_every_sample": true,
+    "observed_payload_sha256": "11e4734348cc2ffa088b3eadc47e43ca16b50bd8b6f03026fc34607b002511ce",
+    "hidden_state": "Only displayed native diagnostics compared; no claim about undisplayed object state or upstream CI."
+  },
+  "pending": {
+    "rich_actual_samples": 0,
+    "rich_reason": "Bounded settling/strict preproduct preflight failures retained separately; no Rich production sample replaced. Rich complete cohort and fresh full release gates pending."
+  },
+  "provenance": {
+    "handoff": "20261010T161505Z-codex-1946-warning-guard-validation",
+    "root_independent_receipts_sha256": {
+      "matched-series-r04/root-voluptuous-cohort-readback.json": "e37c511bc8b09d8c5a5dee362c21032161482fb49f27387aa9b2c1d92ec7aba7",
+      "matched-series-r04/root-click-cohort-readback.json": "dd5984a62b056b5fce3e79b13b24bbb7cdc201c394ec2f76db4ad4914fe34a4d",
+      "matched-series-r04/root-click-failure-payload-readback.json": "5aa4683cf445637e5f5a821a103050cddfa8d42d5284b3348f70242694ae8f62"
+    },
+    "source_json_sha256": "ab602350c21f34459f4820d1122a3f160b66d4b3caed0ff4f21a10e13cc6bfba",
+    "plan_r04_sha256": "3e903df1f0c32597c222ee836b19054f432adcc49e3a745bbd03fdb9efca4a03",
+    "plan_r05_sha256": "897603f7e92a42438f155ffda7d969841d565abf0563eda23eb771ce62acf034"
+  },
+  "limits": [
+    "n=2 per role/workload; no confidence interval, isolated-host, general speedup or restoration claim.",
+    "Per-CLI waited-child CPU unavailable. Whole-container native CPU/idle context includes setup, tests, postproof and owned VM; it is not CLI CPU attribution.",
+    "Source metadata1.946 does not establish completed release matrix/corpus/exactCI certification.",
+    "Known baseline Click failures preserved with exact counts,IDs and displayed payloads; no failure waiver.",
+    "No source/artifact/output identity from later source changes may inherit these measurements.",
+    "Old9d57 eight-sample record and rejected a53 partial141campaign remain separate historical evidence."
+  ]
+}

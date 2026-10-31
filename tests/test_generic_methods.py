@@ -154,7 +154,11 @@ def test_constrained_generic_methods_preserve_dispatch_and_reject_mixed_argument
     source = _ordinary_source(method_kind)
     path = _project(tmp_path, source)
     rendered, helper = _extract(path, oracle, "Calculator", method_kind)
-    explicit = [argument for argument in helper.args.args if argument.arg not in {"self", "cls"}]
+    holder = helper.args.args[-1]
+    assert holder.arg == "_towel_owner" and _annotation(holder.annotation) == "object"
+    explicit = [
+        argument for argument in helper.args.args[:-1] if argument.arg not in {"self", "cls"}
+    ]
     assert len(explicit) == 2
     binder = _annotation(explicit[0].annotation)
     assert _annotation(explicit[1].annotation) == binder
@@ -167,12 +171,13 @@ def test_constrained_generic_methods_preserve_dispatch_and_reject_mixed_argument
     )
     valid = rendered + (
         f"\n{indent}def valid({receiver}) -> None:\n"
-        f"{indent}    {via}{helper.name}(1, 2)\n"
-        f'{indent}    {via}{helper.name}("a", "b")\n'
+        f"{indent}    {via}{helper.name}(1, 2, None)\n"
+        f'{indent}    {via}{helper.name}("a", "b", None)\n'
     )
     assert oracle.check(str(path), valid) == CheckSuccess()
     invalid = rendered + (
-        f"\n{indent}def invalid({receiver}) -> None:\n" f'{indent}    {via}{helper.name}(1, "x")\n'
+        f"\n{indent}def invalid({receiver}) -> None:\n"
+        f'{indent}    {via}{helper.name}(1, "x", None)\n'
     )
     rejected = oracle.check(str(path), invalid)
     assert isinstance(rejected, CheckSuccess) and rejected.errors

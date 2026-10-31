@@ -61,6 +61,7 @@ from typing import (
 
 from ..canonical_ast import canonical_dump
 from .bounded_cache import BoundedCache
+from .compiler_literals import immutable_literal_value, literal_fragment_transfer_supported
 from .lexical_scopes import (
     Comprehension,
     NestedScope,
@@ -127,6 +128,7 @@ def instantiation_mismatch(
         tuple(sorted(site_names)),
         preamble_length,
         returns_variables,
+        literal_fragment_transfer_supported(),
     )
     known = _VERDICTS.get(key)
     if known is not None:
@@ -160,6 +162,7 @@ _VERDICTS: BoundedCache[
         Tuple[Tuple[str, str], ...],
         Tuple[str, ...],
         int,
+        bool,
         bool,
     ],
     _Verdict,
@@ -199,10 +202,9 @@ def _instantiation_mismatch(
     call = _extract_call(call_statement, helper.name)
     if call is None:
         return "call shape"
-    parameters = [argument.arg for argument in helper.args.args]
+    parameters = [argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)]
     if (
-        helper.args.posonlyargs
-        or helper.args.kwonlyargs
+        helper.args.kwonlyargs
         or helper.args.vararg
         or helper.args.kwarg
         or len(parameters) != len(call.args)
@@ -249,7 +251,9 @@ class _BindingForm(NamedTuple):
     binders: Mapping[str, str]
 
 
-_EXPECTED_FORMS: "BoundedCache[Tuple[str, Tuple[str, ...]], _BindingForm]" = BoundedCache(16_384)
+_EXPECTED_FORMS: "BoundedCache[Tuple[str, Tuple[str, ...], bool], _BindingForm]" = BoundedCache(
+    16_384
+)
 """The binding form of a block, by structural id and its site's function-scope names.
 
 A block is checked against every call that reproduces it, once per pair it
@@ -264,7 +268,11 @@ def _expected_binding_form(
     block: Sequence[ast.stmt], site_function_names: FrozenSet[str]
 ) -> _BindingForm:
     """``_binding_form`` of a copy of ``block``, memoized on its structure and its site's names."""
-    key = (structural_id(block), tuple(sorted(site_function_names)))
+    key = (
+        structural_id(block),
+        tuple(sorted(site_function_names)),
+        literal_fragment_transfer_supported(),
+    )
     cached = _EXPECTED_FORMS.get(key)
     if cached is None:
         copied = [copy.deepcopy(statement) for statement in block]
@@ -287,7 +295,34 @@ def _binding_form(
     speller = _BindingSpeller(site_function_names, fragment_is_site=fragment_is_site)
     speller.fragment(statements)
     module = ast.Module(body=statements, type_ignores=[])
+    if literal_fragment_transfer_supported():
+        _ConstantStringFormats().visit(module)
     return _BindingForm(module, canonical_dump(module), dict(speller.binders))
+
+
+class _ConstantStringFormats(ast.NodeTransformer):
+    """No-spec formatting of an exact literal string keeps that same object.
+
+    Normalize only copied proof syntax, preserving individual JoinedStr
+    chunks and their order. Conversions, format specs and dynamic values
+    remain intact; no user-defined formatting operation is erased.
+    """
+
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
+        self.generic_visit(node)
+        node.values = [
+            (
+                value.value
+                if isinstance(value, ast.FormattedValue)
+                and value.conversion == -1
+                and value.format_spec is None
+                and isinstance(value.value, ast.Constant)
+                and type(value.value.value) is str
+                else value
+            )
+            for value in node.values
+        ]
+        return node
 
 
 def _alpha_normalize(module: ast.Module) -> ast.Module:
@@ -307,7 +342,8 @@ def observable_renamings(block: Sequence[ast.stmt], renamed: AbstractSet[str]) -
     """The binders among ``renamed`` whose spelling the running block could observe.
 
     The helper runs a site's block with the template's spelling of the names
-    the block binds. A local's name reaches the program in exactly these ways:
+    the block binds. Within the supported contract, a local's spelling matters
+    in these ways:
 
     - ``UnboundLocalError`` names it when a read, an augmented assignment or
       a ``del`` finds it unbound, and ``NameError`` names it when a closure
@@ -317,14 +353,9 @@ def observable_renamings(block: Sequence[ast.stmt], renamed: AbstractSet[str]) -
       scope that may run while it is unbound, is observable.
     - A ``global`` or ``nonlocal`` declaration makes the name another
       scope's variable, not a spelling: renaming it writes a different one.
-    - A frame (``locals()``, ``vars()``, ``dir()``, ``sys._getframe()``,
-      ``eval``) lists its locals by name; such blocks, and functions that
-      read their frame outside the block, are declined before this is asked
-      (``requires_original_frame``, ``frame_read_outside_block``).
-    - A ``def`` or ``class`` stores its name in the object it creates, and a
-      lambda's parameter names are its signature; a block whose created
-      objects can be seen other than by calling them where they stand is
-      declined before this is asked (``created_object_escapes``).
+    - A callable's parameter names are its keyword-call interface. Moving
+      a created callable can also change the cells its closure captures;
+      ``created_object_escapes`` checks those obligations separately.
 
     When every read of every renamed binder is definitely bound, and none is
     declared, the renaming is unobservable. Whether a read is definitely
@@ -332,8 +363,8 @@ def observable_renamings(block: Sequence[ast.stmt], renamed: AbstractSet[str]) -
     they are evaluated, ``and``/``or``, conditional expressions and chained
     comparisons may skip their later operands, loops may run zero times and
     repeat, a handler or ``finally`` may start anywhere in its ``try``, and
-    only ``contextlib.suppress`` among context managers is taken to swallow
-    an exception, as the definite-assignment analysis takes it.
+    any context manager may swallow an exception, as the definite-assignment
+    analysis assumes too.
     """
     names = frozenset(renamed)
     if not names:
@@ -380,12 +411,6 @@ def _irrefutable(pattern: ast.AST) -> bool:
     if isinstance(pattern, ast.MatchOr):
         return any(_irrefutable(alternative) for alternative in pattern.patterns)
     return False
-
-
-def _suppresses(expression: ast.AST) -> bool:
-    callee = expression.func if isinstance(expression, ast.Call) else expression
-    name = callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", "")
-    return name == "suppress"
 
 
 _TRY_STATEMENTS: Tuple[type, ...] = tuple(
@@ -494,14 +519,16 @@ class _UnboundReads:
             self.run(node.orelse, fails)
             return holds & fails
         if isinstance(node, (ast.With, ast.AsyncWith)):
+            entry = state
             for item in node.items:
                 state = self._expression(item.context_expr, state)
                 if item.optional_vars is not None:
                     state = self._target(item.optional_vars, state)
-            after = self.run(node.body, state)
-            if any(_suppresses(item.context_expr) for item in node.items):
-                return state - _names_unbound_anywhere(node.body)
-            return after
+            self.run(node.body, state)
+            # Unknown __exit__/__aexit__ behavior can leave the with early.
+            # Earlier managers can suppress later entry/target failures too.
+            # Inspect body reads, but export no newly established bindings.
+            return entry - _names_unbound_anywhere([node])
         if isinstance(node, _TRY_STATEMENTS):
             return self._try(node, state)
         if isinstance(node, ast.Match):
@@ -812,6 +839,21 @@ class _Reducer(ast.NodeTransformer):
     def visit_Name(self, node: ast.Name) -> ast.AST:
         argument = self._argument_for(node.id)
         return node if argument is None else self._copied(argument)
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
+        # A certified literal carrier has only immutable compiler literals;
+        # selecting its fixed slot has no effects or discarded computations.
+        if isinstance(node.value, ast.Name) and isinstance(node.ctx, ast.Load):
+            argument = self._argument_for(node.value.id)
+            if (
+                isinstance(argument, ast.Tuple)
+                and immutable_literal_value(argument)
+                and isinstance(node.slice, ast.Constant)
+                and type(node.slice.value) is int
+                and 0 <= node.slice.value < len(argument.elts)
+            ):
+                return self._copied(argument.elts[node.slice.value])
+        return self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         function = node.func

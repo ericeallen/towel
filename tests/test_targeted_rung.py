@@ -12,180 +12,205 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""After a refused ordinary signature, ``Any`` goes only where the checker's errors point.
+"""Keep caller refinements and checker-reported result alternatives distinct.
 
-The rung that made every annotation ``Any`` came next and, under strict mypy,
-was refused wherever the helper's ``Any`` result was returned (packaging's
-``_matches_literal``/``contains`` and ``__eq__`` pairs, declined). The targeted
-rung keeps every other annotation and the return as precise as they were: the
-one parameter whose narrowing the call boundary dropped becomes ``Any``, and a
-helper returning ``NotImplemented`` returns ``bool | Any``.
+The 2026-09-27 decisions in docs/DECISIONS.md supersede this file's former
+expectation that a lost Optional refinement could be hidden by an Any input.
+That proposal must now be declined before signature search. By contrast,
+mypy's Any alternative for returned NotImplemented belongs in the first
+signature. A deliberately narrower staged signature still exercises allowed
+fallback rendering and comment preservation, without disabling a safety guard.
 """
 
 from __future__ import annotations
 
 import ast
 from pathlib import Path
+import subprocess
+import sys
+import textwrap
 
-from tests.typed_fixtures import TypedOutcome, apply_one, requires_mypy
+import pytest
+
+from tests.typed_fixtures import CountingMypy, STRICT, apply_one, requires_mypy
+from towel.type_inference import CheckSuccess
+from towel.unification.models import RefactoringProposal
+from towel.unification.refactor_engine import UnificationRefactorEngine
+
+OPTIONAL_CONSUMER = textwrap.dedent("""
+    class Version:
+        def __init__(self, parts: tuple[int, ...], pre: bool = False) -> None:
+            self.parts = parts
+            self.is_prerelease = pre
 
 
-def _targeted_after_the_precise_rungs(outcome: TypedOutcome) -> None:
-    """The ordinary signature was refused first, then any generic candidate, and no every-Any rung ran.
+    def matches_bounds_only(bounds: tuple[int, int], version: Version) -> bool:
+        return bounds[0] <= version.parts[0] < bounds[1]
 
-    The targeted rung follows the rungs that lose no information; the generic
-    candidates the sites offer are tried before it and may cost a check each.
+
+    def _coerce(text: str) -> Version | None:
+        return Version((int(text),)) if text.isdigit() else None
+
+
+    class VersionRange:
+        def __init__(self, bounds: tuple[int, int]) -> None:
+            self._bounds = bounds
+
+        def _arbitrary_active(self) -> bool:
+            return self._bounds[0] == 0
+
+        def _matches_literal(self, text: str) -> bool:
+            parsed = _coerce(text)
+            if parsed is None:
+                return self._arbitrary_active()
+            return matches_bounds_only(self._bounds, parsed)
+
+        def contains(self, item: Version, effective_pre: bool | None) -> bool:
+            if effective_pre is False and item.is_prerelease:
+                return False
+            return matches_bounds_only(self._bounds, item)
+    """).lstrip()
+
+
+COMPARISONS = textwrap.dedent("""
+    class LowerBound:
+        def __init__(self, version: int, inclusive: bool) -> None:
+            self.version = version
+            self.inclusive = inclusive
+
+        def __eq__(self, other: object) -> bool:
+            if not isinstance(other, LowerBound):
+                # Let the other operand handle an unrelated type.
+                return NotImplemented
+            return self.version == other.version and self.inclusive == other.inclusive  # both fields
+
+        def __hash__(self) -> int:
+            return hash((self.version, self.inclusive))
+
+
+    class UpperBound:
+        def __init__(self, version: int, inclusive: bool) -> None:
+            self.version = version
+            self.inclusive = inclusive
+
+        def __eq__(self, other: object) -> bool:
+            if not isinstance(other, UpperBound):
+                # Let the other operand handle an unrelated type.
+                return NotImplemented
+            return self.version == other.version and self.inclusive == other.inclusive  # both fields
+
+        def __hash__(self) -> int:
+            return hash((self.version, self.inclusive))
+    """).lstrip()
+
+
+def _assert_comparison_behavior(after: str) -> None:
+    """Check direct dunder results and Python's reflected-comparison fallback."""
+    program = """
+values = [LowerBound(1, True), LowerBound(1, False), LowerBound(2, True),
+          UpperBound(1, True), UpperBound(1, False), UpperBound(2, True), object()]
+for left in values[:-1]:
+    for right in values:
+        direct = left.__eq__(right)
+        print(direct is NotImplemented, direct, left == right)
+"""
+    observed = [
+        subprocess.run(
+            [sys.executable, "-B", "-c", source + program],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        for source in (COMPARISONS, after)
+    ]
+    assert observed[0].stdout == observed[1].stdout
+    assert observed[0].stderr == observed[1].stderr == ""
+
+
+@requires_mypy
+@pytest.mark.parametrize("typed", [False, True])
+def test_a_lost_optional_refinement_is_not_hidden_by_any(tmp_path: Path, typed: bool) -> None:
+    """The original strict project is valid; a Boolean cannot refine a separate Version|None.
+
+    This formerly expected the Version parameter to become Any. The approved
+    boundary policy requires refusal in typed and untyped discovery instead.
     """
-    checked = outcome.checked_helpers
-    assert len(checked) >= 2, checked
-    assert "Any" not in checked[0], checked
-    assert all("_TowelT" in signature for signature in checked[1:-1]), checked
-    assert not any(
-        signature.count(": Any") == signature.count(": ") for signature in checked
-    ), checked
+    path = tmp_path / "module.py"
+    path.write_text(OPTIONAL_CONSUMER)
+    (tmp_path / "pyproject.toml").write_text(STRICT)
+    checker = CountingMypy()
+    try:
+        assert checker.check_project({str(path): OPTIONAL_CONSUMER}) == CheckSuccess()
+        engine = UnificationRefactorEngine(
+            min_lines=2, reuse_existing_functions=False, type_oracle=checker if typed else None
+        )
+        assert engine.analyze_file(str(path)) == []
+        assert all(
+            "extracted_func" not in source
+            for sources in checker.checked
+            for source in sources.values()
+        )
+        assert path.read_text() == OPTIONAL_CONSUMER
+    finally:
+        checker.close()
 
 
 @requires_mypy
-def test_the_parameter_whose_narrowing_the_call_dropped_alone_becomes_any(
-    tmp_path: Path,
-) -> None:
-    """packaging's ``_matches_literal``/``contains``: ``parsed is None`` narrowed the value passed on."""
-    outcome = apply_one(
-        tmp_path,
-        """
-        class Version:
-            def __init__(self, parts: tuple[int, ...], pre: bool = False) -> None:
-                self.parts = parts
-                self.is_prerelease = pre
-
-
-        def matches_bounds_only(bounds: tuple[int, int], version: Version) -> bool:
-            return bounds[0] <= version.parts[0] < bounds[1]
-
-
-        def _coerce(text: str) -> Version | None:
-            return Version((int(text),)) if text.isdigit() else None
-
-
-        class VersionRange:
-            def __init__(self, bounds: tuple[int, int]) -> None:
-                self._bounds = bounds
-
-            def _arbitrary_active(self) -> bool:
-                return self._bounds[0] == 0
-
-            def _matches_literal(self, text: str) -> bool:
-                parsed = _coerce(text)
-                if parsed is None:
-                    return self._arbitrary_active()
-                return matches_bounds_only(self._bounds, parsed)
-
-            def contains(self, item: Version, effective_pre: bool | None) -> bool:
-                if effective_pre is False and item.is_prerelease:
-                    return False
-                return matches_bounds_only(self._bounds, item)
-        """,
-        pick="_matches_literal and contains",
-    )
+def test_notimplemented_has_its_result_alternative_on_the_first_check(tmp_path: Path) -> None:
+    """Preserve the observed result alternative without erasing any input types."""
+    outcome = apply_one(tmp_path, COMPARISONS, pick="__eq__ and __eq__")
     assert outcome.error is None, outcome.error
-    assert outcome.signature() == (
-        "(self, __param_0: bool, __param_1: _typing.Callable[[], bool], __param_2: _typing.Any)"
-        " -> bool"
+    assert outcome.prospective_checks == 1, outcome.checked_helpers
+    assert len(outcome.checked_helpers) == 1, outcome.checked_helpers
+    helper = outcome.helper()
+    assert helper.returns is not None
+    spelled = (
+        helper.returns.value
+        if isinstance(helper.returns, ast.Constant)
+        else ast.unparse(helper.returns)
     )
-    _targeted_after_the_precise_rungs(outcome)
-
-
-@requires_mypy
-def test_a_helper_returning_notimplemented_returns_its_type_or_any(tmp_path: Path) -> None:
-    """packaging's ``LowerBound``/``UpperBound.__eq__``: mypy allows the constant only in a dunder."""
-    outcome = apply_one(
-        tmp_path,
-        """
-        class LowerBound:
-            def __init__(self, version: int, inclusive: bool) -> None:
-                self.version = version
-                self.inclusive = inclusive
-
-            def __eq__(self, other: object) -> bool:
-                if not isinstance(other, LowerBound):
-                    return NotImplemented
-                return self.version == other.version and self.inclusive == other.inclusive
-
-            def __hash__(self) -> int:
-                return hash((self.version, self.inclusive))
-
-
-        class UpperBound:
-            def __init__(self, version: int, inclusive: bool) -> None:
-                self.version = version
-                self.inclusive = inclusive
-
-            def __eq__(self, other: object) -> bool:
-                if not isinstance(other, UpperBound):
-                    return NotImplemented
-                return self.version == other.version and self.inclusive == other.inclusive
-
-            def __hash__(self) -> int:
-                return hash((self.version, self.inclusive))
-        """,
-        pick="__eq__ and __eq__",
-    )
-    assert outcome.error is None, outcome.error
-    returns = outcome.helper().returns
-    assert returns is not None
-    spelled = returns.value if isinstance(returns, ast.Constant) else ast.unparse(returns)
     assert spelled == "bool | _typing.Any", outcome.signature()
-    _targeted_after_the_precise_rungs(outcome)
+    assert "Any" not in ast.unparse(helper.args), outcome.signature()
+    assert outcome.module is not None
+    _assert_comparison_behavior(outcome.module)
 
 
 @requires_mypy
-def test_a_later_rung_carries_the_comments_of_the_moved_code(tmp_path: Path) -> None:
-    """The targeted rung, rendered after the ordinary one was refused, keeps the block's comments."""
-    outcome = apply_one(
-        tmp_path,
-        """
-        class Version:
-            def __init__(self, parts: tuple[int, ...], pre: bool = False) -> None:
-                self.parts = parts
-                self.is_prerelease = pre
+def test_a_targeted_return_fallback_carries_the_comments_of_the_moved_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stage a narrow return to test rendering after a real, repairable rejection.
 
+    Normal construction already retains NotImplemented's Any alternative, as
+    the preceding test requires. Only its return annotation is staged here;
+    discovery, refinement guards, input types and final checking stay active.
+    The real checker must reject that annotation and accept the targeted union.
+    """
+    infer = UnificationRefactorEngine._infer_helper_annotations
 
-        def matches_bounds_only(bounds: tuple[int, int], version: Version) -> bool:
-            return bounds[0] <= version.parts[0] < bounds[1]
+    def stage_narrow_return(
+        engine: UnificationRefactorEngine, proposal: RefactoringProposal
+    ) -> None:
+        infer(engine, proposal)
+        assert proposal.extracted_function.returns is not None
+        assert "Any" in ast.unparse(proposal.extracted_function.returns)
+        proposal.extracted_function.returns = ast.Name(id="bool", ctx=ast.Load())
+        proposal.observed_return_any = False
 
-
-        def _coerce(text: str) -> Version | None:
-            return Version((int(text),)) if text.isdigit() else None
-
-
-        class VersionRange:
-            def __init__(self, bounds: tuple[int, int]) -> None:
-                self._bounds = bounds
-
-            def _arbitrary_active(self) -> bool:
-                return self._bounds[0] == 0
-
-            def _matches_literal(self, text: str) -> bool:
-                parsed = _coerce(text)
-                if parsed is None:
-                    # Nothing parsed: the arbitrary-equality flag decides.
-                    return self._arbitrary_active()
-                return matches_bounds_only(self._bounds, parsed)  # the parsed bounds
-
-            def contains(self, item: Version, effective_pre: bool | None) -> bool:
-                if effective_pre is False and item.is_prerelease:
-                    # Nothing parsed: the arbitrary-equality flag decides.
-                    return False
-                return matches_bounds_only(self._bounds, item)  # the parsed bounds
-        """,
-        pick="_matches_literal and contains",
-    )
+    monkeypatch.setattr(UnificationRefactorEngine, "_infer_helper_annotations", stage_narrow_return)
+    checker = CountingMypy()
+    outcome = apply_one(tmp_path, COMPARISONS, pick="__eq__ and __eq__", oracle=checker)
     assert outcome.error is None, outcome.error
-    _targeted_after_the_precise_rungs(outcome)
+    assert outcome.prospective_checks >= 2, outcome.checked_helpers
+    assert outcome.checked_helpers[0].endswith(" -> bool"), outcome.checked_helpers
+    assert "Any" not in outcome.checked_helpers[0], outcome.checked_helpers
+    assert "bool | _typing.Any" in outcome.checked_helpers[-1], outcome.checked_helpers
+    assert all("Any" not in signature.split(" -> ")[0] for signature in outcome.checked_helpers)
     assert outcome.module is not None
     helper = outcome.helper()
     written = outcome.module.splitlines()[helper.lineno - 1 : helper.end_lineno]
     text = "\n".join(written)
-    assert "__param_2: _typing.Any" in text, text
-    assert "# Nothing parsed: the arbitrary-equality flag decides." in text, text
-    assert "# the parsed bounds" in text, text
+    assert "# Let the other operand handle an unrelated type." in text, text
+    assert "# both fields" in text, text
+    _assert_comparison_behavior(outcome.module)

@@ -201,13 +201,20 @@ def test_clean_unannotated_run_never_disables_for_prospective_errors(
     for _ in range(2):
         with pytest.raises(RefactoringError, match="[Tt]ype (errors|check failed)"):
             engine.apply_refactoring(str(path), proposal)
-    # The second application renders the same variant against the same
-    # project, so a refusal is answered as the first check answered it; a
-    # checker that could not run answered nothing, and is asked again, each
-    # time with the unchanged file as well, which it checks, so the failure is
-    # the candidate's.
-    prospective = 4 if failure else 1
-    assert len(oracle.checks) == 1 + prospective, "The baseline and the prospective change"
+    # Each submitted variant needs a fresh checker answer, including an
+    # unchanged retry. A checker failure additionally checks the unchanged
+    # project to establish that the failure belongs to the candidate.
+    prospective = 4 if failure else 2
+    assert len(oracle.checks) == 1 + prospective, "The baseline and both fresh attempts"
+    assert oracle.checks[0] == {str(path): original}
+    attempted = oracle.checks[1]
+    assert attempted[str(path)] != original and "extracted_func" in attempted[str(path)]
+    expected = (
+        [oracle.checks[0], attempted, oracle.checks[0], attempted, oracle.checks[0]]
+        if failure
+        else [oracle.checks[0], attempted, attempted]
+    )
+    assert oracle.checks == expected
     assert "disabling" not in caplog.text
     assert oracle.inferences == 0
     assert path.read_text() == original and engine.change_log == ()
@@ -350,7 +357,10 @@ def test_library_copied_directory_keeps_original_consumers_and_oracle_ownership(
                 str(source), str(output), max_iterations=1, progress="none"
             )
             assert sum(count for count, _ in results.values()) == 1
-            assert "return __extracted_func_0(value)" in (output / "program.py").read_text()
+            assert (
+                "return __extracted_func_0(_towel_arguments[0][0], "
+                "_towel_arguments.pop())" in (output / "program.py").read_text()
+            )
             # The checker reads the run's stage under the original's names,
             # and the stage itself is excluded from the project it checks.
             excluded = check.call_args_list[1].kwargs["excluded_paths"]
@@ -379,7 +389,9 @@ def test_cli_refactors_over_original_errors_with_types_and_no_types_leaves_helpe
     project.mkdir()
     (project / "mypy.ini").write_text("[mypy]\nstrict = true\nfiles = program.py, consumer.py\n")
     source = project / "program.py"
-    original = "total = value + 2".join(_source().rsplit("total = value + 1", 1))
+    # Distinct nonrepeated constants permit a complete body; repeated 2 in
+    # the old partial fixture would require an unsafe frame split.
+    original = "total = value + 10".join(_source().rsplit("total = value + 1", 1))
     source.write_text(original)
     (project / "consumer.py").write_text('broken: int = "wrong"\n')
     command = [

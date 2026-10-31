@@ -20,8 +20,9 @@ function, a class, an import alias, ``__file__``, or a builtin that only one
 module rebinds (by definition, star import, a local of its function, or its
 ``__builtins__``), including one only the ancestor class's module rebinds.
 A module name must reach the helper from its caller rather than resolve in
-the helper's own module. A builtin cannot: no helper takes one as a
-parameter, so a pair whose modules may disagree about it is declined.
+the helper's own module. By default a helper takes no builtin parameter,
+so cross-module builtin reads decline. ``BUILTIN_CALLER_LOOKUPS`` also runs
+with the explicit parameterization mode to verify caller lookup thunks.
 
 As in ``test_hostile_battery``, ``TRANSFORMED`` pins which packages the
 current engine rewrites, so a lost cross-file extraction fails as loudly as
@@ -41,10 +42,10 @@ binding it; and ``xf7fz_late_toplevel_module_in_package``, whose ``pkg/c.py``
 imports a module of ``pkg`` as a top-level name, so runs as a top-level
 module itself.
 
-The ``r9dc_`` packages are the round-4 audit's decorator cases: a plain
-wrapper rebound by another module before its importer runs, declined; and
-star imports, one whose provider's ``__all__`` cannot bind the decorators,
-extracted, and two that do bind an instrumenting ``staticmethod``, declined.
+The ``r9dc_`` packages are the round-4 audit's decorator cases. Ordinary
+wrappers and star imports remain in the equivalence battery; body-recompiling
+decorators are in ``REFLECTION_CASES`` and require extraction and valid syntax
+without promising runtime preservation.
 
 ``r9sr_inline_snapshot`` holds the fourth audit's reproducer: two tests that
 differ in the literal each passes to ``snapshot()``. A stub of inline-snapshot
@@ -69,6 +70,13 @@ import ``shop`` without the module hatch, or the subpackage setuptools,
 leaves out of the wheel. Their modules left out may borrow from the ones
 that ship, never the reverse.
 
+``IMPORT_REFUSALS`` retains historical packages whose imports do not directly
+establish that a helper host has loaded. Importing a new package member can
+overwrite an ordinary parent attribute, and member-from imports do not prove
+the member is a module. ``EXPLICIT_HOST_IMPORTS`` runs copied variants with
+direct host loads so the original binding and typing defects still exercise
+extraction while historical inputs remain unchanged.
+
 A package in ``REFUSED`` holds a file written for a newer Python than any
 Towel supports, stored as ``.pynew`` (``tests.hostile_execution``): Towel
 must refuse the run before writing anything, naming that file, since what it
@@ -87,6 +95,7 @@ yet fixed: a strict expected failure whose transformed state is not pinned.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 import re
 import shutil
@@ -102,28 +111,34 @@ from tests.test_cli_integration import invoke
 
 CASES = Path(__file__).parent / "hostile_crossfile"
 
-TRANSFORMED = {
-    "xf3_same_named_local_function",
-    "xf4_same_named_class",
-    "xf5_dunder_file",
-    "xf6_same_alias_different_import",
-    "xf7_docstring_import",
-    "xf8_helper_name_collision",
-    "xf9_same_named_base_class",
-    "xf10_reuse_existing_function",
+# Each of these formerly read a builtin in the borrowed helper's host module.
+# Default extraction now declines. The explicit mode preserves every ordinary
+# runtime/scope/public-name observation; extraction also needs a proved host
+# load, supplied by the copied variants when IMPORT_REFUSALS applies.
+BUILTIN_CALLER_LOOKUPS = {
+    "r9sb_lambda_capture_across_modules",
     "xf11_package_init_reaches_back",
     "xf12_cycle_through_package_init",
-    "xf14_script_with_leading_statement",
+    "xf21_builtin_shadowed_in_third_module",
+    "xf7fz_binding_x_class_level_name",
+    "xf7fz_grammar_u0474_for_target_prebound",
+    "xf7fz_grammar_u0624_for_target_prebound",
+    "xf7fz_grammar_u1209_for_target_prebound",
+    "xf7n_host_the_wheel_leaves_out",
+    "xf7n_subpackage_the_wheel_leaves_out",
+    "xf9_same_named_base_class",
+    "xf9xi_type_only_import_of_a_missing_module",
+}
+
+HISTORICAL_EXTRACTIONS = {
+    "xf1792_ci_strict_any",
+    "xf1792_typed_shared_helper_comments",
+    "xf1792_excluded_probe_import",
+    "xf10_reuse_existing_function",
     "xf15_ancestor_in_another_module",
     "xf16_consumer_outside_target_owns_helper_name",
     "xf20_builtin_shadowed_in_ancestor_module",
-    "xf21_builtin_shadowed_in_third_module",
-    "xf24_relative_import_climbs_elsewhere",
-    "xf25_relative_import_in_the_same_package",
     "xf26_relative_import_ancestor_in_another_package",
-    "xf27_registration_decorator_in_host",
-    "xf28_registration_decorator_in_reused_module",
-    "xf29_type_checking_block_with_branches",
     # The host's new binding for its annotations is private, so no module that
     # star-imports it takes a typing name in place of its own Any or Callable:
     # a sibling (xf30), the package's __init__ (xf31), a module outside the
@@ -135,8 +150,6 @@ TRANSFORMED = {
     # its code (round-3 audit, P1-1).
     "xf7c_rebinding_enclosing_function_beside_a_twin_in_another_module",
     "xf7t_import_order_is_registration_order",
-    "xf7n_host_the_wheel_leaves_out",
-    "xf7n_subpackage_the_wheel_leaves_out",
     # The round-3 audit's P1 cases, typed and across modules, each now
     # extracted soundly by the fix of its defect (and, typed, accepted by
     # the strict checker its pyproject.toml configures).
@@ -153,36 +166,59 @@ TRANSFORMED = {
     "xf7fz_typeguard2_import_alias_flag_both",
     "xf7fz_extra_typed_binder_message_mypy",
     "xf7fz_extra_typed_binder_message_pyright",
-    "xf7fz_grammar_u0474_for_target_prebound",
-    "xf7fz_grammar_u0624_for_target_prebound",
-    "xf7fz_grammar_u1209_for_target_prebound",
     # The round-3 audit's families (xf7fz_<family>_<case>): a sample of the
     # cross-module cases the audit found sound, every one transformed.
-    "xf7fz_binding_x_class_level_name",
-    "xf7fz_binding_x_dunder_file",
-    "xf7fz_builtins_x_shadow_in_b",
-    "xf7fz_modules_b_imports_a",
     "xf7fz_modules_init_hosts",
-    "xf7fz_modules_rel_import_in_block",
     "xf7fz_modules_script_main_guard",
-    "xf7fz_modules_three_modules_cluster",
     # Two modules pytest does not rewrite share an assert: either may host it.
     "xf7d_asserts_shared_by_modules_rewritten_alike",
-    # A type-only import of a module the tree lacks never runs, so its file
-    # still shares helpers (round-4 audit, p2_typechecking_missing).
-    "xf9xi_type_only_import_of_a_missing_module",
-    # Round-4 P1-03 across modules: the lambda keeps its own parameter.
-    "r9sb_lambda_capture_across_modules",
     # Round-4 audit P2-02: a star import whose provider's __all__ cannot bind
     # staticmethod or property left both unknown.
     "r9dc_star_import_that_cannot_bind_a_decorator",
-    # Round-4 audit: each inline-snapshot call keeps its place, and the code
-    # before it is still shared.
-    "r9sr_inline_snapshot",
+}
+
+# Historical packages whose existing imports do not prove the candidate host
+# loaded before the new helper import. A package member import may read an
+# existing ordinary attribute, and a new submodule load would replace it.
+# xf12 additionally encounters partially initialized ancestors; their later
+# imports cannot establish readiness. These cases still run in both builtin
+# modes, and retain runtime, scope and public-name assertions below.
+IMPORT_REFUSALS = {
+    "r9sb_lambda_capture_across_modules",
+    "xf12_cycle_through_package_init",
+    "xf14_script_with_leading_statement",
+    "xf21_builtin_shadowed_in_third_module",
+    "xf24_relative_import_climbs_elsewhere",
+    "xf25_relative_import_in_the_same_package",
+    "xf27_registration_decorator_in_host",
+    "xf28_registration_decorator_in_reused_module",
+    "xf3_same_named_local_function",
+    "xf4_same_named_class",
+    "xf5_dunder_file",
+    "xf6_same_alias_different_import",
+    "xf7_docstring_import",
+    "xf7fz_binding_x_class_level_name",
+    "xf7fz_binding_x_dunder_file",
+    "xf7fz_builtins_x_shadow_in_b",
+    "xf7fz_grammar_u0474_for_target_prebound",
+    "xf7fz_grammar_u0624_for_target_prebound",
+    "xf7fz_grammar_u1209_for_target_prebound",
+    "xf7fz_modules_b_imports_a",
+    "xf7fz_modules_rel_import_in_block",
+    "xf7fz_modules_three_modules_cluster",
+    "xf7n_host_the_wheel_leaves_out",
+    "xf7n_subpackage_the_wheel_leaves_out",
+    "xf8_helper_name_collision",
+    "xf9_same_named_base_class",
+    "xf9xi_type_only_import_of_a_missing_module",
 }
 
 # Packages the engine must leave alone, with the reason a comment in the fixture.
 REJECTED = {
+    *BUILTIN_CALLER_LOOKUPS,
+    *IMPORT_REFUSALS,
+    # TYPE_CHECKING is mutable: this host's guarded branches may execute.
+    "xf29_type_checking_block_with_branches",
     "xf13_import_time_effects",
     "xf17_builtin_shadowed_in_borrower",
     "xf18_builtin_shadowed_by_star_import",
@@ -202,20 +238,17 @@ REJECTED = {
     # import; towel dry refuses the run outright
     # (test_cli_refuses_a_top_level_module_inside_the_package).
     "xf7fz_late_toplevel_module_in_package",
-    # A test module's assert would move to a module pytest does not rewrite,
-    # and the AssertionError pytest reports would lose its explanation.
-    "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite",
     # Round-4 audit P1-04 across modules: each block holds its function's only
     # binding of total, read on the early return (moves_only_binding).
     "xf9bd_only_binding_across_modules",
-    # Round-4 audit P1-07: a plain wrapper that a setup module rebinds to an
-    # instrumenting decorator before its importer runs.
-    "r9dc_decorator_rebound_by_another_module",
-    # Star imports that do bind an instrumenting staticmethod: one from a
-    # provider with no __all__, one from a provider part way through an
-    # import cycle, before it binds the __all__ that leaves it out.
-    "r9dc_star_import_binds_an_instrumenting_decorator",
-    "r9dc_star_import_of_a_module_part_way_through_a_cycle",
+}
+
+REFLECTION_CASES: Dict[str, str] = {
+    "r9dc_decorator_rebound_by_another_module": "a rebound decorator recompiles function bodies",
+    "r9dc_star_import_binds_an_instrumenting_decorator": "an imported decorator recompiles bodies",
+    "r9dc_star_import_of_a_module_part_way_through_a_cycle": "an import cycle exposes a recompiler",
+    "r9sr_inline_snapshot": "snapshot calls inspect their caller's source position",
+    "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite": "pytest rewrites only one module",
 }
 
 REFUSED: Dict[str, str] = {
@@ -227,8 +260,59 @@ REFUSED: Dict[str, str] = {
 }
 """Packages whose run Towel refuses before writing anything, with the file the refusal names."""
 
+# Preserve the original import, checker and runtime fixtures. A proved host
+# load does not also prove that a split frame can transfer owned locals on
+# exceptional paths, or that every retained local is bound at block exit.
+OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "r9dc_star_import_that_cannot_bind_a_decorator": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf10_reuse_existing_function": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf1792_typed_shared_helper_comments": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7d_asserts_shared_by_modules_rewritten_alike": "retained local is not definitely bound on every block exit",
+    "xf7fz_extra_typed_binder_message_mypy": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_extra_typed_binder_message_pyright": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_grammar_t11094_semicolon": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_modules_init_hosts": "retained local is not definitely bound on every block exit",
+    "xf7fz_modules_script_main_guard": "retained local is not definitely bound on every block exit",
+    "xf7fz_typeguard2_from_compat_true_both": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_typeguard2_from_compat_true_late_use_both": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_typeguard2_from_compat_true_late_use_mypy": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_typeguard2_from_compat_true_mypy": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_typeguard2_import_alias_flag_both": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_typeguard2_import_alias_flag_mypy": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+}
+EXPLICIT_OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "xf21_builtin_shadowed_in_third_module": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf24_relative_import_climbs_elsewhere": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf25_relative_import_in_the_same_package": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf27_registration_decorator_in_host": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_binding_x_class_level_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_binding_x_dunder_file": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_builtins_x_shadow_in_b": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_grammar_u0624_for_target_prebound": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_grammar_u1209_for_target_prebound": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_modules_b_imports_a": "retained local is not definitely bound on every block exit",
+    "xf7fz_modules_rel_import_in_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7fz_modules_three_modules_cluster": "retained local is not definitely bound on every block exit",
+    "xf7n_host_the_wheel_leaves_out": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7n_subpackage_the_wheel_leaves_out": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf9xi_type_only_import_of_a_missing_module": "retained local is not definitely bound on every block exit",
+}
+CALLER_LOOKUP_OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "xf11_package_init_reaches_back": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+}
+REFLECTION_OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "r9dc_star_import_binds_an_instrumenting_decorator": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r9dc_star_import_of_a_module_part_way_through_a_cycle": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+}
+TRANSFORMED = HISTORICAL_EXTRACTIONS - OWNERSHIP_REFUSALS.keys()
+REJECTED |= OWNERSHIP_REFUSALS.keys()
+
 TYPED = frozenset(
     {
+        "xf1792_ci_strict_any",
+        "xf1792_typed_shared_helper_comments",
+        "xf1792_excluded_probe_import",
         # The round-3 audit's typed cases: refactored with the strict checker
         # the fixture's pyproject.toml configures, as towel dry does by default.
         "xf7fz_misc_typed_for_prebound_mypy",
@@ -250,8 +334,11 @@ TYPED = frozenset(
 )
 """Packages run with the checker their ``pyproject.toml`` configures."""
 
-WITHOUT_CROSS_MODULE = TYPED | {"xf9up_newer_syntax_hides_hand_decoration", "r9sr_inline_snapshot"}
-"""Packages run without ``--cross-module``: every typed one so far, as the audit ran them, the
+WITHOUT_CROSS_MODULE = (TYPED - {"xf1792_typed_shared_helper_comments"}) | {
+    "xf9up_newer_syntax_hides_hand_decoration",
+    "r9sr_inline_snapshot",
+}
+"""Packages run without ``--cross-module``: the earlier typed fixtures, as the audit ran them, the
 default-mode refusal, and the inline-snapshot fixture, whose defect the audit found without it."""
 
 KNOWN_DEFECTS: Dict[str, str] = {}
@@ -281,15 +368,46 @@ def _modules(root: Path) -> list[str]:
 @pytest.mark.parametrize(
     "case",
     with_known_defects(
-        sorted(path.name for path in CASES.iterdir() if path.is_dir()), KNOWN_DEFECTS
+        sorted(
+            path.name
+            for path in CASES.iterdir()
+            if path.is_dir() and path.name not in REFLECTION_CASES
+        ),
+        KNOWN_DEFECTS,
     ),
 )
 def test_directory_refactoring_preserves_program_output(case: str) -> None:
+    _check_directory_program_output(case, parameterize_builtins=False)
+
+
+def _check_directory_program_output(
+    case: str,
+    *,
+    parameterize_builtins: bool,
+    explicit_imports: tuple[tuple[str, str], ...] = (),
+) -> None:
     with tempfile.TemporaryDirectory(prefix="towel-hostile-xf-") as directory:
         before = Path(directory) / "before"
         after = Path(directory) / "after"
         copy_fixture_tree(CASES / case, before)
         copy_fixture_tree(CASES / case, after)
+        for root in (before, after):
+            for relative, module in explicit_imports:
+                _add_leading_module_import(root / relative, module)
+            if explicit_imports and case in EXPLICIT_COMMON_IMPORTS:
+                # The copied grammar variant spells the byte-identical
+                # common modules' six exports. A runtime star can overwrite
+                # an early helper, a separate refusal from the binder bug.
+                for name in ("a", "b"):
+                    path = root / "pkg" / f"{name}.py"
+                    source = path.read_text()
+                    assert source.count("from .common import *") == 1
+                    path.write_text(
+                        source.replace(
+                            "from .common import *",
+                            "from .common import LOG, G, tr, Box, Ctx, bump",
+                        )
+                    )
         if case in REFUSED:
             with pytest.raises(UnparsedProgramError, match=re.escape(f"  {REFUSED[case]}: line ")):
                 refactor_package(after / "pkg", cross_module=case not in WITHOUT_CROSS_MODULE)
@@ -302,6 +420,7 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
             cross_module=case not in WITHOUT_CROSS_MODULE,
             typed=case in TYPED,
             file_finisher=scopes,
+            parameterize_builtins=parameterize_builtins,
         )
         transformed = _python_files(after) != _python_files(before)
         assert transformed == (sum(applied for applied, _ in results.values()) > 0)
@@ -313,14 +432,134 @@ def test_directory_refactoring_preserves_program_output(case: str) -> None:
             modules = _modules(before)
             assert module_faces(after, modules) == module_faces(before, modules)
         if case not in KNOWN_DEFECTS:
+            ordinary_refusal = (
+                case in EXPLICIT_OWNERSHIP_REFUSALS
+                if explicit_imports
+                else (
+                    case in CALLER_LOOKUP_OWNERSHIP_REFUSALS
+                    if parameterize_builtins
+                    else case in OWNERSHIP_REFUSALS
+                )
+            )
             # Pinned only once the defect is fixed: a fix that declines the
             # package must show as an XPASS, not fail here as expected.
             assert (
-                results or case in REJECTED
+                results or case in REJECTED or ordinary_refusal
             ), "Each fixture must exercise a real cross-file extraction"
-            assert transformed == (case in TRANSFORMED), (
-                "rejected" if not transformed else "transformed"
-            )
+            assert transformed == (
+                not ordinary_refusal
+                and (
+                    bool(explicit_imports)
+                    or case in TRANSFORMED
+                    or (
+                        parameterize_builtins
+                        and case in BUILTIN_CALLER_LOOKUPS
+                        and case not in IMPORT_REFUSALS
+                    )
+                )
+            ), ("rejected" if not transformed else "transformed")
+
+
+@pytest.mark.parametrize("case", sorted(BUILTIN_CALLER_LOOKUPS))
+def test_caller_lookup_mode_preserves_cross_module_program_output(case: str) -> None:
+    _check_directory_program_output(case, parameterize_builtins=True)
+
+
+# Keep the original fixtures as regression evidence. These copied variants
+# explicitly load the host before the borrower's definitions, so the original
+# binding, grammar, registration and packaging fixes still exercise extraction.
+EXPLICIT_HOST_IMPORTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "r9sb_lambda_capture_across_modules": (("pkg/quotes.py", "pkg.orders"),),
+    "xf3_same_named_local_function": (("pkg/b.py", "pkg.a"),),
+    "xf4_same_named_class": (("pkg/b.py", "pkg.a"),),
+    "xf5_dunder_file": (("pkg/b.py", "pkg.a"),),
+    "xf6_same_alias_different_import": (("pkg/b.py", "pkg.a"),),
+    "xf7_docstring_import": (("pkg/b.py", "pkg.a"),),
+    "xf8_helper_name_collision": tuple((f"pkg/{name}.py", "pkg.a") for name in "bcde"),
+    "xf21_builtin_shadowed_in_third_module": (("pkg/b.py", "pkg.a"), ("pkg/c.py", "pkg.a")),
+    "xf24_relative_import_climbs_elsewhere": (("pkg/x/a.py", "pkg.b"),),
+    "xf25_relative_import_in_the_same_package": (("pkg/x/b.py", "pkg.x.a"),),
+    "xf27_registration_decorator_in_host": (("pkg/beta.py", "pkg.alpha"),),
+    "xf28_registration_decorator_in_reused_module": (("pkg/beta.py", "pkg.alpha"),),
+    "xf7fz_binding_x_class_level_name": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_binding_x_dunder_file": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_builtins_x_shadow_in_b": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_grammar_u0474_for_target_prebound": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_grammar_u0624_for_target_prebound": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_grammar_u1209_for_target_prebound": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_modules_b_imports_a": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_modules_rel_import_in_block": (("pkg/b.py", "pkg.a"),),
+    "xf7fz_modules_three_modules_cluster": (("pkg/b.py", "pkg.a"), ("pkg/c.py", "pkg.a")),
+    "xf7n_host_the_wheel_leaves_out": (("pkg/src/shop/_devtools.py", "shop.stats"),),
+    "xf7n_subpackage_the_wheel_leaves_out": (("pkg/src/shop/devtools/dump.py", "shop.stats"),),
+    "xf9_same_named_base_class": (
+        ("pkg/one/revoke.py", "pkg.one.introspect"),
+        ("pkg/two/access.py", "pkg.one.introspect"),
+        ("pkg/two/request.py", "pkg.one.introspect"),
+    ),
+    "xf9xi_type_only_import_of_a_missing_module": (("pkg/b.py", "pkg.a"),),
+}
+
+EXPLICIT_COMMON_IMPORTS = frozenset(
+    {
+        "xf7fz_grammar_u0474_for_target_prebound",
+        "xf7fz_grammar_u0624_for_target_prebound",
+        "xf7fz_grammar_u1209_for_target_prebound",
+    }
+)
+
+
+def _add_leading_module_import(path: Path, module: str) -> None:
+    source = path.read_text()
+    tree = ast.parse(source)
+    position = tree.body[0].lineno - 1 if tree.body else 0
+    for index, statement in enumerate(tree.body):
+        if (
+            index == 0
+            and isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        ) or (
+            isinstance(statement, ast.ImportFrom)
+            and statement.level == 0
+            and statement.module == "__future__"
+        ):
+            position = statement.end_lineno or statement.lineno
+        else:
+            break
+    lines = source.splitlines(keepends=True)
+    lines.insert(position, f"import {module} as _loaded_host\n")
+    path.write_text("".join(lines))
+
+
+@pytest.mark.parametrize("case", sorted(EXPLICIT_HOST_IMPORTS))
+def test_explicit_host_load_keeps_the_original_cross_module_regression_active(case: str) -> None:
+    _check_directory_program_output(
+        case,
+        parameterize_builtins=case in BUILTIN_CALLER_LOOKUPS,
+        explicit_imports=EXPLICIT_HOST_IMPORTS[case],
+    )
+
+
+@pytest.mark.parametrize("case", sorted(REFLECTION_CASES))
+def test_instrumentation_does_not_veto_directory_extraction(tmp_path: Path, case: str) -> None:
+    root = tmp_path / "project"
+    copy_fixture_tree(CASES / case, root)
+    scopes = ScopeWatch()
+    results = refactor_package(
+        root / "pkg",
+        cross_module=case not in WITHOUT_CROSS_MODULE,
+        file_finisher=scopes,
+        parameterize_builtins=True,
+    )
+    applied = sum(applied for applied, _ in results.values())
+    if case in REFLECTION_OWNERSHIP_REFUSALS:
+        assert applied == 0, REFLECTION_OWNERSHIP_REFUSALS[case]
+    else:
+        assert applied > 0, REFLECTION_CASES[case]
+    assert scopes.found == []
+    for path in (root / "pkg").rglob("*.py"):
+        compile(path.read_bytes(), str(path), "exec")
 
 
 def test_cli_refuses_a_top_level_module_inside_the_package(tmp_path: Path) -> None:

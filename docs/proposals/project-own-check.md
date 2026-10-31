@@ -1,11 +1,19 @@
 # Checking a project the way its own CI checks it
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 Status: proposal, 2026-09-23. Not scheduled. For 1.772 the owner chose a
 differential baseline instead: typed mode proceeds on a project whose
 baseline has errors, and rejects only a candidate that adds one (see
 `docs/DECISIONS.md`). This proposal would make Towel's check agree with the
 project's own. It builds on the differential baseline and does not replace
 it.
+
+**October 10 status:** general checker/environment integration remains deferred
+in prepared, unpublished 1.946. Literal GitHub mypy strict-policy discovery is
+already implemented; it does not reproduce arbitrary tox/nox/pre-commit commands,
+all targets and flags, or CI environments. The study below keeps its original
+source and environment scope. See the [current deferred groups](README.md#deferred-groups).
 
 ## The problem
 
@@ -36,9 +44,17 @@ several):
 | The CI checks only stubs, never the implementation | 2 |
 | A CI-only flag, a different checker (ty), Python-version pins | 1 each |
 
-The corpus harness now installs projects' typing dependencies and pinned
-checkers, which removes the second row. A defect in Towel's pyright session
-behind two further disagreements is being fixed separately.
+The corpus harness now adds projects' missing typing dependencies and selects
+pinned checkers. It preserves dependencies already installed for tests, so this
+does not by itself reproduce every project's locked environment. The next-version
+corpus found one such mismatch in Blinker: pytest 9.1.1 contains syntax its mypy
+Python 3.9 target cannot parse. The manifest now pins pytest 8.3.5 and
+pytest-asyncio 1.0.0 from that project's lockfile. With that pair, its declared
+mypy and Pyright checks, Pyright's package completeness check, all 25 tests, and
+Towel's default typed invocation pass (the latter makes no changes). This is a
+specific environment correction, not an implementation of this proposal's
+general CI discovery. A defect in Towel's pyright session behind two further
+disagreements was addressed separately.
 
 ## What the project's own check is
 

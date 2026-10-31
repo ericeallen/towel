@@ -179,10 +179,7 @@ def _reference_requires_original_frame(block: Sequence[ast.AST]) -> bool:
         NO_ALIASES,
         _has_comprehension_assignment,
         _is_aliased_super_call,
-        _is_frame_relative_call,
-        _is_warning_call,
         has_external_loop_control,
-        is_namespace_access_call,
     )
 
     if has_external_loop_control(block) or _has_comprehension_assignment(block):
@@ -193,12 +190,8 @@ def _reference_requires_original_frame(block: Sequence[ast.AST]) -> bool:
                 return True
             if isinstance(node, ast.comprehension) and node.is_async:
                 return True
-            if isinstance(node, ast.Call) and _is_warning_call(node, NO_ALIASES):
-                return True
             if isinstance(node, ast.Call):
-                if is_namespace_access_call(node) or _is_aliased_super_call(node, NO_ALIASES):
-                    return True
-                if _is_frame_relative_call(node):
+                if _is_aliased_super_call(node, NO_ALIASES):
                     return True
     return False
 

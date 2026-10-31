@@ -49,11 +49,32 @@ from .annotation_imports import (
     words_of,
 )
 from .block_comments import excluded_lines, weave_comments
+from .argument_ownership import (
+    argument_handoff_fits,
+    render_argument_handoff,
+    verify_argument_handoff,
+)
+from .profitability import worthwhile_helper
+from ..formatting import checked, formatting_repeatability
+from ..canonical_ast import canonical_dump
 from .class_private import is_class_private, mangled, mangling_classes, mangling_prefix
 from .engine_state import HelperNameClaims
-from .exceptions import ProjectScanLimitError, RefactoringError, UntypeableExtraction
-from .import_graph import ImportTimeCode, TypeCheckingGuards, fails_run_by_path, runs_as_script
-from .insertion import reindent
+from .exceptions import (
+    ProjectScanLimitError,
+    RefactoringError,
+    TypeRejectedExtraction,
+    UntypeableExtraction,
+)
+from .import_graph import (
+    ImportTimeCode,
+    TypeCheckingGuards,
+    _import_statements,
+    fails_run_by_path,
+    future_imports_are_standard,
+    inert_function_definition,
+    runs_as_script,
+)
+from .insertion import early_helper_line, reindent
 from .splicing import splice_block, whole_lines
 from .models import (
     AppliedChange,
@@ -67,7 +88,13 @@ from ..coverage_config import CoverageExclusion
 from ..project_layout import find_project_root
 from towel.changes import StaleSource, ChangePlan
 from ..source_text import read_source
+from ..formatting import format_at_indentation
 
+from .extraction_policy import (
+    overlaps_protected,
+    protected_definitions,
+    require_protected_definitions_unchanged,
+)
 from .reuse import ExistingFunctionReuse
 from .annotation_ladder import Hearing, Rejection, Verified
 from .annotation_wiring import HelperAnnotationWiring
@@ -98,6 +125,10 @@ class Materialization(
 ):
     """Materialization methods of the engine; see the module docstring."""
 
+    # Helper signatures the type checker accepted and refused since the run began.
+    _signatures_verified: int = 0
+    _signatures_refused: int = 0
+
     def apply_refactoring(self, file_path: str, proposal: RefactoringProposal) -> str:
         """
         Apply a refactoring proposal to a file.
@@ -127,6 +158,11 @@ class Materialization(
     def apply_refactoring_multi_file(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render without writing or mutating caller-owned proposal ASTs.
 
+        Consume a proposal accepted by this implementation's analysis. This
+        API does not validate arbitrary proposal bodies or provide serialized
+        interchange between implementations; reanalyze with the implementation
+        that will apply the result. Source digests detect project-byte changes.
+
         The first application establishes the run's complete original type
         baseline before inference or materialization. Later applications keep
         that policy until ``begin_refactoring_run`` starts another run. A
@@ -149,14 +185,25 @@ class Materialization(
         finally:
             self._helper_name_counters = counters
 
-    def _render(self, node: ast.AST) -> str:
-        """The source text inserted for a generated node, formatted when a formatter is set."""
+    def _render(
+        self, node: ast.AST, file_path: str, prefix: str = "", *, preserve_ast: bool = False
+    ) -> str:
+        """Render a generated node using its destination file's formatting policy."""
         source = ast.unparse(node)
-        if self.snippet_formatter is None:
-            return source
-        return self.snippet_formatter(source)
+        return self._format_snippet(source, file_path, prefix, preserve_ast=preserve_ast)
 
-    def _helper_text(self, proposal: RefactoringProposal, node: ast.AST) -> str:
+    def _format_snippet(
+        self, source: str, file_path: str, prefix: str, *, preserve_ast: bool
+    ) -> str:
+        factory = self.snippet_formatter_for_file
+        formatter = factory(self._origin_of(file_path)) if factory else self.snippet_formatter
+        if formatter is None:
+            return source
+        if preserve_ast and formatting_repeatability(formatter) is None:
+            formatter = checked(formatter)
+        return format_at_indentation(formatter, source, prefix)
+
+    def _helper_text(self, proposal: RefactoringProposal, node: ast.AST, prefix: str = "") -> str:
         """The helper's text: ``node`` rendered with the comments its sites' blocks carried.
 
         ``node`` is the helper, or a module ending with it. The comments are
@@ -165,12 +212,14 @@ class Materialization(
         not used: the helper is then inserted as rendered, where each
         directive stands beside the code it was written for.
         """
+        preserve_ast = any(r.argument_handoff is not None for r in proposal.replacements)
         if not proposal.helper_comments.carried:
-            return self._render(node)
-        woven = weave_comments(node, proposal.extracted_function, proposal.helper_comments)
-        if self.snippet_formatter is None:
-            return woven.text
-        formatted = self.snippet_formatter(woven.text)
+            return self._render(node, proposal.file_path, prefix, preserve_ast=preserve_ast)
+        helper = node.body[-1] if isinstance(node, ast.Module) else node
+        woven = weave_comments(node, helper, proposal.helper_comments)
+        formatted = self._format_snippet(
+            woven.text, proposal.file_path, prefix, preserve_ast=preserve_ast
+        )
         return formatted if woven.keeps_directives(formatted) else woven.text
 
     def _materialize_refactoring(self, proposal: RefactoringProposal) -> Dict[str, str]:
@@ -185,21 +234,41 @@ class Materialization(
         """
         # Materialization owns its ASTs; callers may reuse or inspect the proposal.
         proposal = copy.deepcopy(proposal)
+        if proposal.reused_function is None:
+            host = self._parsed_host(proposal.file_path)
+            if self._oldest_python_for(proposal.file_path, host) < (3, 8):
+                arguments = proposal.extracted_function.args
+                arguments.args = arguments.posonlyargs + arguments.args
+                arguments.posonlyargs = []
         self._infer_helper_annotations(proposal)
         check_types = self._active_type_oracle() is not None
         counters = dict(self._helper_name_counters)
         hearing = Hearing(self._judge_for(proposal))
+        offered = False
+        fully_judged = check_types
         for variant in self._annotation_ladder(proposal, check_types, hearing):
             outcome = self._attempt(variant, counters, check_types)
+            if check_types:
+                self._count_signature(outcome)
             if isinstance(outcome, Verified):
                 return outcome.files
+            offered = True
+            fully_judged = fully_judged and bool(outcome.errors)
             hearing.refused(variant, outcome)
         settled = hearing.settled_by()
         if settled is not None:
             raise UntypeableExtraction(settled.reason, settled.detail)
+        refusal = TypeRejectedExtraction if offered and fully_judged else RefactoringError
         if proposal.reused_function is not None:
-            raise RefactoringError("Reusing the existing function introduces project type errors")
-        raise RefactoringError("Every helper annotation variant introduces project type errors")
+            raise refusal("Reusing the existing function introduces project type errors")
+        raise refusal("Every helper annotation variant introduces project type errors")
+
+    def _count_signature(self, outcome: "Verified | Rejection") -> None:
+        """Count one helper signature the type checker judged, for the run's report."""
+        if isinstance(outcome, Verified):
+            self._signatures_verified += 1
+        else:
+            self._signatures_refused += 1
 
     def _attempt(
         self, variant: RefactoringProposal, counters: Dict[str, int], check_types: bool
@@ -214,13 +283,10 @@ class Materialization(
         # from the original helper name.
         rendered = copy.deepcopy(variant)
         try:
+            self._append_argument_holder(rendered)
             files = self._materialize_once(rendered)
             errors = (
-                self._project_errors(
-                    files, rendered.extracted_function.name, self._change_shape(rendered)
-                )
-                if check_types
-                else ()
+                self._project_errors(files, self._change_shape(rendered)) if check_types else ()
             )
         except Exception:
             del self._change_log[mark:]
@@ -236,12 +302,62 @@ class Materialization(
             files,
         )
 
+    def _append_argument_holder(self, proposal: RefactoringProposal) -> None:
+        """Extend only the owned rendering copy, after signature inference/ladder selection."""
+        if not any(
+            replacement.argument_handoff is not None for replacement in proposal.replacements
+        ):
+            return
+        if proposal.reused_function is not None:
+            raise RefactoringError("An existing function cannot receive an ownership holder")
+        helper = proposal.extracted_function
+        for replacement in proposal.replacements:
+            if replacement.argument_handoff is not None:
+                original = "".join(self._source_lines(replacement.file_path or proposal.file_path))
+                if not verify_argument_handoff(
+                    replacement.argument_handoff, original, replacement.node, helper
+                ):
+                    raise RefactoringError(
+                        "Argument ownership certificate does not match the original source"
+                    )
+        if not argument_handoff_fits(helper, self.unifier.max_parameters):
+            raise RefactoringError("The helper cannot add a final ownership parameter")
+        self._append_holder_parameter(helper)
+
     def _materialize_once(self, proposal: RefactoringProposal) -> Dict[str, str]:
         """Render one proposal into modified sources (see ``_materialize_refactoring``)."""
+        if proposal.reused_function is not None:
+            reused = proposal.reused_function
+            source = "".join(self._source_lines(reused.file_path))
+            definitions = protected_definitions(source, self._parse_source(source))
+            protected = tuple(definition.line_range for definition in definitions)
+            if overlaps_protected(reused.line_range, protected) or any(
+                definition.ancestry == (reused.name,) for definition in definitions
+            ):
+                raise RefactoringError("Cannot reuse a function marked # towel: no-extract")
+        if _shared_module_helper(proposal):
+            if proposal.insert_into_class or proposal.insert_into_function:
+                raise RefactoringError("A shared helper must be available at module scope")
+            tree = self._parse_source("".join(self._source_lines(proposal.file_path)))
+            if not future_imports_are_standard(tree, Path(proposal.file_path), self.import_graph):
+                raise RefactoringError(
+                    "A future import can run before the shared helper is available"
+                )
+            if _runtime_star_imports(tree):
+                raise RefactoringError("A star import can overwrite an early shared helper")
+            if proposal.reused_function is not None:
+                self._require_early_reused_helper(proposal)
         if proposal.helper_type_declarations and (
             proposal.reused_function is not None or proposal.insert_into_function is not None
         ):
             raise RefactoringError("Type declarations require a fresh module or class helper")
+        helper = self._prepare_helper_interface(proposal)
+        if (
+            self.skip_trivial_helpers
+            and proposal.reused_function is None
+            and not worthwhile_helper(helper, self._profitability_sites(proposal))
+        ):
+            raise RefactoringError("The helper interface outweighs its shared logic")
         replacements_by_file: Dict[str, List[Replacement]] = {}
         for repl in proposal.replacements:
             file_path = repl.file_path or proposal.file_path
@@ -265,6 +381,37 @@ class Materialization(
         else:
             self._verify_helper_call_arity(modified_files, naming.final_name, proposal.method_kind)
         return modified_files
+
+    def _require_early_reused_helper(self, proposal: RefactoringProposal) -> None:
+        """An existing shared helper must precede operations that could request it early.
+
+        Unlike a fresh helper, the user's existing definition is not moved or
+        given new annotations. Only an already inert module prefix proves its
+        availability while its module is partially initialized.
+        """
+        reused = proposal.reused_function
+        if reused is None:
+            raise RefactoringError("An existing helper needs its source definition")
+        source = "".join(self._source_lines(proposal.file_path))
+        tree = self._parse_source(source)
+        position = early_helper_line(source.splitlines(keepends=True), tree)
+        postponed = _postpones_annotations(source)
+        for statement in tree.body:
+            if (statement.end_lineno or statement.lineno) <= position:
+                continue
+            if isinstance(statement, ast.Pass) or (
+                isinstance(statement, ast.Assign)
+                and isinstance(statement.value, ast.Constant)
+                and all(isinstance(target, ast.Name) for target in statement.targets)
+            ):
+                continue
+            if not isinstance(statement, ast.FunctionDef) or not inert_function_definition(
+                statement, postponed=postponed
+            ):
+                break
+            if statement.name == reused.name and statement.lineno == reused.line_range[0]:
+                return
+        raise RefactoringError("An existing shared helper is unavailable before reentrant imports")
 
     def _settle_helper_name(
         self, proposal: RefactoringProposal, related_paths: List[str]
@@ -309,7 +456,13 @@ class Materialization(
         receiver_name = proposal.method_param_name or (
             "cls" if proposal.method_kind == "classmethod" else "self"
         )
-        parameters = [arg.arg for arg in proposal.extracted_function.args.args]
+        parameters = [
+            arg.arg
+            for arg in (
+                *proposal.extracted_function.args.posonlyargs,
+                *proposal.extracted_function.args.args,
+            )
+        ]
         return _HelperNaming(
             original_name=original_name,
             final_name=proposal.extracted_function.name,
@@ -426,6 +579,30 @@ class Materialization(
     ) -> str:
         """One file's new source: its call sites spliced in, then the helper or its import."""
         lines = list(self._source_lines(file_path))
+        original = "".join(lines)
+        protected = (
+            tuple(
+                definition.line_range
+                for definition in protected_definitions(original, self._parse_source(original))
+            )
+            if "# towel: no-extract" in original
+            else ()
+        )
+        if any(
+            overlaps_protected(replacement.line_range, protected) for replacement in replacements
+        ):
+            raise RefactoringError("Cannot replace code in a function marked # towel: no-extract")
+        # Host selection proved an import safe at the original module's
+        # boundary. Replacing an early helper definition with an alias must
+        # not move that boundary below the alias that needs the import.
+        import_position = (
+            self._find_import_position(lines) if file_path != proposal.file_path else None
+        )
+        if import_position is not None and any(
+            (statement.end_lineno or statement.lineno) > import_position
+            for statement in _runtime_star_imports(self._parse_source("".join(lines)))
+        ):
+            raise RefactoringError("A later star import can overwrite the borrowed helper")
         self._splice_call_sites(proposal, naming, file_path, lines, replacements)
         if proposal.reused_function is not None and file_path == proposal.file_path:
             pass  # the function the calls target is already defined here
@@ -433,13 +610,26 @@ class Materialization(
             self._insert_helper(proposal, file_path, lines)
         elif not proposal.insert_into_class:
             before = "".join(lines)
-            self._insert_helper_import(proposal, file_path, lines)
+            self._insert_helper_import(proposal, file_path, lines, position=import_position)
             self._refuse_relative_import_in_a_script(
                 before, "".join(lines), file_path, proposal.extracted_function.name
             )
         assembled = "".join(lines)
         if self.file_finisher is not None:
+            handoff = any(r.argument_handoff is not None for r in proposal.replacements)
+            prove_ast = handoff and formatting_repeatability(self.file_finisher) is None
+            before_ast = canonical_dump(ast.parse(assembled)) if prove_ast else None
             assembled = self.file_finisher(file_path, assembled)
+            if prove_ast:
+                try:
+                    after = canonical_dump(ast.parse(assembled))
+                except SyntaxError as error:
+                    raise RefactoringError(
+                        "File finisher changed the argument handoff AST"
+                    ) from error
+                if before_ast != after:
+                    raise RefactoringError("File finisher changed the argument handoff AST")
+        require_protected_definitions_unchanged(original, assembled)
         return assembled
 
     def _splice_call_sites(
@@ -466,8 +656,15 @@ class Materialization(
             start_line, end_line = repl.line_range
             if not 1 <= start_line <= end_line <= len(lines):
                 raise ValueError(f"Invalid replacement range {start_line}-{end_line}: {file_path}")
-            replacement_code = self._render(self._call_site(proposal, naming, repl))
             block_lines = lines[start_line - 1 : end_line]
+            first = block_lines[0]
+            indentation = first[: len(first) - len(first.lstrip())]
+            replacement_code = self._render(
+                self._call_site(proposal, naming, repl),
+                file_path,
+                indentation,
+                preserve_ast=any(r.argument_handoff is not None for r in proposal.replacements),
+            )
             spliced = splice_block(
                 block_lines, repl.columns or whole_lines(block_lines), replacement_code
             )
@@ -487,10 +684,13 @@ class Materialization(
     def _call_site(
         self, proposal: RefactoringProposal, naming: _HelperNaming, repl: Replacement
     ) -> ast.AST:
-        """The replacement's call, retargeted to the helper's final name and placement."""
-        node = copy.deepcopy(repl.node)
+        """Retarget first, then transfer certified original argument ownership."""
+        node: ast.AST = copy.deepcopy(repl.node)
+        handed = any(
+            replacement.argument_handoff is not None for replacement in proposal.replacements
+        )
         if proposal.insert_into_class and repl.class_name:
-            return self._rewrite_call_for_method(
+            node = self._rewrite_call_for_method(
                 node,
                 naming.original_name,
                 naming.final_name,
@@ -498,10 +698,21 @@ class Materialization(
                 repl.implicit_param or proposal.method_param_name,
                 repl.class_name,
                 naming.receiver_parameter_index,
-                naming.parameter_count,
+                naming.parameter_count - int(handed),
             )
-        if naming.original_name != naming.final_name:
-            return self._retarget_helper_calls(node, naming.original_name, naming.final_name)
+        elif naming.original_name != naming.final_name:
+            node = self._retarget_helper_calls(node, naming.original_name, naming.final_name)
+        if repl.argument_handoff is not None:
+            return render_argument_handoff(node, repl.argument_handoff, naming.final_name)
+        if handed:
+            for call in ast.walk(node):
+                if isinstance(call, ast.Call) and (
+                    isinstance(call.func, ast.Name)
+                    and call.func.id == naming.final_name
+                    or isinstance(call.func, ast.Attribute)
+                    and call.func.attr == naming.final_name
+                ):
+                    call.args.append(ast.Constant(value=None))
         return node
 
     def _insert_helper(
@@ -524,16 +735,18 @@ class Materialization(
         fn_insert_info = self._find_function_insert_position_before_body_statements(
             "".join(lines), proposal.insert_into_function
         )
+        inner_indent = fn_insert_info[1] + "    " if fn_insert_info is not None else ""
         fn_lines = [
             line + "\n"
-            for line in self._helper_text(proposal, proposal.extracted_function).split("\n")
+            for line in self._helper_text(
+                proposal, proposal.extracted_function, inner_indent
+            ).split("\n")
         ]
         if fn_insert_info is None:
             insert_line = self._find_insert_position(lines)
             lines[insert_line:insert_line] = fn_lines + ["\n", "\n"]
             return
-        insert_at, indent = fn_insert_info
-        inner_indent = indent + "    "
+        insert_at, _ = fn_insert_info
         indented = [inner_indent + line if line.strip() else line for line in fn_lines]
         lines[insert_at:insert_at] = _padded(lines, insert_at, indented)
 
@@ -547,10 +760,6 @@ class Materialization(
             proposal.method_kind or "instance",
             proposal.method_param_name,
         )
-        method_lines = [
-            line + "\n"
-            for line in self._helper_text(proposal, proposal.extracted_function).split("\n")
-        ]
         insert_info = self._find_class_insert_position("".join(lines), proposal.insert_into_class)
         if insert_info is None:
             raise RefactoringError(
@@ -558,6 +767,12 @@ class Materialization(
                 f"class in {file_path}; cannot insert a method"
             )
         insert_line_zero_based, method_indent = insert_info
+        method_lines = [
+            line + "\n"
+            for line in self._helper_text(
+                proposal, proposal.extracted_function, method_indent
+            ).split("\n")
+        ]
         indented = [
             reindent(line, method_indent) if line.strip() else line for line in method_lines
         ]
@@ -576,6 +791,31 @@ class Materialization(
     def _insert_helper_at_module_level(
         self, proposal: RefactoringProposal, lines: List[str]
     ) -> None:
+        if _shared_module_helper(proposal):
+            helper = _early_module_helper(proposal.extracted_function)
+            if proposal.helper_type_declarations:
+                runtime_names = set().union(*(loaded_names(statement) for statement in helper.body))
+                if runtime_names & self._type_declaration_names(proposal):
+                    raise RefactoringError(
+                        "A shared helper's body cannot require type declarations before reentrant imports"
+                    )
+                dependencies = self._type_declaration_dependencies(proposal)
+                declared_at = self._type_declaration_position(
+                    lines, dependencies, self._find_insert_position(lines, dependencies)
+                )
+                declarations = ast.Module(
+                    body=list(proposal.helper_type_declarations), type_ignores=[]
+                )
+                declaration_lines = [
+                    line + "\n"
+                    for line in self._render(declarations, proposal.file_path).split("\n")
+                ]
+                lines[declared_at:declared_at] = _padded(lines, declared_at, declaration_lines)
+            source = "".join(lines)
+            insert_line = early_helper_line(lines, self._parse_source(source))
+            func_lines = [line + "\n" for line in self._helper_text(proposal, helper).split("\n")]
+            lines[insert_line:insert_line] = _padded(lines, insert_line, func_lines)
+            return
         node: ast.AST = proposal.extracted_function
         dependencies = self._placeable_dependencies(
             "".join(lines),
@@ -655,7 +895,7 @@ class Materialization(
         if position > class_start:
             raise RefactoringError("A method type declaration depends on a binding after its host")
         module = ast.Module(body=list(proposal.helper_type_declarations), type_ignores=[])
-        rendered = [line + "\n" for line in self._render(module).split("\n")]
+        rendered = [line + "\n" for line in self._render(module, proposal.file_path).split("\n")]
         lines[position:position] = _padded(lines, position, rendered)
 
     @staticmethod
@@ -717,7 +957,12 @@ class Materialization(
             )
 
     def _insert_helper_import(
-        self, proposal: RefactoringProposal, file_path: str, lines: List[str]
+        self,
+        proposal: RefactoringProposal,
+        file_path: str,
+        lines: List[str],
+        *,
+        position: Optional[int] = None,
     ) -> None:
         """Import the module-level helper into a file whose call sites need it.
 
@@ -748,9 +993,13 @@ class Materialization(
                 f"No import of {provider} from {importer} is known to work: the program's"
                 " own imports show none"
             )
-        self._ensure_import(lines, spelling.module, proposal.extracted_function.name)
+        self._ensure_import(
+            lines, spelling.module, proposal.extracted_function.name, position=position
+        )
 
-    def _ensure_import(self, lines: List[str], module_name: str, name: str) -> None:
+    def _ensure_import(
+        self, lines: List[str], module_name: str, name: str, *, position: Optional[int] = None
+    ) -> None:
         """Add ``from module_name import name`` at the import position unless a line already says so.
 
         Only for a helper's own import into a module that calls it: the name is
@@ -760,7 +1009,9 @@ class Materialization(
         """
         import_line = f"from {module_name} import {name}\n"
         if not any(import_line.strip() == ln.strip() for ln in lines):
-            lines.insert(self._find_import_position(lines), import_line)
+            lines.insert(
+                self._find_import_position(lines) if position is None else position, import_line
+            )
 
     def _bind_annotation_names(
         self, proposal: RefactoringProposal, file_path: str, lines: List[str]
@@ -798,7 +1049,7 @@ class Materialization(
             taken,
             typing_names,
             proposal.type_checking_imports,
-            self._find_import_position(lines),
+            self._find_import_position(lines, typing_only=True),
             joins_guard=_guard_body_start(lines) is not None,
         )
         proposal.extracted_function = respelled_helper(
@@ -821,7 +1072,7 @@ class Materialization(
             words_of("".join(lines)),
             (),
             ((module_name, name),),
-            self._find_import_position(lines),
+            self._find_import_position(lines, typing_only=True),
             joins_guard=_guard_body_start(lines) is not None,
         )
         self._write_annotation_imports(file_path, lines, plan)
@@ -832,19 +1083,17 @@ class Materialization(
     ) -> None:
         """Write ``plan``'s imports into ``lines``: ``typing``'s alias, then the type-only imports.
 
-        The type-only imports are wanted by annotations and never at run time,
-        so importing them under ``TYPE_CHECKING`` keeps the module's runtime
-        imports as they were and cannot close an import cycle -- which matters
-        here, because the extraction has often just made that module import
-        this one. An existing module-level guard is extended rather than a
-        second one written. It is recognised as every other question about
-        what a module runs recognises one, by binding (``TypeCheckingGuards``),
-        whatever follows its colon, and the import takes the indentation of
-        the guard's own body. A new guard is confirmed to be one by the same
-        test before it is kept (:meth:`_guard_header` spells it).
+        The literal integer comparison 0 > 1 is always false,
+        so changing typing.TYPE_CHECKING cannot execute these imports or close
+        a cycle. Only a guard with the same immutable runtime proof is extended.
+        Existing imported-flag guards keep their original bodies and behavior.
+        The import takes the guard's indentation, and a new guard is checked
+        against the same AST proof used by import and effect analysis.
         """
         if plan.typing_import is not None:
-            lines.insert(self._find_import_position(lines), plan.typing_import + "\n")
+            lines.insert(
+                self._find_import_position(lines, typing_only=True), plan.typing_import + "\n"
+            )
         if not plan.guarded:
             return
         existing = _guard_body_start(lines)
@@ -854,7 +1103,7 @@ class Materialization(
             return
         if plan.guard_test is None:
             raise RefactoringError("Type-only imports need a guard, and none was planned")
-        at = self._find_import_position(lines)
+        at = self._find_import_position(lines, typing_only=True)
         lines[at:at] = [
             "\n",
             self._guard_header(file_path, plan.guard_test),
@@ -862,7 +1111,7 @@ class Materialization(
         ]
         source = "".join(lines)
         tree = self._parse_source(source)
-        guards = TypeCheckingGuards.of(source, tree)
+        guards = TypeCheckingGuards(tree)
         if not any(
             isinstance(statement, ast.If)
             and statement.lineno == at + 2
@@ -880,7 +1129,7 @@ class Materialization(
         The guarded body never runs, so the project's coverage counts it as
         missed unless it is excluded. coverage.py's own defaults exclude ``if
         TYPE_CHECKING:`` and ``if typing.TYPE_CHECKING:``, not a guard through
-        a private alias of ``typing``, which the defaults' ``# pragma: no
+        the literal integer comparison, which the defaults' ``# pragma: no
         cover`` excludes instead; a project whose exclusions already match
         the guard gets no mark.
         """
@@ -937,6 +1186,53 @@ class Materialization(
                     )
 
 
+def _runtime_star_imports(tree: ast.Module) -> Tuple[ast.ImportFrom, ...]:
+    """Star imports that may bind module names when the module is imported."""
+    return tuple(
+        statement
+        for statement in _import_statements(tree, "at_import", TypeCheckingGuards(tree))
+        if isinstance(statement, ast.ImportFrom)
+        and any(alias.name == "*" for alias in statement.names)
+    )
+
+
+def _shared_module_helper(proposal: RefactoringProposal) -> bool:
+    """Whether any call site belongs to a file other than the helper's host."""
+    host = Path(proposal.file_path).resolve()
+    return any(
+        Path(replacement.file_path or proposal.file_path).resolve() != host
+        for replacement in proposal.replacements
+    )
+
+
+def _early_module_helper(helper: ast.FunctionDef) -> ast.FunctionDef:
+    """An inert copy whose definition needs no module binding to have run yet.
+
+    Module imports can return a partial module, so a helper shared with
+    another module precedes ordinary imports and effects. Quoted annotations
+    retain checker meaning without looking up bindings early. Eager defaults,
+    decorators and native generic parameter scopes need separate proofs and
+    are refused. Generated helpers normally have none of them.
+    """
+    rewritten = copy.deepcopy(helper)
+
+    def deferred(annotation: Optional[ast.expr]) -> Optional[ast.expr]:
+        if annotation is None or isinstance(annotation, ast.Constant):
+            return annotation
+        return ast.copy_location(ast.Constant(value=ast.unparse(annotation)), annotation)
+
+    arguments = rewritten.args
+    for parameter in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs):
+        parameter.annotation = deferred(parameter.annotation)
+    for variadic in (arguments.vararg, arguments.kwarg):
+        if variadic is not None:
+            variadic.annotation = deferred(variadic.annotation)
+    rewritten.returns = deferred(rewritten.returns)
+    if not inert_function_definition(rewritten):
+        raise RefactoringError("A shared helper's definition must be inert before module imports")
+    return rewritten
+
+
 def _postpones_annotations(source: str) -> bool:
     """Whether the module is written under ``from __future__ import annotations``."""
     try:
@@ -945,6 +1241,7 @@ def _postpones_annotations(source: str) -> bool:
         return False
     return any(
         isinstance(statement, ast.ImportFrom)
+        and statement.level == 0
         and statement.module == "__future__"
         and any(alias.name == "annotations" for alias in statement.names)
         for statement in body
@@ -958,15 +1255,13 @@ _HELPER_SHAPED = re.compile(r"(?<!\w)\w*extracted_func(?:_\d+)?(?!\w)")
 def _claimed_helper_names(root: Path) -> HelperNameClaims:
     """The helper-shaped names that sources under ``root`` define where a helper could be.
 
-    A module-level helper is reached as an attribute of its module, so another
-    file takes its place only by assigning that attribute: an attribute store,
-    or the name as a string given to ``setattr`` or stored by subscript into a
-    namespace. A method helper is class-private and reached as ``_A__name``,
-    so another file takes its place only by defining a member stored under
-    that name, in a class body, by an attribute store, a ``setattr``, a
-    subscript into a namespace, or a ``type(...)`` namespace; a subclass's
-    ``_extracted_func_0``, which once had to be kept clear of, can no longer
-    reach it. A mere call or mention takes nothing. A file that does not parse
+    A module-level helper is reached as an attribute of its module, so an
+    attribute store or deletion claims its name. A method helper is
+    class-private and reached as ``_A__name``, so a class-body binding or
+    attribute store under that name claims it; a subclass's
+    ``_extracted_func_0`` cannot reach it. Reflective namespace and class
+    mutation is outside the contract. A mere call or mention takes nothing.
+    A file that does not parse
     cannot be told apart, so every helper-shaped word in it counts, spelled
     as it stands and under every class's name. Past the consumer scan's limit
     the project cannot be read whole, and the run stops, as a typed run's
@@ -1020,15 +1315,6 @@ def _claims_in(text: str) -> HelperNameClaims:
         elif isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
             owner = owners.get(node)
             namespace.add(mangled(node.attr, owner.name if owner is not None else None))
-        elif isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store):
-            namespace.update(_string_constants([node.slice]))  # namespace["name"] = ...
-        elif isinstance(node, ast.Call):
-            callee = node.func
-            called = callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", "")
-            if called in {"setattr", "__setattr__"} and len(node.args) >= 2:
-                namespace.update(_string_constants([node.args[1]]))
-            elif called == "type" and len(node.args) == 3 and isinstance(node.args[2], ast.Dict):
-                members.update(_string_constants([k for k in node.args[2].keys if k]))
     shaped = {name for name in namespace | members if _HELPER_SHAPED.fullmatch(name)}
     return HelperNameClaims(
         frozenset(shaped & namespace), frozenset(shaped & (members | namespace))
@@ -1058,21 +1344,14 @@ def _member_names(node: ast.ClassDef) -> Set[str]:
     return defined
 
 
-def _string_constants(nodes: List[ast.expr]) -> Set[str]:
-    return {
-        node.value
-        for node in nodes
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    }
-
-
 def _guard_body_start(lines: List[str]) -> Optional[Tuple[int, str]]:
-    """Where a line joins the body of the module's first ``TYPE_CHECKING`` guard, and its indent.
+    """Where a line joins a locally proved false comparison guard, and its indent.
 
     Only a guard at module level: one inside a function or class would take
     the import out of the scope the annotation reads it in. A guard is one
-    ``TypeCheckingGuards`` resolves as never true where it runs, so a name the
-    module rebinds is not one, and an import joined to it would run. A guard
+    ``TypeCheckingGuards`` resolves as never true where it runs; a test that
+    reads through an imported flag is not one. Literal False is not joined:
+    pyright hides its imports from annotations. A guard
     whose body shares its header's line has no line to join, nor has a module
     that does not parse or whose lines do not match its statements; each of
     those gets a guard of its own.
@@ -1082,9 +1361,13 @@ def _guard_body_start(lines: List[str]) -> Optional[Tuple[int, str]]:
         tree = ast.parse(source)
     except SyntaxError:
         return None
-    guards = TypeCheckingGuards.of(source, tree)
+    guards = TypeCheckingGuards(tree)
     for order, statement in enumerate(tree.body):
-        if not isinstance(statement, ast.If) or not guards.never_true(statement.test, order=order):
+        if (
+            not isinstance(statement, ast.If)
+            or not isinstance(statement.test, ast.Compare)
+            or not guards.never_true(statement.test, order=order)
+        ):
             continue
         first = statement.body[0]
         index = first.lineno - 1

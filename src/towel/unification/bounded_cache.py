@@ -119,8 +119,15 @@ class BoundedCache(MutableMapping[K, V]):
         if self._weight is not None:
             self._total_weight -= self._weights.pop(key, 0)
 
+    def clear(self) -> None:
+        """Release owned entries even when memoization makes reads unavailable."""
+        self._table.clear()
+        self._weights.clear()
+        self._total_weight = 0
+
     def __iter__(self) -> Iterator[K]:
-        return iter(self._table)
+        # Reads update LRU order; standard mapping views must not iterate that live order.
+        return iter(tuple(self._table))
 
     def __len__(self) -> int:
         return len(self._table)

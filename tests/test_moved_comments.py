@@ -36,13 +36,23 @@ import subprocess
 import sys
 import textwrap
 import tokenize
-from typing import Dict, Mapping, Sequence
+from typing import Callable, Dict, Mapping, Sequence, cast
 
 import pytest
 
 import towel
 from towel.diagnostics import Settings
 from towel.formatting import BlackSettings, SnippetFormatter, black_formatter, checked
+from towel.canonical_ast import canonical_dump
+from towel.unification.block_comments import (
+    Anchor,
+    HelperComment,
+    HelperComments,
+    NodePath,
+    Placement,
+)
+from towel.unification.materialize import _early_module_helper
+from towel.unification.models import RefactoringProposal
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 SERIAL = Settings.from_environ({"TOWEL_WORKERS": "1"})
@@ -205,7 +215,7 @@ def test_explanatory_comments_keep_their_statements_and_order(tmp_path: Path) ->
     assert result.count("# the bonus for a large value") == 1
     assert result.count("# large values count double") == 1
     # A comment above the block is the call site's own, and stays with each call.
-    assert result.count("    # Start from nothing.\n    return __extracted_func_0(") == 2, result
+    assert result.count("    # Start from nothing.\n    _towel_arguments = ") == 2, result
     _assert_same_refactoring_without_comments(path, result)
 
 
@@ -263,24 +273,26 @@ def test_comments_on_clause_headers_stay_on_their_headers(tmp_path: Path, format
 _CALLS = """
     def first(numerator, denominator):
         ratio = numerator / denominator
-        return format_ratio(
+        formatted = format_ratio(
             numerator,
             denominator,
             product_fmt="*",  # TODO: should this be ''?
             power_fmt="{{}}**{{}}",  # the power, with no spaces
             parentheses_fmt=r"({{}})",
         )
+        return ratio, formatted
 
 
     def second(numerator, denominator):
         ratio = numerator / denominator
-        return format_ratio(
+        formatted = format_ratio(
             numerator,
             denominator,
             product_fmt="{{}} * {{}}",
             power_fmt="{{}} ** {{}}",  # the power, with no spaces
             parentheses_fmt=r"({{}})",
         )
+        return ratio, formatted
     """
 
 
@@ -302,6 +314,39 @@ def test_a_comment_inside_brackets_stays_beside_its_argument(
     assert "power_fmt=" in _line_holding(helper, "# the power, with no spaces")
     assert result.count("# the power, with no spaces") == 1
     _assert_same_refactoring_without_comments(path, result, **options)
+
+    # Both computations contribute to the result; sharing is useful under the
+    # normal tiny-helper policy rather than enabled by a test-only bypass.
+    def observe(source: str) -> tuple[list[object], list[tuple[float, float, str, str, str]]]:
+        calls: list[tuple[float, float, str, str, str]] = []
+
+        def format_ratio(
+            numerator: float,
+            denominator: float,
+            *,
+            product_fmt: str,
+            power_fmt: str,
+            parentheses_fmt: str,
+        ) -> str:
+            calls.append((numerator, denominator, product_fmt, power_fmt, parentheses_fmt))
+            return f"{numerator}/{denominator}: {product_fmt}:{power_fmt}:{parentheses_fmt}"
+
+        namespace: Dict[str, object] = {"format_ratio": format_ratio}
+        exec(compile(source, "comment-fixture", "exec"), namespace)
+        values: list[object] = []
+        for name in ("first", "second"):
+            function = cast(Callable[[float, float], object], namespace[name])
+            values.extend(
+                function(numerator, denominator) for numerator, denominator in ((6, 2), (7, 3))
+            )
+            with pytest.raises(ZeroDivisionError):
+                function(1, 0)
+        return values, calls
+
+    before = observe(path.read_text())
+    after = observe(result)
+    assert len(before[1]) == 4
+    assert after == before
 
 
 _GROUPED = """
@@ -650,8 +695,19 @@ def _package(root: Path, comment: str) -> Sequence[Path]:
     paths = []
     for name in ("first", "second"):
         path = root / "zzshared" / f"{name}.py"
+        # A direct host load lets these cases reach the comment/directive
+        # rules rather than declining a newly imported package module.
+        prefix = "from builtins import print as emit\n"
+        if name == "second":
+            prefix += "from .first import total_first\n"
+        prefix += "\n"
         path.write_text(
-            textwrap.dedent(block.format(name=f"total_{name}", tag=name, comment=comment)).lstrip()
+            prefix
+            + textwrap.dedent(
+                block.replace("print(", "emit(").format(
+                    name=f"total_{name}", tag=name, comment=comment
+                )
+            ).lstrip()
         )
         paths.append(path)
     return paths
@@ -665,6 +721,68 @@ def test_a_helper_shared_across_modules_carries_the_comments(tmp_path: Path) -> 
     host = written[proposal.file_path]
     assert _line_holding(_helper_source(host), "total += value * 2").endswith("  # noqa: E501")
     assert sum(text.count("# noqa: E501") for text in written.values()) == 1
+
+
+@pytest.mark.parametrize("with_declarations", [False, True])
+def test_adapted_helper_comments_preserve_the_actual_rendered_tree(
+    with_declarations: bool,
+) -> None:
+    helper = ast.parse("def shared(value: bool) -> bool:\n    return not value\n").body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    comments = HelperComments(
+        comments=(HelperComment("# noqa: E501", Anchor(NodePath(0, "Return"), Placement.TRAILING)),)
+    )
+    proposal = RefactoringProposal(
+        "unused.py", helper, [], "Share a typed block", 1, helper_comments=comments
+    )
+    original = ast.dump(helper, include_attributes=True)
+    adapted = _early_module_helper(helper)
+    node: ast.AST = adapted
+    if with_declarations:
+        node = ast.Module(body=[ast.parse("marker = 1").body[0], adapted], type_ignores=[])
+    before = ast.dump(node, include_attributes=True)
+    rendered = _engine()._helper_text(proposal, node)
+    expected = node if isinstance(node, ast.Module) else ast.Module(body=[adapted], type_ignores=[])
+    assert canonical_dump(ast.parse(rendered)) == canonical_dump(expected)
+    assert _line_holding(rendered, "return not value").endswith("# noqa: E501")
+    assert ast.dump(node, include_attributes=True) == before
+    assert ast.dump(helper, include_attributes=True) == original
+
+
+@requires_mypy
+def test_typed_shared_helper_with_comments_is_applicable_without_mutating_proposal(
+    tmp_path: Path,
+) -> None:
+    from towel.type_inference import CheckSuccess, MypyInferrer
+
+    root = tmp_path.resolve() / "project"
+    paths = _package(root, "  # noqa: E501")
+    (root / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
+    for path in paths:
+        path.write_text(path.read_text().replace("(values):", "(values: list[int]) -> int:"))
+    originals = {str(path): path.read_text() for path in paths}
+    oracle = MypyInferrer()
+    try:
+        engine = _engine(
+            cross_module_helpers=True, type_oracle=oracle, reuse_existing_functions=False
+        )
+        proposals = engine.analyze_files([str(path) for path in paths], progress="none")
+        assert proposals, engine.declined_pairs
+        proposal = proposals[0]
+        original_helper = ast.dump(proposal.extracted_function, include_attributes=True)
+        written = engine.apply_refactoring_multi_file(proposal)
+        assert len(written) == 2
+        assert engine.apply_refactoring_multi_file(proposal) == written
+        assert ast.dump(proposal.extracted_function, include_attributes=True) == original_helper
+        host = _helper_source(written[proposal.file_path])
+        assert _line_holding(host, "total += value * 2").endswith("# noqa: E501")
+        helper = ast.parse(host).body[0]
+        assert isinstance(helper, ast.FunctionDef)
+        assert any(isinstance(arg.annotation, ast.Constant) for arg in helper.args.args)
+        assert oracle.check_project(written) == CheckSuccess()
+        assert {str(path): path.read_text() for path in paths} == originals
+    finally:
+        oracle.close()
 
 
 def test_a_file_directive_does_not_move_to_another_module(tmp_path: Path) -> None:
@@ -784,7 +902,9 @@ def test_an_ignore_the_checker_needs_lets_the_helper_type_check(tmp_path: Path) 
         oracle.close()
     helper = _helper_source(result)
     assert _line_holding(helper, "_get(d, Mapping").endswith("  # type: ignore[type-abstract]")
-    assert "d: Mapping[str, Any]" in helper, helper
+    # Preserve the exact Mapping type as well as the necessary ignore. The
+    # generated subscription is quoted so extraction adds no runtime lookup.
+    assert "d: 'Mapping[str, Any]'" in helper, helper
     # Checked again by the command line, strictly, with unused ignores reported.
     checked_copy = tmp_path / "checked"
     checked_copy.mkdir()
@@ -960,7 +1080,20 @@ def _inside(**parts: str) -> str:
         "start_comment": "",
     }
     defaults.update(parts)
-    return _INSIDE.format(**defaults)
+    # Keep the original opaque-frame boundary as a separate negative below.
+    # Globals and literal prefixes leave no caller-owned locals beside this block.
+    safe = (
+        _INSIDE.replace("def first(values, error):", "def first():")
+        .replace("def second(values, error):", "def second():")
+        .replace("total = len(values) * 2", "total = 0")
+        .replace("total = sum(values) - 3", "total = 3")
+        .replace("return total * 5", "return -total * 5")
+    )
+    prelude = defaults["prelude"]
+    body = textwrap.dedent(safe.format(**(defaults | {"prelude": ""}))).lstrip()
+    return (prelude + "\nvalues = []\nerror = False\n" + body).replace(
+        "for item in values:", "if values:"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1020,19 +1153,22 @@ def test_a_block_opening_with_an_excluded_clause_still_moves(tmp_path: Path) -> 
     path = _write(
         tmp_path,
         """
-        def first(values, error):
-            total = len(values) * 2
+        values = []
+        error = False
+
+        def first():
+            total = 2
             if error:  # pragma: no cover
-                message = "bad: " + str(values)
+                message = "bad input"
                 values.clear()
                 raise ValueError(message)
             return total + 1
 
 
-        def second(values, error):
-            total = sum(values) - 3
+        def second():
+            total = 3
             if error:  # pragma: no cover
-                message = "bad: " + str(values)
+                message = "bad input"
                 values.clear()
                 raise ValueError(message)
             return total * 5
@@ -1159,13 +1295,9 @@ def test_without_the_configuration_the_main_block_moves(tmp_path: Path) -> None:
     "source",
     [
         _MAIN_BLOCK.format(pragma="  # pragma: no cover"),
-        _INSIDE.format(
-            prelude="",
-            first_header_comment="",
-            second_header_comment="",
+        _inside(
             first_opener="for item in values:",
             second_opener="while error:",
-            opener_comment="",
             disable="pass  # pragma: no cover",
             start_comment="  # pragma: no cover",
         ),
@@ -1310,3 +1442,17 @@ def test_the_run_reports_an_unreadable_configuration(tmp_path: Path) -> None:
     output = completed.stdout + completed.stderr
     assert output.count("coverage.py could not read its configuration") == 1, output
     assert "Applied 1 refactoring" in output, output
+
+
+def test_original_opaque_message_partial_remains_refused(tmp_path: Path) -> None:
+    source = _INSIDE.format(
+        prelude="",
+        first_header_comment="",
+        second_header_comment="",
+        first_opener="for item in values:",
+        second_opener="while error:",
+        opener_comment="",
+        disable="pass",
+        start_comment="",
+    )
+    assert "owned_binding_frame_boundary" in _declined(tmp_path / "m.py", source)

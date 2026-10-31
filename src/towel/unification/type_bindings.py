@@ -47,6 +47,7 @@ import re
 import typing
 from collections.abc import Callable, Sequence
 
+from ..runtime_guards import module_false_guards
 from .revealed_types import OpaqueType, parse_revealed
 
 
@@ -404,8 +405,13 @@ def _scope(
             + ([node.args.kwarg] if node.args.kwarg else [])
         ):
             collector.bindings[argument.arg] = _Binding("unknown", "", argument)
+    false_guards = module_false_guards(node) if isinstance(node, ast.Module) else frozenset()
     for statement in node.body:
-        if _is_type_checking_guard(statement) and isinstance(statement, ast.If):
+        if isinstance(statement, ast.If) and (
+            _is_type_checking_guard(statement)
+            or isinstance(statement.test, ast.Compare)
+            and statement.test in false_guards
+        ):
             # Imported for the checker only: a binding for every annotation
             # this module writes, all of which are quoted. What the other
             # branch binds instead is a second, conditional binding.

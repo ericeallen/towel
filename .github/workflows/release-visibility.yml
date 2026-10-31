@@ -1,0 +1,34 @@
+name: Release documentation
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag (for example v1.947)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  default-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Verify the live default branch presents the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          test "${RELEASE_TAG#v}" != "$RELEASE_TAG"
+          release_commit="$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")"
+          python scripts/verify_release_visibility.py "${RELEASE_TAG#v}" --commit "$release_commit"

@@ -1,10 +1,54 @@
 # Open-source readiness — 1.1.0a1
 
+[Documentation index](README.md)
+
 > Historical record of the September 12, 2026 alpha audit. The production-readiness pass that followed, with its counterexamples, repairs, and consumer evidence, is recorded in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md), which supersedes the disposition below.
+
+**Current release:** [1.947](https://github.com/ericeallen/towel/releases/tag/v1.947)
+was published October 26, 2026. Its
+[publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+contains the completed release validation and limitations. The audit and
+orientations below retain their historical dates and source identities.
+
+**Publication orientation, October 19, 2026:** publication of 1.946 was
+independently verified; see its [publication record](RELEASE_1_946.md).
+This source targets 1.947, whose [overview](RELEASE_1_947.md) describes the
+subsequent audit repairs. The [readiness report](PRODUCTION_READINESS.md)
+separates source-bound checks from final outcomes recorded externally.
+
+**October 18 checkpoint (historical):** the maintainer requested 1.946 publication,
+then extended the scope to implement scoped source-proof reuse and rerun
+Python 3.11–3.13 suites and cache-on/off output comparisons. Live verification
+and upload were blocked by network access; publication was unconfirmed at that
+checkpoint. See the
+[publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026)
+and [October 18 profile](RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
+
+**October 10, 2026 orientation (historical):** the alpha candidate, private-repository and
+pending-publication statements below are historical. The last published version
+is 1.792 from `44d7795`; **1.946 is prepared and unpublished**. The four selected
+proposal changes and subsequent repairs passed the final runtime audit on
+`9d57b0d25f3ee743e0ce0035ed13df65b2344164`: 10,583 tests and 45 subtests passed,
+32 skipped, with 93.478% line coverage. That audit does not certify later
+versioned artifacts or constitute publication approval. The completed
+shared-host default-CLI comparison observed Click +21.85% and Rich +78.10%
+elapsed time against published 1.792, with two samples per version per workload;
+the restoration target was not met. See the [current proposal status](proposals/README.md)
+and [performance evidence](proposals/performance-roadmap.md#october-10-2026-preparation-and-completed-comparison).
+The September counts, artifacts, dependency/security scope and environment
+claims below retain their original identities; they are not current results.
 
 **Disposition: experimental alpha candidate; local verification complete.** The five follow-ups from the first audit have been implemented. The adversarial review found additional semantic and filesystem defects, repaired them, and added executable regressions. Publication has not occurred.
 
 The earlier audit checkpoint is local commit `6247333390a4ffb049f1959d1c4b29e36fee6b39`, based on `3bf35f2`. This work continues on `audit/open-source-2026-09-12` in the isolated audit checkout. The original checkout's user changes and index are preserved. No push, remote tag, visibility change, or package upload was performed.
+
+**Contents**
+
+- [Delivered follow-ups](#five-follow-ups-delivered) · [Adversarial results](#adversarial-results)
+- [Final gates](#final-gates) · [Consumer evidence](#consumer-evidence)
+- [Assessment by dimension](#assessment-by-dimension)
+- [Publication decisions and limitations](#publication-decisions-and-remaining-limitations)
+- [Measurement environment](#measurement-environment)
 
 ## Measurement environment
 

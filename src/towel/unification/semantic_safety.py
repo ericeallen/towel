@@ -14,10 +14,9 @@
 
 """Conservative guards for extractions that change execution context.
 
-Reads that depend on the frame (``locals``, ``eval``, ``warnings.warn`` stack
-levels, and the module's imported or assigned aliases of them), external
-names another function may rebind while the block runs, nested scopes and
-loop control that cross the block boundary, names the block unbinds or
+Suspension and zero-argument ``super``, external names another function may
+rebind while the block runs, nested scopes and loop control that cross the
+block boundary, names the block unbinds or
 declares ``global``/``nonlocal``, arguments that cannot be evaluated eagerly,
 and the names a block resolves at module scope, which a same-module helper
 may read bare.
@@ -25,10 +24,9 @@ may read bare.
 
 from __future__ import annotations
 
-import dataclasses
-
 import ast
 import builtins
+import sys
 from itertools import chain
 from typing import (
     Callable,
@@ -63,10 +61,18 @@ from .definite_assignment import (
     definitely_bound_before,
     locally_bound_names,
 )
-from .lexical_scopes import comprehension_targets, free_reads
+from .lexical_scopes import (
+    comprehension_results,
+    comprehension_targets,
+    free_reads,
+    nested_scope_names,
+)
+from .function_scope import function_names
 from .models import FunctionNode
-from .bounded_cache import BoundedCache
-from .scope_analyzer import ScopeAnalyzer, type_parameter_names
+from .module_bindings import global_bindings
+from .bounded_cache import BoundedCache, memoizing
+from ..analysis_sources import ParserConfiguration, parser_configuration, parsing_is_pure
+from .scope_analyzer import ScopeAnalyzer, _postpones_annotations, type_parameter_names
 from .parameters import parameter_names
 from .statement_facts import (
     bindings_of,
@@ -76,7 +82,13 @@ from .statement_facts import (
     pattern_capture_names,
 )
 from .structural_memo import structural_id
-from .visitors import FreeNameCollector, OwnScopeVisitor, type_parameter_expressions
+from .visitors import (
+    FreeNameCollector,
+    OwnScopeVisitor,
+    annotation_expressions,
+    evaluated_before_definition,
+    type_parameter_expressions,
+)
 
 if TYPE_CHECKING:
     from .substitution import Substitution
@@ -177,11 +189,10 @@ def rebound_external_names(
     Passing such a name to the helper snapshots it before the block's later
     reads; a helper that reads it bare, where the block did, sees the
     rebinding as the block did. Explicit global/nonlocal declarations
-    identify the bindings another function can update. Namespace reflection
-    makes that identification unreliable, so its presence makes every external
-    read a hazard, and a function the analyzer could not place is
-    ``UNKNOWABLE_HAZARD``. Opaque mutation from outside the module is not
-    modeled.
+    identify the bindings another function can update. An unresolved nonlocal
+    binding makes that identification unreliable, and a function the analyzer
+    could not place is ``UNKNOWABLE_HAZARD``. Reflective namespace mutation and
+    opaque mutation from outside the module are not modeled.
     """
     scope = analyzer.node_scopes.get(function)
     root = analyzer.root_scope
@@ -191,7 +202,7 @@ def rebound_external_names(
     if hazards is None:
         return frozenset({UNKNOWABLE_HAZARD})
     rebound = hazards.rebound
-    unreliable = hazards.unresolved_nonlocal or hazards.reflective
+    unreliable = hazards.unresolved_nonlocal
     found: Set[str] = set()
     for statement in nodes:
         for node in ast.walk(statement):
@@ -238,105 +249,15 @@ def _has_comprehension_assignment(nodes: Iterable[ast.AST]) -> bool:
     )
 
 
-# Attributes and callees whose behavior depends on the call stack, the active
-# traceback, or a module's own source text. Moving code into a helper adds a
-# frame and shifts line numbers, so a program that reads any of these can
-# observe the refactoring even when its result is unchanged. These power the
-# pre-run warning; they are names to look for, not a guarantee of breakage.
-_FRAME_SENSITIVE_ATTRS = frozenset(
-    {
-        "f_back",
-        "f_locals",
-        "f_globals",
-        "f_lineno",
-        "f_code",
-        "tb_frame",
-        "tb_next",
-        "tb_lineno",
-        "__traceback__",
-    }
-)
-_FRAME_SENSITIVE_CALLEES = frozenset(
-    {
-        "_getframe",
-        "currentframe",
-        "stack",
-        "getouterframes",
-        "getframeinfo",
-        "extract_stack",
-        "print_stack",
-        "extract_tb",
-        "walk_tb",
-        "walk_stack",
-        "format_exc",
-        "format_stack",
-        "print_exc",
-    }
-)
-_SOURCE_OBSERVING_CALLEES = frozenset(
-    {"getsource", "getsourcelines", "getsourcefile", "findsource", "getframeinfo"}
-)
-
-
-def frame_sensitivity_markers(source: str) -> FrozenSet[str]:
-    """Frame-, traceback-, and source-observing constructs a module contains.
-
-    A module in the returned-empty case is not proof of safety; a callee that
-    inspects frames internally is invisible here. This exists to warn a person
-    which files to review, not to decide any single extraction.
-    """
-    try:
-        tree = ast.parse(source)
-    except (SyntaxError, ValueError):
-        return frozenset()
-    markers: Set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute):
-            if node.attr in _FRAME_SENSITIVE_ATTRS:
-                markers.add("frame")
-            if node.attr == "__traceback__":
-                markers.add("traceback")
-        elif isinstance(node, ast.Call):
-            callee = node.func
-            name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
-            if name == "warn" and any(kw.arg == "stacklevel" for kw in node.keywords):
-                markers.add("stacklevel-warning")
-            if name in _FRAME_SENSITIVE_CALLEES:
-                markers.add("frame")
-            if name in _SOURCE_OBSERVING_CALLEES:
-                markers.add("source")
-    return frozenset(markers)
-
-
-_NAMESPACE_CALLEES = frozenset({"locals", "globals", "eval", "exec"})
-_NAMESPACE_CALLEES_NO_ARGS = frozenset({"vars", "dir"})
-
-
 @dataclass(frozen=True)
 class FrameAliases:
-    """Local names through which a module reaches the frame-sensitive builtins.
+    """Module aliases through which zero-argument ``super`` can be called.
 
-    ``import builtins as bi`` makes ``bi.locals()`` a namespace read;
-    ``from builtins import locals as l`` makes ``l()`` one; ``import warnings
-    as w`` and ``from warnings import warn as w`` make ``w.warn(...)`` and
-    ``w(...)`` warnings. Resolved from the module's import statements at any
-    depth, so a shadowing local of the same name is over-approximated as the
-    alias, which only declines.
+    Resolved from imports and assignments at any depth. A shadowing local
+    with the same name is conservatively treated as the alias.
     """
 
     builtins_modules: FrozenSet[str] = frozenset()
-    namespace_functions: FrozenSet[str] = frozenset()
-    warnings_modules: FrozenSet[str] = frozenset()
-    warn_functions: FrozenSet[str] = frozenset()
-    # ``gf = sys._getframe``: names bound to a frame- or stack-reading function.
-    frame_functions: FrozenSet[str] = frozenset()
-    # Functions and methods of the module whose own body reads a frame
-    # relative to its caller (``sys._getframe(n)``, ``inspect.stack()``, a
-    # ``stacklevel=``), directly or by calling another such function: a call
-    # to one from inside a helper would see the helper instead.
-    frame_readers: FrozenSet[str] = frozenset()
-    # ``s = super`` and ``from builtins import super as s``: names bound to
-    # ``super`` itself, whose call with no arguments reads the calling frame.
     super_functions: FrozenSet[str] = frozenset()
 
 
@@ -345,158 +266,56 @@ _FRAME_ALIASES: "WeakKeyDictionary[ast.AST, FrameAliases]" = WeakKeyDictionary()
 
 
 def frame_aliases(module: Optional[ast.AST]) -> FrameAliases:
-    """The module's aliases of the frame-sensitive builtins, computed once per tree."""
+    """The module's aliases of ``super``, computed once per tree."""
     if module is None:
         return NO_ALIASES
     known = _FRAME_ALIASES.get(module)
     if known is not None:
         return known
     builtins_modules: Set[str] = set()
-    namespace_functions: Set[str] = set()
-    warnings_modules: Set[str] = set()
-    warn_functions: Set[str] = set()
-    frame_functions: Set[str] = set()
     super_functions: Set[str] = set()
+    assignments: List[Union[ast.Assign, ast.AnnAssign]] = []
     for node in ast.walk(module):
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name == "builtins":
-                    builtins_modules.add(alias.asname or alias.name)
-                elif alias.name == "warnings":
-                    warnings_modules.add(alias.asname or alias.name)
-        elif isinstance(node, ast.ImportFrom) and node.level == 0:
-            for alias in node.names:
-                if node.module == "builtins" and (
-                    alias.name in _NAMESPACE_CALLEES or alias.name in _NAMESPACE_CALLEES_NO_ARGS
-                ):
-                    namespace_functions.add(alias.asname or alias.name)
-                elif node.module == "builtins" and alias.name == "super":
-                    super_functions.add(alias.asname or alias.name)
-                elif node.module == "warnings" and alias.name == "warn":
-                    warn_functions.add(alias.asname or alias.name)
-    # ``e = eval`` and ``warn = warnings.warn`` are aliases too, wherever they
-    # are written; the pass is a fixed point, since an alias of an alias is
-    # one. Rebinding elsewhere makes this conservative, never unsound.
+            builtins_modules.update(
+                alias.asname or alias.name for alias in node.names if alias.name == "builtins"
+            )
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "builtins":
+            super_functions.update(
+                alias.asname or alias.name for alias in node.names if alias.name == "super"
+            )
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            assignments.append(node)
+    # An assignment can alias another alias; take the closure of these names.
     grew = True
     while grew:
         grew = False
-        for node in ast.walk(module):
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
-                continue
+        for node in assignments:
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             if len(targets) != 1 or not isinstance(targets[0], ast.Name):
                 continue
             aliased = targets[0].id
             value = node.value
             if isinstance(value, ast.Name):
-                frame_builtin = (
-                    value.id in _NAMESPACE_CALLEES
-                    or value.id in _NAMESPACE_CALLEES_NO_ARGS
-                    or value.id in namespace_functions
-                )
-                warning = value.id in warn_functions
-                frame_reader = value.id in frame_functions
                 super_alias = value.id == "super" or value.id in super_functions
             elif isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
-                frame_builtin = value.value.id in builtins_modules and (
-                    value.attr in _NAMESPACE_CALLEES or value.attr in _NAMESPACE_CALLEES_NO_ARGS
-                )
-                warning = value.value.id in warnings_modules and value.attr == "warn"
-                # Any receiver: the attribute name alone identifies these.
-                frame_reader = value.attr in _FRAME_RELATIVE_CALLEES
                 super_alias = value.value.id in builtins_modules and value.attr == "super"
             else:
                 continue
-            if frame_builtin and aliased not in namespace_functions:
-                namespace_functions.add(aliased)
-                grew = True
-            if warning and aliased not in warn_functions:
-                warn_functions.add(aliased)
-                grew = True
-            if frame_reader and aliased not in frame_functions:
-                frame_functions.add(aliased)
-                grew = True
             if super_alias and aliased not in super_functions:
                 super_functions.add(aliased)
                 grew = True
-    aliases = FrameAliases(
-        frozenset(builtins_modules),
-        frozenset(namespace_functions),
-        frozenset(warnings_modules),
-        frozenset(warn_functions),
-        frozenset(frame_functions),
-        super_functions=frozenset(super_functions),
-    )
-    result = dataclasses.replace(aliases, frame_readers=_frame_readers(module, aliases))
+    result = FrameAliases(frozenset(builtins_modules), frozenset(super_functions))
     _FRAME_ALIASES[module] = result
     return result
 
 
-def _callee_name(call: ast.Call, aliases: FrameAliases) -> Optional[str]:
-    """The builtin a call reaches, by name or through a builtins-module alias."""
-    callee = call.func
-    if isinstance(callee, ast.Name):
-        if callee.id in aliases.namespace_functions:
-            return callee.id
-        return callee.id
-    if (
-        isinstance(callee, ast.Attribute)
-        and isinstance(callee.value, ast.Name)
-        and callee.value.id in aliases.builtins_modules
-    ):
-        return callee.attr
-    return None
-
-
-def is_namespace_access_call(node: ast.AST, aliases: FrameAliases = NO_ALIASES) -> bool:
-    """Whether ``node`` is a call that reads or writes the caller's namespace.
-
-    That is ``locals()``, ``globals()``, ``eval()``, ``exec()``, or the
-    no-argument ``vars()`` and ``dir()`` (which read ``locals()``), spelled
-    directly or through an alias of the ``builtins`` module. A local
-    variable, parameter, or attribute that merely shares one of these names is
-    not such a call, so callers can rely on this to avoid false positives on
-    shadowing.
-    """
-    if not isinstance(node, ast.Call):
-        return False
-    name = _callee_name(node, aliases)
-    if name is None:
-        return False
-    if isinstance(node.func, ast.Name) and node.func.id in aliases.namespace_functions:
-        # ``from builtins import vars as v``: the alias stands for the builtin.
-        return True
-    if name in _NAMESPACE_CALLEES:
-        return True
-    return name in _NAMESPACE_CALLEES_NO_ARGS and not node.args and not node.keywords
-
-
-def _is_warning_call(call: ast.Call, aliases: FrameAliases) -> bool:
-    """``warnings.warn(...)`` however it is spelled.
-
-    The warnings registry deduplicates by the calling site, so two sites that
-    warn become one site that warns once; and a ``stacklevel`` attributes the
-    warning to a caller a fixed number of frames up, which a helper shifts.
-    A ``stacklevel`` keyword on any call is taken as forwarding to ``warn``.
-    """
-    if any(keyword.arg == "stacklevel" for keyword in call.keywords):
-        return True
-    callee = call.func
-    if isinstance(callee, ast.Name):
-        return callee.id == "warn" or callee.id in aliases.warn_functions
-    if isinstance(callee, ast.Attribute) and callee.attr == "warn":
-        return isinstance(callee.value, ast.Name) and (
-            callee.value.id == "warnings" or callee.value.id in aliases.warnings_modules
-        )
-    return False
-
-
 def requires_original_frame(nodes: Iterable[ast.AST], aliases: FrameAliases = NO_ALIASES) -> bool:
-    """Reject suspension and operations that inspect the original call frame.
+    """Reject control flow, suspension and aliased ``super`` that cannot move.
 
     Generator delegation needs a separate transformation preserving send/throw
-    and return values. Moving frame inspection into a helper is not equivalent.
-    Unknown shadowing of these call names is deliberately treated conservatively.
+    and return values. An aliased zero-argument ``super`` needs the original
+    class cell and receiver. Reflection is outside the preservation contract.
     Each statement's verdict is memoized: it is a property of that statement
     and its module alone, and a statement belongs to every block that spans it.
     """
@@ -611,41 +430,30 @@ def _super_differs_in_a_helper(function: FunctionNode) -> bool:
 def frame_read_outside_block(
     analyzer: "ScopeAnalyzer", function: FunctionNode, nodes: Sequence[ast.stmt]
 ) -> bool:
-    """Whether the function reads its own frame anywhere outside the block.
+    """Whether moving a class-cell load can break an aliased ``super`` outside it.
 
-    ``locals()``, ``vars()``, ``dir()``, a direct ``eval``/``exec`` or a frame
-    walk after the block sees the block's locals; moved into a helper, they
-    are gone (``dir()`` after the block lists fewer names; ``eval("total")``
-    raises). Only the function's own scope counts: a nested function's
-    ``locals()`` is its own frame. An aliased ``super()`` outside the block
-    (``_is_aliased_super_call``) counts when the block loads ``super`` or
-    ``__class__``: that load may be what gives the function its class cell,
-    and it moves into the helper.
+    Loading ``super`` or ``__class__`` may be what gives the function its
+    compiler-provided class cell. Moving that load into the helper removes
+    the cell needed by an aliased zero-argument ``super`` left in the caller.
     """
     aliases = frame_aliases(analyzer.analyzed_tree)
+    if not (aliases.super_functions or aliases.builtins_modules) or not _loads_class_cell_name(
+        nodes
+    ):
+        return False
     inside = set(map(id, nodes))
-    # Only a module that binds an alias of ``super`` or ``builtins`` can spell one.
-    moves_cell_load = bool(
-        aliases.super_functions or aliases.builtins_modules
-    ) and _loads_class_cell_name(nodes)
-    for statement in function.body:
-        for node in _walk_own_scope_outside(statement, inside):
-            if isinstance(node, ast.Call) and (
-                is_namespace_access_call(node, aliases)
-                or _reads_own_frame(node, aliases)
-                or (moves_cell_load and _is_aliased_super_call(node, aliases))
-            ):
-                return True
-    return False
+    return any(
+        isinstance(node, ast.Call) and _is_aliased_super_call(node, aliases)
+        for statement in function.body
+        for node in _walk_own_scope_outside(statement, inside)
+    )
 
 
 def _walk_own_scope_outside(node: ast.AST, excluded: AbstractSet[int]) -> Iterator[ast.AST]:
     """``walk_own_scope(node)`` without the nodes whose ids are ``excluded``, or anything in them.
 
-    The rest of a compound statement that holds the block is still walked: a
-    frame read earlier in the same loop body sees the block's locals on the
-    next iteration, and a frame handle taken before the block sees them
-    afterwards.
+    The rest of a compound statement that holds the block is still walked;
+    an aliased ``super`` can precede or follow the extracted statements.
     """
     pending = [node]
     while pending:
@@ -656,55 +464,6 @@ def _walk_own_scope_outside(node: ast.AST, excluded: AbstractSet[int]) -> Iterat
         if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
             continue
         pending.extend(ast.iter_child_nodes(current))
-
-
-def _frame_readers(module: ast.AST, aliases: FrameAliases) -> FrozenSet[str]:
-    """Names of the module's functions and methods that read a caller-relative frame.
-
-    A function qualifies when its own scope makes a frame-relative call, or
-    calls, by bare name or as an attribute, a function that qualifies; the
-    closure is taken to a fixed point. Resolution is by name, so a same-named
-    function elsewhere is over-approximated as a reader, which only declines.
-    """
-    definitions = [
-        node
-        for node in ast.walk(module)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
-    calls = {
-        id(node): [
-            item
-            for statement in node.body
-            for item in walk_own_scope(statement)
-            if isinstance(item, ast.Call)
-        ]
-        for node in definitions
-    }
-    readers: Set[str] = {
-        node.name
-        for node in definitions
-        if any(_is_frame_relative_call(call, aliases) for call in calls[id(node)])
-    }
-    grew = bool(readers)
-    while grew:
-        grew = False
-        for node in definitions:
-            if node.name in readers:
-                continue
-            if any(_called_name(call) in readers for call in calls[id(node)]):
-                readers.add(node.name)
-                grew = True
-    return frozenset(readers)
-
-
-def _called_name(call: ast.Call) -> Optional[str]:
-    """The name a call reaches: ``f(...)`` gives ``f``, ``obj.f(...)`` gives ``f``."""
-    callee = call.func
-    if isinstance(callee, ast.Name):
-        return callee.id
-    if isinstance(callee, ast.Attribute):
-        return callee.attr
-    return None
 
 
 def _is_aliased_super_call(call: ast.Call, aliases: FrameAliases) -> bool:
@@ -742,21 +501,6 @@ def _loads_class_cell_name(nodes: Iterable[ast.AST]) -> bool:
     )
 
 
-def _reads_own_frame(call: ast.Call, aliases: FrameAliases) -> bool:
-    """``sys._getframe()`` or ``inspect.currentframe()``: a handle to this frame's locals.
-
-    Stack listings and warnings attribute to frames above the call and are
-    unchanged by a helper that has already returned; a frame object read
-    later sees whatever locals are still there. A name bound to one of these
-    (``gf = sys._getframe``) is over-approximated as the function itself.
-    """
-    callee = call.func
-    if isinstance(callee, ast.Name) and callee.id in aliases.frame_functions:
-        return True
-    name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
-    return name in {"_getframe", "currentframe"}
-
-
 _FRAME_SENSITIVE: "WeakKeyDictionary[ast.AST, bool]" = WeakKeyDictionary()
 
 
@@ -770,37 +514,9 @@ def _statement_requires_original_frame(statement: ast.AST, aliases: FrameAliases
         if isinstance(node, ast.comprehension) and node.is_async:
             # An async comprehension is only valid inside an async function.
             return True
-        if isinstance(node, ast.Call):
-            if is_namespace_access_call(node, aliases) or _is_aliased_super_call(node, aliases):
-                return True
-            if _is_frame_relative_call(node, aliases) or _is_warning_call(node, aliases):
-                return True
-            if _called_name(node) in aliases.frame_readers:
-                return True
+        if isinstance(node, ast.Call) and _is_aliased_super_call(node, aliases):
+            return True
     return False
-
-
-_FRAME_RELATIVE_CALLEES = frozenset(
-    {"_getframe", "currentframe", "stack", "getouterframes", "extract_stack", "print_stack"}
-)
-
-
-def _is_frame_relative_call(call: ast.Call, aliases: FrameAliases = NO_ALIASES) -> bool:
-    """Calls whose result depends on how many frames sit above them.
-
-    ``warnings.warn(..., stacklevel=n)`` attributes the warning to the n-th
-    caller; a helper adds one frame. Frame and stack inspection is likewise
-    relative to the current frame. Only direct, recognizably named calls and
-    the module's assigned aliases of them are detected; a callee that
-    inspects frames internally is not.
-    """
-    callee = call.func
-    if isinstance(callee, ast.Name) and callee.id in aliases.frame_functions:
-        return True
-    name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
-    if any(keyword.arg == "stacklevel" for keyword in call.keywords):
-        return True
-    return name in _FRAME_RELATIVE_CALLEES
 
 
 class _LoopControlVisitor(OwnScopeVisitor):
@@ -1068,24 +784,20 @@ def _shadowable_names(module: Optional[ast.AST]) -> Optional[FrozenSet[str]]:
 def created_object_escapes(
     analyzer: "ScopeAnalyzer", function: FunctionNode, nodes: Sequence[ast.stmt]
 ) -> bool:
-    """Whether the block creates a function, class or generator that anything could observe.
+    """Whether a created callable or iterator can outlive the extracted block.
 
-    An object made by moved code is made by the helper: a function, lambda
-    or generator expression carries ``__extracted_func_0.<locals>`` in its
-    ``__qualname__`` where it carried the enclosing function's, and a
-    lambda built from a unified template has the template's parameter
-    names. Both reach output through ``repr``, logging, registries and
-    ``inspect.signature``, and a caller passing ``other=`` by keyword to a
-    lambda now spelled ``value`` gets TypeError. Such an object is safe only
-    where nothing can look at it: a function or lambda that is only ever
-    called inside the block, with arguments its parameters accept (a call
-    that fails to bind raises TypeError naming the function), a ``key=``
-    function of ``sorted``, ``min`` or ``max``, the function of a ``map``
-    or ``filter`` consumed in the block, and a generator expression the
-    block consumes on the spot. Anything else -- returned, yielded, stored
-    anywhere, passed to another call, formatted, decorated, a coroutine
-    function, or a class, whose every instance shows its qualified name --
-    declines the block.
+    A closure moved into a helper captures the helper's bindings. If it
+    escapes, later rebinding in the caller can change the original closure's
+    result while leaving the helper's snapshot unchanged. Unification can
+    also rename lambda parameters, changing an escaping callable's keyword
+    interface. Neither change requires reflection to observe.
+
+    The supported cases call a function or lambda within the block with
+    arguments its parameters accept, use it as a known builtin's callback,
+    or consume its iterator before leaving the block. Other uses decline
+    conservatively. Classes, coroutine functions and decorated definitions
+    can expose closures or defer execution beyond the block, and are not
+    analyzed more precisely here. Object metadata is outside the contract.
     """
     block = list(nodes)
     shadowable = _shadowable_names(analyzer.analyzed_tree)
@@ -1119,7 +831,7 @@ def created_object_escapes(
 
 
 def _makes_generator(node: Union[ast.FunctionDef, ast.Lambda]) -> bool:
-    """Whether calling ``node`` returns a generator, whose repr names the function."""
+    """Whether calling ``node`` returns a generator that defers its body."""
     return any(isinstance(child, (ast.Yield, ast.YieldFrom)) for child in _walk_own_body(node))
 
 
@@ -1329,9 +1041,8 @@ def _binds(
 ) -> bool:
     """Whether ``positional`` arguments and these keywords bind without a TypeError.
 
-    The TypeError a failed binding raises names the function by its
-    qualified name, which a helper changes. A keyword binds the parameter
-    whose name, as the compiler stores it (``stored_as``), is the keyword
+    A keyword binds the parameter whose name, as the compiler stores it
+    (``stored_as``), is the keyword
     as written: in a class body a parameter ``__p`` is stored mangled and
     the keyword ``__p=`` is not (``class_private``), so it does not bind
     there. A parameter whose storage is unknown binds nothing.
@@ -1492,6 +1203,163 @@ def _lexical_name_scopes(
 _MODULE_PARENTS: "WeakKeyDictionary[ast.AST, Dict[ast.AST, ast.AST]]" = WeakKeyDictionary()
 
 
+@dataclass(frozen=True)
+class _BuiltinMappingSource:
+    source: str
+    configuration: ParserConfiguration
+    may_replace: bool
+
+
+_BUILTIN_MAPPING_SOURCE_BYTES = 8 * 1024 * 1024
+_BUILTIN_MAPPING_SOURCES: "WeakKeyDictionary[ScopeAnalyzer, _BuiltinMappingSource]" = (
+    WeakKeyDictionary()
+)
+
+
+def _module_may_replace_builtins(analyzer: ScopeAnalyzer, source: str) -> bool:
+    """One warning-free source fact per live analyzer, with an 8 MiB source budget.
+
+    This predicate depends on source and parser limits, not the analyzer's AST.
+    Its weak owner only bounds lifetime. Warning-capable sources still take
+    the native parsing path on every call; no AST or block fact is retained.
+    """
+    use_memo = memoizing() and type(source) is str and type(analyzer) is ScopeAnalyzer
+    configuration = parser_configuration()
+    if use_memo:
+        known = _BUILTIN_MAPPING_SOURCES.get(analyzer)
+        if known is not None and known.source == source and known.configuration == configuration:
+            return known.may_replace
+        _BUILTIN_MAPPING_SOURCES.pop(analyzer, None)
+    bindings = global_bindings(source)
+    may_replace = bindings is None or (
+        bool(bindings.star_imports)
+        or "__builtins__" in bindings.bindings
+        or "__builtins__" in bindings.rebound_by_global
+        or bindings.builtin_mapping_attribute_write
+    )
+    if use_memo:
+        # Count the source object and a possible separately cached UTF-8 buffer,
+        # as the lexical warning cache does; over-budget sources stay unretained.
+        storage = sys.getsizeof(source) + (0 if source.isascii() else 4 * len(source) + 1)
+        if storage <= _BUILTIN_MAPPING_SOURCE_BYTES and parsing_is_pure(source):
+            _BUILTIN_MAPPING_SOURCES[analyzer] = _BuiltinMappingSource(
+                source, configuration, may_replace
+            )
+    return may_replace
+
+
+def builtin_mapping_reads(
+    function: FunctionNode,
+    nodes: Sequence[ast.stmt],
+    analyzer: ScopeAnalyzer,
+    source: str,
+    *,
+    project_may_replace: bool = False,
+) -> FrozenSet[str]:
+    """Builtin lookups that cannot move when this module may replace ``__builtins__``.
+
+    CPython captures the mapping when it creates a function. A helper or a
+    caller-side lookup lambda created later can capture another mapping.
+    Mutating the shared mapping does not replace it, and local shadowing of
+    a builtin keeps its ordinary parameter behavior.
+    """
+    module = analyzer.analyzed_tree
+    known_source = (
+        source
+        if source.strip()
+        else (ast.unparse(module) if isinstance(module, ast.Module) else "")
+    )
+    # Keep native source diagnostics even when the independently computed
+    # project fact already prevents a shared-mapping proof.
+    source_may_replace = not known_source or _module_may_replace_builtins(analyzer, known_source)
+    if not project_may_replace and not source_may_replace:
+        return frozenset()
+    names, operations = _captured_mapping_dependencies(nodes, analyzer)
+    # Every global lookup can fall back to a captured mapping, which may have
+    # arbitrary keys. A list of the interpreter's standard builtins is not a
+    # proof that other spellings share the same lookup behavior.
+    return (
+        module_resolved_names(function, analyzer, names, exact=True) - {"__debug__"}
+    ) | operations
+
+
+def _captured_mapping_dependencies(
+    nodes: Sequence[ast.stmt], analyzer: ScopeAnalyzer
+) -> Tuple[FrozenSet[str], FrozenSet[str]]:
+    """Explicit and implicit mapping reads executed in the block's original frame.
+
+    Nested callable bodies capture their mapping when they are created; their
+    defaults still execute here. Generator bodies also have their own frame.
+    List, set and dict comprehensions execute inline on Python 3.12+, so their
+    reads must remain safe on those interpreters even when Towel runs on 3.11.
+    Compiler operations consult their mapping key independently of lexical
+    names: a local called ``__import__`` does not affect an import statement.
+    """
+    names: Set[str] = set()
+    operations: Set[str] = set()
+    pending: List[Tuple[ast.AST, FrozenSet[str]]] = [(node, frozenset()) for node in nodes]
+    postponed = _postpones_annotations(analyzer.analyzed_tree)
+    while pending:
+        node, bound = pending.pop()
+        if isinstance(node, ast.Name):
+            if isinstance(node.ctx, ast.Load) and node.id not in bound:
+                names.add(node.id)
+            continue
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            if node.target.id not in bound:
+                names.add(node.target.id)
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            operations.add("__import__")
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            generic_bound = bound | type_parameter_names(node)
+            if not isinstance(node, ast.Lambda):
+                pending.extend((expression, bound) for expression in node.decorator_list)
+            if isinstance(node, ast.ClassDef):
+                operations.add("__build_class__")
+                pending.extend((expression, generic_bound) for expression in node.bases)
+                pending.extend((keyword.value, generic_bound) for keyword in node.keywords)
+            else:
+                pending.extend((expression, generic_bound) for expression in node.args.defaults)
+                pending.extend(
+                    (expression, generic_bound)
+                    for expression in node.args.kw_defaults
+                    if expression is not None
+                )
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not postponed:
+                    pending.extend(
+                        (expression, generic_bound) for expression in annotation_expressions(node)
+                    )
+            continue
+        if isinstance(node, ast.GeneratorExp):
+            pending.append((node.generators[0].iter, bound))
+            continue
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp)):
+            pending.append((node.generators[0].iter, bound))
+            comprehension_bound = bound | comprehension_targets(node)
+            pending.extend(
+                (generator.iter, comprehension_bound) for generator in node.generators[1:]
+            )
+            pending.extend((generator.target, comprehension_bound) for generator in node.generators)
+            pending.extend(
+                (condition, comprehension_bound)
+                for generator in node.generators
+                for condition in generator.ifs
+            )
+            pending.extend(
+                (expression, comprehension_bound) for expression in comprehension_results(node)
+            )
+            continue
+        if isinstance(node, ast.AnnAssign):
+            # Function-local variable annotations never execute.
+            pending.append((node.target, bound))
+            if node.value is not None:
+                pending.append((node.value, bound))
+            continue
+        pending.extend((child, bound) for child in ast.iter_child_nodes(node))
+    return frozenset(names), frozenset(operations)
+
+
 def module_resolved_names(
     function: FunctionNode,
     analyzer: "ScopeAnalyzer",
@@ -1505,19 +1373,24 @@ def module_resolved_names(
     name an enclosing function binds is a cell; either read is not the
     module's. The annotation scopes of generic functions and classes bind
     their type parameters too. Class attributes do not count.
-    Anything else reaches the module's namespace, then the builtins, and is
-    the same lookup from any function of the module. A comprehension's
+    Anything else reaches the shared module namespace, then the builtin
+    mapping captured separately by each function at its creation. Preserving
+    that fallback requires the separate mapping guard. A comprehension's
     target counts as a function's local unless ``exact``
     (``_lexical_name_scopes``): the answer then under-counts module names,
     which only declines.
     """
-    # ``__class__`` is the cell the compiler gives a method for zero-argument
-    # ``super()``; it names the defining class, not a module binding.
-    resolved = set(names) - {"__class__"}
+    resolved = set(names)
     module_only: Set[str] = set()
     for scope in _lexical_name_scopes(function, analyzer, exact=exact):
         module_only.update(scope.global_names & resolved)
         resolved -= (scope.local_names | scope.type_parameters) - module_only
+        if isinstance(scope.node, ast.ClassDef) and "__class__" not in module_only:
+            # Only crossing an actual class boundary supplies its implicit
+            # cell. A plain function can instead fall back to this arbitrary
+            # key in its captured builtin mapping. Nearer global declarations
+            # bypass the class cell just as they bypass enclosing locals.
+            resolved.discard("__class__")
     return frozenset(resolved)
 
 
@@ -1648,10 +1521,9 @@ def passes_lambdas_through(expressions: Sequence[Tuple[int, ast.AST]]) -> bool:
     a lambda each block hands to a call, makes at most once per run, and
     holds once. Making it at the call site instead is unobservable: a lambda
     that takes nothing evaluates nothing when it is made and cannot fail, it
-    closes over the same variables of the same function as the block's, and
-    its ``__qualname__`` is the one the block's had. So it is passed as it
-    is; a thunk around it would be the ``lambda: __param_0()`` the unifier
-    avoided.
+    closes over the same variables of the same function as the block's. So
+    it is passed as it is; a thunk around it would be the
+    ``lambda: __param_0()`` the unifier avoided.
     """
     return all(
         isinstance(expression, ast.Lambda)
@@ -1753,6 +1625,77 @@ def thunk_reads_possibly_unbound_local(
             reader.visit(node)
             if (reader.used & local) - available:
                 return True
+    return False
+
+
+def captured_comprehension_changes_enclosing_cell(
+    analyzer: "ScopeAnalyzer", function: FunctionNode, nodes: Sequence[ast.stmt]
+) -> bool:
+    """Keep an inlined comprehension's captured target in its original free-cell frame.
+
+    On Python 3.12/3.13 a target captured by a lambda or generator can be both a local
+    cell and an enclosing free cell of its containing function. Moving
+    the comprehension to a helper removes that topology and changes the
+    caller's ordinary reads, including its errors. Refuse on every host
+    version so generated projects preserve the supported interpreters.
+    """
+    references = frozenset(function_names(function).references)
+    outer = references - own_scope_locals(function)
+    outer -= module_resolved_names(function, analyzer, outer, exact=True)
+    if not outer:
+        return False
+    pending: List[ast.AST] = list(nodes)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            pending.extend(evaluated_before_definition(node))
+            if isinstance(node, ast.ClassDef):
+                pending.extend([*node.bases, *(keyword.value for keyword in node.keywords)])
+            elif isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ) and not _postpones_annotations(analyzer.analyzed_tree):
+                pending.extend(annotation_expressions(node))
+            continue
+        if isinstance(node, ast.GeneratorExp):
+            # Its body has a separate frame; the first iterable runs here.
+            if node.generators:
+                pending.append(node.generators[0].iter)
+            continue
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp)):
+            targets = comprehension_targets(node) & outer
+            if targets:
+                scope = analyzer.node_scopes.get(node)
+                for closure in ast.walk(node):
+                    if isinstance(closure, ast.Lambda):
+                        parts: List[ast.AST] = [closure.body]
+                    elif isinstance(closure, ast.GeneratorExp):
+                        # The first iterable is evaluated before this closure exists.
+                        parts = [
+                            *comprehension_results(closure),
+                            *(generator.iter for generator in closure.generators[1:]),
+                            *(
+                                condition
+                                for generator in closure.generators
+                                for condition in generator.ifs
+                            ),
+                        ]
+                    else:
+                        continue
+                    own = nested_scope_names(closure).local
+                    captured = {name for part in parts for name in free_reads(part, own)} & targets
+                    if not captured:
+                        continue
+                    for read in (read for part in parts for read in ast.walk(part)):
+                        if (
+                            not isinstance(read, ast.Name)
+                            or not isinstance(read.ctx, ast.Load)
+                            or read.id not in captured
+                        ):
+                            continue
+                        binding = analyzer.identifier_bindings.get(read)
+                        if scope is None or binding is None or binding.scope_id == scope.scope_id:
+                            return True
+        pending.extend(ast.iter_child_nodes(node))
     return False
 
 

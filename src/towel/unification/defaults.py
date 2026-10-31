@@ -15,7 +15,11 @@
 """The engine's defaults, shared by the constructor, the drivers and the command line."""
 
 DEFAULT_MAX_PARAMETERS = 5
-"""Most parameters an extracted helper may take."""
+"""Most differing expressions replaced by new parameters.
+
+Ordinary free inputs can add arguments. Certified whole-body ownership transfer
+must also fit its complete positional signature, including the final holder.
+"""
 
 DEFAULT_MIN_LINES = 3
 """Fewest lines a candidate block may span."""

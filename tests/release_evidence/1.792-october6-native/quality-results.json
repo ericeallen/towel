@@ -1,0 +1,49 @@
+[
+  {
+    "gate": "black",
+    "exit_code": 0,
+    "seconds": 0.3507442499976605,
+    "python": "/Users/ericeallen/Code/towel-1792-performance/.venv/bin/python3",
+    "arguments": [
+      "black",
+      "--check",
+      "src/towel",
+      "tests",
+      "scripts"
+    ]
+  },
+  {
+    "gate": "flake8",
+    "exit_code": 0,
+    "seconds": 0.7743222499266267,
+    "python": "/Users/ericeallen/Code/towel-1792-performance/.venv/bin/python3",
+    "arguments": [
+      "flake8",
+      "src/towel",
+      "scripts",
+      "tests"
+    ]
+  },
+  {
+    "gate": "mypy",
+    "exit_code": 0,
+    "seconds": 0.18029879103414714,
+    "python": "/Users/ericeallen/Code/towel-1792-performance/.venv/bin/python3",
+    "arguments": [
+      "mypy"
+    ]
+  },
+  {
+    "gate": "bandit",
+    "exit_code": 0,
+    "seconds": 2.0158048749435693,
+    "python": "/Users/ericeallen/Code/towel-1792-performance/.venv/bin/python3",
+    "arguments": [
+      "bandit",
+      "-r",
+      "src/towel",
+      "scripts",
+      "-ll"
+    ]
+  }
+]

@@ -15,7 +15,7 @@
 """An environment is known by what it holds, never by its name (round 4, P2).
 
 A project package called ``env`` or ``venv`` is refactored like any other
-(README, "What is analyzed"). The checked copy of an output skipped both names
+(docs/CLI_GUIDE.md, "Exclude files and directories"). The checked copy of an output skipped both names
 whatever they held, so once a change to ``env/x.py`` was written every later
 check read the original's ``env/x.py``; the second change was accepted against
 that stale view, and the cold confirmation, which read the real one, refused

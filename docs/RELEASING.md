@@ -1,39 +1,420 @@
 # Preparing a release
 
-The `1.772` release is dated September 26, 2026. Its
-[changelog](../CHANGELOG.md#1772---2026-09-26) records what changed since
-`1.732`. Helpers are shared within one module unless `--cross-module` is
-given. Import names come from the program's own imports. A typed run is
-compared against the project's own check where the original's errors stood.
-Code under decorators that rewrite bodies stays where it is. The rest are the
-defects four rounds of audit found and fixed, each pinned by a test. The
-preceding `1.732.post1` release corrected PyPI documentation links without
-changing the Python implementation in `1.732`; its
-[post-release changelog](../CHANGELOG.md#1732post1---2026-09-19) records that
-fix, and the [1.732 changelog](../CHANGELOG.md#1732---2026-09-19) summarizes
-reuse of existing functions, optional formatting and typing, larger-project
-controls, and that release's audit fixes. The candidate commit and the evidence
-behind each claim are recorded in the
-[readiness report](PRODUCTION_READINESS.md).
+[Documentation index](README.md)
 
-The 1.772 corpus, typed and with `--cross-module`, gave 90 `PASS`,
-45 `NO_CHANGE` and six import-problem refusals among 141 projects; the
-[readiness report](PRODUCTION_READINESS.md#1772-release-validation-september-26-2026)
-gives the commits, the refusals' causes and the four projects that took the
-untyped path. Earlier corpus reports belong to their own commits. Preparing
-artifacts does not authorize uploading
-them, changing repository visibility, creating remote tags, or contacting users.
-Publication is a separate maintainer decision.
+**1.947 was published October 26, 2026** on
+[PyPI](https://pypi.org/project/code-towel/1.947/) and
+[GitHub](https://github.com/ericeallen/towel/releases/tag/v1.947), from
+`8a853126f5499eb11dfa04fbe304dc332dc5ef73`. All four
+[exact-commit CI jobs](https://github.com/ericeallen/towel/actions/runs/40312460216)
+passed. Its [overview](RELEASE_1_947.md) and
+[changelog](../CHANGELOG.md#1947) describe the repair scope and the explicit
+rename consumer-scope requirement. The [readiness report](PRODUCTION_READINESS.md)
+records the completed local campaign, corpus exceptions, performance costs and
+artifact hashes. The dated preparation checkpoints below retain their original
+incomplete or failed results; they do not describe the current release status.
+
+The initial publication left GitHub's default branch at 1.792 even though the
+1.947 tag and PyPI distributions were correct. A release branch and tag are
+not a substitute for promoting the validated source to the default branch.
+The live default-branch gate below now checks that missing step explicitly.
+
+## 1.947 preparation checkpoint, October 25, 2026
+
+The later Sphinx investigation confirmed and repaired unnecessary incremental
+invalidation and duplicate Black/isort workers. These findings do not establish
+the sole cause of the original signal kill: the failed and earlier passing
+campaigns used different memory limits and concurrent workloads. The corrected
+diagnostic then reached its three-hour deadline with no recorded OOM events;
+it produced no adopted output or transformed consumer test result. See the
+[diagnostic scope and parsing repair](PERFORMANCE.md#1947-sphinx-memory-and-parsing-investigation).
+
+The corpus harness now distinguishes signal kills from expired deadlines and
+defaults to one project worker. The further lexical correction admits only
+warning-free raw formatted literal segments supported by the tokenizer. Freeze
+the changed runtime and run complete exact-candidate release gates. Earlier
+partial runs and completed gates retain their original identities; final
+validation and publication outcomes remain external to the shipped source.
+
+## 1.947 preparation checkpoint, October 24, 2026
+
+Candidate `877b375` reached the corpus after completing its matrix, differential,
+artifact and self-dogfood gates. The corpus workspace permission repair preserved
+that frozen candidate: using a volume mount with `volume-nocopy` prevented Docker
+from replacing the non-root runner's ownership during mount initialization. The
+runner's write, read, rename and removal probe passed before resumption.
+
+The resumed corpus then stopped on PrettyTable's 30-minute refactor timeout.
+Bounded diagnostics identified repeated parsing of a warning-free source caused
+by the lexical warning classifier. The [narrow runtime correction](PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
+requires a new freeze and the complete declared release campaign. This differs
+from the permission-only repair: completed `877b375` gates do not validate the
+changed runtime. Preserve those records and the incomplete corpus under their
+original identities. Final validation and publication outcomes remain external.
+
+## 1.947 preparation checkpoint, October 23, 2026
+
+The replacement candidate `9def1b8` passed Linux quality checks, then its
+dependency audit reported three vulnerabilities in development dependency
+filelock 3.32.6. The lock now selects filelock 4.2.4, including the fixes
+identified in 4.2.1. Its Python requirement matches the supported 3.11–3.13
+range and the existing dependent packages accept it. Runtime requirements
+are unchanged. This dependency update requires a fresh freeze and validation.
+
+Binding-form seed `10060797319587863840408861851` exhausted memory during
+validation of frozen source `575abcc`. Its original and transformed programs
+both append indefinitely to the list being iterated, before reaching extracted
+code. Each independently exhausted an isolated 256 MiB container; resource
+contention is not required to reproduce the failure. This was a fuzz-harness
+containment defect, with no runtime source correction needed.
+
+Differential observation now runs the original first. An original that exceeds
+its memory, output or time budget is inconclusive, and the transformed observer
+is not launched. Transformed-only exhaustion remains a finding; unexplained
+process exits remain harness errors. Each observer has a 256 MiB memory budget,
+a 60-second overall deadline, and the existing per-call timeout. Linux enforces
+the memory limit with `RLIMIT_AS`; the parent also samples RSS (`/proc` on Linux,
+`ps` on macOS). Sampled RSS can overshoot between checks, so native macOS has
+no hard memory guarantee. Failed RSS measurements fail closed. Run release
+campaigns in disposable Linux containers with an outer memory limit too.
+Captured streams stop at 20,000 characters, output files at a sampled 16 MiB,
+and timeout handling skips subsequent argument representation. Resource findings
+are exported without replay through the less constrained hostile battery.
+The seed and transformed-only controls are permanent regressions. The replacement
+freeze requires fresh release validation; completed `575abcc` results retain
+their original identity. Final outcomes remain external to shipped source.
+
+Binding-form seed `19009312961665790893874724517` exposed another conservative
+scope-oracle refusal on frozen source `5f527a1`. Its execution observations
+agreed. The oracle now certifies retention in literal `while True` loops with
+an unconditional terminal `break`, no `else`, and no earlier `break` or `continue`,
+nested loop, handler or context manager. Both original and rewritten loops
+must qualify; all existing producer, return-slot and unused-binding checks
+remain in force. The seed and negative controls are permanent regressions.
+No runtime source change was needed. The replacement validation outcomes
+remain external to the shipped source.
+
+## 1.947 preparation checkpoint, October 22, 2026
+
+Bounded investigation reproduced the grammar failure at binding-form seed
+`94085730748536952` on frozen source `0695378`. Its execution observations
+agreed; the scope oracle rejected a retained caller binding because it
+mistook a comprehension assignment's attribute receiver for a comprehension
+variable. The oracle now distinguishes assigned names from receiver/index
+reads, retaining checks for real scope changes. The seed is a permanent
+regression. No runtime source change was needed.
+
+Development pins were refreshed for the newly reported certifi, virtualenv and
+Black advisories. Both the harness correction and lock update require a replacement
+freeze and new release validation. The prior matrix and artifact checks remain
+bound to `0695378`; its interrupted fuzz campaign and unstarted corpus,
+self-dogfood and timing checks do not establish acceptance. Final outcomes
+remain external to the shipped source as specified below.
+
+## 1.947 preparation checkpoint, October 19, 2026
+
+At this preparation checkpoint, 1.947 was unpublished and live PyPI metadata
+showed the version unused. That observation does not reserve it. Published
+1.946 was independently verified: its October 19 wheel has SHA-256
+`090c158f8dbd6795dbbe7e18d0bcffbbb884141f16d04100663c8d4ccc45c0cd`,
+and all 107 runtime files match audited source `a1355ab`. GitHub's `v1.946` ref
+resolves to `4b95c0ae1bef211574f747775b49e3422b08e5ce`; matching the runtime
+files does not identify every packaging or documentation file with that source.
+Neither the published version nor its artifacts may be replaced.
+
+The preceding repair source `2027689` still used 1.946 metadata. Its Linux
+Python 3.13 full `just ci`, native scoped regressions, bare-wheel checks and
+focused differential sample passed as recorded in the readiness report. Those
+are prior-source repair results. Version, lock metadata and documentation
+changes for 1.947 require a new final freeze and exact distributions. The
+complete Python 3.11–3.13 suites and coverage, all other local evidence below,
+the corpus, consumer/performance review and source-bound evidence verification
+remained pending for that final candidate.
+
+The first versioned candidate, `59aafb1`, subsequently completed the full local
+matrix, differential families, clean-wheel and source-archive checks, and
+self-dogfood. Its corpus was stopped after eight completed project results when
+profiling confirmed that the builtin-mapping safety guard repeatedly rescanned
+warning-free modules above the lexical cache's per-source size limit. A separate
+diagnostic using the verified published 1.946 wheel produced byte-identical
+consumer output. The profiler records identify the repeated work; their elapsed
+times are not an unprofiled production benchmark. This candidate's retained
+results do not certify the subsequent runtime fix.
+
+The repaired guard covers all explicit module/global fallback reads and implicit
+import/class lookups under possible mapping replacement, including wildcard
+exports of `__builtins__` and ordinary `receiver.__builtins__` stores/deletions
+anywhere in the analyzed program. A fresh per-analysis boolean records that
+program-wide hazard, including excluded runnable files and conservative
+unknown-input handling. See the [evaluation-scope policy](GENERATED_CODE.md#arguments-and-evaluation).
+Separately, it memoizes only the source-derived
+builtin-mapping predicate, with one warning-free source/configuration fact per
+weakly held analyzer and an 8 MiB source-storage admission limit. Native warning
+replay, parser-limit changes,
+disabled memoization and fresh block/AST checks remain in force. Finalize and
+review all version metadata, documentation and container prerequisites before
+the replacement freeze; then build and validate its exact archives. Keep final
+outcomes external to the frozen shipped files so recording them does not itself
+change the release contents.
+
+Exact-commit remote CI, the release tag and its README destinations, and
+publication also remained pending. The standing **never push** instruction
+blocked an agent from completing the remote sequence below. Local preparation
+cannot stand in for exact-commit remote CI or authorize an upload while that
+barrier remains. No tag, push, upload or publication is performed by preparing
+this source.
+
+### Historical 1.946 preparation context
+
+The following records retain their original dates and source identities; they
+do not certify 1.947 or override the verified 1.946 publication above.
+
+The earlier raw-regex guard source `a6dc6ed` has source-bound 1.946 artifacts,
+static/package checks and a complete Voluptuous canary. Its two completed
+shared-host R,F,F,R cohorts measured Voluptuous 3.75% lower and Click 23.39%
+slower than published `44d7795`, with two observations per source/workload.
+The [portable record](../tests/release_evidence/1.946-warning-guard/README.md)
+retains all eight actual samples, original pairs, outputs and closure. Rich
+had zero actual samples in that campaign; its cohort and fresh full release
+gates remained pending for that source. These limited measurements neither
+approve publication nor establish overall restoration. The subsequent prepared
+1.946 runtime included a backslash-parity repair and required a new final freeze,
+fresh full gates and new timing evidence. The older cohorts remain bound to `a6dc6ed`;
+later source changes cannot inherit those checks or measurements.
+
+The preceding **1.792** release was completed October 8, 2026, from `44d7795`,
+with Python 3.11–3.13 validation, the 141-project corpus review, exact artifact
+verification and exact-commit CI. Its records retain that source identity;
+they do not validate the follow-up runtime or artifacts still numbered 1.792.
+Preparing artifacts does not authorize uploading them, changing repository
+visibility, creating remote tags, or contacting users. Publication is a
+separate maintainer decision.
+
+## 1.946 publication checkpoint, October 18, 2026
+
+This is the historical October 18 checkpoint. The October 19 verification above
+supersedes its then-unverified remote status; its validation records remain
+bound to their original sources.
+
+The maintainer extended the 1.946 scope to implement the per-analysis
+source-correspondence memo, preserve mutation protections, rerun the complete
+Python 3.11–3.13 suites and compare generated output with the cache enabled and
+disabled. This supersedes the earlier instruction to publish without more tests
+and the earlier decision to defer the memo. The [local results](PRODUCTION_READINESS.md#scoped-source-proof-memo-local-validation-october-18-2026)
+record completed runs, corrected navigation links and the remaining blocked
+watchdog observer. Historical results retain their original sources.
+
+The October 18 runtime included `--stats` and reused source correspondence only for
+explicitly owned immutable trees within one analysis. Caller trees and
+materialization retain fresh proofs; disabled memoization and warning-capable
+sources bypass reuse. The October 18 profile predates this implementation and
+does not establish its performance. No new speedup is claimed.
+
+At that checkpoint, publication was authorized but unverified. The environment
+could not resolve PyPI or GitHub, and the web tool returned no live release
+metadata. Local records identified 1.792 as the last published version and
+contained no `v1.946` tag. Those records could not establish the remote state.
+The remaining instructions at that checkpoint were: before uploading,
+check live version availability and the existing remote commit, CI and tag;
+verify the release-pinned README destinations. After uploading the exact wheel
+and sdist, compare PyPI's artifact hashes and embedded README with them. Do not
+replace an existing upload or mark 1.946 published without that readback.
+No Git push is permitted under the standing repository instructions.
+
+**Contents**
+
+- [1.947 preparation checkpoint](#1947-preparation-checkpoint-october-25-2026)
+- [Historical 1.946 checkpoint](#1946-publication-checkpoint-october-18-2026)
+- [Version convention](#version-number-convention) · [Recorded history](#recorded-release-history)
+- [Evidence gate](#repository-owned-evidence-gate) · [Schema](#evidence-schema-1) · [Changes after freezing](#changes-after-a-validation-freeze)
+- [Required local evidence](#local-evidence-required) · [Automation](#configured-automation)
+- [Consumer and typing evidence](#consumer-and-typing-evidence) · [Dependency audit](#dependency-audit)
+- [Candidate artifacts](#candidate-artifacts) · [Publication order and links](#publication-order-and-documentation-links)
+- [Release record](#recording-the-release) · [Maintainer decisions](#maintainer-decisions-before-publication)
+
+## Version number convention
+
+Towel uses increasing, normalized PEP 440 identifiers with mathematical
+mnemonics: 1.772 names the square root of pi, 1.792 names ln 6, and 1.946 names
+ln 7. These two-component versions are not a strict Semantic Versioning scheme.
+The maintainer explicitly selected 1.947 for audit repairs after 1.946; no new
+mathematical mnemonic is assigned. Its rename CLI enforces the complete-consumer
+scope requirement; see the [1.947 overview](RELEASE_1_947.md). A future 2.0 should accompany a deliberate
+major transition, rather than the size of a patch or a nearby mathematical value.
+
+At three decimal places, 1.947 leaves 52 larger labels below 2.000, from 1.948
+through 1.999. Choose each future mnemonic and identifier explicitly; the current
+choice does not schedule 2.0. Version tools compare integer components, not real
+numbers: `1.9461` sorts after `1.999`, so adding decimal precision is not a way to
+insert a release between them. Review ordering with `packaging.version.Version`
+and check live availability before reserving any future release identifier.
 
 ## Recorded release history
 
-Recorded during September 2026; verify current remote state before publication:
+Updated with the October 19, 2026 publication verification; recheck remote state before any later publication:
 
-- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` (September 15, 2026), `1.618` (September 17, 2026), and `1.732` and `1.732.post1` (September 19, 2026) are published and not yanked; none may be rebuilt or replaced. Publish the next release as a new version.
+The September 26, 2026 **1.772** corpus gave 90 `PASS`, 45 `NO_CHANGE` and six
+import-problem refusals among 141 projects. Its completed results remain in the
+[historical readiness section](PRODUCTION_READINESS.md#1772-release-validation-september-26-2026),
+under their original source and environment identities. They do not describe
+the later 1.792 release or the prepared 1.946 version.
+
+- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` (September 15, 2026), `1.618` (September 17, 2026), and `1.732` and `1.732.post1` (September 19, 2026) are published and not yanked. Version `1.772` is also published (release dated September 26; PyPI upload September 27 UTC). The verified 1.792 release followed on October 8 from `44d7795`. The published 1.946 release was verified on October 19, 2026, as recorded above. None may be rebuilt or replaced. Prepare 1.947 as a new version under the same release gates.
 - The GitHub repository was made public on September 15, 2026, and its default branch is `main`. Earlier authenticated inspection (while private) found historical releases `v0.5.0` and `v0.5.1`, an active CI workflow, and an unprotected `main` branch. Verify the actual remote settings before relying on any of them.
-- The public PyPI description still represents the earlier release. A new distribution must carry the current status documentation, known limitations, and Python requirement.
+- PyPI embeds each uploaded distribution's README. A new distribution must carry the current version's documentation links, known limitations and Python requirement; editing GitHub afterward does not update an uploaded description.
 
 Recheck live version availability immediately before publishing. The proposed version number is not reserved.
+
+## Repository-owned evidence gate
+
+The supported local release command is now:
+
+```sh
+just release VERSION /path/to/release-evidence.json
+```
+
+Choose and commit `VERSION` **before** freezing validation. This command
+requires a clean checkout and verifies completed evidence for the exact
+prebuilt wheel and source archive; it never changes the version or rebuilds
+after verification. `just bump-version VERSION` and `just build` remain
+separate development operations. The verifier neither uploads nor tags and
+does not prevent an owner from invoking an upload tool manually. A successful
+local check does not reserve a version or replace the final maintainer decision.
+
+The completed 1.946 development audit is bound to `9d57b0d`, which still used
+1.792 metadata. That source passed the native suite, static gates, broad behavior
+checks and six pinned consumer comparisons. The earlier `9d57b0d` complete-CLI
+Click/Rich measurements found slowdowns of 21.85% and 78.10%, respectively, with
+two samples per version per workload on a shared host. These historical
+observations do not certify the later versioned candidate; earlier phase
+improvements do not override them. Those Voluptuous/Click
+cohorts left restoration unresolved and Rich pending for that source.
+The maintainer must review the measured regression before publication.
+
+The version and documentation update changes release contents. Freeze the final
+1.947 source, rebuild its artifacts, and run the full declared release campaign:
+Python 3.11–3.13, coverage and quality, differential families, clean-wheel and
+sdist checks, self-dogfood, dependency/diagram checks, the 141-project corpus,
+source-bound evidence verification and exact-commit CI. Historical successes
+remain evidence for their original sources. The detailed completed and pending
+scope is in the [readiness report](PRODUCTION_READINESS.md).
+
+The first versioned freeze, `a53e351`, completed several gates but its corpus
+was stopped at 31 of 141 projects after a reproduced performance defect.
+That campaign does not clear release acceptance. The subsequent warning-guard
+repair was frozen as `a6dc6ed` with fresh artifacts/static checks and completed
+Voluptuous/Click cohorts. The subsequent backslash-parity repair has scoped
+native/fixture evidence, but its fresh full gates and timing observations remain
+pending. The original raw records retain their original identities.
+
+For an unreleased experiment, use
+`just verify-release-evidence VERSION /path/to/release-evidence.json`.
+This explicitly reports validation only, never permission to upload. The
+post-1.772 frozen validation artifacts still numbered `1.772` have that scope;
+they must not be relabelled as a new release. The release path also checks the
+current hashed `source.json` and `artifacts.json` publication-status fields,
+so changing only the bundle's purpose cannot override their no-upload status.
+Historical documentation and old fixtures are not scanned for such wording.
+
+### Evidence schema 1
+
+Keep the bundle external to the checkout. No tracked file needs to contain
+the hash of the commit that includes itself. All file references below contain
+a relative path and the SHA-256 of the bytes at that path. Paths cannot escape
+the bundle directory, including through symlinks. Named records may be stored
+as `.gz`; their reference hashes the compressed file and the verifier reads
+the decompressed record. Artifacts are always the original archive bytes.
+Run the verifier from the frozen development environment (`uv sync --frozen
+--extra dev`), which includes its hardened `defusedxml` parser through the
+locked dependency-audit tools. Coverage evidence cannot declare a DTD or
+expand custom entities, even when its file hash matches.
+
+```json
+{
+  "schema": 1,
+  "version": "VERSION",
+  "purpose": "validation",
+  "validation_commit": "FULL_FROZEN_GIT_SHA",
+  "artifacts": {
+    "wheel": {"path": "dist/code_towel-VERSION-py3-none-any.whl", "sha256": "SHA256"},
+    "sdist": {"path": "dist/code_towel-VERSION.tar.gz", "sha256": "SHA256"}
+  },
+  "records": {
+    "source.json": {"path": "source.json", "sha256": "SHA256"}
+  },
+  "review": {"path": "release-review.json", "sha256": "SHA256"},
+  "amendments": null
+}
+```
+
+The example abbreviates `records`: every name exported by
+`scripts.verify_release_evidence.REQUIRED_RECORDS` is mandatory. List them with
+`python -c 'from scripts.verify_release_evidence import REQUIRED_RECORDS; print("\n".join(REQUIRED_RECORDS))'`.
+These are the retained native source/artifact inventories, five build/quality
+steps, dependency/diagram checks, both 2,000-case fuzz families, all three
+interpreter results with the matrix driver, full runtime coverage XML and logs, six clean-wheel command
+records, sdist documentation tests, complete self-dogfood tests and integrity
+records, and corpus launch/completion/environment/summary records. Also include
+each `corpus-report/PROJECT.json` and every referenced raw phase log as
+`corpus-logs/BASENAME`. A PASS reached through retesting also requires its
+`corpus-logs/PROJECT-retest.json` and isolated/full before-and-after logs.
+Missing, partial, failed or inconsistent records refuse the gate. A free-form
+`status: passed` is insufficient; the verifier examines exit records, actual
+pytest summaries, coverage line hits, archive contents and RECORD hashes,
+corpus membership/pins, and completed before/after outcomes and failed-test IDs.
+
+The structured review has `validation_commit`, `wheel_sha256`, `reviewer`, a
+nonempty `report` file reference, `open_findings: []`, and four maps:
+`reviewed_nonaccepted`, `reviewed_fallbacks`, `reviewed_known_failures`, and
+`reviewed_baseline_failures`. Each map must contain exactly the projects in
+that category, with no missing or stale entries. Each entry contains a
+nonempty `reason`, `disposition` (`accepted-refusal`, `typed-fallback`,
+`known-limitation`, or `pre-existing-baseline`) and a nonempty `evidence`
+array of file references. Those dispositions respectively belong to
+`reviewed_nonaccepted`, `reviewed_fallbacks`, `reviewed_known_failures` and
+`reviewed_baseline_failures`.
+Describe a baseline failure as pre-existing **in this run/environment**, not
+as a claim about upstream CI. NO_CHANGE and early refusals do not establish
+a transformed-suite result. Known differences still require pinned manifest
+expectations and explicit review; a new regression is not an accepted refusal.
+Every project needs a completed baseline. Only a completed CRASH or UNSUPPORTED
+refactor refusal with zero changed files and no after-suite can receive
+`accepted-refusal`. Setup errors, timeouts, killed processes and incomplete
+suites refuse the gate regardless of review text. A known limitation must
+preserve baseline failure identities and introduce only manifest-listed failures.
+
+Native records must come from the frozen source. Where an older command
+capture lacks its own source field, the bundle and review record its
+provenance alongside the independently source-bound matrix/corpus/self runs.
+This is a guard against incomplete or mismatched local evidence, not an
+authentication mechanism: someone able to fabricate every record can also
+fabricate observations. The verifier never executes retained commands.
+
+### Changes after a validation freeze
+
+A different HEAD is not automatically accepted. Runtime, project/build/type
+configuration, dependency locks, corpus scripts/manifest, differential harness
+or conftest changes require new validation. Documentation, ordinary regression
+tests and retained evidence may be reconciled explicitly. Bootstrapping this
+verifier permits its new script and changes confined to the justfile release
+block, with the same checks; later verifier edits require a new freeze.
+
+When these permitted files differ, `amendments` must contain `files` mapping
+**every** changed repository-relative path to its current SHA-256 (or `null`
+for deletion), a `report` file reference, and `checks`. Every check contains
+`kind` (`tests`, `quality`, or `diagrams`), its actual `command` argument array,
+timezone-aware `started`/`finished`, integer `exit_status: 0`, a `log` file
+reference, the same complete `files` map, and `covers` listing the changed
+files it checked. Every change requires successful supplemental tests; Python
+and justfile changes also require successful `just check`. Preserve these
+counts separately from the frozen matrix. Checks are tied to content, so a
+subsequent edit requires recording them again.
+
+Validation-only verification can reconcile later documentation against old
+validation artifacts while retaining their exact original source identity.
+For an actual release, changes to a file already shipped in those archives
+refuse the gate: freeze and validate the final release contents and artifacts
+instead. No version-only drift exception is provided.
 
 ## Local evidence required
 
@@ -41,14 +422,49 @@ Use Python 3.13 for the pinned quality tools and `uv sync --frozen --extra dev`.
 Run `just ci`: formatting, lint, typing, Bandit, the dependency audit, full tests,
 coverage with the unconditional 85% gate, and a wheel/source build. Repeat the
 full tests and coverage on Python 3.11–3.13, combining coverage before each
-report. If dependencies or extras changed, review and commit the refreshed
+report. Complete this Python 3.11–3.13 matrix **before starting the corpus**.
+Every interpreter's full test suite and coverage gate must pass on the frozen
+candidate. A failed or incomplete matrix blocks the corpus run; fix the failure
+and repeat the affected validation first. A passing native Python 3.13 suite
+alone does not satisfy this prerequisite.
+If dependencies or extras changed, review and commit the refreshed
 `uv.lock` before the frozen runs. Record the candidate commit, commands,
 interpreter/tool versions, exit statuses, and retained evidence paths.
 
+### Configured automation
+
+This table describes the current workflow configuration, not a completed run
+or a promise that the next candidate passes. Historical release results keep
+their original platforms and interpreter versions in the readiness report.
+CI runs for pull requests and pushes to `main` or `release/**`. Preparing a
+release branch permits exact-commit push CI without changing `main`. Verify
+that the completed CI run's `headSha` is the frozen release commit; a green
+run on an ancestor or a different pull-request merge is insufficient.
+
+| Job | Runner | Python | Scope |
+| --- | --- | --- | --- |
+| Full tests and coverage | `ubuntu-latest` | 3.11, 3.12, 3.13 | 85% coverage gate |
+| Quality and distributions | `ubuntu-latest` | 3.13 | Black, Flake8, mypy, Bandit, dependency audit, build |
+| Scheduled/manual corpus | `ubuntu-latest` | 3.13 | untyped (`--no-types`); 2 concurrent projects; 180-minute job limit |
+
+`tests/test_release_documentation.py` compares this table with the workflow
+files and advertised Python classifiers. It also checks the 1.772 results
+against retained logs and the separately identified operator-recorded
+environment in `tests/release_evidence/1.772/`. Those tests preserve timing
+units, resource context, typed/untyped scope and untested platforms; they do
+not run benchmarks or declare an old release validated on today's machine.
+
+For each new release, retain completed outputs and record the source revision,
+OS, interpreter/checker versions, host and container resources, concurrency,
+flags and measurement units. Add its documentation checks before publication.
+Correct a historical record only with corroborating evidence and a recorded
+explanation. Never update an expectation solely because a new run differs.
+
 ### Consumer and typing evidence
 
-Run the ecosystem harness from a committed snapshot (`--towel-src` names that
-snapshot's `src` directory). What runs is one wheel of that source, the one
+Start the ecosystem harness only after the frozen candidate's Python
+3.11–3.13 matrix has completed successfully. Run it from a committed snapshot
+(`--towel-src` names that snapshot's `src` directory). What runs is one wheel of that source, the one
 `--towel-wheel` names or one the harness builds from the snapshot when none is
 named, and the harness refuses a wheel whose Python files differ from
 `--towel-src`, so the commit it records is the code that ran. It runs
@@ -71,9 +487,27 @@ written down; then the `rev` of the tool's hook in `.pre-commit-config.yaml`
 which is the version the project's own checks run, with a commit read as the
 tag its `# frozen:` comment names; then an exact pin, for this interpreter, in a
 requirements file, those named for typing read first (httpx's
-`requirements.txt` has `mypy==1.17.1`). Only the rest come from the wheel's
-extras, at the versions that resolve that day. A version
-the project chose that fails the extra's requirement is replaced by the extra's,
+`requirements.txt` has `mypy==1.17.1`). An otherwise unselected checker then
+uses its first applicable version-bearing typing declaration context, such as
+a tox environment or a dependency group. Literal checker installs in GitHub
+Actions workflows are considered after those other declaration sources, with
+each job treated as a separate context. Unconditional literal `pip install -r`
+and `--requirement` paths within the project are read with their nested includes,
+including `--require-hashes` installs. These files preserve checker and formatter
+pins and the job's supporting dependency declarations; their content participates
+in environment reuse checks. Escaping, computed or ambiguous paths and steps
+with a custom working directory are skipped. This limited reader preserves Python
+version markers and skips conditional or computed installs it cannot establish
+statically; it does not execute shell or interpret workflow expressions or YAML
+merges. The applicable requirements for that
+checker within that context are resolved together with the wheel's mandatory
+extra requirement. Distinct contexts remain alternatives: they are not
+intersected and do not replace an earlier selection. If the selected context
+cannot satisfy the extra, environment setup fails. Only checkers without such
+a context, and formatters without an earlier selection, come directly from the
+wheel's extras at the versions that resolve that day. For the earlier project,
+lock, hook and requirement-file selections, a version that fails the extra's
+requirement is replaced by the extra's,
 as installing the extra replaces it, and the result names the pin it overrode:
 rich's `poetry.lock` pins Black 22.12.0, below `black>=26.3.1`. Which formatter
 formats a project is still Towel's choice from the project's configuration,
@@ -89,16 +523,27 @@ names say typing, types, mypy, pyright, lint or check; the `deps`,
 `tox.toml`, `[tool.tox]`) whose commands run mypy or pyright, with their factor
 conditions applied; what nox sessions that run them install; the
 `additional_dependencies` of `.pre-commit-config.yaml`'s mypy and pyright
-hooks; and requirements files named for typing. Each is installed at the
+hooks; and requirements files named for typing. An explicit list in
+`[tool.uv].default-groups` also contributes a group when its expanded
+requirements name mypy or pyright. Included groups, extras and version markers
+keep their existing declaration semantics; an unrelated default group supplies
+no typing dependencies. Each is installed at the
 version the project's lock file pins where it pins one. The install only adds:
 everything already in the environment is held at its version by a constraints
 file, so the test dependencies, the checkers and formatters chosen above, and
-the project itself cannot change, and a requirement naming one of them is left
-as it is. A requirement the installer cannot add beside them is refused and
-recorded, not resolved around. The checkers therefore see what the project's
-own type check sees, and Towel's import model sees the project installed from
-the tree it refactors rather than an installed copy elsewhere, which it would
-count as a second provider of the project's names.
+the project itself cannot change. A declaration naming a selected checker or
+formatter leaves that tool in place, and the report names its selected version
+and source; it does not combine alternative checking contexts. Other already
+installed dependencies are also left in place. A requirement the installer
+cannot add beside them is refused and recorded, not resolved around.
+These dependencies expose the project's declared typing requirements, but do
+not reproduce every project-owned hook or CI invocation. In particular, a
+hook's Python target can differ from Towel's combined invocation; the Cheroot
+gap is recorded in the [completed development validation](proposals/next-validation-final.md).
+Reconcile targets, flags, dependencies and interpreter before attributing a
+typed refusal to the project. Towel's import model sees the editable project
+from the tree it refactors rather than an installed copy elsewhere, which it
+would count as a second provider of the project's names.
 The editable install follows the tree each test run exercises: the clone for
 the baseline, the refactored copy for Towel and the run after it, and the
 original package again for each retest of the original, so a regression in a
@@ -107,11 +552,23 @@ project is installed except where its manifest entry says why not: wrapt,
 whose compiled extension replaces the Python wrappers in every test, and
 html5lib, whose `setup.py` cannot be built in isolation.
 
+Consumer suites use an isolated environment without harness-imposed color or
+terminal settings. Plain-output controls apply only to Towel commands. Raw
+consumer logs are retained; result parsing removes ANSI formatting without
+changing the behavior the tests exercise.
+Recognized pytest invocations request a cleared cache, including isolated and
+full retries, while retaining the cache fixture and configured cache directory.
+Explicit cache-plugin disables in custom commands remain honored. Baseline
+cache values must not conceal a regression in the transformed program.
+A narrowed retry is refused when replacing selectors would change pytest's
+ordered plugin arguments; the original full-suite outcome remains authoritative.
+
 Run the corpus with the default type policy, which is what a user gets. Each
 result records the interpreter, the candidate's version, each checker's and
 formatter's version and who chose it (`project`; the file whose pin it is, a
-lock file, `.pre-commit-config.yaml` or a requirements file by its path; or the
-extra, `towel[types]` or `towel[format]`, with any pin it overrode), every typing
+lock file, `.pre-commit-config.yaml` or a requirements file by its path; a
+selected typing declaration, recorded as `typing context: ...`; or the extra,
+`towel[types]` or `towel[format]`, with any pin it overrode), every typing
 requirement the project declares with where it declares it and what became of
 it (installed as, pinned by, or why not), the distributions the installer
 added for them, the tree the project was installed from, and whether its
@@ -152,7 +609,7 @@ evidence about the other.
 #### Running the corpus in a container
 
 The harness clones and executes third-party code, so it belongs in a container.
-Six details matter, and none of them is obvious from the failure it produces:
+Prepare its dependencies before starting the corpus:
 
 - **Install `uv` in the image.** The harness builds a per-project environment
   with it, and its absence surfaces as `FileNotFoundError` on every project.
@@ -168,6 +625,19 @@ Six details matter, and none of them is obvious from the failure it produces:
 - **Put `node` on the image's `PATH`.** Without one, pyright's wrapper
   downloads a Node of about 460 MB into `HOME` on first use, and the harness
   gives every worker a scratch `HOME`.
+- **Install `procps` for process-observing suites.** Towel's watchdog tests
+  invoke `ps` to check real child processes. A missing or failed observer is an
+  environment failure, not evidence that no workers remain. The image includes
+  it; verify an owned child's PID is visible when checking a new environment.
+- **Include `libmemcached-dev` for the Django consumers.** Their `pylibmc`
+  dependency builds against these headers. The corpus Dockerfile includes them.
+- **Stage python-dateutil's timezone archive before its preparation hook.**
+  Clone that consumer at the manifest's pinned revision in the work volume,
+  read its `zonefile_metadata.json`, and download the named archive from
+  `https://data.iana.org/time-zones/releases/` into that clone. Verify its SHA-512
+  against `tzdata_file_sha512` before running the corpus. The pinned revision
+  names `tzdata2024a.tar.gz`; its unchanged `post_install` hook checks for the
+  archive and builds the zoneinfo data. A fresh clone does not contain it.
 - **Give the harness a standalone clone detached at the release commit**, not a
   git worktree. A worktree's `.git` is a file pointing outside the mount, so
   the harness cannot read the revision and aborts. With a real clone it records
@@ -176,9 +646,23 @@ Six details matter, and none of them is obvious from the failure it produces:
   from the host: `copytree` reports `ENOENT` for directories that exist when
   several workers share one. Give that volume to the container's own user, or
   the harness cannot take its lock.
+- **Start with one project worker in a memory-limited container.** The consumer's
+  baseline tests, Towel and its type checkers, and the transformed tests all use
+  the container's shared memory budget. `TOWEL_WORKERS=1` caps Towel's analysis
+  workers; it does not cap the consumer's test or checker processes. Increase
+  `--workers` only after measuring the combined peak. Record the memory limit,
+  swap limit, project concurrency and OOM events with the run; a prior pass
+  under a larger limit does not certify a smaller one.
 - **Mount the source read-only** so the run cannot change the code it is
   testing, and pass `--towel-src` the mounted path; the harness compares the
   wheel with it before any project starts.
+
+After an interrupted run, verify that every retained consumer clone has a valid
+`HEAD` and its pinned commit before resuming. Stopping the worker pool can leave
+the next clone incomplete; directory existence alone does not establish a usable
+checkout. Preserve completed reports and raw logs before rerunning unfinished
+projects. Restore missing Git objects from that consumer's recorded upstream at
+the same pin; do not substitute a newer revision.
 
 `scripts/ecosystem/Dockerfile` builds an image with those pieces in place, the
 candidate at `/opt/towel`. A working shape, with the wheel built from the clone
@@ -193,10 +677,12 @@ rm "$CLONE"/scripts/ecosystem/code_towel-*.whl
 
 docker volume create towel-eco-work
 docker run --rm --user root -v towel-eco-work:/work "$IMAGE" chown -R runner:runner /work
+# Stage and verify python-dateutil's archive in /work/python-dateutil as above
+# before starting the full corpus below.
 docker run -d --name towel-eco -e TOWEL_WORKERS=1 \
     -v "$CLONE":/snapshot:ro -v towel-eco-work:/work -w /snapshot "$IMAGE" \
     python scripts/ecosystem_check.py --run-untrusted-code \
-        --towel-src /snapshot/src --towel-wheel /opt/towel --work /work --workers 4
+        --towel-src /snapshot/src --towel-wheel /opt/towel --work /work --workers 1
 ```
 
 Verify the default policy separately: an original whose check reports errors
@@ -245,7 +731,7 @@ wheel environment; the audit command requires `pip-audit` in the audit environme
 
 ### Candidate artifacts
 
-**Before building, sweep every human-facing version reference, not just `pyproject.toml`.** `python -m build` embeds the README into the wheel and sdist as the PyPI `long_description`, and PyPI freezes that description at upload time: a published version's project page cannot be edited afterward, so a stale version string ships to PyPI and stays wrong until the next release. `just bump-version` rewrites the version in `pyproject.toml` and then refreshes `uv.lock` and the dev environment (`uv lock`, `uv sync --frozen --extra dev`); it touches no other file. After bumping, grep the tree for the outgoing version and update at least `README.md`'s `**Release status: X (beta).**` line and `SECURITY.md`'s "currently **X**" supported-version line, then rebuild so the corrected README is what gets embedded. (code-towel 1.618 shipped with the README still reading 1.414 for exactly this reason; the PyPI 1.618 page cannot be corrected.)
+**Before building, sweep every human-facing version reference, not just `pyproject.toml`.** `python -m build` embeds the README into the wheel and sdist as the PyPI `long_description`, and PyPI freezes that description at upload time: a published version's project page cannot be edited afterward, so a stale version string ships to PyPI and stays wrong until the next release. `just bump-version` rewrites the version in `pyproject.toml` and then refreshes `uv.lock` and the dev environment (`uv lock`, `uv sync --frozen --extra dev`); it touches no other file. Before freezing, search the tree for the outgoing version and update `README.md`'s `**Release status: X (beta).**` line, its version-pinned documentation links, and `SECURITY.md`'s source-target version. Preserve historical measurements and released-version records under their original identities. The README in the built artifacts must match the reviewed source. (code-towel 1.618 shipped with the README still reading 1.414 for exactly this reason; the PyPI 1.618 page cannot be corrected.)
 
 For the exact candidate commit:
 
@@ -258,9 +744,23 @@ For the exact candidate commit:
    - Each failure is written as a hostile fixture, ready to commit, under the directory the run prints, with a note saying which battery it belongs to and what to add there. Pass `--prefix` to name the fixtures by your branch. The run exits 1 if any case failed.
    - A failure of a class that [tests/audit_defects.py](../tests/audit_defects.py) names is a known defect. Commit its fixture only when it shows the class in a shape the batteries lack.
    - Any other failure is a finding for the audit, at the owner's P1 standard. Its fixture is committed as a strict expected failure, entered in its battery's `KNOWN_DEFECTS`, until the fix lands.
-   - Record the seed range, the counts the run prints, and each failure. The default of 2000 seeds is about 3,700 runs; on the 1.772 candidate they took two minutes on nine worker processes (`--jobs` defaults to half the cores), and found 27 failures, every one of a class the audit had reported.
+   - Record the seed range, the actual run count printed by each invocation, and each failure. The release recipe draws 2000 seeds; the number of runs depends on the selected family, forms, layouts and typed frequency. The earlier 1.772 campaign completed about 3,700 runs in two minutes on nine worker processes (`--jobs` defaults to half the cores), and found 27 failures, every one of a class the audit had reported. That historical count is not the current two-form grammar's run count.
 
-`just release VERSION` prepares local artifacts. Inspect its current recipe before use; it does not replace the full evidence above or authorize publication.
+`just release VERSION /path/to/release-evidence.json` verifies the completed
+evidence and exact prebuilt artifacts, then checks the live GitHub default branch.
+It refuses if that branch does not contain the validated commit, if package or
+README/security/changelog versions are stale, or if README documentation links
+name another release or missing files. It discovers the configured default branch
+through GitHub, rather than assuming `main` or trusting local tracking refs.
+API failures and incomplete file responses fail the gate.
+
+Before pushing, run `just verify-release-evidence VERSION /path/to/release-evidence.json`
+for the local evidence check. After the validated commit is on the default
+branch, run the full `just release` command before tagging or uploading.
+Neither command builds artifacts, replaces the full evidence above or grants
+publication permission. Retain the credential-scan
+report alongside the bundle: the verifier checks dependency-audit evidence,
+but does not currently require a secret-scan record.
 
 ### Publication order and documentation links
 
@@ -283,8 +783,14 @@ Before uploading to PyPI:
    pushing. An agent must not upload while leaving an unresolved GitHub push
    for the maintainer afterward.
 3. Push the release commit to GitHub, without its tag, and wait for all CI
-   jobs on that exact commit to pass.
-4. Confirm the version is still free on PyPI
+   jobs on that exact commit to pass. If CI ran on a release branch, promote
+   that tested commit to the repository's configured default branch through
+   its normal protection rules. Preserve its ancestry; do not squash or rebase
+   away the commit whose artifacts and CI were validated. A fast-forward is
+   sufficient when the branches have not diverged.
+4. Run `just release VERSION /path/to/release-evidence.json` against the frozen
+   candidate and require both its local evidence and live default-branch gates
+   to pass. Then confirm the version is still free on PyPI
    (`https://pypi.org/pypi/code-towel/json` lists every published version).
    Only then create the annotated tag on that commit, recording the artifacts'
    hashes, and push it. A tag pushed before CI passes, or for a version PyPI
@@ -294,20 +800,37 @@ Before uploading to PyPI:
 5. Upload the verified distributions to PyPI, then compare the remote hashes
    and description with the local artifacts and smoke-test a fresh installation.
 6. Create the GitHub release from the existing tag with the same artifacts and
-   release notes. Verify its tag, assets, and links before declaring completion.
+   release notes. Update the default branch's current-status documentation with
+   the completed publication results while preserving dated preparation history.
+   Do not rebuild or replace the uploaded artifacts or move the release tag.
+   Run `just verify-release-visibility VERSION COMMIT` again and verify the
+   repository front page, tag, assets, and links before declaring completion.
+   The **Release documentation** workflow independently checks the live default
+   branch when a release is published; it can also be dispatched with a published
+   tag to recheck an existing release. Its check is read-only and requires no
+   package upload credentials. It complements the mandatory pre-upload gate,
+   rather than postponing detection until after an irreversible upload.
 
-Uploaded artifacts cannot be replaced. A documentation-only correction after
-publication requires a new post-release, such as `1.732.post1`; do not delete
-and try to reuse a published version.
+Uploaded artifacts cannot be replaced. Correcting documentation embedded in
+those distributions requires a new post-release, such as `1.732.post1`; do not
+delete and try to reuse a published version. Repository-only documentation
+corrections can be committed to the default branch without rebuilding the
+published distributions or moving their tag.
 
 ## Recording the release
 
-Once the version is chosen and the evidence is in:
+Choose the version and complete these source edits before freezing, building,
+or running the release checks, so version and documentation edits do not
+require repeating acceptance work:
 
-1. Convert the `[Unreleased]` heading of [CHANGELOG.md](../CHANGELOG.md) to `## [X.Y] - YYYY-MM-DD` and open a new, empty `[Unreleased]` above it.
-2. Add an entry at the top of [RELEASE_LOG.md](RELEASE_LOG.md): version, the commit or tag, a summary, and the test and ecosystem status.
-3. Update the first paragraph of this document (the latest release, its date, and what the next one carries).
-4. Tag the release commit `vX.Y` (`git tag` lists the existing ones: `v0.5.0`, `v0.5.1`, `v0.5.3`, `v0.5.4`, `v0.6.6`, `v1.414`, `v1.618`, `v1.732`, `v1.732.post1`); the tag is created locally and pushed only as part of the maintainer's publication decision.
+1. Move completed changes from `[Unreleased]` into `## [X.Y]` in [CHANGELOG.md](../CHANGELOG.md) and leave an empty `[Unreleased]` above it. Add a date only if it is already known; publication metadata can record the actual date without changing frozen artifacts.
+2. Add a preparation entry to [RELEASE_LOG.md](RELEASE_LOG.md) naming the version, summary, existing evidence and its limits. Record the final commit, artifact hashes, completed outcomes and CI run externally alongside the artifacts; do not edit a shipped file after its validation freeze.
+3. Update the current-version summary in this document and the readiness report. Do not describe a planned check or publication as completed.
+
+After exact-commit CI and the live PyPI availability check, the maintainer may
+tag `vX.Y` as specified above. Inspect current tags rather than relying on a
+historical list. Tagging and publication remain separate from preparing this
+source.
 
 ## Maintainer decisions before publication
 

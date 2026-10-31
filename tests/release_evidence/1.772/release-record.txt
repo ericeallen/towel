@@ -1,0 +1,22 @@
+code-towel 1.772
+
+Validated September 26, 2026, at the end of audit rounds three and four.
+
+Tests at 2b399ef and, as CI runs them (coverage, Linux link mode), at c3d062a:
+  3.11 7,751 passed; 3.12 7,882 passed; 3.13 7,899 passed; just check passes.
+src/towel differs since 2b399ef only in one corrected docstring, and GitHub
+CI passed the full suite on this commit.
+
+Distributions built from a clean clone of this commit:
+  code_towel-1.772-py3-none-any.whl
+    sha256 4af0f6067d830e396aecf82320d69cb82343a848f24b7d1f3e2a152018605683
+  code_towel-1.772.tar.gz
+    sha256 69735c69497a6d2395bbb952ddedf5c050936fa8622499726cc3748a8a525a58
+  Wheel, sdist and src/towel agree file for file; twine check --strict
+  passes; the wheel imports on 3.11, 3.12 and 3.13, bare and with extras.
+
+Corpus, 141 projects, typed and --cross-module, Python 3.12:
+  90 PASS, 45 NO_CHANGE, 6 import-problem refusals.
+
+No fifth audit round was run; see docs/DECISIONS.md, "1.772 ships
+without a clean audit round".

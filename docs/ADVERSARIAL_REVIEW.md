@@ -1,10 +1,28 @@
 # Adversarial review
 
-A cumulative log of adversarial counterexamples and their repairs, across the September 2026 audit rounds. Each row is now covered by a fixture and, where noted, by the ecosystem check.
+[Documentation index](README.md)
+
+A cumulative log of adversarial counterexamples and their repairs, across the
+September and October 2026 audit rounds. Each row records fixture coverage and, where
+noted, ecosystem checks at that time.
+
+The [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+supersedes the reflection, frame/source-reading and body-instrumentation
+protections recorded below. Their passing and failing results remain historical
+evidence; they do not describe the current checks or guarantee.
 
 The review used executable counterexamples, independent agents, fault injection, consumer projects' own tests, and repeated transformations. Passing evidence establishes the tested cases, not universal equivalence of arbitrary Python programs.
 
 Fixture counts below are as of each round; at `5ff2458` (September 19, 2026) `tests/hostile_cases` holds 129 fixtures (87 transformed, 42 rejected) and `tests/hostile_crossfile` 12 (11 transformed).
+
+**Contents**
+
+- [Confirmed repairs](#confirmed-defects-repaired) · [Hostile execution battery](#additional-hostile-execution-battery)
+- [Filesystem boundary](#filesystem-boundary) · [Performance and isolation](#performance-and-isolation) · [Final verification](#final-verification)
+- [Second review: September 13](#second-review--production-readiness-september-13-2026)
+- [Third review: September 17–19](#third-review--september-1719-2026)
+- [October proposal and cache regressions](#october-proposal-and-cache-regressions)
+- [Measurement environment](#measurement-environment)
 
 ## Measurement environment
 
@@ -23,6 +41,16 @@ describe belong to that version.
 
 | Counterexample | Repair and executable evidence |
 |---|---|
+| Properties, subscription, operators and protocol targets own finalizable values without an explicit call; nested bindings were classified at an ancestor's header | Retain opaque own-scope values and use actual binding/read positions; `test_protocol_lifetime_regressions.py` executes the protocol and nested-compound cases. |
+| An unused caller argument finalizes after a helper local; exceptions bypass a returned ownership tuple | Refuse unsafe partial frame splits and certify whole-body argument transfer; `test_frame_ownership_engine.py` and `test_argument_ownership.py` check proposals, fixed points, normal/exceptional cleanup and unsupported captures. |
+| Optional formatter discovery imports a project-owned tool in the parent | Isolated discovery and owned persistent Black/isort workers; `test_isolated_format_tools.py`, `test_audit_io_safety.py` and `test_formatting_protocol_boundary.py` execute shadow modules, parent exits and mutable typing guards. |
+| Recovery remedies split or execute hostile path spellings | Shell-quote each argument and place portable option terminators correctly; `test_audit_io_safety.py` executes the advertised chmod/move remedies. |
+| A malformed Pyright publication silently clears known diagnostics | Validate publications atomically, abandon the warm session and require cold fallback; `test_pyright_diagnostic_boundary.py` checks malformed and valid updates. |
+| An ordinary lowercase factory's result is finalized when the extracted helper returns, before its caller finishes | Retain opaque call results, aliases and derived values; preserve relative compiler-local cleanup order or decline. The factory defect also reproduced in published 1.772; `test_release_audit_regressions.py` covers factory, alias and multiple-finalizer cases. |
+| An aliased or custom context manager suppresses an exception before a local is bound, but extraction eagerly reads that local on a path that originally avoided it | Treat all context managers as potentially suppressing; `r1792_aliased_suppress_conditional_read.py` and definite-assignment/binder-observability tests cover the conditional read. Published 1.772 reproduced the defect without types; its default typed CLI declined the audit's exact input. |
+| Optional naming metadata fails after a successful in-place or out-of-place source publication, and the CLI reports the published operation as failed | Warn and exit successfully for optional sidecar I/O/validation failures, preserving collisions and symlink targets. `test_cli_sidecar_publication.py` checks actual publication and source execution; source-publication failures still fail. |
+| An extracted call fits the formatter width at column zero but exceeds it after insertion into a method | Format generated snippets at their destination depth and check their unwrapped AST; `r1792_formatting_destination_indentation.py` and `test_generated_code_formatting.py` cover Ruff, Black and execution. |
+| A clean configured mypy check fails when reachability probes explicitly target excluded tests and their imports | Filter probe requests per checker before constructing the batch; `test_mypy_judged_as_configured.py` keeps covered extraction and the clean check while excluded imports contain syntax unavailable at the configured target. |
 | Moving `self.__value` into another lexical class loses Python's private-name mangling | Reject private-name extraction across lexical classes; preserve same-class extraction. Read-only private properties prevent tests from accidentally accommodating the wrong attribute. |
 | `[xs for xs in xs]` resolves its first iterable in the containing scope | Correct comprehension evaluation order and scope isolation; execute list/set/dict/generator cases. |
 | Assignment expressions in comprehensions leak bindings to their containing scope | Reject these candidates until their flow is represented; ordinary comprehensions remain useful. |
@@ -40,6 +68,33 @@ describe belong to that version.
 | CRLF normalization makes unchanged input appear stale | Capture original bytes independently of rendered source; verify execution and on-disk result. |
 | Copying directly into a new destination leaves a partial tree after failure | Copy into a private sibling before publishing the completed copy; preserve symlinks without following their targets. |
 | Unexpected compiler exceptions become silent candidate rejection | Expected unsupported extraction has a distinct exception; unexpected unifier/extractor/scope failures propagate. Fault-injection tests assert the failure reaches the caller. |
+
+## October proposal and cache regressions
+
+The post-1.792 changes add the following permanent executable coverage. These
+are supported boundaries and regression evidence, rather than a claim that all
+Python programs or a future release have been certified. The earlier review
+results below remain tied to their original sources and environments.
+
+| Boundary | Repair and executable evidence |
+|---|---|
+| Equal-valued constants at different positions were conflated | Substitute exact occurrence paths and reuse only matching complete caller columns. `test_occurrence_constants.py` and `test_occurrence_constant_cli.py` cover useful extraction, type distinctions and independent positions. |
+| Moving literal occurrences changes compiler-pool identity | Verify compiler/source provenance, compound pools and formatted-string parts. `test_compiler_literal_pools.py`, `test_fstring_literal_pools.py` and `test_literal_byte_provenance.py` cover identity and conservative refusals. |
+| Eager thunk parameters retain opaque temporaries longer than the original expression | Require immutable results at every caller before inlining. `test_thunk_result_lifetimes.py` compares callbacks, finalizers and early errors through the actual CLI. |
+| Parameter discovery order prevents safe leading-thunk inlining | Order only contiguous certified slots within each positional segment. `test_thunk_parameter_ordering.py` and `test_thunk_ordering_cli.py` retain signature, effect, ownership and unsafe-extra-caller controls. |
+| A signature fallback hides a required Optional refinement | Associate checker diagnostics with original operands and declared obligations before allowing `Any`. `test_optional_converter_narrowing.py` exercises both checkers, useful nullable controls and actual typed CLI refusals. |
+| A fresh local initialized in an IF cannot reach continuation code through the helper | Certify original sites, normal-exit outputs and aligned return order, keeping calls branch-local. `test_if_binding_transfer.py` and `test_if_fresh_bindings_cli.py` preserve false-path unbound errors and ownership. |
+| An inlined comprehension's captured target changes its containing cell | Keep affected source-associated sites in their original frame, including evaluated defaults and nested generators. `test_captured_comprehension_cells.py` and `test_comprehension_cell_capture_cli.py` exercise native 3.11–3.13 behavior and useful uncaptured companions. |
+| Cached analyses outlive their source or warning policy | Bound immutable facts to their verified owner and context, bypass custom source subclasses, and reprove admissions. `test_if_transfer_source_facts.py`, `test_pair_if_proof_order.py`, `test_lexical_fast_path_memo.py` and `test_return_source_uses.py` cover disabled, mutation, fork and cleanup paths. |
+| Reading mapping values changes LRU order during view iteration | Snapshot iterator keys without suppressing normal value promotion. `test_bounded_cache_views.py` covers keys, values, items and mutation. |
+| A raw f-string literal on CPython 3.12 is conservatively treated like a warning-capable raw format specification | Track per-string OP-brace depth while retaining native warning parsing for uncertain escapes. `test_parsing_warnings.py`, `test_parsing_warning_cache.py` and `test_analysis_sources.py` preserve warning/error/filter behavior. |
+
+The execution oracle also has a measurement boundary. Retained-binding checks
+use lexical correspondence rather than subtracting all same-spelled comprehension
+targets; the first iterable still reads the containing scope. Unsupported scope
+paths and original executions that time out remain uncertified, even when
+completed observations match. An instrument correction does not turn an old raw
+alarm into accepted product evidence.
 
 ## Additional hostile execution battery
 
@@ -156,7 +211,9 @@ identical program output.
 | Twelve name shapes passed eagerly where the original read them only on some path: a failed optional import, a `TYPE_CHECKING` import, a module-level `except ... as` name, an unmatched `match` capture, a class attribute read bare in a method (of a module, nested, or function-local class), an enclosing function's name bound later, deleted, or bound conditionally, a module `def`, class or import bound after the call, a comprehension variable, and a lambda parameter | `available_argument_names` is rebuilt on control flow: a name is eager only when definitely bound at the site (locals bound on every path before the block, module names bound on every path before the function's top-level statement and never deleted, enclosing bindings made before the inner definition); the rest are thunks. A comprehension variable and a lambda parameter are binders, not free names. r109 to r122. |
 | `eval("total + doubled + k")`, `sorted(locals())` or `dir()` after the block saw the helper's frame, and an aliased spelling (`e = eval`, `bi.eval` through `import builtins as bi`, `from warnings import warn as w` with `stacklevel`) slipped past the guard | The frame-reading builtins, `eval`/`exec`, `sys._getframe` and `inspect.currentframe` anywhere in the enclosing function's own scope decline the block (`frame_read_in_function`); aliases bound by import or assignment are resolved to a fixed point over the module. r123 to r128 (rejected). |
 | Two sites calling `warnings.warn("plain")` without `stacklevel` became one: the warnings registry deduplicates per call site, so the second run's warning vanished | Every `warnings.warn`, in any spelling, and any call with a `stacklevel=` keyword decline the block. r129 (rejected). |
-| A `NamedTemporaryFile` bound in the block was finalized when the helper returned, so `os.path.exists(path)` after the block answered differently; a weak reference to a block-bound instance died the same way | A name the block binds to a class instantiation or to a known resource factory (`open`, `connect`, `socket`, `mkdtemp`, `Popen`, `urlopen`, ...) is returned from the helper and rebound at the site (`lifetime_bound_names`). r130, r131. |
+| A resource or finalizable object bound in the block was finalized when the helper returned, changing later observations | A name bound from an expression containing a call is returned and rebound at the site, including ordinary factories and aliases (`lifetime_bound_names`). Multiple results retain their original compiler local-slot order; incompatible occurrences are declined. r130, r131, `r1792_factory_finalizer_continuation`, `r1792_factory_finalizer_order`. |
+| An aliased or custom suppressing manager left a local unbound, but extraction read it eagerly outside its conditional branch | Definite assignment and binder observability assume any context manager may suppress exceptions, including a later manager's entry failure. `r1792_aliased_suppress_conditional_read` and the generated binder-observability battery. |
+| A naming sidecar write failed after successful source publication, producing a failure exit despite changed source | Naming metadata is optional; write failures report successful source publication with a warning. Real in-place/out-of-place collisions and injected I/O failures are exercised in `test_release_audit_regressions.py`. |
 | An async comprehension in the block moved into a synchronous helper, which is a `SyntaxError` | Async comprehensions decline the block. r132 (rejected). |
 | A form feed, U+2028, `\x1c` or `\x85` in a comment or string above the block: `str.splitlines` counts them as line ends and the parser does not, so every splice below shifted by a line | Sources are split on LF alone (`source_text.source_lines`), matching the tokenizer's line numbers; a literal round trip is pinned too. r133 to r139. |
 | A shared free name nothing binds, read only on a branch no run takes, was hoisted into an eager argument and raised `NameError` at every call (found by the new property test); a helper defined below its callers and called once at import time raised the same way | A shared free variable follows the same rule as a differing argument: eager only when the site resolves it on every path, else a thunk; a same-module helper reads a module name bare. r140, r141. |

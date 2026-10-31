@@ -100,8 +100,16 @@ TAXES = """\
         subtotal = sum(prices)
         taxed = subtotal * (1 + rate)
         rounded = round(taxed, 2)
-        return rounded - taxed + subtotal
+        return rounded
     """
+
+
+def _tax_values(source: str) -> tuple[object, object]:
+    namespace: dict[str, object] = {}
+    exec(compile(textwrap.dedent(source), "<scope-fixture>", "exec"), namespace)
+    first, second = namespace["with_tax"], namespace["without_tax"]
+    assert callable(first) and callable(second)
+    return first([1.0, 2.0], 0.1), second([3.0, 4.0], 0.2)
 
 
 @requires_mypy
@@ -177,7 +185,9 @@ def test_r9my_a_consumer_outside_the_target_is_not_built(tmp_path: Path) -> None
             "docs/two/example.py": example,
         },
     )
+    expected = _tax_values(TAXES)
     assert _typed_run(tmp_path / "calc") == ["core.py"]
+    assert _tax_values((tmp_path / "calc/core.py").read_text()) == expected
 
 
 @requires_mypy
@@ -200,4 +210,6 @@ def test_r9my_a_file_the_configuration_excludes_is_not_built(tmp_path: Path) -> 
     # cookiecutter's hooks are Jinja templates, which do not parse, so the run
     # leaves them out by name, as the refusal says to; the project's mypy
     # configuration still decides what its check builds.
+    expected = _tax_values(TAXES)
     assert _typed_run(tmp_path, ("post_gen.py",)) == ["core.py"]
+    assert _tax_values((tmp_path / "calc/core.py").read_text()) == expected

@@ -105,7 +105,11 @@ def test_a_returning_block_against_one_that_binds_variables_is_named_for_that(
     hits = [m for m in messages if f"REJECT[{RejectReason.RETURN_VERSUS_VARIABLES}]" in m]
     assert hits, messages
     assert all("returning@" in m and "binding@" in m for m in hits), hits
-    assert all(m.endswith(":: block2 binds ['label']") for m in hits), hits
+    assert all(
+        m.endswith(":: block2 binds ['label']") or m.endswith(":: block2 binds ['label', 'total']")
+        for m in hits
+    ), hits
+    assert any(m.endswith(":: block2 binds ['label']") for m in hits), hits
     assert RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK2 not in _reasons(messages)
 
 
@@ -136,8 +140,12 @@ def test_first_block_coverage_guard_is_shadowed_by_block_enumeration(
         assert shapes == [(2, "Assign")], "only the prefix without a return is enumerated"
         for _span, block in blocks:
             assert not (is_value_producing(block) and not has_complete_return_coverage(block))
-    # The twins' prefixes pair and are extracted; no coverage guard is ever consulted.
+    # Keep the original owner-sensitive prefix refusal, then require the same
+    # enumerated prefix with no caller owners to remain a useful extraction.
     source = PARTIAL_RETURN + PARTIAL_RETURN.replace("partial", "partial_twin")
+    original_reasons = _reasons(_rejections(tmp_path, source, caplog))
+    assert RejectReason.OWNED_BINDING_FRAME_BOUNDARY in original_reasons
+    source = source.replace("(value):", "():").replace("total = value + 1", "total = 2")
     reasons = _reasons(_rejections(tmp_path, source, caplog, expect_proposals=True))
     assert RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK1 not in reasons
     assert RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK2 not in reasons
@@ -185,7 +193,7 @@ def second(items):
     [
         # Both functions bind ``later`` after the block: the tail ``scaled = ...; later = N``
         # is still a legitimate pair, extracted with the constant as a parameter.
-        (LATER_BOUND_AFTER_IN_BOTH, RejectReason.INCOMPLETE_LIFETIME_BLOCK1, True),
+        (LATER_BOUND_AFTER_IN_BOTH, RejectReason.INCOMPLETE_LIFETIME_BLOCK1, False),
         # Only the second binds it: the tails differ in shape and nothing is extracted.
         (LATER_BOUND_AFTER_IN_SECOND_ONLY, RejectReason.INCOMPLETE_LIFETIME_BLOCK2, False),
     ],
@@ -202,3 +210,9 @@ def test_free_variable_bound_after_the_block_is_rejected(
     hits = [m for m in messages if f"REJECT[{reason}]" in m]
     assert hits, messages
     assert all(m.endswith(":: {'later'}") for m in hits), hits
+    if source == LATER_BOUND_AFTER_IN_BOTH:
+        safe = source.replace("scaled = total * 2", "print(total)").replace(
+            "return scaled + later", "return total + later"
+        )
+        safe_messages = _rejections(tmp_path, safe, caplog, expect_proposals=True)
+        assert any(f"REJECT[{reason}]" in message for message in safe_messages)

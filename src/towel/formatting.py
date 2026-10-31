@@ -35,29 +35,58 @@ from __future__ import annotations
 
 import ast
 from collections import OrderedDict
+from collections import Counter
 import configparser
 from dataclasses import dataclass
 import copy
+import json
+import os
+import re
 from enum import Enum
 from pathlib import Path
-import posixpath
-import re
 import sys
 import shutil
 import subprocess
-from typing import TYPE_CHECKING, Callable, List, Mapping, NamedTuple, Optional, Set, Tuple
+import threading
+import weakref
+from typing import (
+    Callable,
+    Literal,
+    List,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Set,
+    Tuple,
+    cast,
+)
+
+from ._formatting_repeatability import (
+    FormattingRepeatability,
+    formatting_repeatability as _formatting_repeatability,
+    _register_repeatable,
+    _propagate_repeatability,
+    _invalidate_repeatability,
+)
 
 from .canonical_ast import canonical_dump
 from .project_layout import find_project_root, load_pyproject
-from .project_tools import ToolChoice, python_tool_environment
+from .project_tools import (
+    IsolatedFormatTool,
+    ToolChoice,
+    ToolFailure,
+    python_tool_environment,
+)
 from .diagnostics import LOG
-from .source_text import try_read_source
+from .source_text import decorator_line_numbers, definition_start_line, try_read_source
 
-if TYPE_CHECKING:
-    import isort
+formatting_repeatability = _formatting_repeatability
 
 SnippetFormatter = Callable[[str], str]
 """Maps one generated snippet (a definition or a statement) to its formatted text."""
+
+SnippetFormatterFactory = Callable[[str], Optional[SnippetFormatter]]
+"""Selects a snippet formatter for the actual source path of one modified file."""
 
 FileFinisher = Callable[[str, str], str]
 """Maps ``(path, source)`` of a modified file to its finished text, e.g. with imports sorted.
@@ -69,6 +98,7 @@ ImportSorter = Callable[[str, str], Optional[str]]
 
 ``source`` itself for a file the tool's own configuration leaves alone; None
 when the tool failed or declined, which it reports."""
+
 
 TOOL_TIMEOUT_SECONDS = 120.0
 """How long an external formatter or sorter may take on one file before Towel gives up on it."""
@@ -82,6 +112,185 @@ class FormattingChangedCode(ValueError):
     Either way nothing it returned is written: the proposal it was formatting
     is declined, and the run goes on.
     """
+
+
+class LintRejected(FormattingChangedCode):
+    """The configured Ruff check failed or found a diagnostic the change introduced."""
+
+
+@dataclass(frozen=True)
+class _LintDiagnostic:
+    code: str
+    message: str
+    row: int
+    column: int
+    scopes: tuple[tuple[str, str], ...] = ()
+
+
+def _lint_diagnostics(output: str) -> tuple[_LintDiagnostic, ...]:
+    """Validate Ruff's located JSON diagnostics before using them as a baseline."""
+    try:
+        values: object = json.loads(output)
+    except ValueError as error:
+        raise LintRejected("Ruff returned invalid diagnostic JSON") from error
+    if not isinstance(values, list):
+        raise LintRejected("Ruff returned a diagnostic value that is not a list")
+    diagnostics: list[_LintDiagnostic] = []
+    for value in cast(list[object], values):
+        if not isinstance(value, dict):
+            raise LintRejected("Ruff returned a diagnostic that is not an object")
+        record = cast(Mapping[str, object], value)
+        code, message, location = (
+            record.get("code"),
+            record.get("message"),
+            record.get("location"),
+        )
+        if (
+            not isinstance(code, str)
+            or not isinstance(message, str)
+            or not isinstance(location, dict)
+        ):
+            raise LintRejected("Ruff returned an unlocated diagnostic")
+        coordinates = cast(Mapping[str, object], location)
+        row, column = coordinates.get("row"), coordinates.get("column")
+        if type(row) is not int or type(column) is not int or row < 1 or column < 1:
+            raise LintRejected("Ruff returned an invalid diagnostic location")
+        diagnostics.append(_LintDiagnostic(code, message, row, column))
+    return tuple(diagnostics)
+
+
+def _ruff_lint_guard(command: List[str], root: Path) -> FileFinisher:
+    """Reject new diagnostics; only errors on exactly retained lines spend the baseline.
+
+    A warning moved into a helper is conservatively new. Code, message, aligned
+    line, column and named lexical scopes must all match; a removed warning
+    cannot pay for one in a new helper. The file still holds this proposal's input.
+    """
+    from .type_baseline import unchanged_lines
+
+    command = list(tuple(command))
+
+    def diagnostics(path: str, source: str) -> tuple[_LintDiagnostic, ...]:
+        try:
+            result = subprocess.run(
+                [
+                    *command,
+                    "check",
+                    "--no-fix",
+                    "--no-fix-only",
+                    "--no-cache",
+                    "--force-exclude",
+                    "--output-format",
+                    "json",
+                    "--stdin-filename",
+                    str(_counterpart(root, Path(path))),
+                    "-",
+                ],
+                input=source,
+                capture_output=True,
+                text=True,
+                cwd=root,
+                env=python_tool_environment(),
+                check=False,
+                timeout=TOOL_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise LintRejected(f"The configured Ruff check failed: {error}") from error
+        if result.returncode not in (0, 1):
+            raise LintRejected(f"The configured Ruff check failed: {result.stderr.strip()}")
+        found = _lint_diagnostics(result.stdout)
+        if result.returncode == 1 and not found:
+            raise LintRejected("Ruff failed without a located diagnostic")
+        try:
+            decorators = decorator_line_numbers(source)
+            definitions = [
+                node
+                for node in ast.walk(ast.parse(source))
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            ]
+        except SyntaxError as error:
+            raise LintRejected(
+                "Cannot establish Ruff diagnostic scopes in invalid source"
+            ) from error
+        return tuple(
+            _LintDiagnostic(
+                error.code,
+                error.message,
+                error.row,
+                error.column,
+                tuple(
+                    (type(node).__name__, node.name)
+                    for node in sorted(
+                        definitions,
+                        key=lambda node: (
+                            definition_start_line(node, decorators),
+                            -(node.end_lineno or node.lineno),
+                        ),
+                    )
+                    if definition_start_line(node, decorators)
+                    <= error.row
+                    <= (node.end_lineno or node.lineno)
+                ),
+            )
+            for error in found
+        )
+
+    def finish(path: str, source: str) -> str:
+        original = try_read_source(Path(path))
+        if original is None:
+            raise LintRejected(f"Cannot read the configured Ruff baseline: {path}")
+        lines = unchanged_lines(original, source).after_of
+        baseline = Counter(
+            _LintDiagnostic(error.code, error.message, lines[error.row], error.column, error.scopes)
+            for error in diagnostics(path, original)
+            if error.row in lines
+        )
+        introduced = Counter(diagnostics(path, source)) - baseline
+        if introduced:
+            first = next(iter(introduced))
+            raise LintRejected(f"The change introduces Ruff {first.code}: {first.message}")
+        return source
+
+    return _register_repeatable(
+        finish,
+        FormattingRepeatability(
+            ("ruff-lint", *command),
+            _ruff_configuration_roots(root),
+        ),
+    )
+
+
+def _ruff_configures_file(path: Path, root: Path) -> bool:
+    """Whether Ruff finds configuration above the original source file."""
+    return project_configures_ruff(_counterpart(root, path))
+
+
+def file_finisher_for_project(path: Path, *, sort_imports: bool = True) -> ToolChoice[FileFinisher]:
+    """Sort added imports, then require the project's configured Ruff lint baseline."""
+    sorting = (
+        import_sorter_for_project(path) if sort_imports else ToolChoice[FileFinisher](None, "")
+    )
+    command = _ruff_executable()
+    if command is None:
+        return (
+            ToolChoice(sorting.tool, "ruff is configured but not installed; lint not checked")
+            if project_configures_ruff(path)
+            else sorting
+        )
+    root = _root(path)
+    guard = _ruff_lint_guard(command, root)
+
+    def finish(file_path: str, source: str) -> str:
+        finished = sorting.tool(file_path, source) if sorting.tool else source
+        _propagate_repeatability(finish, sorting.tool, guard)
+        return (
+            guard(file_path, finished) if _ruff_configures_file(Path(file_path), root) else finished
+        )
+
+    return ToolChoice(
+        _propagate_repeatability(finish, sorting.tool, guard),
+        "; ".join(note for note in (sorting.note, "configured Ruff lint") if note),
+    )
 
 
 @dataclass(frozen=True)
@@ -169,7 +378,12 @@ def checked(formatter: SnippetFormatter) -> SnippetFormatter:
             # the proposal it was given, never the run (numbagg's snippet
             # that Black could not parse ended every formatted run).
             raise FormattingChangedCode(
-                f"the formatter failed: {type(error).__name__}: {error}"
+                "the formatter failed: "
+                + (
+                    str(error)
+                    if isinstance(error, ToolFailure)
+                    else f"{type(error).__name__}: {error}"
+                )
             ) from error
         try:
             formatted_tree = ast.parse(formatted)
@@ -181,7 +395,60 @@ def checked(formatter: SnippetFormatter) -> SnippetFormatter:
             )
         return formatted.rstrip("\n")
 
-    return format_snippet
+    return _propagate_repeatability(format_snippet, formatter)
+
+
+def _leading_blank_lines(source: str) -> int:
+    for index, line in enumerate(source.split("\n")):
+        if line.strip():
+            return index
+    return source.count("\n") + 1
+
+
+def format_at_indentation(formatter: SnippetFormatter, source: str, prefix: str) -> str:
+    """Format a snippet at its destination depth, returning column-zero text.
+
+    A call formatted at column zero can exceed the project's width after
+    insertion into a function or method. Inert surrounding suites let the
+    formatter see that depth without formatting any existing source. Like
+    the materializer's reindentation, each tab represents a four-space level.
+    The suites are only formatter input, never generated program statements.
+    """
+    depth = (len(prefix.expandtabs(4)) + 3) // 4
+    if not depth:
+        return formatter(source)
+    indentation = "    " * depth
+    wrapped = "\n".join(
+        [
+            *("    " * level + "if True:" for level in range(depth)),
+            *(indentation + line for line in source.split("\n")),
+        ]
+    )
+    formatted = formatter(wrapped)
+    tree = ast.parse(formatted)
+    body = tree.body
+    for _ in range(depth):
+        if len(body) != 1 or not isinstance(body[0], ast.If):
+            raise FormattingChangedCode("formatting changed the snippet's enclosing suites")
+        suite = body[0]
+        body = suite.body
+    lines = formatted.split("\n")[suite.lineno :]
+    # Formatter indentation may use tabs or a configured width of its own.
+    first = next(line for line in lines if line.strip())
+    margin = first[: len(first) - len(first.lstrip())]
+    unwrapped = "\n".join(
+        line[len(margin) :] if line.startswith(margin) else line for line in lines
+    )
+    # Ruff separates a definition from its synthetic enclosing ``if`` with a
+    # blank line. That suite's spacing does not belong to the destination;
+    # insertion supplies its own separator. Keep blanks the input already had.
+    extra = max(_leading_blank_lines(unwrapped) - _leading_blank_lines(source), 0)
+    unwrapped = "\n".join(unwrapped.split("\n")[extra:])
+    if canonical_dump(ast.parse(unwrapped)) != canonical_dump(ast.parse(source)):
+        raise FormattingChangedCode(
+            "formatting changed the generated code's meaning:\n" + unwrapped
+        )
+    return unwrapped.rstrip("\n")
 
 
 def black_formatter(settings: BlackSettings) -> SnippetFormatter:
@@ -190,16 +457,32 @@ def black_formatter(settings: BlackSettings) -> SnippetFormatter:
     Raises ``ImportError`` when Black is not installed; install the
     ``format`` extra (``pip install "code-towel[format]"``) to provide it.
     """
-    import black
+    return _black_formatter(IsolatedFormatTool("black"), settings)
 
-    mode = black.Mode(
-        line_length=settings.line_length,
-        string_normalization=settings.string_normalization,
-    )
 
+def _black_formatter(tool: IsolatedFormatTool, settings: BlackSettings) -> SnippetFormatter:
     def run_black(source: str) -> str:
-        return black.format_str(source, mode=mode)
+        return tool.render(
+            {
+                "source": source,
+                "line_length": settings.line_length,
+                "string_normalization": settings.string_normalization,
+            }
+        )
 
+    if type(tool) is IsolatedFormatTool:
+        _register_repeatable(
+            run_black,
+            FormattingRepeatability(
+                (
+                    "black",
+                    sys.executable,
+                    str(settings.line_length),
+                    str(settings.string_normalization),
+                ),
+                workers=(weakref.ref(tool),),
+            ),
+        )
     return checked(run_black)
 
 
@@ -217,28 +500,96 @@ def _tool_section(root: Path, name: str) -> Mapping[str, object]:
     return section if isinstance(section, Mapping) else {}
 
 
-def project_configures_ruff(path: Path) -> bool:
-    """Whether the project configures ruff (``[tool.ruff]``, ``ruff.toml`` or ``.ruff.toml``)."""
-    root = _root(path)
-    return bool(_tool_section(root, "ruff")) or any(
-        (root / name).is_file() for name in ("ruff.toml", ".ruff.toml")
+def _ruff_configuration(path: Path) -> Optional[Path]:
+    """Discover Ruff's nearest project configuration; Ruff resolves its settings.
+
+    A packaging file without a Ruff table is not a Ruff boundary. At the same
+    directory Ruff prefers .ruff.toml, then ruff.toml, then pyproject.toml.
+    Everything inside that selected configuration, including extend, is left
+    to Ruff's supported CLI instead of reimplemented here.
+    """
+    absolute = path.resolve()
+    folder = absolute if absolute.is_dir() else absolute.parent
+    for directory in (folder, *folder.parents):
+        for name in (".ruff.toml", "ruff.toml"):
+            candidate = directory / name
+            if candidate.is_file():
+                return candidate
+        tool = load_pyproject(directory).get("tool", {})
+        if isinstance(tool, Mapping) and isinstance(tool.get("ruff"), Mapping):
+            return directory / "pyproject.toml"
+    return None
+
+
+def _ruff_configuration_roots(path: Path) -> Tuple[Path, ...]:
+    configuration = _ruff_configuration(path)
+    return (
+        tuple(dict.fromkeys((_root(path), configuration.parent)))
+        if configuration
+        else (_root(path),)
     )
 
 
+def project_configures_ruff(path: Path) -> bool:
+    """Whether Ruff finds a project configuration above this exact path."""
+    return _ruff_configuration(path) is not None
+
+
+def _ruff_import_rules(command: List[str], path: Path, configuration: Path) -> Optional[bool]:
+    """Read enabled rules, or return None when their effective policy is unresolved.
+
+    --show-settings requires an existing file. For a directory or a not-yet
+    existing module, an explicit configuration and Towel's own existing file
+    query that configuration's rule selection. The actual sort still uses
+    the destination path, so native per-file ignores/exclusions remain in force.
+    """
+    target = path.resolve() if path.is_file() else Path(__file__).resolve()
+    try:
+        result = subprocess.run(
+            [
+                *command,
+                "check",
+                "--show-settings",
+                "--config",
+                str(configuration),
+                str(target),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(configuration.parent),
+            env=python_tool_environment(),
+            check=False,
+            timeout=TOOL_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        LOG.warning("Could not resolve Ruff import sorting for %s: %s", path, error)
+        return None
+    match = re.search(
+        r"^linter\.rules\.enabled = \[\n(.*?)^\]",
+        result.stdout,
+        re.MULTILINE | re.DOTALL,
+    )
+    if result.returncode != 0 or match is None:
+        LOG.warning(
+            "Could not resolve Ruff import sorting for %s; imports left as assembled: %s",
+            path,
+            result.stderr.strip() or "unrecognized effective-settings output",
+        )
+        return None
+    return re.search(r"\(I[0-9]+\)", match.group(1)) is not None
+
+
 def project_configures_ruff_import_sorting(path: Path) -> bool:
-    """Whether ruff's import-sorting rules (``I``) are selected in the project's configuration."""
-    root = _root(path)
-    ruff = _tool_section(root, "ruff")
-    lint = ruff.get("lint", {}) if isinstance(ruff.get("lint", {}), Mapping) else {}
-    selected: List[str] = []
-    for section in (ruff, lint):
-        if not isinstance(section, Mapping):
-            continue
-        for key in ("select", "extend-select"):
-            value = section.get(key)
-            if isinstance(value, list):
-                selected.extend(str(item) for item in value)
-    return any(rule == "ALL" or rule == "I" or rule.startswith("I0") for rule in selected)
+    """Whether this path's effective Ruff configuration selects import rules.
+
+    Ruff resolves config precedence, extend, select and ignore. Its sorter
+    subsequently applies file-level exclusions and per-file ignores itself.
+    """
+    configuration = _ruff_configuration(path)
+    if configuration is None:
+        return False
+    command = _ruff_executable()
+    return command is not None and _ruff_import_rules(command, path, configuration) is True
 
 
 def project_configures_isort(path: Path) -> bool:
@@ -264,13 +615,29 @@ def project_configures_isort(path: Path) -> bool:
 def _ruff_executable() -> Optional[List[str]]:
     """How to run ruff: this interpreter's copy first, then one on PATH."""
     try:
-        import ruff  # noqa: F401
-    except ImportError:
-        executable = shutil.which("ruff")
-        return [executable] if executable else None
-    # Both callers run from the analyzed project's root. Do not let a
-    # project-owned ruff.py, or a shadow of one of its dependencies, run.
-    return [sys.executable, "-I", "-m", "ruff"]
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                "-c",
+                "import importlib.util;raise SystemExit(0 if importlib.util.find_spec('ruff') else 1)",
+            ],
+            capture_output=True,
+            env=python_tool_environment(),
+            timeout=TOOL_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise FormattingChangedCode(f"Could not discover installed Ruff: {error}") from error
+
+    if probe.returncode == 0:
+        return [sys.executable, "-I", "-m", "ruff"]
+    if probe.returncode != 1 or probe.stderr:
+        raise FormattingChangedCode(
+            "Could not discover installed Ruff: " + probe.stderr.decode("utf-8", "replace")
+        )
+    executable = shutil.which("ruff")
+    return [executable] if executable else None
 
 
 def ruff_formatter(path: Path) -> SnippetFormatter:
@@ -284,13 +651,21 @@ def ruff_formatter(path: Path) -> SnippetFormatter:
     command = _ruff_executable()
     if command is None:
         raise FormatterUnavailable("ruff")
+    command = list(tuple(command))
     root = _root(path)
     target = str(path.resolve())
 
     def run_ruff(source: str) -> str:
         try:
             completed = subprocess.run(
-                [*command, "format", "--force-exclude", "--stdin-filename", target, "-"],
+                [
+                    *command,
+                    "format",
+                    "--force-exclude",
+                    "--stdin-filename",
+                    target,
+                    "-",
+                ],
                 input=source,
                 capture_output=True,
                 text=True,
@@ -305,11 +680,21 @@ def ruff_formatter(path: Path) -> SnippetFormatter:
             raise FormattingChangedCode(f"ruff format failed: {completed.stderr.strip()}")
         return completed.stdout
 
+    _register_repeatable(
+        run_ruff,
+        FormattingRepeatability(
+            ("ruff-format", *command, target),
+            _ruff_configuration_roots(path),
+        ),
+    )
     return checked(run_ruff)
 
 
 def _unformatted(source: str) -> str:
     return source
+
+
+_register_repeatable(_unformatted, FormattingRepeatability(("identity",)))
 
 
 def black_excludes(path: Path) -> bool:
@@ -325,45 +710,71 @@ def black_excludes(path: Path) -> bool:
     that does not compile is its own to report, so such a pattern excludes
     nothing here.
     """
-    from black import re_compile_maybe_verbose
-    from black.const import DEFAULT_EXCLUDES
-    from black.files import path_is_excluded
-
-    root = _root(path)
+    tool = IsolatedFormatTool("black")
     try:
-        parts = path.resolve().relative_to(root).parts
-    except ValueError:
-        return False
-    black = _tool_section(root, "black")
-    patterns = []
-    for key, default in (
-        ("exclude", DEFAULT_EXCLUDES),
-        ("extend-exclude", ""),
-        ("force-exclude", ""),
-    ):
-        value = black.get(key) or default
-        if isinstance(value, str) and value:
-            try:
-                patterns.append(re_compile_maybe_verbose(value))
-            except re.error:
-                continue
-    for depth in range(1, len(parts) + 1):
-        relative = Path(*parts[:depth])
-        normalized = "/" + relative.as_posix() + ("/" if (root / relative).is_dir() else "")
-        if any(path_is_excluded(normalized, pattern) for pattern in patterns):
-            return True
-    return False
+        return _black_excludes(tool, path)
+    finally:
+        tool.close()
 
 
-def _black_for_project(path: Path, note: str) -> ToolChoice[SnippetFormatter]:
+def _black_excludes(tool: IsolatedFormatTool, path: Path) -> bool:
+    root = _root(path)
+    configuration = _tool_section(root, "black")
+    patterns = {
+        name: (
+            None
+            if not configuration.get(name)
+            else configuration[name] if isinstance(configuration[name], str) else ""
+        )
+        for name in ("exclude", "extend-exclude", "force-exclude")
+    }
+    return tool.excludes(
+        {"operation": "excludes", "root": str(root), "path": str(path), **patterns}
+    )
+
+
+class _RunFormatTools:
+    """Lazy tools owned by one factory; file-specific settings travel with each request.
+
+    Keeping a formatter for every file must not keep a process for every file.
+    These tools remain alive while their factory or any selected callback owns
+    them, and IsolatedFormatTool disposes them with their last owner. A failed
+    worker stays failed, so selecting another file cannot hide its failure.
+    """
+
+    def __init__(self) -> None:
+        self._tools: dict[Literal["black", "isort"], IsolatedFormatTool] = {}
+        self._owner = os.getpid()
+        self._lock = threading.Lock()
+
+    def get(self, name: Literal["black", "isort"]) -> IsolatedFormatTool:
+        if self._owner != os.getpid():
+            raise ToolFailure("Create a new formatter factory after fork")
+        with self._lock:
+            if name not in self._tools:
+                self._tools[name] = IsolatedFormatTool(name)
+            return self._tools[name]
+
+
+def _black_for_project(
+    path: Path, note: str, tools: Optional[_RunFormatTools] = None
+) -> ToolChoice[SnippetFormatter]:
     """Black with the project's settings, or no formatting where its configuration excludes ``path``.
 
     Raises ``ImportError`` when Black is not installed.
     """
-    formatter = black_formatter(BlackSettings.for_project(path))
-    if black_excludes(path):
+    tool = IsolatedFormatTool("black") if tools is None else tools.get("black")
+    try:
+        excluded = _black_excludes(tool, path)
+    except BaseException:
+        if tools is None:
+            tool.close()
+        raise
+    if excluded:
+        if tools is None:
+            tool.close()
         return ToolChoice(checked(_unformatted), f"{note}, which the project excludes {path} from")
-    return ToolChoice(formatter, note)
+    return ToolChoice(_black_formatter(tool, BlackSettings.for_project(path)), note)
 
 
 def formatter_for_project(path: Path) -> ToolChoice[SnippetFormatter]:
@@ -374,19 +785,57 @@ def formatter_for_project(path: Path) -> ToolChoice[SnippetFormatter]:
     A formatter whose configuration excludes ``path`` leaves the code Towel
     writes there as ``ast.unparse`` renders it.
     """
+    return _formatter_for_project(path, None)
+
+
+def _formatter_for_project(
+    path: Path, tools: Optional[_RunFormatTools]
+) -> ToolChoice[SnippetFormatter]:
     if project_configures_ruff(path):
         try:
             return ToolChoice(ruff_formatter(path), "ruff (project configuration)")
         except FormatterUnavailable:
             note = "ruff is configured but not installed"
             try:
-                return _black_for_project(path, f"Black; {note}")
+                return _black_for_project(path, f"Black; {note}", tools)
             except ImportError:
                 return ToolChoice(None, f"{note}, and Black is not installed either")
     try:
-        return _black_for_project(path, "Black")
+        return _black_for_project(path, "Black", tools)
     except ImportError:
         return ToolChoice(None, "Black is not installed")
+
+
+def formatter_factory_for_project(
+    path: Path, report: Optional[Callable[[ToolChoice[SnippetFormatter]], None]] = None
+) -> SnippetFormatterFactory:
+    """Choose each modified file's formatter, sharing one Black worker for this run.
+
+    The caller passes original project paths, including when materializing a
+    staged copy. Built-in repeatability is updated with every selected tool;
+    an unavailable or custom child cannot certify cached annotation refusals.
+    """
+    selected: dict[str, Optional[SnippetFormatter]] = {}
+    tools = _RunFormatTools()
+    root = _root(path)
+
+    def choose(file_path: str) -> Optional[SnippetFormatter]:
+        if file_path not in selected:
+            choice = _formatter_for_project(Path(file_path), tools)
+            selected[file_path] = choice.tool
+            if report is not None:
+                report(choice)
+            if choice.tool is not None and formatting_repeatability(choice.tool) is None:
+                _invalidate_repeatability(context)
+            _propagate_repeatability(choose, base, *selected.values())
+        return selected[file_path]
+
+    def base(source: str) -> str:
+        return source
+
+    context = FormattingRepeatability(("per-file-format",), (root,))
+    _register_repeatable(base, context)
+    return _propagate_repeatability(choose, base)
 
 
 def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
@@ -398,21 +847,74 @@ def import_sorter_for_project(path: Path) -> ToolChoice[FileFinisher]:
     tool sorts only a file its own configuration selects, and only one whose
     imports it already leaves as they are (``sorted_where_already_sorted``).
     """
-    if project_configures_ruff_import_sorting(path):
+    if path.is_dir():
+        return _import_sorter_for_directory(path)
+    selection = _import_sorter_for_file(path)
+    return (
+        selection
+        if selection is not None
+        else ToolChoice(None, "Ruff import policy is unresolved; imports left as assembled")
+    )
+
+
+def _import_sorter_for_file(
+    path: Path, tools: Optional[_RunFormatTools] = None
+) -> Optional[ToolChoice[FileFinisher]]:
+    """Resolve one file's sorting policy; None is a failed query, never a disabled policy."""
+    configuration = _ruff_configuration(path)
+    if configuration is not None:
         command = _ruff_executable()
         if command is None:
-            return ToolChoice(None, "ruff import sorting is configured but ruff is not installed")
-        note = "ruff import sorting"
-        return ToolChoice(
-            sorted_where_already_sorted(_ruff_sorter(command, _root(path)), note), note
-        )
+            return ToolChoice(
+                None, "ruff is configured but not installed; imports left as assembled"
+            )
+        imports_enabled = _ruff_import_rules(command, path, configuration)
+        if imports_enabled is None:
+            return None
+        if imports_enabled:
+            note = "ruff import sorting"
+            return ToolChoice(
+                sorted_where_already_sorted(_ruff_sorter(command, _root(path)), note),
+                note,
+            )
     if project_configures_isort(path):
         try:
-            import isort  # noqa: F401
+            sorter = _isort_sorter(_root(path), tools)
         except ImportError:
             return ToolChoice(None, "isort is configured but not installed")
-        return ToolChoice(sorted_where_already_sorted(_isort_sorter(_root(path)), "isort"), "isort")
+        return ToolChoice(sorted_where_already_sorted(sorter, "isort"), "isort")
     return ToolChoice(None, "")
+
+
+def _import_sorter_for_directory(path: Path) -> ToolChoice[FileFinisher]:
+    """Resolve each file's import policy, sharing one isort worker across configurations."""
+    root = _root(path)
+    selected: dict[str, Optional[FileFinisher]] = {}
+    tools = _RunFormatTools()
+
+    def finish(file_path: str, source: str) -> str:
+        target = str(_counterpart(root, Path(file_path)))
+        if target not in selected:
+            choice = _import_sorter_for_file(Path(target), tools)
+            if choice is None:
+                _invalidate_repeatability(context)
+                return source
+            selected[target] = choice.tool
+            if "not installed" in choice.note:
+                LOG.warning("%s: %s", target, choice.note)
+            _propagate_repeatability(finish, base, *selected.values())
+        sorter = selected[target]
+        result = sorter(file_path, source) if sorter is not None else source
+        if sorter is not None and formatting_repeatability(sorter) is None:
+            _invalidate_repeatability(context)
+        return result
+
+    def base(file_path: str, source: str) -> str:
+        return source
+
+    context = FormattingRepeatability(("per-file-import-sort",), (root,))
+    _register_repeatable(base, context)
+    return ToolChoice(_propagate_repeatability(finish, base), "per-file configured import sorting")
 
 
 def _counterpart(root: Path, path: Path) -> Path:
@@ -444,16 +946,18 @@ def _ruff_sorter(command: List[str], root: Path) -> ImportSorter:
     and ``# ruff: noqa`` need no flag, since they only silence the rule.
     """
 
+    command = list(tuple(command))
+    context = FormattingRepeatability(("ruff-sort", *command), _ruff_configuration_roots(root))
+
     def sort(file_path: str, source: str) -> Optional[str]:
         try:
             completed = subprocess.run(
                 [
                     *command,
                     "check",
-                    "--select",
+                    "--fix-only",
+                    "--fixable",
                     "I",
-                    "--fix",
-                    "--exit-zero",
                     "--quiet",
                     "--force-exclude",
                     "--stdin-filename",
@@ -469,9 +973,11 @@ def _ruff_sorter(command: List[str], root: Path) -> ImportSorter:
                 timeout=TOOL_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired as error:
+            _invalidate_repeatability(context)
             LOG.warning("ruff import sorting timed out for %s (%s s)", file_path, error.timeout)
             return None
         if completed.returncode != 0 or not completed.stdout:
+            _invalidate_repeatability(context)
             LOG.warning(
                 "ruff import sorting failed for %s; imports left as assembled: %s",
                 file_path,
@@ -480,51 +986,24 @@ def _ruff_sorter(command: List[str], root: Path) -> ImportSorter:
             return None
         return completed.stdout
 
-    return sort
+    return _register_repeatable(sort, context)
 
 
-def _isort_sorter(root: Path) -> ImportSorter:
+def _isort_sorter(root: Path, tools: Optional[_RunFormatTools] = None) -> ImportSorter:
     """isort over one file's text, with the project's configuration found from ``root``."""
-    import isort
+    tool = IsolatedFormatTool("isort") if tools is None else tools.get("isort")
+    context = FormattingRepeatability(("isort", sys.executable), (root,), (weakref.ref(tool),))
 
     def sort(file_path: str, source: str) -> Optional[str]:
         target = _counterpart(root, Path(file_path))
         try:
-            config = isort.Config(settings_path=str(root))
-            if _isort_skips(config, root, target):
-                return source
-            return isort.code(source, config=config, file_path=target)
-        except isort.exceptions.FileSkipped:
-            # ``# isort: skip_file`` in the text, or a skip setting ``_isort_skips``
-            # agrees with: the project told isort to leave the file alone.
-            return source
-        except isort.exceptions.ISortError as error:
+            return tool.render({"source": source, "root": str(root), "path": str(target)})
+        except ToolFailure as error:
+            _invalidate_repeatability(context)
             LOG.warning("isort declined %s; imports left as assembled: %s", file_path, error)
             return None
 
-    return sort
-
-
-def _isort_skips(config: "isort.Config", root: Path, target: Path) -> bool:
-    """Whether isort, run over the project at ``root``, would leave ``target`` alone.
-
-    Walking the project, isort asks ``Config.is_skipped`` of every directory
-    it enters and of every file it finds, by ``skip``, ``extend_skip``,
-    ``skip_glob``, ``extend_skip_glob`` and ``skip_gitignore``; ``isort.code``
-    asks it of the file alone, so a skipped directory is asked here too. An
-    entry naming a path (``tests/_sync``) isort resolves against the
-    directory it runs in, which for the project is its root, not wherever
-    Towel happens to run.
-    """
-    try:
-        relative = target.relative_to(root)
-    except ValueError:
-        return bool(config.is_skipped(target))
-    named = {posixpath.normpath(entry) for entry in config.skips if not posixpath.isabs(entry)}
-    return any(
-        part.as_posix() in named or config.is_skipped(root / part)
-        for part in (relative, *list(relative.parents)[:-1])
-    )
+    return _register_repeatable(sort, context)
 
 
 class SortOutcome(Enum):
@@ -642,7 +1121,7 @@ def sorted_where_already_sorted(sort: ImportSorter, tool: str) -> FileFinisher:
             LOG.warning(report, file_path, tool)
         return result.text
 
-    return finish
+    return _propagate_repeatability(finish, sort)
 
 
 def imports_permuted_only(finisher: FileFinisher) -> FileFinisher:
@@ -755,7 +1234,7 @@ def _normalize_import_groups(statements: list[ast.stmt]) -> list[ast.stmt]:
                 bindings.setdefault(name, []).append(ast.Import(names=[alias]))
         elif (
             isinstance(statement, ast.ImportFrom)
-            and statement.module != "__future__"
+            and (statement.level != 0 or statement.module != "__future__")
             and all(alias.name != "*" for alias in statement.names)
         ):
             for alias in statement.names:

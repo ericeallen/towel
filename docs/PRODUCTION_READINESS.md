@@ -1,6 +1,629 @@
 # Production readiness
 
-**1.772 is released on September 26, 2026, from `audit-1772`.** It repays
+[Documentation index](README.md)
+
+The [October 2 preservation decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+removes reflection and self-instrumentation guarantees. Validation and repair
+records below retain the source, contract and results of their dated runs;
+they are not evidence of those retired protections in the current code.
+
+Start with the completed 1.947 publication below. Later sections retain
+completed releases and earlier preparation checkpoints, with their original
+source identities and historical measurements. Pending work in those dated
+checkpoints describes the state at that time, not the published release.
+
+## 1.947 published release, October 26, 2026
+
+Towel **1.947** is published on [PyPI](https://pypi.org/project/code-towel/1.947/)
+and [GitHub](https://github.com/ericeallen/towel/releases/tag/v1.947) from
+`8a853126f5499eb11dfa04fbe304dc332dc5ef73`, tagged `v1.947`.
+The existing repository evidence verifier accepted the complete local release
+records before publication. All four
+[GitHub CI jobs](https://github.com/ericeallen/towel/actions/runs/40312460216)
+then passed on that exact commit.
+
+| Python | Local passed / skipped | GitHub CI passed / skipped | Passing subtests in each run | Line coverage |
+| --- | ---: | ---: | ---: | ---: |
+| 3.11 | 11,034 / 337 | 11,036 / 335 | 45 | 93% |
+| 3.12 | 11,237 / 205 | 11,239 / 203 | 45 | 94% |
+| 3.13 | 11,220 / 225 | 11,222 / 223 | 45 | 94% |
+
+Native quality and strict typing, Linux typing, dependency audits, strict Twine
+and distribution-content checks passed. Six clean-wheel smoke checks covered
+bare and formatter/checker-extra installations across Python 3.11–3.13.
+The exact source archive passed 126 documentation tests, and all five Mermaid
+diagrams rendered. Differential grammar and scope fuzzing completed 9,400 runs:
+4,361 equivalent, 5,009 unchanged, 30 inconclusive and zero failures.
+Self-dogfood applied 28 refactorings across 19 files, reached a fixed point,
+and passed strict typing and the Python 3.13 suite; all 108 generated runtime
+members were unchanged by testing.
+
+All **141 corpus projects completed**: **89 PASS, 45 NO_CHANGE, five reviewed
+import-ambiguity refusals and two BROKEN_KNOWN warning-location limitations**.
+There were no timed-out or signal-terminated phases, and Docker reported
+`OOMKilled=false`. This is not a claim that all upstream suites were clean:
+19 projects had pre-existing baseline failures. Three explicit no-types
+fallbacks were reviewed separately from type-verified transformations:
+prompt-toolkit and typing_extensions preserved their original test outcomes,
+while Trio made no changes.
+
+The five refusals were invoke, isort, towel-v1.414, towel-v1.618 and towel-main.
+Each exited with status 1, changed zero files, and produced a refusal log
+identical to the prior 1.946 gate at the same consumer revision. The Towel
+entries expose a harness coverage limitation: the executing candidate occupies
+the same installed package name as the separate target checkout, so import
+analysis refuses the ambiguity. These entries do not demonstrate successful
+self-refactoring; the separate self-dogfood result above does. Pluggy and
+BeautifulSoup introduced only their manifest-listed warning-filename failures.
+
+The corpus used one project worker and one Towel worker, six CPUs, 6 GiB RAM
+and no swap. Sphinx passed its 2,389 tests and 36 skips before and after
+45 refactorings in 16 files; refactoring took 5,738.25 seconds. PrettyTable
+retained all 338 passing tests with 47.82 seconds of refactoring, and Croniter
+retained all 248 with 1,246.14 seconds. The last live memory peak observation
+was 5.67 GiB, not a final lifetime peak: final cgroup counters were unavailable
+after shutdown. The final container state and completed phase results establish
+that this campaign finished without an OOM termination. The interrupted host
+collector's records were recovered from the completed container without
+rerunning the workload.
+
+The [controlled full-CLI comparison](PERFORMANCE.md#1947-published-release-comparison)
+with 1.946 observed mean increases of 2.58% for Click, 8.84% for Rich and 1.25%
+for Voluptuous. All distinct generated outputs matched their original consumer
+test outcomes. Two samples per version on a shared host do not establish
+statistical significance or a general speed improvement.
+
+Both services' downloaded distributions matched these validated SHA-256 hashes:
+
+```text
+11c0a735b9730db6d0b635d3440a22891d79e881bb4dd7682c99210b367a2bd4  code_towel-1.947-py3-none-any.whl
+1feed54607c7fcb108e7664eb7e193fdd22a0d9a5b5763f79b36c50115efe45b  code_towel-1.947.tar.gz
+```
+
+PyPI's description matches the frozen README. A fresh uncached PyPI installation
+verified the installed runtime bytes, CLI preview, an actual refactoring and
+preserved executable behavior. All 22 version-pinned README documentation URLs
+and their fragments resolved at the tag. The immutable tagged documents retain
+their preparation checkpoints; this default-branch record adds the completed
+outcomes. Publication initially left the default branch at 1.792; that stale
+GitHub front page did not alter the tag or either distribution. The subsequent
+documentation correction adds a default-branch publication gate.
+
+## 1.947 preparation checkpoint, October 24, 2026
+
+Candidate `877b37578b79434c1eb473a49f0ae54516679276` completed its Linux
+Python 3.11–3.13 full suites and coverage, 9,400 differential runs with zero
+failures, six wheel smoke checks, 126 sdist documentation checks and self-dogfood
+validation. Its dependency audit also passed with filelock 4.2.4. Those results
+remain evidence for that exact source.
+
+After the corpus workspace permissions were repaired without changing the
+candidate, the resumed corpus stopped at PrettyTable's refactor timeout. It had
+86 completed reports: 60 `PASS`, 23 `NO_CHANGE`, one `BROKEN_KNOWN`, one `CRASH`
+and one `TIMEOUT`. PrettyTable's baseline passed 338 tests; no transformed-suite
+result was available from the timed-out run. The corpus is incomplete and does
+not clear release acceptance.
+
+The [bounded investigation](PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
+identified repeated parsing caused by an overly conservative warning classifier.
+Its narrow runtime correction requires a fresh candidate and complete release
+gates. The isolated completed diagnostic does not transfer earlier gate results
+or establish a controlled performance ratio. Consumer/performance review,
+exact-commit remote CI and publication remain pending at this checkpoint;
+final validation outcomes are retained externally with the exact artifacts.
+
+## 1.947 preparation checkpoint, October 23, 2026
+
+The single-pass-loop scope-oracle correction required no runtime change. Its
+replacement candidate `575abcc` completed the Linux Python 3.11–3.13 matrix
+and artifact checks, then stopped in grammar fuzzing on binding-form seed
+`10060797319587863840408861851`. Both original and transformed programs grow
+the iterated list without bound, before extracted code is reached; each
+independently exhausted a 256 MiB container. This identifies a harness
+containment defect, not evidence of a Towel behavior change.
+
+The harness now bounds observation memory/output and runs the original first,
+skipping the transformed observer when the original cannot finish. Controls
+retain detection of transformed-only exhaustion and unexpected exits. The
+[release procedure](RELEASING.md#1947-preparation-checkpoint-october-23-2026)
+records the limits and platform qualifications. This correction requires a new
+freeze and fresh validation; the preceding results do not certify the replacement.
+The full corpus, consumer/performance review, exact-commit remote CI and
+publication remain pending. Final validation outcomes are retained externally.
+
+## 1.947 preparation checkpoint, October 22, 2026
+
+The interrupted `0695378` grammar campaign reported a scope difference at
+binding-form seed `94085730748536952`. Bounded reproduction confirmed an oracle
+defect: names read by attribute/subscript comprehension targets were treated as
+comprehension bindings. This rejected a valid retained local and could hide real
+scope changes involving those reads. The corrected oracle distinguishes the
+target's actual bindings; regressions cover accepted correspondence and changed
+receivers/bindings. The case's executed observations agree before and after
+refactoring. No runtime source change was needed.
+
+The development dependency refresh and differential harness correction require
+a replacement freeze. Completed `0695378` checks retain their original identity;
+full release validation, consumer/performance review, exact-commit remote CI and
+publication remain pending for the replacement candidate. See the
+[release procedure](RELEASING.md#1947-preparation-checkpoint-october-22-2026).
+
+## 1.947 candidate 59aafb1: corpus stop
+
+Frozen source `59aafb189f1d3feb2f97c433dabbf77815bb5a36`, numbered **1.947**,
+completed the following Linux checks before its corpus exposed a runtime
+performance defect:
+
+| Python | Passed | Skipped | Passing subtests | Line coverage |
+| --- | ---: | ---: | ---: | ---: |
+| 3.11.17 | 10,735 | 318 | 45 | 93% |
+| 3.12.15 | 10,919 | 205 | 45 | 94% |
+| 3.13.16 | 10,902 | 225 | 45 | 94% |
+
+That source also completed 9,400 differential runs with zero failures: 4,471
+transformed/equivalent, 4,890 unchanged and 39 inconclusive. It passed six
+bare/extras wheel smoke checks and 126 sdist documentation checks. Self-dogfood
+applied 28 refactorings across 19 files; the generated source passed strict
+mypy and 10,902 tests. These results retain their exact source identity; they
+do not transfer to the runtime repair described below.
+
+The 141-project corpus was intentionally stopped after **eight completed
+project results**. Its exit status 143 is an intentional termination, not an
+out-of-memory result. More-itertools's completed refactor took 474.037 seconds
+and retained all 914 consumer tests. Diagnostics traced repeated lexical scans
+to the definition-time builtin-mapping guard: 2,988 calls over five exact
+source strings, 99.8327% repeated. The independently verified published 1.946
+wheel completed the same case with byte-identical Python output. Partial
+profiles identify the cause but do not establish a production speed ratio.
+See the [performance investigation](PERFORMANCE.md#1947-large-module-builtin-guard-repair).
+
+The repaired guard conservatively covers all explicit module/global fallback
+reads and implicit import/class lookups under possible mapping replacement,
+including wildcard imports exporting `__builtins__` through `__all__` and
+ordinary `receiver.__builtins__` stores/deletions anywhere in the analyzed
+program. One fresh analysis-owned boolean carries the program-wide hazard;
+excluded runnable files count, and unknown input cannot establish absence.
+See the [evaluation-scope policy](GENERATED_CODE.md#arguments-and-evaluation).
+A separate source-local memo reuses only the immutable source/parser-dependent
+builtin-mapping verdict within a weakly owned scope analyzer, with one source and an 8 MiB source-storage budget per
+analyzer. Warning-capable sources and disabled
+memoization retain ordinary computation; no AST or block fact is retained.
+The global lexical cache limits and behavioral contract are unchanged. At
+this repair-preparation checkpoint, the changed runtime still required a fresh
+freeze and complete release validation. All `59aafb1` results and stopped-corpus
+diagnostics remain in `/private/tmp/towel-release-1947-final-validation/`,
+separate from final
+source/artifact acceptance and publication outcomes recorded externally.
+
+## 1.947 preparation checkpoint, October 19, 2026
+
+This source targets **1.947**, selected for the seven audit repairs after
+published 1.946. At this preparation checkpoint the final versioned candidate
+had not been frozen, its release gates remained pending, and no 1.947 tag or
+publication was claimed. Final outcomes are recorded externally with the exact
+artifacts, CI and PyPI. See the [release procedure](RELEASING.md#1947-preparation-checkpoint-october-19-2026).
+
+The preceding repair source was
+`2027689f263ff781a9172320a3afa9f6080d0911`, with **1.946 metadata**:
+
+| Repair check | Source-bound result | Scope limit |
+| --- | --- | --- |
+| Linux Python 3.13.16 `just ci` | 10,901 passed, 226 skipped, 45 passing subtests; 94% line coverage; quality, installed-pins audit and wheel/sdist build passed | Not the final 1.947 source or its complete interpreter matrix |
+| Native macOS focused regression matrix | 194 passed, zero skips each on Python 3.11.14, 3.12.12 and 3.13.7 | Scoped regressions, not full native suites |
+| Fresh bare repair wheel | 33 cases passed, 11 per interpreter; all 107 tracked runtime files matched `2027689` byte for byte | Local wheel still numbered 1.946; no extras or publication claim |
+| Seeded differential sample | Seeds 20261019–20261118; 370 runs: 114 transformed/equivalent, 254 unchanged, two inconclusive, zero failures | Unchanged/inconclusive runs are not transformed-program coverage; not the required full release fuzz campaigns |
+
+The complete Linux suite included the watchdog tests with a functioning process
+observer. Native macOS watchdog observation remained blocked by the environment's
+`ps` permission; the assertion was retained. Coverage was 30,723 statements with
+1,982 missed, above the unconditional 85% floor. No known dependency
+vulnerabilities were reported by that source's installed-pins audit.
+
+The local repair wheel comparison above is distinct from publication identity:
+the independently downloaded **published 1.946** wheel has SHA-256
+`090c158f8dbd6795dbbe7e18d0bcffbbb884141f16d04100663c8d4ccc45c0cd`,
+and its 107 runtime files match **`a1355ab`**. Its runtime is not `2027689`.
+GitHub's `v1.946` ref resolves to
+`4b95c0ae1bef211574f747775b49e3422b08e5ce`; runtime-file matching alone does
+not identify all packaging and documentation bytes with the audited source.
+
+Repair-session native singleton measurements (Python 3.13.7, one worker,
+pair budget one) were 0.00527, 0.01021 and 0.01768 seconds for 160, 320 and
+640 statements, with zero proposals. Eligible two-function observations improved
+1.657 → 0.226 seconds at 160 and 11.092 → 1.116 seconds at 320. These are host
+observations, not portable thresholds or new full-command release benchmarks.
+Ten eligible comparisons and the retained Rich 15.0.0 `rich/panel.py` fixture
+preserved ordered pairs, proposals and rendered bytes at engine source
+`631b6fd`; later repair commits changed renaming, headers and Ruff recovery.
+The Rich fixture had 86 ordered pairs, one proposal and two replacements; it
+stayed serial even with the workers setting at two.
+
+The final 1.947 full Python 3.11–3.13 matrix and coverage, complete corpus,
+consumer/performance review, exact artifact checks and completed release
+verification remained pending at this checkpoint. Earlier 1.946/1.792 evidence
+below cannot satisfy those gates for changed release contents. The standing
+never-push rule also blocked exact-commit remote CI, remote tagging and the
+publication sequence; local preparation did not bypass those steps.
+
+## Current publication status, October 18, 2026
+
+This dated checkpoint retains its historical preparation status. The October 19
+verification above establishes publication of 1.946, without relabelling these
+older source-bound measurements as final 1.947 results.
+
+The maintainer extended 1.946 to include per-analysis source-correspondence
+memoization and requested fresh Python 3.11–3.13 suites and cache-on/off output
+comparisons. The implementation reuses only successful proofs for explicitly
+owned immutable trees; caller trees and materialization remain fresh, and
+optional immutability checking detects a changed warmed owner. Earlier profiles,
+including Rich +7.6% at `0b3494c`, predate this change. No speedup is claimed.
+
+The completed local matrix and output checks are recorded below, including
+the corrected navigation failure and the blocked watchdog observer. The historical
+results below retain their source identities. Publication remains unverified
+pending live PyPI/GitHub and uploaded-artifact readback. See the
+[publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026)
+and [October 18 profile](RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
+
+## Scoped source-proof memo: local validation, October 18, 2026
+
+The memo is implemented in the prepared 1.946 source. It shares only successful
+source-correspondence proofs for explicitly registered immutable analysis trees,
+with source and parser-limit identity. Caller trees remain uncached. Function
+and suite identity checks remain independent, as does materialization. Optional
+AST immutability checking rejects changes to a warmed owned tree.
+
+The complete native suites ran under coverage, with the pinned development
+dependencies and one Towel worker, on macOS:
+
+| Python | Passed | Skipped | Passing subtests | Line coverage |
+| --- | ---: | ---: | ---: | ---: |
+| 3.11.14 | 10,655 | 315 | 45 | 93% |
+| 3.12.12 | 10,838 | 202 | 45 | 94% |
+| 3.13.7 | 10,825 | 222 | 45 | 94% |
+
+**These full runs each exited with two failures.** One was a stale documentation
+anchor introduced during reconciliation. Both references were corrected, and all
+8 navigation tests then passed separately on each interpreter. The remaining
+`test_workers_exit_after_the_parent_is_killed` failure is an observer limitation:
+this environment refuses execution of `ps` with `PermissionError: Operation not
+permitted`, before the test can observe the workers. That test is unchanged and
+remains unverified here. No all-green full-suite or complete release-gate result
+is claimed. It needs a run in an environment that permits its process observer.
+
+Coverage combined successfully and exceeded the unconditional 85% gate for all
+three interpreters: 28,433/30,512 statements on 3.11, 28,530/30,512 on 3.12 and
+28,531/30,512 on 3.13. Black checked all 543 files, Flake8 passed, strict mypy
+passed all 531 source files, and the declared Bandit medium/high-severity gate
+passed. Tools were pytest 9.1.1, coverage 7.16.0, mypy 2.3.1, pyright 1.1.414
+and Black 26.5.1.
+
+The new real-engine control reduced four source-proof requests to one underlying
+computation; the next analysis proves its source again. Existing caller-mutation
+tests were retained unchanged. New controls exercise owner mutation checking,
+foreign trees/functions, source and parser changes, warning behavior, disabled
+memoization, nested scopes, cleanup and fresh materialization verification.
+
+Four complete CLI branch cases compare identical generated bytes with all
+memoization enabled versus disabled, on each supported interpreter. A separate
+complete typed/formatted CLI comparison ran over all 28 Python files in
+`test_examples`: 23 files changed, and all generated Python bytes matched with
+the new proof memo enabled and disabled. The original input remained unchanged;
+both runs recorded 113 verified signature attempts and zero signature refusals.
+The original type-check baseline contained one error, preserved by both runs.
+No new timing benefit, fresh 141-project corpus or remote CI result is claimed.
+
+Raw suite, coverage and example-comparison logs are retained locally under
+`/private/tmp/towel-1946-proof-memo.0iBHiS/`. Publication remains unverified;
+see the [publication checkpoint](RELEASING.md#1946-publication-checkpoint-october-18-2026).
+
+**Contents**
+
+- [1.947 published release](#1947-published-release-october-26-2026)
+- [1.947 candidate 59aafb1 corpus stop](#1947-candidate-59aafb1-corpus-stop)
+- [1.947 preparation and prior-source repair checks](#1947-preparation-checkpoint-october-19-2026)
+- [1.946 preparation and audited source](#1946-preparation-and-audited-source-october-10-2026)
+- [1.792 published release](#1792-published-release-october-8-2026) · [1.792 preparation](#1792-release-preparation) · [Previous published release](#previous-published-release)
+- [1.772 release validation](#1772-release-validation-september-26-2026) · [Earlier 1.772 candidate](#earlier-1772-candidate-validation-september-19-2026)
+- [1.732 validation](#historical-1732-validation-september-19-2026) · [1.732 candidate](#historical-1732-candidate-run-september-19-2026)
+- [September 17–18 corpus](#historical-141-project-corpus-september-1718-2026)
+- [1.414 report](#the-1414-report-september-1215-2026) · [Readiness criteria](#what-production-ready-means-here)
+- [1.414 repairs](#defects-found-and-repaired-in-this-pass) · [Consumer evidence](#consumer-evidence) · [Ecosystem check](#ecosystem-check)
+- [1.414 verification gates](#verification-gates-on-the-1414-tree) · [Historical limitations](#historical-1414-limitations-and-outstanding-work)
+- [Measurement environment](#measurement-environment)
+
+## 1.946 preparation and audited source, October 10, 2026
+
+Version **1.946**, named for ln(7) ≈ 1.945910149, is being prepared locally.
+The latest full audit applies to frozen source
+`9d57b0d25f3ee743e0ce0035ed13df65b2344164`, whose metadata and tested wheel
+still said **1.792**. It does not certify the subsequent versioned 1.946
+source or distributions. Fresh source-bound release gates, the required
+interpreter matrix and corpus, exact-commit CI and publication verification
+remain to be completed under the [release procedure](RELEASING.md). No 1.946
+tag, upload or publication is recorded here.
+
+The subsequent versioned candidate `a53e351` completed quality, distribution,
+six clean-install checks, differential behavior, the Linux Python 3.11–3.13
+matrix and self-dogfood gates. Its 141-project corpus stopped after 31 complete
+outcomes (20 PASS, 10 NO_CHANGE and one manifest-listed Pluggy difference)
+when Voluptuous exposed a material performance defect. The campaign is
+incomplete and rejected as release acceptance. All owned workers closed;
+the raw partial observations and exact-source gate results are retained under
+`~/Knowledge/handoffs/towel/20261010T113508Z-codex-1946-release-validation/`.
+
+A separate bounded replay proved repeated native parsing of the same
+warning-free source. The preceding raw-regex guard repair was frozen as
+`a6dc6ed` with versioned 1.946 artifacts. Fresh quality, strict typing, exact
+archive/RECORD and Twine
+checks passed; the complete Voluptuous canary retained 182/182 passes and
+40 applications across four files. These checks do not complete release
+acceptance or inherit `a53e351`'s matrix/corpus results.
+
+Two completed R,F,F,R cohorts then compared `a6dc6ed` with published `44d7795`:
+Voluptuous averaged 90.984 → 87.569 seconds (−3.75%); Click averaged
+47.165 → 58.195 seconds (+23.39%). There were two shared-host observations
+per source per workload under 2 CPUs, 6 GiB RAM and 12 GiB combined RAM+swap.
+Original pairs, 24 displayed Click failure payloads, repeated per-arm outputs
+and owned-worker closure matched. Per-CLI CPU is unavailable. Rich has zero
+actual samples in this campaign; its fresh cohort and all remaining full
+source-bound release gates are pending. Restoration remains unresolved. The
+[current record](../tests/release_evidence/1.946-warning-guard/README.md)
+preserves all eight samples and telemetry limits; the earlier comparison below
+remains historical. A subsequent backslash-parity repair changes runtime bytes
+again: complete paired backslashes no longer cause the guard refusal, while
+native diagnostic and cache boundaries remain fixed. Its scoped checks do not
+inherit the `a6dc6ed` timings or certify a release. A new final freeze, fresh
+complete gates and new source-bound timing evidence remain pending. See the
+[parity addendum](PERFORMANCE.md#october-10-backslash-parity-repair) and the [investigation](PERFORMANCE.md#october-10-voluptuous-regression-investigation).
+
+At that audit freeze, the complete canonical suite passed **10,583 tests and
+45 subtests**, with 32 skips and eight warnings. Coverage was **93.478046%**
+(28,422 of 30,405 statements). Configured strict mypy over 530 files, Black,
+Flake8 and the selected medium/high Bandit checks passed. The bounded
+credential-shape scan reported no matches; it cannot prove that no secret
+exists. The independent behavior lane retained 4,501 equivalent observations,
+57 inconclusive observations and 4,842 unchanged cases, with no observed
+difference or failed case. Inconclusive and unchanged cases do not establish
+transformed-program coverage.
+
+Six fresh pinned Linux consumers used the actual installed default CLI and
+unchanged original before/after test commands. Their environment, full
+dependency maps, input Git bytes, wheel RECORD, 107 runtime payloads and
+531 generated Python outputs matched the retained references. There were
+56 local refactoring applications across 30 files. No typing fallback,
+confirmation substitution, retry-to-green or oracle waiver was accepted.
+These six consumers are a bounded audit, not a new 141-project corpus or
+Sphinx validation.
+
+| Consumer | Matching original and transformed suite | Local applications / changed files | Python outputs |
+| --- | --- | ---: | ---: |
+| attrs | 1,490 passed, one baseline failure, seven skipped, one xfailed | 1 / 1 | 13 |
+| Click | 2,035 passed, 24 baseline failures, 24 skipped, one xfailed, 31,000 deselected | 5 / 3 | 17 |
+| Packaging | 62,435 passed, 427 deselected | 4 / 4 | 22 |
+| Pygments | 5,330 passed, 16 skipped | 26 / 12 | 343 |
+| Rich | 948 passed, eight baseline failures, 25 skipped | 15 / 7 | 100 |
+| Starlette | 1,247 passed, two baseline failures, two xfailed | 5 / 3 | 36 |
+
+Matching outcomes retain **35 known baseline failure records**, not uniformly
+green upstream suites. Failure IDs, reported exception/assertion details and
+all retained visible payloads matched. Nine records contain pytest-truncated
+hidden portions—one attrs record and eight Rich records—which remain
+unverified. The audit independently matched all 2,644 tracked files to Git
+before and after, and its owned workers closed. Installed identity snapshots
+and actual CLI invocation evidence have their recorded process boundaries;
+a separate import probe is not evidence of an import in the CLI process.
+
+The subsequent eight-sample production assessment used the same audited
+source and released source `44d7795`, with wheels still numbered 1.792.
+Mean complete CLI time was 46.527→56.693 seconds on Click (**21.85% slower**)
+and 99.773→177.699 seconds on Rich (**78.10% slower**), with two samples per
+source per workload in release/audited/audited/release order. All original
+pairs, visible payloads and output references matched, with every runtime
+CPU shortfall retained. This is shared-host evidence, not isolated-host
+certification; the performance-restoration target remains unmet. All eight
+owned containers and measurement workers closed, and source and frozen
+instrument bytes stayed unchanged. See [performance details](PERFORMANCE.md#october-10-click-and-rich-assessment),
+the [source-bound evidence guide](../tests/release_evidence/1.946-preparation/README.md)
+and [eight-sample record](../tests/release_evidence/1.946-preparation/measurements.json).
+
+The external raw audit and measurement records are retained under
+`~/Knowledge/handoffs/towel/20261009-performance-recovery-01a11b7c/`, including
+`audit-r04/root-independent-readback.json` and
+`observational-assessments-20261010-rich-r03/combined-independent-final-readback.json`.
+The repository evidence guide records that provenance. Earlier rejected
+source rounds and failed resource/instrument attempts remain historical;
+they were not adopted as acceptance for this freeze.
+
+## 1.792 published release, October 8, 2026
+
+Version 1.792 was published from `44d779563578a32e24f8213fba96f43c6698ab43`.
+The [public release record](https://github.com/ericeallen/towel/releases/tag/v1.792)
+retains the completed gate results and reviewed artifact hashes. Exact-commit
+CI passed all four jobs; the Python 3.11–3.13 matrix passed with 93% line
+coverage on each interpreter. The completed 141-project corpus contains 88
+matching PASS outcomes, 46 NO_CHANGE outcomes, two known reflection differences
+and five controlled zero-write refusals. PASS means matching observed outcomes,
+including selected-environment baseline failures, rather than uniformly green
+consumer suites. Runtime-only typing fallbacks do not certify typing parity.
+
+The final complete default typed/formatted Packaging comparison used four
+samples per version: 39.356 seconds mean for published 1.772 and 39.714 seconds
+for 1.792. The 0.91% difference is within approximately 2.8% sample variation;
+neither a meaningful speedup nor slowdown is established on this workload.
+The dated preparation results below retain their original identities and do
+not describe this final release. Subsequent source fixes and proposal work
+belong to the prepared 1.946 version and require their own release validation
+before publication.
+
+## 1.792 release preparation
+
+This section preserves historical preparation checkpoints. Its pending-stage
+statements apply at those checkpoints; the completed release is recorded above.
+
+At the October 7 preparation checkpoint, the parameter, placement and
+checker-cache audit follow-ups passed the
+complete native Python 3.13.7/macOS suite at `04d2710`: **9,697 passed**, 20 skipped
+and 26 passing subtests, with **93%** combined line coverage. Black, flake8,
+strict mypy, Bandit and the pinned third-party dependency audit pass. Every
+source byte stayed unchanged throughout the native run. Documentation/evidence
+updates preserve its runtime and executable-test bytes.
+
+The complete typed/formatted block-memo comparison measures 56.72s without the
+memo and 56.70s with it, with identical outputs. No wall-clock improvement is
+established. [Retained evidence](../tests/release_evidence/1.792-parameter-audit-fixes/README.md)
+records scope and failed attempts. This does not clear interpreter-matrix,
+corpus, final source-bound artifact/evidence or exact-commit CI gates. A fresh
+validation campaign was authorized at that checkpoint; its later completed
+release results are recorded above.
+
+The campaign's Python 3.11 checks exposed two test assumptions: a starred call
+can retain a temporary argument tuple past function return, and a nested list
+comprehension can capture a parameter in a cell. Cleanup tests now distinguish
+direct and starred calls, retaining original-versus-transformed effects in both;
+the comprehension test checks the compiled cell requirement and preserves the
+ownership refusal. These corrections leave the runtime guards unchanged.
+
+The inner rendered-variant checker-refusal memo is removed after a changed
+stub provider exposed incomplete checker-input closure. Every submitted variant
+gets a new project-check request. The separately qualified outer completed-
+proposal rehearing cache remains; earlier timing and validation records predate
+this removal and do not measure or validate it.
+
+The October 6 audit and performance changes alter runtime behavior after the
+October 5 validation. Their native checks and bounded performance experiments
+are development evidence. The full matrix and corpus remain release gates for
+the final candidate. The dated results below do not clear the changed source
+for release.
+
+At `1e87842`, the complete native Python 3.13 suite passed **9,671 tests and
+26 subtests**, with 20 skips and **93% combined coverage**. Black, Flake8,
+mypy and Bandit passed. The before/after full source inventories matched;
+the run changed no source, fixture, test or documentation bytes. The
+[retained native evidence](../tests/release_evidence/1.792-october6-native/README.md)
+binds the runtime tree `87bd254a7948b5611b334e85856c2aec94d13207`, identical
+to the October 6 installed-wheel optimization comparison at `8626d50`.
+
+Version **1.792** carries the [post-1.772 changes](../CHANGELOG.md#1792):
+checked fixed-point preview, caller-narrowing preservation, Pyright reveal
+batching, broader safe duplicate discovery, generated-helper reuse and inert
+precise annotations, plus the [scoped function opt-out](CLI_GUIDE.md#protect-a-function).
+[Design decisions](DECISIONS.md) and intent-bearing tests
+record the preservation contract.
+
+The October 5 audit repairs preserve opaque factory-result lifetimes and
+finalizer order, conservatively account for aliased and custom suppressing
+context managers, and treat optional naming metadata failures as warnings
+after successful publication. At `c5311b4`, native tests passed 9,320 cases;
+the full Linux Python 3.11–3.13 matrix passed with 93–94% coverage. Archives
+and six installed-wheel CLI checks also passed. These results belong to that
+audit-fix commit, not to a later documentation commit or a published release.
+The [release log](RELEASE_LOG.md#2026-10-05-1792-audit-repairs) records their
+scope. Final auxiliary checks and release evidence remain external to the
+source tree so their identities cannot refer circularly to their own commit.
+
+At documentation/source snapshot `00b4f4f`, the fresh 141-project corpus
+completed and its raw outcomes were reviewed. It followed the completed
+Python 3.11–3.13 matrix; runtime and test trees were independently unchanged
+from the earlier audit-fix and auxiliary validations.
+
+| October 5 corpus disposition | Projects |
+| --- | ---: |
+| PASS | 96 |
+| NO_CHANGE | 35 |
+| Known reflection differences (`BROKEN_KNOWN`) | 5 |
+| Import-origin refusals (harness label `CRASH`) | 5 |
+
+Sphinx passed, with 25 changed files. The known reflection differences are
+Beautiful Soup, Boltons, Pluggy, Pyparsing and typing_extensions; they introduce
+only the manifest-listed failures, not ordinary-behavior regressions accepted
+under a broad waiver. Import refusals are Isort, Invoke and Towel's main,
+1.414 and 1.618 corpus entries. All five refused before a transformed suite;
+an independent read-only check matched 256 tracked package files to Git and
+confirmed no output directory. They are not successful refactorings.
+
+python-prompt-toolkit, Trio and typing_extensions used the explicit untyped
+fallback, establishing untyped parity only; typing_extensions retains its
+listed reflection differences. Nineteen projects had baseline test failures
+in this run's environment, whose identities the review retained. NO_CHANGE
+and refusals do not establish transformed-suite coverage. The only verdict
+change from the preceding candidate's corpus was python-dotenv, PASS to
+NO_CHANGE. No new runtime regression outside the pinned reflection
+expectations was found in this completed corpus.
+
+The [October 5 complete CLI comparison](PERFORMANCE.md#october-5-repaired-candidate-comparison)
+measured the repaired runtime at **43.43 seconds versus 38.80 seconds** for
+published 1.772, **11.9% slower**, on the controlled typed, formatted Packaging
+fixture. Four fresh-process observations per arm were repeatable under the
+recorded background activity. The candidate applied 20 refactorings versus
+18; this is not an identical-transformation comparison or a whole-corpus
+speedup. The measured runtime was unchanged since `c5311b4`; the October 6
+repairs and optimizations have separate [paired installed CLI measurements](PERFORMANCE.md#october-6-optimization-experiments).
+All three bounded optimization comparisons produced identical outputs and
+established no complete-command speedup. They do not compare the changed
+October 6 source with published 1.772 or clear a release gate.
+
+The [retained documentation evidence](../tests/release_evidence/1.792-audit-fixes/README.md)
+preserves original performance records and corpus summaries/review, with
+their source and archive identities. It is a subset of the external raw
+release evidence, not a complete publication bundle. Final source-bound
+evidence assembly, verification by the unmodified repository release gate,
+exact-commit remote CI, the maintainer's performance disposition and
+publication remained pending at this preparation checkpoint. No `just release`
+success was claimed for it. Updating
+these documents requires release archives containing the updated text and
+successful archive documentation checks; existing observations keep their
+original identities.
+
+The October 2 follow-up removes reflection-specific protections and shares
+immutable source, narrowing and subtype evidence. The current preservation
+requirement covers programs that do not use reflection or self-instrumentation,
+including through their callees. Ordinary behavior within that scope must be
+preserved or the transformation refused; reflection is not detected to refuse
+programs.
+
+The [October 2 complete CLI comparison](PERFORMANCE.md#october-2-complete-cli-comparison)
+measured the controlled typed, formatted Packaging fixture at 36.24 seconds
+versus 41.59 seconds for published 1.772, about 13% faster. It used runtime
+commit `000d751`, applied one more refactoring than 1.772 and preserved the
+preceding candidate's output bytes. Two fresh-process samples per arm establish
+that checkpoint's improvement, not a whole-corpus speedup or a claim about the
+repaired release candidate. The October 5 comparison above was the latest
+recorded published-version comparison at that preparation checkpoint; it does
+not measure the later audit follow-ups or the final release comparison above.
+
+The [completed development validation](proposals/next-validation-final.md)
+identifies its exact frozen source, three Linux interpreter runs, native
+transformed-source suite, 141-project corpus and reviewed exceptions.
+The earlier [published-wheel comparison](proposals/published-1772-comparison.md)
+established a large first-reveal gain for Sphinx and no meaningful complete-CLI
+gain for Packaging at its development snapshot. Those measurements
+have their own platform, load and timing boundaries; the historical default
+conditions below do not override them.
+
+That earlier validation belongs to development artifacts still numbered 1.772;
+it does not validate the October 2 runtime changes. Release
+1.792 therefore required building and validation at its own frozen commit, with the full raw
+results, review and exact-commit CI retained alongside its distributions.
+The [release procedure](RELEASING.md) and repository-owned verifier enforce the
+local evidence boundary. No pending run or historical success establishes
+completion of that final release validation.
+
+The October 3 remediation filters verification probes to each checker's
+configured file scope. Cheroot's own check and one typed extraction passed in
+the same development environment after that correction. The completed corpus
+validation retains its original identity. The required fresh audit-fix corpus
+is complete at `00b4f4f`, as recorded above: the earlier skip decision preceded
+the runtime repairs and is superseded. No older corpus result is relabelled
+as a run on the changed runtime.
+The earlier development corpus's Cheroot, Trio
+and typing_extensions fallbacks establish untyped parity only. Conservative
+import-origin refusals and listed frame/traceback-reflection differences retain
+their explicit scope in the pinned corpus manifest and review.
+
+## Previous published release
+
+**1.772 was released on September 26, 2026, from `audit-1772`.** It repays
 the defects that four audit rounds found in 1.732's design. Helpers are shared
 within one module unless `--cross-module` is given. Import names come only
 from the program's own imports. A typed run is judged against the project's
@@ -10,14 +633,15 @@ change the September 19 candidate carried, is part of it. The
 [changelog](../CHANGELOG.md#1772---2026-09-26) lists every change.
 
 Release evidence is valid only for the exact source it was taken from. The
-validation below names its commits; `src/towel` is identical at each of them.
+historical 1.772 validation below names its commits; the qualified runtime
+comparison in that section applies only to those historical states.
 Passing the sampled tests does not establish equivalence for arbitrary Python
 programs; review generated changes and the
 [known limitations](KNOWN_LIMITATIONS.md).
 
 ## Measurement environment
 
-Every time, memory and disk figure in this document was measured on an Apple
+Every time, memory and disk figure in the historical sections below was measured on an Apple
 M5 Max with 18 cores and 128 GiB of memory, writing to an APFS internal
 volume. Unless a figure says otherwise it was taken with the machine
 otherwise idle and with Towel's CLI defaults, and a figure that names a
@@ -67,7 +691,8 @@ tag's annotation, since recording them here would change the sdist.
 **The 141-project corpus**, run in a disposable Docker container on Python
 3.12, typed by default and with `--cross-module` for every project. The
 container is a Linux VM on the same M5 Max, given all 18 cores and 8 GB of
-memory, and it ran four projects at a time, each with `TOWEL_WORKERS=1`. For
+memory, with `TOWEL_WORKERS=1` per project. The full corpus ran four projects
+at a time; the Sphinx-only rerun ran alone. For
 part of the full run a test gate shared the machine; the sphinx-only run did
 not. Its times are not the idle macOS figures this report otherwise gives.
 
@@ -96,6 +721,12 @@ not. Its times are not the idle macOS figures this report otherwise gives.
   sphinx at `29454ab`. Both were built from the same `src/towel`.
 
 **Performance.** The corpus found yapf and sphinx over their time budgets.
+The Sphinx-only rerun at `29454ab` took 5,660 s (about 94 minutes) and changed
+55 files. It ran alone in a Docker Linux VM with 18 cores and 8 GB of memory,
+using Python 3.12, `TOWEL_WORKERS=1`, `--cross-module`, and default typing
+(mypy and Pyright both strict). These are measured conditions, not minimum
+resource requirements or time guarantees.
+
 Resolving which typing form a name denotes grew exponentially with the
 functions that alias a name to itself. yapf's `--cross-module` fixed point
 took 2,083 s; with the resolution kept per name and depth it takes 5 s, with
@@ -114,7 +745,7 @@ Its semantic P1s were checked against 1.618, which shows them too.
 
 **Not covered:**
 - no fifth audit round;
-- Windows: the local gates and every timing ran on macOS, GitHub CI ran the
+- Windows: the local gates and native timings ran on macOS, GitHub CI ran the
   full suite on Linux for 3.11, 3.12 and 3.13, and the corpus ran in a Linux
   container, on Python 3.12 only; no run was made on Windows;
 - `placement._dispatches_on` still re-walks each method per candidate pair,
@@ -416,7 +1047,7 @@ one core, the defaults).
 
 The subsequent timing-only changes, through the reviewed `83f4d8a` checkpoint,
 left the exactness baselines byte-identical, and click and jinja2 produced
-identical output with and without the last of them. The current validation
+identical output with and without the last of them. The historical 1.732 validation
 above records the later audit fixes separately from these historical timing checks.
 
 ## Historical 141-project corpus (September 17–18, 2026)
@@ -651,8 +1282,8 @@ codebase. The suite at `938d351` was 1,181 tests; at `5ff2458` (September
 19, 2026) it collects 2,182.
 
 ## The 1.414 report (September 12–15, 2026)
-Publication remains a separate maintainer decision; see
-[RELEASING.md](RELEASING.md). Unattended use is not claimed: the first three
+At this historical checkpoint, publication remained a separate maintainer
+decision; see [RELEASING.md](RELEASING.md). Unattended use was not claimed: the first three
 batches of new projects each found new defect classes (see below), but the
 fourth and fifth batches of ten previously unseen projects each passed clean,
 meeting the stopping rule of two consecutive defect-free batches. The failure
@@ -925,17 +1556,18 @@ projects found no defect and the stopping rule is met.
 
 ## Historical 1.414 limitations and outstanding work
 
-- Hosted Linux CI has not run; the workflow is unchanged and local runs are
-  macOS. Run it against the published commit before citing it.
-- No wheel or source distribution was rebuilt for 1.414; `just release 1.414`
-  prepares them and the maintainer approves hashes.
+- Hosted Linux CI had not run at the 1.414 checkpoint; its local runs were
+  macOS. This historical statement is not the status of later releases.
+- No wheel or source distribution had been rebuilt at that 1.414 checkpoint;
+  preparation and artifact-hash approval were still required.
 - Security support policy, confidential reporting channel, and repository
   visibility remain maintainer decisions recorded in RELEASING.md.
 - Thunked arguments read as `__param_0()`. An inlining pass passes a thunk
   eagerly when the helper evaluates it first, once, and unconditionally,
   which covers the common `x = E` opening; thunks used repeatedly or after
   an effect stay deferred. The `rename-helpers` workflow can name the rest.
-- The ecosystem corpus was 91 projects at 1.414 and is 141 now; the
+- The ecosystem corpus was 91 projects at 1.414 and reached 141 in
+  September 2026; the
   largest, networkx and Sphinx, are refactored within hours-long budgets.
   No measurement yet says how much of each transformed block its suite
   exercises. The stopping rule for calling the pass rate stable was two

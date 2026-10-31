@@ -135,6 +135,26 @@ class HelperHome:
     method_param_name: Optional[str]
 
 
+@dataclass(frozen=True)
+class ArgumentHandoff:
+    """Certified whole-body parameter ownership, copied only while rendering.
+
+    Parameters are in compiler cleanup order; the caller transfers their
+    reversed tuple to the helper's final parameter. AST/source identities
+    prevent applying a certificate to a different function or call.
+    """
+
+    parameters: Tuple[str, ...]
+    box_name: str
+    captures: Tuple[Tuple[str, str], ...]
+    function_name: str
+    function_line: int
+    function_dump: str
+    call_dump: str
+    helper_name: str
+    module_dump: str
+
+
 @dataclass
 class Replacement:
     """Represents a replacement call to the extracted function/method."""
@@ -153,6 +173,7 @@ class Replacement:
     # Every block the engine finds records its columns; None stands for a
     # block of whole lines, as a replacement built by hand is.
     columns: Optional[BlockColumns] = None
+    argument_handoff: Optional[ArgumentHandoff] = None
 
 
 GENERATED_HELPER_NAME = re.compile(r"_{1,2}extracted_func(?:_\d+)?")
@@ -212,6 +233,8 @@ class RefactoringProposal:
     helper_type_declarations: Tuple[ast.stmt, ...] = ()
     # The comments of the sites' blocks the helper carries (``block_comments``).
     helper_comments: HelperComments = HelperComments()
+    observed_return_any: bool = False
+    """The checker revealed Any for a result; do not mistake that fact for failed inference."""
 
 
 @dataclass
@@ -286,19 +309,17 @@ the bound receiver of a method helper."""
 class RejectReason(StrEnum):
     """Why a candidate pair was declined; the vocabulary of the rejection trace."""
 
-    ASSERT_REWRITING_DIFFERS = "assert_rewriting_differs"
     BARE_NAME_DIFFERS_BY_MODULE = "bare_name_differs_by_module"
     BUILTIN_ARGUMENT = "builtin_argument"
+    BUILTIN_MAPPING_REPLACED = "builtin_mapping_replaced"
     BUILTIN_MAY_DIFFER_BY_MODULE = "builtin_may_differ_by_module"
-    # Counted with what builds the class: class_machinery_may_transform_methods[metaclass M].
-    CLASS_MACHINERY_MAY_TRANSFORM_METHODS = "class_machinery_may_transform_methods"
     CLOSURE_CROSSES_BLOCK_BOUNDARY = "closure_crosses_block_boundary"
     CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"
     CONDITIONALLY_IMPORTED_HOST = "conditionally_imported_host"
     CREATED_OBJECT_ESCAPES = "created_object_escapes"
+    OWNED_BINDING_EXCEPTION_BOUNDARY = "owned_binding_exception_boundary"
+    OWNERSHIP_PARAMETER_BUDGET = "ownership_parameter_budget"
     CROSS_MODULE_GLOBAL_DECLARATION = "cross_module_global_declaration"
-    # Counted with the decorator it names: decorator_may_transform_body[numba.njit].
-    DECORATOR_MAY_TRANSFORM_BODY = "decorator_may_transform_body"
     EXISTING_HELPER_BECOMES_FORWARDER = "existing_helper_becomes_forwarder"
     FRAME_READ_IN_FUNCTION = "frame_read_in_function"
     FRAME_SENSITIVE_BLOCK = "frame_sensitive_block"
@@ -326,13 +347,12 @@ class RejectReason(StrEnum):
     OTHER_DISTRIBUTION = "other_distribution"
     PRIVATE_NAME_LEXICAL_CLASS = "private_name_lexical_class"
     REBOUND_EXTERNAL_BINDING = "rebound_external_binding"
+    OWNED_BINDING_FRAME_BOUNDARY = "owned_binding_frame_boundary"
     RELATIVE_IMPORT_ACROSS_PACKAGES = "relative_import_across_packages"
     RETURN_VARIABLES_NOT_ALIGNED = "return_variables_not_aligned"
     RETURN_VERSUS_VARIABLES = "return_versus_variables"
     RUN_BY_PATH_IMPORT = "run_by_path_import"
     SCOPE_DECLARATIONS_DIFFER = "scope_declarations_differ"
-    # Counted with the callee it names: source_reading_callee[inline_snapshot.snapshot].
-    SOURCE_READING_CALLEE = "source_reading_callee"
     SUPER_IN_CALL = "super_in_call"
     TRIVIAL_FORWARDING_HELPER = "trivial_forwarding_helper"
     TRIVIAL_RETURN_BLOCKS = "trivial_return_blocks"
@@ -349,7 +369,9 @@ class RejectReason(StrEnum):
     FORWARDED_CALLEE = "forwarded_callee"
     THUNK_OF_POSSIBLY_UNBOUND_LOCAL = "thunk_of_possibly_unbound_local"
     UNDEFINED_NAMES_IN_CALL = "undefined_names_in_call"
+    LITERAL_POOL_BOUNDARY = "literal_pool_boundary"
     UNIFICATION_FAILED = "unification_failed"
+    UNPROFITABLE_HELPER = "unprofitable_helper"
     UNPROVEN_IMPORT = "unproven_import"
     UNSUPPORTED_EXTRACTION = "unsupported_extraction"
     UNSAFE_REASSIGNMENT_BLOCK1 = "unsafe_reassignment_block1"
@@ -452,6 +474,20 @@ def proposal_identity(proposal: RefactoringProposal) -> Hashable:
 def identity_digest(identity: Hashable) -> str:
     """``proposal_identity`` as a short digest, the same in every process that computes it."""
     return hashlib.sha256(repr(identity).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class PairTally:
+    """How one analysis's candidate pairs ended, apart from those it declined.
+
+    Every candidate pair is declined (counted by reason in ``declined_pairs``),
+    only repeats a proposal an earlier pair made (``duplicate_pairs``), or is
+    the first to make one of the analysis's ``distinct_proposals``.
+    """
+
+    candidate_pairs: int = 0
+    duplicate_pairs: int = 0
+    distinct_proposals: int = 0
 
 
 @dataclass(frozen=True)

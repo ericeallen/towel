@@ -19,8 +19,7 @@ directory loop analyzes the whole project, applies the best proposal,
 re-analyzes the files it rewrote for localized follow-ups, and when that
 queue drains re-pairs changed files and previously declined proposals.
 An unchanged project with only declined proposals is a fixed point.
-The run stops there or when the iteration bound is reached. Before a run, modules that
-inspect their own frames are named in a warning. Progress follows the
+The run stops there or when the iteration bound is reached. Progress follows the
 progress mode: ``tqdm`` (a bar when tqdm is installed; without it a warning
 once per process, an inline bar on stderr for the pairing loop and none for
 the apply phase), ``auto`` (the tqdm bar, or an inline bar on stderr for
@@ -60,13 +59,14 @@ from ..canonical_ast import canonical_dump
 from .defaults import DEFAULT_MAX_ITERATIONS
 from .exceptions import (
     CheckerUnavailableError,
+    TypeRejectedExtraction,
     RefactoringError,
     UncheckedCodeError,
     Untypeable,
     UntypeableExtraction,
     UnverifiableChangeError,
 )
-from .models import RefactoringProposal, TerminationReason
+from .models import PairTally, RefactoringProposal, TerminationReason
 from .overlap import filter_overlapping_proposals
 from .progress import (
     DEFAULT_PROGRESS,
@@ -80,11 +80,10 @@ from .progress import (
     render_inline_bar,
     wants_bar,
 )
-from .semantic_safety import frame_sensitivity_markers
 from towel.changes import ChangePlan, StaleSource, apply_changes
 from ..consumers import MAXIMUM_FILES
 from ..diagnostics import LOG, OVERLAP, REJECTIONS, TYPES, UNIFIER, VALIDATION, debugging
-from ..formatting import FormattingChangedCode
+from ..formatting import FormattingChangedCode, LintRejected
 from ..filesystem import (
     StagedProject,
     copy_project,
@@ -94,11 +93,12 @@ from ..filesystem import (
 )
 from ..program_files import refuse_unparsed_program
 from ..project_layout import find_project_root
-from ..source_text import UnencodableText, decode_source, encode_like, read_source
+from ..source_text import UnencodableText, decode_source, encode_like
 from ..type_inference import relocate_oracle
 
 from .annotation_wiring import UNTYPED_REMEDY
 from .materialize import Materialization
+from .rehearing import exact_candidate_key, execution_context
 
 _TQDM_NOTED = False
 
@@ -126,6 +126,7 @@ DeclineReason = Union[
         "not representable in its file's encoding",
         "not writable in place: its file is hard-linked",
         "the formatter changed its code or failed",
+        "the configured Ruff check failed or introduced diagnostics",
         "could not be rendered",
         "changed nothing",
     ],
@@ -140,13 +141,28 @@ class RunReport:
 
     ``declined_pairs`` counts the candidate pairs the run's last whole analysis
     declined, by ``RejectReason``; a pair that only repeated another pair's
-    proposal is not counted, since nothing was lost. ``declined_proposals``
+    proposal is not counted there, since nothing was lost. ``declined_proposals``
     counts the proposals built but not applied, by ``DeclineReason``, each
     heard once however often the run reconsidered it.
+
+    The same last whole analysis accounts for each of its ``candidate_pairs``
+    exactly once: declined, a duplicate of an earlier pair's proposal
+    (``duplicate_pairs``), dropped for overlapping a proposal kept in its place
+    (``overlapping_proposals``), or emitted (``emitted_proposals``). At a fixed
+    point nothing emitted could be applied. ``signatures_verified`` and
+    ``signatures_refused`` count, over the whole run, the helper signatures the
+    project's type checker accepted and refused, each rung of a proposal's
+    annotation ladder one attempt.
     """
 
     declined_pairs: Mapping[str, int] = field(default_factory=dict)
     declined_proposals: Mapping[DeclineReason, int] = field(default_factory=dict)
+    candidate_pairs: int = 0
+    duplicate_pairs: int = 0
+    overlapping_proposals: int = 0
+    emitted_proposals: int = 0
+    signatures_verified: int = 0
+    signatures_refused: int = 0
 
 
 _Reason = TypeVar("_Reason", bound=str)
@@ -171,6 +187,9 @@ class FixedPointDrivers(Materialization):
     # the latest reason; and what its last whole analysis declined.
     _declined: Dict[str, DeclineReason] = {}
     _last_declined_pairs: Dict[str, int] = {}
+    # How the last whole analysis's pairs ended, and how many proposals it emitted.
+    _last_pair_tally: PairTally = PairTally()
+    _last_emitted: int = 0
     # The stage copies of the files an in-place run must not write, since
     # the project holds them under more than one link.
     _unwritable_in_place: FrozenSet[Path] = frozenset()
@@ -181,11 +200,24 @@ class FixedPointDrivers(Materialization):
         proposals: Dict[DeclineReason, int] = {}
         for reason in self._declined.values():
             proposals[reason] = proposals.get(reason, 0) + 1
-        return RunReport(dict(self._last_declined_pairs), proposals)
+        tally = self._last_pair_tally
+        return RunReport(
+            dict(self._last_declined_pairs),
+            proposals,
+            candidate_pairs=tally.candidate_pairs,
+            duplicate_pairs=tally.duplicate_pairs,
+            overlapping_proposals=tally.distinct_proposals - self._last_emitted,
+            emitted_proposals=self._last_emitted,
+            signatures_verified=self._signatures_verified,
+            signatures_refused=self._signatures_refused,
+        )
 
-    def _note_analysis(self, analyzed: Path, reporter: Optional["_ApplyProgress"] = None) -> None:
-        """Keep what a whole analysis of ``analyzed`` declined, for the run's report."""
+    def _note_analysis(
+        self, analyzed: Path, emitted: int, reporter: Optional["_ApplyProgress"] = None
+    ) -> None:
+        """Keep what a whole analysis of ``analyzed`` declined and emitted, for the run's report."""
         self._last_declined_pairs = dict(self._pair_rejections)
+        self._last_pair_tally, self._last_emitted = self._pair_tally, emitted
         if reporter is not None and self._last_declined_pairs:
             reporter.detail(
                 f"Declined {sum(self._last_declined_pairs.values())} candidate pair(s): "
@@ -214,6 +246,8 @@ class FixedPointDrivers(Materialization):
     def _begin_counting_checker_failures(self) -> None:
         self._unchecked, self._unchecked_reason = frozenset(), ""
         self._declined, self._last_declined_pairs = {}, {}
+        self._pair_tally = self._last_pair_tally = PairTally()
+        self._last_emitted = self._signatures_verified = self._signatures_refused = 0
 
     def _refuse_a_run_the_checker_emptied(self, applied: int) -> None:
         """Raise when nothing was applied and the checker failed on some proposal.
@@ -344,7 +378,6 @@ class FixedPointDrivers(Materialization):
         analysis_progress: ProgressMode,
     ) -> Tuple[str, int, List[str]]:
         """The single-file loop over ``file_path``, which holds ``current_bytes``."""
-        self._warn_about_frame_sensitive_files(file_path)
         num_applied = 0
         descriptions = []
         rejected = _RejectedProposals()
@@ -357,7 +390,7 @@ class FixedPointDrivers(Materialization):
             proposals = self.analyze_files(
                 [file_path], invalidate_paths=[file_path], progress=analysis_progress
             )
-            self._note_analysis(Path(file_path))
+            self._note_analysis(Path(file_path), len(proposals))
 
             if not proposals:
                 # Fixed point reached - no more refactorings found
@@ -483,6 +516,11 @@ class FixedPointDrivers(Materialization):
                 if reason is Untypeable.UNANNOTATED_IN_ANNOTATED_MODULE
                 else "no helper signature can type"
             )
+        elif isinstance(error, LintRejected):
+            reason, said = (
+                "the configured Ruff check failed or introduced diagnostics",
+                "the configured Ruff check refused",
+            )
         elif isinstance(error, FormattingChangedCode):
             reason, said = (
                 "the formatter changed its code or failed",
@@ -501,52 +539,6 @@ class FixedPointDrivers(Materialization):
         LOG.warning("Dropped a proposal %s (%s): %s", said, proposal.description, error)
         if debugging(REJECTIONS):
             REJECTIONS.debug("RENDER FAILED: %s :: %r", proposal.description, error)
-
-    _FRAME_SENSITIVE_DESCRIPTION = {
-        "frame": "inspect call frames",
-        "traceback": "read exception tracebacks",
-        "stacklevel-warning": "attribute warnings to a caller's frame",
-        "source": "read Python source text",
-    }
-
-    def _warn_about_frame_sensitive_files(self, directory: str) -> None:
-        """Warn that some modules observe frames, tracebacks, or their own source.
-
-        Extraction adds a helper frame and shifts line numbers, so a program
-        that reads any of these can observe the change even when the result it
-        computes is unchanged (pluggy attributes a warning through the new
-        frame, lark's standalone tool copies marked source regions, glom and
-        rich assert on rendered tracebacks). The scan names files to review;
-        it is not a proof of breakage, and a callee that inspects frames
-        internally is invisible to it. Emitted on stderr like any diagnostic.
-        """
-        flagged: List[Tuple[str, FrozenSet[str]]] = []
-        for path in self._find_python_files(directory):
-            try:
-                markers = frame_sensitivity_markers(read_source(path))
-            except (OSError, UnicodeError, SyntaxError):
-                # An unreadable file is reported by the analysis that follows.
-                continue
-            if markers:
-                flagged.append((path, markers))
-        if not flagged:
-            return
-        kinds = sorted({m for _path, markers in flagged for m in markers})
-        described = ", ".join(self._FRAME_SENSITIVE_DESCRIPTION.get(k, k) for k in kinds)
-        directory_root = Path(directory)
-        lines = [
-            f"warning: {len(flagged)} module(s) in this project {described}; a "
-            "transformation that adds a helper frame or shifts line numbers may "
-            "change their observable behavior even when it preserves the "
-            "program's result. Review these files' diffs or pass --exclude:"
-        ]
-        for path, markers in sorted(flagged):
-            try:
-                shown = str(Path(path).relative_to(directory_root))
-            except ValueError:
-                shown = path
-            lines.append(f"    {shown} ({', '.join(sorted(markers))})")
-        LOG.warning("\n".join(lines))
 
     def refactor_directory_to_fixed_point(
         self,
@@ -622,7 +614,6 @@ class FixedPointDrivers(Materialization):
         self, directory: Path, reporter: "_ApplyProgress", max_iterations: int
     ) -> Tuple[Dict[str, Tuple[int, List[str]]], TerminationReason]:
         """The directory loop over ``directory``, then the cold confirmation of what it did."""
-        self._warn_about_frame_sensitive_files(str(directory))
 
         run = _DirectoryRun()
         termination_reason: TerminationReason = "fixed_point"
@@ -754,7 +745,7 @@ class FixedPointDrivers(Materialization):
                     # calls itself finished. A rehearing needs an application
                     # since the last one, so the run cannot circle on proposals
                     # the project keeps refusing.
-                    run.begin_rehearing()
+                    run.begin_rehearing(execution_context(self))
                     reporter.detail("Rehearing proposals declined earlier")
                     found = self._global_pass(
                         output_path, run, global_passes, reporter, rehearing=True
@@ -800,7 +791,15 @@ class FixedPointDrivers(Materialization):
                         *(rep.file_path or proposal.file_path for rep in proposal.replacements),
                     }
                 )
-                run.rejected.add(proposal)
+                run.rejected.add(
+                    proposal,
+                    revision=(run.revision if isinstance(error, TypeRejectedExtraction) else None),
+                    context=(
+                        execution_context(self)
+                        if isinstance(error, TypeRejectedExtraction)
+                        else None
+                    ),
+                )
                 self._report_dropped(proposal, error)
                 continue
             except StaleSource as conflict:
@@ -871,7 +870,7 @@ class FixedPointDrivers(Materialization):
             progress=reporter.analysis_mode,
             changed_files=restrict,
         )
-        self._note_analysis(output_path, reporter)
+        self._note_analysis(output_path, len(proposals), reporter)
         run.global_revision = run.revision
         run.changed_since_global.clear()
         if not proposals:
@@ -996,10 +995,11 @@ class _RejectedProposals:
     Re-analyzing a rewritten file finds again every proposal in it that was
     rejected before, and a rejection costs a project check per annotation
     variant: on a capped Sphinx run 204 of 287 checks retried four proposals,
-    and no proposal was ever accepted after being rejected. Nothing is lost by
-    declining those retries, because the run does not end here: a changed
-    project gets another whole analysis, which empties this and hears each
-    proposal once more.
+    and no proposal was ever accepted after being rejected. A changed project
+    gets another whole analysis and hears old refusals again. A completed
+    checker refusal of the current revision survives only for its exact
+    candidate and unchanged built-in checker/configuration context; unknown,
+    tool, formatter and source-proof failures are heard again.
 
     A proposal is known by what it extracts and where it puts it, not by line
     numbers, which every earlier application shifts.
@@ -1007,6 +1007,8 @@ class _RejectedProposals:
 
     def __init__(self) -> None:
         self._identities: Set[str] = set()
+        self._definitive: Dict[str, Tuple[int, str, str]] = {}
+        self._retained_exact: Dict[str, str] = {}
 
     @staticmethod
     def identity(proposal: RefactoringProposal) -> str:
@@ -1015,7 +1017,7 @@ class _RejectedProposals:
                 proposal.file_path,
                 proposal.insert_into_class,
                 proposal.insert_into_function,
-                None if proposal.reused_function is None else proposal.reused_function.name,
+                (None if proposal.reused_function is None else proposal.reused_function.name),
                 canonical_dump(proposal.extracted_function),
                 sorted(
                     repr(
@@ -1030,17 +1032,48 @@ class _RejectedProposals:
             )
         )
 
-    def add(self, proposal: RefactoringProposal) -> None:
-        self._identities.add(self.identity(proposal))
+    def add(
+        self,
+        proposal: RefactoringProposal,
+        *,
+        revision: Optional[int] = None,
+        context: Optional[str] = None,
+    ) -> None:
+        identity = self.identity(proposal)
+        self._identities.add(identity)
+        self._retained_exact.pop(identity, None)
+        self._definitive.pop(identity, None)
+        if revision is not None and context is not None:
+            key = exact_candidate_key(proposal)
+            if key is not None:
+                self._definitive[identity] = (revision, context, key)
+
+    def retain_current(self, revision: int, context: Optional[str]) -> None:
+        """Keep only completed exact refusals of this unchanged context."""
+        self._definitive = {
+            identity: refusal
+            for identity, refusal in self._definitive.items()
+            if refusal[:2] == (revision, context)
+        }
+        self._identities = set(self._definitive)
+        self._retained_exact = {
+            identity: refusal[2] for identity, refusal in self._definitive.items()
+        }
 
     def __contains__(self, proposal: RefactoringProposal) -> bool:
-        return self.identity(proposal) in self._identities
+        identity = self.identity(proposal)
+        if identity not in self._identities:
+            return False
+        retained = self._retained_exact.get(identity)
+        return retained is None or exact_candidate_key(proposal) == retained
 
     def __bool__(self) -> bool:
         return bool(self._identities)
 
     def clear(self) -> None:
         self._identities.clear()
+        self._definitive.clear()
+        self._retained_exact.clear()
 
 
 @dataclass
@@ -1068,9 +1101,9 @@ class _DirectoryRun:
         """Whether anything was declined that the project has changed under since."""
         return bool(self.rejected) and self.applied != self.reheard_after
 
-    def begin_rehearing(self) -> None:
+    def begin_rehearing(self, context: Optional[str] = None) -> None:
         self.reheard_after = self.applied
-        self.rejected.clear()
+        self.rejected.retain_current(self.revision, context)
 
     def record(self, path: str, description: str) -> None:
         count, descriptions = self.results.get(path, (0, []))

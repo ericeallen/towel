@@ -1,8 +1,16 @@
 # A shared helper module for duplicates across unrelated directories
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 Status: proposal, recorded at the owner's direction on 2026-09-24 (see
 `docs/DECISIONS.md`). The idea is the owner's, and the figures below
 measure it. It is not part of 1.772 and is not scheduled.
+
+**October 10 status:** new shared helper modules remain deferred in prepared,
+unpublished 1.946. Current cross-module extraction still chooses an existing
+module; the measured new-module prototype below is not implemented behavior.
+Its host-choice counts are historical upper bounds, not a current accepted
+opportunity census. See the [current deferred groups](README.md#deferred-groups).
 
 ## The idea
 

@@ -4,7 +4,17 @@ Towel rewrites source code. Review the generated diff and run the affected proje
 
 ## Supported versions
 
-Security fixes are provided for the latest released version, currently **1.772**. Earlier versions are not supported; the PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and are not a recommended installation target. Upgrade to the latest release rather than relying on a fix to an older one.
+Security fixes are provided for the latest released version.
+This source tree targets **1.947**, the latest supported release, published
+October 26, 2026. Its [PyPI artifacts](https://pypi.org/project/code-towel/1.947/)
+and [GitHub release](https://github.com/ericeallen/towel/releases/tag/v1.947)
+were verified against the validated distributions. Support follows the latest
+confirmed PyPI release; see the
+[publication record](docs/PRODUCTION_READINESS.md#1947-published-release-october-26-2026).
+Earlier versions are not supported; the PyPI releases `1.0.0`–`1.0.4` are
+yanked for broken import handling and are not a recommended installation
+target. Upgrade to the latest release rather than relying on a fix to an
+older one.
 
 ## Reporting a vulnerability
 
@@ -16,4 +26,16 @@ This is a solo-maintained project with no formal response-time commitment. Repor
 
 Towel's own analysis parses Python syntax without executing the analyzed project. Optional type checkers read project source and configuration: mypy runs in an owned worker with the project's checking rules and its configured plugins, each build in a forked child of it that exits once it has answered; a configured plugin is project-chosen code and runs there as it does in the project's own mypy run, while configured executables and report destinations are disabled; pyright runs as a long-lived `pyright-langserver` subprocess per project, started with Towel's interpreter, or as a command-line subprocess with Towel's interpreter (`--pythonpath`), so a project `venv` setting does not select an executable. Python module launches for mypy, pyright and Ruff use isolated mode (`-I`), and child tool environments exclude inherited Python startup/import settings, including for PATH executable fallbacks. Whole-project pyright verification uses a private copy of the project's sources, stubs and checker configuration, which is made once per run, kept in step with the project while the run lasts by comparing content, and removed when the oracle is closed. A typed run that used a language server starts one further pyright command-line subprocess at the end to confirm the finished project. Checker failure is distinct from a successful check and cannot certify a generated change. The `pyright` PyPI package downloads a Node runtime on first use. Pass `--no-types` when analyzing code you do not trust. The behavioral test harness executes fixtures and must be used only on trusted code. The rename assistant prints a prompt containing source excerpts for the user to transfer manually; consider the destination before sharing confidential code.
 
-Directory refactoring excludes symlinked Python files and refuses overlapping input/output trees. Type-checker probes are written only into Towel's private copies of the project in the system temporary directory, never beside the project's files; the copies are removed when the checker is closed, including on SIGTERM, and a stray `_towel_probe_*.py` is never analyzed as source. Generated files are compiled before writing. Writes use staged byte plans, per-file atomic replacement, rollback, and an interruption-recovery journal. Apply and recovery require exclusive write access; an unrelated writer can race snapshot checks. A batch is not globally atomic to readers. A run's extractions are made in a private copy of the project and written back only when the run has succeeded, as one journaled batch. Compilation does not prove behavior preservation. Static analysis cannot fully model reflection, dynamic imports, arbitrary callbacks, or external effects. Keep the original version under source control and review every generated diff.
+Black's file selection and formatting, and isort's selection and import sorting, run in owned isolated workers with bounded requests and answers. The workers reuse their imports across snippets without changing the parent interpreter's modules or search path. Ruff availability is also discovered in an isolated interpreter. Project-local tool names and inherited Python import settings cannot select these imports. Installed packages and explicitly selected PATH executables remain trusted code; subprocess isolation is not an operating-system sandbox. Worker failure or timeout cannot certify generated text.
+
+Directory refactoring excludes symlinked Python files and refuses overlapping input/output trees. Type-checker probes are written only into Towel's private copies of the project in the system temporary directory, never beside the project's files; the copies are removed when the checker is closed, including on SIGTERM, and a stray `_towel_probe_*.py` is never analyzed as source. Generated files are compiled before writing. Writes use staged byte plans, per-file atomic replacement, rollback, and an interruption-recovery journal. Apply and recovery require exclusive write access; an unrelated writer can race snapshot checks. A batch is not globally atomic to readers. A run's extractions are made in a private copy of the project and written back only when the run has succeeded, as one journaled batch. Compilation does not prove behavior preservation. Keep the original version under source control and review every generated diff.
+
+Towel's soundness requirement covers programs that do not use reflection or
+self-instrumentation, including through code they call. An accepted change
+to such a program's behavior is a defect to fix or refuse. Reflection over
+source, ASTs, bytecode, frames or namespaces, and instrumentation using those
+observations to transform functions or classes, receive no preservation
+guarantee. Towel does not scan for or refuse code to protect those behaviors;
+decorators, ordinary calls and hooks share this boundary. Ordinary binding,
+control flow, evaluation order and effects remain covered. See the
+[October 2 decision](docs/DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract).

@@ -26,7 +26,11 @@ import textwrap
 import ast
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.test_helpers import TemporaryModuleTestCase, assert_file_not_modified
+from tests.test_helpers import (
+    original_argument_name,
+    TemporaryModuleTestCase,
+    assert_file_not_modified,
+)
 
 
 class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
@@ -168,7 +172,7 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
         )
         helper_name = helper.name
         self.assertFalse(helper.decorator_list, "Instance helper should have no decorators")
-        self.assertEqual([arg.arg for arg in helper.args.args], ["self", "value"])
+        self.assertEqual([arg.arg for arg in helper.args.args], ["self", "value", "_towel_owner"])
 
         for method_name in ("alpha", "beta"):
             method = next(
@@ -187,9 +191,7 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
                 assert isinstance(call, ast.Call)
                 self.assertIsInstance(call.func, ast.Attribute)
                 assert isinstance(call.func, ast.Attribute)
-                self.assertIsInstance(call.func.value, ast.Name)
-                assert isinstance(call.func.value, ast.Name)
-                self.assertEqual(call.func.value.id, "self")
+                self.assertEqual(original_argument_name(method, call.func.value), "self")
                 self.assertEqual(call.func.attr, helper_name)
 
     def test_classmethods_extracted_into_class(self):
@@ -222,7 +224,7 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
         helper_name = helper.name
         decorator_ids = [dec.id for dec in helper.decorator_list if isinstance(dec, ast.Name)]
         self.assertIn("classmethod", decorator_ids)
-        self.assertEqual([arg.arg for arg in helper.args.args], ["cls", "value"])
+        self.assertEqual([arg.arg for arg in helper.args.args], ["cls", "value", "_towel_owner"])
 
         for method_name in ("alpha", "beta"):
             method = next(
@@ -230,8 +232,19 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
                 for node in cls.body
                 if isinstance(node, ast.FunctionDef) and node.name == method_name
             )
-            call_sites = [ast.unparse(n) for n in ast.walk(method) if isinstance(n, ast.Call)]
-            self.assertEqual(call_sites, [f"cls.{helper_name}(value)"])
+            call_sites = [
+                n
+                for n in ast.walk(method)
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr == helper_name
+            ]
+            self.assertEqual(len(call_sites), 1)
+            call = call_sites[0]
+            assert isinstance(call.func, ast.Attribute)
+            self.assertEqual(original_argument_name(method, call.func.value), "cls")
+            self.assertEqual(original_argument_name(method, call.args[0]), "value")
+            self.assertEqual(ast.unparse(call.args[-1]), "_towel_arguments.pop()")
 
     def test_staticmethods_share_a_module_level_helper(self):
         """Duplicate static methods call a module function: a static helper had to be
@@ -273,7 +286,13 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
                 if isinstance(node, ast.FunctionDef) and node.name == method_name
             )
             call_sites = [ast.unparse(n) for n in ast.walk(method) if isinstance(n, ast.Call)]
-            self.assertEqual(call_sites, [f"{helper_name}(value)"])
+            self.assertEqual(
+                call_sites,
+                [
+                    f"{helper_name}(_towel_arguments[0][0], _towel_arguments.pop())",
+                    "_towel_arguments.pop()",
+                ],
+            )
 
     def test_sibling_instance_methods_share_a_module_helper_taking_the_receiver(self):
         """Methods of two subclasses share a module function; their base gains nothing.
@@ -306,7 +325,9 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
         self.assertEqual([ast.dump(node) for node in base.body], [ast.dump(ast.Pass())])
         helper = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
         self.assertFalse(helper.decorator_list)
-        self.assertEqual(sorted(arg.arg for arg in helper.args.args), ["self", "value"])
+        self.assertEqual(
+            sorted(arg.arg for arg in helper.args.args), ["_towel_owner", "self", "value"]
+        )
 
         for cls_name, method_name in (("First", "alpha"), ("Second", "beta")):
             cls = next(
@@ -328,8 +349,11 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
             ]
             self.assertEqual(len(helper_calls), 1, "each sibling method calls the helper once")
             self.assertEqual(
-                [ast.unparse(argument) for argument in helper_calls[0].args],
-                [arg.arg for arg in helper.args.args],
+                [
+                    original_argument_name(method, argument)
+                    for argument in helper_calls[0].args[:-1]
+                ],
+                [arg.arg for arg in helper.args.args[:-1]],
             )
 
 

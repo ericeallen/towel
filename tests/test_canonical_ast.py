@@ -33,7 +33,7 @@ from typing import Callable, List, Sequence, Type, TypeVar
 import pytest
 
 from tests.hostile_execution import fixture_sources
-from towel.canonical_ast import canonical_dump
+from towel.canonical_ast import canonical_dump, exact_dump
 from towel.type_inference import Subtyping
 from towel.unification.annotations import _joined, _unknown_subtypes, normalize_union
 from towel.unification.block_comments import HelperComments, weave_comments
@@ -245,6 +245,32 @@ def test_an_int_too_wide_for_repr_has_a_distinct_spelling() -> None:
     )
 
 
+def test_exact_compiler_spelling_preserves_empty_missing_and_position_fields() -> None:
+    name = ast.Name(id="x", ctx=ast.Load())
+    missing = copy.deepcopy(name)
+    del missing.ctx
+    assert canonical_dump(name) == canonical_dump(missing)
+    assert exact_dump(name) != exact_dump(missing)
+    setattr(missing, "ctx", None)
+    assert exact_dump(name) != exact_dump(missing)
+    present = exact_dump(missing)
+    del missing.ctx
+    assert exact_dump(missing) != present
+    function = _statement("def f(): pass")
+    moved = copy.deepcopy(function)
+    ast.increment_lineno(moved, 10)
+    assert canonical_dump(function) == canonical_dump(moved)
+    assert exact_dump(function) != exact_dump(moved)
+    assert "decorator_list=[]" in exact_dump(function)
+
+
+def test_exact_compiler_spelling_retains_wide_integers_without_decimal_conversion() -> None:
+    wide, wider = _wide_int(), _wide_int(4)
+    assert exact_dump(wide) == exact_dump(copy.deepcopy(wide))
+    assert exact_dump(wide) != exact_dump(wider)
+    assert "int(0x" in exact_dump(wide)
+
+
 # The comparisons Towel makes, each between a node it built and one it parsed.
 
 
@@ -268,11 +294,12 @@ def test_a_union_of_a_built_and_a_parsed_spelling_has_one_member() -> None:
     assert [ast.unparse(m) for m in normalize_union(members, _unknown_subtypes)] == ["list[int]"]
 
 
-def test_one_spelling_everywhere_is_kept_as_written() -> None:
+def test_one_type_spelling_everywhere_keeps_its_type_without_evaluation() -> None:
     built = ast.Subscript(value=_load("Optional"), slice=_load("int"))
     joined = _joined([built, _expression("Optional[int]")], None, True, {"Optional"})
-    assert joined is not None
-    assert ast.unparse(joined) == "Optional[int]"
+    # Built and parsed copies must deduplicate without rewriting Optional into
+    # a union. Preserve that exact type while avoiding new runtime subscription.
+    assert isinstance(joined, ast.Constant) and joined.value == "Optional[int]"
 
 
 def test_a_built_helper_instantiates_to_the_parsed_block() -> None:

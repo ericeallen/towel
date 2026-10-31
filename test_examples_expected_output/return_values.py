@@ -6,20 +6,14 @@ properly propagate return values in replacement calls.
 """
 
 
-def __extracted_func_4(x):
-    result = []
-    for i in range(x):
-        result.append(i * 2)
-
-
-def __extracted_func_3(items):
+def __extracted_func_3(items, _towel_owner):
     for item in items:
         if item > 100:
             return item
     return None
 
 
-def __extracted_func_2(x):
+def __extracted_func_2(x, _towel_owner):
     if x < 0:
         return None
     result = x * 2
@@ -46,12 +40,16 @@ def __extracted_func_0(x, y):
 
 def early_return_a(x):
     """Early return in if statement."""
-    return __extracted_func_2(x)
+    _towel_arguments = [(x,)]
+    del x
+    return __extracted_func_2(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 def early_return_b(x):
     """Early return in if statement (duplicate)."""
-    return __extracted_func_2(x)
+    _towel_arguments = [(x,)]
+    del x
+    return __extracted_func_2(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 def nested_return_a(x, y):
@@ -66,12 +64,16 @@ def nested_return_b(x, y):
 
 def loop_with_return_a(items):
     """Return inside loop."""
-    return __extracted_func_3(items)
+    _towel_arguments_1 = [(items,)]
+    del items
+    return __extracted_func_3(_towel_arguments_1[0][0], _towel_arguments_1.pop())
 
 
 def loop_with_return_b(items):
     """Return inside loop (duplicate)."""
-    return __extracted_func_3(items)
+    _towel_arguments_1 = [(items,)]
+    del items
+    return __extracted_func_3(_towel_arguments_1[0][0], _towel_arguments_1.pop())
 
 
 def multiple_returns_a(x):
@@ -86,11 +88,15 @@ def multiple_returns_b(x):
 
 def no_return_a(x):
     """Function with no explicit return (returns None)."""
-    __extracted_func_4(x)
+    result = []
+    for i in range(x):
+        result.append(i * 2)
     # No return statement
 
 
 def no_return_b(x):
     """Function with no explicit return (duplicate)."""
-    __extracted_func_4(x)
+    result = []
+    for i in range(x):
+        result.append(i * 2)
     # No return statement

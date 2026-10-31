@@ -114,12 +114,12 @@ def test_a_body_that_only_binds_literals_and_parameters_is_not_extracted(tmp_pat
         "    depth = 0\n"
         "    seen = False\n"
         "    limit = x\n"
-        "    return depth + limit if seen else limit\n\n"
+        "    return (depth, seen, limit)\n\n"
         "def second(y):\n"
         "    depth = 0\n"
         "    seen = False\n"
         "    limit = y\n"
-        "    return depth * limit if seen else limit\n",
+        "    return (depth, seen, limit)\n",
     )
     assert (
         UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False).analyze_file(path)
@@ -128,3 +128,17 @@ def test_a_body_that_only_binds_literals_and_parameters_is_not_extracted(tmp_pat
     assert UnificationRefactorEngine(
         min_lines=3, reuse_existing_functions=False, skip_trivial_helpers=False
     ).analyze_file(path)
+
+
+def test_partial_initialization_does_not_split_original_argument_ownership(tmp_path):
+    source = (
+        "def first(x):\n    depth = 0\n    seen = False\n    limit = x\n"
+        "    return depth + limit if seen else limit\n\n"
+        "def second(y):\n    depth = 0\n    seen = False\n    limit = y\n"
+        "    return depth * limit if seen else limit\n"
+    )
+    path = write_module(tmp_path, source)
+    for skip in (False, True):
+        assert not UnificationRefactorEngine(
+            min_lines=3, reuse_existing_functions=False, skip_trivial_helpers=skip
+        ).analyze_file(path)

@@ -21,8 +21,8 @@ star-imports it takes it too, whatever that module had bound under the name
 before: ``from typing import Callable`` written into ``pkg/a.py`` turned
 ``collections.abc.Callable`` into ``typing.Callable`` in a module doing
 ``from pkg.a import *``, and ``case Callable():`` there raised ``TypeError``.
-The import under ``TYPE_CHECKING`` never runs, but a checker reads it as a
-binding like any other, so it too reaches every star-importer's checker.
+A checker-only import must stay unreachable at runtime, but a checker reads
+it as a binding like any other, so it too reaches every star-importer's checker.
 
 So every name Towel binds for an annotation is private and free: it starts
 with an underscore, which a star import does not take unless the provider's
@@ -33,13 +33,14 @@ annotations are spelled through those names:
 
 * a ``typing`` name the module does not bind is reached through the module
   ``typing`` itself, ``import typing as _typing`` and ``_typing.Callable``,
-  one binding however many names the annotations use. ``TYPE_CHECKING`` is
-  reached the same way, ``if _typing.TYPE_CHECKING:``, which mypy recognises
-  by the attribute's name and pyright by the alias of ``typing``;
-  ``from typing import TYPE_CHECKING as _TYPE_CHECKING`` would be recognised
-  by neither, and the guard's imports would read as possibly unbound;
+  one binding however many names the annotations use;
 * a class imported for the checker alone is imported under a private alias,
-  ``from pkg.models import Item as _Item``, and spelled ``"_Item"``.
+  ``from pkg.models import Item as _Item``, and spelled ``"_Item"``. Its guard
+  is the immutable comparison ``if 0 > 1``. Both
+  mypy and pyright read these imported types; pyright hides types behind a
+  literal ``if False``. The generated guard never reads the mutable
+  ``typing.TYPE_CHECKING`` flag, and an existing imported-flag guard is never
+  extended. Reusing a name it already imports adds no executable code.
 
 ``_Callable`` for ``typing.Callable`` would read shorter, and would need an
 alias per name and still a second binding for the guard; ``_typing.Callable``
@@ -68,7 +69,7 @@ from ..canonical_ast import canonical_dump
 from .annotation_ladder import fresh_name
 from .exceptions import RefactoringError
 from .import_graph import TypeCheckingGuards
-from .module_bindings import import_origin
+from .module_bindings import dotted_name, global_bindings, import_origin
 from .statement_facts import bindings_of, imported_binding_name
 
 _TYPING_ORIGINS = frozenset({"typing"})
@@ -89,7 +90,7 @@ def words_of(*texts: str) -> FrozenSet[str]:
 
 @dataclass(frozen=True)
 class GuardedImport:
-    """An import written under the module's ``TYPE_CHECKING`` guard, for a checker alone."""
+    """An import written under a locally proved false guard, for a checker alone."""
 
     module: str
     """The module as the program spells it from here, relative or absolute (``.models``)."""
@@ -157,24 +158,22 @@ def annotation_imports(
         guarded.append(GuardedImport(module, name, alias))
         respell(name, alias)
     guard_test: Optional[str] = None
-    needs_typing = bool(typing_names)
     if guarded and not joins_guard:
-        if _reused(tree, "TYPE_CHECKING", _TYPE_CHECKING_ORIGINS, import_line):
-            guard_test = "TYPE_CHECKING"
-        else:
-            needs_typing = True
+        guard_test = "0 > 1"
     typing_import: Optional[str] = None
-    if needs_typing:
+    if typing_names:
         typing_module = _typing_module(tree, import_line)
         if typing_module is None:
             typing_module = fresh_name("_typing", set(taken | chosen))
-            chosen.add(typing_module)
             typing_import = f"import typing as {typing_module}"
-        if guarded and not joins_guard and guard_test is None:
-            guard_test = f"{typing_module}.TYPE_CHECKING"
         for name in typing_names:
             respell(name, f"{typing_module}.{name}")
-    return AnnotationImports(typing_import, guard_test, tuple(guarded), respellings)
+    return AnnotationImports(
+        typing_import=typing_import,
+        guard_test=guard_test,
+        guarded=tuple(guarded),
+        respellings=respellings,
+    )
 
 
 def _typing_module(tree: ast.Module, import_line: int) -> Optional[str]:
@@ -226,9 +225,23 @@ def _joinable_guarded_import(
     module, and, for a public name, no star import could rebind it for the
     checker.
     """
-    guards = TypeCheckingGuards.of(source, tree)
+    guards = TypeCheckingGuards(tree)
+    bindings = global_bindings(source)
     for order, statement in enumerate(tree.body):
-        if not isinstance(statement, ast.If) or not guards.never_true(statement.test, order=order):
+        if not isinstance(statement, ast.If):
+            continue
+        test = dotted_name(statement.test)
+        checker_guard = (
+            bindings is not None
+            and test is not None
+            and bindings.resolve(test, order) in _TYPE_CHECKING_ORIGINS
+        )
+        # Reusing an existing annotation spelling adds no executable import.
+        # Extending a guard is different and requires the immutable False proof.
+        if not checker_guard and not (
+            isinstance(statement.test, ast.Compare)
+            and guards.never_true(statement.test, order=order)
+        ):
             continue
         for inner in statement.body:
             if not isinstance(inner, ast.ImportFrom):

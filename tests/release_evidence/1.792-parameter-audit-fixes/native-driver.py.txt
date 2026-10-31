@@ -1,0 +1,29 @@
+from pathlib import Path
+import hashlib, json, os, subprocess, sys, time
+import towel
+root = Path(__file__).parent
+repo = Path.cwd()
+def manifest():
+    names = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"]).split(b"\0")
+    return {os.fsdecode(name): hashlib.sha256((repo / os.fsdecode(name)).read_bytes()).hexdigest() for name in names if name and (repo / os.fsdecode(name)).is_file()}
+initial = manifest()
+(root / "source-before.json").write_text(json.dumps(initial, indent=2)+"\n")
+commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+env = dict(os.environ, COVERAGE_FILE=str(root / "coverage" / ".coverage"))
+(root / "coverage").mkdir(exist_ok=True)
+results = []
+checks = [("pytest", ["coverage", "run", "-m", "pytest", "-q"]), ("coverage-combine", ["coverage", "combine", "--keep", str(root / "coverage")]), ("coverage-report", ["coverage", "report", "--fail-under=85"])]
+for name, arguments in checks:
+    print("START", name, flush=True)
+    start = time.monotonic()
+    with (root / (name + ".log")).open("w") as stream:
+        run = subprocess.run([sys.executable, "-m", *arguments], stdout=stream, stderr=subprocess.STDOUT, env=env)
+    results.append({"gate":name, "exit_code":run.returncode, "seconds":time.monotonic()-start, "arguments":arguments})
+    print("DONE", name, run.returncode, flush=True)
+    if run.returncode: break
+final = manifest()
+(root / "source-after.json").write_text(json.dumps(final, indent=2)+"\n")
+report = {"commit":commit, "python":sys.executable, "python_version":sys.version, "towel_import":towel.__file__, "runtime_tree":subprocess.check_output(["git", "rev-parse", "HEAD:src/towel"], text=True).strip(), "results":results, "source_unchanged":final==initial, "scope":"Complete native Python3.13 pytest under coverage and declared coverage gate. No matrix or corpus."}
+(root / "result.json").write_text(json.dumps(report, indent=2)+"\n")
+print(json.dumps(report), flush=True)
+raise SystemExit(int(any(item["exit_code"] for item in results) or final!=initial))

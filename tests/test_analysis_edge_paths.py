@@ -37,7 +37,6 @@ from towel.type_inference import project_configures_mypy
 from towel.unification.hof_promotion import _is_used_as_callable_or_value_later
 from towel.unification.insertion import InsertionPoints
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from towel.unification.scope_analyzer import ScopeAnalyzer
 from towel.unification.unifier import Unifier
 
 
@@ -98,27 +97,6 @@ def test_a_try_of_definitions_can_precede_a_helper_but_a_call_in_it_cannot(
     prefix: str, expected: set[str]
 ) -> None:
     assert InsertionPoints.placeable_after(prefix + "CONST = 1\ndef f():\n    pass\n") == expected
-
-
-@pytest.mark.parametrize(
-    "source, reflective",
-    [
-        ("def f(obj):\n    setattr(obj, 'a', 1)\n", False),
-        ("class Box:\n    pass\ndef f():\n    box = Box()\n    delattr(box, 'a')\n", False),
-        ("import os\ndef f():\n    setattr(os, 'a', 1)\n", True),
-        ("def f():\n    return getattr(unknown, 'a')\n", True),
-        ("def f():\n    return getattr(f(), 'a')\n", True),
-    ],
-    ids=["parameter", "local", "module", "unresolved-name", "call-result"],
-)
-def test_attribute_reflection_is_a_hazard_on_modules_and_unresolved_targets(
-    source: str, reflective: bool
-) -> None:
-    analyzer = ScopeAnalyzer()
-    analyzer.analyze(ast.parse(source))
-    summary = analyzer.external_binding_hazards
-    assert summary is not None
-    assert summary.reflective is reflective
 
 
 @pytest.mark.parametrize(

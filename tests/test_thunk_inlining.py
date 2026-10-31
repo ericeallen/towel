@@ -28,7 +28,7 @@ from towel.unification.substitution import Substitution
 def _substitution(*names: str) -> tuple[Substitution, dict[str, int]]:
     substitution = Substitution()
     for name in names:
-        substitution.param_expressions[name] = []
+        substitution.param_expressions[name] = [(0, ast.Constant(value=1))]
         substitution.function_params[name] = []
     return substitution, {name: index for index, name in enumerate(names)}
 
@@ -146,6 +146,28 @@ def test_later_parameter_evaluated_first_is_inlined_alone() -> None:
     )
     assert inlined == {"__param_1"}
     assert "__param_0()" in rendered and "__param_1()" not in rendered
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["make_value()", "value", "value.item", "values[0]", "(1, make_value())"],
+)
+def test_unknown_result_lifetime_stays_deferred(expression: str) -> None:
+    helper = function_def("def h(__param_0):\n    x = __param_0()\n    del x\n")
+    substitution, order = _substitution("__param_0")
+    substitution.param_expressions["__param_0"] = [
+        (0, ast.Constant(value=1)),
+        (1, ast.parse(expression, mode="eval").body),
+    ]
+    assert inline_leading_thunks(helper, substitution, order) == set()
+    assert "__param_0()" in ast.unparse(helper)
+
+
+def test_missing_result_proof_stays_deferred() -> None:
+    helper = function_def("def h(__param_0):\n    return __param_0()\n")
+    substitution, order = _substitution("__param_0")
+    substitution.param_expressions["__param_0"] = []
+    assert inline_leading_thunks(helper, substitution, order) == set()
 
 
 @pytest.mark.parametrize(

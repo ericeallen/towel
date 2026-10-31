@@ -35,6 +35,7 @@ import argparse
 import ast
 import contextlib
 import io
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Tuple
@@ -55,20 +56,19 @@ from towel.program_files import (
     refuse_unparsed_program,
     unparsed_program_files,
 )
-from towel.project_layout import find_project_root
-from towel.unification import assert_rewriting
-from towel.unification.decorator_reach import ModuleSource, decorator_refusal
 from towel.unification.exceptions import UnparsedProgramError
-from towel.unification.import_graph import ImportGraphCache
 from towel.unification.namespace_writes import scan_project_writes
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 NEWER = "lazy import json  # PEP 810: Python 3.15\n"
 """A line no supported Python parses, standing for syntax newer than the running one."""
 
+# Keep the loop target bound even for an empty range: these tests exercise
+# unrelated instrumentation policy, independently of opaque iterator lifetimes.
 KERNELS = """\
 def first(n):
     total = 0
+    i = 0
     for i in range(n):
         total += i * 2
     total = total + 1
@@ -77,11 +77,36 @@ def first(n):
 
 def second(n):
     total = 0
+    i = 0
     for i in range(n):
         total += i * 2
     total = total + 1
     return -total
 """
+
+SAFE_KERNELS = (
+    KERNELS.replace("def first(n):", "def first(n, sign=1):")
+    .replace("def second(n):", "def second(n, sign=-1):")
+    .replace("return -total", "return sign * total")
+    .replace("return total\n", "return sign * total\n")
+)
+
+
+def _kernel_results(source: str) -> str:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            source + "\nprint([(first(n), second(n)) for n in (0, 1, 4)])",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout
+
 
 HAND_APPLIED = "import numba\nfrom pkg import kernels\nfast_first = numba.njit(kernels.first)\n"
 
@@ -95,11 +120,10 @@ def describe_{name}(items):
 """
 
 PATCHES_LEN = (
-    "from unittest import mock\n"
-    "from pkg.b import describe_b\n"
-    "def test_patched():\n"
-    '    with mock.patch("pkg.b.len", create=True, return_value=100):\n'
-    "        assert describe_b([1]) == 'n=200'\n"
+    "import pkg.b\n"
+    "def test_rebound():\n"
+    "    pkg.b.len = lambda value: 100\n"
+    "    assert pkg.b.describe_b([1]) == 'n=200'\n"
 )
 
 
@@ -211,33 +235,6 @@ def test_the_program_is_read_whole_and_the_target_with_it(tmp_path: Path) -> Non
 # -- each whole-program scan ----------------------------------------------------
 
 
-def _first(root: Path, excluded: Tuple[str, ...] = ()) -> Optional[str]:
-    """The decorator refusal of ``pkg.kernels.first``, as the hand-application index reads it."""
-    path = root / "pkg" / "kernels.py"
-    source = path.read_text()
-    tree = ast.parse(source)
-    definition = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
-    refusal = decorator_refusal(
-        definition, ModuleSource(str(path), source, tree), ImportGraphCache(excluded_names=excluded)
-    )
-    return None if refusal is None else refusal.decorator
-
-
-def test_the_hand_application_index_refuses_a_file_that_does_not_parse(tmp_path: Path) -> None:
-    _project(tmp_path, {"pkg/fast.py": NEWER + HAND_APPLIED})
-    with pytest.raises(UnparsedProgramError, match=r"pkg/fast\.py: line 1: "):
-        _first(tmp_path)
-
-
-def test_the_hand_application_index_still_reads_what_is_excluded(tmp_path: Path) -> None:
-    # An excluded directory is left unchanged, not unseen; its unparsed file is passed over.
-    _project(tmp_path, {"extras/fast.py": HAND_APPLIED, "extras/bad.py": NEWER})
-    assert _first(tmp_path, ("extras",)) == "numba.njit"
-    assert _first(tmp_path, ("bad.py",)) == "numba.njit"
-    with pytest.raises(UnparsedProgramError, match=r"extras/bad\.py"):
-        _first(tmp_path)
-
-
 def test_the_namespace_scan_refuses_a_file_that_does_not_parse(tmp_path: Path) -> None:
     _project(tmp_path, {"tests/test_b.py": NEWER + PATCHES_LEN})
     with pytest.raises(UnparsedProgramError, match=r"tests/test_b\.py: line 1: "):
@@ -263,32 +260,6 @@ def test_a_scan_that_cannot_parse_what_this_module_can_still_refuses(tmp_path: P
             path, tmp_path, error=SyntaxError("invalid escape", ("m.py", 1, 5, ""))
         )
     refuse_unparsed_file(path, tmp_path, {"m.py"}, SyntaxError("invalid escape"))  # excluded
-
-
-def _rewrites(root: Path, excluded: frozenset[str] = frozenset()) -> Optional[bool]:
-    assert_rewriting._SETUPS.clear()
-    return assert_rewriting.rewrites_asserts(
-        str(root / "pkg" / "a.py"), find_project_root, excluded
-    )
-
-
-def test_the_assert_rewriting_scan_refuses_a_file_that_does_not_parse(tmp_path: Path) -> None:
-    _project(
-        tmp_path,
-        {"pytest.ini": "[pytest]\n", "plugins/marks.py": NEWER + "pytest_plugins = ['pkg.a']\n"},
-    )
-    with pytest.raises(UnparsedProgramError, match=r"plugins/marks\.py: line 1: "):
-        _rewrites(tmp_path)
-
-
-def test_the_assert_rewriting_scan_still_reads_what_is_excluded(tmp_path: Path) -> None:
-    _project(
-        tmp_path, {"pytest.ini": "[pytest]\n", "plugins/marks.py": "pytest_plugins = ['pkg.a']\n"}
-    )
-    (tmp_path / "plugins" / "bad.py").write_text(NEWER + "pytest_plugins = ['pkg.b']\n")
-    assert _rewrites(tmp_path, frozenset({"plugins"})) is None, "a mark pytest may load: unknown"
-    (tmp_path / "plugins" / "marks.py").unlink()
-    assert _rewrites(tmp_path, frozenset({"bad.py"})) is False, "the control: nothing marks pkg.a"
 
 
 def test_a_file_that_does_not_parse_is_no_consumer_and_refuses_the_run_first(
@@ -521,10 +492,10 @@ def _refactored(root: Path, target: str, excluded: Tuple[str, ...], cross_module
     return sum(applied for applied, _ in results.values())
 
 
-def test_an_excluded_test_suite_still_declines_a_change_its_patch_would_notice(
+def test_cross_module_builtins_decline_with_or_without_excluded_writes(
     tmp_path: Path,
 ) -> None:
-    """``--exclude tests`` keeps the tests unchanged; their ``mock.patch`` of ``len`` still counts."""
+    """Ordinary external writes need not be visible for cross-module lookups to differ."""
     files = {
         "pyproject.toml": '[project]\nname = "pkg"\nversion = "0"\n',
         "pkg/__init__.py": "",
@@ -532,14 +503,14 @@ def test_an_excluded_test_suite_still_declines_a_change_its_patch_would_notice(
         "pkg/b.py": DESCRIBE.format(name="b"),
     }
     patched = _write(tmp_path / "patched", {**files, "tests/test_b.py": PATCHES_LEN})
-    assert _refactored(patched, "pkg", ("tests",), cross_module=True) > 0
+    assert _refactored(patched, "pkg", ("tests",), cross_module=True) == 0
     assert "count = len(items)" in (patched / "pkg" / "b.py").read_text(), "len stays in pkg.b"
     control = _write(tmp_path / "control", files)
-    assert _refactored(control, "pkg", ("tests",), cross_module=True) > 0
-    assert "len(items)" not in (control / "pkg" / "b.py").read_text(), "the control moves it"
+    assert _refactored(control, "pkg", ("tests",), cross_module=True) == 0
+    assert "len(items)" in (control / "pkg" / "b.py").read_text(), "the control keeps its lookup"
 
 
-def test_an_excluded_hand_application_still_declines_the_function_it_decorates(
+def test_an_excluded_instrumenter_does_not_veto_extraction(
     tmp_path: Path,
 ) -> None:
     kernels = tmp_path / "hand" / "pkg" / "kernels.py"
@@ -548,8 +519,13 @@ def test_an_excluded_hand_application_still_declines_the_function_it_decorates(
     (hand / "pkg" / "b.py").unlink()
     assert _refactored(hand, ".", ("extras",), cross_module=False) == 0
     assert kernels.read_text() == KERNELS
-    (hand / "extras" / "fast.py").unlink()
-    assert _refactored(hand, ".", ("extras",), cross_module=False) == 1, "the control"
+    expected = _kernel_results(KERNELS)
+    assert _kernel_results(SAFE_KERNELS) == expected
+    kernels.write_text(SAFE_KERNELS)
+    assert _refactored(hand, ".", ("extras",), cross_module=False) == 1
+    assert kernels.read_text() != SAFE_KERNELS
+    assert _kernel_results(kernels.read_text()) == expected
+    assert (hand / "extras" / "fast.py").read_text() == HAND_APPLIED
 
 
 @pytest.mark.parametrize("excluded", ["tests", "test_b.py"])
@@ -597,12 +573,15 @@ def test_a_3_12_file_refuses_a_3_11_run(tmp_path: Path) -> None:
     assert not (tmp_path / "out").exists()
 
 
-def test_a_library_analysis_refuses_at_its_first_pair(tmp_path: Path) -> None:
-    """``analyze_files`` has no up-front check, but every pair consults the hand-application index."""
+def test_same_file_library_analysis_does_not_scan_unrelated_instrumenters(tmp_path: Path) -> None:
+    """Ordinary same-file extraction no longer needs the project instrumentation index."""
     project = _project(tmp_path, {"pkg/fast.py": NEWER + HAND_APPLIED})
     engine = UnificationRefactorEngine(min_lines=3)
-    with pytest.raises(UnparsedProgramError, match=r"pkg/fast\.py"):
-        engine.analyze_files([str(project / "pkg" / "kernels.py")], progress="none")
+    proposals = engine.analyze_files([str(project / "pkg" / "kernels.py")], progress="none")
+    assert proposals == []
+    kernels = project / "pkg" / "kernels.py"
+    kernels.write_text(SAFE_KERNELS)
+    assert engine.analyze_files([str(kernels)], progress="none")
 
 
 def test_the_towel_repository_parses_on_this_python() -> None:

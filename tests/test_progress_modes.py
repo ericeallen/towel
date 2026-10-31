@@ -125,7 +125,9 @@ def _two_round_project(root: Path) -> None:
 
 def test_none_is_silent_through_every_re_analysis(tmp_path: Path) -> None:
     _two_round_project(tmp_path / "proj")
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        min_lines=3, cross_module_helpers=True, parameterize_builtins=True
+    )
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         results, reason = engine.refactor_directory_to_fixed_point(

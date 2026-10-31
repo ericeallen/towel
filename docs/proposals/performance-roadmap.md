@@ -1,5 +1,78 @@
 # Performance roadmap: what is worth doing, in what order
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
+## Current release observations
+
+The latest release is **1.947**, published October 26, 2026. Its
+[controlled comparison](../PERFORMANCE.md#1947-published-release-comparison)
+with 1.946 observed full-CLI mean increases of 2.58% for Click, 8.84% for Rich
+and 1.25% for Voluptuous, with original consumer outcomes preserved. These
+are two samples per version on a shared host, not a general performance claim.
+The older experiments and roadmap below retain their original source identities.
+
+<a id="current-versioned-warning-guard-observations"></a>
+
+## Historical versioned warning-guard observations
+
+Source `a6dc6ed`/1.946 versus published `44d7795`/1.792 completed two R,F,F,R
+cohorts: Voluptuous 90.984 → 87.569 seconds (−3.75%) and Click 47.165 →
+58.195 seconds (+23.39%), two shared-host samples per source/workload.
+All original pairs, displayed Click failure records, repeated outputs and owned
+closure matched. Rich has zero actual samples here after preproduct failures;
+its measurements and fresh full release gates remain pending. Per-CLI CPU is
+unavailable. The [portable record](../../tests/release_evidence/1.946-warning-guard/README.md)
+retains all eight observations and the 2 CPU/6 GiB RAM/12 GiB combined caps.
+The restoration target remains unresolved; profiles are diagnostics, not timing
+samples. The earlier complete comparison below keeps its own source and caps.
+
+## October 10, 2026 preparation and completed comparison
+
+Version 1.946 is prepared and unpublished; the last published release is 1.792.
+The four selected changes—ownership-fact reuse, exact constant occurrences,
+certified leading-thunk ordering and IF-only fresh local outputs—are implemented
+and audited. The final runtime audit used
+`9d57b0d25f3ee743e0ce0035ed13df65b2344164`. Source-only facts and scoped caches
+reduce repeated work; every admitted IF certificate still checks the current
+mutable module and original ownership afresh. These proof obligations were not
+removed to obtain a timing result.
+
+The completed comparison used that source against published 1.792
+`44d779563578a32e24f8213fba96f43c6698ab43`, with two samples per version per
+workload, Click R,F,F,R followed by Rich R,F,F,R:
+
+| Workload | Published mean seconds | Prepared runtime mean seconds | Increase |
+| --- | ---: | ---: | ---: |
+| Click | 46.527008 | 56.692565 | 21.85% |
+| Rich | 99.772523 | 177.698981 | 78.10% |
+
+These measure the complete cold default production CLI, including checkers,
+formatting, materialization and final validation. Setup, settling and original
+before/after tests are outside the CLI timer. All eight samples passed their
+original test-pair, visible diagnostic, output-reference, source, artifact,
+runtime, dependency, resource and closure checks. Existing failures remain:
+24 Click records and eight Rich records, with eight hidden truncated Rich
+portions unverified. Click applied four extractions in the released version and
+five in the prepared runtime; Rich applied 15 in both. Output bytes matched the
+separate reference for each version. Hardware page caches were not flushed.
+
+This was an explicitly observational shared-host protocol. Runtime idle below
+70% was retained and disclosed, not filtered or treated as proof of unrelated
+contention. There was no replacement of an actual sample. Two observations per
+version do not establish a confidence interval, isolated-host performance or a
+corpus-wide result. **The requested restoration target is not met.** Earlier
+rejected, confounded and instrumented runs are preserved separately and excluded
+from this comparison.
+
+The source-bound report and independent readback are retained at
+`~/Knowledge/handoffs/towel/20261009-performance-recovery-01a11b7c/observational-assessments-20261010-rich-r03/`.
+The historical profiles below keep their original dates, source sizes and
+measurements. Their recommendations are not an additional implementation
+sequence: N-way discovery, Rust and other follow-ups remain deferred until new
+profiles and preservation proofs justify them.
+
+## Historical roadmap
+
 Status: measured 2026-09-17 on Towel's own source (16k lines, 28 files) and
 on arrow (10k lines); item 1 applied the same day, items 2 to 5 in the days
 after (see *Done since*, at the end). The Rust question is answered by the
@@ -9,9 +82,10 @@ they were when measured; `_find_block_pairs_multi_file` is now
 `get_bound_variables_in_context` is `bound_variables_in_context`, and
 `is_value_producing` is the engine's memoized `_is_value_producing`.
 
-Every figure here was measured on an Apple M5 Max with 18 cores and 128 GiB
-under macOS, writing to its internal APFS volume, at the commit or date it
-names; one marked "under load" shared the machine with other work.
+Unless a section says otherwise, figures here were measured on an Apple
+M5 Max with 18 cores and 128 GiB under macOS, writing to its internal APFS
+volume, at the commit or date it names. A measurement marked "under load"
+shared the machine with other work.
 
 ## Where the time goes
 
@@ -143,6 +217,103 @@ near-identical 38-line functions under `--max-pairs 200000` peaked at
 (`--max-pairs`, 20,000,000 by default) leaves out the largest groups of
 similar blocks with a warning when the projected pair count exceeds it,
 and the verdict of the instantiation check is memoized on the helper, the
-call and the block's structure. The CHANGELOG's `[Unreleased]` section
+call and the block's structure. The CHANGELOG's 1.792 section
 records each step with its measurement; the current end-to-end figures are
 in docs/KNOWN_LIMITATIONS.md.
+
+## Method placement after 1.772
+
+Measured September 26, 2026, on Python 3.13.7 against packaging 26.3's 20
+Python files, copied out of its installation. Two untyped analysis passes
+with `TOWEL_CHECK_AST_IMMUTABLE=1` made 17,405 receiver-dispatch queries on 245
+distinct method/receiver inputs. `_dispatches_on` now computes the immutable
+set of names used as attribute receivers once per method AST. A weak-key
+cache releases the facts when the AST dies, and the differential-testing
+switch disables this memo along with the other node memos.
+
+The same passes asked 354 class-hosting questions on six distinct
+source/class inputs. The first optimization, `470d763`, shared their parses
+through the engine's bounded source cache: `ImportTimeCode` constructor
+parses fell from 368 to 14, and total analysis parses from 511 to 163. It
+still ran all hosting judgments because they followed imported bases.
+
+The subsequent reflection-boundary correction removes those judgments
+entirely, including the second class-machinery veto in decorator analysis.
+A hygienic private helper stays in its original class; observing its added
+name or lookup is outside the reflection contract. No ancestry-based
+hosting cache is needed. Import-time effect analysis remains separate and
+still follows bases where required to preserve execution order.
+
+The same fixture also made 2,666 requests for function-scope `global` and
+`nonlocal` declarations on 226 distinct function trees. Memoizing that pure
+walk alone reduces its executions to 226. It returns a `frozenset` and uses
+weak AST keys, so neither callers nor the cache can mutate the result or
+keep the tree alive. With the policy correction included, 227 distinct
+function trees are walked. All three versions (baseline `7335e1c`, scope
+memo alone, and policy plus memo) find the same 23 proposals on both passes;
+every proposal compiles and its rendered output is byte-identical.
+Rendering here disables helper annotations; this checks proposal
+materialization, not acceptance by the project's type checkers.
+The final analysis reports 4,461 declined candidate pairs and emits 23
+proposals, all 23 of which render and compile. Candidate declines therefore
+must not be read as invalid emitted proposals. Annotation retries are a
+third count: several attempted annotations can belong to one proposal.
+
+A generated eight-method class with `self: Self` still made 336 requests for
+the bindings of `Self` in its one module after the machinery guard was
+removed. The receiver-annotation lookup now shares an immutable tuple of
+those statements by module tree and name: 336 queries require one scan and
+produce the same one proposal. The scan's existing conservative treatment
+of conditional bindings and star imports is unchanged. Its weak key does
+not retain the module, and its value contains no parent pointers.
+
+`tests/test_placement_memoization.py` and
+`tests/test_scope_declaration_memoization.py`, together with
+`tests/test_receiver_binding_memoization.py`, count real walks, check weak
+cache lifetime and distinct trees, and compare exact fixed-point output
+with memoization enabled and disabled. Declaration results are also checked
+against CPython's symbol table. These measurements establish less repeated
+work; they do not measure the speedup of a complete typed project refactoring.
+
+## Initial typed Sphinx investigation after 1.772
+
+The investigation below is the September 26 checkpoint. Its first-reveal
+bottleneck was subsequently addressed by batching: the
+[published-wheel comparison](published-1772-comparison.md) records identical
+requests and answers with means of 931.071 and 8.632 seconds. That comparison
+measures the reveal phase only; whole-run and whole-corpus speedups remain
+unestablished. The older trace and proposed next steps below remain historical.
+
+A bounded diagnostic run on September 26, 2026, used Towel `088a4c7`,
+Sphinx `e44a40eb2f810558ccd9da1425421270ccb81351` (9.1.1), Python 3.12.14,
+mypy 1.19.1 and pyright 1.1.407. It ran in an isolated copy of the retained
+corpus environment, in the Linux Docker VM on the M5 Max with about 8 GiB
+available, `TOWEL_WORKERS=1`, and concurrent tests on the host. The command
+was `towel dry sphinx OUTPUT --cross-module --no-interactive --max-refactorings 10`,
+with a 1,200-second outer timeout. Lightweight wrappers timed checker
+method boundaries without tracing individual AST operations.
+
+Completed startup calls took:
+
+| Operation | Wall seconds |
+|---|---:|
+| mypy initial project check | 6.98 |
+| pyright initial project check | 11.49 |
+| mypy first reveal batch | 2.29 |
+| pyright first reveal batch | 1,084.32 |
+
+The pyright reveal returned before the run entered analysis. The outer
+timeout then stopped the run at 20 minutes, before candidate application;
+the container exited 124 and was not OOM-killed. This is an incomplete
+profile, not a fixed-point runtime or a decomposition of the corpus's
+5,660-second run. These wall times were measured under load.
+
+`PyrightOracle.reveal` groups requests by file and calls `_diagnostics`
+separately for each file. On the warm path each call reaches
+`_WarmProject.diagnostics` and the language server's `diagnostics_after`.
+The first reveal batch is therefore a concrete next target. The current
+trace does not split that batch into individual file round-trips or show
+how much later candidate checking repeats work. The next profile should
+record entries as well as exits, per-file calls and exact repeated inputs,
+and then continue through a fixed point. Checker coverage and the accepted
+proposal set must remain unchanged by any optimization.

@@ -23,8 +23,11 @@ from __future__ import annotations
 
 import argparse
 import ast
+from contextlib import contextmanager
 from dataclasses import dataclass
+from difflib import unified_diff
 import json
+import logging
 import os
 import re
 import signal
@@ -37,6 +40,7 @@ from typing import (
     Callable,
     Dict,
     Iterable,
+    Iterator,
     List,
     Literal,
     Mapping,
@@ -319,10 +323,15 @@ def _add_parameterize_builtins_flag(parser: argparse.ArgumentParser) -> None:
         dest="parameterize_builtins",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Where a builtin the duplicated code reads may differ between its sites (one "
-        "function binds len, the other reads the builtin; or, with --cross-module, a module "
-        "may hold the name), pass it to the helper as a parameter instead of declining the "
-        "pair. --no-parameterize-builtins, the default, gives no helper a builtin parameter.",
+        help="Preserve each caller's builtin binding through a lookup thunk when sharing "
+        "code across modules or between different bindings. By default, cross-module "
+        "bare builtin reads are declined (except __debug__). Safe same-module reads stay bare. "
+        "If ordinary bindings, wildcard imports or __builtins__ attribute writes elsewhere in "
+        "the analyzed program may replace a module's mapping, its captured global-fallback "
+        "reads (including custom names) and implicit import/class operations decline even "
+        "with this flag. "
+        "Eager evaluation requires a proved single use "
+        "at the first effect and an immutable lookup result.",
     )
 
 
@@ -359,7 +368,16 @@ Examples:
     _add_parameterize_builtins_flag(parser)
 
     _add_import_layout_flags(parser)
+    _add_tuning_flags(parser)
+    _add_execution_flags(parser)
+    _add_progress_flag(
+        parser,
+        detail="'detail' logs each pass's discovered proposals and follow-ups instead of a bar",
+    )
 
+
+def _add_execution_flags(parser: argparse.ArgumentParser) -> None:
+    """Options shared by dry and the complete preview of that same run."""
     parser.add_argument(
         "--max-refactorings",
         dest="max_refactorings",
@@ -368,7 +386,6 @@ Examples:
         metavar="N",
         help="Stop after N applied refactorings (0, the default, runs to a fixed point)",
     )
-    _add_tuning_flags(parser)
     parser.add_argument(  # earlier spelling, kept for scripts
         "--max-iterations",
         dest="max_refactorings",
@@ -395,12 +412,16 @@ Examples:
         help="Format generated code (the default) with the project's formatter (ruff when "
         "configured, else Black; the 'format' extra) at the line length the project declares, "
         "and sort inserted imports the way the project does (ruff's I rules or isort). "
-        "--no-format inserts code as rendered.",
+        "--no-format inserts code as rendered. Configured Ruff lint checks remain active.",
     )
-
-    _add_progress_flag(
-        parser,
-        detail="'detail' logs each pass's discovered proposals and follow-ups instead of a bar",
+    parser.add_argument(
+        "--stats",
+        dest="stats",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="After the run, account for every candidate pair of its last whole analysis "
+        "(declined, duplicated, overlapped or emitted) and count the helper signatures the "
+        "type checker verified and refused. Output files are the same with or without it.",
     )
 
 
@@ -418,7 +439,9 @@ def _add_tuning_flags(parser: argparse.ArgumentParser) -> None:
         type=_count,
         default=DEFAULT_MAX_PARAMETERS,
         metavar="N",
-        help=f"Most parameters an extracted helper may take (default: {DEFAULT_MAX_PARAMETERS})",
+        help=f"Most newly parameterized differing expressions (default: {DEFAULT_MAX_PARAMETERS}); "
+        "ordinary free inputs may add arguments. Whole-body ownership transfer must fit its "
+        "complete positional signature, including the final lifetime holder, within this limit.",
     )
     parser.add_argument(
         "--max-pairs",
@@ -451,18 +474,34 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     """Add 'preview' subcommand parser."""
     parser = subparsers.add_parser(
         "preview",
-        help="Preview duplicate code detection (read-only)",
-        description="Preview refactoring opportunities using anti-unification without modifying files.",
+        help="Preview the complete dry run without modifying input files",
+        description="Run dry's complete pipeline in temporary output, including type checks, "
+        "formatting and follow-up extractions, without modifying input files.",
     )
 
     parser.add_argument("target", help="File or directory to analyze")
+    parser.add_argument(
+        "--interactive",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Accepted for dry compatibility; preview never prompts or changes the input",
+    )
+    parser.add_argument("--non-interactive", action="store_true", help=argparse.SUPPRESS)
     _add_exclude_flag(parser)
     _add_cross_module_flag(parser)
     _add_parameterize_builtins_flag(parser)
     _add_tuning_flags(parser)
+    _add_execution_flags(parser)
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="List one structural analysis only, skipping type checks, formatting and follow-ups. "
+        "This partial list is not an upper bound on eventual extractions; --max-refactorings "
+        "applies only to the complete preview.",
+    )
     _add_progress_flag(
         parser,
-        detail="'detail' shows no bar either (a preview is one analysis, with no passes to log)",
+        detail="'detail' logs each complete-preview pass; --quick performs only one analysis",
     )
 
     _add_import_layout_flags(parser)
@@ -491,31 +530,44 @@ The tool works in two modes:
 
 2. FILE MODE (--rename-file):
    Provide a JSON file with old_name -> new_name mappings.
-   The tool applies these renamings across your entire codebase.
+   Select the project root so ordinary consumers are included. Use path-qualified
+   keys or --file to select definitions. A narrow target is refused if a consumer
+   outside it needs an edit; files outside the target are never changed.
+   For a project without metadata or regular-package ancestry, --complete-scope
+   explicitly declares that the target contains every ordinary consumer.
         """,
         epilog="""
 Examples:
   # Interactive mode: generate LLM prompt and apply suggestions
-  towel rename-helpers src/
+  towel rename-helpers path/to/project
 
   # List all extracted helpers
-  towel rename-helpers src/ --list
+  towel rename-helpers path/to/project --list
 
   # Apply renamings from a JSON file
-  towel rename-helpers src/ --rename-file renames.json
+  towel rename-helpers path/to/project --rename-file renames.json
 
   # Show the renames without writing files
-  towel rename-helpers src/ --rename-file renames.json --preview
+  towel rename-helpers path/to/project --rename-file renames.json --preview
 
   # Specify specific files or functions
-  towel rename-helpers src/ --file mymodule.py
-  towel rename-helpers src/ --function __extracted_func_7
+  towel rename-helpers path/to/project --file src/mymodule.py
+  towel rename-helpers path/to/project --function __extracted_func_7
+
+  # An unmarked project: explicitly declare its complete consumer scope
+  towel rename-helpers path/to/project --complete-scope --rename-file renames.json
         """,
     )
 
     parser.add_argument(
         "target",
-        help="Directory containing generated extracted helper functions",
+        help="Project directory containing selected definitions and their ordinary consumers",
+    )
+
+    parser.add_argument(
+        "--complete-scope",
+        action="store_true",
+        help="Declare target is the complete consumer root when project metadata is absent",
     )
 
     parser.add_argument(
@@ -657,6 +709,24 @@ def _change_sidecar_path(target: "Path") -> "Path":
     return target.with_name(target.name + CHANGE_SIDECAR_NAME)
 
 
+def _change_records(
+    engine: "UnificationRefactorEngine", output: str
+) -> Dict[str, List[ChangeRecord]]:
+    """The run's call-site history, relative to its destination."""
+    out = Path(output)
+    base = (out if out.is_dir() else out.parent).resolve()
+    helpers: Dict[str, List[ChangeRecord]] = {}
+    for record in engine.change_log:
+        try:
+            rel = os.path.relpath(Path(record.path).resolve(), base)
+        except ValueError:
+            rel = record.path
+        helpers.setdefault(record.helper, []).append(
+            {"file": rel, "line": record.line, "before": record.before, "after": record.after}
+        )
+    return helpers
+
+
 def _write_change_sidecar(engine: "UnificationRefactorEngine", output: str) -> None:
     """Persist each applied extraction's original block and generated call.
 
@@ -670,20 +740,10 @@ def _write_change_sidecar(engine: "UnificationRefactorEngine", output: str) -> N
     matching ``file`` against paths relative to its target, never found.
     """
 
-    records = engine.change_log
-    if not records:
+    helpers = _change_records(engine, output)
+    if not helpers:
         return
     out = Path(output)
-    base = (out if out.is_dir() else out.parent).resolve()
-    helpers: Dict[str, List[ChangeRecord]] = {}
-    for record in records:
-        try:
-            rel = os.path.relpath(Path(record.path).resolve(), base)
-        except ValueError:
-            rel = record.path
-        helpers.setdefault(record.helper, []).append(
-            {"file": rel, "line": record.line, "before": record.before, "after": record.after}
-        )
     sidecar = _change_sidecar_path(out)
     if sidecar.is_symlink():
         raise ValueError(f"Refusing to write the change sidecar through a symlink: {sidecar}")
@@ -801,28 +861,41 @@ def _type_oracle(project_path: "Path") -> Optional["TypeOracle"]:
     return choice.tool
 
 
-def _generated_code_formatter(project_path: "Path") -> Optional[Callable[[str], str]]:
-    """The formatter the project's configuration calls for, or None with a note."""
-    from towel.formatting import formatter_for_project
+def _generated_code_formatter(
+    project_path: "Path",
+) -> Callable[[str], Optional[Callable[[str], str]]]:
+    """Select each modified file's formatter, reporting unavailable project tools."""
+    from towel.formatting import SnippetFormatter, formatter_factory_for_project
+    from towel.project_tools import ToolChoice
 
-    choice = formatter_for_project(project_path)
-    if choice.tool is None:
-        print(
-            f"Note: {choice.note}, so generated code is inserted unformatted. "
-            'Install the format extra (pip install "code-towel[format]") to format it.'
-        )
-    elif "not installed" in choice.note:
-        print(f"Note: {choice.note}; formatting generated code with {choice.note.split(';')[0]}.")
-    return choice.tool
+    reported: set[str] = set()
+
+    def report(choice: ToolChoice[SnippetFormatter]) -> None:
+        if choice.note in reported:
+            return
+        reported.add(choice.note)
+        if choice.tool is None:
+            print(
+                f"Note: {choice.note}, so generated code is inserted unformatted. "
+                'Install the format extra (pip install "code-towel[format]") to format it.'
+            )
+        elif "not installed" in choice.note:
+            print(
+                f"Note: {choice.note}; formatting generated code with {choice.note.split(';')[0]}."
+            )
+
+    return formatter_factory_for_project(project_path, report)
 
 
-def _import_sorter(project_path: "Path") -> Optional[Callable[[str, str], str]]:
-    """Import sorting the project configures, or None (with a note if the tool is missing)."""
-    from towel.formatting import import_sorter_for_project
+def _file_finisher(
+    project_path: "Path", *, sort_imports: bool
+) -> Optional[Callable[[str, str], str]]:
+    """The project's import sorting and Ruff lint guard, with missing-tool notes."""
+    from towel.formatting import file_finisher_for_project
 
-    choice = import_sorter_for_project(project_path)
-    if choice.tool is None and choice.note:
-        print(f"Note: {choice.note}; inserted imports are left where Towel put them.")
+    choice = file_finisher_for_project(project_path, sort_imports=sort_imports)
+    if "not installed" in choice.note:
+        print(f"Note: {choice.note}.")
     return choice.tool
 
 
@@ -848,7 +921,7 @@ def _existing_target(path: str) -> Tuple[bool, bool]:
 
 @dataclass(frozen=True)
 class DryOptions:
-    """What ``towel dry`` was asked to do, read once from the parsed arguments."""
+    """One dry pipeline, publishing to a requested or private preview destination."""
 
     input: str
     output: str
@@ -863,6 +936,7 @@ class DryOptions:
     format: bool
     exclude: Tuple[str, ...]
     cross_module: bool = False
+    stats: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -880,6 +954,7 @@ class DryOptions:
             format=bool(args.format),
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
+            stats=bool(args.stats),
         )
 
 
@@ -893,8 +968,13 @@ class PreviewOptions:
     parameterize_builtins: bool
     max_pairs: int
     progress: ProgressMode
+    max_refactorings: int
+    types: bool
+    format: bool
+    quick: bool
     exclude: Tuple[str, ...] = ()
     cross_module: bool = False
+    stats: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -905,8 +985,32 @@ class PreviewOptions:
             parameterize_builtins=bool(args.parameterize_builtins),
             max_pairs=int(args.max_pairs),
             progress=normalize_progress(args.progress),
+            max_refactorings=int(args.max_refactorings),
+            types=bool(args.types),
+            format=bool(args.format),
+            quick=bool(args.quick),
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
+            stats=bool(args.stats),
+        )
+
+    def dry_options(self, output: str) -> DryOptions:
+        """Run with the same options, without asking before writing private output."""
+        return DryOptions(
+            input=self.target,
+            output=output,
+            interactive=False,
+            max_refactorings=self.max_refactorings,
+            min_lines=self.min_lines,
+            max_parameters=self.max_parameters,
+            parameterize_builtins=self.parameterize_builtins,
+            max_pairs=self.max_pairs,
+            progress=self.progress,
+            types=self.types,
+            format=self.format,
+            exclude=self.exclude,
+            cross_module=self.cross_module,
+            stats=self.stats,
         )
 
 
@@ -922,6 +1026,7 @@ class RenameOptions:
     json: bool
     preview: bool
     llm: str
+    complete_scope: bool
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "RenameOptions":
@@ -934,6 +1039,7 @@ class RenameOptions:
             json=bool(args.json),
             preview=bool(args.preview),
             llm=str(args.llm),
+            complete_scope=bool(args.complete_scope),
         )
 
 
@@ -941,6 +1047,11 @@ def _run_dry(args: argparse.Namespace) -> None:
     """Run the dry command."""
     options = DryOptions.from_namespace(args)
     _warn_about_retired_flags(args)
+    _execute_dry(options)
+
+
+def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
+    """Run the shared pipeline; only its presentation and destination differ for preview."""
     # Import here to avoid loading heavy modules if not needed
     from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -972,8 +1083,17 @@ def _run_dry(args: argparse.Namespace) -> None:
         _judge_import_problems(source, options.exclude)
 
     print("=" * 70)
-    _banner("APPLYING REFACTORINGS (FIXED-POINT ITERATION)")
-    print("This will apply refactorings one at a time until no more are found.")
+    _banner(
+        "PREVIEWING REFACTORINGS (COMPLETE DRY RUN)"
+        if preview
+        else "APPLYING REFACTORINGS (FIXED-POINT ITERATION)"
+    )
+    if preview:
+        print(
+            "Running the complete dry pipeline in private temporary output; input stays unchanged."
+        )
+    else:
+        print("This will apply refactorings one at a time until no more are found.")
     print("Helpers go before the first definition of their module,")
     print("or inside the class or function the duplicates share.")
     print()
@@ -1008,10 +1128,10 @@ def _run_dry(args: argparse.Namespace) -> None:
             parameterize_constants=True,
             excluded_directories=options.exclude,
             cross_module_helpers=options.cross_module,
-            snippet_formatter=(
+            snippet_formatter_for_file=(
                 _generated_code_formatter(Path(input_path)) if options.format else None
             ),
-            file_finisher=(_import_sorter(Path(input_path)) if options.format else None),
+            file_finisher=_file_finisher(Path(input_path), sort_imports=options.format),
             annotate_helpers=options.types,
             type_oracle=oracle,
         )
@@ -1019,7 +1139,9 @@ def _run_dry(args: argparse.Namespace) -> None:
         print()
 
         if is_file:
-            print(f"Refactoring file: {output_path}")
+            print(
+                f"Analyzing file: {input_path}" if preview else f"Refactoring file: {output_path}"
+            )
             final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
                 input_path,
                 max_iterations=options.max_refactorings,
@@ -1028,14 +1150,23 @@ def _run_dry(args: argparse.Namespace) -> None:
             )
             applied = num_applied
 
-            if num_applied > 0:
+            if preview:
+                termination = (
+                    "iteration_cap" if 0 < options.max_refactorings <= applied else "fixed_point"
+                )
+                _print_complete_preview(engine, options, applied, descriptions, termination)
+            elif num_applied > 0:
                 print(f"\nApplied {num_applied} refactoring(s):")
                 for i, desc in enumerate(descriptions, 1):
                     print(f"  {i}. {desc}")
             else:
                 print("\nNo refactorings found!")
         else:
-            print(f"Refactoring directory: {output_path}")
+            print(
+                f"Analyzing directory: {input_path}"
+                if preview
+                else f"Refactoring directory: {output_path}"
+            )
             results, termination_reason = engine.refactor_directory_to_fixed_point(
                 input_path,
                 output_path,
@@ -1044,7 +1175,12 @@ def _run_dry(args: argparse.Namespace) -> None:
             )
             applied = sum(count for count, _ in results.values())
 
-            if results:
+            if preview:
+                descriptions = [
+                    description for _, entries in results.values() for description in entries
+                ]
+                _print_complete_preview(engine, options, applied, descriptions, termination_reason)
+            elif results:
                 total_refactorings = applied
                 print(
                     f"\nApplied {total_refactorings} refactoring(s) across {len(results)} file(s)"
@@ -1066,7 +1202,20 @@ def _run_dry(args: argparse.Namespace) -> None:
                 " could not run for them (see the warnings above); they were not judged."
             )
         _print_declined(engine.run_report, applied)
-        _write_change_sidecar(engine, output_path)
+        if options.stats:
+            _print_statistics(engine.run_report)
+        if not preview:
+            # Publication has succeeded. This optional naming aid cannot
+            # retroactively make that source transaction a failed command.
+            try:
+                _write_change_sidecar(engine, output_path)
+            except (OSError, ValueError) as error:
+                LOG.warning(
+                    "Source publication succeeded, but the optional naming sidecar"
+                    " could not be written: %s. Helper inventory and renaming remain"
+                    " available without call-site before/after metadata.",
+                    error,
+                )
     finally:
         if oracle is not None:
             oracle.close()
@@ -1307,6 +1456,30 @@ def _print_declined(report: "RunReport", applied: int) -> None:
             print(line)
 
 
+def _print_statistics(report: "RunReport") -> None:
+    """Account for every candidate pair of the last whole analysis, and the run's signatures.
+
+    The pair line adds up: each pair is declined, a duplicate, dropped for an
+    overlap, or emitted, so a reader sees where the duplicates went. A run
+    whose checker judged no signature leaves the signature line out.
+    """
+    declined = sum(report.declined_pairs.values())
+    print("\nStatistics (the last whole analysis; signatures over the whole run):")
+    print(
+        f"  {report.candidate_pairs} candidate pair(s): {declined} declined, "
+        f"{report.duplicate_pairs} duplicate, {report.overlapping_proposals} overlapping, "
+        f"{report.emitted_proposals} emitted"
+    )
+    signatures = report.signatures_verified + report.signatures_refused
+    if signatures:
+        print(
+            f"  {signatures} signature attempt(s): {report.signatures_verified} verified, "
+            f"{report.signatures_refused} refused by the type checker"
+        )
+    not_applied = sum(report.declined_proposals.values())
+    print(f"  {not_applied} proposal(s) not applied")
+
+
 def _print_proposal(
     index: int,
     prop: "RefactoringProposal",
@@ -1394,9 +1567,124 @@ def _print_call_sites(
 
 
 def _run_preview(args: argparse.Namespace) -> None:
-    """Run the preview command."""
+    """Run dry privately, or explicitly request the partial structural listing."""
     options = PreviewOptions.from_namespace(args)
     _warn_about_retired_flags(args)
+    if options.quick:
+        if options.stats:
+            print("--stats accounts for a complete run; a --quick list has no statistics.")
+        _run_quick_preview(options)
+        return
+    _existing_target(options.target)
+    with tempfile.TemporaryDirectory(prefix="towel-preview-") as temporary:
+        output = Path(temporary) / Path(options.target).resolve().name
+        dry_options = options.dry_options(str(output))
+        with _preview_paths(dry_options):
+            _execute_dry(dry_options, preview=True)
+
+
+def _preview_text(text: str, options: DryOptions) -> str:
+    """Name the input wherever the private output would appear in a report."""
+    for output in (str(Path(options.output).resolve()), options.output):
+        text = text.replace(output, str(Path(options.input).resolve()))
+    return text
+
+
+@contextmanager
+def _preview_paths(options: DryOptions) -> Iterator[None]:
+    """Translate the engine's public output paths once more for a disposable preview."""
+    from towel.unification.fixed_point import _StagePathsInLogs, _name_public_paths
+
+    # Engine staging translates its paths on the logger first. Handler filters
+    # run afterward, so diagnostics name input files rather than the private
+    # preview destination that is about to disappear.
+    def rewrite(text: str) -> str:
+        return _preview_text(text, options)
+
+    path_filter = _StagePathsInLogs(rewrite)
+    handlers = tuple(dict.fromkeys([*LOG.handlers, *logging.getLogger().handlers]))
+    for handler in handlers:
+        handler.addFilter(path_filter)
+    try:
+        yield
+    except (OSError, ValueError, TowelError) as error:
+        _name_public_paths(error, rewrite)
+        raise
+    finally:
+        for handler in handlers:
+            handler.removeFilter(path_filter)
+
+
+def _print_complete_preview(
+    engine: "UnificationRefactorEngine",
+    options: DryOptions,
+    applied: int,
+    descriptions: Sequence[str],
+    termination: str,
+) -> None:
+    """Report only the completed pipeline's accepted changes, in their execution order."""
+    print("\n" + "=" * 70)
+    print("REFACTORING OPPORTUNITIES (COMPLETE PREVIEW)")
+    print("=" * 70)
+    print(f"Would apply {applied} refactoring(s).")
+    print(f"  Termination: {termination}")
+    if not applied:
+        if engine.run_report.declined_pairs or engine.run_report.declined_proposals:
+            print("No applicable refactorings found.")
+        else:
+            print("No duplicates found!")
+    for index, description in enumerate(descriptions, 1):
+        print(f"  {index}. {_preview_text(description, options)}")
+    changes = engine.change_log
+    if changes:
+        print("\n   Call sites (- before / + after):")
+        print("   Blocks and line numbers are shown at the step when they would change.")
+        target = Path(options.input).resolve()
+        for change in changes[:30]:
+            path = Path(_preview_text(change.path, options))
+            location = os.path.relpath(path, target) if target.is_dir() else path.name
+            print(f"      {location}:{change.line} ({change.helper})")
+            for line in change.before.splitlines():
+                print(f"        - {line}")
+            for line in change.after.splitlines():
+                print(f"        + {line}")
+        if len(changes) > 30:
+            print(f"      ... ({len(changes) - 30} more call site(s))")
+    _print_preview_artifacts(engine, options)
+    print("\nInput files were not changed.")
+
+
+def _print_preview_artifacts(engine: "UnificationRefactorEngine", options: DryOptions) -> None:
+    """Show the complete final source diff and the same inventory used for naming."""
+    source, output = Path(options.input).resolve(), Path(options.output).resolve()
+    output_base = output if output.is_dir() else output.parent
+    for after in python_sources(output, excluded=options.exclude):
+        relative = after.relative_to(output_base)
+        before = source / relative if source.is_dir() else source
+        old = read_source(before) if before.exists() else ""
+        new = read_source(after)
+        if old == new:
+            continue
+        print()
+        for line in unified_diff(
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
+            fromfile=f"before/{relative}",
+            tofile=f"after/{relative}",
+        ):
+            print(line, end="" if line.endswith("\n") else "\n\\ No newline at end of file\n")
+    helpers = _find_extracted_helpers(output, None, None)
+    if helpers:
+        inventory = helper_inventory(
+            output_base, helpers, changes_by_helper=_change_records(engine, options.output)
+        )
+        inventory["target"] = str(source if source.is_dir() else source.parent)
+        print("\nHelper inventory:")
+        print(json.dumps(inventory, indent=2))
+
+
+def _run_quick_preview(options: PreviewOptions) -> None:
+    """List one analysis without promising that the proposals will pass dry's checks."""
     from towel.unification.refactor_engine import UnificationRefactorEngine
     from towel.unification.overlap import filter_overlapping_proposals
 
@@ -1409,6 +1697,11 @@ def _run_preview(args: argparse.Namespace) -> None:
     refuse_unparsed_program(Path(target), options.exclude)
     if options.cross_module and is_dir:
         _judge_import_problems(Path(target).resolve(), options.exclude)
+
+    _banner("QUICK PREVIEW (PARTIAL STRUCTURAL ANALYSIS)")
+    print("Skips type checks, formatting and follow-up extractions.")
+    print("This partial list is not an upper bound on eventual extractions.")
+    print("Candidates may fail dry's validation; --max-refactorings does not limit this list.")
 
     engine = UnificationRefactorEngine(
         max_parameters=options.max_parameters,
@@ -1446,7 +1739,7 @@ def _run_preview(args: argparse.Namespace) -> None:
         print(f"(Removed {len(all_proposals) - len(proposals)} overlapping proposals)")
 
     print("\n" + "=" * 70)
-    print("REFACTORING OPPORTUNITIES")
+    print("REFACTORING OPPORTUNITIES (PARTIAL)")
     print("=" * 70)
 
     source_cache: Dict[str, List[str]] = {}
@@ -1457,11 +1750,7 @@ def _run_preview(args: argparse.Namespace) -> None:
         print(f"\n... and {len(proposals) - 10} more proposals")
 
     print("\n" + "=" * 70)
-    print("\nTo apply these refactorings, run:")
-    if is_file:
-        print(f"  towel dry {target} <output>")
-    else:
-        print(f"  towel dry {target} <output_dir>")
+    print("\nFor a complete preview with the same options, omit --quick.")
     print()
 
 
@@ -1512,6 +1801,20 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
                     print("      ...")
             print()
         return
+
+    from towel.renaming import inferred_rename_root
+
+    if not options.complete_scope and inferred_rename_root(target) is None:
+        reason = (
+            f"Cannot establish the consumer scope around {target}. Select the whole project "
+            "and pass --complete-scope to declare that target contains every ordinary consumer. "
+            "Use a file-qualified mapping key or --file to select definitions within that root."
+        )
+        if options.json:
+            print(json.dumps({"applied": False, "dry_run": options.preview, "error": reason}))
+        else:
+            print(f"Error: {reason}")
+        sys.exit(2)
 
     if options.rename_file:
         _apply_rename_file(
@@ -1702,7 +2005,12 @@ def _private_helper_calls(
     ]
 
 
-def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) -> HelperInventory:
+def helper_inventory(
+    target: Path,
+    helpers: List[Tuple[Path, str, int, str]],
+    *,
+    changes_by_helper: Optional[Dict[str, List[ChangeRecord]]] = None,
+) -> HelperInventory:
     """Describe every generated helper for a naming assistant.
 
     Each entry gives the helper's scope, source, parameters with their
@@ -1715,7 +2023,8 @@ def helper_inventory(target: Path, helpers: List[Tuple[Path, str, int, str]]) ->
     something only there: the class stores it as ``_Class__helper``.
     """
 
-    changes_by_helper = _read_change_sidecar(_change_sidecar_path(target))
+    if changes_by_helper is None:
+        changes_by_helper = _read_change_sidecar(_change_sidecar_path(target))
 
     wanted = {name for _, name, _, _ in helpers}
     modules = _load_modules(target)

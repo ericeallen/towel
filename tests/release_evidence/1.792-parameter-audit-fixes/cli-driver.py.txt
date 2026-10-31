@@ -1,0 +1,71 @@
+"""ABBA complete-command comparison on fresh pinned third-party inputs."""
+
+from pathlib import Path
+import datetime
+import hashlib
+import importlib.metadata
+import json
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+root = Path(__file__).parent
+fixture = Path('/Users/ericeallen/Knowledge/handoffs/towel/20261006T235841Z-codex-full-parameter-audit/generated-output/input')
+target = root / 'performance'
+target.mkdir(exist_ok=True)
+repo = Path.cwd()
+
+def manifest(path):
+    return {str(p.relative_to(path)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(path.rglob('*.py'))}
+
+original = manifest(fixture)
+metadata_names = [p.relative_to(fixture) for p in fixture.rglob("*") if p.is_file() and p.suffix != ".py"]
+original_metadata = {str(name): hashlib.sha256((fixture / name).read_bytes()).hexdigest() for name in metadata_names}
+def metadata_manifest(path):
+    return {str(name): hashlib.sha256((path / name).read_bytes()).hexdigest() for name in metadata_names}
+rows = []
+outputs = []
+source_identity = subprocess.check_output(['git', 'rev-parse', 'HEAD:src/towel'], text=True).strip()
+for index, mode in enumerate(('uncached', 'cached', 'cached', 'uncached'), 1):
+    case = target / f'{index}-{mode}'
+    case.mkdir()
+    source = case / 'input'
+    destination = case / 'output'
+    shutil.copytree(fixture, source)
+    arguments = [sys.executable, str(root / 'cli_cache_arm.py'), mode, str(source), str(destination)]
+    environment = dict(os.environ, TOWEL_WORKERS='1', PYTHONHASHSEED='0')
+    print(f'START {index}/4 {mode}', flush=True)
+    host_raw = subprocess.check_output(['top', '-l', '2', '-s', '1', '-n', '0'], text=True)
+    (case / 'host-before.log').write_text(host_raw)
+    host = {'load_average': os.getloadavg(), 'cpu_snapshots': [line.strip() for line in host_raw.splitlines() if line.startswith('CPU usage:')]}
+    start_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    started = time.perf_counter()
+    with (case / 'cli.log').open('w') as output:
+        result = subprocess.run(arguments, stdout=output, stderr=subprocess.STDOUT, env=environment)
+    seconds = time.perf_counter() - started
+    log = (case / 'cli.log').read_text()
+    applied = re.search(r'Applied (\d+) refactoring', log)
+    assert result.returncode == 0, log[-2500:]
+    assert applied is not None and int(applied.group(1)) > 0, log[-2500:]
+    assert manifest(source) == original
+    assert metadata_manifest(source) == original_metadata
+    generated = manifest(destination)
+    assert generated and generated != original
+    outputs.append(generated)
+    row = {'case': index, 'mode': mode, 'host_before': host, 'seconds': seconds, 'start_utc': start_utc, 'argv': arguments, 'cli_argv': ['towel', 'dry', str(source), str(destination), '--no-interactive'], 'environment': {'TOWEL_WORKERS': '1', 'PYTHONHASHSEED': '0'}, 'exit_code': result.returncode, 'applications': int(applied.group(1)), 'source_unchanged': True, 'python_output_sha256': generated}
+    rows.append(row)
+    (target / 'partial-results.json').write_text(json.dumps(rows, indent=2) + '\n')
+    print(f'DONE {index}/4 {mode}: {seconds:.3f}s, {row["applications"]} applications', flush=True)
+
+assert all(item == outputs[0] for item in outputs)
+assert manifest(fixture) == original
+assert metadata_manifest(fixture) == original_metadata
+assert subprocess.check_output(['git', 'rev-parse', 'HEAD:src/towel'], text=True).strip() == source_identity
+means = {mode: sum(row['seconds'] for row in rows if row['mode'] == mode) / 2 for mode in ('cached', 'uncached')}
+receipt = {'scope': 'Complete typed/formatted CLI with TOWEL_WORKERS=1; fresh input/output and owned checker workers each arm; current fixed source in both arms. Only block-query memo differs. ABBA two samples per arm; not a published-1.772 or corpus comparison.', 'runtime_tree': source_identity, 'python': sys.version, 'platform': platform.platform(), 'rows': rows, 'means_seconds': means, 'all_python_outputs_identical': True, 'input_manifest': original, 'input_non_python_manifest': original_metadata, 'tool_versions': {name: importlib.metadata.version(name) for name in ('mypy', 'pyright', 'black', 'ruff', 'isort')}}
+(target / 'result.json').write_text(json.dumps(receipt, indent=2) + '\n')
+print(json.dumps({'means_seconds': means, 'all_python_outputs_identical': True}), flush=True)

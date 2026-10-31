@@ -132,7 +132,6 @@ print(__extracted_func_0())
     "suffix, message",
     [
         ("def use(answer):\n    return __extracted_func_0()\n", "capture"),
-        ('print(globals()["__extracted_func_0"]())\n', "Dynamic"),
         ('__all__ = ["__extracted_func_0"]\n', "exports"),
         ("class C:\n    __extracted_func_0 = __extracted_func_0\n", "class namespace"),
         ("class __extracted_func_0:\n    pass\n", "Non-function binding"),
@@ -213,7 +212,6 @@ def test_many_to_one_mappings_fail_before_write(tmp_path):
     "suffix",
     [
         'def use(x: "__extracted_func_0"):\n    return x\n',
-        'lookup = globals\nprint(lookup()["__extracted_func_0"]())\n',
         "_C__extracted_func_0 = lambda: 11\nclass C:\n    def call(self):\n        return __extracted_func_0()\nprint(C().call())\n",
     ],
 )
@@ -222,7 +220,7 @@ def test_implicit_name_lookup_boundaries_fail_visibly(tmp_path, suffix):
     original = HELPER + suffix
     path.write_text(original)
     execute(path)
-    with pytest.raises(ValueError, match="annotation|namespace|mangling"):
+    with pytest.raises(ValueError, match="annotation|mangling"):
         _rename_function_in_directory(tmp_path, "__extracted_func_0", "answer", False)
     assert path.read_text() == original
 

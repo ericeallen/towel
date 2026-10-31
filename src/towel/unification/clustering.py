@@ -35,25 +35,35 @@ downstream mutates a replacement's node without deep-copying it first.
 from __future__ import annotations
 
 import ast
+import os
 
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
 from ..canonical_ast import canonical_dump
+from ..diagnostics import REJECTIONS, debugging
 from .assignment_analyzer import has_reassignments_without_bindings
-from .block_analysis import align_return_variables
+from .block_analysis import (
+    align_return_variables,
+    lifetime_order_preserved,
+    owned_binding_crosses_exception_boundary,
+)
 from .block_comments import call_argument_lines, directive_conflict, site_comments
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
 from .instantiation import instantiation_mismatch
-from .models import FunctionArtifact, FunctionNode, RejectReason, Replacement
+from .retained_bindings import spell_retained_bindings
+from .argument_ownership import argument_handoff_fits
+from .compiler_literals import unsafe_byte_literal_moves, unstable_literal_pool
+from .models import ArgumentHandoff, FunctionArtifact, FunctionNode, RejectReason, Replacement
 from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import bindings_of, statement_shape
 from .substitution import Substitution
-from .decorator_reach import ModuleSource, decorator_refusal
 from .semantic_safety import (
+    captured_comprehension_changes_enclosing_cell,
     available_argument_names,
     builtins_passed,
+    builtin_mapping_reads,
     free_variable_positions,
     function_scope_names,
     thunk_meets_an_inlined_comprehension,
@@ -62,7 +72,6 @@ from .semantic_safety import (
     defer_impure_parameters,
     has_impure_eager_parameters,
     moves_scope_declaration,
-    nested_bindings_escape,
     nested_scopes_cross_block_boundary,
     block_requires_original_frame,
     created_object_escapes,
@@ -70,9 +79,8 @@ from .semantic_safety import (
     needs_class_body,
     unbinds_external_name,
 )
-from .source_readers import calls_source_reader
 from .splicing import BlockColumns
-from .thunk_inlining import inline_leading_thunks
+from .thunk_inlining import inline_leading_thunks, reorder_eligible_thunk_parameters
 from .typing_forms import ModuleText
 from .visitors import body_without_docstring
 
@@ -123,7 +131,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
 
     def _cluster_candidate_call(
         self, template: "HelperTemplate", candidate: "_ClusterCandidate"
-    ) -> Optional[Tuple[ast.stmt, FrozenSet[int]]]:
+    ) -> Optional[Tuple[ast.stmt, FrozenSet[int], Optional[ArgumentHandoff]]]:
         """The call replacing a clustered occurrence, and the lines where its code becomes an argument.
 
         None when the occurrence cannot share the helper. Everything here is a
@@ -132,13 +140,33 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         memoizes it on exactly those.
         """
         pair = template.pair
+        mapping_reads = builtin_mapping_reads(
+            candidate.function,
+            candidate.nodes,
+            candidate.analyzer,
+            pair.source1,
+            project_may_replace=self._project_may_replace_builtin_mapping(candidate.file_path),
+        )
+        if mapping_reads:
+            self._debug_decline_site(
+                RejectReason.BUILTIN_MAPPING_REPLACED,
+                pair,
+                candidate.function,
+                candidate.nodes,
+                sorted(mapping_reads),
+            )
+            return None
         if not self._declares_alike(template, candidate):
             return None
         cluster_renames: List[Dict[str, str]] = [{}, {}]
         # Clustering scans the pair's own file, so both blocks are in its module.
         module = ModuleText(pair.file_path, pair.source1)
         subst2 = self._unify_memoized(
-            [pair.block1_nodes, candidate.nodes], cluster_renames, (module, module)
+            [pair.block1_nodes, candidate.nodes],
+            cluster_renames,
+            (module, module),
+            thread_literal_pools=os.path.abspath(pair.file_path)
+            != os.path.abspath(pair.file_path2),
         )
         if not subst2:
             return None
@@ -189,6 +217,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 error,
             )
             return None
+        candidate_order = reorder_eligible_thunk_parameters(
+            candidate_helper, subst2, candidate_order
+        )
         inline_leading_thunks(candidate_helper, subst2, candidate_order)
         if (
             candidate_order != template.param_order
@@ -205,10 +236,15 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             set(template.bound_in_block),
             set(candidate.snapshot.bound_in_block),
             cluster_renames,
+            template_order=template.return_variables,
         )
         if aligned is None or aligned[0] != list(template.return_variables):
             return None
         returned = aligned[1]
+        if not lifetime_order_preserved(
+            candidate.nodes, candidate.function, candidate.analyzer, returned
+        ):
+            return None
         # A name the call rebinds is not orphaned by moving the block.
         indices = self._get_block_indices(candidate.function, candidate.nodes)
         if indices is None:
@@ -250,9 +286,24 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             site=candidate.site,
         ):
             return None
-        # A clustered block reading a builtin cannot join a helper whose sites
-        # pass their own local of that name: its call would hand over the
-        # builtin, which only ``parameterize_builtins`` permits.
+        # An existing eager free-variable parameter snapshots a module
+        # binding before ordinary callees can rebind it between reads. Only
+        # a helper with a caller lookup thunk can accept that clustered site.
+        # Comprehension targets do not shadow the enclosing function's lookup.
+        free_positions = free_variable_positions(template.param_order, subst2)
+        eager_free_names = {
+            argument.id
+            for node in ast.walk(call_node2)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == template.func_def.name
+            for index, argument in enumerate(node.args)
+            if index in free_positions and isinstance(argument, ast.Name)
+        }
+        if module_resolved_names(
+            candidate.function, candidate.analyzer, eager_free_names, exact=True
+        ):
+            return None
         if builtins_passed(
             call_node2,
             template.func_def.name,
@@ -300,7 +351,40 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             for name in used2
         ):
             return None
-        return call_node2, call_argument_lines(subst2, 1)
+        safe_call = spell_retained_bindings(candidate.function, candidate.nodes, call_node2)
+        ownership = self._frame_ownership(candidate.function, candidate.nodes, site=candidate.site)
+        handoff = (
+            self._argument_handoff_plan(
+                candidate.function,
+                candidate.nodes,
+                candidate.analyzer,
+                safe_call,
+                template.func_def,
+            )
+            if ownership.split and ownership.whole_body
+            else None
+        )
+        if handoff is not None and not argument_handoff_fits(
+            template.func_def, self.unifier.max_parameters
+        ):
+            self._debug_decline_site(
+                RejectReason.OWNERSHIP_PARAMETER_BUDGET,
+                pair,
+                candidate.function,
+                candidate.nodes,
+                "the final ownership parameter exceeds the helper budget",
+            )
+            return None
+        if ownership.split and handoff is None:
+            self._debug_decline_site(
+                RejectReason.OWNED_BINDING_FRAME_BOUNDARY,
+                pair,
+                candidate.function,
+                candidate.nodes,
+                f"inside={sorted(ownership.inside)}, outside={sorted(ownership.outside)}",
+            )
+            return None
+        return safe_call, call_argument_lines(subst2, 1), handoff
 
     @staticmethod
     def _declares_alike(template: "HelperTemplate", candidate: "_ClusterCandidate") -> bool:
@@ -367,7 +451,10 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         """
         pair = template.pair
         module_digest = self._module_digest(pair.function1_node)
-        if module_digest is None:
+        # A traced scan emits pair-specific declined-site diagnostics. Reusing
+        # its site list would drop those observable messages; the pure, untraced
+        # production scan remains memoized.
+        if module_digest is None or debugging(REJECTIONS):
             return tuple(self._scan_clustered_sites(template, dce_node, functions))
         key = ClusterScanKey(
             self._template_key(template),
@@ -408,17 +495,13 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             # a block elsewhere in the file cannot call it (prompt_toolkit).
             if dce_node is not None and not encloses(dce_node, fn):
                 continue
-            # A call site is code in its function, which a decorator reaching
-            # the function may compile or instrument (``decorator_reach``).
             analyzed = entry.scope_analyzer.analyzed_tree
-            if not isinstance(analyzed, ast.Module) or decorator_refusal(
-                fn, ModuleSource(entry.file_path, entry.source, analyzed), self.import_graph
-            ):
-                continue
             # Where the candidate sits decides, once the helper's home is
             # known, whether it can share a method call.
             candidate_class = self._method_class(fn, entry.class_name, entry.scope_analyzer)
-            candidate_info = self._get_method_context(fn, candidate_class, analyzed)
+            candidate_info = self._get_method_context(
+                fn, candidate_class, analyzed if isinstance(analyzed, ast.Module) else None
+            )
             context = ClusterContext(candidate_class, candidate_info)
             for cand_range, cand_nodes, cand_sig in self._signed_blocks(fn):
                 # The size gate and signature filter are constant-time and
@@ -442,12 +525,13 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 found = self._cluster_candidate_call(template, candidate)
                 if found is None:
                     continue
-                call_node, arguments = found
+                call_node, arguments, handoff = found
                 yield ClusteredSite(
                     Replacement(
                         line_range=cand_range,
                         columns=BlockColumns.of(cand_nodes),
                         node=call_node,
+                        argument_handoff=handoff,
                         file_path=entry.file_path,
                         class_name=entry.class_name,
                         method_kind=None,
@@ -470,28 +554,41 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
     ) -> Optional["_ClusterCandidate"]:
         """The candidate block as a cluster candidate, or None when a semantic guard declines it.
 
-        The same guards the pair stages apply to a block: frame sensitivity,
-        a callee that reads the source or position of its call, escaping
-        nested bindings, rebinding of snapshotted names, scopes crossing the
+        The same guards the pair stages apply to a block: required execution
+        context, escaping nested bindings, rebinding of snapshotted names, scopes crossing the
         boundary, moved scope declarations, reassignment of a name the block
         did not bind, and unbinding of a name bound before it.
         """
         fn, fpath, analyzer = entry.node, entry.file_path, entry.scope_analyzer
+        module = analyzer.analyzed_tree
+        if unstable_literal_pool(cand_nodes) or unsafe_byte_literal_moves(
+            cand_nodes, module if isinstance(module, ast.Module) else None
+        ):
+            return None
         for frame_guard in (
+            captured_comprehension_changes_enclosing_cell,
             block_requires_original_frame,
-            calls_source_reader,
             frame_read_outside_block,
             created_object_escapes,
         ):
             if self._block_rejected(frame_guard, cand_nodes, fn, analyzer, site=site):
                 return None
         for guard in (
-            nested_bindings_escape,
+            owned_binding_crosses_exception_boundary,
             nested_scopes_cross_block_boundary,
             moves_scope_declaration,
         ):
             if self._block_rejected(guard, cand_nodes, fn, site=site):
                 return None
+        if self._nested_bindings_rejected(
+            fn,
+            cand_nodes,
+            entry.source,
+            analyzer,
+            site=site,
+            allow_if_transfer=False,
+        ):
+            return None
         reassignments = self._get_assignment_reuse(fn)
         if self._per_block(
             "reassignments",

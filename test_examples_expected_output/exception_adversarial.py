@@ -6,7 +6,7 @@ when extracting code with try/except/finally blocks.
 """
 
 
-def __extracted_func_5(__param_0, __param_1):
+def __extracted_func_5(__param_0, __param_1, _towel_owner):
     value = __param_0
     try:
         value = int(__param_1)
@@ -15,7 +15,7 @@ def __extracted_func_5(__param_0, __param_1):
     return value
 
 
-def __extracted_func_4(__param_0, __param_1):
+def __extracted_func_4(__param_0, __param_1, _towel_owner):
     result = 0
     try:
         result = __param_0 / __param_1
@@ -24,7 +24,7 @@ def __extracted_func_4(__param_0, __param_1):
     return result
 
 
-def __extracted_func_3(__param_0):
+def __extracted_func_3(__param_0, _towel_owner):
     result = 0
     try:
         try:
@@ -36,7 +36,7 @@ def __extracted_func_3(__param_0):
     return result
 
 
-def __extracted_func_2(__param_0):
+def __extracted_func_2(__param_0, _towel_owner):
     results = []
     count = 0
     try:
@@ -48,7 +48,7 @@ def __extracted_func_2(__param_0):
     return results
 
 
-def __extracted_func_1(__param_0):
+def __extracted_func_1(__param_0, _towel_owner):
     result = None
     try:
         result = int(__param_0) / len(__param_0)
@@ -61,7 +61,7 @@ def __extracted_func_1(__param_0):
     return result
 
 
-def __extracted_func_0(__param_0):
+def __extracted_func_0(__param_0, _towel_owner):
     results = []
     error = None
     try:
@@ -76,52 +76,76 @@ def __extracted_func_0(__param_0):
 
 def safe_divide_a(x, y):
     """Division with exception handling."""
-    return __extracted_func_4(x, y)
+    _towel_arguments_4 = [(y, x)]
+    del x
+    del y
+    return __extracted_func_4(_towel_arguments_4[0][1], _towel_arguments_4[0][0], _towel_arguments_4.pop())
 
 
 def safe_divide_b(a, b):
     """Similar division pattern."""
-    return __extracted_func_4(a, b)
+    _towel_arguments_4 = [(b, a)]
+    del a
+    del b
+    return __extracted_func_4(_towel_arguments_4[0][1], _towel_arguments_4[0][0], _towel_arguments_4.pop())
 
 
 def parse_int_or_default_a(s, default=0):
     """Parse int with fallback."""
-    return __extracted_func_5(default, s)
+    _towel_arguments_5 = [(default, s)]
+    del s
+    del default
+    return __extracted_func_5(_towel_arguments_5[0][0], _towel_arguments_5[0][1], _towel_arguments_5.pop())
 
 
 def parse_int_or_default_b(text, fallback=0):
     """Similar parse pattern."""
-    return __extracted_func_5(fallback, text)
+    _towel_arguments_5 = [(fallback, text)]
+    del text
+    del fallback
+    return __extracted_func_5(_towel_arguments_5[0][0], _towel_arguments_5[0][1], _towel_arguments_5.pop())
 
 
 def process_with_cleanup_a(items):
     """Process with finally cleanup."""
-    return __extracted_func_2(items)
+    _towel_arguments_2 = [(items,)]
+    del items
+    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
 
 
 def process_with_cleanup_b(values):
     """Similar cleanup pattern."""
-    return __extracted_func_2(values)
+    _towel_arguments_2 = [(values,)]
+    del values
+    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
 
 
 def nested_exception_a(data):
     """Nested exception handling."""
-    return __extracted_func_3(data)
+    _towel_arguments_3 = [(data,)]
+    del data
+    return __extracted_func_3(_towel_arguments_3[0][0], _towel_arguments_3.pop())
 
 
 def nested_exception_b(input_val):
     """Similar nested exception pattern."""
-    return __extracted_func_3(input_val)
+    _towel_arguments_3 = [(input_val,)]
+    del input_val
+    return __extracted_func_3(_towel_arguments_3[0][0], _towel_arguments_3.pop())
 
 
 def exception_with_else_a(items):
     """Exception handling with else clause."""
-    return __extracted_func_0(items)
+    _towel_arguments = [(items,)]
+    del items
+    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 def exception_with_else_b(values):
     """Similar else clause pattern."""
-    return __extracted_func_0(values)
+    _towel_arguments = [(values,)]
+    del values
+    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 def reraise_exception_a(x):
@@ -148,9 +172,13 @@ def reraise_exception_b(y):
 
 def multiple_except_a(data):
     """Multiple except clauses."""
-    return __extracted_func_1(data)
+    _towel_arguments_1 = [(data,)]
+    del data
+    return __extracted_func_1(_towel_arguments_1[0][0], _towel_arguments_1.pop())
 
 
 def multiple_except_b(input_val):
     """Similar multiple except pattern."""
-    return __extracted_func_1(input_val)
+    _towel_arguments_1 = [(input_val,)]
+    del input_val
+    return __extracted_func_1(_towel_arguments_1[0][0], _towel_arguments_1.pop())

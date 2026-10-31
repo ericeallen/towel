@@ -115,8 +115,36 @@ class TestOutOfPlaceCycleRegression(unittest.TestCase):
             )
             self.assertNotIn("circular import", result.stderr)
 
-    def test_shared_helper_is_kept_and_placed_in_the_safe_module(self) -> None:
+    def test_owned_duplicates_use_fresh_module_local_helpers(self) -> None:
         self._refactor_and_adopt()
+        for filename in ("a.py", "b.py"):
+            source = (self.pkg / filename).read_text()
+            self.assertIn("def __extracted_func", source)
+            self.assertNotRegex(source, r"from (?:app\.|\.)[ab] import __extracted_func")
+
+    def test_shared_helper_is_kept_and_placed_in_the_safe_module(self) -> None:
+        # A fresh owned ABI is not a reusable provider. Keep that original
+        # case above, and exercise cycle-safe sharing with binding-free work.
+        shared = "    seq + factor\n" "    seq * factor\n" "    return seq * factor - factor\n"
+        for filename in ("a.py", "b.py"):
+            path = self.pkg / filename
+            path.write_text(path.read_text().replace(_SHARED, shared))
+        program = "from app import a,b; print([f(3,2) for f in (a.a1,a.a2,b.b1,b.b2)])"
+
+        def observe() -> str:
+            return subprocess.run(
+                [sys.executable, "-B", "-c", program],
+                cwd=self.pkg.parent,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=30,
+            ).stdout
+
+        expected = observe()
+        self._refactor_and_adopt()
+        self.assertEqual(observe(), expected)
+        self.assertEqual(expected, "[4, 4, 4, 4]\n")
         a_source = (self.pkg / "a.py").read_text(encoding="utf-8")
         b_source = (self.pkg / "b.py").read_text(encoding="utf-8")
         # The cross-file duplicate is still deduplicated (not declined): the
@@ -127,6 +155,31 @@ class TestOutOfPlaceCycleRegression(unittest.TestCase):
         self.assertNotIn("b1(", a_source)
         self.assertIn("def __extracted_func", b_source)
         self.assertNotRegex(b_source, r"from (?:app\.|\.)a import")
+
+    def test_shared_helper_preserves_results_after_adoption(self) -> None:
+        program = (
+            "from app import a, b\n"
+            "for function in (a.a1, a.a2, b.b1, b.b2, b.b3, b.b4):\n"
+            "    for seq in ([], [1, 2, 3], [-2, 0, 5], None):\n"
+            "        for factor in (0, 2, -3):\n"
+            "            try: print(function(seq, factor))\n"
+            "            except Exception as error: print(type(error).__name__, str(error))\n"
+        )
+
+        def observe() -> tuple[str, str]:
+            result = subprocess.run(
+                [sys.executable, "-B", "-c", program],
+                cwd=self.pkg.parent,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=True,
+            )
+            return result.stdout, result.stderr
+
+        before = observe()
+        self._refactor_and_adopt()
+        self.assertEqual(observe(), before)
 
 
 if __name__ == "__main__":

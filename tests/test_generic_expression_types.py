@@ -32,9 +32,9 @@ from towel.type_inference import (
     TypeOracle,
     _BuildMessages,
 )
-from towel.unification.exceptions import RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.type_bindings import TypeResolver, render_type, required_imports
+from tests.test_generic_extraction import value_parameters, ownership_argument
 
 
 @pytest.fixture(params=["mypy", "pyright"])
@@ -87,6 +87,15 @@ def extract(path: Path, oracle: TypeOracle) -> tuple[str, ast.FunctionDef]:
     return changed, helpers[0]
 
 
+def _binding_free_companion(path: Path, old: str, new: str) -> None:
+    """Keep the unsafe owned-local split as a refusal before measuring a safe helper."""
+    source = path.read_text()
+    engine = UnificationRefactorEngine(min_lines=2, reuse_existing_functions=False)
+    assert engine.analyze_file(str(path)) == []
+    assert source.count(old) == 2
+    path.write_text(source.replace(old, new))
+
+
 def annotation(node: ast.expr | None) -> str:
     assert node is not None
     return (
@@ -122,9 +131,12 @@ def test_unannotated_indexed_locals_preserve_free_or_bounded_parameters(
             return result[0]
     """,
     )
+    _binding_free_companion(
+        path, "result = [head]\n    return result[0]", "print('head', head)\n    return head"
+    )
     changed, helper = extract(path, oracle)
     assert observed, "Local expression types must be obtained from the real checker"
-    kind = annotation(helper.args.args[0].annotation)
+    kind = annotation(value_parameters(helper)[0].annotation)
     assert kind.startswith("_TowelT") and annotation(helper.returns) == kind
     assert "Any" not in changed
     declaration = next(
@@ -174,14 +186,21 @@ def test_inferred_local_callable_keeps_argument_and_result_correlation(
             return wrapped[0]
     """,
     )
+    _binding_free_companion(
+        path,
+        "result = callback(head)\n    wrapped = [result]\n    return wrapped[0]",
+        "print('callback', callback)\n    return callback(head)",
+    )
     changed, helper = extract(path, oracle)
     assert any(" -> " in kind for kind in observed.values()), observed
-    kinds = {parameter.arg: annotation(parameter.annotation) for parameter in helper.args.args}
+    kinds = {
+        parameter.arg: annotation(parameter.annotation) for parameter in value_parameters(helper)
+    }
     assert kinds["callback"] == f'Callable[[{kinds["head"]}], {kinds["head"]}]'
     assert annotation(helper.returns) == kinds["head"] and "Any" not in changed
     arguments = {"callback": "integer_callback", "head": '"wrong"'}
     bad = changed + "\ndef integer_callback(value: int) -> int:\n    return value + 1\n"
-    bad += f'\nwrong = {helper.name}({", ".join(arguments[arg.arg] for arg in helper.args.args)})\n'
+    bad += f'\nwrong = {helper.name}({", ".join(arguments[arg.arg] for arg in value_parameters(helper))}{ownership_argument(helper)})\n'
     rejected = oracle.check(str(path), bad)
     assert isinstance(rejected, CheckSuccess) and rejected.errors
     namespace: dict[str, object] = {}
@@ -293,14 +312,15 @@ def test_constrained_local_specializations_are_not_silently_narrowed(
             min_lines=2, reuse_existing_functions=False, type_oracle=oracle
         )
         proposals = engine.analyze_file(str(path))
-        assert proposals
-        with pytest.raises(RefactoringError, match="annotation variant"):
-            engine.apply_refactoring(str(path), proposals[0])
+        assert proposals == [], "The original owned-local split remains unsafe"
         assert path.read_text() == source
     else:
         assert set(reveals.values()) == {"T@first", "U@second"}
+        _binding_free_companion(
+            path, "result = [head]\n    return result[0]", "print('head', head)\n    return head"
+        )
         changed, helper = extract(path, oracle)
-        kind = annotation(helper.args.args[0].annotation)
+        kind = annotation(value_parameters(helper)[0].annotation)
         assert kind.startswith("_TowelT") and annotation(helper.returns) == kind
         declaration = next(
             node

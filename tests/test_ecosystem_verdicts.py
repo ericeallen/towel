@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 from typing import Callable, Optional, Sequence
@@ -53,10 +54,10 @@ def _is_refactor(command: Sequence[str]) -> bool:
     return Path(command[0]).name == "towel" and command[1:2] == ["dry"]
 
 
-def _phase(path: Path, code: int, output: str) -> ecosystem.Phase:
+def _phase(path: Path, code: int, output: str, *, timed_out: bool = False) -> ecosystem.Phase:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(output)
-    return ecosystem.Phase(code, 0.0, ecosystem.summarize(output), str(path))
+    return ecosystem.Phase(code, 0.0, ecosystem.summarize(output), str(path), timed_out)
 
 
 @pytest.mark.parametrize(
@@ -143,6 +144,7 @@ def _check(
     test: tuple[str, ...] = tuple(ecosystem.DEFAULT_TEST),
     no_types: bool = False,
     refactor: tuple[int, str] = (0, "Applied 1 refactoring\n"),
+    refactor_timed_out: bool = False,
     refactor_retry: Optional[tuple[int, str]] = None,
 ) -> ecosystem.Result:
     source = root / "fixture"
@@ -178,7 +180,7 @@ def _check(
             cleaned = Path(command[command.index("dry") + 2])
             cleaned.parent.mkdir(parents=True, exist_ok=True)
             cleaned.write_text("value = 2\n" if changed else "value = 1\n")
-            return _phase(log, *outcome)
+            return _phase(log, *outcome, timed_out=refactor_timed_out)
         if ecosystem._pytest_arguments_start(command) is not None:
             assert command[-2:] == ["--verbosity=0", "-ra"]
         code, output = next(phases)
@@ -330,23 +332,38 @@ def test_equal_red_counts_with_different_test_identities_do_not_pass(
     assert result.verdict == "BROKEN"
 
 
-def test_failure_identities_preserve_spaces_and_strip_ansi(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "output,expected",
+    [
+        (
+            "\x1b[31mFAILED tests/test_case.py::test_case[value with spaces] - assertion\x1b[0m\n"
+            "ERROR tests/test_case.py::test_setup[other value] - setup failure\n"
+            "1 failed, 1 error in 0.01s\n",
+            {
+                "tests/test_case.py::test_case[value with spaces]",
+                "tests/test_case.py::test_setup[other value]",
+            },
+        ),
+        (
+            "\x1b[31mFAIL: test_case (tests.Case) (value='has spaces')\x1b[0m\n"
+            "ERROR: test_setup (tests.Case)\n"
+            "UNEXPECTED SUCCESS: test_expected (tests.Case)\n"
+            "Ran 3 tests in 0.001s\n"
+            "FAILED (failures=1, errors=1, unexpected successes=1)\n",
+            {
+                "unittest:test_case (tests.Case) (value='has spaces')",
+                "unittest:test_setup (tests.Case)",
+                "unittest:test_expected (tests.Case)",
+            },
+        ),
+    ],
+)
+def test_failure_identities_preserve_spaces_and_strip_ansi(
+    tmp_path: Path, output: str, expected: set[str]
+) -> None:
     log = tmp_path / "failures.log"
-    log.write_text(
-        "\x1b[31mFAILED tests/test_case.py::test_case[value with spaces] - assertion\x1b[0m\n"
-        "ERROR tests/test_case.py::test_setup[other value] - setup failure\n"
-        "FAIL: test_case (tests.Case) (value='has spaces')\n"
-        "ERROR: test_setup (tests.Case)\n"
-        "UNEXPECTED SUCCESS: test_expected (tests.Case)\n"
-        "FAILED (failures=1, errors=1, unexpected successes=1)\n"
-    )
-    assert ecosystem.failed_tests(str(log)) == {
-        "tests/test_case.py::test_case[value with spaces]",
-        "tests/test_case.py::test_setup[other value]",
-        "unittest:test_case (tests.Case) (value='has spaces')",
-        "unittest:test_setup (tests.Case)",
-        "unittest:test_expected (tests.Case)",
-    }
+    log.write_text(output)
+    assert ecosystem.failed_tests(str(log)) == expected
 
 
 def test_unittest_differences_never_use_a_pytest_retest_command(
@@ -469,15 +486,15 @@ def test_recognition_matches_real_local_runner_output(
     [
         (
             ["python", "-m", "pytest", "-q", "tests"],
-            ["python", "-m", "pytest", "-q", "tests", "--verbosity=0", "-ra"],
+            ["python", "-m", "pytest", "-q", "tests", "--cache-clear", "--verbosity=0", "-ra"],
         ),
         (
             ["/env/bin/pytest", "-q", "tests"],
-            ["/env/bin/pytest", "-q", "tests", "--verbosity=0", "-ra"],
+            ["/env/bin/pytest", "-q", "tests", "--cache-clear", "--verbosity=0", "-ra"],
         ),
         (
             ["python3.13", "-m", "pytest", "-rs"],
-            ["python3.13", "-m", "pytest", "-rs", "--verbosity=0", "-ra"],
+            ["python3.13", "-m", "pytest", "-rs", "--cache-clear", "--verbosity=0", "-ra"],
         ),
         (
             ["python", "-m", "pytest", "-k", "selected", "-o", "addopts=", "--", "tests"],
@@ -489,6 +506,7 @@ def test_recognition_matches_real_local_runner_output(
                 "selected",
                 "-o",
                 "addopts=",
+                "--cache-clear",
                 "--verbosity=0",
                 "-ra",
                 "--",
@@ -736,6 +754,7 @@ def test_retests_apply_the_contract_and_persist_independently_checkable_statuses
         "pytest",
         "-q",
         "test_case.py::test_error",
+        "--cache-clear",
         "--verbosity=0",
         "-ra",
     ]
@@ -954,6 +973,45 @@ def test_a_failed_transformation_is_never_retried_without_types(
     assert result.refactor is not None and result.refactor.returncode == 1
 
 
+@pytest.mark.parametrize("termination_signal", [signal.SIGKILL, signal.SIGTERM])
+@pytest.mark.parametrize("diagnostic", ["TIMEOUT\n", CHECKER_FAILED])
+def test_a_signalled_refactor_cannot_claim_a_timeout_or_refusal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    termination_signal: signal.Signals,
+    diagnostic: str,
+) -> None:
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(-termination_signal, diagnostic),
+    )
+    assert result.verdict == "CRASH"
+    assert result.detail == f"refactor terminated by signal {termination_signal.value}"
+    assert result.fallback == "" and result.after is None
+    assert result.typing_mode == "default" and result.changed_files == 0
+    assert (tmp_path / "fixture-ready/package.py").read_text() == "value = 1\n"
+
+
+def test_a_refactor_deadline_is_recorded_as_a_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(-signal.SIGKILL, CHECKER_FAILED),
+        refactor_timed_out=True,
+    )
+    assert result.verdict == "TIMEOUT" and result.detail == "refactor exceeded 10s"
+    assert result.fallback == "" and result.after is None
+    assert result.typing_mode == "default" and result.changed_files == 0
+    assert (tmp_path / "fixture-ready/package.py").read_text() == "value = 1\n"
+
+
 def test_a_project_whose_checker_cannot_run_is_rerun_without_types(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -995,6 +1053,31 @@ def test_a_clean_check_records_no_pre_existing_errors(
 ) -> None:
     result = _check(tmp_path, monkeypatch, (0, "3 passed in 0.01s\n"), (0, "3 passed in 0.01s\n"))
     assert result.verdict == "PASS" and result.pre_existing is None and result.unchecked is None
+
+
+def test_untyped_imports_are_recorded_without_a_type_error_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # NetworkX's imports are typed as Any without diagnostic errors. Towel
+    # reports the scope warning independently, so an absent error header must
+    # not erase the files and proposals it conservatively leaves alone.
+    report = (
+        "warning: 74 import(s) or error(s) leave a name the checker cannot type\n"
+        "No change to these 39 file(s) is attempted; install their stubs\n"
+        "Applied 1 refactoring(s) across 1 file(s)\n"
+        "Declined: not verifiable: its file holds a name the type checker cannot type 42\n"
+    )
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(0, report),
+    )
+    assert result.verdict == "PASS" and result.typing_mode == "default" and not result.fallback
+    assert result.pre_existing == ecosystem.PreExistingErrors(
+        errors=0, files=0, names_any=74, declined_files=39, declined_proposals=42
+    )
 
 
 def test_an_older_towels_refusal_for_existing_errors_is_reported_and_not_retried(
@@ -1511,7 +1594,25 @@ def test_a_phase_that_times_out_takes_its_descendants_with_it(tmp_path: Path) ->
         [sys.executable, str(script)], tmp_path, dict(os.environ), 1, tmp_path / "phase.log"
     )
     assert phase.returncode == -9, phase
+    assert phase.timed_out
     deadline = time.monotonic() + 6
     while time.monotonic() < deadline:
         assert not marker.exists(), "a descendant outlived the phase that timed out"
         time.sleep(0.25)
+
+
+def test_a_phase_killed_before_its_deadline_is_not_a_timeout(tmp_path: Path) -> None:
+    phase = ecosystem.run(
+        [
+            sys.executable,
+            "-c",
+            "import os, signal; print('TIMEOUT', flush=True); "
+            "os.kill(os.getpid(), signal.SIGKILL)",
+        ],
+        tmp_path,
+        dict(os.environ),
+        10,
+        tmp_path / "killed.log",
+    )
+    assert phase.returncode == -signal.SIGKILL
+    assert not phase.timed_out

@@ -85,7 +85,7 @@ def _force_include_project(root: Path) -> Path:
             """).lstrip(),
         encoding="utf-8",
     )
-    for package, name, tag, number in (("alpha", "fa", "a", 1), ("beta", "fb", "bb", 2)):
+    for package, name, tag, number in (("alpha", "fa", "a", 1), ("beta", "fb", "a", 2)):
         (root / "src" / package / "__init__.py").write_text("", encoding="utf-8")
         (root / "src" / package / f"{name[1]}.py").write_text(
             BLOCK.format(name=name, tag=tag, number=number).lstrip(), encoding="utf-8"
@@ -153,7 +153,7 @@ def test_a_refusal_by_the_checker_is_called_that(
     root = tmp_path / "project"
     (root / "pkg").mkdir(parents=True)
     (root / "pkg" / "m.py").write_text(
-        BLOCK.format(name="fa", tag="a", number=1) + BLOCK.format(name="fb", tag="bb", number=2),
+        BLOCK.format(name="fa", tag="a", number=1) + BLOCK.format(name="fb", tag="a", number=2),
         encoding="utf-8",
     )
     monkeypatch.setattr("towel.cli._type_oracle", lambda path: _RefusesEveryCandidate())

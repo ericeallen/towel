@@ -13,7 +13,9 @@ Thank you for your interest in contributing to Towel! We welcome contributions f
 - [Development Setup](#development-setup)
 - [Coding Standards](#coding-standards)
 - [Testing](#testing)
+- [Local release verification](#local-release-verification)
 - [Documentation](#documentation)
+- [Pull Request Process](#pull-request-process)
 
 ## Code of Conduct
 
@@ -158,6 +160,16 @@ All code contributions should include tests:
   ```
 - Aim for high test coverage of new code
 - Include both positive and negative test cases
+- **Preserve the intent of policy regressions.** Tests linked to an approved
+  entry in `docs/DECISIONS.md` encode a design requirement. When one fails,
+  investigate the implementation against that requirement; changed engine
+  output is not evidence that the expected behavior has changed. Revise an
+  expectation only with evidence that the test contradicts the recorded rule,
+  or a separately agreed revision of that rule. Record the rationale and
+  update the decision and test together. Keep each test's explanation of the
+  invariant and the failure it prevents. For example, caller-narrowing tests
+  must protect both avoiding wasted typed validation and retaining smaller
+  valid extractions; making every proposal disappear satisfies neither goal.
 
 ### Running Tests
 
@@ -175,10 +187,158 @@ uv run --frozen coverage combine
 uv run --frozen coverage report --fail-under=85
 ```
 
+### CI commands and behavioral evidence
+
+Use Python 3.13 for formatting and typing gates; the lockfile also resolves
+test dependencies for supported older interpreters. Python 3.11 is the minimum.
+`just ci` runs the local quality, test, dependency-audit and build gates:
+
+```bash
+uv sync --frozen --extra dev
+uv run --frozen black --check src/towel tests scripts
+uv run --frozen flake8 src/towel scripts tests
+uv run --frozen mypy
+uv run --frozen coverage run -m pytest -q
+uv run --frozen coverage combine
+uv run --frozen coverage report --fail-under=85
+uv run --frozen bandit -r src/towel scripts -ll
+just audit-dependencies
+uv run --frozen python -m build
+```
+
+Behavioral tests compare sampled return values and types, exceptions, output,
+and argument mutations. Cross-file tests isolate imports for each execution.
+Empty selections, unsupported class construction and cross-file returned
+closures do not count as success. Single-file comparison samples one layer of
+returned callables; it does not validate deeper layers. This is regression
+evidence, not a proof of equivalence for arbitrary programs.
+
+Set `TOWEL_CHECK_AST_IMMUTABLE=1` to check on every cache reuse that analysis
+has left the module's AST unchanged. Large analyses fork workers when a timed
+probe projects enough work; `TOWEL_WORKERS=1` forces one worker.
+
+### Ecosystem checks
+
+`just ecosystem --run-untrusted-code --no-types` runs the standing ecosystem
+check (`scripts/ecosystem_check.py`) on all 141 manifest entries. It tests each
+project before and after refactoring a copy. Revisions are pinned except for
+the deliberate check of Towel's current `main`, whose resolved commit is recorded.
+
+The manifest's test requirements must cover the pinned project's selected
+suite, including CI-selected optional libraries and pytest plugins. For example,
+Tabulate's test workflow installs its NumPy, pandas and wide-character support;
+MarkdownIt's test workflow selects its `testing` and `linkify` extras. An
+all-skipped optional test family or an unknown pytest configuration option does
+not establish that this context is complete. Keep upstream constraints and
+record actual installed versions; an unpinned dependency is not an upstream pin.
+The harness does not automatically install every testing, development or docs
+group. Preserve all dependencies in an explicitly selected broad development
+extra or default group, even when they include documentation and orchestration
+tools. Name the chosen context: installing outer uv defaults alongside an inner
+tox test group is a broader corpus environment, not the original single CI
+testenv. Independent contexts with incompatible constraints remain separate.
+One selected context does not claim coverage of the whole CI matrix.
+
+A manifest `prepare` command runs at clone time for Git setup, before dependency
+installation. An optional `post_install` argv array runs from the original
+project root after installation, using `{python}` for the selected environment's
+interpreter. It uses the project's test environment and phase timeout, records
+its command and log, and a failed preparation stops before baseline as
+`SETUP_ERROR`. The prepared original tree is copied to the refactoring role.
+Dateutil selects compatible upstream-allowed pytest 8.4.2 and builds its bundled
+timezone archive with its unchanged `updatezinfo.py`. Stage the public tarball
+named by pinned `zonefile_metadata.json` locally first: missing data fails
+before any download, and the upstream builder verifies SHA512. Ordinary selected
+timezone tests require that archive too; `--ignore=tests/property` remains the
+explicit selected profile. Record staged payload and generated archive hashes.
+Selected system prerequisites need the same provenance as Python dependencies.
+Natsort's selected CI tests require its three declared locales. Provision the
+verified matching-glibc locale directories read-only at the isolated corpus
+container's standard locale lookup paths; record payload hashes and actual locale
+availability. The harness's test environment does not pass inherited `LOCPATH`.
+Missing locales leave the selected CI prerequisites unmet, even when the test
+runner completes. This does not install system packages or change the host's
+locale configuration.
+
+Peewee uses its documented local/default SQLite profile and `runtests.py`.
+Optional features can skip when their modules are absent; CPython may still
+build its default extensions from shipped C sources. Its broader CI service,
+client, extension and conditional Git dependency setup is a separate context.
+Record the actual installed extension and driver state when reviewing its run.
+
+New weak tool requirements must preserve a compatible selected lock, hook or
+requirements-file version. The manifest records those original choices; after
+installation, the environment report calls them project-installed tools.
+A tool incompatible with Towel's extras is replaced as those extras require,
+and the report records the override. That final version is an explicit
+variation from the upstream formatter/checker environment.
+
+Weekly CI explicitly uses `--no-types`: the manifest supplies runtime test
+dependencies, not every project's complete typing environment. Omit the flag
+to retain Towel's default typing policy; the harness never disables checking
+automatically. Reports record the requested typing mode and every outcome.
+
+The harness accepts `PASS`, `NO_CHANGE` and specifically documented
+`BROKEN_KNOWN` outcomes. Setup failures, typing failures, timeouts and incomplete
+test runs fail its gate. A no-change result does not validate a transformation.
+A release review must separately account for any refusal or fallback under
+[the evidence gate](docs/RELEASING.md#repository-owned-evidence-gate).
+
+These checks execute third-party code with your privileges, so use a disposable
+machine or container. The opt-in is `--run-untrusted-code` or
+`TOWEL_ECOSYSTEM_RUN_UNTRUSTED=1`.
+
+Towel runs inside each project's environment, alongside an installation of
+that project from the tested tree, Towel's `format` and `types` extras, and the
+configured checker dependencies. One wheel is built from `--towel-src` or
+supplied with `--towel-wheel`; a wheel whose code differs from the source is
+refused. Point `--towel-src` at a committed snapshot's `src` directory. Reports
+record the actual commit and dirty state; source archives need an independently
+retained source manifest. See [Production readiness](docs/PRODUCTION_READINESS.md)
+for results and qualifications.
+
+## Local release verification
+
+Choose and commit a release version before freezing its validation source.
+`just build` and `just bump-version VERSION` are development commands; they do
+not establish release fitness. Before pushing, use
+`just verify-release-evidence VERSION /path/to/release-evidence.json` to check
+the completed local evidence. After exact-commit CI and promotion to GitHub's
+default branch, run `just release VERSION /path/to/release-evidence.json`.
+It requires a clean checkout, reviewed evidence bound to the exact prebuilt
+wheel and source archive, and a live default branch that contains the validated
+commit and presents the same version and documentation links. A correct local
+checkout, release branch, or tag does not establish what GitHub's front page
+shows. Neither command rebuilds, publishes, or tags.
+
+Validation-only artifacts must preserve their nonpublication status. Additional
+documentation/tests/evidence need exact source hashes, an explicit review and
+supplemental checks; their results are not part of the frozen suite counts.
+Runtime, configuration and corpus-harness changes invalidate old evidence.
+See [the evidence schema and release procedure](docs/RELEASING.md#repository-owned-evidence-gate).
+
 ## Documentation
 
-- Update the README.md if you change functionality, and add an entry under
-  `[Unreleased]` in CHANGELOG.md
+- Keep the README focused on the project overview and first-use path. Put
+  detailed tasks and explanations in the appropriate guide linked from
+  [the documentation index](docs/README.md), and add user-visible changes
+  under `[Unreleased]` in CHANGELOG.md
+- This source documents published 1.947. Its
+  [overview](docs/RELEASE_1_947.md) describes the post-1.946 audit repairs;
+  [readiness](docs/PRODUCTION_READINESS.md) and the
+  [release procedure](docs/RELEASING.md) record the completed release and the
+  gates for its successors. Do not report missing results as passed. Published
+  1.946/1.792 artifacts and older development measurements retain their
+  original source and artifact identities. Follow the
+  [version convention](docs/RELEASING.md#version-number-convention) when choosing
+  the next identifier; mathematical mnemonics do not define compatibility policy.
+- Give each new guide an index entry and a backlink. Longer references should
+  have a compact contents list using their existing headings. Prefer relative
+  links inside `docs/`; the root README needs release-pinned absolute links
+  because it is also the PyPI description
+- When moving a measured claim, move its documentation regression to the new
+  canonical page. Preserve the evidence, numerical expectations and negative
+  mutation tests; a new layout does not change what a historical run measured
 - Add docstrings to new functions and classes
 - Update relevant documentation in the `docs/` directory: a new guard or
   rejection belongs in KNOWN_LIMITATIONS.md, a new stage or rule in
@@ -217,6 +377,11 @@ If you have questions, feel free to:
 
 Thank you for contributing to Towel!
 
-For reproducible tool versions, use `uv sync --frozen --extra dev` and the commands in README.md (`just ci` runs the same set locally). CI runs the full tests and an unconditional 85% coverage gate for each supported Python version, and on Python 3.13 also Black, flake8, mypy, Bandit, `pip-audit --strict`, and a wheel and source build; a separate weekly and on-demand workflow runs the 141-project ecosystem check on a discarded runner, and Dependabot proposes grouped dependency updates weekly. `just release VERSION` prepares local distributions only; publication requires maintainer review of the current audit and policy decisions.
+CI runs the full tests and the 85% coverage gate on each supported Python
+minor. Python 3.13 also runs formatting, lint, typing, Bandit, the strict
+dependency audit and distribution builds. The separate ecosystem workflow runs
+weekly or on demand on a discarded runner; Dependabot proposes grouped updates
+weekly. Publication still requires review of the exact source, artifacts, CI
+and policy decisions.
 
 Release maintainers should follow [docs/RELEASING.md](docs/RELEASING.md).

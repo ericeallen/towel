@@ -28,6 +28,10 @@ yet fixed: it is expected to fail, strictly, and its transformed state is
 not pinned, since the fix may extract it soundly or decline it. When the fix
 lands the fixture passes, pytest reports the XPASS as a failure, and the
 fixture moves from ``KNOWN_DEFECTS`` to ``TRANSFORMED`` or stays out of both.
+
+``REFLECTION_CASES`` instead records examples outside the equivalence contract.
+Their separate test pins extraction or an ordinary ownership refusal and
+valid syntax, without asserting preservation for reflection or instrumentation.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import tempfile
+from types import CodeType
 from typing import Dict
 
 import pytest
@@ -45,7 +50,28 @@ from tests.hostile_refactoring import refactor_script, with_known_defects
 
 CASES = Path(__file__).parent / "hostile_cases"
 
-TRANSFORMED = {
+HISTORICAL_EXTRACTIONS = {
+    "r1792_factory_finalizer_continuation",
+    "r1792_factory_finalizer_order",
+    "r1792_aliased_suppress_conditional_read",
+    # Returning opaque call results keeps these names local at the callers,
+    # including their earlier unbound reads (the battery checks both).
+    "r9bd_only_binding_read_before_block",
+    "rmypyoverlay_constructor_fields",
+    # The consumer-formatting regression also retains its original results
+    # and scopes under the ordinary hostile battery.
+    "r1792_formatting_destination_indentation",
+    # September 27: mixed expression list children can be passed as thunks;
+    # nxt() and nxt() * 10 are still called once per iteration, in order.
+    "h03_loop_reeval",
+    # The complete inner body, including both del X and its later read, moves
+    # together. X stays local and unbound in the helper; no read is left in
+    # inner to resolve to the enclosing X. ScopeWatch and execution both check
+    # this boundary, so a future partial move must not be accepted here.
+    "r9bd_only_binding_deleted_read_after",
+    "p09_static_helper_metaclass_hides_attribute",
+    "p13_protocol_default_methods",
+    "p14_protocol_common_ancestor",
     "r101_same_named_method_forces_module_helper",
     "h04_closure_freevar",
     "h05_cond_return_plus_retvar",
@@ -64,6 +90,8 @@ TRANSFORMED = {
     "r38_name_two_positions",
     "r39_cluster_alpha",
     "r40_class_hierarchy",
+    # Lazy module callee lookup remains inside the conditional branch.
+    "r41_conditional_call_param",
     "r44_cluster_nested_overlap",
     "r45_async_no_await",
     "r46_nonlocal_counter",
@@ -73,7 +101,6 @@ TRANSFORMED = {
     "h10_short_circuit",
     "r66_conditional_callee",
     "r60_local_import",
-    "r146_module_function_reads_caller_frame",
     "r144_class_cell_in_a_method_helper",
     "r142_module_data_rebound_by_callback",
     "r143_module_name_shadowed_by_a_local_elsewhere",
@@ -86,7 +113,6 @@ TRANSFORMED = {
     "r81_conditionally_bound_free_variable",
     "r82_local_classes_same_name",
     "r83_tab_indented_class",
-    "r84_warn_stacklevel",
     "r87_nested_function_in_method",
     "r88_elif_branch",
     "r90_cluster_across_classes",
@@ -218,10 +244,10 @@ TRANSFORMED = {
     "r7bi_loop_capture_def_rebind_prebound",
     # The helper returns what a later += or del of it needs.
     "r7bi_augassign_and_del_after_block",
-    # (r7bi_read_before_own_binding is declined: its block reads a local
+    # r7bi_read_before_own_binding is declined: its block reads a local
     # before binding it, which only the original's UnboundLocalError shows.
-    # r7bi_loop_del_before_eager_read is declined: a del later in the loop
-    # leaves the name unbound on the next iteration.)
+    # r7bi_loop_del_before_eager_read can move its complete body: the loop's
+    # read and later del remain together, including the next unbound read.
     # A binder that may be read unbound keeps its spelling: the deletion and
     # the handler stay with each site, and only what follows them moves.
     "r7bi_renamed_binder_named_by_unbound_error",
@@ -300,7 +326,8 @@ TRANSFORMED = {
     "r7fz_misc_async_no_await",
     "r7fz_misc_binder_renamed_unbound_message_inner",
     "r7fz_misc_block_raises_in_handler_context",
-    "r7fz_misc_decorated_lru_cache",
+    # r7fz_misc_decorated_lru_cache is declined: keeping the loop's call-
+    # supplied item alive requires returning a target an empty loop never binds.
     "r7fz_misc_except_star_reraise",
     "r7fz_misc_generator_return_block",
     "r7fz_misc_mutable_default_host",
@@ -329,16 +356,11 @@ TRANSFORMED = {
     "r7fz_thunks_lambda_default_first",
     "r7fz_thunks_match_guard",
     "r7fz_thunks_short_circuit_and",
-    # A decorator the project defines that only wraps or registers the
-    # function leaves its body alone; the r7d_instrumenting_* fixtures, whose
-    # decorators recompile the body, are declined.
+    # Ordinary wrappers and registries retain their call behavior.
     "r7d_plain_wrapper_decorator",
-    # The same applied by hand, with a known factory and a property built from
-    # its accessors; r7d_instrumenting_call_applied_by_hand, whose recompiler is
-    # applied by a call, and r7d_metaclass_recompiles_methods are declined.
+    # The same applied by hand, with a factory and a property built from its
+    # accessors. Body recompilation is covered separately by REFLECTION_CASES.
     "r7d_plain_wrapper_applied_by_hand",
-    # r9dc_stacked_decoration_by_hand, whose recompiler is applied by hand around
-    # a plain decorator and through a factory, is declined (round-4 audit P1-06).
     # A TestCase, read to be built by type, takes the class-private helper, which
     # neither unittest nor pytest collects as a test.
     "r7d_method_helper_in_a_testcase",
@@ -365,25 +387,16 @@ TRANSFORMED = {
     "r9bd_global_bound_by_every_binder",
     "r9bd_global_declared_at_one_site",
 }
-# r7fz_classhost_init_subclass_wraps and r7fz_classhost_metaclass_registry,
-# which the round-3 audit found extracted soundly, are declined since code
-# stopped moving out of classes whose machinery the method-host test cannot
-# read: an __init_subclass__ that wraps methods, and a project metaclass.
 # r7sp_directive_on_a_shared_line is declined: each block starts after, or
 # ends before, a statement that stays on a line carrying a directive.
 # r7fz_grammar_u0217_read_before_bind, a P1-7 case, is declined since its fix:
 # its block reads v6 before binding it (incomplete_lifetime_block1).
-# p09, p13, p14 and p17 left it when the classes code moves out of began to be
-# held to the method-host test of their machinery: p09's metaclass is the
-# project's, p13 and p14 derive from Protocol, whose machinery the test does
-# not accept, and p17's base carries a decorator not known to keep it.
-# p15_class_decorator_rebuilds_namespace and p16_class_decorator_wraps_every_function
-# left the set when a class decorator not known to leave its methods alone began
-# to decline blocks in them: the one rebuilds the class from its namespace, the
-# other wraps every method, and either might as well have recompiled them.
+# p09, p13 and p14 transform without the implicit-machinery guard.
+# Static helpers and helpers extracted from a Protocol remain at module level;
+# an ancestor's decorator does not decorate the subclass's own methods.
 # r153_class_definition_reads left the set when a class defined in the block
-# began to decline it: every instance and the class itself show the helper in
-# their qualified names. Its reads are still what free_variables reports.
+# began to decline it. Escaping classes remain conservative because their
+# methods can close over bindings outside the block.
 # r85_conditionally_bound_parameter left the set when a thunk of a local that
 # may be unbound at the call began to be declined: the thunk would raise
 # NameError where the block raised UnboundLocalError. Its own read never
@@ -392,9 +405,177 @@ TRANSFORMED = {
 # r86_annotated_assignment_live left the set when the trivial-helper filter
 # began declining its shared block, which binds only a literal and a parameter.
 
+# These original fixtures continue to check ordinary effects and scope. Their
+# earlier extraction pins predate the ownership proof: an exceptional exit
+# cannot hand new owned locals back to a caller retaining other values, and
+# a conditionally unbound local cannot be returned just to extend its lifetime.
+OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "h04_closure_freevar": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "h39_augassign_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "h52_del_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "h61_str_method_param": "retained local is not definitely bound on every block exit",
+    "r103_lambda_parameter_spelling": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r107_unbound_global_argument": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r108_clustered_sites_assign_the_returned_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r109_eager_optional_import_failed": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r110_eager_type_checking_import": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r111_eager_module_except_as_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r112_eager_module_match_capture_unmatched": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r113_eager_class_attr_in_method": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r114_eager_nested_class_attr": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r115_eager_class_in_function_attr": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r116_eager_enclosing_bound_after_inner_call": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r117_eager_enclosing_deleted_before_inner_call": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r118_eager_enclosing_conditionally_bound": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r119_eager_module_def_and_class_after_call": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r120_eager_module_import_after_call": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r121_eager_comprehension_variable": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r122_eager_lambda_parameter": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r130_resource_observed_after_block_differs": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r133_formfeed": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r139_literal_roundtrip": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r140_unbound_name_on_untaken_branch": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r141_module_name_bound_after_an_early_call": "retained local is not definitely bound on every block exit",
+    "r142_module_data_rebound_by_callback": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r143_module_name_shadowed_by_a_local_elsewhere": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r154_bare_annotation_reads_the_caller": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r156_created_objects_that_escape": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r157_created_objects_only_called": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r1792_aliased_suppress_conditional_read": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r1792_factory_finalizer_continuation": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r1792_factory_finalizer_order": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r39_cluster_alpha": "ordered retained-value slots do not align across sites",
+    "r45_async_no_await": "retained local is not definitely bound on every block exit",
+    "r46_nonlocal_counter": "retained local is not definitely bound on every block exit",
+    "r69_annassign": "retained local is not definitely bound on every block exit",
+    "r76_return_order": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7bi_augassign_and_del_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7bi_except_name_in_nested_block": "retained local is not definitely bound on every block exit",
+    "r7bi_renamed_binder_named_by_unbound_error": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7c_top_level_copy_beside_a_loop_copy": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7d_method_helper_in_a_testcase": "retained local is not definitely bound on every block exit",
+    "r7fz_binding_builtin_rebound_mid_module": "retained local is not definitely bound on every block exit",
+    "r7fz_binding_class_attr_vs_local": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_builtins_differ_in_builtin": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_builtins_param_named_len": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_builtins_print_shadowed_local": "retained local is not definitely bound on every block exit",
+    "r7fz_classhost_dataclass_slots_super": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_dunder_class_same_class": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_enum_methods": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_getattr_fallback": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_siblings_plain": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_underscore_class_names": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_zero_arg_super": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_directives_fmt_off_region": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_grammar_u0417_augassign_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_late_after_block_augassign": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_late_after_block_del": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_literals_cast_literal": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_literals_enum_functional": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_literals_gettext_differ": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_literals_typevar_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_misc_async_no_await": "retained local is not definitely bound on every block exit",
+    "r7fz_misc_binder_renamed_del_message": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_misc_binder_renamed_unbound_message_inner": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_misc_generator_return_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_misc_mutable_default_host": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_misc_nested_host_called_early": "retained local is not definitely bound on every block exit",
+    "r7fz_misc_super_inside_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_prebound_class_conditional_rebind": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_prebound_def_conditional_rebind": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_thunks2_lambda_kwdefault": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_thunks_conditional": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_thunks_lambda_default_first": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_thunks_short_circuit_and": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7sp_block_ends_before_a_semicolon": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r87_nested_function_in_method": "physical helper parameters plus ownership holder exceed max5",
+    "r94_import_binds_live_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r96_unpacked_targets_live": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r9bd_only_binding_read_before_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+}
+REFLECTION_OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "r106_dir_reads_the_frame": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r123_direct_eval_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r124_eval_alias_reads_preblock_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r125_locals_dir_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r127_eval_alias_partial_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r145_getframe_assigned_alias": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_init_subclass_wraps": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+    "r7fz_classhost_metaclass_registry": "owned bindings straddle a partial or uncertified whole-body frame boundary",
+}
+# r162 retains its original behavior check, but its wildcard import and bare
+# print reads now require conservative builtin-mapping refusal.
+TRANSFORMED = (
+    HISTORICAL_EXTRACTIONS - OWNERSHIP_REFUSALS.keys() - {"r162_host_star_imports_callable"}
+) | {
+    # Occurrence-specific constants recover complete-body ownership handoffs.
+    # Conditional bindings and loop deletion move with their unbound reads;
+    # no eager argument or partial helper changes the exception or lifetime.
+    "p19_thunk_of_possibly_unbound_local",
+    "p20_thunk_of_loop_variable",
+    "r7bi_loop_del_before_eager_read",
+    # The recovered historical deletion, directive, source-text and match
+    # cases likewise no longer straddle a partial ownership boundary.
+    # Certified complete-body handoff, or a binding-free inner effect block.
+    "r1792_protocol_context_target",
+    "r1792_protocol_iteration_target",
+    "r1792_value_return_owner",
+}
+
 KNOWN_DEFECTS: Dict[str, str] = {}
 """Fixtures whose defect is reported and not yet fixed, each with its reason from
 ``tests/audit_defects.py``. None is open: every round-3 P1 fixture passes."""
+
+REFLECTION_CASES: Dict[str, str] = {
+    "p15_class_decorator_rebuilds_namespace": "a decorator drops helpers from a rebuilt namespace",
+    "p16_class_decorator_wraps_every_function": "a decorator wraps scanned class members",
+    "p17_decorated_base_rebuilds_namespace": "a decorator rebuilds an ancestor's namespace",
+    "r84_warn_stacklevel": "warning locations depend on the call stack",
+    "r106_dir_reads_the_frame": "dir() observes the local namespace",
+    "r123_direct_eval_after_block": "eval() reads the local namespace",
+    "r124_eval_alias_reads_preblock_name": "an eval alias reads the local namespace",
+    "r125_locals_dir_after_block": "locals() and dir() observe moved bindings",
+    "r126_locals_in_nested_scope": "nested functions inspect local namespaces",
+    "r127_eval_alias_partial_block": "an eval alias observes moved bindings",
+    "r128_warn_stacklevel_via_alias": "warning aliases observe the call stack",
+    "r129_warning_registry_dedup": "warning deduplication depends on source locations",
+    "r145_getframe_assigned_alias": "an aliased frame reader observes moved bindings",
+    "r146_module_function_reads_caller_frame": "a function inspects its caller's frame",
+    "r159_frame_handle_before_a_nested_block": "a retained frame observes moved bindings",
+    "r7d_instrumenting_call_applied_by_hand": "a call recompiles function bodies",
+    "r7d_instrumenting_class_decorator": "a class decorator recompiles methods",
+    "r7d_instrumenting_enclosing_function": "a decorator recompiles enclosing function bodies",
+    "r7d_instrumenting_function_decorator": "a decorator recompiles function bodies",
+    "r7d_metaclass_recompiles_methods": "a metaclass recompiles method bodies",
+    "r7fz_classhost_init_subclass_wraps": "a subclass hook wraps names found by scanning vars(cls)",
+    "r7fz_classhost_metaclass_registry": "a metaclass publishes the scanned class namespace",
+    "r9dc_stacked_decoration_by_hand": "stacked calls recompile function bodies",
+}
+
+
+def _r102_transforms_on_this_compiler(fixture: Path) -> bool:
+    """Only this fixture's comprehension parameter cells vary across compilers."""
+    parameters = {
+        "scale": ("items", "factor"),
+        "rescale": ("values", "k"),
+        "summarize": ("data", "weight", "label"),
+        "render": ("self", "data", "weight"),
+    }
+    pending = [compile(fixture.read_text(), str(fixture), "exec", dont_inherit=True)]
+    functions: list[CodeType] = []
+    while pending:
+        code = pending.pop()
+        pending.extend(value for value in code.co_consts if isinstance(value, CodeType))
+        if code.co_name in parameters:
+            functions.append(code)
+    assert len(functions) == 4 and {code.co_name for code in functions} == set(parameters)
+    captures = []
+    for code in functions:
+        actual_parameters = code.co_varnames[: code.co_argcount + code.co_kwonlyargcount]
+        assert actual_parameters == parameters[code.co_name]
+        captures.append(bool(set(actual_parameters).intersection(code.co_cellvars)))
+    assert all(captures) or not any(captures), "Unknown mixed r102 parameter-cell facts"
+    return not any(captures)
 
 
 def _run(script: Path) -> tuple[int, str, list[str]]:
@@ -402,7 +583,11 @@ def _run(script: Path) -> tuple[int, str, list[str]]:
 
 
 @pytest.mark.parametrize(
-    "case", with_known_defects([path.stem for path in fixture_sources(CASES)], KNOWN_DEFECTS)
+    "case",
+    with_known_defects(
+        [path.stem for path in fixture_sources(CASES) if path.stem not in REFLECTION_CASES],
+        KNOWN_DEFECTS,
+    ),
 )
 def test_refactoring_preserves_program_output(case: str) -> None:
     fixture = fixture_named(CASES, case)
@@ -428,6 +613,26 @@ def test_refactoring_preserves_program_output(case: str) -> None:
             # No public name of the module appears, disappears, or changes meaning.
             assert module_faces(after.parent, ["m"]) == module_faces(before.parent, ["m"])
         if case not in KNOWN_DEFECTS:
-            assert transformed == (case in TRANSFORMED), (
-                "rejected" if not transformed else "transformed"
+            expected = (
+                _r102_transforms_on_this_compiler(fixture)
+                if case == "r102_whole_body_reuse"
+                else case in TRANSFORMED
             )
+            assert transformed == expected, "rejected" if not transformed else "transformed"
+
+
+@pytest.mark.parametrize("case", sorted(REFLECTION_CASES))
+def test_reflection_does_not_veto_extraction(tmp_path: Path, case: str) -> None:
+    fixture = fixture_named(CASES, case)
+    parsed_or_skipped(fixture)
+    script = tmp_path / "m.py"
+    shutil.copy(fixture, script)
+    scopes = ScopeWatch()
+    applied = refactor_script(script, file_finisher=scopes)
+    if case in REFLECTION_OWNERSHIP_REFUSALS:
+        # Reflection has no veto: the same ordinary ownership guard applies.
+        assert applied == 0, REFLECTION_OWNERSHIP_REFUSALS[case]
+    else:
+        assert applied > 0, REFLECTION_CASES[case]
+    compile(script.read_text(), str(script), "exec")
+    assert scopes.found == []

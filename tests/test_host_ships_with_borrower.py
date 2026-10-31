@@ -33,11 +33,15 @@ import shutil
 import subprocess
 import sys
 import textwrap
-from typing import Dict, Sequence
+from typing import Dict, FrozenSet, Optional, Sequence
 
 import pytest
 
-from towel.unification.import_graph import ImportGraphCache, import_runs_new_code
+from towel.unification.import_graph import (
+    ImportGraphCache,
+    _new_top_level_packages,
+    import_runs_new_code,
+)
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 BLOCK = """
@@ -54,12 +58,42 @@ BLOCK = """
 """
 
 
-def _function(name: str, tag: str, offset: int) -> str:
+def _function(name: str, tag: str, offset: int, *, safe: bool = False) -> str:
+    if safe:
+        body = (
+            BLOCK.replace('print("begin {tag}")', 'emit("begin " + tag)')
+            .replace('print("{tag}",', "emit(tag,")
+            .replace("len(items)", "size(items)")
+            .replace("{offset}", "offset")
+            .replace("    for item", "    item = 0\n    for item")
+        )
+        return (
+            "from builtins import print as emit, len as size\n\n"
+            + f"def {name}(items, scale, tag={tag!r}, offset={offset}):\n"
+            + textwrap.indent(textwrap.dedent(body).strip("\n"), "    ")
+            + "\n"
+        )
     return (
         f"def {name}(items, scale):\n"
         + textwrap.indent(textwrap.dedent(BLOCK.format(tag=tag, offset=offset)).strip("\n"), "    ")
         + "\n"
     )
+
+
+def _calls(root: Path, program: str) -> str:
+    return subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            f"import sys; sys.path.insert(0, {str(root)!r})\n" + program,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout
 
 
 def _write(root: Path, files: Dict[str, str]) -> None:
@@ -70,7 +104,7 @@ def _write(root: Path, files: Dict[str, str]) -> None:
 
 
 def _refactor(root: Path, target: str) -> bool:
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(min_lines=3, max_parameters=8, cross_module_helpers=True)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(root / target), str(root / target), progress="none"
@@ -156,18 +190,27 @@ def test_the_shipped_package_never_imports_one_that_stays_behind(
     )
 
 
-def test_a_test_module_that_imports_the_package_may_borrow_from_it(tmp_path: Path) -> None:
+@pytest.mark.parametrize("safe", [False, True])
+def test_a_test_module_that_imports_the_package_may_borrow_from_it(
+    tmp_path: Path, safe: bool
+) -> None:
     files = {
         "pyproject.toml": FLAT_PYPROJECT,
         "zeta/__init__.py": "",
-        "zeta/a.py": _function("fa", "a", 1),
+        "zeta/a.py": _function("fa", "a", 1, safe=safe),
         "tests/__init__.py": "",
-        "tests/test_b.py": "import zeta\n\n\n" + _function("test_fb", "bb", 2),
+        "tests/test_b.py": "import zeta.a\n\n\n" + _function("test_fb", "bb", 2, safe=safe),
     }
     _write(tmp_path, files)
-    assert _refactor(tmp_path, ".")
+    program = "from zeta import a; from tests import test_b; print(a.fa([1, -2], 2), test_b.test_fb([1, -2], 3))"
+    expected = _calls(tmp_path, program)
+    assert _refactor(tmp_path, ".") is safe
+    assert _calls(tmp_path, program) == expected
     assert "from tests" not in (tmp_path / "zeta" / "a.py").read_text()
-    assert "extracted_func" in (tmp_path / "tests" / "test_b.py").read_text()
+    if not safe:
+        for relative, source in files.items():
+            assert (tmp_path / relative).read_text() == source
+    assert ("extracted_func" in (tmp_path / "tests" / "test_b.py").read_text()) is safe
     assert _import_shipped(tmp_path, ["zeta"], ["zeta", "zeta.a"], tmp_path).split() == [
         "zeta",
         "ok",
@@ -203,19 +246,34 @@ def test_a_borrower_gains_only_top_level_packages_it_already_imports(tmp_path: P
     )
     cache = ImportGraphCache()
 
-    def refused(host: str, borrower: str) -> bool:
-        return import_runs_new_code(str(tmp_path / host), str(tmp_path / borrower), cache)
+    def new_packages(host: str, borrower: str, *loaded: str) -> FrozenSet[Optional[str]]:
+        host_path, borrower_path = tmp_path / host, tmp_path / borrower
+        program = cache.program_for(host_path)
+        return _new_top_level_packages(
+            {host_path, *(tmp_path / path for path in loaded)},
+            {borrower_path, *program.package_initializers(borrower_path)},
+            borrower_path,
+            program,
+        )
 
-    assert not refused("zeta/b.py", "zeta/a.py")
-    assert refused("tests/helpers.py", "zeta/a.py")
-    assert not refused("zeta/b.py", "tests/test_b.py")
-    assert refused("zeta/b.py", "scripts/tool.py")
+    # Isolate package availability from the stronger rule against new
+    # submodule loads, which can replace ordinary parent-package bindings.
+    assert new_packages("zeta/b.py", "zeta/a.py") == frozenset()
+    # No program import establishes an absolute name for the unshipped tests.
+    assert new_packages("tests/helpers.py", "zeta/a.py") == frozenset({None})
+    assert new_packages("zeta/b.py", "tests/test_b.py") == frozenset()
+    assert new_packages("zeta/b.py", "scripts/tool.py") == frozenset({"zeta"})
     # A host whose import loads a package the borrower's never imports makes
     # the borrower need it too.
-    assert refused("zeta/uses_gamma.py", "tests/test_b.py")
+    assert new_packages("zeta/uses_gamma.py", "tests/test_b.py", "gamma/util.py") == frozenset(
+        {"gamma"}
+    )
     # An import inside a function runs only when it is called: importing
     # zeta.lazy loads nothing of gamma.
-    assert not refused("zeta/lazy.py", "tests/test_b.py")
+    assert new_packages("zeta/lazy.py", "tests/test_b.py") == frozenset()
+    assert import_runs_new_code(
+        str(tmp_path / "zeta/lazy.py"), str(tmp_path / "tests/test_b.py"), cache
+    )
 
 
 def test_a_borrower_that_imports_its_host_only_in_a_function_does_not_already_run_it(
@@ -228,7 +286,7 @@ def test_a_borrower_that_imports_its_host_only_in_a_function_does_not_already_ru
             "pkg/__init__.py": "",
             "pkg/host.py": 'print("loading host")\ndef helper():\n    return 1\n',
             "pkg/lazy.py": "def use():\n    from pkg import host\n    return host.helper()\n",
-            "pkg/eager.py": "from pkg import host\ndef use():\n    return 2\n",
+            "pkg/eager.py": "import pkg.host\ndef use():\n    return 2\n",
         },
     )
     cache = ImportGraphCache()

@@ -36,6 +36,10 @@ its configuration, report changed files, and collect published diagnostics.
 Anything unexpected from the server ends the session rather than being
 interpreted, because a checker that cannot be trusted to have finished is not
 evidence that code is valid.
+A malformed diagnostic publication is rejected whole before it changes stored
+errors or acknowledges a marker. The oracle abandons that session and checks the
+same candidate with the command line; a failed fallback is a failed check.
+A valid empty diagnostic array still clears the previous diagnostics for its file.
 """
 
 from __future__ import annotations
@@ -55,7 +59,19 @@ import threading
 import time
 import tomllib
 import weakref
-from typing import Dict, Iterator, List, Literal, Mapping, Optional, Sequence, Set, Tuple, TypedDict
+from typing import (
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    TypedDict,
+    cast,
+)
 
 from .checker_project import UnusableConfiguration, _settings_chain
 from .diagnostics import LOG
@@ -749,7 +765,7 @@ class PyrightSession:
             last = time.monotonic()
             if method == "":
                 raise SessionFailure("pyright closed its output")
-            if method == "textDocument/publishDiagnostics" and isinstance(params, dict):
+            if method == "textDocument/publishDiagnostics":
                 self._record(params)
             elif method == "$/progress" and isinstance(params, dict):
                 value = params.get("value")
@@ -835,15 +851,22 @@ class PyrightSession:
                 method, params = self._events.get_nowait()
             except queue.Empty:
                 return
-            if method == "textDocument/publishDiagnostics" and isinstance(params, dict):
+            if method == "textDocument/publishDiagnostics":
                 self._record(params)
 
-    def _record(self, params: Mapping[str, object]) -> None:
-        """Take one published file's diagnostics as the current word on it."""
-        path = _path_of(str(params.get("uri", "")))
+    def _record(self, params: object) -> None:
+        """Validate a complete publication before changing diagnostics or marker state."""
+        publication = _diagnostic_object(params, "publication")
+        uri = publication.get("uri")
+        if not isinstance(uri, str):
+            raise SessionFailure("pyright diagnostics have no local file URI")
+        try:
+            path = _path_of(uri)
+        except ValueError as error:
+            raise SessionFailure("pyright diagnostics have an invalid file URI") from error
         if path is None:
-            return
-        entries = list(_diagnostics_of(path, params))
+            raise SessionFailure("pyright diagnostics have no local file URI")
+        entries = list(_diagnostics_of(path, publication))
         if Path(path).name == _MARKER_NAME:
             # The marker is this session's own and no part of the project's picture.
             self._marker_answered |= self._marker.answered_by(path, entries)
@@ -886,24 +909,47 @@ class PyrightSession:
                     pass
 
 
+def _diagnostic_object(value: object, field: str) -> Mapping[str, object]:
+    """A protocol object whose consumed fields must be validated before use."""
+    if not isinstance(value, dict):
+        raise SessionFailure(f"pyright diagnostic {field} is not an object")
+    return cast(Mapping[str, object], value)
+
+
+def _diagnostic_position(value: object) -> Tuple[int, int]:
+    position = _diagnostic_object(value, "position")
+    line, character = position.get("line"), position.get("character")
+    if type(line) is not int or type(character) is not int or line < 0 or character < 0:
+        raise SessionFailure("pyright diagnostic position is not a nonnegative integer pair")
+    return line, character
+
+
 def _diagnostics_of(path: str, params: Mapping[str, object]) -> Iterator[Diagnostic]:
     entries = params.get("diagnostics")
     if not isinstance(entries, list):
-        return
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
+        raise SessionFailure("pyright diagnostics are not an array")
+    for value in entries:
+        entry = _diagnostic_object(value, "entry")
         message = entry.get("message")
         if not isinstance(message, str):
-            continue
-        span = entry.get("range")
-        start = span.get("start") if isinstance(span, dict) else None
-        line = start.get("line") if isinstance(start, dict) else None
-        code = entry.get("code")
+            raise SessionFailure("pyright diagnostic message is not a string")
+        span = _diagnostic_object(entry.get("range"), "range")
+        start = _diagnostic_position(span.get("start"))
+        end = _diagnostic_position(span.get("end"))
+        if end < start:
+            raise SessionFailure("pyright diagnostic range ends before its start")
+        severity = entry.get("severity", 1)
+        if type(severity) is not int or severity not in _SEVERITIES:
+            raise SessionFailure("pyright diagnostic severity is not recognized")
+        code = entry.get("code", "")
+        if type(code) not in (str, int):
+            raise SessionFailure("pyright diagnostic code is not a string or integer")
+        # Related information and protocol extensions are not primary diagnostics;
+        # their presence does not alter the reported error or its source position.
         yield Diagnostic(
             path=path,
-            line=line if isinstance(line, int) else 0,
-            severity=_SEVERITIES.get(entry.get("severity"), "error"),  # type: ignore[arg-type]
+            line=start[0],
+            severity=_SEVERITIES[severity],
             message=message,
             rule=code if isinstance(code, str) else "",
         )

@@ -29,8 +29,10 @@ import unittest
 import shutil
 import tempfile
 import re
+import subprocess
 from pathlib import Path
 from typing import Dict
+from unittest.mock import patch
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -39,6 +41,13 @@ sys.path.insert(0, str(project_root))
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
 from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
+from tests.compiler_golden_profiles import (
+    PARAMETER_CELL_GOLDENS,
+    _compiled_parameter_cells,
+    _compiler_baseline,
+    _uses_parameter_cell_golden,
+)
+from tests.generate_baseline import generate_single_file_baseline
 
 
 def normalize_generated_names(code: str) -> str:
@@ -155,9 +164,115 @@ def find_duplicate_helpers(root: Path) -> list[str]:
 # - example3_file1.py / example3_file2.py: their duplicate is across the two
 #   files, which single-file mode cannot see (the cross-file run is covered by
 #   test_crossfile_integration.py).
+# - generators_async.py: the pre-suspension prefix creates owned cleaned/window
+#   locals while the original parameters remain in the caller; partial-frame
+#   ownership transfer is not proved for generators or coroutines.
+# - global_nonlocal_examples.py: moving nested nonlocal scopes is declined;
+#   the former f/g suffix creates owned call results while outer stays local
+#   in the caller, so it also lacks a certified frame ownership transfer.
 EXPECTED_UNCHANGED_EXAMPLES = frozenset(
-    {"bindings_comprehensions.py", "example3_file1.py", "example3_file2.py"}
+    {
+        "bindings_comprehensions.py",
+        "example3_file1.py",
+        "example3_file2.py",
+        "generators_async.py",
+        "global_nonlocal_examples.py",
+    }
 )
+
+# class_hierarchy's duplicated statistics read len/sum/min/max in different modules. The
+# default mode preserves those caller lookups by declining; the opt-in corpus
+# exercises the corresponding thunked extraction separately.
+# multi_level and nested_structure import package members, which may already
+# be ordinary attributes. Those imports do not guarantee that the child
+# module has loaded; adding a helper import could overwrite the attribute.
+EXPECTED_UNCHANGED_CROSSFILE_PROJECTS = frozenset(
+    {"class_hierarchy", "multi_level", "nested_structure"}
+)
+
+
+class TestCompilerGoldenSelection(unittest.TestCase):
+    def test_exact_cells_and_cell_free_profiles_have_distinct_goldens(self) -> None:
+        for expected in PARAMETER_CELL_GOLDENS.values():
+            with self.subTest(definitions=tuple(expected)):
+                self.assertTrue(_uses_parameter_cell_golden(expected, expected))
+                self.assertFalse(
+                    _uses_parameter_cell_golden({name: frozenset() for name in expected}, expected)
+                )
+
+    def test_unknown_mixed_and_missing_profiles_are_rejected(self) -> None:
+        expected = PARAMETER_CELL_GOLDENS["nested_structures.py"]
+        first = next(iter(expected))
+        for actual in (
+            {**expected, first: frozenset()},
+            {**expected, first: frozenset({"unexpected"})},
+            {name: cells for name, cells in expected.items() if name != first},
+        ):
+            with self.subTest(actual=actual), self.assertRaises(AssertionError):
+                _uses_parameter_cell_golden(actual, expected)
+
+    def test_original_definition_inventory_must_be_exact(self) -> None:
+        with self.assertRaises(AssertionError):
+            _compiled_parameter_cells("def other(): pass", {"missing"})
+        with self.assertRaises(AssertionError):
+            _compiled_parameter_cells("def f(): pass\ndef f(): pass", {"f"})
+
+    def test_generation_refuses_cell_profile_before_any_output_write(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="towel-golden-generator-") as directory:
+            root = Path(directory)
+            examples = root / "examples"
+            outputs = root / "outputs"
+            examples.mkdir()
+            outputs.mkdir()
+            (examples / "aaa.py").write_text("value = 1\n")
+            name = "edge_cases_stress_test.py"
+            (examples / name).write_bytes((project_root / "test_examples" / name).read_bytes())
+            marker = outputs / "keep.py"
+            marker.write_text("untouched\n")
+            engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+            with (
+                patch(
+                    "tests.compiler_golden_profiles._compiled_parameter_cells",
+                    return_value=PARAMETER_CELL_GOLDENS[name],
+                ),
+                patch.object(engine, "refactor_to_fixed_point") as refactor,
+                self.assertRaisesRegex(RuntimeError, "Broad regeneration"),
+            ):
+                generate_single_file_baseline(engine, examples, outputs)
+            refactor.assert_not_called()
+            self.assertEqual({p.name for p in outputs.iterdir()}, {"keep.py"})
+            self.assertEqual(marker.read_text(), "untouched\n")
+
+    def test_reviewed_cell_goldens_restore_original_definitions_and_still_extract(self) -> None:
+        examples = project_root / "test_examples"
+        goldens = project_root / "test_examples_expected_output"
+        self.assertEqual(
+            {path.name for path in (goldens / "parameter_cells").glob("*.py")},
+            set(PARAMETER_CELL_GOLDENS),
+        )
+        for file, names in PARAMETER_CELL_GOLDENS.items():
+            original = ast.parse((examples / file).read_text())
+            native = ast.parse((goldens / file).read_text())
+            retained = ast.parse((goldens / "parameter_cells" / file).read_text())
+            original_defs = {
+                n.name: n for n in ast.walk(original) if isinstance(n, ast.FunctionDef)
+            }
+            native_defs = {n.name: n for n in ast.walk(native) if isinstance(n, ast.FunctionDef)}
+            retained_defs = {
+                n.name: n for n in ast.walk(retained) if isinstance(n, ast.FunctionDef)
+            }
+            for name in names:
+                with self.subTest(file=file, definition=name):
+                    self.assertEqual(
+                        ast.dump(original_defs[name], include_attributes=False),
+                        ast.dump(retained_defs[name], include_attributes=False),
+                    )
+                    self.assertNotEqual(
+                        ast.dump(original_defs[name], include_attributes=False),
+                        ast.dump(native_defs[name], include_attributes=False),
+                    )
+            self.assertNotEqual(ast.dump(original), ast.dump(retained))
+            self.assertTrue(any(name.startswith("__extracted_func_") for name in retained_defs))
 
 
 class TestSingleFileRegression(unittest.TestCase):
@@ -257,6 +372,11 @@ class TestSingleFileRegression(unittest.TestCase):
 
         This test ensures that changes to the refactoring engine don't
         unintentionally change the output on known test cases.
+
+        The annotated_module golden deliberately quotes only generated
+        compound annotations. Keep their precise types and every original
+        annotation: blanket regeneration or annotation-insensitive comparison
+        would hide regressions in the runtime-preservation policy.
         """
         # Get all test example Python files
         python_files = [
@@ -274,7 +394,7 @@ class TestSingleFileRegression(unittest.TestCase):
                 f"[Stability {idx}/{total_files}] Comparing {py_file.name}...", end=" ", flush=True
             )
             # Check if baseline exists for this file
-            baseline_file = self.expected_output / py_file.name
+            baseline_file = _compiler_baseline(py_file, self.expected_output)
 
             if not baseline_file.exists():
                 # No baseline for this file (skip)
@@ -449,7 +569,15 @@ class TestCrossFileRegression(unittest.TestCase):
                     str(source), str(out), progress="none"
                 )
                 self.assertEqual(reason, "fixed_point", project_dir.name)
-                self.assertTrue(results, f"{project_dir.name}: nothing was refactored")
+                unchanged = project_dir.name in EXPECTED_UNCHANGED_CROSSFILE_PROJECTS
+                self.assertEqual(bool(results), not unchanged, project_dir.name)
+                if unchanged:
+                    for original in source.rglob("*.py"):
+                        self.assertEqual(
+                            original.read_bytes(),
+                            (out / original.relative_to(source)).read_bytes(),
+                            str(original),
+                        )
                 current = {
                     p.relative_to(out): normalize_generated_names(p.read_text())
                     for p in sorted(out.rglob("*.py"))
@@ -471,6 +599,61 @@ class TestCrossFileRegression(unittest.TestCase):
                 + "\n  ".join(differences)
                 + "\nIf intentional: just regenerate-baseline"
             )
+
+    def test_package_member_fixtures_preserve_existing_attributes(self) -> None:
+        """The unchanged fixtures cannot acquire imports that replace ordinary attributes."""
+        programs = {
+            "multi_level": (
+                "import api\napi.checkout = 7\n"
+                "from core.services import payment\n"
+                "print(api.checkout + 1, payment.process_payment('user', 5, 'USD'))\n",
+                "8 {'status': 'success', 'user_id': 'user', 'amount': 5, 'currency': 'USD'}\n",
+            ),
+            "nested_structure": (
+                "import lib\nlib.report_generator = 7\n"
+                "from src import data_processor\n"
+                "print(lib.report_generator + 1, data_processor.calculate_statistics([1, 2]))\n",
+                "8 {'count': 2, 'sum': 3, 'mean': 1.5}\n",
+            ),
+        }
+        for name, (program, expected) in programs.items():
+            with (
+                self.subTest(project=name),
+                tempfile.TemporaryDirectory(prefix="towel-package-binding-") as directory,
+            ):
+                source = Path(directory) / "source" / name
+                out = Path(directory) / name
+                shutil.copytree(self.crossfile_examples / name, source)
+
+                def execute(root: Path) -> subprocess.CompletedProcess[str]:
+                    return subprocess.run(
+                        [
+                            sys.executable,
+                            "-I",
+                            "-B",
+                            "-c",
+                            f"import sys; sys.path.insert(0, {str(root)!r})\n" + program,
+                        ],
+                        cwd=root,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+
+                before = execute(source)
+                self.assertEqual(before.returncode, 0, before.stderr)
+                self.assertEqual(before.stdout, expected)
+                engine = UnificationRefactorEngine(
+                    max_parameters=5, min_lines=3, cross_module_helpers=True
+                )
+                results, reason = engine.refactor_directory_to_fixed_point(
+                    str(source), str(out), progress="none"
+                )
+                self.assertFalse(results)
+                self.assertEqual(reason, "fixed_point")
+                after = execute(out)
+                self.assertEqual(after.returncode, before.returncode, after.stderr)
+                self.assertEqual((after.stdout, after.stderr), (before.stdout, before.stderr))
 
 
 def main():

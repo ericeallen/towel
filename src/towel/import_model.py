@@ -142,7 +142,6 @@ import importlib.machinery
 import os
 import sys
 import sysconfig
-import warnings
 from dataclasses import dataclass, field, replace
 from keyword import iskeyword
 from pathlib import Path
@@ -164,6 +163,10 @@ from typing import (
 from .consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES, ScanLimitExceeded
 from .declared_requirements import Requirement, declared_requirements, normalized_name, own_names
 from .shipped_files import Artifact, left_out
+from .analysis_sources import parse_analysis_source
+from .runtime_guards import module_false_guards
+from .unification.bounded_cache import BoundedCache, memoizing
+from weakref import WeakKeyDictionary
 
 __all__ = [
     "AmbiguousName",
@@ -228,9 +231,10 @@ class ImportSite:
     """One import as written: ``level`` dots, then ``module``, naming ``names`` from it.
 
     ``import a.b`` is ``(0, "a.b", ())``; each alias of ``import a, b`` is a
-    site of its own. The flags say when the statement runs: never, under
-    ``TYPE_CHECKING`` (``runtime`` is false); expecting it may fail, inside
-    ``try``/``except ImportError`` or ``suppress(ImportError)`` (``guarded``);
+    site of its own. The flags say when the statement runs: never, under a
+    locally proved false guard (``runtime`` is false); conditionally or
+    expecting it may fail, inside ``try``/``except ImportError`` or
+    ``suppress(ImportError)`` (``guarded``);
     or only when an enclosing function is called (``deferred``).
     """
 
@@ -1125,7 +1129,9 @@ speaks for.
 
 _INSTALLATIONS = frozenset({"site-packages", "dist-packages"})
 _ENVIRONMENT_MARKERS = ("pyvenv.cfg", "conda-meta")
-_NOT_PROJECT_MODULES = frozenset({"__future__", "__main__"})
+# A future directive also performs an ordinary runtime import. A project
+# module named __future__ can therefore execute code and shadow the stdlib.
+_NOT_PROJECT_MODULES = frozenset({"__main__"})
 
 
 @dataclass(frozen=True)
@@ -1296,7 +1302,7 @@ class _Listings:
         import fails as ``from .generated_at_build import VERSION`` does. A
         namespace directory binds nothing but its modules. An initializer
         that may bind names no statement shows (a star import, a module
-        ``__getattr__``, ``globals()``, a change to ``__path__`` or to
+        ``__getattr__``, a change to ``__path__`` or to
         ``sys.modules``), or that is not Python source, leaves every name
         possible. ``directory`` not being a directory leaves every name so too.
         """
@@ -1360,10 +1366,7 @@ _IMPLICIT_MODULE_NAMES = frozenset(
 
 def _read_module(path: Path) -> _Module:
     try:
-        with warnings.catch_warnings():
-            # Test data is full of invalid escapes; reading it is not the place to say so.
-            warnings.simplefilter("ignore")
-            tree = ast.parse(path.read_bytes(), filename=str(path))
+        tree = parse_analysis_source(path.read_bytes(), filename=str(path))
     except (OSError, SyntaxError, ValueError, RecursionError):
         # Its imports are unknown, so no spelling is made to or from it. It may
         # run on a newer Python, so a dry or preview run refuses before reading
@@ -1382,7 +1385,21 @@ class _When:
     deferred: bool = False
 
 
+_SCANS: "WeakKeyDictionary[ast.Module, BoundedCache[Path, _Module]]" = WeakKeyDictionary()
+
+
 def _scan(tree: ast.Module, path: Path) -> _Module:
+    """Immutable import facts of one read-only tree and its file identity."""
+    if not memoizing():
+        return _scan_tree(tree, path)
+    facts = _SCANS.get(tree)
+    if facts is None:
+        facts = _SCANS[tree] = BoundedCache(8)
+    known = facts.get(path)
+    return known if known is not None else facts.put(path, _scan_tree(tree, path))
+
+
+def _scan_tree(tree: ast.Module, path: Path) -> _Module:
     """Every import in ``tree``, module level or not, and what the file does to ``sys``.
 
     Walked with an explicit stack: a deeply nested file must not exhaust the
@@ -1390,6 +1407,7 @@ def _scan(tree: ast.Module, path: Path) -> _Module:
     """
     sites: List[ImportSite] = []
     changes_sys_path = registers_modules = False
+    false_guards = module_false_guards(tree)
     pending: List[Tuple[ast.AST, _When]] = [(tree, _When())]
     while pending:
         node, when = pending.pop()
@@ -1417,13 +1435,9 @@ def _scan(tree: ast.Module, path: Path) -> _Module:
         else:
             changes_sys_path = changes_sys_path or _changes_list(node, "path")
             registers_modules = registers_modules or _registers_modules(node)
-            pending.extend(_children(node, when))
+            pending.extend(_children(node, when, false_guards))
     ordered = sorted(sites, key=lambda site: (site.line, site.level, site.module or ""))
     return _Module(tuple(ordered), changes_sys_path, registers_modules, _module_bindings(tree))
-
-
-_OPAQUE_NAMESPACE_CALLS = frozenset({"globals", "vars", "locals", "setattr", "exec", "eval"})
-"""Names through which a module can bind names no statement shows, from anywhere in it."""
 
 
 def _module_bindings(tree: ast.Module) -> Optional[FrozenSet[str]]:
@@ -1434,17 +1448,10 @@ def _module_bindings(tree: ast.Module) -> Optional[FrozenSet[str]]:
     lets an import pass unreported, so every store counts, guarded or not. A
     ``from . import x`` binds no attribute of its own: it names the
     submodule, which either exists or fails to import; ``as y`` binds ``y``.
-    A module-level ``__getattr__``, a star import, a change to ``__path__``,
-    or any use anywhere in the file of ``globals``, ``vars``, ``locals``,
-    ``setattr``, ``exec`` or ``eval``, as bs4's ``register_treebuilders_from``
-    uses ``setattr`` on its own module, leaves every name possible.
+    A module-level ``__getattr__``, a star import or a change to ``__path__``
+    leaves every name possible. Reflective namespace mutation is outside
+    the preservation contract.
     """
-    if any(
-        (isinstance(node, ast.Name) and node.id in _OPAQUE_NAMESPACE_CALLS)
-        or (isinstance(node, ast.Attribute) and node.attr == "__dict__")
-        for node in ast.walk(tree)
-    ):
-        return None
     bound: Set[str] = set()
     pending: List[ast.AST] = list(tree.body)
     while pending:
@@ -1488,20 +1495,24 @@ def _module_bindings(tree: ast.Module) -> Optional[FrozenSet[str]]:
     return frozenset(bound)
 
 
-def _children(node: ast.AST, when: _When) -> Iterator[Tuple[ast.AST, _When]]:
+def _children(
+    node: ast.AST, when: _When, false_guards: FrozenSet[ast.expr]
+) -> Iterator[Tuple[ast.AST, _When]]:
     """``node``'s children, each with when it runs relative to the module's import."""
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         deferred = replace(when, deferred=True)
         yield from ((child, deferred) for child in ast.iter_child_nodes(node))
         return
     if isinstance(node, ast.If):
-        positive = _type_checking(node.test)
-        if positive is not None:
-            checker = replace(when, runtime=False)
-            yield node.test, when
-            yield from ((statement, checker if positive else when) for statement in node.body)
-            yield from ((statement, when if positive else checker) for statement in node.orelse)
-            return
+        yield node.test, when
+        if node.test in false_guards:
+            unreachable = replace(when, runtime=False)
+            yield from ((statement, unreachable) for statement in node.body)
+            yield from ((statement, when) for statement in node.orelse)
+        else:
+            conditional = replace(when, guarded=True)
+            yield from ((statement, conditional) for statement in (*node.body, *node.orelse))
+        return
     if isinstance(node, (ast.Try, ast.TryStar)):
         tried = replace(when, guarded=True) if _handles_import_errors(node.handlers) else when
         yield from ((statement, tried) for statement in node.body)
@@ -1515,24 +1526,6 @@ def _children(node: ast.AST, when: _When) -> Iterator[Tuple[ast.AST, _When]]:
         yield from ((statement, replace(when, guarded=True)) for statement in node.body)
         return
     yield from ((child, when) for child in ast.iter_child_nodes(node))
-
-
-def _type_checking(test: ast.expr) -> Optional[bool]:
-    """True for ``TYPE_CHECKING``, False for ``not TYPE_CHECKING``, None for any other test.
-
-    ``TYPE_CHECKING and anything`` is true only for a checker, so its body
-    never runs either; ``or`` can run.
-    """
-    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
-        return True if any(_type_checking(value) is True for value in test.values) else None
-    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
-        inner = _type_checking(test.operand)
-        return None if inner is None else not inner
-    if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
-        return True
-    if isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING":
-        return True
-    return None
 
 
 _IMPORT_ERROR_CATCHERS = frozenset(
@@ -1984,7 +1977,14 @@ def _classify(
     ``scripts.utils``.
     """
     if not candidates:
-        return TopLevelName(name, NameStatus.EXTERNAL, ())
+        # Future directives must precede definitions, but their runtime
+        # import can reenter through a shadow. Record its provider even when
+        # the project has no candidate, so early-helper placement can prove
+        # the required prefix is the standard library's inert module.
+        outside = installed(name, root) if name == "__future__" else None
+        return TopLevelName(
+            name, NameStatus.EXTERNAL, (), None if outside is None else outside.description
+        )
     outside = installed(name, root)
     if outside is not None and outside.kind is ProviderKind.UNSHADOWABLE:
         return TopLevelName(name, NameStatus.EXTERNAL, (), outside.description)

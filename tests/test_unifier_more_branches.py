@@ -169,8 +169,8 @@ class TestUnifierMoreBranches(unittest.TestCase):
         res = u.unify_blocks([blk1, blk2], [{}, {}])
         self.assertIsNone(res)
 
-    def test_constant_consistency_counts_and_alignment(self):
-        # Different counts for value 3 vs 2 cause inconsistency -> reject
+    def test_constant_occurrences_with_different_counts_and_alignment(self):
+        # A differing first assignment does not change the equal second value.
         blk_a = [
             ast.Assign(targets=[ast.Name(id="x", ctx=ast.Store())], value=ast.Constant(value=2)),
             ast.Assign(targets=[ast.Name(id="y", ctx=ast.Store())], value=ast.Constant(value=2)),
@@ -184,7 +184,14 @@ class TestUnifierMoreBranches(unittest.TestCase):
             ast.fix_missing_locations(m)
         u = Unifier(parameterize_constants=True)
         res1 = u.unify_blocks([blk_a, blk_b], [{}, {}])
-        self.assertIsNone(res1)
+        self.assertIsNotNone(res1)
+        assert res1 is not None
+        self.assertEqual(len(res1.param_expressions), 1)
+        for index, block in enumerate((blk_a, blk_b)):
+            first, second = block
+            assert isinstance(first, ast.Assign) and isinstance(second, ast.Assign)
+            self.assertIsNotNone(res1.get_param_for_expr(index, first.value))
+            self.assertIsNone(res1.get_param_for_expr(index, second.value))
 
         # Alignment case: both positions differ consistently -> allow parameterization
         blk_c = [
@@ -199,8 +206,9 @@ class TestUnifierMoreBranches(unittest.TestCase):
             m = ast.Module(body=list(seq), type_ignores=[])
             ast.fix_missing_locations(m)
         res2 = u.unify_blocks([blk_c, blk_d], [{}, {}])
-        # Should either unify with a substitution or at least not crash
         self.assertIsNotNone(res2)
+        assert res2 is not None
+        self.assertEqual(len(res2.param_expressions), 1)
 
     def test_try_parameterize_joinedstr_guard(self):
         # Field type mismatch with JoinedStr should hit _try_parameterize and be rejected by the guard

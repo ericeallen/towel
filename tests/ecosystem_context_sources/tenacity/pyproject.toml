@@ -1,0 +1,140 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "tenacity/_version.py"
+
+[project]
+name = "tenacity"
+dynamic = ["version"]
+description = "Retry code until it succeeds"
+readme = "README.rst"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+authors = [
+    { name = "Julien Danjou", email = "julien@danjou.info" },
+]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/jd/tenacity"
+Documentation = "https://tenacity.readthedocs.io"
+Source = "https://github.com/jd/tenacity"
+Issues = "https://github.com/jd/tenacity/issues"
+Changelog = "https://tenacity.readthedocs.io/en/latest/changelog.html"
+
+[project.optional-dependencies]
+doc = [
+    "reno",
+    "sphinx",
+]
+test = [
+    "pytest",
+    "tornado>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "poethepoet",
+    "pytest",
+    "tornado>=6.0",
+    "ruff==0.16.5",
+    "mypy==2.3.1",
+    "sphinx",
+    "reno",
+    "trio",
+]
+
+[tool.poe.tasks]
+test = "pytest"
+docs-doctest = "sphinx-build -a -E -W -b doctest doc/source doc/build"
+docs-html = "sphinx-build -a -E -W -b html doc/source doc/build"
+docs = ["docs-doctest", "docs-html"]
+check = ["test", "docs"]
+mypy = "mypy"
+reno = "reno"
+
+[tool.poe.tasks.fmt]
+sequence = [
+    { cmd = "ruff check --fix ." },
+    { cmd = "ruff format ." },
+]
+
+[tool.poe.tasks.lint]
+sequence = [
+    { cmd = "ruff check ." },
+    { cmd = "ruff format --check ." },
+]
+
+[tool.poe.tasks.all]
+sequence = [
+    { ref = "lint" },
+    { ref = "mypy" },
+    { ref = "check" },
+]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "once::DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 88
+indent-width = 4
+target-version = "py310"
+exclude = ["tenacity/_version.py"]
+
+[tool.ruff.lint]
+select = ["ASYNC", "B", "C4", "DTZ", "E", "EXE", "F", "FLY", "FURB", "I", "ICN", "ISC", "LOG", "PERF", "PGH", "PIE", "PTH", "PYI", "RET", "RSE", "RUF", "SIM", "SLF", "SLOT", "T10", "TC", "UP", "W"]
+ignore = [
+    "B008",  # function calls in default arguments (intentional API design)
+    "B905",  # zip() without strict= (not needed in existing code)
+    "E501",  # line too long (formatter handles what it can)
+    "PYI036",  # false positive on string-quoted __exit__ annotations
+    "RUF003",  # ambiguous unicode characters in comments (copyright names)
+    "RUF005",  # iterable unpacking vs concatenation (less readable for tuple +)
+    "RUF012",  # mutable class default (test constant, never mutated)
+    "SIM108",  # ternary instead of if-else (less readable in context)
+]
+
+[tool.mypy]
+strict = true
+# Match `requires-python`, so results do not depend on which interpreter
+# happens to run mypy. Without this it defaults to the running version and
+# silently skips checking that the code is valid on the oldest one we support.
+python_version = "3.10"
+files = ["tenacity", "tests"]
+show_error_codes = true
+exclude = ["tenacity/_version\\.py"]
+# `strict` is not "everything" -- these are checks it leaves off.
+warn_unreachable = true
+disallow_any_unimported = true
+extra_checks = true
+enable_error_code = [
+    "deprecated",
+    "exhaustive-match",
+    "explicit-override",
+    "ignore-without-code",
+    "mutable-override",
+    "possibly-undefined",
+    "redundant-expr",
+    "truthy-bool",
+    "truthy-iterable",
+    "unused-awaitable",
+]
+

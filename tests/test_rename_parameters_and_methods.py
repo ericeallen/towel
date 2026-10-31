@@ -127,7 +127,7 @@ def test_class_helper_rename_updates_every_attribute_reference(tmp_path: Path) -
     assert "_extracted_func_3" not in a + b
 
 
-def test_class_helper_rename_refuses_existing_or_dynamic_names(tmp_path: Path) -> None:
+def test_class_helper_rename_checks_identifier_collisions_only(tmp_path: Path) -> None:
     target = _project(
         tmp_path,
         {
@@ -140,5 +140,7 @@ def test_class_helper_rename_refuses_existing_or_dynamic_names(tmp_path: Path) -
     )
     with pytest.raises(ValueError, match="already appears"):
         plan_renames(target, [("_extracted_func_0", "taken", None)])
-    with pytest.raises(ValueError, match="referenced by name"):
-        plan_renames(target, [("_extracted_func_0", "fresh", None)])
+    _apply(target, {"_extracted_func_0": "fresh"})
+    updated = (target / "m.py").read_text()
+    assert "def fresh(self):" in updated
+    assert "getattr(self, '_extracted_func_0')" in updated

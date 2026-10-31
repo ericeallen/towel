@@ -15,11 +15,14 @@
 """Pass a thunk's expression eagerly when doing so is unobservable.
 
 A thunk parameter is evaluated inside the helper at the original position.
-When the helper evaluates that thunk before any other effect, exactly once,
-and on every path, evaluating the expression at the call site instead
+When every caller proves an immutable result, and the helper evaluates that
+thunk before any other effect, exactly once, and on every path, evaluating
+the expression at the call site instead
 changes nothing an observer can see: the call site's own arguments are
 names, literals, tuples of those, lambda creations, or earlier such thunks
-in the same order. This pass detects that situation from the helper body
+in the same order. Unknown results remain deferred because an eager parameter
+would retain a temporary beyond its original last use. This pass detects the
+eligible situation from the original argument expressions and helper body
 and turns the thunk back into an ordinary argument, so the helper reads
 ``__param_0`` rather than ``__param_0()``.
 
@@ -62,6 +65,7 @@ from typing import (
     Union,
 )
 
+from .compiler_literals import immutable_literal_value
 from .substitution import Substitution
 
 
@@ -97,18 +101,37 @@ def inline_leading_thunks(
 ) -> Set[str]:
     """Inline thunks that the helper evaluates first, once, unconditionally.
 
-    Thunks are considered in the helper's evaluation order and must appear in
-    increasing parameter position, because call-site arguments are evaluated
+    Every caller must prove an immutable result. Thunks are considered in the
+    helper's evaluation order and must appear in increasing parameter
+    position, because call-site arguments are evaluated
     left to right. Returns the inlined parameter names; ``helper`` and
     ``substitution`` are updated in place.
     """
-    # A thunk is a function parameter with no bound variables. The extractor
-    # also lists it under ``params_used_as_callee`` because the body calls it,
-    # so that set cannot distinguish thunks from forwarded callees here.
-    candidates = {name for name, bound in substitution.function_params.items() if not bound}
-    if not candidates:
-        return set()
     inlined: List[str] = []
+    for name in _eligible_leading_thunks(helper, substitution):
+        if inlined and param_order[name] <= param_order[inlined[-1]]:
+            break
+        inlined.append(name)
+    return _apply(helper, substitution, inlined)
+
+
+def _eligible_leading_thunks(
+    helper: ast.FunctionDef, substitution: Substitution
+) -> Tuple[str, ...]:
+    """The complete certified evaluation prefix, independent of signature discovery order.
+
+    This discovery does not change the helper or substitution. A thunk is a
+    function parameter with no bound variables; every caller must prove an
+    immutable result. Every other existing inlining guard applies here.
+    """
+    candidates = {
+        name
+        for name, bound in substitution.function_params.items()
+        if not bound and _immutable_thunk_results(substitution, name)
+    }
+    if not candidates:
+        return ()
+    eligible: List[str] = []
     bound = _parameter_names(helper.args)
     for statement in helper.body:
         if isinstance(statement, (ast.Global, ast.Nonlocal)):
@@ -117,18 +140,88 @@ def inline_leading_thunks(
         for step in steps:
             thunk = _thunk_name(step, candidates)
             if thunk is not None:
-                if thunk in inlined or not _single_use(helper, thunk):
-                    return _apply(helper, substitution, inlined)
-                if inlined and param_order[thunk] <= param_order[inlined[-1]]:
-                    return _apply(helper, substitution, inlined)
-                inlined.append(thunk)
+                if thunk in eligible or not _single_use(helper, thunk):
+                    return tuple(eligible)
+                eligible.append(thunk)
                 continue
             if not _effect_free(step, bound):
-                return _apply(helper, substitution, inlined)
+                return tuple(eligible)
             bound = bound | _names_bound_by(step)
         if not complete:
             break
-    return _apply(helper, substitution, inlined)
+    return tuple(eligible)
+
+
+def _ordered_thunk_slots(arguments: Sequence[ast.arg], ranks: Mapping[str, int]) -> List[ast.arg]:
+    """Permute only contiguous certified slots, retaining every argument node unchanged."""
+    ordered = list(arguments)
+    start = 0
+    while start < len(ordered):
+        if ordered[start].arg not in ranks:
+            start += 1
+            continue
+        end = start + 1
+        while end < len(ordered) and ordered[end].arg in ranks:
+            end += 1
+        ordered[start:end] = sorted(ordered[start:end], key=lambda argument: ranks[argument.arg])
+        start = end
+    return ordered
+
+
+def reorder_eligible_thunk_parameters(
+    helper: ast.FunctionDef, substitution: Substitution, param_order: Dict[str, int]
+) -> Dict[str, int]:
+    """Order certified thunk slots in an owned helper signature before eager inlining.
+
+    Free variables, eager parameters and other noncandidates keep their slots.
+    The positional-only boundary cannot move. Defaults, variadic arguments and
+    keyword-only signatures remain untouched. Only the argument lists change;
+    annotations, locations, body and substitution retain their original nodes.
+    A changed signature gets a complete position map, including free variables.
+    """
+    arguments = helper.args
+    if (
+        arguments.defaults
+        or arguments.vararg is not None
+        or arguments.kwarg is not None
+        or arguments.kwonlyargs
+        or arguments.kw_defaults
+    ):
+        return param_order
+    parameters = [*arguments.posonlyargs, *arguments.args]
+    if len({argument.arg for argument in parameters}) != len(parameters):
+        return param_order
+    ranks = {
+        name: index for index, name in enumerate(_eligible_leading_thunks(helper, substitution))
+    }
+    positional_only = _ordered_thunk_slots(arguments.posonlyargs, ranks)
+    ordinary = _ordered_thunk_slots(arguments.args, ranks)
+    if positional_only == arguments.posonlyargs and ordinary == arguments.args:
+        return param_order
+    arguments.posonlyargs = positional_only
+    arguments.args = ordinary
+    return {argument.arg: index for index, argument in enumerate((*positional_only, *ordinary))}
+
+
+def _immutable_thunk_results(substitution: Substitution, name: str) -> bool:
+    """Every caller proves a value whose extra parameter reference cannot affect release.
+
+    Evaluation order alone does not certify lifetime: a temporary consumed
+    inside the helper would otherwise remain owned by its eager parameter.
+    Names, calls, attributes and subscripts have unknown results, regardless
+    of annotations or whether their reads are definitely bound.
+    """
+    expressions = substitution.param_expressions.get(name, ())
+    return bool(expressions) and all(
+        immutable_literal_value(expression)
+        or (
+            isinstance(expression, ast.UnaryOp)
+            and isinstance(expression.op, (ast.UAdd, ast.USub, ast.Invert))
+            and isinstance(expression.operand, ast.Constant)
+            and type(expression.operand.value) in (bool, int, float, complex)
+        )
+        for _, expression in expressions
+    )
 
 
 def effect_free(expression: ast.expr, bound: AbstractSet[str] = frozenset()) -> bool:

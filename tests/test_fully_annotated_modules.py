@@ -33,25 +33,27 @@ from tests.typed_fixtures import apply_one, requires_mypy
 NO_MYPY_CONFIGURATION = "[project]\nname = 'labels'\nversion = '0'\n"
 
 LABELS = """
-def encode(text: str, strict: bool) -> list[str]:
+def encode() -> list[str]:
+    text = "a.b"
+    strict = True
     trailing_dot = False
     result = []
     labels = text.split(".") if strict else text.split(",")
     if not labels or labels == [""]:
         raise ValueError("empty")
-    for label in labels:
-        result.append(label.upper())
+    result.append(labels[0].upper())
     return result if not trailing_dot else result + [""]
 
 
-def decode(text: str, strict: bool) -> list[str]:
+def decode() -> list[str]:
+    text = "a.b"
+    strict = True
     trailing_dot = False
     result = []
     labels = text.split(".") if strict else text.split(",")
     if not labels or labels == [""]:
         raise ValueError("empty")
-    for label in labels:
-        result.append(label.lower())
+    result.extend([label.lower() for label in labels])
     return result if not trailing_dot else result + [""]
 """
 
@@ -64,7 +66,9 @@ def test_only_an_unannotated_helper_is_declined_in_a_fully_annotated_module(
     assert outcome.error is not None, outcome.module
     message = str(outcome.error)
     assert "would be the one unannotated function of its module" in message, message
-    assert all(": " in signature for signature in outcome.checked_helpers), outcome.checked_helpers
+    assert all(
+        " -> " in signature for signature in outcome.checked_helpers
+    ), outcome.checked_helpers
 
 
 @requires_mypy

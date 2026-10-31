@@ -66,7 +66,9 @@ from .progress import (
     render_inline_bar,
 )
 from .parallel import ParallelEvaluation
+from .pair_evaluation import deferring_pair_if_proofs
 from .bounded_cache import BoundedCache
+from .argument_ownership import ArgumentHandoffMemo
 from .engine_state import (
     BlockSite,
     ClusteredSite,
@@ -77,10 +79,11 @@ from .engine_state import (
     UnifyKey,
 )
 from .defaults import DEFAULT_MAX_CANDIDATE_PAIRS, DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
+from .extraction_policy import protected_definitions
 from .function_index import FunctionIndex
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
 from .import_graph import ImportGraphCache
-from .namespace_writes import ProjectWrites
+from .builtin_mapping_writes import project_may_replace_builtin_mapping
 from .block_signature import (
     BlockBucketKey,
     BlockSignature,
@@ -88,10 +91,15 @@ from .block_signature import (
     signature_bucket_key,
 )
 from ..coverage_config import CoverageExclusion
+from ..consumers import MAXIMUM_FILES
+from .if_binding_transfer import sharing_if_transfer_sources
+from .compiler_literals import sharing_compiler_literal_facts
+from .return_source_uses import sharing_return_source_uses
 from .models import (
     CodeBlockPair,
     FunctionArtifact,
     ClassInfo,
+    PairTally,
     PairVerdict,
     RefactoringProposal,
     RejectReason,
@@ -103,6 +111,12 @@ from ..type_baseline import KnownErrors
 from ..type_inference import TypeOracle
 from ..source_files import python_sources
 from ..source_text import read_source
+from ..analysis_sources import (
+    ParserConfiguration,
+    parser_configuration,
+    parsing_is_pure,
+    sharing_analysis_sources,
+)
 from .pipeline import run_pipeline, AnalysisSession
 
 _SignedBlock = Tuple[Tuple[int, int], List[ast.stmt], BlockSignature]
@@ -164,6 +178,10 @@ class _Partners:
                 for place, index in enumerate(indices)
             },
         )
+
+    def participates(self, index: int) -> bool:
+        """Whether another function can pair with this function, before incremental filtering."""
+        return self.count > 1 if self.by_module is None else len(self.by_module[index][0]) > 1
 
     def after(self, index: int) -> Sequence[int]:
         """The functions after ``index``, in order, that it is paired with."""
@@ -322,6 +340,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         annotate_helpers: bool = True,
         type_oracle: Optional[TypeOracle] = None,
         snippet_formatter: Optional[Callable[[str], str]] = None,
+        snippet_formatter_for_file: Optional[
+            Callable[[str], Optional[Callable[[str], str]]]
+        ] = None,
         file_finisher: Optional[Callable[[str, str], str]] = None,
         incremental_global_passes: bool = True,
         max_candidate_pairs: int = DEFAULT_MAX_CANDIDATE_PAIRS,
@@ -331,8 +352,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         Initialize the refactoring engine.
 
         Args:
-            max_parameters: Maximum parameters an extracted helper may take; a
-                candidate needing more is rejected (default: 5).
+            max_parameters: Maximum newly parameterized differing expressions
+                (default: 5); ordinary free inputs may add arguments. A certified
+                whole-body ownership transfer must fit its complete positional
+                signature, including the final lifetime holder, within this limit.
             min_lines: Minimum number of source lines a duplicated block must span
                 to be considered (default: 3).
             max_candidate_pairs: Most block pairs one analysis evaluates. Blocks
@@ -355,14 +378,14 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 package is read from the imports that use it.
             promote_equal_hof_literals: Expose literal arguments of higher-order
                 factory calls as parameters even when they are equal across blocks
-                (Option B policy); default False.
-            parameterize_builtins: Where a builtin the duplicated code reads may
-                differ between its sites -- one site's function binds ``len`` and
-                the other reads the builtin, or, across modules, the program shows
-                a participating module may hold the name -- pass it to the helper
-                as a parameter, each site giving its own, instead of declining
-                the pair (default: False). A builtin every site reads alike is
-                still read bare.
+                (Option B policy); default False. This explicit API opt-in does not
+                merge independent bindings or change deferred lookup timing.
+            parameterize_builtins: Permit caller-side builtin lookup suppliers
+                across modules, or where sites otherwise resolve the builtin
+                differently, instead of declining the pair (default: False).
+                Each original use reads that caller's current binding. The same
+                spelling across modules does not prove equal bindings; same-module
+                builtin reads stay bare. Other binding checks still apply.
             excluded_directories: Names of directories, or of files, to leave
                 unchanged, matched at any depth, such as a package's own test
                 suite. The checks that read the whole program still read them,
@@ -379,16 +402,19 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 written: an extraction then changes nothing about how the
                 project's modules depend on each other at run time. A helper
                 whose annotations need a type another module defines still
-                gets a type-only import under ``TYPE_CHECKING``, which never
+                gets a type-only import under ``if 0 > 1:``, which never
                 runs (docs/DECISIONS.md, *Cross-module extraction is opt-in*).
-            skip_trivial_helpers: Skip proposing a helper whose body is a single
-                forwarding statement -- a lone ``raise``, a ``return`` of one
-                call, or a bare call -- which adds indirection without sharing any
-                logic (default: True).
+            skip_trivial_helpers: Apply optional forwarding and tiny straight-line
+                interface-cost filters (default: True). The latter compares the
+                complete signature and call-wrapper burden with work shared by
+                at most two simple statements across the sites. False bypasses
+                those output-quality filters, not semantic checks or unconditional
+                no-logic refusals (docs/DECISIONS.md, "Tiny helpers must repay
+                their interface cost").
             reuse_existing_functions: Deprecated, and has no effect. It chose
                 whether a site that is the whole body of a plain module-level
                 function was left alone and the other sites rewritten to call
-                it; since 1.772 every whole-body site calls a new helper
+                it; since 1.772 an extracted input function calls a fresh helper
                 instead, because such a call looked the other function up in
                 its module each time, so patching or rebinding it changed both.
                 Still accepted so existing callers keep working; it will be
@@ -413,6 +439,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 call statement from ``ast.unparse`` output to the text that is
                 inserted, for example Black (see ``towel.formatting``). None
                 (default) inserts the ``ast.unparse`` text as is.
+            snippet_formatter_for_file: Selects a formatter from each modified
+                file's original project path. This preserves per-file settings
+                in directory and cross-module runs. Mutually exclusive with
+                snippet_formatter; None uses the existing single formatter.
             file_finisher: Maps ``(path, source)`` of each modified file to its
                 final text, for example with imports sorted the way the project
                 sorts them (see ``towel.formatting.import_sorter_for_project``).
@@ -451,7 +481,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._type_names_any = {}
         self._type_unlooked = {}
         self._type_unreadable = frozenset()
+        if snippet_formatter is not None and snippet_formatter_for_file is not None:
+            raise ValueError("Supply either snippet_formatter or snippet_formatter_for_file")
         self.snippet_formatter = snippet_formatter
+        self.snippet_formatter_for_file = snippet_formatter_for_file
         self.file_finisher = file_finisher
         self.incremental_global_passes = incremental_global_passes
         # Directory names left out of directory mode, such as ``tests`` when a
@@ -525,13 +558,19 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._per_block_cache: BoundedCache[PerBlockKey, object] = BoundedCache(
             self.STRUCTURAL_CACHE_LIMIT
         )
-        self._parse_cache: BoundedCache[str, ast.Module] = BoundedCache(64)
+        self._argument_handoff_memo = ArgumentHandoffMemo()
+        self._parse_cache: BoundedCache[Tuple[str, ParserConfiguration], ast.Module] = BoundedCache(
+            64
+        )
         # Every cache entry is registered under the absolute path(s) of the
         # file(s) it describes, so a file that changes between fixed-point
         # iterations evicts exactly its own entries and unchanged files keep
         # theirs across iterations.
         self._cache_entries_by_path: Dict[str, List[Tuple[MutableMapping[Any, Any], Any]]] = {}
         self._function_paths: WeakKeyDictionary[FunctionNode, str] = WeakKeyDictionary()
+        self._extraction_exclusions: WeakKeyDictionary[
+            FunctionNode, Tuple[Tuple[int, int], ...]
+        ] = WeakKeyDictionary()
         self._function_index_cache: Optional[Tuple[Sequence[FunctionArtifact], FunctionIndex]] = (
             None
         )
@@ -539,16 +578,23 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._helper_name_counters: Dict[str, int] = {}
         # Helper-shaped names anywhere in each project, scanned once per engine.
         self._project_helper_names: Dict[str, HelperNameClaims] = {}
-        # Writes into module namespaces anywhere in each project, scanned once
-        # per engine: patches of a builtin that decline a cross-module pair.
-        self._namespace_writes: Dict[str, ProjectWrites] = {}
         # What each project's coverage.py excludes, read once per engine.
         self._coverage_exclusions: Dict[str, CoverageExclusion] = {}
         self._origins_in_run: Dict[Tuple[str, Optional[Tuple[Path, Path]]], Path] = {}
+        self._project_builtin_mapping_replacements: Mapping[str, bool] = {}
+        # Local refreshes visit only the rewritten files. Keep prior root/fact
+        # observations for other files so changing that subset is not mistaken
+        # for a changed project dependency. An evicted observation fails closed.
+        self._builtin_mapping_snapshots: BoundedCache[str, Tuple[Path, bool]] = BoundedCache(
+            MAXIMUM_FILES
+        )
         self._seen_proposals: Set[Hashable] = set()
         self._pair_rejection: Optional[RejectReason] = None
         self._pair_rejection_subject: Optional[str] = None
         self._pair_rejections: Dict[str, int] = {}
+        self._duplicate_pairs = 0
+        self._proposing_pairs = 0
+        self._pair_tally = PairTally()
         self._pair_identity: Optional[Hashable] = None
         self._trace_at_identity = 0
         self._captured_trace: Optional[List[str]] = None
@@ -702,6 +748,33 @@ class UnificationRefactorEngine(ParallelEvaluation):
             changed_files: When given, only pairs with a function in one of
                 these files are considered (see ``incremental_global_passes``).
         """
+        with (
+            sharing_analysis_sources(check_ast_immutable=self._settings.check_ast_immutable),
+            sharing_if_transfer_sources(),
+            sharing_compiler_literal_facts(),
+            sharing_return_source_uses(self),
+            deferring_pair_if_proofs(self),
+        ):
+            return self._analyze_files(
+                file_paths,
+                progress=progress,
+                invalidate_paths=invalidate_paths,
+                changed_files=changed_files,
+            )
+
+    def _analyze_files(
+        self,
+        file_paths: List[str],
+        *,
+        progress: ProgressMode,
+        invalidate_paths: Optional[List[str]],
+        changed_files: Optional[FrozenSet[str]],
+    ) -> List[RefactoringProposal]:
+        """Analyze with the caller's shared, bounded source context active."""
+        # The index and last unification's inputs belong to one analysis.
+        # Release them even when the next analysis has no candidate pairs.
+        self._function_index_cache = None
+        self.unifier.release_blocks()
         # Every file of the analysis must fit, or each pass re-parses them all.
         self.analysis_session.hold_at_least(
             len(file_paths), sum(_size_or_zero(path) for path in file_paths)
@@ -709,6 +782,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         if self._output_origin is None:
             # Outside a fixed-point run the analysis is the run.
             self._forget_run_lookups()
+            self.import_graph.begin_run()
         stale = {os.path.abspath(path) for path in (invalidate_paths or ())}
         stale.update(
             os.path.abspath(path) for path in file_paths if not self.analysis_session.reusable(path)
@@ -716,6 +790,26 @@ class UnificationRefactorEngine(ParallelEvaluation):
         for path in stale:
             self._evict_cached_analysis(path)
         self._analysis_paths = tuple(file_paths)
+        roots = {path: self._project_root_in_run(path) for path in file_paths}
+        mapping_writes = {
+            root: project_may_replace_builtin_mapping(root, frozenset(self.excluded_directories))
+            for root in sorted(set(roots.values()))
+        }
+        replacements = {os.path.abspath(path): mapping_writes[root] for path, root in roots.items()}
+        mapping_changed = False
+        for path, root in roots.items():
+            absolute = os.path.abspath(path)
+            snapshot = (root, mapping_writes[root])
+            if self._builtin_mapping_snapshots.get(absolute) != snapshot:
+                mapping_changed = True
+            self._builtin_mapping_snapshots.put(absolute, snapshot)
+        if mapping_changed:
+            # A third, unchanged/excluded module can change every candidate's
+            # mapping dependency. Neither file digests nor changed-file pairing
+            # alone capture that input to clustered-call admission.
+            self._cluster_scan_cache.clear()
+            changed_files = None
+        self._project_builtin_mapping_replacements = replacements
         if self.cross_module_helpers and file_paths:
             # Read the program's imports before any pair is judged or a
             # worker forked, once for the project; a run's stage has them.
@@ -743,9 +837,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
 
     def _parse_source(self, source: str) -> ast.Module:
         """``ast.parse(source)``, remembered for the last few sources; callers never mutate the tree."""
-        tree = self._parse_cache.get(source)
+        if not parsing_is_pure(source):
+            return ast.parse(source)
+        key = source, parser_configuration()
+        tree = self._parse_cache.get(key)
         if tree is None:
-            tree = self._parse_cache.put(source, ast.parse(source))
+            tree = self._parse_cache.put(key, ast.parse(source))
         return tree
 
     def _sid(self, nodes: Sequence[ast.AST]) -> str:
@@ -813,6 +910,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
             if os.path.abspath(function_path) == absolute:
                 del self._function_paths[function]
                 self._function_sources.pop(function, None)
+                self._extraction_exclusions.pop(function, None)
 
     def _function_index(self, all_functions: Sequence[FunctionArtifact]) -> FunctionIndex:
         """The index of ``all_functions``, built once and shared by every pair of the analysis.
@@ -827,9 +925,26 @@ class UnificationRefactorEngine(ParallelEvaluation):
         return cached[1]
 
     def _record_function_paths(self, all_functions: Sequence[FunctionArtifact]) -> None:
+        exclusions: Dict[str, Tuple[Tuple[int, int], ...]] = {}
         for entry in all_functions:
+            if entry.file_path not in exclusions:
+                exclusions[entry.file_path] = (
+                    tuple(
+                        definition.line_range
+                        for definition in protected_definitions(
+                            entry.source,
+                            entry.scope_analyzer.analyzed_tree or self._parse_source(entry.source),
+                        )
+                    )
+                    if "# towel: no-extract" in entry.source
+                    else ()
+                )
             self._function_paths[entry.node] = entry.file_path
             self._function_sources[entry.node] = entry.module_digest
+            if exclusions[entry.file_path]:
+                self._extraction_exclusions[entry.node] = exclusions[entry.file_path]
+            else:
+                self._extraction_exclusions.pop(entry.node, None)
 
     def process_block_pairs(
         self,
@@ -840,6 +955,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
         progress: ProgressMode,
     ) -> List[RefactoringProposal]:
         self._pair_rejections = {}
+        self._duplicate_pairs = self._proposing_pairs = 0
+        self._pair_tally = PairTally()
         if not block_pairs:
             return []
 
@@ -847,15 +964,23 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._settled_identities = set()
         self._record_function_paths(all_functions)
         if self._should_use_parallel(len(block_pairs)):
-            return self._evaluate_pairs_parallel(
+            proposals = self._evaluate_pairs_parallel(
                 block_pairs, all_functions, class_infos, progress=progress
             )
-        return self._evaluate_pairs_serial(
-            block_pairs,
-            all_functions,
-            class_infos,
-            progress=progress,
+        else:
+            proposals = self._evaluate_pairs_serial(
+                block_pairs,
+                all_functions,
+                class_infos,
+                progress=progress,
+            )
+        # A settled proposal that repeats an earlier one is dropped when the
+        # proposals are made distinct, so its pair is a duplicate too.
+        repeats = self._proposing_pairs - len(proposals)
+        self._pair_tally = PairTally(
+            len(block_pairs), self._duplicate_pairs + repeats, len(proposals)
         )
+        return proposals
 
     def _judge_pair(
         self,
@@ -868,7 +993,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         A pair declined only because another pair already proposed the same
         refactoring loses nothing, so it is not counted. A pair declined
         without a traced reason is counted as ``other``, and a reason naming
-        something is counted with it: ``decorator_may_transform_body[numba.njit]``.
+        something is counted with it: ``builtin_may_differ_by_module[len]``.
         Pairs are judged here in their own order; forked evaluation judges
         them out of it (``_pair_verdict``) and settles them in it.
         """
@@ -915,6 +1040,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
             self._trace_rejection(line)
         if duplicate:
             self._debug_reject(RejectReason.DUPLICATE_PROPOSAL, pair)
+            self._duplicate_pairs += 1
             return None
         for line in verdict.after_identity:
             self._trace_rejection(line)
@@ -922,6 +1048,11 @@ class UnificationRefactorEngine(ParallelEvaluation):
             self._pair_rejections[verdict.counted] = (
                 self._pair_rejections.get(verdict.counted, 0) + 1
             )
+        elif verdict.proposal is None:
+            # Its own judgement found the duplicate (``_finish_proposal``).
+            self._duplicate_pairs += 1
+        else:
+            self._proposing_pairs += 1
         return verdict.proposal
 
     def _rejection_key(self) -> str:
@@ -1006,12 +1137,16 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # forks, so a configuration that cannot be read is reported once.
         for path in sorted({entry.file_path for entry in all_functions}):
             self._coverage_exclusion(path)
-        blocks = [self._signed_blocks(entry.node) for entry in all_functions]
-        buckets = [_bucketed(function_blocks) for function_blocks in blocks]
-        # Without cross-module helpers a function pairs only with the others
-        # of its own module, so no pair across modules is formed, counted
-        # against the budget, or evaluated.
+        # Eligibility precedes block materialization: a module singleton has
+        # no partner unless cross-module helpers are enabled. Earlier partners
+        # count too, including generated helpers from previous passes. Keep
+        # incremental filtering below the budget calculation, as before.
         partners = _Partners.of(all_functions, self.cross_module_helpers)
+        blocks = [
+            self._signed_blocks(entry.node) if partners.participates(index) else []
+            for index, entry in enumerate(all_functions)
+        ]
+        buckets = [_bucketed(function_blocks) for function_blocks in blocks]
         excluded = _buckets_over_budget(buckets, self.max_candidate_pairs, partners)
         if excluded:
             buckets = [bucket.without(excluded) for bucket in buckets]

@@ -1,5 +1,7 @@
 # Proposal: form a Template Method instead of extracting a free helper
 
+[Proposals and experiments](README.md) · [Documentation index](../README.md)
+
 Status: idea recorded 2026-09-18; not designed, not implemented. Research
 needed before design (see *What we need to find out*). Since 2026-09-22 the
 owner's decision "Towel does not change externally visible class design"
@@ -8,6 +10,13 @@ class is the paired coding agent's change to make, from the module function
 Towel extracts, as an ordinary edit checked by the project's tests and type
 checker.
 Author: design note from the 2026-09 audit sessions
+
+**October 10 status:** Template Method research and reviewed agent assistance
+remain deferred in prepared, unpublished 1.946. Automatic superclass, base-list
+or MRO rewrites remain ruled out. The mechanical rendering plan and old visitor
+census below preserve the original proposal, not an available mode or an
+implementation commitment. The October 2 reflection decision does not revoke
+the separate class-design rule.
 
 ## The observation
 

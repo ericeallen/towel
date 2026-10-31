@@ -21,8 +21,12 @@ and renamed with its references in that class's body, to a name that is
 class-private too; an older class-level helper defined once is renamed with
 every attribute reference; a helper's parameter is renamed within the
 helper's own scope. Only statically resolved names are supported: renaming
-needs every consumer in the selected source tree, and dynamic lookup or an
-escaping module object is rejected where it is visible in that tree.
+checks ordinary consumers across the enclosing project, refusing any edit
+outside the selected source tree. Without a project marker or regular-package
+ancestry, library callers must supply a complete source root as the target
+(a standalone file declares its containing directory). An escaping
+module object is rejected because its attribute uses cannot be resolved.
+Reflective lookup is outside the rename contract.
 """
 
 from __future__ import annotations
@@ -38,7 +42,7 @@ from typing import Iterable, Literal, NamedTuple, Sequence, cast
 
 from .changes import ChangePlan
 from .import_model import ImportModel, build_import_model
-from .project_layout import find_project_root
+from .project_layout import find_project_root, is_package_dir
 from .source_text import decode_source
 from .source_files import python_sources
 from .unification.class_private import (
@@ -47,6 +51,7 @@ from .unification.class_private import (
     mangled,
     mangling_classes,
     mangling_prefix,
+    rewritten_identifiers,
 )
 from .unification.models import GENERATED_HELPER_NAME, FunctionNode
 from .unification.statement_facts import import_binding_names, imported_binding_name
@@ -157,6 +162,7 @@ class _Scope:
     globals: frozenset[str]
     nonlocals: frozenset[str]
     parameters: frozenset[str] = frozenset()
+    private_class: str | None = None
 
 
 def _scope(
@@ -164,7 +170,11 @@ def _scope(
     kind: ScopeKind,
     nodes: Iterable[ast.AST],
     args: ast.arguments | None = None,
+    *,
+    private_class: str | None = None,
 ) -> _Scope:
+    if kind != "class" and parent is not None:
+        private_class = parent.private_class
     collector = _Bindings()
     for node in nodes:
         collector.visit(node)
@@ -174,13 +184,18 @@ def _scope(
         collector.local.update(parameters)
         parameters.update(arg.arg for arg in (args.vararg, args.kwarg) if arg is not None)
         collector.local.update(parameters)
+
+    def stored(names: Iterable[str]) -> frozenset[str]:
+        return frozenset(mangled(name, private_class) for name in names)
+
     return _Scope(
         parent,
         kind,
-        frozenset(collector.local - collector.global_names - collector.nonlocal_names),
-        frozenset(collector.global_names),
-        frozenset(collector.nonlocal_names),
-        frozenset(parameters),
+        stored(collector.local) - stored(collector.global_names) - stored(collector.nonlocal_names),
+        stored(collector.global_names),
+        stored(collector.nonlocal_names),
+        stored(parameters),
+        private_class,
     )
 
 
@@ -214,14 +229,19 @@ class _Scopes(ScopeVisitor):
         elif isinstance(node, ast.Lambda):
             self.current = _scope(self.current, "function", [node.body], node.args)
         elif isinstance(node, ast.ClassDef):
-            self.current = _scope(self.current, "class", node.body)
+            self.current = _scope(self.current, "class", node.body, private_class=node.name)
         else:
             comprehension = cast(ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp, node)
             collector = _Bindings()
             for generator in comprehension.generators:
                 collector.visit(generator.target)
             self.current = _Scope(
-                self.current, "comprehension", frozenset(collector.local), frozenset(), frozenset()
+                self.current,
+                "comprehension",
+                frozenset(mangled(name, self.current.private_class) for name in collector.local),
+                frozenset(),
+                frozenset(),
+                private_class=self.current.private_class,
             )
 
     def _leave_scope(self, node: ast.AST) -> None:
@@ -256,6 +276,7 @@ def _module_scope(scope: _Scope) -> _Scope:
 
 
 def _resolve(scope: _Scope, name: str) -> _Scope:
+    name = mangled(name, scope.private_class)
     current = scope
     while (parent := current.parent) is not None:
         if name in current.globals:
@@ -283,93 +304,6 @@ class _Module:
     scopes: _Scopes
 
 
-_DYNAMIC_NAMESPACE_NAMES = frozenset({"globals", "locals", "vars", "dir", "eval", "exec"})
-_DYNAMIC_ATTRIBUTE_CALLS = frozenset({"getattr", "setattr", "hasattr", "delattr"})
-_REFLECTIVE_BUILTINS = _DYNAMIC_NAMESPACE_NAMES | _DYNAMIC_ATTRIBUTE_CALLS
-
-
-class _BuiltinReferences:
-    """Lexically resolved reflective builtins, including imported and assigned aliases.
-
-    Alias sets grow monotonically: a rebinding can make a refusal conservative,
-    but cannot hide an earlier reflective use. Shadowed builtin spellings alone
-    are not aliases. The same policy covers module, method and parameter names.
-    """
-
-    def __init__(self, module: _Module) -> None:
-        self.scopes = module.scopes
-        self.aliases: dict[tuple[_Scope, str], frozenset[str]] = {}
-        nodes = list(ast.walk(module.tree))
-        for node in nodes:
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name == "builtins":
-                        self._add(node, alias.asname or alias.name, frozenset({"builtins"}))
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == "builtins":
-                for alias in node.names:
-                    if alias.name in _REFLECTIVE_BUILTINS:
-                        self._add(node, alias.asname or alias.name, frozenset({alias.name}))
-        grew = True
-        while grew:
-            grew = False
-            for node in nodes:
-                if (
-                    isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
-                    and node.value is not None
-                ):
-                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                    for target in targets:
-                        grew = self._assignment(target, node.value) or grew
-
-    def _assignment(self, target: ast.AST, value: ast.AST) -> bool:
-        if isinstance(target, ast.Name):
-            return self._add(target, target.id, self.resolve(value))
-        if isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List)):
-            if len(target.elts) == len(value.elts):
-                updates = [
-                    self._assignment(left, right) for left, right in zip(target.elts, value.elts)
-                ]
-                return any(updates)
-        return False
-
-    def _add(self, node: ast.AST, name: str, origins: frozenset[str]) -> bool:
-        key = (_resolve(self.scopes.nodes[node], name), name)
-        previous = self.aliases.get(key, frozenset())
-        updated = previous | origins
-        self.aliases[key] = updated
-        return updated != previous
-
-    def resolve(self, node: ast.AST) -> frozenset[str]:
-        """Reflective builtins this expression may denote, or the builtins module."""
-        if isinstance(node, ast.Name):
-            scope = _resolve(self.scopes.nodes[node], node.id)
-            origins = self.aliases.get((scope, node.id), frozenset())
-            if (
-                scope is self.scopes.root
-                and node.id not in scope.bindings
-                and node.id in _REFLECTIVE_BUILTINS
-            ):
-                origins |= {node.id}
-            return origins
-        if isinstance(node, ast.Attribute) and node.attr in _REFLECTIVE_BUILTINS:
-            if "builtins" in self.resolve(node.value):
-                return frozenset({node.attr})
-        return frozenset()
-
-    def namespace_read(self, node: ast.AST) -> bool:
-        return bool(self.resolve(node) & _DYNAMIC_NAMESPACE_NAMES)
-
-    def looks_up(self, call: ast.Call, names: Iterable[str]) -> bool:
-        if not self.resolve(call.func) & _DYNAMIC_ATTRIBUTE_CALLS:
-            return False
-        if len(call.args) < 2:
-            return True
-        name = call.args[1]
-        return not isinstance(name, ast.Constant) or (
-            isinstance(name.value, str) and name.value in names
-        )
-
-
 class _Edits:
     def __init__(self, module: _Module) -> None:
         self.module = module
@@ -391,24 +325,61 @@ class _Edits:
             raise ValueError("a parsed node carries its end position")
         self.add(node.lineno, node.col_offset, node.end_lineno, node.end_col_offset, replacement)
 
-    def identifier(self, node: FunctionNode | ast.Global, old: str, new: str) -> None:
+    def identifier(
+        self,
+        node: FunctionNode | ast.Global | ast.arg | ast.keyword | ast.Attribute,
+        old: str,
+        new: str,
+    ) -> None:
+        """Edit normalized NAME identities using their original UTF-8 source spans."""
         source = self.module.raw.decode("utf-8")
+        found = False
+        definition_name_next = False
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
             if token.start[0] < node.lineno:
                 continue
             if token.start[0] > (node.end_lineno or node.lineno):
                 break
-            if token.type == tokenize.NAME and token.string == old:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if token.string == "def":
+                    definition_name_next = True
+                    continue
+                if not definition_name_next:
+                    continue
+                if (
+                    token.type != tokenize.NAME
+                    or unicodedata.normalize("NFKC", token.string) != old
+                ):
+                    break
+            if token.type == tokenize.NAME and unicodedata.normalize("NFKC", token.string) == old:
                 line = self.lines[token.start[0] - 1].decode("utf-8")
+                column = len(line[: token.start[1]].encode("utf-8"))
+                end_column = len(line[: token.end[1]].encode("utf-8"))
+                if (token.start[0], column) < (node.lineno, node.col_offset):
+                    continue
+                if (
+                    node.end_lineno is not None
+                    and node.end_col_offset is not None
+                    and (token.end[0], end_column) > (node.end_lineno, node.end_col_offset)
+                ):
+                    continue
+                if isinstance(node, ast.Attribute) and (token.end[0], end_column) != (
+                    node.end_lineno,
+                    node.end_col_offset,
+                ):
+                    continue
                 self.add(
                     token.start[0],
-                    len(line[: token.start[1]].encode("utf-8")),
+                    column,
                     token.end[0],
-                    len(line[: token.end[1]].encode("utf-8")),
+                    end_column,
                     new,
                 )
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found = True
+                if not isinstance(node, ast.Global):
                     return
+        if not found:
+            raise ValueError(f"Missing identifier {old} at {self.module.path}:{node.lineno}")
 
     def render(self) -> bytes:
         result = self.module.raw
@@ -505,6 +476,22 @@ class _ParameterSpec(NamedTuple):
         return qualified, self.parameter
 
 
+def inferred_rename_root(target: Path) -> Path | None:
+    """An enclosing consumer scope established by metadata or regular-package ancestry.
+
+    A bare namespace directory does not establish its surrounding project.
+    CLI callers require an explicit completeness declaration in that case;
+    library callers retain the documented complete-target precondition.
+    """
+    root = find_project_root(target)
+    if any((root / name).exists() for name in ("pyproject.toml", "setup.cfg")) or (
+        (root / "setup.py").exists() and not is_package_dir(root)
+    ):
+        return root
+    directory = target if target.is_dir() else target.parent
+    return root if is_package_dir(directory) else None
+
+
 def plan_renames(
     target: Path, specifications: Sequence[tuple[str, str, Path | None]]
 ) -> tuple[ChangePlan, int]:
@@ -520,20 +507,32 @@ def plan_renames(
     (:func:`_validate_private_renames`); an older class-level helper is
     renamed together with every attribute reference to it, which is sound
     only because generated helper names are unique across the project.
+
+    The target selects definitions and writable files; the enclosing project
+    supplies read-only consumer analysis. An edit outside the target refuses
+    the whole batch. Without a discoverable project anchor, the caller declares
+    the target (or a file target's parent) to be the complete consumer scope.
     """
     for old, new, _ in specifications:
         _validate_names((*old.split("."), new))
-    modules = _load_rename_modules(target)
-    private, specifications = _class_private_specifications(modules, specifications)
+    selected_paths = frozenset(path.resolve() for path in python_sources(target))
+    root = find_project_root(target)
+    modules = _load_rename_modules(root)
+    definition_modules = [module for module in modules if module.path in selected_paths]
+    private, specifications = _class_private_specifications(definition_modules, specifications)
     function_specifications, parameter_specifications = _split_specifications(specifications)
     parameter_specifications += [
         _ParameterSpec(helper.name, parameter, new, helper.module.path, helper)
         for helper, parameter, new in private
         if parameter is not None
     ]
-    parameter_calls = _ParameterCallsites(modules, parameter_specifications)
+    parameter_calls = _ParameterCallsites(
+        modules, parameter_specifications, definition_modules=definition_modules
+    )
     by_name = {module.name: module for module in modules}
-    selected, method_specifications = _select_definitions(modules, function_specifications)
+    selected, method_specifications = _select_definitions(
+        definition_modules, function_specifications
+    )
     _extend_to_generated_importers(modules, selected)
     _refuse_unresolved_helper_imports(modules, selected)
     method_renames = _validate_method_renames(modules, method_specifications)
@@ -555,10 +554,17 @@ def plan_renames(
         edits = _plan_module(module, selected, by_name)
         _plan_method_renames(module, method_renames, edits)
         _plan_private_renames(module, private_renames, edits)
-        parameters_found |= _plan_parameter_renames(module, parameter_specifications, edits)
+        if module.path in selected_paths:
+            parameters_found |= _plan_parameter_renames(module, parameter_specifications, edits)
         parameter_calls.plan(module, edits)
         content = edits.render()
         if content != module.raw:
+            if module.path not in selected_paths:
+                raise ValueError(
+                    f"Rename consumer {module.path} lies outside the selected target {target}. "
+                    f"Rerun at project root {root} with a file-qualified mapping key or --file "
+                    "to select the definition. No files were changed."
+                )
             before[str(module.path)] = module.original
             after[str(module.path)] = content.decode("utf-8")
             count += len(edits.changes)
@@ -695,32 +701,20 @@ def _validate_private_renames(
     as the definition and as ``obj.__old`` in the class's own body, which the
     rename rewrites: an explicit ``obj._Box__old`` anywhere, an unmangled
     ``__old`` in another class of the same name, a bare ``__old`` or the
-    stored name as a string all refuse the batch, as does a lookup by a
-    computed name or a namespace read in the class's body, which could build
-    the stored name. The new stored name, ``_Box__new``, must be spelled
-    nowhere at all.
+    stored name as an identifier all refuse the batch. The new stored name,
+    ``_Box__new``, must be unused by other identifiers. Reflective lookup is
+    outside the rename contract.
     """
     if not renames:
         return []
     stored_spellings: dict[str, list[tuple[_Module, ast.AST, ast.ClassDef | None]]] = {}
-    strings: set[str] = set()
-    dynamic: set[int] = set()
     for module in modules:
         owners = mangling_classes(module.tree)
-        builtins = _BuiltinReferences(module)
         for node in ast.walk(module.tree):
             owner = owners.get(node)
             for name in _spelled_names(node):
                 stored = mangled(name, owner.name if owner is not None else None)
                 stored_spellings.setdefault(stored, []).append((module, node, owner))
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                strings.add(node.value)
-            if owner is not None and (
-                builtins.namespace_read(node)
-                or isinstance(node, ast.Call)
-                and builtins.looks_up(node, ())
-            ):
-                dynamic.add(id(owner))
     accepted: list[tuple[_PrivateHelper, str]] = []
     destinations: set[tuple[int, str]] = set()
     for helper, new in renames:
@@ -754,16 +748,8 @@ def _validate_private_renames(
                 f" in its class's body: {module.path}:{getattr(node, 'lineno', '?')};"
                 " rename it manually"
             )
-        if helper.stored in strings:
-            raise ValueError(
-                f"{where} is spelled {helper.stored!r} in a string; rename it manually"
-            )
-        if id(helper.owner) in dynamic:
-            raise ValueError(
-                f"Dynamic attribute lookup in {helper.qualname}'s body prevents renaming {where}"
-            )
         new_stored = prefix + new
-        if new_stored in stored_spellings or new_stored in strings:
+        if new_stored in stored_spellings:
             raise ValueError(
                 f"New method name {new} in {helper.qualname} already appears in the project"
             )
@@ -792,13 +778,7 @@ def _plan_private_renames(
             ):
                 if node.end_lineno is None or node.end_col_offset is None:
                     raise ValueError("a parsed node carries its end position")
-                edits.add(
-                    node.end_lineno,
-                    node.end_col_offset - len(node.attr.encode("utf-8")),
-                    node.end_lineno,
-                    node.end_col_offset,
-                    new,
-                )
+                edits.identifier(node, node.attr, new)
 
 
 def _load_rename_modules(target: Path) -> list[_Module]:
@@ -876,10 +856,18 @@ def _select_definitions(
     return selected, method_specifications
 
 
-def _identifiers_in(node: ast.AST) -> set[str]:
-    """Every identifier a subtree binds, references, or names as an attribute."""
+def _identifiers_in(
+    node: ast.AST, *, private_classes: dict[ast.AST, ast.ClassDef | None] | None = None
+) -> set[str]:
+    """Every raw identifier of a subtree, with compiler identities when requested."""
     names: set[str] = set()
     for child in ast.walk(node):
+        if private_classes is not None:
+            owner = private_classes.get(child)
+            names.update(
+                mangled(name, owner.name if owner is not None else None)
+                for name in rewritten_identifiers(child)
+            )
         if isinstance(child, ast.Name):
             names.add(child.id)
         elif isinstance(child, ast.arg):
@@ -987,17 +975,13 @@ def _validate_method_renames(
     project_identifiers: set[str] = set()
     definitions: dict[str, int] = {}
     bare_references: set[str] = set()
-    dynamic_calls: list[tuple[_BuiltinReferences, ast.Call]] = []
     for module in modules:
-        builtins = _BuiltinReferences(module)
         project_identifiers |= _identifiers_in(module.tree)
         for node in ast.walk(module.tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 definitions[node.name] = definitions.get(node.name, 0) + 1
             elif isinstance(node, ast.Name):
                 bare_references.add(node.id)
-            elif isinstance(node, ast.Call):
-                dynamic_calls.append((builtins, node))
     renames: dict[str, str] = {}
     for old, new in specifications:
         if is_class_private(old) or is_class_private(new):
@@ -1015,9 +999,7 @@ def _validate_method_renames(
             raise ValueError(f"Class helper {old} must be defined exactly once to be renamed")
         if new in project_identifiers:
             raise ValueError(f"New method name {new} already appears in the project")
-        if old in bare_references or any(
-            aliases.looks_up(call, {old}) for aliases, call in dynamic_calls
-        ):
+        if old in bare_references:
             raise ValueError(f"Class helper {old} is referenced by name; rename it manually")
         if renames.get(old, new) != new:
             raise ValueError(f"Conflicting renames for class helper {old}")
@@ -1034,13 +1016,7 @@ def _plan_method_renames(module: _Module, renames: dict[str, str], edits: _Edits
         elif isinstance(node, ast.Attribute) and node.attr in renames:
             if node.end_lineno is None or node.end_col_offset is None:
                 raise ValueError("a parsed node carries its end position")
-            edits.add(
-                node.end_lineno,
-                node.end_col_offset - len(node.attr.encode("utf-8")),
-                node.end_lineno,
-                node.end_col_offset,
-                renames[node.attr],
-            )
+            edits.identifier(node, node.attr, renames[node.attr])
 
 
 def _plan_parameter_renames(
@@ -1055,7 +1031,7 @@ def _plan_parameter_renames(
     """
     found: set[tuple[str, str]] = set()
     scopes = module.scopes
-    builtins = _BuiltinReferences(module)
+    private_classes = mangling_classes(module.tree) if specifications else None
     for spec in specifications:
         helper, parameter, new, file_filter = (
             spec.helper,
@@ -1085,37 +1061,33 @@ def _plan_parameter_renames(
             found.add(spec.key)
             if parameter == new:
                 continue
-            if new in _identifiers_in(function) or _private_in_class(scopes.nodes[function], new):
+            if new in _identifiers_in(
+                function, private_classes=private_classes
+            ) or _private_in_class(scopes.nodes[function], new):
                 raise ValueError(
                     f"Parameter rename would collide with {new} in {module.path}:{helper}"
                 )
             if not function.body:
                 continue
-            if any(builtins.namespace_read(node) for node in ast.walk(function)):
-                raise ValueError(
-                    f"Dynamic namespace access prevents safe parameter rename: {module.path}:{helper}"
-                )
             own_scope = scopes.nodes[function.body[0]]
+            parameter_binding = mangled(parameter, own_scope.private_class)
             for node in ast.walk(function):
-                if isinstance(node, (ast.Global, ast.Nonlocal)) and parameter in node.names:
+                if isinstance(node, (ast.Global, ast.Nonlocal)) and any(
+                    mangled(name, scopes.nodes[node].private_class) == parameter_binding
+                    for name in node.names
+                ):
                     raise ValueError(
                         f"Parameter {parameter} is redeclared in a nested scope: {module.path}"
                     )
             for arg in matching:
                 if arg.end_lineno is None or arg.end_col_offset is None:
                     raise ValueError("a parsed node carries its end position")
-                edits.add(
-                    arg.lineno,
-                    arg.col_offset,
-                    arg.end_lineno,
-                    arg.col_offset + len(parameter.encode("utf-8")),
-                    new,
-                )
+                edits.identifier(arg, parameter, new)
             for node in ast.walk(function):
                 if (
                     isinstance(node, ast.Name)
-                    and node.id == parameter
-                    and _resolve(scopes.nodes[node], parameter) is own_scope
+                    and mangled(node.id, scopes.nodes[node].private_class) == parameter_binding
+                    and _resolve(scopes.nodes[node], node.id) is own_scope
                 ):
                     edits.node(node, new)
     return found
@@ -1151,6 +1123,8 @@ class _ParameterCallsites:
         self,
         modules: Sequence[_Module],
         specifications: Sequence[_ParameterSpec],
+        *,
+        definition_modules: Sequence[_Module],
     ) -> None:
         self.symbols: dict[tuple[_Scope, str], tuple[_ParameterRename, ...]] = {}
         self.methods: dict[str, tuple[_ParameterRename, ...]] = {}
@@ -1164,7 +1138,7 @@ class _ParameterCallsites:
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     stored = self._stored(node.name, owners.get(node))
                     definitions[stored] = definitions.get(stored, 0) + 1
-        for module in modules:
+        for module in definition_modules:
             owners = self.owners[module.name]
             for node in ast.walk(module.tree):
                 if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1273,7 +1247,8 @@ class _ParameterCallsites:
                         else ()
                     )
                     if targets and (
-                        set(targets) != set(imported) or name in _resolve(scope, name).parameters
+                        set(targets) != set(imported)
+                        or mangled(name, scope.private_class) in _resolve(scope, name).parameters
                     ):
                         raise ValueError(
                             f"Rebound callable prevents safe parameter rename: {module.path}:{name}"
@@ -1317,14 +1292,7 @@ class _ParameterCallsites:
             elif isinstance(node, ast.ImportFrom):
                 resolver._plan_import_from(node)
         resolver._check_alias_bindings()
-        helper_names = {name for _, name in self.symbols} | set(self.methods)
         for node in ast.walk(module.tree):
-            if resolver.builtins.namespace_read(node) or (
-                isinstance(node, ast.Call) and resolver.builtins.looks_up(node, helper_names)
-            ):
-                raise ValueError(
-                    f"Dynamic namespace access prevents safe parameter rename: {module.path}"
-                )
             targets: tuple[_ParameterRename, ...] = ()
             if isinstance(node, ast.Name):
                 targets = self.symbols.get(
@@ -1373,13 +1341,7 @@ class _ParameterCallsites:
                     f"Dynamic keyword arguments prevent safe parameter rename: {edits.module.path}"
                 )
             if argument.arg in replacements:
-                edits.add(
-                    argument.lineno,
-                    argument.col_offset,
-                    argument.lineno,
-                    argument.col_offset + len(argument.arg.encode("utf-8")),
-                    replacements[argument.arg],
-                )
+                edits.identifier(argument, argument.arg, replacements[argument.arg])
 
 
 class _ModulePlanner:
@@ -1406,7 +1368,6 @@ class _ModulePlanner:
         self.protected_modules = set(protected_modules or ()) | {name for name, _ in selected}
         self.edits = _Edits(module)
         self.scopes = module.scopes
-        self.builtins = _BuiltinReferences(module)
         self.parents = {
             child: parent
             for parent in ast.walk(module.tree)
@@ -1523,7 +1484,8 @@ class _ModulePlanner:
     def _check_alias_bindings(self) -> None:
         for (binding_scope, local), imported_module in self.imports.items():
             if self._has_renamed_members(imported_module) and (
-                binding_scope.kind == "class" or local in binding_scope.parameters
+                binding_scope.kind == "class"
+                or mangled(local, binding_scope.private_class) in binding_scope.parameters
             ):
                 raise ValueError(f"Ambiguous module alias binding: {self.module.path}:{local}")
 
@@ -1546,12 +1508,9 @@ class _ModulePlanner:
         if isinstance(node, ast.Attribute):
             self._plan_attribute(node)
         self._check_module_escape(node)
-        self._check_dynamic_namespace(node)
         if isinstance(node, ast.Name):
             self._check_alias_rebinding(node)
         self._check_string_annotations(node)
-        if isinstance(node, ast.Call):
-            self._check_dynamic_lookup(node)
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             self._check_string_exports(node)
 
@@ -1581,7 +1540,11 @@ class _ModulePlanner:
         scope = self.scopes.nodes[node]
         if node.id not in self.local_renames:
             return
-        if scope.kind == "class" and node.id in scope.bindings and isinstance(node.ctx, ast.Load):
+        if (
+            scope.kind == "class"
+            and mangled(node.id, scope.private_class) in scope.bindings
+            and isinstance(node.ctx, ast.Load)
+        ):
             raise ValueError(f"Ambiguous class namespace lookup: {self.module.path}:{node.id}")
         if _resolve(scope, node.id) is not self.scopes.root:
             return
@@ -1597,7 +1560,8 @@ class _ModulePlanner:
     def _plan_global(self, node: ast.Global) -> None:
         for old, new in self.local_renames.items():
             if old in node.names:
-                if new in self.scopes.nodes[node].bindings:
+                scope = self.scopes.nodes[node]
+                if mangled(new, scope.private_class) in scope.bindings:
                     raise ValueError(
                         f"Rename conflicts with global declaration: {self.module.path}:{new}"
                     )
@@ -1619,13 +1583,7 @@ class _ModulePlanner:
             raise ValueError(
                 f"Class-private attribute mangling prevents safe rename: {self.module.path}"
             )
-        self.edits.add(
-            node.end_lineno,
-            node.end_col_offset - len(node.attr.encode("utf-8")),
-            node.end_lineno,
-            node.end_col_offset,
-            new,
-        )
+        self.edits.identifier(node, node.attr, new)
 
     def _check_module_escape(self, node: ast.AST) -> None:
         """A renamed module used other than as the object of an attribute access escapes."""
@@ -1638,10 +1596,6 @@ class _ModulePlanner:
                 f"Module object escapes static rename analysis: "
                 f"{self.module.path}:{expression_origin}"
             )
-
-    def _check_dynamic_namespace(self, node: ast.AST) -> None:
-        if self.local_renames and self.builtins.namespace_read(node):
-            raise ValueError(f"Dynamic namespace access prevents safe rename: {self.module.path}")
 
     def _check_alias_rebinding(self, node: ast.Name) -> None:
         if not isinstance(node.ctx, (ast.Store, ast.Del)):
@@ -1679,10 +1633,6 @@ class _ModulePlanner:
             for part in ast.walk(annotation)
         ):
             raise ValueError(f"String annotation requires manual rename: {self.module.path}")
-
-    def _check_dynamic_lookup(self, node: ast.Call) -> None:
-        if self.local_renames and self.builtins.looks_up(node, self.local_renames):
-            raise ValueError(f"Dynamic name lookup prevents safe rename: {self.module.path}")
 
     def _check_string_exports(self, node: ast.Assign | ast.AnnAssign) -> None:
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]

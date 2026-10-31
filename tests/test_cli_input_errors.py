@@ -91,10 +91,10 @@ def test_preview_of_one_file_is_silent_under_progress_none(
     source = tmp_path / "m.py"
     source.write_text(
         "def a(v):\n    x = v + 1\n    y = x * 2\n    z = y - 3\n    return z\n\n"
-        "def b(v):\n    x = v + 1\n    y = x * 2\n    z = y - 3\n    return z + 1\n"
+        "def b(v):\n    x = v + 1\n    y = x * 2\n    z = y - 3\n    return z\n"
     )
     arguments = _build_parser().parse_args(["preview", str(source), "--progress", "none"])
     _run_preview(arguments)
     captured = capsys.readouterr()
     assert "\r" not in captured.out and "\r" not in captured.err
-    assert "Found 1 refactoring opportunit" in captured.out
+    assert "Would apply 1 refactoring" in captured.out

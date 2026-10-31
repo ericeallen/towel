@@ -1,9 +1,41 @@
 # Known limitations
 
+[Documentation index](README.md)
+
 This document states what Towel verifies about a transformation, what it
-rejects, and what remains outside its model. Read it together with
+rejects, and where its implementation has limits. Towel must preserve the
+behavior of programs that do not use reflection or self-instrumentation,
+including through code they call. A behavior change in such a program is a
+soundness defect: fix the transformation or refuse it. Documenting an
+implementation gap does not waive this requirement.
+
+Reflection and self-instrumentation
+are excluded under the [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract);
+they are not detected to refuse or warn on a program. Read this together with
 [the production readiness report](PRODUCTION_READINESS.md) and
 [the adversarial review](ADVERSARIAL_REVIEW.md).
+
+**Contents**
+
+- [What every accepted proposal verifies](#what-is-verified-for-every-accepted-proposal)
+- [Observable differences](#observable-differences-that-remain) · [Reflection and stack depth](#reflection-over-a-namespace-and-stack-depth)
+- [Cross-file imports](#a-cross-file-helper-adds-an-import-of-its-host-module)
+- [Method insertion](#method-insertion) · [Helper types](#type-annotations-on-helpers)
+- [Body instrumentation](#decorators-that-compile-or-instrument-a-body)
+- [Conservative rejections](#conservative-rejections)
+- [Unreadable programs](#a-program-towel-cannot-read-whole)
+- [Rename consumer scope](#rename-consumer-scope)
+- [Performance](#performance) · [Resources and platform](#resources-and-platform) · [Measurement environment](#measurement-environment)
+
+## Rename consumer scope
+
+Renaming analyzes ordinary consumers across its discovered enclosing project,
+and refuses edits needed outside the selected target. An unmarked CLI target
+requires an explicit `--complete-scope` declaration; library callers retain
+the complete-target precondition where project discovery has no anchor.
+Excluded sources and external installed consumers are outside that scope;
+unreadable included sources refuse the batch. See [definition selection and
+consumer scope](NAMING.md#definition-selection-and-consumer-scope).
 
 ## Measurement environment
 
@@ -50,14 +82,29 @@ describe belong to that version.
   Expressions that read names bound inside the block are lambda-lifted with
   those names as arguments.
   A thunk the helper evaluates first, exactly once, and before any other
-  effect is passed eagerly after all, because the call site's evaluation is
-  then indistinguishable from the in-place one (`thunk_inlining.py`). What
+  effect can be passed eagerly only when every caller proves an immutable
+  result (`thunk_inlining.py`). Calls, attributes, subscriptions and unknown
+  name results retain their thunks: an eager parameter would hold an extra
+  reference until the helper returns, changing temporary release or exception
+  cleanup. Contiguous eligible thunk slots can be ordered by evaluation within
+  each positional signature segment, without crossing a fixed parameter or
+  the positional-only boundary. Defaulted, keyword-only and variadic signatures
+  are not reordered. What
   the helper evaluates before it must neither run code nor raise: reading a
   parameter or a name the helper has already bound, building a tuple, list,
   set or dict of constants and such names, creating a lambda whose defaults
   are such, a constant, a negative number. A global or builtin read, a set or
   dict inserting anything but a constant, `*` and `**`, and unpacking a
   target list are effects, so a thunk after them stays a thunk.
+- **Literal occurrences and identity.** Constant differences are tracked by
+  exact AST field/index paths. Equal-valued literals elsewhere in a block are
+  not replaced with the differing occurrence. Parameter reuse requires the
+  complete ordered type-and-value column to agree at every site, preserving
+  `False` versus `0`, `0.0` versus `0`, and signed floating zero. Compiler-pooled
+  compound literals remain whole. Source bytes, compiler behavior and the
+  original occurrence establish literal identity; equal ASTs or equal values
+  alone do not. Unsupported provenance or a pool that cannot be preserved can
+  therefore decline an otherwise similar block.
 - **Binding discipline.** The block may not rebind, delete, or `except ... as`
   a name bound before it, by whatever construct binds it (an assignment, a
   `for` or `with` target, a `match` capture, a nested `def` or `class`, an
@@ -80,26 +127,45 @@ describe belong to that version.
   function declares differently from the pair's. Names bound in the
   block and read afterwards are returned, where `count += 1` and `del count`
   read `count` as a load does, including targets of annotated assignments
-  and assignment expressions, as is a name bound to a class instantiation or
-  to a known resource factory (`open`, `connect`,
-  `socket`, `mkdtemp`, `Popen`, `urlopen`, ...), whose lifetime a later
-  statement could observe; a factory outside that list is not detected. A
+  and assignment expressions. Every nonconstant expression may produce a
+  resource or finalizable value, including properties, subscriptions,
+  operators and aliases; iterator and context-manager targets count too.
+  Such values are retained across an ordinary block's helper return. A
+  literal constant assignment is the narrow harmless case. When several
+  such values are returned, their caller bindings preserve the original
+  compiler local-slot order, so finalizers run in the same relative order.
+  An occurrence with an incompatible order, or without compiler evidence
+  sufficient to establish it, is declined. A
   returned name must be definitely bound where the block ends or have
-  entered as a parameter.
-- **Frame and control flow.** Blocks containing `yield`, `await`, `async`
-  loops, context managers or comprehensions, `locals()`, `globals()`,
-  `eval`, `exec`, zero-argument `vars()` or `dir()`, `super()` reached
-  through another name (`s = super; s()`, `builtins.super()`),
-  `break`/`continue` targeting an outer loop, comprehension assignment
-  expressions, `warnings.warn` in any spelling with or without
-  `stacklevel`, any call with a `stacklevel=` keyword, or direct frame or
-  stack inspection are rejected; aliases of these bound by import or
-  assignment are resolved. A block is also rejected when its enclosing
-  function reads its own frame (`locals()`, `dir()`, `eval`,
-  `sys._getframe()`, ...) anywhere outside the block. Zero-argument
-  `super()` itself moves only into a method helper of the class that holds
-  the block (see *Method insertion*). A block that calls inline-snapshot is
-  rejected as well; see *Observable differences that remain*.
+  entered as a parameter. A partial extraction that splits potentially
+  owned values between caller and helper is refused, including values that
+  would bypass an ordinary returned tuple on exceptions. Whole-body
+  extraction can transfer original argument ownership on CPython when the
+  compiled cleanup order and immutable bindings are certified. It adds a
+  final holder parameter and a caller-side box/delete/pop sequence. Parameter
+  cells, rebinding, escaping thunks and unsupported runtimes do not receive
+  this exemption. A custom formatter must preserve the certified AST. Runtime
+  reads of native type parameters are refused when they require cells;
+  annotation-only native type parameters can remain on the original function. These conservative
+  checks can decline ordinary numeric-looking code: its runtime values are
+  not proved to lack finalizers merely by their spelling or annotations.
+  A bounded exception permits fresh local outputs in an IF-only suite. Each
+  site must match its original source, initialize every output on normal exit,
+  and have no prior read, other binding, repeated write, deletion or capture of
+  those outputs. All later-read and lifetime-required names return to the same
+  branch-local caller binding in compiler order. The complete tuple is proved
+  again after alignment. This preserves a later `UnboundLocalError` when the
+  original condition was false. Loop, try, with and match ancestry do not
+  qualify for this certificate, and additional nested cluster sites remain
+  conservative. Frame and exception ownership checks can still refuse a
+  certified binding transfer.
+- **Control flow and class context.** Blocks containing `yield`, `await`,
+  async loops, context managers or comprehensions, `break`/`continue` targeting
+  an outer loop, or comprehension assignment expressions are rejected where
+  the helper cannot preserve their control flow or scope. Zero-argument
+  `super()`, including aliases, needs the original class cell and receiver;
+  it moves only when the method-helper checks establish that context (see
+  *Method insertion*). These checks do not protect frame or source inspection.
 - **Names the call site may not resolve.** A free variable is passed eagerly
   only when the call site resolves it on every path: a local bound on every
   path before the block, a module name bound on every path before the
@@ -114,107 +180,107 @@ describe belong to that version.
   This gives up extractions whose read of such a local can never happen
   unbound, because only a correlation between paths shows it
   (`r85_conditionally_bound_parameter`). Definite assignment is computed conservatively:
-  loops, `contextlib.suppress`, and non-exhaustive `match` statements never
-  bind definitely, and a name a statement may delete (`del`, or the end of
+  loops, context managers, and non-exhaustive `match` statements never
+  establish new definite bindings after the statement. All context managers
+  may suppress an exception before a body assignment; an earlier manager may
+  also suppress a later manager's entry failure. A name a statement may delete
+  (`del`, or the end of
   an `except ... as` clause) is unbound for whatever may follow it: the rest
   of its list, the next iteration of a loop that holds it, and the handlers,
   `else` and `finally` of a `try` that holds it.
-- **Module names stay module names.** A free name that both sites resolve at
-  module scope (or nowhere: a builtin, or a name the module never binds) is
-  not passed to a same-module helper at all; the helper reads it bare, where
-  the block did, so a helper defined below its callers, a class, an import,
-  or module data a callback rebinds between two reads all behave as before.
-  A clustered occurrence whose same-spelled name is a local of its function
-  or of an enclosing one does not join such a helper. Across files the
-  other module's same-named binding may differ, so the name stays a
-  parameter there, and module data that a callback may rebind still
-  declines the pair (`module_data_lookup`, `rebound_external_binding`).
-  A same-file pair's helper, a method or a function, always lives in the
-  pair's own module, so these names are always read there (oauthlib's
-  `BearerToken`, fixture `xf15`, broke when a helper was hoisted into a base
-  class defined in another module). By default a builtin is never a
-  parameter, since a call such as `helper(rows, len)` would surprise every
-  reader, so a helper that a site in another module calls, which only a
-  `--cross-module` run writes, reads its builtins bare in its host's
-  namespace. That is the lookup each site made only while no
-  participating module holds the name, and the pair is declined
-  (`builtin_may_differ_by_module`) wherever the program shows one may: a
-  statement of the module's own scope binds the name, a function of it
-  declares it `global`, a star import of it may bind it (a project module's
-  literal `__all__` or else its public top-level names say what; a module
-  outside the project may bind anything), it rebinds `__builtins__`, it
-  writes its own namespace at run time (`globals()[...] = ...`, `vars()` or
-  `locals()` so used at its top level, `globals().update(...)`, `globals()`
-  handed to other code, `setattr(sys.modules[__name__], ...)`, `exec`,
-  `eval`), or the project's own code or tests patch the name into it:
-  `mock.patch("pkg.mod.len")` in any spelling, with or without
-  `create=True`, `patch.object`, `patch.multiple`, `patch.dict` of its
-  `__dict__`, pytest's `monkeypatch.setattr` in either form or
-  `monkeypatch.setitem` of its `__dict__`, `setattr(mod, "len", ...)`, or
-  `mod.len = ...` (`tests/test_builtins_across_modules.py`, fixtures
-  `xf17`-`xf19` and `xf22`; `xf21` shares what the other two modules can).
-  A module is matched by every dotted name its path gives it below the
-  project root, which include the names the program's imports use, and by
-  the file a relative import names. A target is read through literals,
-  f-strings, `+` and names bound once to a string, and one whose module part
-  is computed at run time (`"pkg." + name + ".len"`) counts for every
-  module. The names checked are the ones CPython's symbol table says the
-  rendered helper reads from its module, so reads inside its lambdas and
-  comprehensions count. Not seen: code outside the project that patches a
-  builtin into one of its modules (with `create=True`, or through `mock`,
-  which creates a builtin's name without being asked); a target computed
-  whole, as by a wrapper that passes its argument to `patch`; and a module
-  object reached other than by an import, `importlib.import_module`,
-  `getattr` with a spelled name or `sys.modules`, such as a fixture's
-  return value. A cross-module helper then reads that builtin in its host's
-  namespace, and the patch reaches only the code the host itself runs. Nor
-  does this check read a star import as it may run: it takes a provider's
-  literal `__all__` as final, and counts only the provider's own writes.
-  A provider imported part way through an import cycle, before it binds
-  `__all__`, exports every public name bound so far, and a write of the name
-  into the provider from another module reaches every star importer. The
-  round-4 probe `builtin-cycle-probe` shows the first: `pkg/common.py` binds
-  `len`, imports `pkg/b.py`, whose `from .common import *` runs then, and
-  only afterwards binds `__all__ = ["scale"]`; under `--cross-module` the
-  shared helper reads the builtin where `b` read `common.len`, and the
-  program's output changes from `6 110` to `6 6`. The decorator check reads
-  star imports as they may run (*Decorators that compile or instrument a
-  body* below). A module `__getattr__` changes no bare lookup and is not
-  consulted. In any
-  pair, same-module or not, no generated call hands its helper a builtin:
-  an argument, or what a lambda argument returns, that is a name its site
-  reads from the builtins, bare or in a literal tuple, list, set or dict,
-  declines the pair (`builtin_argument`), and a clustered block whose call
-  would hand one over keeps its code. So a pair is declined where one
-  site's function binds a builtin's name and the other reads the builtin,
-  and where the blocks differ in a builtin that Towel's own list of
-  builtins leaves out (`lambda: __import__`, `lambda: __debug__`) or in a
-  container of builtins against a plain name (`(int, str)`). Where both
-  functions bind the name, each passes its own local. A lambda that calls a
-  builtin (`lambda: len(rows)`) passes what the builtin computed, and an
-  attribute of one (`str.upper`) is not the builtin
-  (`tests/test_no_builtin_arguments.py`). With `--parameterize-builtins`
-  (`parameterize_builtins=True`), each of those declines that concerns a
-  builtin the sites may disagree about, one site's function binding the
-  name or a module that may hold it, passes the builtin as an ordinary
-  parameter instead, each site giving its own: eagerly, or as a thunk where
-  the site may not have bound it, as for any free variable. The rules for a
-  name rebound between the call and the read still apply, so a module whose
-  function declares the name `global` or writes its namespace at run time
-  (`rebound_external_binding`), or that assigns it at its top level
-  (`module_data_lookup`), is declined as before. A builtin every site reads
-  alike stays bare, and blocks that differ in which builtin they use
-  (`lambda: __import__`, `(int, str)`) are declined all the same. Such
-  a parameter is annotated from what the checker reveals of the builtin,
-  loosened to what the helper's body needs where the host could not spell
-  the signature: a class every constructor of which makes it is
-  `type[str]`, a callable whose overloads all return one type or whose
-  parameters name typeshed's protocols is `Callable[..., int]`, a signature
-  over builtins alone stays exact (`Callable[[object], str]`). A builtin
-  whose overloads return different types (`open`, `sorted`, `min`) or a
-  generic one (`abs`) has no such annotation and gets `Any`, which a strict
-  checker may then refuse where the helper returns what it computes
-  (`tests/test_parameterize_builtins.py`).
+- **Module names stay module names.** A same-module helper reads module
+  names where the original block did, so ordinary reassignment by a callback
+  or another thread remains visible at each read. A same-file helper stays
+  in that module, even when its callers inherit from a class elsewhere.
+  Across modules, callable module bindings are passed as lookup thunks, such
+  as `lambda: callback`, and the helper performs each original lookup at its
+  use. Inlining additionally requires an immutable result at every caller;
+  unknown lookup results stay deferred even at the first effect. Module-data
+  cases that cannot preserve lookup timing still decline
+  (`module_data_lookup`, `rebound_external_binding`). A clustered occurrence
+  does not join an existing eager parameter when its own binding requires a
+  module lookup. The same spelling in two modules is not a common binding.
+  Even two aliases initially naming the same class can later diverge, and a
+  callback between repeated constructions can rebind or delete either alias.
+  Their lookup suppliers retain each original read; initial equality is not
+  a reason to replace those suppliers with one eager class value. The unread
+  ownership holder likewise retains a lifetime obligation rather than a
+  redundant computed input. See [the argument guide](GENERATED_CODE.md#equal-looking-and-unused-arguments)
+  for equal literals, higher-order opt-in and mixed deferred substitutions.
+
+  By default a cross-module helper may not read a bare builtin from its
+  host on another module's behalf (`builtin_may_differ_by_module`). The
+  exception is `__debug__`, which Python fixes for the interpreter. An
+  absence of assignments in the project does not establish that different
+  modules keep equal bindings: ordinary code outside the scanned project
+  can assign `mod.len`, and a partially initialized star import can expose a
+  different binding. The September audit's builtin-cycle counterexample
+  therefore receives no cross-module extraction under the default policy.
+  Same-module builtin reads remain bare when the module does not replace
+  ``__builtins__``. CPython captures that mapping when it creates a function;
+  a helper created at another point can capture a different mapping. A module
+  can replace it by binding ``__builtins__``, through a wildcard import, or
+  through a nested scope declaring that name global. A provider's ``__all__``
+  can explicitly export the underscore-prefixed name. Replacement before all
+  definitions, conditional assignments and aliased mappings are included.
+  Module binding analysis follows callable defaults and annotation expressions
+  in their enclosing scope, including nested lambda defaults; an uncalled
+  lambda body does not by itself bind the module name.
+
+  An ordinary attribute store or deletion of ``receiver.__builtins__`` anywhere
+  in the analyzed program makes **every module's mapping uncertain**. A function
+  such as ``configure(target)`` can receive a module through an unknown alias;
+  the guard does not try to prove a receiver harmless. A fresh project-wide
+  boolean records this hazard once per analysis. Excluded files that can run
+  still count. Unreadable files/directories or exceeding the scan's file limit
+  cannot prove absence and conservatively select the hazard. Existing unparsed
+  program refusals remain in force; excluded files that cannot parse here
+  retain their non-program treatment. The scan reads ordinary AST attribute
+  stores/deletions, not reflective namespace operations. The source-local
+  predicate includes the same attribute-write fact.
+
+  Under possible replacement, **every explicit module/global fallback read**
+  conservatively declines (`builtin_mapping_replaced`). The mapping can contain
+  arbitrary custom keys, and a currently module-bound name can fall back after
+  deletion; the guard is not limited to standard builtin spellings. Implicit
+  imports read ``__import__`` and class construction reads ``__build_class__``
+  from the captured mapping. Same-spelled local variables do not redirect those
+  implicit operations.
+
+  Dependency analysis follows what executes in the caller's frame: definition
+  defaults and eager annotations, and a generator expression's outer iterable.
+  Nested function/lambda bodies capture the module-current mapping when created;
+  their bodies are not flattened into the original caller's read set. List,
+  set and dict comprehension bodies are conservatively covered for Python 3.12+
+  inlining on every supported host version. Attribute/subscript assignment
+  targets include the reads of their receivers and indexes, including in
+  comprehensions. Explicit local, parameter and cell
+  reads remain eligible, as do compiler-constant ``__debug__`` and blocks without
+  captured-mapping dependencies, subject to the other guards. Mutating one shared
+  mapping is distinct from replacing it and retains its ordinary rules.
+
+  `--parameterize-builtins` (`parameterize_builtins=True`) explicitly permits
+  each caller's binding to reach a shared helper. Module-resolved names use
+  lookup thunks such as `lambda: len` and `lambda: print`, preserving repeated
+  reads and intervening ordinary assignments. The option does not override
+  ``builtin_mapping_replaced``: a lookup lambda created during a later call
+  also captures the then-current mapping, so it cannot reproduce an older
+  caller's captured mapping. First-effect, single-use timing
+  is insufficient to inline an unknown lookup result. Local bindings retain their
+  ordinary parameter behavior. The option does not permit blocks that differ
+  in which builtin they use; the builtin-argument and other binding checks
+  still apply (`tests/test_no_builtin_arguments.py`).
+
+  Typed lookup thunks retain their callable result type. For example,
+  `lambda: len` is `Callable[[], Callable[..., int]]`, `lambda: print` is
+  `Callable[[], Callable[..., None]]`, and `lambda: str` is
+  `Callable[[], type[str]]`. The checker determines these types; the fallback
+  only loosens an otherwise unspellable builtin signature to what its body
+  needs. Signatures with incompatible overload results or unsupported generic
+  parameters can still require `Any`, subject to the normal project check
+  (`tests/test_parameterize_builtins.py`). Reflective namespace manipulation
+  remains outside the preservation contract and is not detected to refuse
+  extraction.
 - **Relative imports stay in their package.** A relative import in a block
   resolves in the package of the module that runs it, so a helper holding
   `from .sub import VAL` imports its host's `sub` for every caller. A block
@@ -251,13 +317,25 @@ describe belong to that version.
   `extend-exclude` or `force-exclude`. That choice is made for the whole
   run, since a snippet is formatted before the file it goes into is known;
   it changes only layout.
+- **Configured Ruff lint.** When Ruff is installed, each modified file with
+  a project Ruff configuration is checked against its preceding source,
+  including nested configurations, file exclusions and per-file ignores.
+  Towel declines a proposal that introduces a diagnostic, or whose check
+  fails. An existing diagnostic must match an unchanged line in the same
+  named lexical scope, with the same code, message and column. A warning
+  moved into a helper is conservatively new and can cost an extraction.
+  The check does not apply fixes or add suppressions, and remains active
+  with `--no-format`. It uses configured rules, rather than interpreting
+  additional lint options in a project's CI commands.
 - **Annotations.** Every generated helper and its call sites are checked
   together in the prospective project, including unchanged consumers, and the
   check is compared with the project's own as it stood: an error the project
   already had is left as it is, and a change passes only when its check
   reports nothing the project's did not (see *Type annotations on helpers*
-  below). A change that introduces a type error has its annotations replaced
-  by `Any`, and then removed. Every variant must pass; checker failure or a
+  below). The signature ladder tries precise ordinary and generic signatures,
+  then targeted or broad `Any` fallbacks where no semantic refusal has ended
+  the ladder. Removal of annotations is also conditional on the remaining
+  errors and the module's annotation policy. Every variant must pass; checker failure or a
   new error declines the change. A checker that cannot run at all refuses the
   typed run, and `--no-types` is the explicit way on. So does a candidate's
   check that fails where the same check of the project as it stands, with no
@@ -274,132 +352,70 @@ frames, names, or source.
 
 ## Observable differences that remain
 
-Some behavior is outside any static model: a program that reads its own call
-stack, the active traceback, or its own source can observe that a helper adds
-a frame or shifts line numbers, even though the value the program computes is
-unchanged. Towel handles this in four layers, and it is worth being explicit
-about where each one stops.
+Reflection can observe that extraction changes a program's source, AST,
+bytecode, frames or namespace. Towel does not preserve those observations and
+does not scan for them, issue reflection warnings or decline code to protect
+them. This exclusion applies to direct operations and callees, whether reached
+by their original names, aliases, decorators, ordinary calls or hooks.
 
-- **Rejected outright.** A block that *itself* contains generator or async
-  suspension, `locals()`/`globals()`/`vars()`/`dir()` with no arguments, a
-  `super()` reached through another name,
-  `eval`/`exec`, direct frame or stack inspection (`sys._getframe`,
-  `inspect.stack`, and the like), or `warnings.warn` is never extracted:
-  with a `stacklevel`, because the helper's frame shifts the attribution,
-  and without one, because the warnings registry deduplicates per call
-  site and two sites that warn would become one. This is exact for
-  constructs written in the block or its enclosing function, directly or
-  through an alias the module binds. A call to a function or method of the
-  same module whose own body reads a frame relative to its caller
-  (`sys._getframe(n)`, `inspect.stack()`, a `stacklevel=`), directly or
-  through other such functions of the module, counts as a frame read too:
-  typing_extensions' `_caller`, which finds a `TypeAliasType`'s defining
-  module that way, would otherwise see the helper (fixture r146). The
-  functions are matched by name, which over-approximates and only declines.
-- **inline-snapshot, recognized by name.** A callee that reads its caller's
-  frame or source is reflection, and Towel does not model it (see *Not
-  detected* below). It makes one exception: inline-snapshot, because it is
-  popular and its snapshot tests are exactly what Towel extracts.
-  `snapshot()` keys each snapshot by its call's position and reads the
-  literal there, so two tests doing `snapshot("<item 1>")` and
-  `snapshot("<item 2>")`, merged into one helper doing
-  `snapshot(__param_1)`, raise `UsageError` (rich-click's suite lost 68 of
-  151 tests this way). A block that refers to `snapshot`, `external` or
-  `snapshot_arg` is declined (`source_reading_callee`), whether or not an
-  argument would be parameterized, and the code around the call is still
-  shared. `outsource`, `Is` and inline-snapshot's other names read no frame;
-  `external_file` reads only its caller's file. The list, with the source
-  each entry was read in, is `src/towel/unification/known_source_readers.py`.
-  Names are resolved by binding, anywhere in the module: an import alias,
-  `from inline_snapshot import snapshot as snap`, a module attribute, a
-  star import, a plain assignment, a parameter default; a local that
-  shadows one is taken for it, which only declines. `snapshot_arg()` reads
-  the call of the function it is called from, so a function of the module
-  that calls it, or calls such a function, or a class whose `__init__` or
-  `__new__` does, is matched too, by name, bare or as an attribute.
-- **Warned before the run.** Directory mode scans every module first and prints
-  a stderr warning naming the files that inspect frames or tracebacks,
-  attribute warnings by `stacklevel`, or read source through
-  `inspect.getsource`. This catches frame sensitivity that a call chain
-  through another module hides from the block-level guard, such as pluggy's
-  argument validation, where the extracted block calls a function that warns
-  with `stacklevel`. The warning
-  tells you which diffs to review or `--exclude`; it is a pointer, not a proof
-  of breakage.
-- **Not detected, and therefore silent.** Four kinds of frame, line, or
-  source sensitivity are outside both the guard and the warning, and are
-  documented `BROKEN_KNOWN` cases in the ecosystem check rather than things
-  Towel can flag: a module that reads a *sibling's* source as text through a
-  plain `open` of a `__file__`-relative path and copies regions of it (lark's
-  standalone parser generator); a *caller or test* that asserts on the exact
-  frames or text of a traceback the refactored code raises normally (glom and
-  rich assert on rendered tracebacks, and pyparsing's `ParseException.explain`
-  counts the frames of the traceback it was raised through); a test that asserts the exact line
-  number a warning is issued from inside its own module, which a helper
-  inserted above it shifts (trio's `test_deprecate`); and a *callee* that
-  reads its caller's frame or source, which is reflection. The block-level
-  guard cannot see through a call, and Towel recognizes no such callee but
-  inline-snapshot's (above): `inspect.stack()` or `sys._getframe(1)` inside a
-  function of another module the block calls; a library that reads the text
-  of its call, as icecream's `ic()`, devtools' `debug()`, varname's
-  `nameof()` and sorcery's spells do, or the name its result is assigned
-  to, as `varname()` does; one that stamps what it builds with its caller's
-  module, as `namedtuple`, the functional `Enum` API and `TypeVar` do,
-  which only a helper in another module changes; an inline-snapshot reader
-  reached through a value (a parameter, a container, `getattr`) or
-  re-exported by another module of the project; the shape of a traceback
-  that now includes the helper's frame; and logging's `%(funcName)s`, which
-  names the function whose frame issued the record and so names the helper
-  (the four differences the fifth audit's battery still shows at `5ff2458`,
-  September 19, 2026, are all of this kind). None of these
-  can be distinguished statically from safe code that does the same thing
-  (a linter also opens `.py` files; every library raises exceptions; every
-  module has line numbers; every logging call may carry any format), so
-  Towel does not warn on them to avoid a flood of false positives. Review
-  the diff and run the tests, as with any refactoring.
+Users can explicitly protect a function with `# towel: no-extract` immediately
+after its signature's final colon. Its definition and nested bodies stay
+intact; unmarked code remains eligible. This does not freeze its absolute line
+position, its module or class namespace, or unmarked callers and callees.
+Protect the frames that matter: a callee reading its caller's frame may require
+marking that caller. When refactoring a directory, use `--exclude filename.py`
+when that file’s entire source must remain unchanged. See
+[Protect a function](CLI_GUIDE.md#protect-a-function).
 
-The remaining entries are other kinds of dynamic behavior that no scan
-addresses:
+Examples include:
 
-- **Reflection and dynamic rebinding.** Code that rebinds module globals or
-  closure cells through `globals()[...]`, `setattr(module, ...)`, `exec`, or
-  from another thread between two reads inside a block is outside the model.
-  Calls to the reflection builtins, direct or through an alias the module
-  binds by import or assignment, are rejected; rebinding through
-  `globals()[...]`, `setattr`, another thread, or a callee is not detected.
-  Nor is rebinding that a new import could reorder: under `--cross-module`
-  a borrower's import of its helper loads the host earlier than the program
-  did, so a host that binds at import what the program rebinds elsewhere,
-  `from time import sleep` where another module or a test sets `time.sleep
-  = patch` or monkeypatches it before importing the host, binds the value
-  it finds then. Towel only places the import after every statement of the
-  borrower's own that runs before its first definition (*Import-time
-  behavior*), so the borrower's own patch still comes first.
-- **Metaclasses and descriptors.** Method extraction into a class assumes the
-  usual descriptor protocol. Only a method whose decorators are all known to
-  leave its body alone is refactored at all (*Decorators that compile or
-  instrument a body*), in a class whose machinery passes the test below; one
-  decorated with any of them but the recognized
-  receiver-preserving decorators receives a module-level helper with the
-  receiver passed explicitly. A class decorator is trusted to leave a
-  helper in place only when it is one of `dataclasses.dataclass`,
-  `functools.total_ordering`, `typing.final`, `typing_extensions.final` and
-  `enum.unique`, reached through the module's own absolute imports; a class
-  carrying any other decorator takes no helper. A metaclass, and every
-  `__init_subclass__` on the class's method resolution order, sees the
-  namespace a method helper joins and may wrap, register or drop it, so the
-  class holding both duplicates takes one only when all of that is known to
-  leave a plain function alone: its metaclass is `type`, `abc.ABCMeta` or the
-  enum metaclass, it defines no `__init_subclass__` itself, and each base is
-  a builtin class, `abc.ABC`, `typing.Generic[...]`, an enum, one of the
-  library classes read to build a subclass with Python's own machinery
-  (*Decorators that compile or instrument a body* below), or a class of the
-  project that qualifies in turn, resolved through the module's imports.
-  Any other class (pygments' lexers, whose metaclass is the project's own; a
-  base reached through a star import or built by a call such as
-  `with_metaclass(...)`; `NamedTuple`; a library base class nobody read)
-  keeps its code: moving it out is refused as well. `__slots__`
-  interactions with added methods are not modeled beyond compilation.
+- `locals()`, `globals()`, `vars()`, `dir()`, `eval` and `exec` whose behavior
+  depends on the original frame or namespace;
+- frame and traceback inspection, logging of function names, and warning
+  attribution or deduplication tied to source positions;
+- reading a function's source, AST or bytecode, reading a sibling's `.py` file,
+  or testing exact line numbers and traceback text;
+- inline-snapshot's call-site source reading and other source-sensitive
+  libraries, such as icecream, devtools, varname and sorcery;
+- body compilation, AST rewriting and reflective class transformations,
+  including typeguard, numba and pytest assertion rewriting.
+
+The old inline-snapshot exception was motivated by a measured rich-click
+failure: 68 of 151 tests failed when calls with different source literals were
+merged into a helper. That historical result remains evidence of source
+sensitivity; it no longer implies a dedicated refusal. Earlier ecosystem
+checks recorded source/frame-sensitive cases involving lark, glom, rich,
+pyparsing and trio, and the September 19 fifth-audit battery at `5ff2458`
+retained four such differences. These are observations of those tested source
+states, not current detection guarantees.
+
+Boltons' `namedtuple` and `namedlist` factories use `sys._getframe(1)` to
+derive the generated class's `__module__` from their caller. Moving that read
+into a helper changes the observed frame and therefore the module name;
+pickling the generated class can then fail to find it. This is an excluded
+frame-inspection dependency, not a general exclusion of pickling. The corpus
+manifest pins the two observed pickle-test failures at the recorded Boltons
+revision.
+
+The following cases distinguish excluded reflective behavior from ordinary
+semantics that transformations must preserve:
+
+- **Reflection and dynamic rebinding.** Rebinding module globals or closure
+  cells through `globals()[...]`, namespace dictionaries, `setattr`, `exec`
+  or reflective patch APIs is outside the guarantee. Ordinary assignments,
+  including those made by callbacks or another thread, do not become reflection
+  merely because they execute dynamically. Their bindings and effects must be
+  preserved. Under
+  `--cross-module`, loading a helper's host earlier can also change what that
+  host imports from a module rebound elsewhere. The borrower's own earlier
+  statements still precede its inserted import (*Import-time behavior*).
+- **Metaclasses and descriptors.** Method extraction assumes the usual
+  descriptor protocol. Receiver compatibility remains a placement constraint.
+  A metaclass, class decorator, `__init_subclass__` or lookup hook can inspect,
+  register, wrap or redirect the new private helper; those reflective changes
+  are outside the guarantee. Body instrumentation receives no special
+  protection. `__slots__` interactions with added methods are not modeled
+  beyond compilation.
 - **Import-time behavior.** Helpers are inserted before the first definition
   in a module, after imports, except that a helper whose annotations name
   classes or functions of the module goes after the last of them, so the
@@ -420,7 +436,7 @@ addresses:
   `re.compile` of a constant pattern that compiles here without a warning;
   `typing.overload` records a registry and `logging.getLogger` a logger a
   later `dictConfig` would disable, so both count as code. Nothing under a
-  `TYPE_CHECKING` resolved through the imports runs, however it branches,
+  literal `False` or the immutable integer comparison `0 > 1` runs,
   and a condition comparing `sys.version_info`, `sys.platform` or `os.name`
   with constants runs nothing. When a name the
   annotations need is defined only after such code, the helper goes before
@@ -437,10 +453,10 @@ addresses:
   the file's own is refused, and its proposal dropped. Static local import cycles are rejected
   (including cycles through a package's `__init__`, which `from . import
   name` runs), dynamic ones are not detected. An import under a
-  `TYPE_CHECKING` guard, resolved as above, never runs and closes no cycle;
-  one in the guard's `else`, under `if not TYPE_CHECKING:`, or under a name
-  a scope binds for itself does. A program that sets `typing.TYPE_CHECKING`
-  true before importing is outside this model.
+  provably false constant guard closes no cycle. Imported `TYPE_CHECKING`
+  flags and locally assigned Boolean names are mutable, so both branches
+  remain possible runtime edges. Setting `typing.TYPE_CHECKING = True` is
+  ordinary assignment and is covered by the preservation requirement.
 - **Concurrency of application.** A run refactors a private copy of the
   project and writes back only when it has succeeded, as one batch; a file
   edited during the run refuses the batch, nothing written. Files are replaced
@@ -458,28 +474,19 @@ addresses:
 
 ### Reflection over a namespace, and stack depth
 
-A program that asks what a namespace holds can see a helper appear there.
-This is reflection, and the owner ruled it a documented limitation rather
-than a defect to fix (DECISIONS, 2026-09-25). Towel does not detect:
+A program that enumerates a namespace can see an added helper. A metaclass,
+class decorator, descriptor, `__init_subclass__`, package initializer or lookup
+hook can then register, wrap, instrument or redirect that helper. Private names
+prevent accidental overrides but do not conceal helpers from reflection.
+Towel neither detects these behaviors to refuse extraction nor guarantees
+that their results remain unchanged.
 
-- a loop over `vars(C)`, `dir(C)` or `C.__dict__`, or a call such as
-  `instrument(C)` or typeguard's `typechecked(C)` on a class, that wraps or
-  rewrites every function it finds: a class-private helper hosted in `C`
-  is wrapped too;
-- a descriptor whose `__set_name__` wraps its owner's functions, which then
-  wraps the helper, or instruments methods that code has moved out of;
-- a package `__init__` that wraps every function of a submodule, including
-  a new module-level helper;
-- a star import without `__all__`, `hasattr`, `dir()` or a module
-  `__getattr__` meeting a submodule that a new `--cross-module` import has
-  bound on its package;
-- a callee that reads its caller's frame or source, other than
-  inline-snapshot, which Towel recognizes by name (above);
-- a callee that rebinds a name between two reads in the block, including a
-  builtin passed under `--parameterize-builtins`, which is read at the call.
-
-Decoration by hand is not reflection: `f = deco(f)` and a stacked
-`f = outer(inner(f))` are judged like the decorators they apply.
+The same exclusion covers source/AST/bytecode inspection, direct frame reads,
+source-sensitive callees and import hooks that transform module bodies. There
+is no exception for recognized libraries or for explicit `@` syntax: `@deco`,
+`f = deco(f)`, stacked calls and class hooks share the same boundary. The
+[October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+supersedes September 27's selected-instrumentation protection.
 
 Each helper call adds a stack frame. Recursive functions are refactored like
 any other, so a deeply recursive function uses more stack after extraction
@@ -492,7 +499,7 @@ Sharing a helper across modules is opt-in (`--cross-module`,
 paired, pairs across modules are neither formed nor counted against the pair
 budget, and no import between the project's modules that runs is ever
 written. The one import of a project module the default writes is the
-type-only one a helper's annotation needs, under `if TYPE_CHECKING:`, which
+type-only one a helper's annotation needs, under `if 0 > 1:`, which
 never runs; it is spelled by the rules below, and where none applies the
 annotation keeps the checker's full name.
 
@@ -589,10 +596,12 @@ name the program uses: a directory link `beta -> src/alpha` beside
 or a hard link, each resolved by replacing the link with a copy (the
 round-4 audit's P1-4). Only an import that attests locates a name,
 makes it ambiguous, or finds it inside a package: one inside
-`try`/`except ImportError`, under `TYPE_CHECKING`, or in a file that
+`try`/`except ImportError`, under a runtime condition, or in a file that
 changes `sys.path`, as graphene's setup.py imports `pyutils.version` after
 appending the package to `sys.path`, does none of these, though one that
-runs still counts where it can load a file under a second name. Before it
+runs still counts where it can load a file under a second name. An imported
+`TYPE_CHECKING` flag is mutable, so its imports remain possible runtime
+dependencies; only a proved immutable false guard excludes them. Before it
 writes anything, a
 `--cross-module` run of `dry` or `preview` names every such problem with the
 remedy for its kind, and refuses the run when one leaves in doubt a
@@ -604,7 +613,8 @@ doubt and refuses nothing, and does not make a stray `src/__init__.py` a
 package the program uses, from the
 root, on a package or on a subpackage; the file making it is left exactly as
 it was, with no helper hosted, borrowed or extracted within it; one under
-`if TYPE_CHECKING:` never runs and leaves its file free. The cost is
+an immutable false guard never runs and leaves its file free; an uncertain
+conditional import does not establish an unconditional dependency. The cost is
 that file's own duplicates, and, when it is a package's `__init__.py`, every
 helper a module outside that package would borrow from a module inside it:
 chardet's `detect` and `detect_all` share a block in its `__init__.py`,
@@ -612,10 +622,15 @@ which a fresh clone lacking `_version.py` leaves as it is. Only a
 `--cross-module` run consults the model; a run without it refactors such a
 file as any other, and writes no import between modules that runs.
 
-The host is chosen so that no import cycle closes, preferring a module the
-borrowers already import; when none qualifies, one borrower gains a new
-import edge. Every import on the way is resolved as the program's import
-model resolves it, an ambiguous name to every place it could be. Towel does not know whether importing that module has
+The host is chosen so that no import cycle closes and no original module load
+is advanced past definitions. A new submodule load is also refused: Python
+binds the submodule on its parent package, replacing any ordinary value
+already there, including one set by code outside the analyzed tree. A fresh
+top-level host must contain only literal bindings and inert function
+definitions, apart from proven standard future directives, and satisfy the
+remaining import checks. Every import on the way is resolved as the program's
+import model resolves it, an ambiguous name to every place it could be. Towel
+does not know whether importing that module has
 requirements of its own: gunicorn's `workers/gtornado.py` raises at import
 time unless tornado is installed, and a helper hosted there made
 `workers/sync.py` import it, so environments without tornado could no longer
@@ -626,8 +641,8 @@ registration decorator there would register wherever the borrower is
 imported (fixtures `xf27`, `xf28`). A module whose classes derive from a
 base with a metaclass of the project's own counts as running code even when
 that metaclass only builds the class, since nothing shows it registers
-nothing; most of Pygments' lexer modules are such, which costs Pygments 12
-of its 23 cross-module helpers. Towel also refuses a host
+nothing; in earlier validation this cost Pygments 12 of its 23 cross-module
+helpers. Towel also refuses a host
 whose import would require a module the borrower does not already
 import: an unconditional import, including one inside a module-level `if`,
 of anything outside the project, the standard library and the project's
@@ -685,10 +700,18 @@ installed `zeta.a` raise `ModuleNotFoundError`. Another participating module
 is then tried as host, so a test module that imports the package under test
 takes the helper from it, and a pair between the package and a module that
 never imports it is declined. What a
-borrower "already loads" counts only the imports its top level certainly
-runs: an import in a function body, a branch or a `try` makes nothing
-present, and a borrower whose function imports the host lazily no longer
-counts as running the host's import-time code already.
+borrower "already loads" counts its enclosing packages and explicit module
+imports before its first definition, including those imports' parent packages.
+`import pkg.host` and `from pkg.host import value` establish that host;
+`from pkg import host` may read an ordinary attribute and does not. An imported
+module can still be
+initializing, so its later imports establish no further completed loads.
+Imports in a function body, a branch or a `try` make nothing certainly present.
+A fresh shared helper is defined before ordinary imports and effects, with
+quoted annotations, so a partially initialized host can supply it. An existing
+generated helper must already have an inert prefix that proves its definition
+is available. Changing a program's imports to overcome these refusals can
+change its behavior and requires a separate review.
 
 A module written to run as a program may be run by its path: `__main__.py`,
 a module whose first line is a `#!` interpreter line, and one with a main
@@ -719,8 +742,8 @@ configuration (`mypy_path`, pyright's `stubPath`) are not read.
 
 ## Method insertion
 
-A helper becomes a method only of the class whose methods hold both
-duplicates, one module-level class statement, and nowhere else: a block
+A helper becomes a method only when its completed body needs the receiver
+or class frame, and only of the class whose methods hold both duplicates, one module-level class statement, and nowhere else: a block
 shared by sibling classes, by a parent and its child, or by classes in
 different modules becomes a module-level function that takes the receiver as
 an ordinary argument (docs/DECISIONS.md, "A method helper lives in the class
@@ -728,11 +751,16 @@ that holds both duplicates"). No class gains a member unless the code it
 replaces was already in that class. Whether such a function belongs in a
 class, an existing base, a mixin or a new one, is a design question Towel
 leaves to whoever reviews the change ("Towel does not change externally
-visible class design"). The rule's costs:
+visible class design"). A receiver used only by a deferred expression retained in the caller does not
+make the completed helper a method. Real receiver reads, class-private accesses
+and zero-argument `super()` retain their own class-context checks. These are
+eligibility requirements, not a promise that every such block moves: a
+super-only source method that never originally dispatches through its receiver
+can still decline rather than gain a new dispatch. The rule's costs:
 
 - A block shared across classes is a module function with an explicit
   receiver, which is sound but less idiomatic than a method.
-- Such a block is declined when the function holding it uses a
+- Such a block is declined when the code moving out of the class uses a
   class-private name (`self.__x`), which a module function would have to
   spell mangled, `receiver._A__x`, a spelling mypy and pyright both reject
   (`private_name_lexical_class`). `__class__` is passed to it as an
@@ -755,21 +783,23 @@ visible class design"). The rule's costs:
 
 A method helper is class-private: `__extracted_func_0`, which its class `A`
 stores as `_A__extracted_func_0` and its methods call as
-`self.__extracted_func_0()`. No subclass, in the project or outside it, can
-override it or collide with it, since a subclass's own `__extracted_func_0`
-is stored under the subclass's name. Mangling goes by name, not by class, so
+`self.__extracted_func_0()`. An ordinary differently named subclass's own
+`__extracted_func_0` is stored under its own name, preventing an accidental
+override through that spelling. Mangling goes by name, not by class, so
 a subclass named like its base (`class A(base.A)`) that defines
 `__extracted_func_0` stores it as `_A__extracted_func_0` too: Python sources
 under the project root are read for such a member, for `_A__extracted_func_0`
-spelled out, and for attribute stores, `setattr` and namespace writes of the
-stored name, before a number is chosen, and one outside that root is not
-seen. A class named only with underscores (`class __`) mangles nothing, and
-gets the module-level helper. A module-level helper's name must likewise be
-one no source under the root writes into a namespace (an attribute store
-`lib._extracted_func_0 = ...`, `setattr`, a subscript store); a class member
-of that name can no longer displace it and claims nothing. The root is the
-nearest directory with packaging metadata above the input (or the directory
-above its packages), read with the consumer scan's exclusions.
+spelled out, and for explicit attribute stores or deletions of the stored
+name before a number is chosen. Sources outside that root are not seen.
+A class named only with underscores (`class __`) mangles nothing and gets a
+module-level helper. A module-level helper avoids identifiers at its insertion
+site and names that other project sources explicitly store or delete as
+attributes (`lib._extracted_func_0 = ...`); an unrelated class member does not
+claim a module helper's name. Names supplied reflectively through `setattr`,
+namespace subscripts or `type(..., namespace)` are not reserved and have no
+preservation guarantee. The root is the nearest directory with packaging
+metadata above the input (or the directory above its packages), read with the
+consumer scan's exclusions.
 
 A helper shared by methods that never read an attribute of their receiver, or
 by static methods, is a module-level function. Such a method works when it is
@@ -788,37 +818,36 @@ does use the receiver takes it as an ordinary argument.
 The class holding both duplicates takes the helper only when every
 decorator on the source methods is known to preserve the receiver, the
 methods have a first parameter named `self` (or the method is a
-`classmethod`), and both read an attribute of it. That parameter's
+`classmethod`), and the completed helper needs its receiver dispatch or
+original lexical class frame. That parameter's
 annotation, if it has one, must name only the class: the class itself,
 `Self`, or a type variable bound to the class, or `type[...]` of one of those
 for a class method. `def m(self: HasV)` declares that any object with the
 protocol's attributes may be passed, as `Box.m(other)`, and
 `self.__extracted_func_0()` would raise `AttributeError` on it, so such a
 method gets the module-level helper that takes the receiver as an argument.
-The class must also be able to hold the helper as an ordinary member: not a
+The class's declared contract must permit adding a private helper: not a
 `Protocol` (a method there is one more member every structural implementer
-lacks, so a runtime-checkable `isinstance` turns false), not written with its
-body on the header's line (`class Base: pass` takes no further statement), and
-not decorated beyond the known namespace-preserving decorators. A base that
-could be `Protocol` on any path through its module, or is spelled
-`Protocol`, counts as one. Its metaclass and every `__init_subclass__` it
-runs must be known to leave a plain function alone (see *Metaclasses and
-descriptors* above), and no class on its method resolution order may bind
-`__getattribute__`, which intercepts every attribute lookup, the helper's
-included: a proxy that answers attributes from another object would look the
-helper up there. A builtin base must look attributes up as `object` does,
-which rules out `type` and `super`, so a metaclass's methods share a module
-function. `__getattr__` is allowed, since it runs only when normal lookup
-fails and nothing spells the helper's stored name: a class whose
-`__getattr__` serves every unknown name from its data keeps serving
-`_extracted_func_0` (fixture `r158`). A subclass that defines
-`__getattribute__` is not examined, since the rule judges the class alone and
-a subclass may lie outside the project: one that lets the class's own methods
-through but answers every other name from another object sends
-`self.__extracted_func_0` there too, and the call raises on its instances.
-Local classes, nested classes, duplicated class names, decorators known to
-leave the body alone but not to preserve the receiver (`mock.patch`,
-`pytest.mark.*`), functions nested inside methods, and class-body functions with no parameter or
+lacks, so a runtime-checkable `isinstance` turns false), and not written with
+its body on the header's line (`class Base: pass` takes no further statement).
+An unknown class decorator does not itself veto adding a helper. Decorator
+classification still informs ordinary Protocol resolution and import-time
+effects. A base that could be `Protocol` on any path through its module, or is spelled
+`Protocol`, counts as one. Direct-base aliases are followed through project
+imports, assignments and conditional expressions. A concrete class that
+implements a protocol is still eligible; an unresolved computed base, such
+as a factory call, takes a module helper instead. This does not evaluate
+arbitrary calls or inspect aliases inside external libraries.
+Namespace scans and lookup interception that
+observe the added helper are reflection (see *Reflection over a namespace,
+and stack depth*). Towel does not inspect ancestry to approve that machinery.
+The class-private name prevents an ordinary subclass method from accidentally
+overriding the helper; it does not bypass a hook that observes every lookup.
+A `__getattr__` that serves unknown names still runs only when normal lookup
+fails, so an existing `_extracted_func_0` supplied from data remains separate
+from the new mangled name (fixture `r158`).
+Local classes, nested classes, duplicated class names, decorators not known
+to preserve the receiver (`mock.patch`, `pytest.mark.*`), functions nested inside methods, and class-body functions with no parameter or
 a first parameter other than `self` get a module-level helper that takes the
 receiver explicitly. Additional call sites gathered from the same file join a
 method helper only when they are methods of the same class with the same
@@ -858,7 +887,14 @@ them early, under the reason its summary counts:
   self._key_cache is None`), and the narrowing ends with the helper;
 - *narrows what a call-site lambda reads*: a test that once governed an
   expression now passed as a lambda (rich's `task.total is not None` beside
-  `lambda: int(task.total)`);
+  `lambda: int(task.total)`). A checker diagnostic must establish a rejected
+  nullable operand and its correspondence to the original expression. Merely
+  reading the test's subject is insufficient: Optional-aware consumers and
+  nullable declared outputs can retain precise generic signatures. Supported
+  arguments, operators, receivers, local aliases and scalar/fixed-tuple value
+  flows are checked before `Any` fallback can hide the lost refinement. Return
+  and assignment witnesses also require the original caller's matching
+  declaration; ambiguous diagnostics do not establish this refusal;
 - *declares its class's attributes*: assignments through a method's
   receiver were the class's attribute declarations (nox's
   `self.location_name = location`), and a function outside the class
@@ -876,14 +912,17 @@ where the evidence comes from:
 
 - Every name bound for an annotation is private and spelled nowhere in its
   module (`import typing as _typing`, `from pkg.models import Item as
-  _Item`, `if _typing.TYPE_CHECKING:`), so nothing the program already binds
+  _Item`), so nothing the program already binds
   changes meaning and no module that star-imports the helper's module takes
   a new public name. The one assumption is the one the helpers' own names
   rest on: a star import brings a private name only from a provider whose
   `__all__` lists it. A binding the module already has is used instead only
   when it is the name's single binding anywhere in the module; the module's
-  own `TYPE_CHECKING`, a flag of its own under that name, is never mistaken
-  for `typing`'s. A new guard carries `# pragma: no cover` where the
+  existing annotation imports can be reused without changing their guards.
+  New type-only imports use `if 0 > 1:`, an immutable false comparison that
+  both mypy and pyright read for types. Existing `TYPE_CHECKING` guards are
+  never extended with new imports. A new guard carries `# pragma: no cover`
+  where the
   project's coverage.py exclusions match only with it, as coverage.py's
   defaults do. A project whose exclusions match neither form, such as one
   whose `exclude_lines` lists `if TYPE_CHECKING:` and not the pragma, counts
@@ -969,7 +1008,7 @@ where the evidence comes from:
   whose sites are in other modules, an annotation may name only builtins
   and the `typing` names Towel imports itself (`Any`, `Callable`), since a
   site's imports are not the host's. A class the module cannot reach is
-  imported under `TYPE_CHECKING` and named by a private alias; only where no module of
+  imported under an immutable false guard and named by a private alias; only where no module of
   the project owns it, or its short name is already taken, is the type left
   unwritten and the parameter completed with `Any`. Any subscripted
   annotation that would not evaluate at definition time (`memoryview[int]`
@@ -1008,8 +1047,12 @@ where the evidence comes from:
   that `Any`, the caller's loop is unremarkable to mypy while Pyright still
   objects. Towel wrote the type the checker revealed and accepted the answer
   the checker gave; the limit is the checker's, not the transformation's.
-- The degradation on a type error is per proposal, not per parameter: one
-  annotation the checker rejects costs the helper all of them.
+- A rejected precise signature does not automatically erase all annotations.
+  The bounded annotation ladder can generalize complete argument/result rows
+  and try targeted `Any` substitutions. Each candidate still passes the project
+  check; the ladder preserves unchanged annotations where that narrower repair
+  succeeds. A final broad fallback is a separate validated candidate, not
+  permission to ignore new checker errors.
 - Verification checks complete prospective project graphs, overlaying all
   changed files together, and compares each with the project as it stood. A newly
   imported helper therefore exists in its host while its consumers are checked.
@@ -1095,10 +1138,13 @@ where the evidence comes from:
   look at are named and not changed at all; mypy and pyright each take their
   own platform and version, so pyright set to check for Windows can skip what
   mypy looks at, and only the question put to every checker settles a change.
-  A body that shares its header's line (`if x: return`) is probed on a line of
-  its own in the text the checker is given; a module in which no probe can be
-  placed is taken to be looked at nowhere. A probe build that fails is not
-  silence: before the run it refuses the run, and for a change it leaves the
+  A body that shares its header's line (`if x: return`, including one-line
+  `case`, `except` and `except*` bodies) is probed on a line of its own in the
+  text the checker is given. Semicolon-separated statements have separate probe
+  sites, so an early exit does not make the following statement appear looked at.
+  A module in which no probe can be placed is taken to be looked at nowhere.
+  A probe build that fails is not silence: before the run it refuses the run, and
+  for a change it leaves the
   change not judged. The body of a function without
   annotations, which mypy does not check unless configured to, counts as
   looked at, since mypy answers there (with `Any`): the project's own mypy
@@ -1139,7 +1185,23 @@ where the evidence comes from:
   module and names under names of its own, where the import stands, and
   reveals them. mypy answers `Any` for a module it cannot resolve or finds no
   types for, and pyright `Unknown` for a name or attribute such an import
-  binds (pyright gives the module itself a module's type). With the report
+  binds (pyright gives the module itself a module's type). For a queried `Self`
+  import or module attribute, the same checker is also asked in a fresh class
+  at the import site. Only its exact contextual self type establishes the
+  import's identity; custom classes, instances and type variables named `Self`
+  do not provide that evidence. The ordinary checker comparison still rejects
+  new type errors in value and annotation uses. A fresh parent-module
+  alias can hide a submodule that Pyright sees through the program's original
+  binding. When the parent and submodule are imported in one module-level
+  import block, every read of that binding follows the block, and there are no
+  competing module bindings or writes to the queried path, its ancestors or
+  descendants, Towel also asks about the original binding just after the block.
+  Unrelated attribute writes and local names do not interfere. An alias
+  replaced within that block is not asked about attributes read from its
+  replacement afterward; uncertain binding or read order remains conservative.
+  Only the same checker's exact named module overrides the alias's `Unknown`;
+  unsupported contexts keep the ordinary check. This question shares the existing checker
+  exchange. With the report
   silenced, uvicorn's `websockets` module missing where Towel ran, a change
   had left a `type: ignore` unused in the project's own check. A name a typed
   module declares as `Any` is the same wherever the check runs, and is not
@@ -1160,7 +1222,20 @@ where the evidence comes from:
   a name from one of these files (`from pkg.compat import wcwidth`) sees it as
   `Any` too and is not declined. In the study's 20 projects, no module imports
   any of the 22 names that such imports and decorators bind at module scope.
-- A project that configures no mypy is checked with mypy's defaults, as its
+- Literal unconditional `mypy --strict` checks in ordinary GitHub workflow
+  jobs also determine the typed run. Supported commands are direct `mypy`,
+  `python -m mypy` (including a literal versioned interpreter), and
+  `uv run --frozen mypy`, with existing project path targets. Their explicit
+  targets override configured `files`, `packages` and `modules`; per-module
+  options retain mypy's precedence over CLI flags. The same policy applies
+  to inference, baseline, candidate and final confirmation checks. Unsupported
+  strict commands, conditional or computed contexts and conflicting policies
+  refuse typed verification with a diagnostic. If one Towel input spans strict
+  targets and files outside them, narrow the input. Other CI flags, platform
+  matrices, checker versions and dependencies remain outside this reader's
+  contract; it does not establish full CI parity.
+- A project with neither mypy configuration nor a supported literal strict
+  workflow check is checked with mypy's defaults, as its
   own `mypy` would check the same files: the bodies of functions without
   annotations are not checked, an import mypy finds no types for (not
   installed, or installed without stubs or `py.typed`) is an error, and a
@@ -1187,7 +1262,8 @@ where the evidence comes from:
   not declare, is private to the module (a stubbed module never hosts a
   helper another module imports).
 - Which files' errors count, and what each module is called, is mypy's own
-  rule under the project's configuration. Where the configuration names no
+  rule under the project's configuration and supported literal CI targets.
+  Where neither names
   `files`, `packages` or `modules`, the project's run is taken to be mypy
   over what Towel is pointed at, less what `--exclude` names, so a consumer
   outside that target (the tests of `towel dry src/pkg`) is not checked; a
@@ -1287,290 +1363,83 @@ where the evidence comes from:
 
 ## Decorators that compile or instrument a body
 
-Some decorators do more than wrap the function they decorate. typeguard's
-`@typechecked` recompiles it from its source with a check after every
-annotated assignment, and numba's `@njit` compiles it in nopython mode. Code
-moved out of such a function into a plain helper is no longer checked or
-compiled: the check stops raising, or the kernel calling a Python helper
-stops compiling. So Towel extracts a block, or places a call site, only where
-every decorator that can reach the code is known to leave the body alone, and
-places a helper inside a function or class only under the same condition.
-The decorators that can reach a function's code are its own, those of every
-function enclosing it, and those of every class enclosing it (typeguard
-instruments every method of a decorated class). Anything else is declined
-under `decorator_may_transform_body[...]`, which names the decorator
-(fixtures `r7d_*`).
+Reflection and body/class instrumentation are outside the preservation
+guarantee. For example, typeguard can recompile a function's source with
+checks, and numba can compile its body. Moving part of that body into a plain
+helper can change what is checked or compiled. The same applies to project
+code rewriting an AST, source readers such as inline-snapshot, and import
+hooks that rewrite modules. Towel does not resolve an instrumenter's reach,
+maintain a body-transformer allowlist or refuse extraction to preserve it.
 
-A decorator is known when it is one of these:
+This boundary applies equally to explicit decorators, calls such as
+`fast = njit(kernel)`, stacked calls, metaclasses and construction hooks. It
+does not exclude ordinary nonreflective calls, effects or receiver behavior
+from the normal correctness checks, and does not mean that all decorated code
+is refused.
 
-- An entry of `KNOWN_DECORATORS` in `src/towel/unification/decorator_reach.py`,
-  each recording its canonical name and the library version whose source was
-  read to verify it: the builtins `property` (and its `setter`, `getter`,
-  `deleter`), `staticmethod` and `classmethod`; `functools.wraps`, `cache`,
-  `lru_cache`, `cached_property`, `singledispatch`, `singledispatchmethod`,
-  `partialmethod` and, on classes, `total_ordering`; `contextlib.contextmanager`
-  and `asynccontextmanager`; `abc.abstractmethod`; `typing` and
-  `typing_extensions` `overload`, `override`, `final`, `no_type_check`,
-  `runtime_checkable`, `dataclass_transform` and `deprecated` (with
-  `warnings.deprecated`); `dataclasses.dataclass` and `enum.unique` on classes;
-  `unittest.mock.patch` and its `object`, `dict` and `multiple`,
-  `unittest.skip`, `skipIf`, `skipUnless` and `expectedFailure`;
-  `pytest.fixture` and every `pytest.mark.*`; and click's `command` and `group`
-  (without a `cls` argument), `option`, `argument`, `confirmation_option`,
-  `password_option`, `version_option`, `help_option`, `pass_context` and
-  `pass_obj`.
-- A function of the project that Towel can show is a plain wrapper: it returns
-  the function unchanged, perhaps after storing it in a module-level `dict`,
-  `list` or `set` display (a registry) or setting a non-dunder attribute on it,
-  or it returns a wrapper that only calls the function with the wrapper's own
-  arguments, with or without `functools.wraps`. A factory of such a decorator
-  (`@retry(3)`) counts too. It must not read the function's `__code__`,
-  `__globals__`, `__closure__` or any attribute but `__name__`, `__qualname__`,
-  `__module__` and `__doc__`, nor hand it to any callable but `wraps`,
-  `update_wrapper` and a registry's own container methods; a decorator doing
-  anything the analysis cannot show harmless is declined, however harmless it
-  is.
+Pytest's assertion rewriting is also unsupported: an `assert` may move to a
+module that pytest rewrites differently, changing its diagnostic message.
+Towel does not read pytest's rewrite configuration to prevent this. Earlier
+reviews recorded differences involving `testpaths`, early imports and package
+initializers under the former partial model; those historical findings are
+superseded as preservation requirements, not reclassified as successful tests.
 
-Names are resolved by binding, never by spelling. `from functools import wraps
-as w` makes `@w(f)` `functools.wraps`; a `property` the module or class binds
-itself is not the builtin; `@pytest.mark.parametrize(...)` and
-`@click.option(...)` resolve through the callee of the call, and
-`needs_db = pytest.mark.skipif(...)` makes `@needs_db` that call's decorator. A
-module-level name counts only when every binding the module could give it is
-known, so a compatibility import (`try: from typing import override` ...
-`except ImportError: from typing_extensions import override`) counts and a name
-rebound anywhere in the module to something unknown does not. So does every
-binding the rest of the program could give it, at whatever module the name
-passes through: `enable_checks.py` setting `app.checks.checked =
-typeguard.typechecked` before `app.core` imports the no-op `checked` declines
-the code under it. Every write the builtins' question counts (above) counts
-here for a decorator's name, from anywhere in the project, tests included:
-an attribute store, `setattr` with that name or a computed one, a store into
-the module's `__dict__`, the module's own `globals()` before or after the
-definition, `mock.patch` and `monkeypatch.setattr`. An attribute store at
-the top level of its module, `mod.name = value`, adds its `value` as one more
-possibility, read there, so `functools.cache =
-functools.lru_cache(maxsize=None)` keeps `@functools.cache` known; any other
-write makes the name unknown. `importlib.reload` needs no rule of its own: it
-runs the module's own statements again, whose every binding the name is
-already held to, and a rebinding it could bring into effect is itself one of
-the writes above. A library's name counts the writes into its
-module by name (`functools.cache = ...`, `builtins.property = ...`). A star
-import makes unknown only the names it may bind (fixtures `r9dc_*`): from a
-module of the project with a literal `__all__`, the names it lists together
-with the module's public names, since an import cycle may run the star import
-before the module binds `__all__`, and it then exports what it has bound so
-far; from one without, its public names, the names a function of it declares
-`global`, and what its own star imports bind; either way with every name the
-project writes into it. From the standard library, from outside the project,
-from a module not found, through a cycle of star imports, or from a module
-whose `__all__` is built at run time, any name. A decorator
-named through a local of an enclosing function, a method of an object
-(`@app.route("/x")`, `@cli.command()`, `@f.register`), a class, or any other
-expression is declined.
+Coverage configuration is not a placement constraint. Under `--cross-module`,
+code can move between files measured differently by coverage.py's `source`,
+`include` and `omit` settings. One historical round-4 probe moved a block from
+an omitted file into a measured module and increased that module's missed
+lines from 4 to 5. This remains a possible tooling difference.
 
-A decorator applied by hand counts as one written with `@`: every call in the
-value of an assignment at module or class level, in any module of the
-project, applies its callee to each definition an argument of it names, or
-that a call made in the argument is handed, at any depth, and is judged as
-that decorator would be. So `parse_a = typechecked(register(parse_a))` and
-`cmd = click.command(cls=Checked)(click.argument("v")(show_a))` apply every
-callable of the chain to the function (fixture
-`r9dc_stacked_decoration_by_hand`). `fast = numba.njit(kernel)` and
-`fast = njit(cache=True)(kernel)` decline `kernel`, `f = typechecked(f)`
-declines `f`, `method = wrap(method)` in a class body declines `method`, and
-`C = typechecked(C)` declines every method of `C`, however the argument is
-spelled (`kernels.slow`, an alias, a name imported from another module). A
-call given the function among other arguments (`x = property(get, set)`,
-`T = TypeVar("T", bound=Model)`) is covered only where the entry's reading
-covers it. A name that cannot be followed to its definition (through a star
-import, a name bound by a loop) is taken to be every definition of its name.
-So `ORDER = sorted(items, key=rank)` at module level declines `rank`.
+External type/build tools are a separate boundary: source constructs such as
+TypeVar, Literal and cast, and Babel catalog-extraction calls, retain their
+position requirements. Those checks protect declared typing and build
+contracts rather than self-inspection by the refactored program.
 
-The class that holds the code is judged by its machinery as well: a
-metaclass, or an `__init_subclass__` anywhere on its method resolution order,
-may wrap or recompile its methods while the class is built. Every class
-enclosing the code must pass the test a class taking a method helper passes
-(*Metaclasses and descriptors* below): a metaclass that is `type`,
-`abc.ABCMeta` or the enum metaclass, no `__init_subclass__` or
-`__getattribute__` of its own, and bases that are builtins, `abc.ABC`,
-`typing.Generic[...]`, enums, the library classes below, or classes of the
-project that pass in turn, whose decorators are known to add no machinery. A
-class not in a module's own body passes only when it has no bases and no
-keywords, and binds neither name. Anything else declines under
-`class_machinery_may_transform_methods[...]`, which names what fails the test:
-`metaclass LexerMeta`, `__init_subclass__ of Base`, `decorator mock.patch of
-Base`, or `base pydantic.BaseModel`, since the test reads no other class
-outside the project.
-
-The library classes are those of `KNOWN_BASES` in
-`src/towel/unification/known_bases.py`, each read in CPython 3.11.15, 3.12.13
-and 3.13.7 and checked of the running interpreter by the suite: `type` or
-`ABCMeta` builds a subclass, nothing on the order defines
-`__getattribute__`, and none defines `__init_subclass__` but
-`unittest.TestCase`, whose own only sets two attributes of the subclass. They
-are `unittest.TestCase`, `IsolatedAsyncioTestCase`, `TestResult` and
-`TextTestResult`; `asyncio.BaseProtocol`, `Protocol`, `BufferedProtocol`,
-`DatagramProtocol` and `SubprocessProtocol`; `ast.NodeVisitor` and
-`NodeTransformer`; `logging.Filterer`, `Filter`, `Formatter`, `Handler` and
-`StreamHandler`; `threading.Thread`; `html.parser.HTMLParser`;
-`json.JSONEncoder` and `JSONDecoder`; `argparse.Action`, `HelpFormatter`,
-`ArgumentParser` and `Namespace`; `http.server.BaseHTTPRequestHandler`;
-`socketserver.ThreadingMixIn`; `string.Formatter`; `textwrap.TextWrapper`;
-`contextlib.ContextDecorator`, `AbstractContextManager` and
-`AbstractAsyncContextManager`; `collections.UserDict`; the `collections.abc`
-classes (`Mapping`, `MutableMapping`, `Sequence`, `Set`, `Iterable` and the
-rest of the common ones, subscripted or not); and `importlib.abc.MetaPathFinder`
-and `Loader`. Classes implemented in C (`io.StringIO`, `datetime.datetime`,
-`threading.local`, `ctypes.Structure`) and third-party classes are not read and
-not listed. An ancestor of the project may carry, besides the decorators that
-keep a class's namespace, `unittest.skip`, `skipIf`, `skipUnless`,
-`expectedFailure`, `typing.no_type_check` and `typing.dataclass_transform`,
-each called or not. A module that binds a builtin by a compatibility import
-(`try: from builtins import object` ... `except ImportError: pass`) holds the
-builtin on every path, and the base resolves to it.
-
-A `TestCase` subclass can therefore take a class-private method helper,
-`_Case__extracted_func_0`. unittest's loader collects only names starting with
-its `testMethodPrefix`, `test`, and pytest collects a `TestCase`'s tests through
-that same loader, so neither collects it (fixture
-`r7d_method_helper_in_a_testcase`); a loader whose prefix starts with an
-underscore would.
-
-Under `--cross-module`, a block holding an `assert` is shared between two
-modules only when pytest rewrites both alike (`assert_rewriting_differs`). A
-rewritten assert that fails reports the values it compared; a plain one
-reports only its message. Following pytest 9.1.1's own rules, a module is
-rewritten when it is a `conftest.py`, matches `python_files` (`test_*.py`
-and `*_test.py` by default), is a file `testpaths` names, or is named, or
-lies in a package named, by a `-p` of `addopts`, a `pytest_plugins` or a
-`register_assert_rewrite` at the top of the root's `conftest.py`; never under
-`--assert=plain` and never with `PYTEST_DONT_REWRITE` in its docstring. The
-configuration is the first pytest reads from the project's root upward
-(`pytest.toml`, `pytest.ini`, `pyproject.toml`, `tox.ini`, `setup.cfg`).
-Where the project cannot say, the pair is declined: a pytest configuration
-below the root, `-o`, `-c` or `--rootdir` in `addopts`, a `pytest11` entry
-point of the project itself (its packages are rewritten once it is
-installed), a `pytest_plugins` or `register_assert_rewrite` anywhere else
-(for the modules it names), or a value that is not a literal. What the
-invocation adds (`PYTEST_ADDOPTS`, `PYTEST_PLUGINS`, a module path given on
-the command line) is taken to be absent (fixtures `xf7d_*`).
-
-Three of pytest's rules are not modeled, and a file they concern is taken
-to be rewritten or not by the rules above. pytest keeps only the
-`testpaths` entries no earlier one holds (`normalize_collection_arguments`
-in `_pytest/main.py`, unless `--keep-duplicates`), so `testpaths =
-["tests/helpers.py", "tests"]` does not make `tests/helpers.py` an initial
-path, and pytest does not rewrite it, while Towel takes it to be rewritten
-(round 4, P1-11). pytest consults its initial paths only once the session
-is set, so a file a `conftest.py` imports while pytest configures itself is
-not rewritten as one. And its early bail-out passes over a package's
-`__init__.py` that `python_files` matches unless the package's own name
-matches too. In each case an `assert` may move, under `--cross-module`,
-between a module pytest rewrites and one it does not. What changes is the
-failure report: a failing assert loses, or gains, pytest's account of the
-values it compared. Whether a test passes or fails does not change.
-
-What this does not see:
-
-- **A function handed to a compiler or source reader only inside another
-  call.** Decoration by hand is read from assignments at module or class
-  level alone. An expression statement (`atexit.register(f)`,
-  `app.add_url_rule("/", view_func=f)`), a call in a function body
-  (`kernel = numba.njit(slow)` inside `setup()`, `Thread(target=f)`), a
-  bare call statement on a class (`typechecked(A)`), a default value, and a
-  function reached through a container
-  (`njit(KERNELS["slow"])`) or through a name bound other than by a `def`, an
-  import or a plain alias (`g = f if fast else h`) are not seen, and code may
-  still move out of the function they hand over.
-- **Import hooks.** A hook that rewrites a whole module (typeguard's
-  `install_import_hook`) is neither a decorator nor class machinery. A helper
-  in the same module is rewritten with it; one shared across modules with
-  `--cross-module` is rewritten only if its host is, and only pytest's
-  assertion rewriting is modeled.
-- **Shadowed library names.** A module of the project named like a
-  third-party library in the list is read as the project's own code, but one
-  named like a standard-library module (`functools.py` at an import root) is
-  taken to be the standard library, as everywhere else in Towel. A class
-  whose metaclass's `__prepare__` fills the class namespace in advance could
-  bind a decorator's name before its body runs; that is not modeled.
-- **Module objects replaced, and writes the scan does not read.** A write
-  into a decorator's module is seen in the forms the builtins' question lists
-  above; not seen are a module replaced whole (`sys.modules["app.checks"] =
-  fake`, or `app.checks = fake` on the package where a relative import
-  reaches the submodule), an attribute store as the target of a `for`, a
-  `with` or a comprehension, a module object reached other than by an import,
-  `importlib.import_module`, `getattr` with a spelled name or `sys.modules`,
-  and what code outside the project does. A star import nested in a provider
-  is read from the project's file even where that file is named like a
-  standard-library module. Any call whose first argument spells a dotted name
-  (`logging.getLogger("app.checks")`) counts as a write of its last part, as
-  it does for the builtins, and may decline code that is safe.
+The [September 27 decision](DECISIONS.md#2026-09-27-supported-body-instrumentation-is-protected-regardless-of-syntax)
+records the earlier supported-instrumentation implementation and validation.
+The [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+removed that exception.
 
 ## Conservative rejections
 
-Towel prefers to leave code unchanged rather than transform it under
-uncertainty. Every declined pair is traced under one of the reasons of
+Within its preservation contract, Towel leaves code unchanged when the
+required checks cannot establish a valid transformation. Every declined pair is traced under one of the reasons of
 `RejectReason` (`src/towel/unification/models.py`), listed here in the order
 the pair decision raises them, grouped by stage; a `dry` run that applied
 nothing prints how many pairs its last analysis declined for each (a pair
 that only repeated another's proposal is not counted), and every run counts
 the proposals it built and did not apply, by reason:
 
-- Decorators and class machinery. `decorator_may_transform_body[...]`,
-  counted with the decorator it names
-  (`decorator_may_transform_body[typeguard.typechecked]`): a decorator,
-  written with `@` or applied by a call a module or class body assigns, that
-  can reach the code of a block, of a call site, or of the helper's host is
-  not known to leave the body alone. `class_machinery_may_transform_methods[...]`,
-  counted with what fails the test (`...[metaclass LexerMeta]`): a class
-  enclosing the code does not pass the method-host test of its machinery.
-  `assert_rewriting_differs`: under `--cross-module`, a block holding an
-  `assert` would join modules pytest does not rewrite alike. See *Decorators
-  that compile or instrument a body* above. Which files coverage.py
-  measures is not read: under `--cross-module`, code can move between files
-  that coverage measures differently, as the project's `[run]` `omit`,
-  `include`, `source` or `source_pkgs`, or its `[report]` `omit` and
-  `include`, decide. Code of a file coverage.py omits then becomes measured
-  in the helper's module, or measured code leaves the report and what
-  counts toward `fail_under` (round 4: a block of a module the
-  `.coveragerc` omits, moved into one it measures, raised that module's
-  missed lines from 4 to 5). Reading it would decline pairs between a
-  project's tests and the package its `source` names, a cost measured on
-  attrs and h2.
-- Frame use. `frame_sensitive_block`: the block contains a suspension,
-  a namespace read, a frame or stack read, a warning, a loop transfer
-  out of the block, a comprehension assignment expression, or a `super()`
-  reached through another name (the list under *Frame and control flow*
-  above), or zero-argument `super()` in a method that rebinds its receiver or
-  binds `__class__`. `source_reading_callee[...]`, counted with the callee
-  it names (`source_reading_callee[inline_snapshot.snapshot]`): the block
-  refers to an inline-snapshot callee that reads the source or position of
-  its call (*Observable differences that remain* above).
-  `frame_read_in_function`: the enclosing function reads
-  its own frame (`locals()`, `dir()`, `eval`, `sys._getframe()`, ...)
-  somewhere outside the block, or calls `super()` through another name there
-  while the block holds a load of `super` or `__class__`, which may be what
-  gives the function its class cell.
+- Control flow and class context. `frame_sensitive_block` retains its
+  historical diagnostic name for suspension, loop transfers out of the block,
+  comprehension assignment expressions and unsupported `super()` context.
+  Zero-argument or aliased `super()` requires the original class cell and
+  receiver. `frame_read_in_function` remains for an aliased `super()` outside
+  the block when moving the block would remove the function's class cell.
+  These historical diagnostic names do not imply a reflection scan.
+  Reflection, warning attribution, body instrumentation and source readers
+  are not refusal categories.
 - Bindings crossing the block boundary. `nested_binding_escapes`: a block
   nested inside a loop or branch binds a name the rest of the function
-  reads. `closure_crosses_block_boundary`: a nested function or lambda
+  reads and lacks the bounded IF-only fresh-output certificate described
+  above. That certificate does not relax ownership or admit arbitrary nested
+  control flow. `closure_crosses_block_boundary`: a nested function or lambda
   outside the block reads a name the block rebinds, or one inside the
   block reads a name the caller rebinds after it. `moves_scope_declaration`:
   a `global`/`nonlocal` declaration in the block names something the
   caller still uses.
-- Objects created by moved code. `created_object_escapes`: a function,
-  lambda, generator or class the block creates could be observed other than
-  by calling it. Created inside a helper it would carry the helper's
-  `__qualname__` (`f1.<locals>.<lambda>` would become
-  `__extracted_func_0.<locals>.<lambda>`), which reaches output through
-  `repr`, logging and registries, and a unified lambda would carry the
-  template's parameter names. Such an object may still be called in the
-  block with arguments it accepts, be the `key=` of `sorted`, `min` or `max`,
-  or be the function of a `map` or `filter` consumed in the block; anything
-  else, and any class defined in the block, is declined. Lambdas passed to
-  methods, to `functools.reduce`, or joined by a non-literal separator are
-  declined by this rule although many are harmless.
+- Objects created by moved code. `created_object_escapes`: a callable or
+  iterator created in the block may outlive it. A moved closure captures the
+  helper's bindings, so later caller rebinding can change the original result
+  while leaving the helper's captured value unchanged. Unification can also
+  rename lambda parameters and change an escaping callable's keyword
+  interface. Both affect ordinary calls, independently of reflection.
+  A created callable may be called within the block with accepted arguments,
+  serve as `key=` for `sorted`, `min` or `max`, or be the function of `map` or
+  `filter` consumed there. Other uses decline conservatively. Classes,
+  coroutine functions and decorated definitions can expose closures or defer
+  execution and are not analyzed more precisely here. Metadata such as
+  `__qualname__`, repr and logging observations is outside the guarantee.
   `thunk_of_possibly_unbound_local`: a lambda the helper call would carry
   reads a local of the calling function that may be unbound there. The
   original raises `UnboundLocalError` at that read; a thunk can only raise
@@ -1580,6 +1449,14 @@ the proposals it built and did not apply, by reason:
   Python 3.12 (PEP 709) that comprehension shares the function's scope, and
   the thunk would raise `NameError`. It declines on 3.11 too, where the
   thunk would work.
+  A separate source-associated compiler check refuses moving a list, set or
+  dict comprehension whose target is captured by a lambda or nested generator
+  and shares an outer free-cell spelling. On CPython 3.12/3.13, moving it can
+  change cell restoration and unchanged continuation reads. Evaluated defaults,
+  decorators and class heads participate in that containing frame; separate
+  bodies and an outer generator's body do not. Uncaptured and independently
+  bound target names remain eligible. This is an ordinary binding/error proof,
+  not a reflection scan.
 - Type information the move would destroy. `narrowing_lost_at_call_site`: a
   test in the block narrows a name, and an expression the two sites differ in
   reads that name, so extraction would leave the reading outside the region
@@ -1615,7 +1492,11 @@ the proposals it built and did not apply, by reason:
   a whole f-string (container syntax rather than values), a lambda with
   positional-only, keyword-only, or variadic parameters, an expression
   containing an assignment expression, and a substitution that would need
-  more than the configured maximum parameters (`--max-parameters`). It
+  more than the configured maximum newly parameterized differing expressions
+  (`--max-parameters`). Ordinary helper signatures may also include unchanged
+  free inputs. Certified argument-ownership transfer additionally requires the
+  complete expanded positional signature, including its holder, to fit that
+  maximum. It
   also includes a difference a tool reads where it stands: a translation
   marker's message, or the name, fields or type a checker reads of a typing
   form. A form is what the block's module binds to typing's object,
@@ -1632,7 +1513,11 @@ the proposals it built and did not apply, by reason:
   binding in the other. `mixed_return_and_variables`: a block both returns
   early and binds variables read afterwards, which one call statement
   cannot render.
-- Free variables and lifetimes. `conditionally_bound_return`: a returned
+- Free variables and lifetimes. `owned_binding_exception_boundary`: a moved
+  owned binding crosses an outside handler or manager before ownership can
+  return. `owned_binding_frame_boundary`: caller and helper would retain
+  potentially finalizable values in different frames without a certified
+  whole-body argument transfer. `conditionally_bound_return`: a returned
   variable is not definitely bound at the block's exit and did not enter
   as a parameter. `incomplete_lifetime_block1`/`_block2`: the block reads a
   name that is bound only after it, or reads a local before its own binding
@@ -1644,8 +1529,7 @@ the proposals it built and did not apply, by reason:
   so no one set of declarations in the helper serves both.
   `module_data_lookup`: the helper would receive module data
   (a module-level assignment) as an argument, snapshotting it. `rebound_external_binding`: the helper would receive a
-  name another function rebinds through `global` or `nonlocal`, or a name
-  the module's reflection makes unreliable. The names both sites resolve
+  name another function rebinds through `global` or `nonlocal`. The names both sites resolve
   at module scope are read bare by a same-module helper and are exempt
   from both, so these two decline cross-file pairs and pairs where only
   one site resolves the name at module scope.
@@ -1666,6 +1550,13 @@ the proposals it built and did not apply, by reason:
   default (`skip_trivial_helpers=False` keeps it). One whose only
   computation is calling helpers Towel generated is declined under this
   reason whatever the setting.
+  The additional tiny-helper interface filter counts final formals (including
+  receiver and ownership holder), replacement-call lambdas and sharing sites.
+  It applies only to at most two meaningful straight-line statements. Actual
+  control flow, nested definitions/scopes and more substantial bodies remain
+  subject to other checks. This output-quality policy does not mean a necessary
+  supplier or holder can be eliminated. See [the calibration](DECISIONS.md#2026-10-06-tiny-helpers-must-repay-their-interface-cost).
+  `skip_trivial_helpers=False` bypasses this optional filter.
 - Orphans. `orphaned_variables`: a name the block binds is read afterwards
   on a path that does not rebind it first, and the helper does not return
   it; an augmented assignment and a `del` read the name as a load does. A
@@ -1861,8 +1752,9 @@ the proposals it built and did not apply, by reason:
 - Placement. `needs_class_body`: the blocks use zero-argument `super()` and
   the helper cannot be a method of the class holding both, reached through
   the same receiver (*Method insertion*); nothing else binds `super()` alike.
-  `nonlocal_safety_skip`: either block's function declares
-  `nonlocal`. `private_name_lexical_class`: a site's method uses a
+  `nonlocal_safety_skip`: a block reads, writes or declares a name its
+  function makes `nonlocal`. An unrelated declaration does not block the
+  extraction. `private_name_lexical_class`: the moving block uses a
   `__private` name and the helper would live in another class, which
   changes name mangling. `cross_module_global_declaration`: a cross-file
   helper's participating modules include one whose functions declare
@@ -1889,15 +1781,28 @@ the proposals it built and did not apply, by reason:
   `bare_name_differs_by_module`: after the pair was decided again with them
   as parameters, the helper still reads bare a name that a site in another
   module could resolve differently. `builtin_may_differ_by_module`: the
-  helper would read bare a builtin that a participating module may hold in
-  its namespace (*Module names stay module names*).
+  helper would read bare a builtin in a different module's namespace (*Module names stay module names*).
+  `builtin_mapping_replaced`: possible `__builtins__` replacement, including
+  an ordinary attribute store/deletion anywhere in the analyzed program, makes an
+  explicit module/global fallback read or implicit import/class lookup depend
+  on the caller's captured mapping. Custom names and currently module-bound
+  names are included. The helper or lookup lambda could capture another mapping.
+  The
+  `--parameterize-builtins` flag does not bypass this conservative refusal.
 - The proposal. `duplicate_proposal`: the helper, home and sites repeat an
   earlier pair's, found through another pair of the same family.
   `existing_helper_becomes_forwarder`: a site is the whole body of a helper
-  an earlier pass inserted, which would keep only the new call, while
-  another site is not a whole body. When every site is the whole body of its
-  function, each of them, an earlier helper included, becomes a call of the
-  new helper, since no function is ever redirected to another.
+  this run inserted, which would keep only a new forwarding call. A proved
+  whole-body identity call may instead reuse that helper. Equivalent module
+  helpers with distinct generated names can share one definition through an
+  alias when their plain signatures and bodies match, their annotations are
+  literal strings or `None`, and the alias's earlier import resolves to the
+  exact proved helper. Evaluated annotations such as `n: int` retain separate
+  definitions under this conservative rule.
+  Same-module consolidation and general consumer redirection are not attempted.
+  A helper-shaped function already in the input retains its independent
+  binding: its body may share a fresh helper, but its name is never reused or
+  aliased merely because of its spelling.
 
 Other behaviors that leave a duplicate in place are not rejections of a
 formed pair:
@@ -1926,9 +1831,13 @@ formed pair:
   a call looks the other function up in its module every time, so
   `mock.patch("mod.f1")`, or any other rebinding of `mod.f1`, changed `f2`
   as well (audit `r06`). The `reuse_existing_functions` setting is
-  deprecated and changes nothing. A site that duplicates an earlier pass's helper, where
-  the other site is only part of its function, is left in place rather than
-  reduced to a call of it or chained through it.
+  deprecated and changes nothing. Compatible plain module helpers generated
+  earlier in this staged run can be reused with their original signature and
+  safe host. Equivalent generated helpers from independent batches can become
+  aliases when plain positional signatures, bodies, inert annotations and
+  import/provenance checks agree. User-input functions retain independent
+  bindings. General consumer redirection, same-name collisions and same-module
+  consolidation remain deferred.
 - A block that begins at an `elif` is never extracted, because its call
   would have to be rendered inside the preceding branch's `else`; the
   `elif`'s own body and further branches remain candidates. This gives up a
@@ -1964,8 +1873,8 @@ this unchanged": what it names is read as evidence like the rest, and only a fil
 it names that does not parse is taken for no part of the program. The refusal
 suggests an `--exclude` for each file that clears it, the directory's name when
 two or more of the files share it, else the file's own; only a file given
-explicitly as the target has none, since it is always analyzed. Of the 140 corpus
-projects, 8 hold a file that does not parse on 3.12 and 3.13, all cleared that
+explicitly as the target has none, since it is always analyzed. In the historical
+140-project corpus run, 8 held a file that did not parse on 3.12 and 3.13, all cleared that
 way (black's `tests/data`, parso's `normalizer_issue_files`, unidecode's
 root-level Python 2 `benchmark.py`). On 3.11 sphinx and cattrs join them, and
 django holds five more such files, all written for 3.12, which sphinx and django
@@ -1981,16 +1890,33 @@ require. What remains:
 
 ## Performance
 
+The dated phase and self-refactoring measurements below are historical. The
+October 10 complete CLI comparison at audited `9d57b0d` measured Click at +21.85%
+and Rich at +78.10% relative to published 1.792, with two samples per arm on a
+shared host. These observations do not establish recovered performance or a
+release timing guarantee. See the [October 10 Click and Rich
+assessment](PERFORMANCE.md#october-10-click-and-rich-assessment) for the exact
+workloads, correctness checks and environment qualifications.
+
 Analysis is quadratic in candidate blocks per file. The measures below keep
 it tractable, all exact: they change no proposal.
 
+- Functions with no structural partner do not enumerate blocks. Without
+  cross-module sharing, each singleton module is skipped even in directory
+  mode. With sharing enabled, functions in other modules can supply partners.
+  Eligible functions use per-suite prefix facts, but exact interval slices
+  and statement-type tuples still consume storage proportional to their total
+  lengths. `--max-pairs` bounds evaluated pairs, not block storage or peak
+  memory. Incremental changed-file filtering remains after global budgeting.
 - Blocks that can never be accepted are not enumerated: one that returns on
   some path but not every path, or a lone expression statement. On pyflakes'
   2,167-line `test_other.py` that removes 32,857 of 44,826 rejected pairs.
-- Every analysis result is cached by the block's structure, not by node
-  identity, so a fixed-point iteration that re-parses a file still reuses
-  results for the blocks it did not touch. Unification results are stored as
-  positions and rehydrated onto the matching blocks.
+- Pure structural unification results are stored as positions and rehydrated
+  onto matching blocks. Site-sensitive safety checks also key or validate the
+  relevant module, source and scope facts; equal AST structure alone cannot
+  transfer a permission to another binding environment. Other immutable facts
+  use AST-lifetime memos. See [the cache boundaries](ARCHITECTURE.md)
+  for the different lifetimes and invalidation rules.
 - The clustering pass scans a file for the sites that can share a helper
   once per distinct helper template, not once per pair (every pair of N
   near-identical blocks renders the same template; 50 identical functions
@@ -2001,9 +1927,9 @@ it tractable, all exact: they change no proposal.
   7.9 s for 50 and 27 to 29 s for 100, in CPU time as in wall time, a
   factor of about 4 for twice the functions; at `5ff2458`, with one other
   single-core job running and before 1.772's per-call-site safety checks,
-  they took 4.0 s and 15.9 s), memoizes its per-candidate
-  pipeline on the template, the candidate, and the pair's helper, and
-  applies its constant-time filters before the semantic guards. The
+  they took 4.0 s and 15.9 s). Constant-time filters precede semantic
+  guards. The former per-candidate pipeline memo was removed because template
+  bindings and helper state can differ; semantic guards use the current site. The
   remaining growth is cubic: every one of the N²/2 pairs legitimately
   proposes the same N-site extraction until the first application collapses
   them. Pair evaluation therefore keeps the first proposal of each identity
@@ -2051,11 +1977,14 @@ it tractable, all exact: they change no proposal.
   rounds, applying 380 refactorings across 105 files, where the same project
   without types changed 108 files in 11 minutes. Sphinx's own test suite, run
   serially, reported the same 2385 passed, 34 skipped and six pre-existing
-  failures before and after. In the 1.772 release corpus, typed with
-  `--cross-module` on one worker in the release corpus's Docker container, a Linux VM on the same M5 Max given all 18 cores and 8 GB of memory, running four projects at a time, Sphinx took 94 minutes and changed
-  55 files,
-  its suite again unchanged; the audit rounds' checks decline more, and typed
-  verification is nearly all of the time.
+  failures before and after.
+  The Sphinx-only rerun at `29454ab` took 5,660 s (about 94 minutes) and changed
+  55 files. It ran alone in a Docker Linux VM with 18 cores and 8 GB of memory,
+  using Python 3.12, `TOWEL_WORKERS=1`, `--cross-module`, and default typing
+  (mypy and Pyright both strict). These are measured conditions, not minimum
+  resource requirements or time guarantees. Its suite was again unchanged;
+  the audit rounds' checks decline more, and typed verification is nearly all
+  of the time.
   The tail was the cost: a proposal the project rejected used to be heard
   again at every whole-project analysis, and families of near-identical
   methods pair many ways. A declined proposal is now remembered for the whole
@@ -2120,7 +2049,7 @@ above (macOS, Python 3.13,
 single core unless stated): the wall time of a whole `towel dry` run on the
 ecosystem check's clone of each project, before and after the measures
 above, with identical output in every case. These are the measured tables
-of package timings; the README refers here rather than repeating figures.
+of package timings; the [performance guide](PERFORMANCE.md) refers here rather than repeating figures.
 
 | Target | Before | After, one core | After, forking |
 |---|---|---|---|
@@ -2159,9 +2088,11 @@ command applies 22 refactorings in 35 s without the type checker and
 formatter, and 21 in 138 s with them, mypy being the one checker the
 project configures.
 
-The remaining cost is the pairwise evaluation of structurally distinct
-candidates, which no cache can share; large test modules with hundreds of
-similar methods remain the worst case. Progress is reported per phase.
+In those historical analyses, the remaining cost was pairwise evaluation of
+structurally distinct candidates, and large test modules with hundreds of
+similar methods were the worst case. Current complete-path costs require fresh
+attribution; the older phase measurements do not identify the current bottleneck.
+Progress is reported per phase.
 There is no time budget, but `--max-pairs` (20,000,000 by default) bounds
 the candidate pairs one analysis evaluates by leaving out the largest
 groups of similar blocks with a warning; interrupt with Ctrl-C, which
@@ -2173,10 +2104,10 @@ without `--run-untrusted-code`; use a disposable machine or container.
 
 ## Resources and platform
 
-Towel runs on Python 3.11 to 3.13 on a POSIX system. Applying changes needs
-POSIX filesystem semantics. Parallel analysis uses the `fork` start method, so
-where `fork` is unavailable (Windows, or a non-`fork` start method) the tool
-runs correctly on a single core and produces the same output.
+Python 3.11 to 3.13 on a POSIX system (macOS or Linux). Applying changes needs
+POSIX filesystem semantics. Parallel analysis uses the `fork` start method;
+under other start methods analysis runs on a single core. Windows is not a
+supported or validated release platform.
 
 One core suffices; more cores shorten a large analysis. Memory is the binding
 constraint on the largest projects. A single analysis process holds the parsed

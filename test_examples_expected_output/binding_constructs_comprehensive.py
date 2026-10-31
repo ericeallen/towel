@@ -8,7 +8,7 @@ Tests that Towel correctly handles free variable analysis for:
 """
 
 
-def __extracted_func_5(file1, file2):
+def __extracted_func_5(file1, file2, _towel_owner):
     data = []
     with open(file1) as f1, open(file2) as f2:
         data.append(f1.read())
@@ -16,7 +16,7 @@ def __extracted_func_5(file1, file2):
     return data
 
 
-def __extracted_func_4(filename):
+def __extracted_func_4(filename, _towel_owner):
     lines = []
     with open(filename) as f:
         for line in f:
@@ -24,7 +24,7 @@ def __extracted_func_4(filename):
     return lines
 
 
-def __extracted_func_3(items):
+def __extracted_func_3(items, _towel_owner):
     result = []
     if (n := len(items)) > 0:
         result.append(n)
@@ -32,7 +32,7 @@ def __extracted_func_3(items):
     return result
 
 
-def __extracted_func_2(items):
+def __extracted_func_2(items, _towel_owner):
     results = []
     idx = 0
     while (item := (items[idx] if idx < len(items) else None)) is not None:
@@ -41,7 +41,7 @@ def __extracted_func_2(items):
     return results
 
 
-def __extracted_func_1(inner_file, outer_file):
+def __extracted_func_1(inner_file, outer_file, _towel_owner):
     result = []
     with open(outer_file) as f1:
         result.append(f1.readline())
@@ -50,7 +50,7 @@ def __extracted_func_1(inner_file, outer_file):
     return result
 
 
-def __extracted_func_0(data):
+def __extracted_func_0(data, _towel_owner):
     errors = []
     for item in data:
         try:
@@ -62,32 +62,46 @@ def __extracted_func_0(data):
 
 def test_walrus_basic_a(items):
     """Walrus operator in if condition."""
-    return __extracted_func_3(items)
+    _towel_arguments_3 = [(items,)]
+    del items
+    return __extracted_func_3(_towel_arguments_3[0][0], _towel_arguments_3.pop())
 
 
 def test_walrus_basic_b(items):
     """Duplicate with walrus operator."""
-    return __extracted_func_3(items)
+    _towel_arguments_3 = [(items,)]
+    del items
+    return __extracted_func_3(_towel_arguments_3[0][0], _towel_arguments_3.pop())
 
 
 def test_with_statement_a(filename):
     """With statement binding."""
-    return __extracted_func_4(filename)
+    _towel_arguments_4 = [(filename,)]
+    del filename
+    return __extracted_func_4(_towel_arguments_4[0][0], _towel_arguments_4.pop())
 
 
 def test_with_statement_b(filename):
     """Duplicate with statement."""
-    return __extracted_func_4(filename)
+    _towel_arguments_4 = [(filename,)]
+    del filename
+    return __extracted_func_4(_towel_arguments_4[0][0], _towel_arguments_4.pop())
 
 
 def test_with_multiple_a(file1, file2):
     """Multiple context managers."""
-    return __extracted_func_5(file1, file2)
+    _towel_arguments_5 = [(file2, file1)]
+    del file1
+    del file2
+    return __extracted_func_5(_towel_arguments_5[0][1], _towel_arguments_5[0][0], _towel_arguments_5.pop())
 
 
 def test_with_multiple_b(file1, file2):
     """Duplicate multiple context managers."""
-    return __extracted_func_5(file1, file2)
+    _towel_arguments_5 = [(file2, file1)]
+    del file1
+    del file2
+    return __extracted_func_5(_towel_arguments_5[0][1], _towel_arguments_5[0][0], _towel_arguments_5.pop())
 
 
 def test_walrus_in_comprehension_a(items):
@@ -105,29 +119,43 @@ def test_walrus_in_comprehension_b(items):
 
 def test_nested_with_a(outer_file, inner_file):
     """Nested with statements."""
-    return __extracted_func_1(inner_file, outer_file)
+    _towel_arguments_1 = [(inner_file, outer_file)]
+    del outer_file
+    del inner_file
+    return __extracted_func_1(_towel_arguments_1[0][0], _towel_arguments_1[0][1], _towel_arguments_1.pop())
 
 
 def test_nested_with_b(outer_file, inner_file):
     """Duplicate nested with statements."""
-    return __extracted_func_1(inner_file, outer_file)
+    _towel_arguments_1 = [(inner_file, outer_file)]
+    del outer_file
+    del inner_file
+    return __extracted_func_1(_towel_arguments_1[0][0], _towel_arguments_1[0][1], _towel_arguments_1.pop())
 
 
 def test_exception_handler_binding_a(data):
     """Exception variable binding."""
-    return __extracted_func_0(data)
+    _towel_arguments = [(data,)]
+    del data
+    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 def test_exception_handler_binding_b(data):
     """Duplicate exception variable binding."""
-    return __extracted_func_0(data)
+    _towel_arguments = [(data,)]
+    del data
+    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
 
 
 def test_walrus_while_a(items):
     """Walrus in while loop condition."""
-    return __extracted_func_2(items)
+    _towel_arguments_2 = [(items,)]
+    del items
+    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
 
 
 def test_walrus_while_b(items):
     """Duplicate walrus in while loop."""
-    return __extracted_func_2(items)
+    _towel_arguments_2 = [(items,)]
+    del items
+    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())

@@ -15,29 +15,25 @@
 """The files of the program that Towel reads whole, and the refusal when one does not parse here.
 
 Some of Towel's checks read the whole program, not only the code being
-refactored, for what could make a change unsafe: a decorator applied by hand
-(``decorator_reach``), a builtin patched into a module (``namespace_writes``),
-a module whose asserts pytest rewrites (``assert_rewriting``). Each reads the
+refactored, for ordinary binding and import dependencies. Each reads the
 files :func:`program_files` yields, so each leaves out the same directories.
 
-A file one of them cannot parse was once skipped as a file that cannot run.
-It can run, on a newer Python. A project that requires 3.12 may hold a PEP 701
-f-string, which 3.11 rejects. Towel on 3.11 then missed the hand-applied
-decorator beside it, and a function it moved code out of computed something
-else. So a run refuses before anything is written when a file of the program
-does not parse on the interpreter Towel runs on
-(:func:`refuse_unparsed_program`). The refusal names each file and the
-parser's complaint, and gives two remedies: run Towel on a Python that parses
-it, or, if it is not meant to run, such as deliberately invalid test data,
-``--exclude`` it, by its own name or its directory's. Each scan refuses in
-the same words if it meets such a file itself (:func:`refuse_unparsed_file`).
+A file one of them cannot parse may run on a newer Python. Skipping it can
+hide ordinary module assignments and imports. A run therefore refuses before
+anything is written when a file of the program does not parse on the
+interpreter Towel runs on (:func:`refuse_unparsed_program`). The refusal names
+each file and the parser's complaint, and gives two remedies: run Towel on a
+Python that parses it, or, if it is not meant to run, such as deliberately
+invalid test data, ``--exclude`` it, by its own name or its directory's. Each
+scan refuses in the same words if it meets such a file itself
+(:func:`refuse_unparsed_file`).
 Only the parse depends on the Python version: a file that does not decode in
 its declared encoding runs on no Python, and is left alone, as one that
 cannot be read is.
 
 ``--exclude`` means "do not refactor these", and a file it names is still
 read by every scan, as evidence: a test suite excluded to keep it unchanged
-still declines a change its ``mock.patch`` would notice. Only a file that is
+still contributes evidence about ordinary module assignments. Only a file that is
 both excluded and does not parse here is taken at the user's word as no part
 of the program (:func:`excluded_by`).
 """
@@ -45,14 +41,25 @@ of the program (:func:`excluded_by`).
 from __future__ import annotations
 
 import ast
+import hashlib
 import os
 import sys
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AbstractSet, Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence
+from typing import (
+    AbstractSet,
+    Callable,
+    Dict,
+    FrozenSet,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+)
 from typing import Tuple
 
+from .analysis_sources import ParserConfiguration, parser_configuration, parsing_is_pure
 from .consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
 from .declared_python import PythonVersion, declared_newest_python, declared_requirement
 from .declared_python import python_lower_bound
@@ -66,7 +73,9 @@ _LEFT_OUT = SKIPPED_DIRECTORIES | {"site-packages", "dist-packages"}
 """Directories no whole-program scan reads: tool state, build outputs, installed packages."""
 
 
-def program_directories(root: Path) -> Iterator[Tuple[str, List[str]]]:
+def program_directories(
+    root: Path, *, on_error: Optional[Callable[[OSError], None]] = None
+) -> Iterator[Tuple[str, List[str]]]:
     """Each directory below ``root`` that the whole-program scans read, with its file names, sorted.
 
     Left out are the directories every scan skips (``SKIPPED_DIRECTORIES``:
@@ -74,10 +83,10 @@ def program_directories(root: Path) -> Iterator[Tuple[str, List[str]]]:
     installation directories, and any environment packages are installed
     into, whatever its name (``is_environment``). What ``--exclude`` names is
     read like the rest (:func:`excluded_by`). Symbolic links to directories
-    are not followed, and an unreadable directory is passed over. Callers
-    pick the files they read by suffix.
+    are not followed, and an unreadable directory is passed over, reporting
+    the error to ``on_error`` when supplied. Callers pick files by suffix.
     """
-    for parent, directories, files in os.walk(root, onerror=lambda _: None):
+    for parent, directories, files in os.walk(root, onerror=on_error):
         directories[:] = sorted(
             name
             for name in directories
@@ -118,8 +127,8 @@ class UnparsedFile:
         return f"{_shown(self.path, root)}: {self.complaint}"
 
 
-_Stamp = Tuple[str, int, int, int]
-_COMPLAINTS: BoundedCache[_Stamp, Optional[str]] = BoundedCache(1 << 15)
+_ComplaintKey = Tuple[str, bytes, ParserConfiguration]
+_COMPLAINTS: BoundedCache[_ComplaintKey, Optional[str]] = BoundedCache(1 << 15)
 """What the parser said of each file version, None when it parsed: a run asks twice."""
 
 
@@ -132,18 +141,17 @@ def parse_failure(path: Path) -> Optional[UnparsedFile]:
     encoding, runs on no Python, and is left alone as it always was.
     """
     try:
-        status = path.stat()
+        data = path.read_bytes()
     except OSError:
         return None
-    stamp = (str(path), status.st_mtime_ns, status.st_size, status.st_ino)
-    if stamp in _COMPLAINTS:
+    stamp = (str(path.absolute()), hashlib.sha256(data).digest(), parser_configuration())
+    cacheable = parsing_is_pure(data)
+    if cacheable and stamp in _COMPLAINTS:
         complaint = _COMPLAINTS[stamp]
     else:
-        try:
-            data = path.read_bytes()
-        except OSError:
-            return None
-        complaint = _COMPLAINTS.put(stamp, _complaint(data, path))
+        complaint = _complaint(data, path)
+        if cacheable:
+            _COMPLAINTS.put(stamp, complaint)
     return None if complaint is None else UnparsedFile(path, complaint)
 
 
@@ -153,10 +161,7 @@ def _complaint(data: bytes, path: Path) -> Optional[str]:
     except (UnicodeError, SyntaxError, LookupError):
         return None  # Not text in its declared encoding, or the cookie names no codec.
     try:
-        with warnings.catch_warnings():
-            # Test data is full of invalid escapes; reading it is not the place to say so.
-            warnings.simplefilter("ignore")
-            ast.parse(text, filename=str(path))
+        ast.parse(text, filename=str(path))
     except (SyntaxError, ValueError, RecursionError) as error:
         # ValueError: a null byte, before 3.12 made that a SyntaxError.
         return _described(error)

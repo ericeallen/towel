@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The ladder spends no check a project's own configuration, or an earlier check, already answered.
+"""The ladder follows current checker policy without losing required fresh checks.
 
 From the corpus study: the unannotated rung was tried where the project
 requires annotations; a helper inference left bare got no fallback at all
@@ -21,6 +21,8 @@ requires annotations; a helper inference left bare got no fallback at all
 checked again from scratch (packaging: 28 of 68 checks were exact repeats);
 and a site's declared annotation was copied even where the block saw a
 narrower type (packaging's comparisons, rich's ``append``/``append_text``).
+Repeated candidate checks deliberately stay fresh: source and configuration
+dependencies cannot safely be approximated by an inner refusal memo.
 """
 
 from __future__ import annotations
@@ -31,7 +33,14 @@ from typing import List, Mapping, Sequence
 
 import pytest
 
-from towel.type_inference import CheckResult, CheckSuccess, RevealRequest, TypeDiagnostic
+from towel.type_inference import (
+    CheckResult,
+    CheckSuccess,
+    RevealRequest,
+    TypeDiagnostic,
+)
+from towel.unification.models import FunctionNode, RefactoringProposal
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 from tests.probe_answers import answer_probes, only_probes
 from tests.typed_fixtures import STRICT, CountingMypy, apply_one, requires_mypy
@@ -54,13 +63,15 @@ class _RefusedInsideTheHelper(CountingMypy):
 
 
 SUMS = """
-def first(values: list[int]) -> int:
+def first() -> int:
+    values = [1, 2]
     total = sum(values)
     count = len(values)
     return total + count
 
 
-def second(items: list[int]) -> int:
+def second() -> int:
+    items = [1, 2]
     total = sum(items)
     count = len(items)
     return total * count
@@ -80,7 +91,9 @@ def test_the_unannotated_rung_is_not_tried_where_annotations_are_required(
     )
     assert outcome.error is not None
     assert outcome.checked_helpers, outcome
-    assert all(": " in signature for signature in outcome.checked_helpers), outcome.checked_helpers
+    assert all(
+        " -> " in signature for signature in outcome.checked_helpers
+    ), outcome.checked_helpers
 
 
 @requires_mypy
@@ -111,19 +124,23 @@ class _RevealsNothing(CountingMypy):
 
 
 @requires_mypy
-def test_a_helper_inference_left_bare_still_gets_the_fallback_rungs(tmp_path: Path) -> None:
+def test_a_helper_inference_left_bare_still_gets_the_fallback_rungs(
+    tmp_path: Path,
+) -> None:
     outcome = apply_one(
         tmp_path,
         """
-        def first(text: str) -> int:
+        def first() -> int:
+            text = "same input"
             words = text.split()
             size = len(words)
             doubled = size * 2
             return doubled
 
 
-        def second(line: str) -> int:
-            parts = line.split(",")
+        def second() -> int:
+            line = "same input"
+            parts = line.split()
             size = len(parts)
             doubled = size * 2
             return doubled + 1
@@ -167,8 +184,33 @@ class Version:
 """
 
 
+def _validation_proposal(
+    engine: UnificationRefactorEngine, path: Path, monkeypatch: pytest.MonkeyPatch
+) -> RefactoringProposal:
+    """Supply a legacy invalid proposal to test the validation backstop independently.
+
+    These tests protect fresh refusal checks and dependency changes, not
+    discovery's willingness to emit the packaging defect. The approved
+    caller-narrowing boundary now prevents that emission, tested separately
+    in test_narrowing_boundaries.py. Bypass only that discovery filter while
+    building the fixture; every materialization/type check remains real and
+    the current checker/reachability backstops remain real.
+    """
+
+    def keep(function: FunctionNode, block: List[ast.stmt]) -> bool:
+        return False
+
+    with monkeypatch.context() as fixture:
+        for module in ("block_analysis", "pair_evaluation"):
+            fixture.setattr(f"towel.unification.{module}.caller_narrowing_leaves_with_block", keep)
+        (proposal,) = [p for p in engine.analyze_file(str(path)) if "__lt__" in p.description]
+    return proposal
+
+
 @requires_mypy
-def test_a_refusal_is_replayed_until_something_it_read_changes(tmp_path: Path) -> None:
+def test_a_prior_refusal_is_checked_again_before_and_after_dependency_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from towel.unification.exceptions import RefactoringError
     from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -184,26 +226,29 @@ def test_a_refusal_is_replayed_until_something_it_read_changes(tmp_path: Path) -
         engine = UnificationRefactorEngine(
             min_lines=2, reuse_existing_functions=False, type_oracle=oracle
         )
-        (proposal,) = [p for p in engine.analyze_file(str(path)) if "__lt__" in p.description]
+        proposal = _validation_proposal(engine, path, monkeypatch)
 
         def hear() -> str:
+            checked_before = len(oracle.checked)
             try:
                 engine.apply_refactoring(str(path), proposal)
             except RefactoringError as error:
+                assert len(oracle.checked) > checked_before, "Every attempt needs a fresh check"
+                assert path.read_text() == VERSIONS.lstrip(), "A refused change must not be written"
                 return str(error)
             raise AssertionError("the proposal was applied")
 
         first = hear()
-        heard_once = len(oracle.checked)
+        assert "it narrows what its caller reads after the call" in first, first
+        assert "Unsupported operand types for <" in first, first
         assert hear() == first
         (tmp_path / "unrelated.py").write_text("VALUE = 2\n")
         assert hear() == first
-        assert len(oracle.checked) == heard_once, "Nothing the refusal read had changed"
-        (tmp_path / "helpers.py").write_text(
-            "def key(a: int, b: int) -> tuple[int, int]:\n    return (b, a)\n"
-        )
-        hear()
-        assert len(oracle.checked) == heard_once + 1, "A module the variant imports changed"
+        assert (tmp_path / "unrelated.py").read_text() == "VALUE = 2\n"
+        changed_helper = "def key(a: int, b: int) -> tuple[int, int]:\n    return (b, a)\n"
+        (tmp_path / "helpers.py").write_text(changed_helper)
+        assert hear() == first, "The implementation changed but its invalid interface did not"
+        assert (tmp_path / "helpers.py").read_text() == changed_helper
     finally:
         oracle.close()
 
@@ -247,17 +292,20 @@ def test_the_type_the_block_saw_replaces_a_wider_declared_one(tmp_path: Path) ->
         pick="append and append_text",
     )
     assert outcome.error is None, outcome.error
-    assert outcome.signature() in {"(self, text: 'Text') -> None", "(self, text: Text) -> None"}
+    assert outcome.signature() in {
+        "(self, length: int, text: 'Text') -> None",
+        "(self, length: int, text: Text) -> None",
+    }
     assert outcome.prospective_checks == 1, outcome.checked_helpers
 
 
 @requires_mypy
-def test_a_variant_accepted_after_a_replayed_refusal_is_still_probed_for_reachability(
+def test_a_variant_accepted_after_a_prior_refusal_is_still_probed_for_reachability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only refusals are replayed: a variant the checker accepts always has its lines probed.
+    """A variant accepted after prior refusals still has its lines probed.
 
-    The same variant is refused, heard again and refused by replay, and then,
+    The same variant is refused and checked again, and then,
     once the module it imports is fixed, checked afresh and accepted, at which
     point the check of code the checker does not look at runs for it.
     """
@@ -283,7 +331,7 @@ def test_a_variant_accepted_after_a_replayed_refusal_is_still_probed_for_reachab
         engine = UnificationRefactorEngine(
             min_lines=2, reuse_existing_functions=False, type_oracle=oracle
         )
-        (proposal,) = [p for p in engine.analyze_file(str(path)) if "__lt__" in p.description]
+        proposal = _validation_proposal(engine, path, monkeypatch)
         for _ in range(2):
             with pytest.raises(RefactoringError):
                 engine.apply_refactoring(str(path), proposal)
@@ -297,12 +345,15 @@ def test_a_variant_accepted_after_a_replayed_refusal_is_still_probed_for_reachab
         (tmp_path / "versions.py").write_text(
             VERSIONS.lstrip()
             .replace("tuple[int, int] | None", "Any")
-            .replace("from helpers import key", "from typing import Any\n\nfrom helpers import key")
+            .replace(
+                "from helpers import key",
+                "from typing import Any\n\nfrom helpers import key",
+            )
         )
         engine = UnificationRefactorEngine(
             min_lines=2, reuse_existing_functions=False, type_oracle=oracle
         )
-        (proposal,) = [p for p in engine.analyze_file(str(path)) if "__lt__" in p.description]
+        proposal = _validation_proposal(engine, path, monkeypatch)
         engine.apply_refactoring(str(path), proposal)
         assert len(oracle.checked) > refused_checks
         assert probed, "the accepted variant's lines were probed"

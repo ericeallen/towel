@@ -6,7 +6,11 @@ This directory contains test projects for verifying cross-file refactoring corre
 
 Each subdirectory is a **test project** containing multiple Python files with duplicate code across nested directory structures. The `CrossFileEquivalenceTester` analyzes these projects, applies cross-file refactorings, and verifies that the refactored code preserves the original behavior.
 
-In every project the module that borrows a helper already imports the module that hosts it: a module may gain an import only of a top-level package it already imports, since nothing else is known to ship with it (see `docs/KNOWN_LIMITATIONS.md`).
+Cross-module sharing is opt-in (`cross_module_helpers=True`). These fixtures
+exercise caller-side builtin lookup with `parameterize_builtins=True`, matching
+the test harness; default cross-module builtin refusal is tested separately.
+A host must also satisfy the existing import, packaging and initialization
+checks described in [the cross-module guide](../docs/CROSS_MODULE.md).
 
 ## Test Projects
 
@@ -100,37 +104,36 @@ just test-crossfile
 
 ### Manual Testing
 
-```bash
-cd /path/to/towel
-source .venv/bin/activate
+Run from the repository root in the pinned development environment:
 
-python -c "
+```bash
+uv run --frozen python - <<'PYTHON'
 from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
+engine = UnificationRefactorEngine(
+    max_parameters=5,
+    min_lines=4,
+    cross_module_helpers=True,
+    parameterize_builtins=True,
+)
 tester = CrossFileEquivalenceTester(engine)
-
-# Test all projects
-results = tester.test_all_projects('test_examples_crossfile', verbose=True)
-print(f'\\nSuccess rate: {100 * results[\"total_passed\"] / results[\"total_proposals_tested\"]:.1f}%')
-"
+results = tester.test_all_projects("test_examples_crossfile", verbose=True)
+assert results["total_proposals_tested"] > 0, results
+assert results["total_failed"] == 0, results
+for project in results["project_results"].values():
+    assert not project["errors"], project
+print(results)
+PYTHON
 ```
 
-### Testing a Single Project
+To test one project with the same engine, replace the `test_all_projects` call
+and assertions with:
 
-```bash
-python -c "
-from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
-from towel.unification.refactor_engine import UnificationRefactorEngine
-
-engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
-tester = CrossFileEquivalenceTester(engine)
-
-# Test specific project
-passed, failed, errors = tester.test_project('test_examples_crossfile/simple_crossfile')
-print(f'Passed: {passed}, Failed: {failed}')
-"
+```python
+passed, failed, errors = tester.test_project("test_examples_crossfile/simple_crossfile")
+assert passed > 0, (passed, failed, errors)
+assert failed == 0 and not errors, (passed, failed, errors)
 ```
 
 ---
@@ -142,7 +145,7 @@ print(f'Passed: {passed}, Failed: {failed}')
 2. **Cross-File Analysis**: Runs `engine.analyze_directory(recursive=True)` to find duplicates across all files in nested directories
 
 3. **Refactoring Application**: Applies cross-file refactorings using `engine.apply_refactoring_multi_file()`, which:
-   - Extracts common code to a canonical location (typically the first file)
+   - Selects a host that passes placement and import checks
    - Adds import statements to other files
    - Replaces original code with function calls
 
@@ -164,7 +167,14 @@ The cross-file testing framework is fully implemented and working, including:
 
 **Test results**: cross-file refactoring is verified end to end.
 
-The cross-file observational-equivalence harness (`test_crossfile_observational_equivalence.py`, `just test-crossfile`) refactors these fixtures and confirms the programs behave identically before and after. Cross-file extraction also clears the standing 91-project ecosystem check (see [../docs/PRODUCTION_READINESS.md](../docs/PRODUCTION_READINESS.md)): duplicates are identified across files and directories, a shared helper is placed in a reachable location, and each importing file receives a correct relative import.
+The cross-file observational-equivalence harness
+(`tests/test_crossfile_observational_equivalence.py`, `just test-crossfile`) is
+collected by the full test suite and CI. It applies accepted proposals and
+compares affected callable observations on generated inputs in isolated import
+contexts. It requires actual proposals and no failures or unverified target
+errors. This finite fixture check is distinct from the pinned ecosystem runs
+recorded in [production readiness](../docs/PRODUCTION_READINESS.md); it is not
+a universal equivalence proof or a standing ecosystem result.
 
 ---
 
@@ -172,10 +182,11 @@ The cross-file observational-equivalence harness (`test_crossfile_observational_
 
 ### Reuse Existing Infrastructure
 
-The `CrossFileEquivalenceTester` reuses components from `AutomaticEquivalenceTester`:
-- `test_all_refactored_functions()` - Behavioral comparison logic
-- `generate_test_cases_for_function()` - Test input generation
-- `compare_function_behavior()` - Equivalence verification
+The tester reuses `prepare_target_cases` for generated inputs and
+`execute_callable` / `compare_executions` for observations. It resolves affected
+functions from replacement sites in the original source, then isolates project
+imports while executing the original and changed callables. The harness is
+serial because `sys.path` and `sys.modules` are process-global.
 
 ### DRY (Don't Repeat Yourself)
 
@@ -212,33 +223,11 @@ The tester will automatically discover and test your new project!
 
 ---
 
-## Future Enhancements
+## Extending coverage
 
-1. **Improve Cross-File Refactoring Engine**: Fix the syntax errors and indentation issues identified by these tests
-
-2. **More Complex Projects**: Add test projects with:
-   - Circular import scenarios
-   - Package-relative imports
-   - `__init__.py` files
-
-3. **Integration with CI**: Add cross-file tests to the `just ci` command
-
-4. **Performance Optimization**: Cache refactoring results to speed up testing
-
----
-
-## Summary
-
-This cross-file testing infrastructure provides:
-
-✅ **Comprehensive Coverage**: Tests simple flat structures, nested directories, and multi-level hierarchies
-
-✅ **Reusable Design**: Leverages existing testing infrastructure (DRY principle)
-
-✅ **Easy to Extend**: New projects are automatically discovered
-
-✅ **Behavioral Verification**: Uses observational equivalence to ensure correctness
-
-✅ **Behavior preservation**: confirms the refactored program runs identically to the original
-
-The harness guards cross-file refactoring quality as part of the test suite.
+Add fixtures for a specific import or placement boundary, and require a useful
+accepted proposal where the case is intended to demonstrate a capability.
+Conservative controls should preserve the original source and observations.
+Circular imports, package-relative imports and package initialization also have
+focused regression families under `tests/`; these four example projects are
+only one layer of that coverage.

@@ -30,6 +30,7 @@ problem can matter, and none is reported.
 
 from __future__ import annotations
 
+import ast
 import os
 from pathlib import Path
 import shutil
@@ -45,8 +46,10 @@ from towel.cli import _problems_involving
 from towel.import_model import NameStatus, build_import_model
 
 _BLOCK = """
-def {name}(values):
-    print({tag!r})
+from builtins import print as emit
+
+def {name}(values, tag={tag!r}):
+    emit(tag)
     total = 0
     for value in values:
         if value > 1:
@@ -58,8 +61,10 @@ def {name}(values):
 """
 
 _WITHIN = """
-def {name}(words):
-    print({tag!r})
+from builtins import print as emit
+
+def {name}(words, tag={tag!r}):
+    emit(tag)
     seen = []
     for word in words:
         cleaned = word.strip().lower()
@@ -84,7 +89,7 @@ def _write(root: Path, files: Mapping[str, str]) -> Path:
 
 
 def _project(root: Path, extra: Mapping[str, str] = {}) -> Path:
-    """``zzalpha`` under ``src``: a block shared by two modules, another within ``b``."""
+    """``zzalpha`` under ``src``: ``b`` loads its shared host, and also has local duplicates."""
     return _write(
         root,
         {
@@ -92,7 +97,8 @@ def _project(root: Path, extra: Mapping[str, str] = {}) -> Path:
             + '[tool.setuptools.packages.find]\nwhere = ["src"]\n',
             "src/zzalpha/__init__.py": "",
             "src/zzalpha/a.py": _BLOCK.format(name="fa", tag="a"),
-            "src/zzalpha/b.py": _BLOCK.format(name="fb", tag="b")
+            "src/zzalpha/b.py": "from .a import fa\n"
+            + _BLOCK.format(name="fb", tag="b")
             + _WITHIN.format(name="gb", tag="gb")
             + _WITHIN.format(name="hb", tag="hb"),
             "tests/test_a.py": "import zzalpha.a\n",
@@ -115,7 +121,8 @@ def _sphinx_shaped(root: Path) -> Path:
             "zzsphx/__init__.py": "",
             "zzsphx/util.py": "SCALE = 2\n",
             "zzsphx/a.py": "from zzsphx.util import SCALE\n" + _BLOCK.format(name="fa", tag="a"),
-            "zzsphx/b.py": "from zzsphx.util import SCALE\n" + _BLOCK.format(name="fb", tag="b"),
+            "zzsphx/b.py": "from zzsphx.util import SCALE\nimport zzsphx.a\n"
+            + _BLOCK.format(name="fb", tag="b"),
             "tests/test_a.py": "import zzsphx.a\n",
             "tests/roots/test-ext-autodoc/target/__init__.py": "",
             "tests/roots/test-ext-autodoc/target/need_mocks.py": (
@@ -144,8 +151,8 @@ def _prompt_toolkit_shaped(root: Path) -> Path:
             "src/zzprompt/__init__.py": "",
             "src/zzprompt/eventloop/__init__.py": "from .inputhook import fa\n",
             "src/zzprompt/eventloop/inputhook.py": _BLOCK.format(name="fa", tag="a"),
-            "src/zzprompt/shortcuts.py": "from .eventloop import inputhook\n"
-            + _BLOCK.format(name="fb", tag="b"),
+            "src/zzprompt/shortcuts.py": "from .eventloop.inputhook import fa\n"
+            "from .eventloop import inputhook\n" + _BLOCK.format(name="fb", tag="b"),
             "tests/test_shortcuts.py": "import zzprompt.shortcuts\n",
             "examples/gevent-get-input.py": (
                 "from gevent.monkey import patch_all\n\n"
@@ -391,8 +398,8 @@ def test_a_package_importing_its_generated_version_is_refactored_around_its_init
     assert f"Left unchanged: src/zzalpha/__init__.py. {_INSIDE_REMEDY}" in ran.stderr
     assert "--exclude" not in ran.stderr
     assert (root / "src/zzalpha/__init__.py").read_bytes() == before
-    # Every module of the package is imported through the initializer, so its
-    # import has already run wherever the helper is newly imported.
+    # The borrower's direct import already loads its host through this
+    # initializer; a shared helper does not introduce that requirement.
     assert "from .a import __extracted_func" in (root / "src/zzalpha/b.py").read_text()
 
 
@@ -406,7 +413,7 @@ def test_a_subpackage_below_an_initializer_importing_what_the_tree_lacks_is_refa
             "src/zzalpha/__init__.py": _IMPORTS_VERSION,
             "src/zzalpha/sub/__init__.py": "",
             "src/zzalpha/sub/m.py": _BLOCK.format(name="fm", tag="m"),
-            "src/zzalpha/sub/n.py": _BLOCK.format(name="fn", tag="n"),
+            "src/zzalpha/sub/n.py": "from .m import fm\n" + _BLOCK.format(name="fn", tag="n"),
         },
     )
     program = (
@@ -464,12 +471,22 @@ def test_a_problem_leaving_a_name_of_the_target_in_doubt_still_refuses(
 def test_without_cross_module_no_problem_is_reported_or_refuses(tmp_path: Path) -> None:
     """Only a same-file helper can be written, and no import that runs depends on the names."""
     root = _project(tmp_path / "project", _STALE_COPY)
+    before_imports = [
+        ast.dump(node)
+        for node in ast.parse((root / "src/zzalpha/a.py").read_text()).body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    ]
     ran = _towel(root, "dry")
     assert ran.returncode == 0, ran.stdout + ran.stderr
     assert "could be any of" not in ran.stderr and "--exclude <directory name>" not in ran.stderr
     b = (root / "src/zzalpha/b.py").read_text()
     assert "def __extracted_func_0(" in b, b
-    assert "import" not in (root / "src/zzalpha/a.py").read_text()
+    after_imports = [
+        ast.dump(node)
+        for node in ast.parse((root / "src/zzalpha/a.py").read_text()).body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    ]
+    assert after_imports == before_imports
     previewed = _towel(root, "preview")
     assert previewed.returncode == 0, previewed.stdout + previewed.stderr
     assert "could be any of" not in previewed.stderr
@@ -559,7 +576,7 @@ _SHOP = {
     "zzshop/pyutils/__init__.py": "",
     "zzshop/pyutils/version.py": "def get_version(parts):\n    return '.'.join(map(str, parts))\n",
     "zzshop/a.py": _BLOCK.format(name="fa", tag="a"),
-    "zzshop/b.py": "from . import a\n" + _BLOCK.format(name="fb", tag="b"),
+    "zzshop/b.py": "from .a import fa\nfrom . import a\n" + _BLOCK.format(name="fb", tag="b"),
 }
 _SHOP_PROGRAM = (
     "import zzshop.a, zzshop.b\nprint(zzshop.a.fa([0, 1, 2, 3]), zzshop.b.fb([3, -1]))\n"

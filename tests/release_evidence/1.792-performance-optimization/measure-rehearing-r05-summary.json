@@ -1,0 +1,21 @@
+{
+  "samples_per_arm": 2,
+  "order": "ABBA",
+  "means": {
+    "rehearing-control-r05": 47.30319829157088,
+    "rehearing-r05": 47.374952687416226
+  },
+  "child_cpu_means": {
+    "rehearing-control-r05": 46.33363600000001,
+    "rehearing-r05": 46.441812999999996
+  },
+  "improvement_percent": -0.15169036859423723,
+  "identical_output": true,
+  "applications": [
+    [
+      "19",
+      "8"
+    ]
+  ],
+  "scope": "One Packaging 26.3 slice; full default typed/formatted installed CLI; preliminary two samples per arm; no matrix/corpus."
+}

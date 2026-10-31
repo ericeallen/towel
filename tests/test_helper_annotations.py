@@ -19,12 +19,12 @@ annotated, never-rebound parameter of its enclosing function or a literal of
 one builtin type, and the sites agree. The return is annotated from the sites'
 declared return type, from annotated locals the helper returns, or as ``None``
 for a helper that returns nothing. Annotations are inserted unquoted only
-where they cannot fail to resolve; otherwise as strings; across modules only
-builtin names are used. An unannotated project stays unannotated.
+where they resolve and are proved inert; otherwise as strings; across modules
+only builtin names are used. An unannotated project stays unannotated.
 
-The fixture project declares Python 3.10, so a union written with ``|`` and a
-subscripted builtin evaluate where the helper is defined; what an older or an
-undeclared Python gets is test_annotations_for_the_oldest_python's subject.
+Compound annotations stay quoted even on current Python: a spelling alone
+does not establish whether its operators or subscriptions invoke user code.
+Interpreter syntax accounting is test_annotations_for_the_oldest_python's subject.
 """
 
 from __future__ import annotations
@@ -65,9 +65,8 @@ def _signature(source: str) -> str:
 
 
 BODY = """
-            total = value * 2
-            label = prefix + str(total)
-            print(label)
+            print(prefix + str(value * 2))
+            print(prefix, value)
 """
 
 
@@ -95,7 +94,9 @@ def test_disagreeing_sites_join_into_a_union(tmp_path: Path) -> None:
         def second(value: float, prefix: str) -> None:{BODY}
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(prefix: str, value: int | float) -> None:"
+    assert (
+        _signature(result) == "def __extracted_func_0(prefix: str, value: 'int | float') -> None:"
+    )
 
 
 def test_unrelated_sites_join_into_a_union(tmp_path: Path) -> None:
@@ -106,7 +107,7 @@ def test_unrelated_sites_join_into_a_union(tmp_path: Path) -> None:
         def second(value: str, prefix: str) -> None:{BODY}
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(prefix: str, value: int | str) -> None:"
+    assert _signature(result) == "def __extracted_func_0(prefix: str, value: 'int | str') -> None:"
 
 
 def test_a_none_site_makes_the_parameter_optional(tmp_path: Path) -> None:
@@ -122,7 +123,7 @@ def test_a_none_site_makes_the_parameter_optional(tmp_path: Path) -> None:
             print(len(items), limit)
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(items: list, limit: int | None) -> None:"
+    assert _signature(result) == "def __extracted_func_0(items: list, limit: 'int | None') -> None:"
 
 
 def test_declared_return_types_need_a_checker_to_meet(tmp_path: Path) -> None:
@@ -143,10 +144,15 @@ def test_declared_return_types_need_a_checker_to_meet(tmp_path: Path) -> None:
             return len(text.strip())
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(value: int) -> _typing.Any:"
+    assert (
+        _signature(result)
+        == "def __extracted_func_0(value: int, _towel_owner: 'object') -> _typing.Any:"
+    )
 
 
-def test_unrelated_declared_return_types_leave_the_return_to_any(tmp_path: Path) -> None:
+def test_unrelated_declared_return_types_leave_the_return_to_any(
+    tmp_path: Path,
+) -> None:
     result = _refactor(
         tmp_path,
         """
@@ -161,7 +167,10 @@ def test_unrelated_declared_return_types_leave_the_return_to_any(tmp_path: Path)
             return len(text.strip())
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(value: int) -> _typing.Any:"
+    assert (
+        _signature(result)
+        == "def __extracted_func_0(value: int, _towel_owner: 'object') -> _typing.Any:"
+    )
     # ``Any`` is reached through a private alias: the module gains no public name.
     assert "import typing as _typing\n" in result and "from typing import Any" not in result
 
@@ -195,13 +204,40 @@ def test_literals_take_their_builtin_type_and_bool_is_not_int(tmp_path: Path) ->
             print(items[:limit], flag)
         """,
     )
+    helper = _helper(result)
+    parameters = helper.args.posonlyargs + helper.args.args
     assert (
-        _signature(result)
-        == "def __extracted_func_0(__param_0: int, __param_1: bool, items: list) -> None:"
-    )
+        helper.args.vararg,
+        helper.args.kwarg,
+        helper.args.kwonlyargs,
+        helper.args.defaults,
+    ) == (None, None, [], [])
+    assert [parameter.arg for parameter in helper.args.posonlyargs] == [
+        "__param_0",
+        "__param_1",
+    ]
+    assert [parameter.arg for parameter in helper.args.args] == ["items"]
+    assert [
+        ast.unparse(parameter.annotation) for parameter in parameters if parameter.annotation
+    ] == ["int", "bool", "list"]
+    assert helper.returns is not None and ast.unparse(helper.returns) == "None"
+    calls = [
+        node
+        for node in ast.walk(ast.parse(result))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper.name
+    ]
+    assert [tuple(ast.unparse(argument) for argument in call.args) for call in calls] == [
+        ("10", "True", "items"),
+        ("20", "False", "items"),
+    ]
+    assert all(not call.keywords and len(call.args) == len(parameters) for call in calls)
 
 
-def test_declared_return_type_is_used_when_every_site_returns_the_call(tmp_path: Path) -> None:
+def test_declared_return_type_is_used_when_every_site_returns_the_call(
+    tmp_path: Path,
+) -> None:
     result = _refactor(
         tmp_path,
         """
@@ -216,29 +252,33 @@ def test_declared_return_type_is_used_when_every_site_returns_the_call(tmp_path:
             return text.strip()
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(value: int) -> str:"
+    assert (
+        _signature(result) == "def __extracted_func_0(value: int, _towel_owner: 'object') -> str:"
+    )
 
 
-def test_annotated_locals_give_the_return_type_of_returned_variables(tmp_path: Path) -> None:
+def test_annotated_locals_give_the_return_type_of_returned_variables(
+    tmp_path: Path,
+) -> None:
     result = _refactor(
         tmp_path,
         """
-        def first(value: int) -> str:
-            total: int = value * 2
+        def first() -> str:
+            total: int = 2
             label: str = str(total)
             print(label)
             return label.upper() + str(total)
 
-        def second(value: int) -> str:
-            total: int = value * 2
+        def second() -> str:
+            total: int = 2
             label: str = str(total)
             print(label)
             return label.lower() + str(total)
         """,
     )
     header = _signature(result)
-    assert header.startswith("def __extracted_func_0(value: int) -> tuple["), header
-    assert header.endswith("-> tuple[int, str]:") or header.endswith("-> tuple[str, int]:")
+    assert header.startswith("def __extracted_func_0() -> 'tuple["), header
+    assert header.endswith("-> 'tuple[int, str]':") or header.endswith("-> 'tuple[str, int]':")
     exec(compile(result, "<locals>", "exec"), {})
 
 
@@ -265,17 +305,19 @@ def test_annotation_can_be_switched_off(tmp_path: Path) -> None:
     assert _signature(result) == "def __extracted_func_0(prefix, value):"
 
 
-def test_class_defined_later_puts_the_helper_after_it_with_a_bare_name(tmp_path: Path) -> None:
+def test_class_defined_later_puts_the_helper_after_it_with_a_bare_name(
+    tmp_path: Path,
+) -> None:
     result = _refactor(
         tmp_path,
         """
         def first(box: Box) -> None:
-            total = box.value * 2
-            print(total, box)
+            print(box.value * 2, box)
+            print(box)
 
         def second(box: Box) -> None:
-            total = box.value * 2
-            print(total, box)
+            print(box.value * 2, box)
+            print(box)
 
         class Box:
             value = 1
@@ -300,12 +342,12 @@ def test_import_time_code_before_the_class_keeps_the_helper_early_and_quoted(
         configure()
 
         def first(box: Box) -> None:
-            total = box.value * 2
-            print(total, box)
+            print(box.value * 2, box)
+            print(box)
 
         def second(box: Box) -> None:
-            total = box.value * 2
-            print(total, box)
+            print(box.value * 2, box)
+            print(box)
 
         class Box:
             value = 1
@@ -323,12 +365,12 @@ def test_deferred_annotations_are_copied_unquoted(tmp_path: Path) -> None:
         from __future__ import annotations
 
         def first(box: Box) -> None:
-            total = box.value * 2
-            print(total, box)
+            print(box.value * 2, box)
+            print(box)
 
         def second(box: Box) -> None:
-            total = box.value * 2
-            print(total, box)
+            print(box.value * 2, box)
+            print(box)
 
         class Box:
             value = 1
@@ -338,22 +380,24 @@ def test_deferred_annotations_are_copied_unquoted(tmp_path: Path) -> None:
     exec(compile(result, "<deferred>", "exec"), {})
 
 
-def test_import_bound_names_are_copied_unquoted(tmp_path: Path) -> None:
+def test_import_bound_compounds_keep_their_type_without_evaluation(
+    tmp_path: Path,
+) -> None:
     result = _refactor(
         tmp_path,
         """
         from typing import Optional
 
         def first(value: Optional[int]) -> None:
-            total = (value or 0) * 2
-            print(total, value)
+            print((value or 0) * 2, value)
+            print(value)
 
         def second(value: Optional[int]) -> None:
-            total = (value or 0) * 2
-            print(total, value)
+            print((value or 0) * 2, value)
+            print(value)
         """,
     )
-    assert _signature(result) == "def __extracted_func_0(value: Optional[int]) -> None:"
+    assert _signature(result) == "def __extracted_func_0(value: 'Optional[int]') -> None:"
     exec(compile(result, "<imported>", "exec"), {})
 
 
@@ -362,45 +406,80 @@ def test_cross_file_helper_keeps_only_builtin_annotations(tmp_path: Path) -> Non
     package.mkdir()
     (package / "__init__.py").write_text("")
     for name, function in (("a.py", "fa"), ("b.py", "fb")):
-        (package / name).write_text(textwrap.dedent(f"""
+        prefix = "import pkg.a\n" if name == "b.py" else ""
+        (package / name).write_text(prefix + textwrap.dedent(f"""
                 from typing import Optional
 
                 def {function}(value: int, label: Optional[str]) -> None:
-                    total = value * 2
-                    text = (label or "") + str(total)
-                    print(text)
-                    print(text.upper())
+                    ((label or "") + "{{}}".format(value * 2)).strip()
+                    ((label or "") + "{{}}".format(value * 2)).upper()
                 """))
     engine = UnificationRefactorEngine(
         min_lines=2, reuse_existing_functions=False, cross_module_helpers=True
     )
     proposals = engine.analyze_directory(str(package))
     assert proposals
-    header = ast.unparse(proposals[0].extracted_function).split("\n", 1)[0]
+    helper = proposals[0].extracted_function
+    parameters = helper.args.posonlyargs + helper.args.args
+    assert len(parameters) == 3 and len(parameters) <= 5
+    assert len(helper.args.posonlyargs) == 1
+    carrier = helper.args.posonlyargs[0]
+    assert carrier.arg.startswith("__param_") and carrier.annotation is None
     # ``Optional[str]`` needs typing; its members ``str | None`` are builtins.
-    assert header == "def __extracted_func(label: str | None, value: int) -> None:"
+    declared = {
+        parameter.arg: ast.unparse(parameter.annotation)
+        for parameter in helper.args.args
+        if parameter.annotation is not None
+    }
+    assert declared == {"label": "'str | None'", "value": "int"}
+    assert isinstance(helper.returns, ast.Constant) and helper.returns.value is None
+    slots = {
+        node.slice.value
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == carrier.arg
+        and isinstance(node.slice, ast.Constant)
+    }
+    assert slots == {0}
+    arguments = [
+        replacement.node.value.args[0]
+        for replacement in proposals[0].replacements
+        if isinstance(replacement.node, ast.Expr) and isinstance(replacement.node.value, ast.Call)
+    ]
+    assert len(arguments) == 2
+    assert all(
+        isinstance(argument, ast.Tuple)
+        and len(argument.elts) == 1
+        and isinstance(argument.elts[0], ast.Constant)
+        and argument.elts[0].value == "{}"
+        for argument in arguments
+    )
 
 
-def test_subscripted_annotations_are_quoted_unless_known_generic(tmp_path: Path) -> None:
+def test_subscripted_annotations_are_quoted_even_with_familiar_names(
+    tmp_path: Path,
+) -> None:
     # ``memoryview`` is not subscriptable at runtime on every interpreter
-    # (tornado failed to import); ``list[int]`` and ``Sequence[int]`` are.
+    # (tornado failed to import). Even a familiar generic spelling does not
+    # prove its runtime binding or rule out overloaded behavior on its arguments.
     result = _refactor(
         tmp_path,
         """
         from typing import Sequence
 
         def first(view: memoryview[int], items: list[int], seq: Sequence[int]) -> None:
-            total = len(view) + len(items)
-            print(total, seq)
+            print(len(view) + len(items), seq)
+            print(seq)
 
         def second(view: memoryview[int], items: list[int], seq: Sequence[int]) -> None:
-            total = len(view) + len(items)
-            print(total, seq)
+            print(len(view) + len(items), seq)
+            print(seq)
         """,
     )
     assert (
         _signature(result)
-        == "def __extracted_func_0(items: list[int], seq: Sequence[int], view: 'memoryview[int]') -> None:"
+        == "def __extracted_func_0(items: 'list[int]', seq: 'Sequence[int]', view: 'memoryview[int]') -> None:"
     )
     exec(compile(result, "<generic>", "exec"), {})
 
@@ -417,12 +496,12 @@ def test_a_union_of_forward_references_is_one_quoted_string(tmp_path: Path) -> N
         configure()
 
         def first(item: Left) -> None:
-            total = item.value * 2
-            print(total, item)
+            print(item.value * 2, item)
+            print(item)
 
         def second(item: Right) -> None:
-            total = item.value * 2
-            print(total, item)
+            print(item.value * 2, item)
+            print(item)
 
         class Left:
             value = 1
@@ -456,3 +535,17 @@ def test_inconsistent_subtype_verdicts_never_empty_a_union() -> None:
         lambda pairs: [consistent.get((ast.unparse(n), ast.unparse(w)), UNKNOWN) for n, w in pairs],
     )
     assert [ast.unparse(m) for m in kept] == ["int"]
+
+
+def test_original_owned_annotated_local_partial_stays_refused(tmp_path: Path) -> None:
+    # Exact original partial: opaque helper locals would cross a frame while
+    # the caller still owns its original parameter. Keep that refusal covered.
+    source = textwrap.dedent(
+        "\n        def first(value: int) -> str:\n            total: int = value * 2\n            label: str = str(total)\n            print(label)\n            return label.upper() + str(total)\n\n        def second(value: int) -> str:\n            total: int = value * 2\n            label: str = str(total)\n            print(label)\n            return label.lower() + str(total)\n        "
+    )
+    path = tmp_path / "owned_partial.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(min_lines=2, annotate_helpers=False)
+    assert engine.analyze_file(str(path)) == []
+    assert "owned_binding_frame_boundary" in engine.declined_pairs
+    assert path.read_text() == source

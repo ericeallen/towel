@@ -45,6 +45,7 @@ def _project(root: Path) -> Path:
         (package / f"{name}.py").write_text(
             textwrap.dedent(f"""
                 from __future__ import annotations
+                {"import pkg.alpha" if name == "beta" else ""}
 
 
                 class {name.capitalize()}:
@@ -72,6 +73,7 @@ def _refactor(root: Path, source: Path, destination: Path) -> str:
             str(destination),
             "--no-interactive",
             "--cross-module",
+            "--parameterize-builtins",
             "--progress",
             "none",
             "--min-lines",

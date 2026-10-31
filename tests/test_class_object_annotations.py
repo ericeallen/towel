@@ -29,7 +29,7 @@ import textwrap
 
 import pytest
 
-from towel.type_inference import MypyInferrer
+from towel.type_inference import CheckSuccess, MypyInferrer
 from towel.unification.annotations import class_object_revealed
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -86,7 +86,7 @@ def test_only_a_reference_to_the_class_itself_is_respelled(
 
 @requires_mypy
 def test_a_class_argument_reaches_isinstance_with_its_type(tmp_path: Path) -> None:
-    """The extracted guard takes the class as a parameter, which must stay a type."""
+    """The extracted guard's lookup thunk returns a class object with its type intact."""
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
@@ -139,8 +139,11 @@ def test_a_class_argument_reaches_isinstance_with_its_type(tmp_path: Path) -> No
             for argument in helper.args.posonlyargs + helper.args.args
             if argument.annotation is not None
         ]
-        assert any(
-            spelling.startswith("type[") for spelling in written
-        ), f"the class parameter kept a constructor type: {written}"
+        # Module class names are read at their original point through thunks;
+        # each thunk must return the class object, not a constructor signature.
+        assert (
+            "_typing.Callable[[], type[Alpha]] | _typing.Callable[[], type[Beta]]" in written
+        ), f"the class lookup kept a constructor type: {written}"
+        assert oracle.check_project({str(path): result}) == CheckSuccess()
     finally:
         oracle.close()

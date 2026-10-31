@@ -301,8 +301,10 @@ def test_recover_refuses_a_link_named_like_a_journal_and_says_why(tmp_path: Path
 def test_recover_names_the_remedy_for_a_journal_whose_mode_was_changed(tmp_path: Path) -> None:
     files, journal = _interrupted_transaction(tmp_path)
     journal.chmod(0o755)
-    with pytest.raises(ChangeConflict, match=f"chmod 700 {journal} and then run towel recover"):
+    with pytest.raises(ChangeConflict) as caught:
         recover(journal)
+    assert shlex.join(("chmod", "--", "700", str(journal))) in str(caught.value)
+    assert shlex.join(("towel", "recover", "--", str(journal))) in str(caught.value)
     journal.chmod(0o700)
     recover(journal)
     assert all(path.read_bytes() == b"value = 1\n" for path in files)

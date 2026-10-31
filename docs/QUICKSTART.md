@@ -1,5 +1,7 @@
 # Quick start
 
+[Documentation index](README.md)
+
 Towel finds repeated Python code and extracts each group of duplicates into one
 helper function, rewriting the duplicates as calls. It verifies every extraction
 and leaves the naming to you. Refactoring changes your code, so the workflow is:
@@ -25,11 +27,13 @@ code it inserts and to annotate and type-check the helpers it generates.
 towel preview path/to/project
 ```
 
-For each opportunity, `preview` prints the extracted helper and, per call site, the original block (`-`) next to the generated call (`+`). A preview is one untyped pass: `dry` then verifies each change with the type checker, so it may apply fewer, and it pairs again after each change, so it may find more.
+`preview` runs the complete `dry` pipeline in a disposable copy, including type checking, formatting, repeated extraction and final verification with the same options. It prints the final source diff and helper inventory without changing the input. Use `--quick` for a partial, untyped analysis; its proposals are not the final result or an upper bound on what `dry` can extract.
 
 By default a helper is shared only between duplicates in one module; add `--cross-module` to share helpers between modules too, which adds imports between them.
 
-On a large project, `--min-lines 5` or `--max-pairs N` bounds the analysis; progress is printed to stderr.
+On a large project, raise `--min-lines` to reduce candidate work or use
+`--max-pairs N` to cap evaluated pairs. Neither is a time or memory limit;
+progress is printed to stderr.
 
 ## 2. Refactor into a fresh copy
 
@@ -72,31 +76,41 @@ and a file where the checker cannot type what it imports is left alone. If the
 checker cannot run at all, fix what stops it or rerun the same command with
 `--no-types`, which preserves existing source annotations and leaves new
 helpers unannotated. See
-[How helpers get their types](../README.md#how-helpers-get-their-types).
+[Type checking and helper annotations](TYPING.md).
 
 ## 3. Give the helpers real names (optional, LLM-assisted)
 
+Review the diff and adopt the cleaned output into its project first, using
+your normal version-control workflow. The rename checker needs the package
+in its real import context. The commands below assume `path/to/project` now
+contains the adopted result.
+
 ```bash
-towel rename-helpers path/to/cleaned --list --json > helpers.json
+towel rename-helpers path/to/project --list --json > helpers.json
 # Have a coding assistant read helpers.json and write renames.json,
 # then apply the batch (it aborts whole if any name is unsafe):
-towel rename-helpers path/to/cleaned --rename-file renames.json --preview
-towel rename-helpers path/to/cleaned --rename-file renames.json
+towel rename-helpers path/to/project --complete-scope --rename-file renames.json --preview
+towel rename-helpers path/to/project --complete-scope --rename-file renames.json
 ```
 
-See the [README](../README.md#naming-the-helpers-with-an-llm) for the full
-naming workflow.
+Select the complete project root; use path-qualified keys to choose individual
+definitions. Unmarked projects require `--complete-scope` to declare that root
+contains every ordinary consumer. See [rename scope](NAMING.md#definition-selection-and-consumer-scope).
+
+See the [naming guide](NAMING.md) for inventory keys, class-private names
+and the full review workflow.
 
 ## 4. Review and test
 
 ```bash
-# adopt the cleaned copy however you version-control it, then:
+# run from the project containing the reviewed result:
 pytest   # or your project's own test command
 ```
 
 ## Next
 
-- [README](../README.md) — full CLI usage, requirements, and timing
+- [Command-line guide](CLI_GUIDE.md) — options, exclusions and recovery
+- [Requirements](REQUIREMENTS.md) and [performance](PERFORMANCE.md) — resources and timing
 - [Known limitations](KNOWN_LIMITATIONS.md) — what is verified, rejected, and outside the model
 - [Python API guide](USAGE_GUIDE.md) — using `UnificationRefactorEngine` directly
 - [Architecture](ARCHITECTURE.md) — how it works

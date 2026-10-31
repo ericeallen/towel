@@ -353,7 +353,9 @@ def test_typing_dependencies_are_installed_at_the_lock_pin_adding_only(
         ),
         ecosystem.TypingRequirement("pytest", group, skipped="already installed at pytest 0.0.1"),
         ecosystem.TypingRequirement(
-            "mypy", group, skipped="Towel's tool selection holds mypy 2.0.0"
+            "mypy",
+            group,
+            skipped="Towel's tool selection holds mypy 2.0.0, selected by towel[types]",
         ),
         ecosystem.TypingRequirement("needs-new-base", group, "needs-new-base", skipped=refused),
         ecosystem.TypingRequirement(

@@ -27,7 +27,10 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
+import sys
 import textwrap
 
 import pytest
@@ -486,8 +489,27 @@ def test_a_relatively_imported_class_gets_a_type_variable_end_to_end(tmp_path: P
     finally:
         oracle.close()
     helper = _helper(changed)
-    kinds = [_annotation(parameter.annotation) for parameter in helper.args.args]
+    kinds = [
+        _annotation(parameter.annotation)
+        for parameter in helper.args.posonlyargs + helper.args.args
+    ]
     assert kinds == ["list[_TowelT0] | None", "list[_TowelT0]"], changed
+    assert [parameter.arg for parameter in helper.args.posonlyargs] == ["__param_0", "__param_1"]
+    assert not helper.args.args
+    calls = [
+        node
+        for node in ast.walk(ast.parse(changed))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper.name
+    ]
+    assert [tuple(ast.unparse(argument) for argument in call.args) for call in calls] == [
+        ("upper_parts", "lower_parts"),
+        ("tail_parts", "fragments"),
+    ]
+    assert all(
+        not call.keywords and len(call.args) == len(helper.args.posonlyargs) for call in calls
+    )
     assert _annotation(helper.returns) == "list[_TowelT0] | None"
     assert path.read_text() == original
 
@@ -523,6 +545,7 @@ def test_the_callable_a_signature_writes_is_imported_end_to_end(tmp_path: Path) 
         },
     )
     path = tmp_path / "shapes" / "groups.py"
+    original = path.read_text()
     oracle = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(
@@ -539,21 +562,99 @@ def test_the_callable_a_signature_writes_is_imported_end_to_end(tmp_path: Path) 
     helper = _helper(changed)
     kinds = [
         _annotation(parameter.annotation)
-        for parameter in helper.args.args
+        for parameter in helper.args.posonlyargs + helper.args.args
         if parameter.annotation is not None
     ]
     assert "_typing.Callable[[], dict[str, tuple[_TowelT0, ...]]]" in kinds, changed
+    # The caller's thunk reads the receiver; the helper does not. Its precise
+    # callable/result relationship survives without an implicit method input.
+    assert any(
+        isinstance(node, ast.FunctionDef) and node.name == helper.name
+        for node in ast.parse(changed).body
+    )
+    assert not helper.decorator_list
+    assert [parameter.arg for parameter in helper.args.posonlyargs] == ["__param_0"]
+    assert [parameter.arg for parameter in helper.args.args] == ["found", "group"]
+    assert [_annotation(parameter.annotation) for parameter in helper.args.args] == [
+        "list[_TowelT0]",
+        "str",
+    ]
+    calls = [
+        node
+        for node in ast.walk(ast.parse(changed))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper.name
+    ]
+    assert [tuple(ast.unparse(argument) for argument in call.args) for call in calls] == [
+        ("lambda: self._versions", "found", "group"),
+        ("lambda: self._names", "found", "group"),
+    ]
+    assert all(
+        isinstance(call.func, ast.Name)
+        and call.func.id == helper.name
+        and not call.keywords
+        and len(call.args) == len(helper.args.posonlyargs + helper.args.args)
+        for call in calls
+    )
     assert _annotation(helper.returns) == "tuple[_TowelT0, ...]"
+    generated = tmp_path / "generated_groups.py"
+    generated.write_text(changed)
+    runtime_probe = textwrap.dedent("""\
+        import json
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, sys.argv[1])
+        source = Path(sys.argv[2])
+        namespace = {"__name__": "shapes.groups", "__package__": "shapes"}
+        exec(compile(source.read_text(), str(source), "exec"), namespace)
+        resolver = namespace["Resolver"]()
+        Version = namespace["Version"]
+        found = [Version("1"), Version("2")]
+        versions = resolver.versions("latest", found)
+        names = resolver.names("latest", ["alice", "bob"])
+        print(json.dumps({
+            "versions": [value.text for value in versions],
+            "names": list(names),
+            "empty": [list(resolver.versions("empty", [])), list(resolver.names("empty", []))],
+            "stored_versions": {key: [value.text for value in values] for key, values in resolver._versions.items()},
+            "stored_names": {key: list(values) for key, values in resolver._names.items()},
+            "version_identity": all(value is found[index] for index, value in enumerate(versions)),
+            "stored_identity": [versions is resolver._versions["latest"], names is resolver._names["latest"]],
+        }))
+        """)
+    observed = []
+    for source in (path, generated):
+        completed = subprocess.run(
+            [sys.executable, "-I", "-c", runtime_probe, str(tmp_path), str(source)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        observed.append(json.loads(completed.stdout))
+    expected = {
+        "versions": ["1", "2"],
+        "names": ["alice", "bob"],
+        "empty": [[], []],
+        "stored_versions": {"latest": ["1", "2"]},
+        "stored_names": {"latest": ["alice", "bob"]},
+        "version_identity": True,
+        "stored_identity": [True, True],
+    }
+    assert observed == [expected, expected]
+    assert path.read_text() == original
 
 
 @requires_mypy
-def test_a_parameter_the_body_never_reads_is_object_end_to_end(tmp_path: Path) -> None:
-    """mistune M3, in miniature: ``self`` reaches the helper unread, and its type is moot.
+def test_an_unread_receiver_is_omitted_without_losing_type_correlations(tmp_path: Path) -> None:
+    """mistune M3: caller thunks capture ``self``; the helper never reads it.
 
-    The two sites' receivers are unrelated classes, which no variable the
-    host could constrain would name; ``object`` accepts both. What remains
-    is one variable over ``int`` and ``str``, whose ``+`` checks only when
-    constrained to them.
+    The old signature passed the unrelated receivers as ``object``. The
+    approved unused-input change removes that argument altogether; do not
+    restore it just to satisfy a typing expectation. Preserve the original
+    type-safety requirement: one variable relates the remaining ``int`` and
+    ``str`` inputs and result, and ``+`` checks without an Any fallback.
+    Both runtime branches must retain their original results.
     """
     _project(
         tmp_path,
@@ -594,11 +695,39 @@ def test_a_parameter_the_body_never_reads_is_object_end_to_end(tmp_path: Path) -
     finally:
         oracle.close()
     helper = _helper(changed)
-    kinds = {parameter.arg: _annotation(parameter.annotation) for parameter in helper.args.args}
-    assert kinds["self"] == "object" and "Any" not in changed, changed
+    kinds = {
+        parameter.arg: _annotation(parameter.annotation)
+        for parameter in helper.args.posonlyargs + helper.args.args
+    }
+    assert "self" not in kinds and "Any" not in changed, changed
     assert "_towel_typevar('_TowelT0', 'int', 'str')" in changed, changed
-    namespace: dict[str, object] = {}
-    exec(compile(changed, str(path), "exec"), namespace)
+    probe = """
+observed = [BlockState('abc').line_end(end) for end in (-2, -1, 0, 4)]
+observed += [Renderer(escape).block_html(html)
+             for escape in (False, True) for html in ('', '  x  ', 'λ')]
+"""
+
+    def results(source: str) -> object:
+        namespace: dict[str, object] = {}
+        exec(compile(source + probe, str(path), "exec"), namespace)
+        return namespace["observed"]
+
+    assert (
+        results(changed)
+        == results(path.read_text())
+        == [
+            3,
+            3,
+            1,
+            5,
+            "\n",
+            "  x  \n",
+            "λ\n",
+            "<p></p>\n",
+            "<p>x</p>\n",
+            "<p>λ</p>\n",
+        ]
+    )
 
 
 def _extract_first(path: Path) -> str:
@@ -669,7 +798,10 @@ def test_a_thunk_returning_a_class_shares_its_variable_with_the_list_end_to_end(
     )
     changed = _extract_first(tmp_path / "elements.py")
     helper = _helper(changed)
-    kinds = [_annotation(parameter.annotation) for parameter in helper.args.args]
+    kinds = [
+        _annotation(parameter.annotation)
+        for parameter in helper.args.posonlyargs + helper.args.args
+    ]
     assert kinds[:2] == [
         "_typing.Callable[[], type[_TowelT0]]",
         "_typing.Callable[[], list[_TowelT0]]",
@@ -725,20 +857,70 @@ def test_returned_values_follow_the_arguments_they_are_end_to_end(tmp_path: Path
                 """,
         },
     )
-    changed = _extract_first(tmp_path / "text.py")
+    path = tmp_path / "text.py"
+    original = path.read_text()
+    oracle = MypyInferrer()
+    try:
+        engine = UnificationRefactorEngine(
+            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        )
+        unchanged, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
+    finally:
+        oracle.close()
+    assert applied == 0 and unchanged == original and path.read_text() == original
+    # Keep the same correlated Span/count and text/Span rows without caller
+    # parameters or loop-target owners outside the duplicated prefix.
+    companion = original.split("class Text:", 1)[0] + """
+_spans: list[Span] = []
+
+def highlight_regex() -> int:
+    append_span = _spans.append
+    _Span = Span
+    plain = "abc"
+    append_span(_Span(0, len(plain)))
+    return len(_spans)
+
+def highlight_words() -> int:
+    add_span = _spans.append
+    count = 0
+    _Span = Span
+    add_span(_Span(count, count + 1))
+    return count
+"""
+    path.write_text(companion)
+    changed = _extract_first(path)
     helper = _helper(changed)
     kinds = {
         parameter.arg: _annotation(parameter.annotation)
-        for parameter in helper.args.args
+        for parameter in helper.args.posonlyargs + helper.args.args
         if parameter.arg != "self"
     }
+    # Both values are evaluated at their original positions: the correlated
+    # rows exchange the module's Span constructor, a count, and literal text.
     assert kinds == {
-        "__param_0": "_TowelT0",
+        "__param_0": "_typing.Callable[[], _TowelT0]",
         "__param_1": "_typing.Callable[[], _TowelT1]",
     }, changed
     assert (
-        _annotation(helper.returns) == "tuple[_TowelT0, _typing.Callable[[Span], None], _TowelT1]"
+        _annotation(helper.returns) == "tuple[_typing.Callable[[Span], None], _TowelT0, _TowelT1]"
     )
+
+    assert "Any" not in changed, changed
+    helper_returns = [n for n in ast.walk(helper) if isinstance(n, ast.Return)]
+    assert len(helper_returns) == 1 and isinstance(helper_returns[0].value, ast.Tuple)
+    assert [ast.unparse(e) for e in helper_returns[0].value.elts] == [
+        "append_span",
+        "_Span",
+        "plain",
+    ]
+    for program in (companion, changed):
+        namespace: dict[str, object] = {}
+        exec(
+            program
+            + "\nobserved = (highlight_regex(), highlight_words(), [tuple(s) for s in _spans])",
+            namespace,
+        )
+        assert namespace["observed"] == (1, 0, [(0, 3), (0, 1)])
 
 
 def test_a_module_no_import_names_is_named_as_mypy_names_it(tmp_path: Path) -> None:
@@ -826,7 +1008,7 @@ def test_a_constraint_from_another_module_is_imported_for_the_checker_end_to_end
     """packaging L, in miniature: the helper's receiver ranges over the two modules' error classes.
 
     The helper lives in direct.py, which does not import lock.py; the class
-    that lock.py defines is imported under ``TYPE_CHECKING``, as the program's
+    that lock.py defines is imported under ``0 > 1``, as the program's
     imports show direct.py can, and so never runs. The ordinary signature
     names both classes directly, which is what the checker reveals: it used
     to drop ``pkg.lock.LockError`` for a head direct.py does not bind, write
@@ -839,14 +1021,21 @@ def test_a_constraint_from_another_module_is_imported_for_the_checker_end_to_end
             "tests/test_errors.py": "from pkg.direct import DirectError\nfrom pkg.lock import LockError\n",
             "pkg/__init__.py": "",
             "pkg/direct.py": ERROR.format(name="DirectError"),
-            "pkg/lock.py": ERROR.format(name="LockError"),
+            "pkg/lock.py": "import pkg.direct\n" + ERROR.format(name="LockError"),
         },
     )
     sources = _extract_across_modules(tmp_path / "pkg")
     direct = sources[str(tmp_path / "pkg" / "direct.py")]
     # The checker's import is private, so no star-importer of direct.py sees it.
-    assert "def _extracted_func_0(self: 'DirectError | _LockError') -> str:" in direct, direct
-    guarded = direct.split("if _typing.TYPE_CHECKING:", 1)[1].splitlines()[1]
+    helper = _helper(direct)
+    parameters = helper.args.posonlyargs + helper.args.args
+    assert len(parameters) == 2 and len(parameters) <= 5, direct
+    receiver = next(parameter for parameter in parameters if parameter.arg == "self")
+    carrier = next(parameter for parameter in parameters if parameter.arg != "self")
+    assert _annotation(receiver.annotation) == "DirectError | _LockError", direct
+    assert _annotation(carrier.annotation) == "tuple[str]", direct
+    assert _annotation(helper.returns) == "str", direct
+    guarded = direct.split("if 0 > 1:", 1)[1].splitlines()[1]
     assert guarded.strip() == "from .lock import LockError as _LockError", direct
     assert "Any" not in direct, direct
 
@@ -890,12 +1079,16 @@ def test_sites_that_agree_are_offered_their_common_signature_end_to_end(tmp_path
                         self.tokens.append(token)
                 """,
             "pkg/block_parser.py": parser.format(name="parse_block_quote", kind="block_quote"),
-            "pkg/spoiler.py": parser.format(name="parse_block_spoiler", kind="block_spoiler"),
+            "pkg/spoiler.py": "import pkg.block_parser\n"
+            + textwrap.dedent(parser.format(name="parse_block_spoiler", kind="block_spoiler")),
         },
     )
     sources = _extract_across_modules(tmp_path / "pkg")
     host = next(text for text in sources.values() if "def __extracted_func" in text)
     helper = _helper(host)
-    kinds = {parameter.arg: _annotation(parameter.annotation) for parameter in helper.args.args}
+    kinds = {
+        parameter.arg: _annotation(parameter.annotation)
+        for parameter in helper.args.posonlyargs + helper.args.args
+    }
     assert kinds["state"] == "BlockState" and "Any" not in host, host
     assert _annotation(helper.returns) == "int"

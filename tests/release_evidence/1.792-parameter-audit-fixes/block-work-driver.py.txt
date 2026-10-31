@@ -1,0 +1,63 @@
+"""Measure actual repeated block work; do not infer CLI speed from it."""
+
+from pathlib import Path
+from unittest.mock import patch
+import hashlib
+import json
+
+from towel.diagnostics import Settings
+from towel.unification.parameterization import Parameterization
+from towel.unification.scope_analyzer import ScopeAnalyzer
+from towel.unification.refactor_engine import UnificationRefactorEngine
+
+root = Path(__file__).parent / 'block-work'
+root.mkdir(exist_ok=True)
+source = 'events=[]\n' + '\n'.join(f'''def function_{index}(arg{index},more{index}):
+ total=arg{index}+more{index}
+ events.append(f'item:{{total}}')
+ result=total*{index+2}
+ return result
+''' for index in range(6))
+original_query = Parameterization._block_free_variables
+original_scope = ScopeAnalyzer.free_variables
+rows = []
+outputs = []
+for mode in ('uncached', 'cached'):
+    calls = 0
+    computations = 0
+    in_query = False
+    inputs = {}
+    def counted_scope(self, nodes):
+        nonlocal_dummy = None
+        global computations
+        if in_query:
+            computations += 1
+        return original_scope(self, nodes)
+    def query(self, index):
+        global calls, in_query
+        calls += 1
+        in_query = True
+        try:
+            result = (original_query(self, index) if mode == 'cached'
+                      else counted_scope(ScopeAnalyzer(), self.current_blocks[index]))
+        finally:
+            in_query = False
+        key = tuple(self.current_blocks[index])
+        frozen = frozenset(result)
+        assert key not in inputs or inputs[key] == frozen
+        inputs[key] = frozen
+        return result
+    path = root / f'{mode}-input.py'
+    path.write_text(source)
+    engine = UnificationRefactorEngine(settings=Settings.from_environ({'TOWEL_WORKERS': '1'}))
+    with patch.object(Parameterization, '_block_free_variables', query), patch.object(ScopeAnalyzer, 'free_variables', counted_scope):
+        output, applied, _ = engine.refactor_to_fixed_point(str(path), output_path=str(root / f'{mode}-output.py'), progress='none')
+    assert path.read_text() == source
+    namespace = {}
+    exec(output, namespace)
+    assert (namespace['function_0'](2, 3), namespace['function_1'](4, 5), namespace['events']) == (10, 27, ['item:5', 'item:9'])
+    outputs.append(output)
+    rows.append({'mode': mode, 'queries': calls, 'fresh_scope_computations': computations, 'distinct_retained_inputs': len(inputs), 'applications': applied, 'output_sha256': hashlib.sha256(output.encode()).hexdigest()})
+assert outputs[0] == outputs[1]
+(root / 'result.json').write_text(json.dumps({'rows': rows, 'outputs_identical': True, 'scope': 'Instrumented untyped public fixed-point path on same six-function fixture as audit; work counts only, no timing or release performance claim.'}, indent=2) + '\n')
+print(json.dumps(rows), flush=True)

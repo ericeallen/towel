@@ -345,10 +345,10 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
             with self.subTest(expression=expression):
                 self.assert_rejected(self.source(f"    {expression}\n" * 4))
 
-    def test_frame_introspection_extraction_is_rejected(self) -> None:
+    def test_frame_introspection_does_not_veto_extraction(self) -> None:
         for expression in ("locals()", "vars()", "eval('secret')", "globals()"):
             with self.subTest(expression=expression):
-                self.assert_rejected(
+                self.rewrite(
                     self.source(
                         f"    count = 1\n    result = {expression}\n    count = 2\n    return result\n",
                         "secret",

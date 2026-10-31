@@ -15,15 +15,16 @@
 """Which helper names a project's other files already claim, and where.
 
 A file outside the refactored package can take a helper's place. A
-module-level helper is an attribute of its module, so an attribute store, a
-``setattr`` or a namespace write of its name replaces it. A method helper is
+module-level helper is an attribute of its module, so an explicit attribute
+store or deletion of its name replaces it. A method helper is
 class-private, stored as ``_A__extracted_func_0``, so only a member stored
 under that name reaches it; a subclass's ``_extracted_func_0``, which the
 reservation was first written against
 (``xf16_consumer_outside_target_owns_helper_name`` in
 ``tests/hostile_crossfile``), can no longer. These tests pin down what counts
 as a claim of each kind, so that a name merely mentioned (a test asserting on
-it, a call) leaves the numbering alone.
+it, a call) leaves the numbering alone. Reflective namespace or class
+mutation does not reserve a name.
 """
 
 from __future__ import annotations
@@ -49,11 +50,10 @@ def _claims(tmp_path: Path, source: str) -> HelperNameClaims:
     [
         "import lib\nlib._extracted_func_0 = print\n",
         "def patch(obj):\n    obj._extracted_func_0 = None\n",
-        "setattr(Base, '_extracted_func_0', None)\n",
-        "namespace = {}\nnamespace['_extracted_func_0'] = None\n",
+        "import lib\ndel lib._extracted_func_0\n",
     ],
 )
-def test_a_namespace_write_of_the_name_claims_it_everywhere(tmp_path: Path, source: str) -> None:
+def test_an_attribute_write_of_the_name_claims_it_everywhere(tmp_path: Path, source: str) -> None:
     claims = _claims(tmp_path, source)
     assert claims.namespace == {"_extracted_func_0"}
     assert claims.members == {"_extracted_func_0"}
@@ -65,7 +65,6 @@ def test_a_namespace_write_of_the_name_claims_it_everywhere(tmp_path: Path, sour
         "class Child(Base):\n    def _extracted_func_0(self):\n        return 1\n",
         "class Child(Base):\n    _extracted_func_0 = staticmethod(len)\n",
         "class Child(Base):\n    if True:\n        _extracted_func_0 = None\n",
-        "Child = type('Child', (Base,), {'_extracted_func_0': None})\n",
     ],
 )
 def test_a_class_member_claims_the_name_only_for_method_helpers(
@@ -126,6 +125,23 @@ def test_a_file_that_does_not_parse_claims_every_word_in_every_class(tmp_path: P
     ],
 )
 def test_a_mention_claims_nothing(tmp_path: Path, source: str) -> None:
+    assert _claims(tmp_path, source) == HelperNameClaims()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "setattr(Base, '_extracted_func_0', None)\n",
+        "object.__setattr__(obj, '_extracted_func_0', None)\n",
+        "namespace = {}\nnamespace['_extracted_func_0'] = None\n",
+        "globals()['_extracted_func_0'] = None\n",
+        "Child = type('Child', (Base,), {'_extracted_func_0': None})\n",
+        "class Box:\n    def reset(self):\n        setattr(self, '_Box__extracted_func_0', None)\n",
+    ],
+)
+def test_reflective_writes_are_outside_the_name_reservation_contract(
+    tmp_path: Path, source: str
+) -> None:
     assert _claims(tmp_path, source) == HelperNameClaims()
 
 
