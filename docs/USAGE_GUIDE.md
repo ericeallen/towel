@@ -85,8 +85,8 @@ When using the fixed-point directory refactoring loop (`refactor_directory_to_fi
 
 | Mode    | Behavior |
 |---------|----------|
-| `tqdm`  | Rich progress bar showing applied count, queue length and the proposal being weighed, redrawn on a heartbeat so a long verification does not look like a hung run. |
-| `auto`  | Attempts `tqdm`, falls back to a textual single-line bar. |
+| `tqdm`  | Rich progress bar showing applied count, queue length and the proposal being weighed, redrawn on a heartbeat so a long verification does not look like a hung run (when `tqdm` is not installed, logs a warning once, shows inline bars during analysis, and omits the apply bar). |
+| `auto`  | Attempts `tqdm`, falls back to a textual single-line bar without warning. |
 | `none`  | Suppresses all progress output (quiet for CI). |
 | `detail`| Lists the discovered proposals (first 25) and the localized follow-ups after each application, on the `towel` logger at INFO. |
 
@@ -415,10 +415,10 @@ proposal.helper_comments      # The sites' comments the helper carries (see Comm
 proposal.return_variables     # Names the helper returns, in the call's unpacking order
 proposal.insert_into_class    # The class the helper becomes a class-private method of,
                               # if any: only ever the class holding every site;
-proposal.method_kind          # instance, class, or static, with insert_into_function
-                              # for a helper nested in a common enclosing function
-proposal.source_digests       # The file digests the proposal was computed from; applying
-                              # a stale proposal raises ChangeConflict("Stale proposal")
+proposal.method_kind          # "instance", "classmethod", or "staticmethod" (or None)
+proposal.insert_into_function # Enclosing function name for a nested helper, if any
+proposal.source_digests       # The file digests the proposal was computed from; applying a
+                              # stale proposal raises StaleSource("Stale proposal; analyze again: ...")
 ```
 
 ### Protect a function from refactoring
