@@ -1720,7 +1720,7 @@ def thunk_meets_an_inlined_comprehension(
     rebound = {
         name
         for statement in function.body
-        for node in walk_own_scope(statement)
+        for node in walk_own_frame(statement)
         if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp))
         for name in comprehension_targets(node)
     }
@@ -1901,5 +1901,29 @@ def walk_own_scope(node: ast.AST) -> Iterable[ast.AST]:
         current = pending.pop()
         yield current
         if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        pending.extend(ast.iter_child_nodes(current))
+
+
+def walk_own_frame(node: ast.AST) -> Iterable[ast.AST]:
+    """Yield the nodes of ``node`` that run in its function's own frame.
+
+    Those of ``walk_own_scope``, and what a nested definition evaluates where
+    it stands: its decorators, defaults, annotations, and a class's bases and
+    keywords. A comprehension there is inlined into this frame (PEP 709)
+    like one in the body.
+    """
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        yield current
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            pending.extend(evaluated_before_definition(current))
+            if not isinstance(current, ast.Lambda):
+                pending.extend(annotation_expressions(current))
+            continue
+        if isinstance(current, ast.ClassDef):
+            pending.extend(evaluated_before_definition(current))
+            pending.extend([*current.bases, *(keyword.value for keyword in current.keywords)])
             continue
         pending.extend(ast.iter_child_nodes(current))
