@@ -95,13 +95,27 @@ class Scope:
     parent: Optional["Scope"]
     bindings: Dict[str, ScopeBinding] = field(default_factory=dict)
     children: List["Scope"] = field(default_factory=list)
+    is_class_body: bool = False
 
     def lookup(self, name: str) -> Optional[ScopeBinding]:
-        """Lookup a binding in this scope or parent scopes."""
+        """The binding ``name`` resolves to from this scope, as Python resolves it.
+
+        A class body's names are visible in that body alone: a function,
+        comprehension or class nested in it, and a ``nonlocal`` declared in
+        one of its methods, resolve past it to the enclosing function or the
+        module.
+        """
         if name in self.bindings:
             return self.bindings[name]
-        if self.parent:
-            return self.parent.lookup(name)
+        return self.lookup_free(name)
+
+    def lookup_free(self, name: str) -> Optional[ScopeBinding]:
+        """The binding ``name`` resolves to when this scope does not bind it, or a ``nonlocal`` names it."""
+        enclosing = self.parent
+        while enclosing is not None:
+            if not enclosing.is_class_body and name in enclosing.bindings:
+                return enclosing.bindings[name]
+            enclosing = enclosing.parent
         return None
 
     def add_binding(self, name: str, node: ast.AST) -> None:
@@ -516,7 +530,7 @@ class ScopeAnalyzer(ScopeVisitor):
         for scope_id, names in self.nonlocal_vars.items():
             declaring = scopes.get(scope_id)
             for name in names:
-                binding = declaring.parent.lookup(name) if declaring and declaring.parent else None
+                binding = declaring.lookup_free(name) if declaring else None
                 if binding is None:
                     unresolved = True
                 else:
@@ -535,6 +549,7 @@ class ScopeAnalyzer(ScopeVisitor):
     def _enter_scope(self, node: ast.AST) -> Scope:
         """Enter a new scope."""
         new_scope = self._create_scope(self.current_scope)
+        new_scope.is_class_body = isinstance(node, ast.ClassDef)
         self.node_scopes[node] = new_scope
         self.scope_nodes[new_scope.scope_id] = node
         self.current_scope = new_scope
