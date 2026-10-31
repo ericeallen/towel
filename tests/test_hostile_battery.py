@@ -520,6 +520,9 @@ TRANSFORMED = (
     "r1792_protocol_context_target",
     "r1792_protocol_iteration_target",
     "r1792_value_return_owner",
+    # Gemini review of 2026-10-31: the statement after a semicolon on the
+    # block's last line reads c, so the helper returns it.
+    "rgm_orphan_semicolon_after_block_in_same_named_methods",
 }
 
 KNOWN_DEFECTS: Dict[str, str] = {}

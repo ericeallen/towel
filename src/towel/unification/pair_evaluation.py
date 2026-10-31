@@ -659,7 +659,7 @@ class PairEvaluation(
         rendered = self._render_helper(pair, ctx, unified, scope, free, value_producing)
         if rendered is None:
             return None
-        if self._leaves_orphans(pair, functions, unified):
+        if self._leaves_orphans(pair, unified):
             return None
         sites = self._call_sites(
             pair, setup, analysis, unified, scope, free, rendered, value_producing, functions
@@ -1428,20 +1428,15 @@ class PairEvaluation(
 
     # -- 8 ---------------------------------------------------------------------
 
-    def _leaves_orphans(
-        self, pair: CodeBlockPair, functions: FunctionIndex, unified: _Unified
-    ) -> bool:
+    def _leaves_orphans(self, pair: CodeBlockPair, unified: _Unified) -> bool:
         """Whether moving the blocks would leave a later read without its binding.
 
         A name the helper returns is rebound by the generated call on every
         path out of the block, so a later read of it is not orphaned.
         """
-        # The last function of each name, as the original list scan resolved it.
-        found1 = functions.named(pair.file_path, pair.function1_name)
-        found2 = functions.named(pair.file_path2, pair.function2_name)
-        if not (found1 and found2):
-            return False
-        func1, func2 = found1[-1].node, found2[-1].node
+        # The functions holding the blocks: two classes may each define a
+        # method of the same name, so a lookup by name could find the other.
+        func1, func2 = pair.function1_node, pair.function2_node
         indices1 = self._get_block_indices(func1, pair.block1_nodes)
         indices2 = self._get_block_indices(func2, pair.block2_nodes)
         if not (indices1 and indices2):

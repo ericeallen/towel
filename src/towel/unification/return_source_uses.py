@@ -18,8 +18,13 @@ from .semantic_safety import walk_own_scope
 @dataclass(frozen=True)
 class StatementUsage:
     lineno: int
+    col_offset: int
     kind: str
     names: FrozenSet[str]
+
+    def starts_at_or_after(self, position: Tuple[int, int]) -> bool:
+        """Whether the statement begins at or after ``position``, a (line, column) pair."""
+        return (self.lineno, self.col_offset) >= position
 
 
 class _SourceUses:
@@ -49,30 +54,37 @@ def sharing_return_source_uses(owner: object, *, entries: int = 2048) -> Iterato
 def _statement_usages(
     function: FunctionNode,
     read_names: Callable[[ast.AST], Set[str]],
-    after_line: Optional[int],
+    after: Optional[Tuple[int, int]],
 ) -> Iterator[StatementUsage]:
     for statement in function.body:
         for node in walk_own_scope(statement):
             if not isinstance(node, ast.stmt) or not hasattr(node, "lineno"):
                 continue
-            if after_line is not None and node.lineno <= after_line:
+            if after is not None and (node.lineno, node.col_offset) < after:
                 continue
-            yield StatementUsage(node.lineno, node.__class__.__name__, frozenset(read_names(node)))
+            yield StatementUsage(
+                node.lineno, node.col_offset, node.__class__.__name__, frozenset(read_names(node))
+            )
 
 
 def return_statement_usages(
     owner: object,
     function: FunctionNode,
     read_names: Callable[[ast.AST], Set[str]],
-    after_line: int,
+    after: Tuple[int, int],
 ) -> Iterator[StatementUsage]:
-    """No return-set memo: fresh callers filter immutable source rows each time."""
+    """The statements of ``function`` that begin at or after ``after``, a (line, column) position.
+
+    The position, not the line, marks a block's end: a statement joined to the
+    block's last one by a semicolon shares its line and still runs after it.
+    No return-set memo: fresh callers filter immutable source rows each time.
+    """
     scope = _SOURCE_USES.get()
     if scope is None or not scope.enabled or scope.owner is not owner or not memoizing():
-        yield from _statement_usages(function, read_names, after_line)
+        yield from _statement_usages(function, read_names, after)
         return
     rows = scope.rows.get(function)
     if rows is None:
         rows = tuple(_statement_usages(function, read_names, None))
         scope.rows[function] = rows
-    yield from (row for row in rows if row.lineno > after_line)
+    yield from (row for row in rows if row.starts_at_or_after(after))

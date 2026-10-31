@@ -56,7 +56,7 @@ def test_usage_rows_keep_original_traversal_and_skip_missing_locations() -> None
     ]
     owner = object()
     with usage.sharing_return_source_uses(owner):
-        rows = list(usage.return_statement_usages(owner, function, _names, 0))
+        rows = list(usage.return_statement_usages(owner, function, _names, (1, 0)))
     assert [(row.lineno, row.kind, row.names) for row in rows] == [
         (node.lineno, type(node).__name__, frozenset(_names(node))) for node in expected
     ]
@@ -79,8 +79,8 @@ def test_readonly_function_builds_rows_once_and_query_filters_stay_fresh() -> No
         usage.sharing_return_source_uses(owner),
         patch.object(usage, "walk_own_scope", wraps=walk_own_scope) as walked,
     ):
-        first = list(usage.return_statement_usages(owner, function, read, 2))
-        second = list(usage.return_statement_usages(owner, function, read, 3))
+        first = list(usage.return_statement_usages(owner, function, read, (3, 0)))
+        second = list(usage.return_statement_usages(owner, function, read, (4, 0)))
         assert seen == [2, 3, 4]
         assert walked.call_count == len(function.body)
         assert [row.lineno for row in first] == [3, 4]
@@ -109,7 +109,7 @@ def test_fallback_keeps_lazy_line_filter_before_reader(
         else usage.sharing_return_source_uses(owner, entries=0 if mode == "zero" else 2048)
     ), (memoization_disabled() if mode == "disabled" else nullcontext()):
         actual_owner = object() if mode == "mismatch" else owner
-        iterator = usage.return_statement_usages(actual_owner, function, read, 3)
+        iterator = usage.return_statement_usages(actual_owner, function, read, (4, 0))
         assert not seen
         assert [row.lineno for row in iterator] == [4]
         assert seen == [4]
@@ -125,6 +125,18 @@ def test_each_return_set_is_fresh_and_caller_mutation_cannot_change_rows() -> No
         first.add("poison")
         assert engine._find_return_variables(function, (2, 2), {"b", "c"}) == {"b", "c"}
         assert engine._find_return_variables(function, (2, 3), {"c"}) == {"c"}
+
+
+def test_a_statement_after_a_semicolon_on_the_blocks_last_line_reads_after_it() -> None:
+    # Gemini review of 2026-10-31: `c = b; res = c` ends the block at `c = b`, and
+    # `res = c` runs after it on the same line, so the helper must return c.
+    engine = UnificationRefactorEngine()
+    function = _function("def f():\n b = a\n c = b; res = c\n return res\n")
+    block = function.body[:2]
+    with patch.object(block_analysis, "lifetime_bound_names", return_value=set()):
+        with usage.sharing_return_source_uses(engine):
+            assert engine._find_return_variables(function, (2, 3), {"b", "c"}, block) == {"c"}
+        assert engine._find_return_variables(function, (2, 3), {"b", "c"}, block) == {"c"}
 
 
 def test_lifetime_requirement_is_computed_for_each_call() -> None:
@@ -202,12 +214,12 @@ def test_nested_context_and_exception_restore_and_clear_rows() -> None:
     original = usage._SOURCE_USES.get()
     with usage.sharing_return_source_uses(owner):
         outer = _scope()
-        list(usage.return_statement_usages(owner, function, _names, 0))
+        list(usage.return_statement_usages(owner, function, _names, (1, 0)))
         with pytest.raises(ValueError, match="scope failure"):
             with usage.sharing_return_source_uses(owner):
                 inner = _scope()
                 assert inner is not outer
-                list(usage.return_statement_usages(owner, function, _names, 0))
+                list(usage.return_statement_usages(owner, function, _names, (1, 0)))
                 raise ValueError("scope failure")
         assert not inner.rows and _scope() is outer and len(outer.rows) == 1
     assert not outer.rows and usage._SOURCE_USES.get() is original
@@ -218,13 +230,13 @@ def test_strong_function_keys_are_entry_bounded_and_released_on_exit() -> None:
     with usage.sharing_return_source_uses(owner, entries=1):
         first = _function()
         reference = weakref.ref(first)
-        list(usage.return_statement_usages(owner, first, _names, 0))
+        list(usage.return_statement_usages(owner, first, _names, (1, 0)))
         del first
         gc.collect()
         assert reference() is not None
         second = _function("def g():\n return value\n")
         second_reference = weakref.ref(second)
-        list(usage.return_statement_usages(owner, second, _names, 0))
+        list(usage.return_statement_usages(owner, second, _names, (1, 0)))
         del second
         gc.collect()
         assert reference() is None and second_reference() is not None and len(_scope().rows) == 1
@@ -239,15 +251,15 @@ def test_mutation_between_readonly_scopes_gets_fresh_rows(
     owner = object()
     function = _function("def f():\n return before\n")
     with usage.sharing_return_source_uses(owner) if mode == "new-scope" else nullcontext():
-        assert next(usage.return_statement_usages(owner, function, _names, 0)).names == frozenset(
-            {"before"}
-        )
+        assert next(
+            usage.return_statement_usages(owner, function, _names, (1, 0))
+        ).names == frozenset({"before"})
     returned = cast(ast.Return, function.body[0])
     returned.value = ast.Name(id="after", ctx=ast.Load())
     with usage.sharing_return_source_uses(owner) if mode == "new-scope" else nullcontext():
-        assert next(usage.return_statement_usages(owner, function, _names, 0)).names == frozenset(
-            {"after"}
-        )
+        assert next(
+            usage.return_statement_usages(owner, function, _names, (1, 0))
+        ).names == frozenset({"after"})
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="Requires native fork")
@@ -255,7 +267,7 @@ def test_fork_filters_inherited_immutable_rows_and_clears_child_scope() -> None:
     owner = object()
     function = _function()
     with usage.sharing_return_source_uses(owner):
-        expected = tuple(usage.return_statement_usages(owner, function, _names, 3))
+        expected = tuple(usage.return_statement_usages(owner, function, _names, (4, 0)))
         scope = _scope()
         read_fd, write_fd = os.pipe()
         pid = os.fork()
@@ -264,12 +276,16 @@ def test_fork_filters_inherited_immutable_rows_and_clears_child_scope() -> None:
             os.close(read_fd)
             signal.alarm(5)
             try:
-                assert tuple(usage.return_statement_usages(owner, function, _names, 3)) == expected
+                assert (
+                    tuple(usage.return_statement_usages(owner, function, _names, (4, 0)))
+                    == expected
+                )
                 with usage.sharing_return_source_uses(owner):
                     child_scope = _scope()
                     assert child_scope is not scope
                     assert (
-                        tuple(usage.return_statement_usages(owner, function, _names, 3)) == expected
+                        tuple(usage.return_statement_usages(owner, function, _names, (4, 0)))
+                        == expected
                     )
                 assert not child_scope.rows and _scope() is scope
                 assert os.write(write_fd, b"1") == 1
@@ -292,7 +308,7 @@ def test_fork_filters_inherited_immutable_rows_and_clears_child_scope() -> None:
             and os.WEXITSTATUS(status) == 0
             and response == b"1"
         )
-        assert tuple(usage.return_statement_usages(owner, function, _names, 3)) == expected
+        assert tuple(usage.return_statement_usages(owner, function, _names, (4, 0))) == expected
 
 
 def test_empty_binding_requirement_never_walks_source_or_lifetime() -> None:
@@ -320,7 +336,7 @@ def test_scope_exit_releases_function_keys_even_when_memoization_is_disabled() -
     try:
         function = _function()
         reference = weakref.ref(function)
-        list(usage.return_statement_usages(owner, function, _names, 0))
+        list(usage.return_statement_usages(owner, function, _names, (1, 0)))
         scope = _scope()
         del function
         gc.collect()

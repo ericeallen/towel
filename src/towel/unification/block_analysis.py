@@ -913,7 +913,6 @@ class BlockAnalysis(EngineState):
         if not initially_bound:
             return set()
 
-        block_end_line = block_range[1]
         result: Set[str] = set()
         debug_enabled = debugging(VALIDATION)
         if block and not self._is_value_producing(block):
@@ -921,7 +920,9 @@ class BlockAnalysis(EngineState):
             # suite, before its enclosing manager/finally cleanup executes.
             result |= lifetime_bound_names(block, initially_bound)
 
-        for usage in return_statement_usages(self, func, self._used_names, block_end_line):
+        for usage in return_statement_usages(
+            self, func, self._used_names, _end_position(block, block_range)
+        ):
             uses = set(usage.names)
             if debug_enabled and debug_label:
                 VALIDATION.debug(f"  {debug_label}: stmt@{usage.lineno} ({usage.kind}) uses {uses}")
@@ -1361,3 +1362,14 @@ def _is_plumbing(node: ast.expr, thunks: AbstractSet[str]) -> bool:
             _is_plumbing(keyword.value, thunks) for keyword in node.keywords
         )
     return False
+
+
+def _end_position(block: Sequence[ast.stmt], block_range: Tuple[int, int]) -> Tuple[int, int]:
+    """Where the block ends, as a (line, column) pair: its last statement's end.
+
+    Given only the block's lines, the start of the line after its last one.
+    """
+    last = block[-1] if block else None
+    if last is not None and last.end_lineno is not None and last.end_col_offset is not None:
+        return (last.end_lineno, last.end_col_offset)
+    return (block_range[1] + 1, 0)
