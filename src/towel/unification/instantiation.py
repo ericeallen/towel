@@ -517,7 +517,9 @@ class _UnboundReads:
             holds, fails = self._condition(node.test, entry)
             self.run(node.body, holds)
             self.run(node.orelse, fails)
-            return holds & fails
+            # The loop is left by a break in the body or through the else
+            # clause, either of which may unbind what the test bound.
+            return (holds & fails) - _names_unbound_anywhere([*node.body, *node.orelse])
         if isinstance(node, (ast.With, ast.AsyncWith)):
             entry = state
             for item in node.items:
