@@ -57,6 +57,7 @@ from tests.test_helpers import (
 from towel.formatting import BlackSettings, black_formatter
 from towel.unification import clustering, pair_evaluation
 from towel.unification.block_analysis import BlockAnalysis
+from towel.unification.fixed_point import _ApplyProgress
 from towel.unification.models import Replacement, is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.unifier import Unifier
@@ -401,6 +402,7 @@ def _continue_from_generated_helper(
         GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT,
         0,
         "none",
+        _ApplyProgress.detail_only("none"),
     )
     assert (origin / "module.py").read_text() == original
     return final, applied

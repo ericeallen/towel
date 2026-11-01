@@ -20,10 +20,9 @@ re-analyzes the files it rewrote for localized follow-ups, and when that
 queue drains re-pairs changed files and previously declined proposals.
 An unchanged project with only declined proposals is a fixed point.
 The run stops there or when the iteration bound is reached. Progress follows the
-progress mode: ``tqdm`` (a bar when tqdm is installed; without it a warning
-once per process, an inline bar on stderr for the pairing loop and none for
-the apply phase), ``auto`` (the tqdm bar, or an inline bar on stderr for
-both), ``detail`` (a line per phase), or ``none``.
+progress mode: ``tqdm`` (tqdm bars; without tqdm a warning once per process
+and an inline bar on stderr in their place), ``auto`` (the same without the
+warning), ``detail`` (a line per pass), or ``none``.
 """
 
 from __future__ import annotations
@@ -108,9 +107,7 @@ def _note_missing_tqdm() -> None:
     global _TQDM_NOTED
     if not _TQDM_NOTED:
         _TQDM_NOTED = True
-        LOG.warning(
-            "tqdm is not installed; the pairing phase shows an inline bar on stderr, the others none"
-        )
+        LOG.warning("tqdm is not installed; progress is shown as inline bars on stderr instead")
 
 
 def _is_checker_failure(error: BaseException) -> bool:
@@ -303,9 +300,10 @@ class FixedPointDrivers(Materialization):
                 fails or is interrupted leaves it as it was.
             max_iterations: Stop after this many applied refactorings; 0 or
                 less runs to a fixed point.
-            progress: How progress is shown: ``tqdm`` (a bar when tqdm is
-                installed), ``auto`` (that, or an inline bar), ``detail``
-                (a line per proposal), or ``none``.
+            progress: How progress is shown: ``tqdm`` (tqdm bars, or inline
+                bars on stderr and a warning when tqdm is not installed),
+                ``auto`` (the same without the warning), ``detail`` (a log
+                of each pass), or ``none``.
             output_path: An optional new file to write the result to instead,
                 when the run succeeds; the original is then only read.
 
@@ -317,6 +315,7 @@ class FixedPointDrivers(Materialization):
         self._begin_counting_checker_failures()
         self._refuse_an_unreadable_program(Path(file_path))
         analysis_progress: ProgressMode = progress if wants_bar(progress) else "none"
+        reporter = _ApplyProgress.detail_only(progress)
         current_bytes = Path(file_path).read_bytes()
         try:
             current_code = decode_source(current_bytes)
@@ -340,7 +339,12 @@ class FixedPointDrivers(Materialization):
         destination = Path(file_path) if in_place else Path(str(output_path))
         with self._staged_output(Path(file_path), destination) as stage:
             refactored = self._refactor_file_in_place(
-                str(stage.target), current_bytes, current_code, max_iterations, analysis_progress
+                str(stage.target),
+                current_bytes,
+                current_code,
+                max_iterations,
+                analysis_progress,
+                reporter,
             )
             self._publish(stage)
             return refactored
@@ -376,8 +380,13 @@ class FixedPointDrivers(Materialization):
         current_code: str,
         max_iterations: int,
         analysis_progress: ProgressMode,
+        reporter: "_ApplyProgress",
     ) -> Tuple[str, int, List[str]]:
-        """The single-file loop over ``file_path``, which holds ``current_bytes``."""
+        """The single-file loop over ``file_path``, which holds ``current_bytes``.
+
+        Each pass re-analyzes the file; ``reporter`` logs what it discovered
+        and declined, as the directory loop's passes do.
+        """
         num_applied = 0
         descriptions = []
         rejected = _RejectedProposals()
@@ -390,12 +399,13 @@ class FixedPointDrivers(Materialization):
             proposals = self.analyze_files(
                 [file_path], invalidate_paths=[file_path], progress=analysis_progress
             )
-            self._note_analysis(Path(file_path), len(proposals))
+            self._note_analysis(Path(file_path), len(proposals), reporter)
 
             if not proposals:
                 # Fixed point reached - no more refactorings found
                 break
 
+            reporter.discovered(proposals, num_applied, max_iterations)
             applied_one = False
             for proposal in proposals:
                 if proposal in rejected:
@@ -408,6 +418,7 @@ class FixedPointDrivers(Materialization):
                 if rendered == current_code:
                     self._forget_records_since(recorded)
                     self._decline(proposal, "changed nothing")
+                    reporter.detail(f"Proposal changed nothing: {proposal.description}")
                     continue
                 new_code = rendered
                 try:
@@ -424,6 +435,7 @@ class FixedPointDrivers(Materialization):
             if not applied_one:
                 if rejected and changed_since_hearing:
                     # The file has changed since these were rejected; hear them once more.
+                    reporter.detail("Rehearing proposals declined earlier")
                     rejected.clear()
                     changed_since_hearing = False
                     continue
@@ -568,9 +580,10 @@ class FixedPointDrivers(Materialization):
                 paths name files here.
             max_iterations: Stop after this many applied refactorings; 0 or
                 less runs to a fixed point.
-            progress: How progress is shown: ``tqdm`` (a bar when tqdm is
-                installed), ``auto`` (that, or an inline bar), ``detail``
-                (a line per proposal), or ``none``.
+            progress: How progress is shown: ``tqdm`` (tqdm bars, or inline
+                bars on stderr and a warning when tqdm is not installed),
+                ``auto`` (the same without the warning), ``detail`` (a log
+                of each pass), or ``none``.
 
         Returns:
             (results_dict, termination_reason)
@@ -1142,6 +1155,15 @@ class _ApplyProgress:
         self._started = time.monotonic()
         self._heartbeat = Heartbeat(self._redraw)
 
+    @classmethod
+    def detail_only(cls, mode: ProgressMode) -> "_ApplyProgress":
+        """A reporter that writes the detail log under ``detail`` and draws nothing.
+
+        The single-file loop has no apply bar, only the analysis bars each
+        pass draws itself, but ``detail`` promises it the same log.
+        """
+        return cls("detail" if normalize_progress(mode) == "detail" else "none", None)
+
     @property
     def _use_tqdm(self) -> bool:
         return self._factory is not None
@@ -1160,8 +1182,13 @@ class _ApplyProgress:
             LOG.info("[towel] %s", message)
 
     def inline(self, applied: int, queued: int, phase: ProgressPhase, desc: str) -> None:
-        """Redraw the inline bar; only the automatic mode without tqdm shows one."""
-        if self._mode != "auto" or self._use_tqdm:
+        """Redraw the inline bar, which stands in for the tqdm bar when tqdm is not installed.
+
+        It does so under ``tqdm`` as under ``auto``, as the analysis bars do:
+        verification is where a run spends its time, so a missing tqdm must
+        not leave that phase, of all of them, showing nothing.
+        """
+        if not wants_bar(self._mode) or self._use_tqdm:
             return
         denom = max(applied + queued, 1)
         pct = int((applied / denom) * 100)

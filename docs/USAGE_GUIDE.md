@@ -85,10 +85,10 @@ When using the fixed-point directory refactoring loop (`refactor_directory_to_fi
 
 | Mode    | Behavior |
 |---------|----------|
-| `tqdm`  | Rich progress bar showing applied count, queue length and the proposal being weighed, redrawn on a heartbeat so a long verification does not look like a hung run (when `tqdm` is not installed, logs a warning once, shows inline bars during analysis, and omits the apply bar). |
-| `auto`  | Attempts `tqdm`, falls back to a textual single-line bar without warning. |
+| `tqdm`  | Rich progress bar showing applied count, queue length and the proposal being weighed, redrawn on a heartbeat so a long verification does not look like a hung run (when `tqdm` is not installed, logs a warning once and draws the same progress as textual single-line bars on stderr). |
+| `auto`  | As `tqdm`, falling back to the textual single-line bars without the warning. |
 | `none`  | Suppresses all progress output (quiet for CI). |
-| `detail`| Lists the discovered proposals (first 25) and the localized follow-ups after each application, on the `towel` logger at INFO. |
+| `detail`| Lists the discovered proposals (first 25) of each pass, and in a directory run the localized follow-ups after each application, on the `towel` logger at INFO. |
 
 The default is `tqdm`; the CLI's `--progress` option accepts the same values.
 

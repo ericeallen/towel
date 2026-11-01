@@ -19,6 +19,10 @@ mnemonics with PEP 440 ordering; see the
 - The interactive cost note names only a type checker the run will start, and
   is left out when none will; it counts the files the run analyzes, without
   environments or `--exclude`d directories.
+- Under the default `--progress tqdm` without tqdm installed, the apply phase
+  draws the inline bar the analysis phases already drew, and the warning says
+  so. `--progress detail` logs each pass of a single-file `dry` or `preview`,
+  as it does for a directory, instead of nothing.
 
 ## [1.947]
 
