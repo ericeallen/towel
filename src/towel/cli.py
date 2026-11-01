@@ -91,7 +91,7 @@ Examples:
   towel preview src/                    # Preview duplicates (read-only)
   towel dry src/ cleaned/               # Apply refactorings to new directory
   towel dry src/ src/                   # Apply refactorings in-place
-  towel rename-helpers                  # Rename extracted functions with LLM assistance
+  towel rename-helpers src/             # Rename extracted functions with LLM assistance
 
 For more help on a specific command:
   towel <command> --help

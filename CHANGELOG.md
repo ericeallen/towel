@@ -14,6 +14,8 @@ mnemonics with PEP 440 ordering; see the
   present its version and documentation before publication. A release-event
   workflow rechecks that public view. Refresh the default-branch documentation
   with the completed 1.947 publication and validation results.
+- `towel --help` shows `rename-helpers` with the target it requires; the
+  example without one was refused.
 
 ## [1.947]
 
