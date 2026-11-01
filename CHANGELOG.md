@@ -16,6 +16,9 @@ mnemonics with PEP 440 ordering; see the
   with the completed 1.947 publication and validation results.
 - `towel --help` shows `rename-helpers` with the target it requires; the
   example without one was refused.
+- The interactive cost note names only a type checker the run will start, and
+  is left out when none will; it counts the files the run analyzes, without
+  environments or `--exclude`d directories.
 
 ## [1.947]
 

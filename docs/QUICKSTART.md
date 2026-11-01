@@ -45,8 +45,9 @@ diff -ru path/to/project path/to/cleaned | less   # or redirect to a file outsid
 ```
 
 `--no-interactive` skips the confirmation `towel dry` would otherwise ask for.
-Without it, on a directory of 25 or more Python files with `--types` enabled,
-it first reports what verification will involve on this project — how many
+Without it, on a directory of 25 or more Python files with `--types` enabled
+and a type checker installed, it first names the checker and reports what
+verification will involve on this project — how many
 files each candidate signature is checked against and how many third-party
 packages their imports pull in — and then asks `Proceed? (y/N): ` before
 doing any of it (smaller targets prompt directly). On a large annotated project
