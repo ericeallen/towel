@@ -14,6 +14,7 @@ the entries below do not transfer approval to a later source or version.
 
 **Contents — release checkpoints**
 
+- [1.948 preparation](#2026-11-05-1948-preparation)
 - [1.947 completed publication](#2026-10-26-1947-published-release)
 - [1.947 Sphinx memory and parsing investigation](#2026-10-25-1947-sphinx-memory-and-parsing-investigation)
 - [1.947 PrettyTable timeout repair](#2026-10-24-1947-prettytable-timeout-repair)
@@ -34,6 +35,21 @@ the entries below do not transfer approval to a later source or version.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-11-05: 1.948 preparation
+
+Towel **1.948** prepares the four silent `dry` miscompilation repairs found
+from the October 31 Gemini review, together with corrections to help examples,
+verification-cost reporting and progress output. The
+[1.948 changelog](../CHANGELOG.md#1948) records their scope. The candidate also
+includes the default-branch publication gate and the completed 1.947
+publication records, which retain their historical identities.
+
+The complete campaign on the final versioned source, artifact validation,
+consumer/performance review, exact-commit CI and publication remain pending.
+The earlier fix-branch checks do not certify this new source or its artifacts.
+Keep final results, source identity and artifact hashes in the external release
+record, as the [release procedure](RELEASING.md#recording-the-release) requires.
 
 ## 2026-10-26: 1.947 published release
 

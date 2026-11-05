@@ -7,10 +7,24 @@ removes reflection and self-instrumentation guarantees. Validation and repair
 records below retain the source, contract and results of their dated runs;
 they are not evidence of those retired protections in the current code.
 
-Start with the completed 1.947 publication below. Later sections retain
-completed releases and earlier preparation checkpoints, with their original
-source identities and historical measurements. Pending work in those dated
-checkpoints describes the state at that time, not the published release.
+Start with the 1.948 preparation checkpoint below. The completed 1.947
+publication and earlier checkpoints retain their original source identities,
+measurements and validation scope.
+
+## 1.948 preparation checkpoint, November 5, 2026
+
+Towel **1.948** is prepared for validation and is not yet published. It repairs
+four silent `dry` miscompilations in 1.947 and corrects CLI help, cost reporting
+and progress behavior; see the [changelog](../CHANGELOG.md#1948).
+
+The final versioned source still requires the complete Python 3.11–3.13
+suites and coverage, quality and dependency checks, differential fuzzing,
+clean-wheel and source-archive checks, diagrams, self-dogfood, credential scan,
+141-project corpus and consumer/performance review. The evidence gate,
+exact-commit remote CI and publication checks also remain pending. Results
+from earlier source trees do not certify this candidate. Record completed
+outcomes externally with the exact artifacts so validation does not change
+the source being validated; see the [release procedure](RELEASING.md).
 
 ## 1.947 published release, October 26, 2026
 

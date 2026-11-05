@@ -2,6 +2,15 @@
 
 [Documentation index](README.md)
 
+**1.948 is prepared for validation and is not yet published.** It repairs
+four silent `dry` miscompilations in 1.947 and corrects CLI help, cost reporting
+and progress output. The [changelog](../CHANGELOG.md#1948) describes the changes;
+the [readiness report](PRODUCTION_READINESS.md#1948-preparation-checkpoint-november-5-2026)
+records the pending campaign. Freeze the final versioned source before running
+the complete gates below. Keep final validation and publication outcomes
+external to the shipped source. Earlier releases and checkpoints below retain
+their own identities and results.
+
 **1.947 was published October 26, 2026** on
 [PyPI](https://pypi.org/project/code-towel/1.947/) and
 [GitHub](https://github.com/ericeallen/towel/releases/tag/v1.947), from
@@ -237,12 +246,13 @@ No Git push is permitted under the standing repository instructions.
 Towel uses increasing, normalized PEP 440 identifiers with mathematical
 mnemonics: 1.772 names the square root of pi, 1.792 names ln 6, and 1.946 names
 ln 7. These two-component versions are not a strict Semantic Versioning scheme.
-The maintainer explicitly selected 1.947 for audit repairs after 1.946; no new
-mathematical mnemonic is assigned. Its rename CLI enforces the complete-consumer
-scope requirement; see the [1.947 overview](RELEASE_1_947.md). A future 2.0 should accompany a deliberate
+The maintainer selected 1.947 for audit repairs after 1.946 and 1.948 for the
+following correctness and CLI repairs; neither adds a mathematical mnemonic.
+The 1.947 rename CLI introduced the complete-consumer scope requirement; see
+the [1.947 overview](RELEASE_1_947.md). A future 2.0 should accompany a deliberate
 major transition, rather than the size of a patch or a nearby mathematical value.
 
-At three decimal places, 1.947 leaves 52 larger labels below 2.000, from 1.948
+At three decimal places, 1.948 leaves 51 larger labels below 2.000, from 1.949
 through 1.999. Choose each future mnemonic and identifier explicitly; the current
 choice does not schedule 2.0. Version tools compare integer components, not real
 numbers: `1.9461` sorts after `1.999`, so adding decimal precision is not a way to
@@ -259,7 +269,7 @@ import-problem refusals among 141 projects. Its completed results remain in the
 under their original source and environment identities. They do not describe
 the later 1.792 release or the prepared 1.946 version.
 
-- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` (September 15, 2026), `1.618` (September 17, 2026), and `1.732` and `1.732.post1` (September 19, 2026) are published and not yanked. Version `1.772` is also published (release dated September 26; PyPI upload September 27 UTC). The verified 1.792 release followed on October 8 from `44d7795`. The published 1.946 release was verified on October 19, 2026, as recorded above. None may be rebuilt or replaced. Prepare 1.947 as a new version under the same release gates.
+- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` (September 15, 2026), `1.618` (September 17, 2026), and `1.732` and `1.732.post1` (September 19, 2026) are published and not yanked. Version `1.772` is also published (release dated September 26; PyPI upload September 27 UTC). The verified 1.792 release followed on October 8 from `44d7795`. The published 1.946 release was verified on October 19, 2026, as recorded above. The 1.947 release followed on October 26, 2026, as recorded above. None may be rebuilt or replaced. Prepare 1.948 as a new version under the same release gates.
 - The GitHub repository was made public on September 15, 2026, and its default branch is `main`. Earlier authenticated inspection (while private) found historical releases `v0.5.0` and `v0.5.1`, an active CI workflow, and an unprotected `main` branch. Verify the actual remote settings before relying on any of them.
 - PyPI embeds each uploaded distribution's README. A new distribution must carry the current version's documentation links, known limitations and Python requirement; editing GitHub afterward does not update an uploaded description.
 
@@ -292,7 +302,7 @@ cohorts left restoration unresolved and Rich pending for that source.
 The maintainer must review the measured regression before publication.
 
 The version and documentation update changes release contents. Freeze the final
-1.947 source, rebuild its artifacts, and run the full declared release campaign:
+1.948 source, rebuild its artifacts, and run the full declared release campaign:
 Python 3.11–3.13, coverage and quality, differential families, clean-wheel and
 sdist checks, self-dogfood, dependency/diagram checks, the 141-project corpus,
 source-bound evidence verification and exact-commit CI. Historical successes

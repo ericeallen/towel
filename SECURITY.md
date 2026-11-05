@@ -5,7 +5,8 @@ Towel rewrites source code. Review the generated diff and run the affected proje
 ## Supported versions
 
 Security fixes are provided for the latest released version.
-This source tree targets **1.947**, the latest supported release, published
+This source tree targets **1.948**, which is prepared for validation and is not
+yet published. The latest confirmed supported release is **1.947**, published
 October 26, 2026. Its [PyPI artifacts](https://pypi.org/project/code-towel/1.947/)
 and [GitHub release](https://github.com/ericeallen/towel/releases/tag/v1.947)
 were verified against the validated distributions. Support follows the latest

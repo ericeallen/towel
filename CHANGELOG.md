@@ -10,6 +10,12 @@ mnemonics with PEP 440 ordering; see the
 
 ## [Unreleased]
 
+## [1.948]
+
+Correctness and CLI repairs after 1.947. Prepared for validation; publication
+and the complete release campaign remain pending. See the
+[preparation record](docs/PRODUCTION_READINESS.md#1948-preparation-checkpoint-november-5-2026).
+
 - Require the live GitHub default branch to contain the validated release and
   present its version and documentation before publication. A release-event
   workflow rechecks that public view. Refresh the default-branch documentation

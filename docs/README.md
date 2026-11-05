@@ -8,7 +8,13 @@ This documentation describes the source version you are reading. Dated
 benchmarks, validation reports and proposals retain their original source and
 artifact identities; they do not establish results for a later release.
 
-**1.947 is the latest release**, published October 26, 2026 on
+**1.948 is prepared for validation and is not yet published.** Its
+[changelog](../CHANGELOG.md#1948) describes four silent `dry` miscompilation
+repairs and corrected CLI reporting. The
+[preparation record](PRODUCTION_READINESS.md#1948-preparation-checkpoint-november-5-2026)
+records the pending validation and publication.
+
+**1.947 is the latest confirmed release**, published October 26, 2026 on
 [PyPI](https://pypi.org/project/code-towel/1.947/) and
 [GitHub](https://github.com/ericeallen/towel/releases/tag/v1.947).
 The [1.947 overview](RELEASE_1_947.md) describes the audit repairs after 1.946
