@@ -177,3 +177,96 @@ def test_preview_honours_progress_none(tmp_path: Path, monkeypatch: pytest.Monke
     assert (
         "it/s" not in err.getvalue() and "%|" not in err.getvalue() and "\r" not in err.getvalue()
     )
+
+
+def _without_tqdm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make tqdm look uninstalled, as in a plain ``pip install code-towel``, and the note unsaid."""
+    import sys
+
+    from towel.unification import fixed_point
+
+    monkeypatch.setitem(sys.modules, "tqdm.auto", None)
+    monkeypatch.setattr(fixed_point, "_TQDM_NOTED", False)
+
+
+def test_default_progress_without_tqdm_draws_every_phase_inline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The apply phase, where verification spends the time, falls back as analysis does.
+
+    The note once said only the pairing phase drew an inline bar; analysis and
+    unification drew one too, and the apply phase alone drew nothing.
+    """
+    _make_fixture(tmp_path / "proj")
+    _without_tqdm(monkeypatch)
+    err = io.StringIO()
+    with (
+        caplog.at_level(logging.WARNING, logger="towel"),
+        contextlib.redirect_stdout(io.StringIO()),
+        contextlib.redirect_stderr(err),
+    ):
+        results, _ = UnificationRefactorEngine(min_lines=3).refactor_directory_to_fixed_point(
+            str(tmp_path / "proj"), str(tmp_path / "out"), progress="tqdm"
+        )
+    assert sum(count for count, _ in results.values()) == 2
+    for label in ("Analyzing files:", "Pairing blocks:", "[towel] apply ", "[towel] applied "):
+        assert label in err.getvalue(), (label, err.getvalue())
+    notes = [record.getMessage() for record in caplog.records if "tqdm" in record.getMessage()]
+    assert notes == ["tqdm is not installed; progress is shown as inline bars on stderr instead"]
+
+
+@pytest.mark.parametrize("mode", ["none", "detail"])
+def test_modes_without_a_bar_draw_no_inline_apply_bar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    _make_fixture(tmp_path / "proj")
+    _without_tqdm(monkeypatch)
+    err = io.StringIO()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+        UnificationRefactorEngine(min_lines=3).refactor_directory_to_fixed_point(
+            str(tmp_path / "proj"), str(tmp_path / "out"), progress=mode  # type: ignore[arg-type]
+        )
+    assert "\r" not in err.getvalue()
+
+
+def test_detail_progress_logs_each_pass_of_a_single_file(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``--progress detail`` promised dry and preview a log of each pass; a file run logged none."""
+    _make_fixture(tmp_path / "proj")
+    err = io.StringIO()
+    with (
+        caplog.at_level(logging.INFO, logger="towel"),
+        contextlib.redirect_stdout(io.StringIO()),
+        contextlib.redirect_stderr(err),
+    ):
+        _, applied, _ = UnificationRefactorEngine(min_lines=3).refactor_to_fixed_point(
+            str(tmp_path / "proj" / "sample.py"),
+            progress="detail",
+            output_path=str(tmp_path / "out.py"),
+        )
+    assert applied == 2
+    messages = [record.getMessage() for record in caplog.records]
+    # One pass per application, and the last finds nothing left.
+    assert messages.count("[towel] Discovered 2 proposal(s)") == 1
+    assert messages.count("[towel] Discovered 1 proposal(s)") == 1
+    listed = [message.strip() for message in messages if message.strip()[:2] in {"1.", "2."}]
+    assert listed[:2] == [
+        "1. Extract common code from f1 and f2",
+        "2. Extract common code from g1 and g2",
+    ]
+    assert "\r" not in err.getvalue(), "detail logs instead of drawing a bar"
+
+
+@pytest.mark.parametrize("command", ["dry", "preview"])
+def test_cli_detail_progress_logs_a_single_file_run(tmp_path: Path, command: str) -> None:
+    from tests.test_cli_integration import invoke
+
+    _make_fixture(tmp_path / "proj")
+    source = str(tmp_path / "proj" / "sample.py")
+    target = (
+        [source, str(tmp_path / "out.py"), "--no-interactive"] if command == "dry" else [source]
+    )
+    result = invoke([command, *target, "--no-types", "--min-lines", "3", "--progress", "detail"])
+    assert result.status == 0, result.stderr
+    assert "[towel] Discovered 2 proposal(s)" in result.stderr, result.stderr

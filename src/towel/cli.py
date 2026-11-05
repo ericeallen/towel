@@ -91,7 +91,7 @@ Examples:
   towel preview src/                    # Preview duplicates (read-only)
   towel dry src/ cleaned/               # Apply refactorings to new directory
   towel dry src/ src/                   # Apply refactorings in-place
-  towel rename-helpers                  # Rename extracted functions with LLM assistance
+  towel rename-helpers src/             # Rename extracted functions with LLM assistance
 
 For more help on a specific command:
   towel <command> --help
@@ -465,8 +465,9 @@ def _add_progress_flag(parser: argparse.ArgumentParser, detail: str) -> None:
         "--progress",
         choices=["auto", "tqdm", "none", "detail"],
         default=DEFAULT_PROGRESS,
-        help="Progress display mode: 'tqdm' shows bars (the default), 'auto' falls back if tqdm "
-        f"is unavailable, 'none' disables output, {detail}.",
+        help="Progress display mode: 'tqdm' shows tqdm bars (the default), or inline bars and a "
+        "warning when tqdm is not installed; 'auto' does the same without the warning; 'none' "
+        f"disables output; {detail}.",
     )
 
 
@@ -805,7 +806,9 @@ def _import_breadth(files: "Sequence[Path]", root: "Path") -> int:
     return len(outside)
 
 
-def _verification_cost(project_path: "Path", types: bool) -> List[str]:
+def _verification_cost(
+    project_path: "Path", types: bool, excluded: "Sequence[str]" = ()
+) -> List[str]:
     """What a typed run over this project involves, in facts rather than a forecast.
 
     How long a run takes is governed by how many proposals the project rejects,
@@ -813,25 +816,33 @@ def _verification_cost(project_path: "Path", types: bool) -> List[str]:
     outnumbered the refactorings about twenty-five to one late in the run. A
     figure derived from anything available here would be confident and wrong,
     so this states what is known and leaves the judgement to the reader.
+
+    It names the checkers the run will start, chosen as the run chooses them
+    but without starting one, since the user has not yet agreed to the run.
+    When none will run (none is installed, or a configured one is missing and
+    the run is about to be refused for it) there is no verification to cost.
+    The files counted are those the run analyzes, less ``excluded``.
     """
-    from towel.type_inference import _configured_root
+    from towel.type_inference import CheckerNotInstalled, type_checkers_for_project
 
     if not types or not project_path.is_dir():
         return []
     try:
-        files = list(project_path.rglob("*.py"))
+        files = python_sources(project_path, excluded=excluded)
     except OSError:
         # Only for a message; a real I/O problem resurfaces in the analysis.
         return []
     if len(files) < _COST_NOTE_FILES:
         return []
+    try:
+        checkers = type_checkers_for_project(project_path)
+    except CheckerNotInstalled:
+        return []  # The selection after the prompt refuses the run, saying why.
+    if not checkers:
+        return []
     packages = _import_breadth(files, project_path)
-    checkers = [
-        name for name in ("mypy", "pyright") if _configured_root(project_path, name) is not None
-    ]
-    named = " and ".join(checkers) if checkers else "the installed checker"
     return [
-        f"Type checking is on ({named}), and this is where the time goes. Every",
+        f"Type checking is on ({' and '.join(checkers)}), and this is where the time goes. Every",
         "candidate signature is verified against the whole project: " f"{len(files)} Python files",
         f"here, importing {packages} third-party packages, and a proposal can take several",
         "such checks. A check costs what that import graph costs, not what the file",
@@ -1099,7 +1110,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
     print()
 
     if options.interactive:
-        for line in _verification_cost(Path(input_path), options.types):
+        for line in _verification_cost(Path(input_path), options.types, options.exclude):
             print(line)
         if not _confirm("Proceed? (y/N): "):
             print("Aborted.")

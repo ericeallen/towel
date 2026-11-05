@@ -124,6 +124,7 @@ __all__ = [
     "is_probe_file",
     "reports_by_each",
     "reveal_by_each",
+    "type_checkers_for_project",
     "type_oracle_for_project",
     "relocate_oracle",
     "unanswered_files",
@@ -2266,39 +2267,52 @@ def _refuse_missing_checkers(missing: Sequence[Tuple[str, Path]]) -> CheckerNotI
     )
 
 
-def type_oracle_for_project(path: Path) -> ToolChoice[TypeOracle]:
-    """The checker the project configures, and a note on what was chosen.
+def type_checkers_for_project(path: Path) -> Tuple[str, ...]:
+    """The checkers a typed run over ``path`` uses, by name, decided without starting any.
 
-    A project that configures mypy gets mypy; one that configures pyright
-    gets pyright; one that configures both infers with mypy and verifies
-    with both, so its own check stays green; one that configures neither
-    gets mypy when installed, else pyright, else no checker and a note saying
-    so. A configured checker that is not installed raises
+    This is the selection :func:`type_oracle_for_project` makes: a project
+    that configures mypy gets mypy; one that configures pyright gets
+    pyright; one that configures both gets both; one that configures
+    neither gets mypy when installed, else pyright, else none, ``()``. A
+    configured checker that is not installed raises
     :class:`CheckerNotInstalled`: substituting another, or none, would verify
-    against a check the project does not run.
+    against a check the project does not run. Nothing is constructed, so a
+    caller may describe the run before the user has agreed to it.
     """
     mypy_root = _configured_root(path, "mypy") or declared_mypy_root(path)
     pyright_root = _configured_root(path, "pyright")
-    mypy: Optional[TypeOracle] = None
-    pyright: Optional[TypeOracle] = None
-    missing: List[Tuple[str, Path]] = []
-    if mypy_root is not None or pyright_root is None:
-        try:
-            mypy = MypyInferrer()
-        except ImportError:
-            if mypy_root is not None:
-                missing.append(("mypy", mypy_root))
-    if pyright_root is not None or mypy is None:
-        try:
-            pyright = PyrightOracle()
-        except ImportError:
-            if pyright_root is not None:
-                missing.append(("pyright", pyright_root))
+    mypy = (mypy_root is not None or pyright_root is None) and _mypy_installed()
+    pyright = (pyright_root is not None or not mypy) and _pyright_command() is not None
+    missing = [
+        (name, root)
+        for name, root, chosen in (("mypy", mypy_root, mypy), ("pyright", pyright_root, pyright))
+        if root is not None and not chosen
+    ]
     if missing:
-        for started in (mypy, pyright):
-            if started is not None:
-                started.close()
         raise _refuse_missing_checkers(missing)
+    return tuple(name for name, chosen in (("mypy", mypy), ("pyright", pyright)) if chosen)
+
+
+def _mypy_installed() -> bool:
+    return importlib.util.find_spec("mypy") is not None
+
+
+def type_oracle_for_project(path: Path) -> ToolChoice[TypeOracle]:
+    """The checker the project configures, and a note on what was chosen.
+
+    The checkers are those :func:`type_checkers_for_project` selects; a
+    project that configures both infers with mypy and verifies with both, so
+    its own check stays green. With none installed the tool is None and the
+    note says so.
+    """
+    checkers = type_checkers_for_project(path)
+    mypy: Optional[TypeOracle] = MypyInferrer() if "mypy" in checkers else None
+    try:
+        pyright: Optional[TypeOracle] = PyrightOracle() if "pyright" in checkers else None
+    except BaseException:
+        if mypy is not None:
+            mypy.close()
+        raise
     if mypy is not None and pyright is not None:
         return ToolChoice(
             CombinedOracle(mypy, [pyright]), "mypy for inference, mypy and pyright for verification"

@@ -29,6 +29,15 @@ mnemonics with PEP 440 ordering; see the
   - A name a `while` test binds and the loop body or `else` clause deletes is
     no longer taken as bound after the loop, so a renamed binder keeps the
     name `UnboundLocalError` reports.
+- `towel --help` shows `rename-helpers` with the target it requires; the
+  example without one was refused.
+- The interactive cost note names only a type checker the run will start, and
+  is left out when none will; it counts the files the run analyzes, without
+  environments or `--exclude`d directories.
+- Under the default `--progress tqdm` without tqdm installed, the apply phase
+  draws the inline bar the analysis phases already drew, and the warning says
+  so. `--progress detail` logs each pass of a single-file `dry` or `preview`,
+  as it does for a directory, instead of nothing.
 
 ## [1.947]
 

@@ -50,13 +50,8 @@ def _without_pyright(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(type_inference, "_pyright_command", lambda: None)
 
 
-class _AbsentMypy:
-    def __init__(self) -> None:
-        raise ImportError("mypy is not installed")
-
-
 def _without_mypy(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(type_inference, "MypyInferrer", _AbsentMypy)
+    monkeypatch.setattr(type_inference, "_mypy_installed", lambda: False)
 
 
 def _project(root: Path, tools: str) -> Path:
@@ -73,21 +68,21 @@ def test_both_configured_and_pyright_missing_refuses_naming_pyright(
 ) -> None:
     path = _project(tmp_path, '[tool.mypy]\nstrict = true\n[tool.pyright]\nstrict = ["."]\n')
     _without_pyright(monkeypatch)
-    closed: List[bool] = []
-    original_close = type_inference.MypyInferrer.close
+    started: List[bool] = []
+    original_init = type_inference.MypyInferrer.__init__
 
-    def recording_close(self: type_inference.MypyInferrer) -> None:
-        closed.append(True)
-        original_close(self)
+    def recording_init(self: type_inference.MypyInferrer) -> None:
+        started.append(True)
+        original_init(self)
 
-    monkeypatch.setattr(type_inference.MypyInferrer, "close", recording_close)
+    monkeypatch.setattr(type_inference.MypyInferrer, "__init__", recording_init)
     with pytest.raises(type_inference.CheckerNotInstalled) as refused:
         type_oracle_for_project(path)
     message = str(refused.value)
     assert "pyright" in message and "mypy" not in message.split(" is configured")[0]
     assert str(tmp_path / "pyproject.toml") in message
     assert "--no-types" in message and "install" in message.lower()
-    assert closed, "the mypy checker already started is released, not leaked"
+    assert not started, "the refusal comes before any checker starts, so none can leak"
 
 
 def test_pyright_only_project_with_pyright_missing_refuses(
