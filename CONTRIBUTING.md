@@ -323,11 +323,12 @@ See [the evidence schema and release procedure](docs/RELEASING.md#repository-own
   detailed tasks and explanations in the appropriate guide linked from
   [the documentation index](docs/README.md), and add user-visible changes
   under `[Unreleased]` in CHANGELOG.md
-- This source documents published 1.947. Its
-  [overview](docs/RELEASE_1_947.md) describes the post-1.946 audit repairs;
-  [readiness](docs/PRODUCTION_READINESS.md) and the
-  [release procedure](docs/RELEASING.md) record the completed release and the
-  gates for its successors. Do not report missing results as passed. Published
+- This source documents 1.948. Its [changelog](CHANGELOG.md#1948) describes
+  the four silent `dry` miscompilation repairs and CLI corrections after 1.947;
+  the [1.947 overview](docs/RELEASE_1_947.md) describes the post-1.946 audit
+  repairs. [Readiness](docs/PRODUCTION_READINESS.md) and the
+  [release procedure](docs/RELEASING.md) record dated checkpoints and the
+  gates for each release. Do not report missing results as passed. Published
   1.946/1.792 artifacts and older development measurements retain their
   original source and artifact identities. Follow the
   [version convention](docs/RELEASING.md#version-number-convention) when choosing

@@ -2,11 +2,12 @@
 
 [Documentation index](README.md)
 
-**1.948 is prepared for validation and is not yet published.** It repairs
-four silent `dry` miscompilations in 1.947 and corrects CLI help, cost reporting
-and progress output. The [changelog](../CHANGELOG.md#1948) describes the changes;
-the [readiness report](PRODUCTION_READINESS.md#1948-preparation-checkpoint-november-5-2026)
-records the pending campaign. Freeze the final versioned source before running
+**1.948 repairs four silent `dry` miscompilations in 1.947** and corrects
+CLI help, cost reporting and progress output. The
+[changelog](../CHANGELOG.md#1948) describes the changes. The dated
+[preparation checkpoint](PRODUCTION_READINESS.md#1948-preparation-checkpoint-november-5-2026)
+retains its original status; completed validation and publication records belong
+in the [release history](https://github.com/ericeallen/towel/releases). Freeze the final versioned source before running
 the complete gates below. Keep final validation and publication outcomes
 external to the shipped source. Earlier releases and checkpoints below retain
 their own identities and results.

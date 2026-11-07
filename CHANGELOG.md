@@ -12,9 +12,11 @@ mnemonics with PEP 440 ordering; see the
 
 ## [1.948]
 
-Correctness and CLI repairs after 1.947. Prepared for validation; publication
-and the complete release campaign remain pending. See the
-[preparation record](docs/PRODUCTION_READINESS.md#1948-preparation-checkpoint-november-5-2026).
+Correctness and CLI repairs after 1.947. See the
+[release history](https://github.com/ericeallen/towel/releases) for completed
+validation and publication records. The dated
+[preparation record](docs/PRODUCTION_READINESS.md#1948-preparation-checkpoint-november-5-2026)
+retains the status of its original checkpoint.
 
 - Require the live GitHub default branch to contain the validated release and
   present its version and documentation before publication. A release-event

@@ -9,13 +9,15 @@ Towel finds repeated Python code and extracts it into shared helper functions.
 It checks each extraction, preserves the parts that differ as parameters, and
 leaves meaningful names for you to choose.
 
-**Release status: 1.948 (beta).** Prepared for validation; not yet published.
-This candidate repairs four silent `dry` miscompilations found in 1.947 and
+**Release status: 1.948 (beta).**
+This version repairs four silent `dry` miscompilations found in 1.947 and
 corrects CLI help, verification-cost reporting and progress output. See the
 [1.948 changelog](https://github.com/ericeallen/towel/blob/v1.948/CHANGELOG.md#1948)
-and [preparation record](https://github.com/ericeallen/towel/blob/v1.948/docs/PRODUCTION_READINESS.md#1948-preparation-checkpoint-november-5-2026).
-The complete release campaign and publication remain pending. Earlier results
-below retain their original release and source identities.
+and [known limitations](https://github.com/ericeallen/towel/blob/v1.948/docs/KNOWN_LIMITATIONS.md).
+Completed validation and publication records are available in the
+[GitHub release history](https://github.com/ericeallen/towel/releases) and
+[PyPI package history](https://pypi.org/project/code-towel/#history).
+Dated preparation records below retain their original release and source identities.
 
 ### Published 1.947
 
@@ -105,9 +107,8 @@ Click averaged 56.69 versus 46.53 seconds (21.85% slower), and Rich averaged
 per workload. The
 [performance guide](https://github.com/ericeallen/towel/blob/v1.948/docs/PERFORMANCE.md)
 records all samples, CPU time, workload differences and measurement limits.
-README documentation links target the planned `v1.948` source snapshot;
-they become available when the validated release is tagged. Dated preparation
-records retain their original status. The historical
+README documentation links target the `v1.948` source snapshot. Dated
+preparation records retain the status of their original checkpoints. The historical
 [1.947 GitHub release](https://github.com/ericeallen/towel/releases/tag/v1.947)
 records that version's completed publication and validation.
 

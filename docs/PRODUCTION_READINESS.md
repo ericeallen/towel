@@ -7,9 +7,10 @@ removes reflection and self-instrumentation guarantees. Validation and repair
 records below retain the source, contract and results of their dated runs;
 they are not evidence of those retired protections in the current code.
 
-Start with the 1.948 preparation checkpoint below. The completed 1.947
-publication and earlier checkpoints retain their original source identities,
-measurements and validation scope.
+For completed validation and publication records, see the
+[GitHub release history](https://github.com/ericeallen/towel/releases).
+The dated preparation and publication checkpoints below retain their original
+source identities, measurements and validation scope.
 
 ## 1.948 preparation checkpoint, November 5, 2026
 
