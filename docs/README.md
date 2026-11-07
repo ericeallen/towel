@@ -8,7 +8,8 @@ This documentation describes the source version you are reading. Dated
 benchmarks, validation reports and proposals retain their original source and
 artifact identities; they do not establish results for a later release.
 
-**This documentation describes 1.948.** Its
+**This documentation describes 1.948**, published November 7, 2026 (see the
+[publication record](PRODUCTION_READINESS.md#1948-published-release-november-7-2026)). Its
 [changelog](../CHANGELOG.md#1948) describes four silent `dry` miscompilation
 repairs and corrected CLI reporting. See the
 [GitHub release history](https://github.com/ericeallen/towel/releases) and

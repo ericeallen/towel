@@ -14,6 +14,7 @@ the entries below do not transfer approval to a later source or version.
 
 **Contents — release checkpoints**
 
+- [1.948 completed publication](#2026-11-07-1948-published-release)
 - [1.948 preparation](#2026-11-05-1948-preparation)
 - [1.947 completed publication](#2026-10-26-1947-published-release)
 - [1.947 Sphinx memory and parsing investigation](#2026-10-25-1947-sphinx-memory-and-parsing-investigation)
@@ -35,6 +36,29 @@ the entries below do not transfer approval to a later source or version.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-11-07: 1.948 published release
+
+Towel **1.948** was published on [PyPI](https://pypi.org/project/code-towel/1.948/)
+and [GitHub](https://github.com/ericeallen/towel/releases/tag/v1.948) from
+frozen commit `31c6a79fc3dfe71f58a5d5ba80bb58eeb8e8b512`, tagged `v1.948`.
+It repairs four silent `dry` miscompilations found in 1.947 and corrects CLI
+help, verification-cost reporting and progress output. The November 5 freeze
+`a246c06` shipped documentation that still called 1.948 unpublished, so the
+documentation was corrected and the complete campaign ran again on the new
+commit and artifacts. The local evidence gate, all four
+[exact-commit CI jobs](https://github.com/ericeallen/towel/actions/runs/42404340696)
+and the live default-branch gate passed before tagging. Both services' artifacts
+matched the validated hashes, PyPI's README matched the frozen source, and a
+fresh PyPI installation passed its CLI checks.
+
+The 141-project corpus completed with 90 PASS, 44 NO_CHANGE, five reviewed
+import refusals and two known warning-location failures. Self-dogfood applied
+28 refactorings across 19 files and passed strict typing and the full Python
+3.13 suite. Differential fuzzing completed 9,400 runs with zero failures and 44
+inconclusive cases. See the
+[publication record](PRODUCTION_READINESS.md#1948-published-release-november-7-2026)
+for matrix counts, qualifications and hashes.
 
 ## 2026-11-05: 1.948 preparation
 

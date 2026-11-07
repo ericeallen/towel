@@ -12,6 +12,51 @@ For completed validation and publication records, see the
 The dated preparation and publication checkpoints below retain their original
 source identities, measurements and validation scope.
 
+## 1.948 published release, November 7, 2026
+
+Towel **1.948** is published on [PyPI](https://pypi.org/project/code-towel/1.948/)
+and [GitHub](https://github.com/ericeallen/towel/releases/tag/v1.948) from
+`31c6a79fc3dfe71f58a5d5ba80bb58eeb8e8b512`, tagged `v1.948`. That commit corrects
+the shipped README, security policy and guides of the November 5 freeze `a246c06`,
+which still described 1.948 as unpublished. Because those files ship in both
+distributions, the complete release campaign ran again on `31c6a79` and its
+rebuilt artifacts; `a246c06` was never published. The repository evidence
+verifier accepted the complete local records, all four
+[GitHub CI jobs](https://github.com/ericeallen/towel/actions/runs/42404340696)
+passed on that exact commit, and the live default-branch gate passed before
+tagging.
+
+| Python | Local passed / skipped | GitHub CI passed / skipped | Passing subtests in each run | Line coverage |
+| --- | ---: | ---: | ---: | ---: |
+| 3.11 | 11,096 / 337 | 11,098 / 335 | 45 | 93% |
+| 3.12 | 11,299 / 205 | 11,301 / 203 | 45 | 94% |
+| 3.13 | 11,282 / 225 | 11,284 / 223 | 45 | 94% |
+
+Native quality and strict typing, dependency audits, strict Twine,
+distribution-content and credential-pattern checks passed. Six clean-wheel smoke
+checks covered bare and formatter/checker-extra installations across Python
+3.11–3.13. The exact source archive passed 129 documentation tests, and all five
+Mermaid diagrams rendered. Differential grammar and scope fuzzing completed 9,400
+runs: 4,326 equivalent, 5,030 unchanged, 44 inconclusive and zero failures.
+Self-dogfood applied 28 refactorings across 19 files and passed strict typing and
+the Python 3.13 suite; all 108 generated runtime members were unchanged by testing.
+
+All **141 corpus projects completed**: **90 PASS, 44 NO_CHANGE, five reviewed
+import-ambiguity refusals (invoke, isort, towel-v1.414, towel-v1.618 and
+towel-main) and two BROKEN_KNOWN warning-location limitations (Pluggy and
+Beautiful Soup)**. Docker reported `OOMKilled=false`. This is not a claim that all
+upstream suites were clean: 20 projects had pre-existing baseline failures, and
+three explicit no-types fallbacks were reviewed separately. Every outcome matched
+the reviewed run on `a246c06`, whose runtime source is identical.
+
+PyPI received the validated distributions on November 7, 2026. Both downloaded
+files matched the validated SHA-256 hashes
+(`980da6fc5fce3c4470651c7d0a1908a0a9b65b8f5129e0eeec51bacc37afa394` for the wheel,
+`352fc5fabb2b66fd20ea1873cfc344aed02d768703311aa814e5e1028af0e9b2` for the sdist),
+PyPI's description matched the frozen README, all 23 README documentation links
+resolved at the tag, and a fresh PyPI installation passed its CLI checks. No
+performance-restoration claim is made for this release.
+
 ## 1.948 preparation checkpoint, November 5, 2026
 
 Towel **1.948** is prepared for validation and is not yet published. It repairs
