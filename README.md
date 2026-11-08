@@ -4,10 +4,11 @@ Towel finds repeated Python code and extracts it into shared helper functions.
 Preview the changes, review the generated code, give the helpers meaningful
 names, and run your project's tests before adopting the result.
 
-**Development branch:** this is the unpublished 1.949 candidate.
-**Release status: 1.949 (beta).** The fixes are implemented; validation is in
-progress. **Latest published release: 1.948.** Installing from PyPI gets that
-release, which does not contain these candidate changes.
+**Release status: 1.949 (beta).** At the November 8, 2026 preparation
+checkpoint, this candidate is unpublished and its release validation is in progress.
+At that checkpoint: **Latest published release: 1.948.** Check the
+[GitHub releases](https://github.com/ericeallen/towel/releases) for completed
+validation and publication records.
 
 ## Install
 
@@ -50,9 +51,9 @@ within a module by default; `--cross-module` also shares them between modules.
 A complete preview runs the full transformation pipeline. `--quick` gives a
 partial structural listing, which does not predict the final result.
 
-Follow the [runnable quick start](docs/QUICKSTART.md)
+Follow the [runnable quick start](https://github.com/ericeallen/towel/blob/v1.949/docs/QUICKSTART.md)
 for a complete example through extraction, naming, tests and adoption. The
-[naming guide](docs/NAMING.md)
+[naming guide](https://github.com/ericeallen/towel/blob/v1.949/docs/NAMING.md)
 includes a manual rename mapping; no LLM account is required.
 
 ## What to expect
@@ -65,9 +66,9 @@ left as it is.
 Helpers initially have names such as `__extracted_func_0`. Preserving evaluation
 and cleanup order can require lookup functions or argument-lifetime bookkeeping.
 Review the whole change, including callers. The
-[generated-code guide](docs/GENERATED_CODE.md)
+[generated-code guide](https://github.com/ericeallen/towel/blob/v1.949/docs/GENERATED_CODE.md)
 explains those cases; the
-[command-line guide](docs/CLI_GUIDE.md)
+[command-line guide](https://github.com/ericeallen/towel/blob/v1.949/docs/CLI_GUIDE.md)
 covers exclusions, bounded runs, output formats and recovery.
 
 ## Requirements
@@ -79,8 +80,8 @@ supported or validated release platform.
 
 One core is enough; `TOWEL_WORKERS=1` limits analysis to one worker. Memory,
 disk use and run time depend on the project and enabled tools. See
-[requirements and resources](docs/REQUIREMENTS.md)
-and [performance measurements](docs/PERFORMANCE.md)
+[requirements and resources](https://github.com/ericeallen/towel/blob/v1.949/docs/REQUIREMENTS.md)
+and [performance measurements](https://github.com/ericeallen/towel/blob/v1.949/docs/PERFORMANCE.md)
 for measured workloads and their conditions.
 
 ## Checks and limitations
@@ -96,41 +97,40 @@ functions or classes. Towel does not scan for these behaviors or refuse code to
 protect them; decorators, ordinary calls and hooks have the same boundary.
 Protect sensitive definitions with `# towel: no-extract` immediately after
 the signature's final colon. The
-[function opt-out guide](docs/CLI_GUIDE.md#protect-a-function)
+[function opt-out guide](https://github.com/ericeallen/towel/blob/v1.949/docs/CLI_GUIDE.md#protect-a-function)
 explains its placement and limits. Mark the frame whose identity matters,
 including when its callee inspects it. The marker preserves that definition's
 source, not module namespaces, absolute line numbers or unmarked call chains.
 Review the
-[known limitations](docs/KNOWN_LIMITATIONS.md)
+[known limitations](https://github.com/ericeallen/towel/blob/v1.949/docs/KNOWN_LIMITATIONS.md)
 and run your tests before adopting changes.
 
 In annotated projects, Towel uses the configured type checkers when available
 and preserves caller-side narrowing. Existing checker errors are compared
 against a baseline; a checker that cannot run refuses typed extraction.
-The [typing guide](docs/TYPING.md)
+The [typing guide](https://github.com/ericeallen/towel/blob/v1.949/docs/TYPING.md)
 explains this policy and the unverified `--no-types` option.
 
 ## Documentation and development
 
-The [documentation index](docs/README.md)
+The [documentation index](https://github.com/ericeallen/towel/blob/v1.949/docs/README.md)
 groups tutorials, task guides, technical reference, design decisions and
 release evidence. Contributors can start with
-[development setup and checks](CONTRIBUTING.md);
+[development setup and checks](https://github.com/ericeallen/towel/blob/v1.949/CONTRIBUTING.md);
 release maintainers should follow the
-[release procedure](docs/RELEASING.md).
+[release procedure](https://github.com/ericeallen/towel/blob/v1.949/docs/RELEASING.md).
 Report security issues through the
-[security policy](SECURITY.md).
+[security policy](https://github.com/ericeallen/towel/blob/v1.949/SECURITY.md).
 
 ## License
 
-Towel is licensed under the [Apache License 2.0](LICENSE);
+Towel is licensed under the [Apache License 2.0](https://github.com/ericeallen/towel/blob/v1.949/LICENSE);
 its source files carry Eric Allen copyright headers.
 
 ## Releases and validation
 
-1.948 repairs four silent `dry` miscompilations found in 1.947. See the
-[changelog](https://github.com/ericeallen/towel/blob/v1.948/CHANGELOG.md#1948)
-and [published release](https://github.com/ericeallen/towel/releases/tag/v1.948).
-[Readiness](https://github.com/ericeallen/towel/blob/v1.948/docs/PRODUCTION_READINESS.md)
-records validation scope and qualifications. Earlier measurements remain in the
-[historical release evidence](https://github.com/ericeallen/towel/blob/v1.948/docs/PRODUCTION_READINESS.md).
+1.948 repairs four silent `dry` miscompilations found in 1.947. Its
+[published release](https://github.com/ericeallen/towel/releases/tag/v1.948)
+retains the completed validation record and artifacts under their original
+source identity. Earlier releases and their evidence remain in the
+[release history](https://github.com/ericeallen/towel/releases).
