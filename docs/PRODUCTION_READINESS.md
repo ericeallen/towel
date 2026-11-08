@@ -12,6 +12,22 @@ For completed validation and publication records, see the
 The dated preparation and publication checkpoints below retain their original
 source identities, measurements and validation scope.
 
+## 1.949 preparation checkpoint, November 8, 2026
+
+Towel **1.949** is an unpublished candidate. The product-experience and maturity
+fixes are implemented: complete rendered-helper usefulness checks, concise and
+structured CLI results, bounded runs, cancellation reporting, copy-first naming,
+a runnable adoption tutorial, a documented compatibility contract and focused
+installed-wheel macOS CI. See the [changelog](../CHANGELOG.md#1949).
+
+Local testing is in progress. This checkpoint does not claim a completed
+exact-candidate release campaign, new runtime benchmarks, remote CI or
+publication. Earlier passing tests and measurements retain their own source and
+version identities. Freeze the final candidate and complete the
+[release procedure](RELEASING.md) before publication; retain final outcomes and
+artifact identities outside the shipped source. **1.948 remains the latest
+published release.**
+
 ## 1.948 published release, November 7, 2026
 
 Towel **1.948** is published on [PyPI](https://pypi.org/project/code-towel/1.948/)

@@ -1,3 +1,5 @@
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
 # Copyright 2025-2026 Eric Allen
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +48,7 @@ class TestAdversarialBreakers(unittest.TestCase):
         """
         path = self._write_temp_py(code)
         engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=1, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1, parameterize_constants=True
         )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
@@ -72,7 +74,7 @@ class TestAdversarialBreakers(unittest.TestCase):
         """
         path = self._write_temp_py(code)
         engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=1, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1, parameterize_constants=True
         )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
@@ -97,7 +99,7 @@ class TestAdversarialBreakers(unittest.TestCase):
         """
         path = self._write_temp_py(code)
         engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=1, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1, parameterize_constants=True
         )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
@@ -121,7 +123,7 @@ class TestAdversarialBreakers(unittest.TestCase):
         """
         path = self._write_temp_py(code)
         engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=1, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1, parameterize_constants=True
         )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)

@@ -113,6 +113,6 @@ def test_cancelled_run_never_constructs_checker(
     selector = Mock()
     monkeypatch.setattr(cli, "_type_oracle", selector)
     result = invoke(["dry", str(source), str(tmp_path / "output.py"), "--interactive"], stdin="n\n")
-    assert result.status == 0
+    assert result.status == 1
     selector.assert_not_called()
     assert not (tmp_path / "output.py").exists()

@@ -14,6 +14,9 @@
 
 """Analysis reuse must not share mutable syntax or leak across analysis owners."""
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 import logging
 import ast
 from pathlib import Path
@@ -225,7 +228,7 @@ def test_mutating_returned_engine_proposal_does_not_change_reanalysis(tmp_path):
         "def second(x):\n    y = x + 1\n    z = y * 2\n    return z\n"
     )
     path = write_module(tmp_path, source=source)
-    engine = UnificationRefactorEngine(min_lines=2)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
     proposals = engine.analyze_files([path], progress="none")
     assert [p.description for p in proposals] == ["Extract common code from first and second"]
     expected = [ast.dump(proposal.extracted_function) for proposal in proposals]
@@ -257,7 +260,7 @@ def test_engine_invalidate_paths_drops_the_snapshot_and_reanalyzes_new_content(t
     from towel.unification.refactor_engine import UnificationRefactorEngine
 
     path = write_module(tmp_path, source=DUPLICATED_PAIR)
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
 
     first = engine.analyze_files([path], progress="none")
     assert [p.description for p in first] == ["Extract common code from alpha and beta"]
@@ -279,7 +282,7 @@ def test_engine_invalidate_paths_leaves_other_files_cached(tmp_path):
 
     kept = write_module(tmp_path, "kept.py", DUPLICATED_PAIR)
     dropped = write_module(tmp_path, "dropped.py", DUPLICATED_PAIR)
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     engine.analyze_files([kept, dropped], progress="none")
     assert engine.analysis_session.entry_count == 2
 

@@ -42,7 +42,9 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
 from tests.crossfile_equivalence_tester import CrossFileEquivalenceTester
 from tests.compiler_golden_profiles import (
+    HISTORICAL_PARAMETER_CELL_GOLDENS,
     PARAMETER_CELL_GOLDENS,
+    PROFITABILITY_RETAINED_DEFINITIONS,
     _compiled_parameter_cells,
     _compiler_baseline,
     _uses_parameter_cell_golden,
@@ -170,13 +172,30 @@ def find_duplicate_helpers(root: Path) -> list[str]:
 # - global_nonlocal_examples.py: moving nested nonlocal scopes is declined;
 #   the former f/g suffix creates owned call results while outer stays local
 #   in the caller, so it also lacks a certified frame ownership transfer.
+# - The eleven additional inputs below previously extracted small duplicates.
+#   Their complete rendered helpers, interfaces and ownership-transfer calls
+#   now cost at least as much syntax as the shared original blocks. The default
+#   profitability policy leaves every definition intact, including annotations,
+#   closures, control flow and exception handling. Semantic tests exercise
+#   those extraction mechanisms separately with an explicit policy opt-out.
 EXPECTED_UNCHANGED_EXAMPLES = frozenset(
     {
+        "annotated_module.py",
+        "binding_constructs_comprehensive.py",
         "bindings_comprehensions.py",
+        "bindings_for_loops.py",
+        "closure_adversarial.py",
+        "complex_expressions.py",
+        "control_flow_adversarial.py",
         "example3_file1.py",
         "example3_file2.py",
+        "exception_adversarial.py",
+        "fstrings_constants.py",
         "generators_async.py",
         "global_nonlocal_examples.py",
+        "hygienic_naming.py",
+        "scoping_edge_cases.py",
+        "tricky_edge_cases_adversarial.py",
     }
 )
 
@@ -248,7 +267,7 @@ class TestCompilerGoldenSelection(unittest.TestCase):
         goldens = project_root / "test_examples_expected_output"
         self.assertEqual(
             {path.name for path in (goldens / "parameter_cells").glob("*.py")},
-            set(PARAMETER_CELL_GOLDENS),
+            set(PARAMETER_CELL_GOLDENS) | HISTORICAL_PARAMETER_CELL_GOLDENS,
         )
         for file, names in PARAMETER_CELL_GOLDENS.items():
             original = ast.parse((examples / file).read_text())
@@ -273,6 +292,31 @@ class TestCompilerGoldenSelection(unittest.TestCase):
                     )
             self.assertNotEqual(ast.dump(original), ast.dump(retained))
             self.assertTrue(any(name.startswith("__extracted_func_") for name in retained_defs))
+
+    def test_unprofitable_former_cell_extractions_retain_original_definitions(self) -> None:
+        examples = project_root / "test_examples"
+        goldens = project_root / "test_examples_expected_output"
+        for file in HISTORICAL_PARAMETER_CELL_GOLDENS:
+            self.assertEqual(_compiler_baseline(examples / file, goldens), goldens / file)
+        for file, names in PROFITABILITY_RETAINED_DEFINITIONS.items():
+            original = ast.parse((examples / file).read_text())
+            original_defs = {
+                n.name: n for n in ast.walk(original) if isinstance(n, ast.FunctionDef)
+            }
+            profiles = [goldens / file]
+            if file in PARAMETER_CELL_GOLDENS:
+                profiles.append(goldens / "parameter_cells" / file)
+            for profile in profiles:
+                retained = ast.parse(profile.read_text())
+                retained_defs = {
+                    n.name: n for n in ast.walk(retained) if isinstance(n, ast.FunctionDef)
+                }
+                for name in names:
+                    with self.subTest(profile=str(profile), definition=name):
+                        self.assertEqual(
+                            ast.dump(original_defs[name], include_attributes=False),
+                            ast.dump(retained_defs[name], include_attributes=False),
+                        )
 
 
 class TestSingleFileRegression(unittest.TestCase):
@@ -373,10 +417,10 @@ class TestSingleFileRegression(unittest.TestCase):
         This test ensures that changes to the refactoring engine don't
         unintentionally change the output on known test cases.
 
-        The annotated_module golden deliberately quotes only generated
-        compound annotations. Keep their precise types and every original
-        annotation: blanket regeneration or annotation-insensitive comparison
-        would hide regressions in the runtime-preservation policy.
+        Preserve precise types and original annotations in the comparison:
+        annotation-insensitive equality would hide regressions in the
+        runtime-preservation policy. The annotated_module golden now retains
+        its original definitions because their helpers do not repay their cost.
         """
         # Get all test example Python files
         python_files = [

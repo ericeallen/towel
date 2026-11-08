@@ -288,9 +288,9 @@ second module repeating its base class's method body),
 verifying the new output (`just regenerate-baseline`) and review the diff,
 since regeneration is not validation.
 
-Four single-file examples also have reviewed `parameter_cells/` goldens. Their
+Two single-file examples also have reviewed `parameter_cells/` goldens. Their
 original parameter cell sets determine selection independently of interpreter
-version: comprehensions compiled as separate scopes retain twelve original
+version: comprehensions compiled as separate scopes retain four original
 functions, while cell-free compilation permits their whole-body extraction.
 The selector requires the exact reviewed sets (or uniformly cell-free sets)
 and fails for unknown or mixed facts. Existing useful/unchanged classifications
@@ -300,17 +300,27 @@ cell-free goldens. Generate affected outputs externally and review exact
 original-body restoration, remaining helper changes, and concrete return/effect
 equivalence before adopting a compiler-profile golden.
 
-The September 27 helper cleanup changes three goldens intentionally: the
-class example drops `self` once its only uses are captured by a caller-side
-thunk; the functional example similarly drops the unused `result` argument;
-and `multi_level/api/checkout.py` reuses the generated validation helper
-without inserting a forwarding layer. These expectations protect helper
-quality as well as behavior. Restore neither unused inputs nor forwarding
-layers merely to match a later implementation; check the focused helper
-parameter and generated reuse regressions when changing them.
+The default profitability policy now retains eight other formerly
+compiler-dependent definitions on every supported compiler: the query pair
+in `method_chains.py`, the comprehension transformation pair in
+`nested_structures.py`, and the complex expression and list comprehension
+pairs in `syntactic_coverage_comprehensive.py`. Their helper interfaces and
+ownership transfers outweigh the shared work. Regression assertions pin those
+original bodies separately. The old `parameter_cells/method_chains.py` and
+`parameter_cells/syntactic_coverage_comprehensive.py` files remain historical
+fixtures; the selector no longer uses them.
 
-Three goldens are byte-identical to their inputs because single-file mode
-finds nothing to extract in them. `EXPECTED_UNCHANGED_EXAMPLES` in
+Default goldens require useful abstractions as well as equivalent behavior.
+The functional example now shares its repeated return computations without
+moving the smaller pipeline into a helper with ownership-transfer calls.
+Preserve this policy and check the focused helper-parameter and generated-reuse
+regressions when changing the output; do not restore unused inputs or
+forwarding layers merely to match an older golden.
+
+Sixteen goldens are byte-identical to their inputs because single-file mode
+finds no safe, profitable extraction in them. Eleven of these stopped
+extracting small duplicates when the default policy began counting the full
+helper signature and ownership-transfer calls. `EXPECTED_UNCHANGED_EXAMPLES` in
 `test_regression.py` names them, and the regression test asserts that the
 unchanged goldens, and the inputs the engine leaves untouched, are exactly
 that set: an extraction that silently stops happening, or one that starts,

@@ -20,6 +20,8 @@ over a multi-file project produces byte-identical files with the
 restriction on and off, and the restriction really skips pairs.
 """
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import contextlib
@@ -39,6 +41,7 @@ PROJECTS = sorted(p.name for p in EXAMPLES.iterdir() if p.is_dir())
 
 def _fixed_point(source: Path, out: Path, incremental: bool) -> tuple[dict[str, bytes], int]:
     engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False,
         incremental_global_passes=incremental,
         cross_module_helpers=True,
         parameterize_builtins=True,
@@ -72,7 +75,10 @@ def test_restriction_skips_unchanged_pairs(tmp_path: Path) -> None:
     source = tmp_path / "src"
     _write_two_round_project(source)
     engine = UnificationRefactorEngine(
-        incremental_global_passes=True, cross_module_helpers=True, parameterize_builtins=True
+        skip_trivial_helpers=False,
+        incremental_global_passes=True,
+        cross_module_helpers=True,
+        parameterize_builtins=True,
     )
     seen: list[object] = []
     original = engine.find_block_pairs
@@ -102,7 +108,9 @@ def test_local_refresh_preserves_restriction_and_omits_unchanged_pairs(tmp_path:
     _write_two_round_project(source)
     (source / "d.py").write_text((source / "b.py").read_text().replace("beta", "delta"))
     paths = [str(source / name) for name in ("a.py", "b.py", "c.py", "d.py")]
-    engine = UnificationRefactorEngine(cross_module_helpers=True, parameterize_builtins=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, cross_module_helpers=True, parameterize_builtins=True
+    )
     seen: list[tuple[frozenset[str] | None, list[CodeBlockPair]]] = []
     original = engine.find_block_pairs
 

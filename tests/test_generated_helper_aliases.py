@@ -14,6 +14,8 @@
 
 """Generated module aliases share a safe home without forwarding or changing input bindings."""
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -102,7 +104,11 @@ def _staged_pair(
     ]
     proposal = RefactoringProposal(target.file_path, new, replacements, "staged pair", 1)
     engine = UnificationRefactorEngine(
-        min_lines=3, cross_module_helpers=True, annotate_helpers=False, type_oracle=oracle
+        skip_trivial_helpers=False,
+        min_lines=3,
+        cross_module_helpers=True,
+        annotate_helpers=False,
+        type_oracle=oracle,
     )
     engine._output_origin = (origin, stage)
     engine.import_graph.begin_run(origin, stage)
@@ -207,7 +213,7 @@ def test_cross_module_input_functions_keep_independent_bindings(tmp_path: Path, 
         check=True,
     )
     engine = UnificationRefactorEngine(
-        min_lines=3, cross_module_helpers=True, annotate_helpers=False
+        skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True, annotate_helpers=False
     )
     results, reason = engine.refactor_directory_to_fixed_point(
         str(origin), str(output), progress="none"

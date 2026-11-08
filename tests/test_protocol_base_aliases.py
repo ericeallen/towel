@@ -31,6 +31,8 @@ from towel.unification.module_bindings import global_bindings
 from towel.unification.protocol_bases import bases_allow_private_helpers
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 
 def _files(root: Path, files: dict[str, str]) -> None:
     (root / "pyproject.toml").write_text('[project]\nname="protocol-check"\nversion="0"\n')
@@ -144,7 +146,9 @@ def test_protocol_aliases_preserve_runtime_structural_conformance(
     )
     before = _run(tmp_path, driver)
     assert before == "True\n|"
-    final, applied = refactor_to_fixed_point_silently(str(tmp_path / "box.py"), min_lines=3)
+    final, applied = refactor_to_fixed_point_silently(
+        str(tmp_path / "box.py"), min_lines=3, skip_trivial_helpers=False
+    )
     assert applied > 0
     assert not method_helper_calls(final)
     assert any(isinstance(node, ast.FunctionDef) for node in ast.parse(final).body)
@@ -222,7 +226,9 @@ def test_concrete_subclasses_keep_private_method_helpers(
     driver = "from box import Box\nprint(Box().first(1), Box().second(2))\n"
     before = _run(tmp_path, driver)
     assert before.endswith("4 6\n|")
-    final, applied = refactor_to_fixed_point_silently(str(tmp_path / "box.py"), min_lines=3)
+    final, applied = refactor_to_fixed_point_silently(
+        str(tmp_path / "box.py"), min_lines=3, skip_trivial_helpers=False
+    )
     assert applied > 0
     calls = method_helper_calls(final)
     assert len(calls) == 2
@@ -255,7 +261,7 @@ def test_alias_cycles_terminate_and_follow_every_possible_export(
             + ("from typing import Protocol as Contract\n" if protocol else ""),
         },
     )
-    engine = UnificationRefactorEngine(annotate_helpers=False)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, annotate_helpers=False)
     info = ClassInfo(name="Box", qualname="Box", file_path=str(tmp_path / "box.py"))
     # These deliberately unresolved cyclic modules need not be executable;
     # this pins the finite static query, not a claim of runtime equivalence.
@@ -265,7 +271,7 @@ def test_alias_cycles_terminate_and_follow_every_possible_export(
 def test_reexport_verdict_reads_changed_dependency_source(tmp_path: Path) -> None:
     source = _module("from aliases import Contract", "class Box(Contract):\n    v = 1\n")
     _files(tmp_path, {"box.py": source, "aliases.py": "class Contract:\n    pass\n"})
-    engine = UnificationRefactorEngine(annotate_helpers=False)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, annotate_helpers=False)
     info = ClassInfo(name="Box", qualname="Box", file_path=str(tmp_path / "box.py"))
     tree = engine._parse_source(source)
     before = ast.dump(tree, include_attributes=True)

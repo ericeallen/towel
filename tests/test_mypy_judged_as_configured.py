@@ -517,6 +517,7 @@ def test_verification_probes_do_not_promote_excluded_files_to_mypy_targets(
             reuse_existing_functions=False,
             annotate_helpers=False,
             type_oracle=oracle,
+            skip_trivial_helpers=False,
         )
         engine.refactor_directory_to_fixed_point(
             str(tmp_path / "pkg"), str(tmp_path / "pkg"), progress="none"
@@ -613,6 +614,7 @@ def test_a_run_whose_probe_builds_fail_refuses_rather_than_call_everything_unrea
         reuse_existing_functions=False,
         annotate_helpers=False,
         type_oracle=_ProbesFail(kept),
+        skip_trivial_helpers=False,
     )
     with pytest.raises(RefactoringError, match=refusal):
         engine.refactor_directory_to_fixed_point(str(tmp_path), str(tmp_path), progress="none")

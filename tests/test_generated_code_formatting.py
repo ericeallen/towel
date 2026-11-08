@@ -47,21 +47,42 @@ from towel.formatting import (
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.splicing import BlockColumns, splice_block
 
-DUPLICATED_STRINGS = textwrap.dedent("""
+# Public CLI formatting controls use enough shared string processing to repay
+# the generated signature and ownership wrappers under the default policy.
+_NORMALIZE_GREETING = """        greeting = greeting.replace('\\t', ' ')
+        greeting = greeting.replace('\\r', ' ')
+        greeting = greeting.replace('\\n', ' ')
+        greeting = greeting.replace('  ', ' ')
+        greeting = greeting.replace(' -', '-')
+        greeting = greeting.replace('- ', '-')
+        greeting = greeting.replace(' .', '.')
+        greeting = greeting.replace(' ,', ',')
+        greeting = greeting.replace(' ;', ';')
+        greeting = greeting.replace(' :', ':')
+        greeting = greeting.removeprefix(' ')
+        greeting = greeting.removesuffix(' ')
+"""
+
+DUPLICATED_STRINGS = textwrap.dedent(f"""
     def first(name, a_rather_long_parameter_name, another_long_parameter_name):
         prefix = 'Mr. '
         greeting = prefix + name + a_rather_long_parameter_name + another_long_parameter_name
+{_NORMALIZE_GREETING}\
         return greeting.strip()
 
     def second(name, a_rather_long_parameter_name, another_long_parameter_name):
         prefix = 'Dr. '
         greeting = prefix + name + a_rather_long_parameter_name + another_long_parameter_name
+{_NORMALIZE_GREETING}\
         return greeting.strip()
     """)
 
 
 def _refactor(path: Path, **engine_options: Unpack[EngineOptions]) -> str:
-    engine = UnificationRefactorEngine(min_lines=2, **engine_options)
+    # Small method fixtures isolate formatter behavior. CLI tests use
+    # substantial input and keep the production readability policy enabled.
+    options: EngineOptions = {"skip_trivial_helpers": False, **engine_options}
+    engine = UnificationRefactorEngine(min_lines=2, **options)
     (proposal,) = engine.analyze_file(str(path))
     return engine.apply_refactoring(str(path), proposal)
 

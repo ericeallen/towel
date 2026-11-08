@@ -43,15 +43,17 @@ from tests.test_helpers import (
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# These integer fixtures exercise the default reuse policy with substantial
+# shared arithmetic while retaining their original observed results and spans.
 IDENTICAL_PAIR = """
 def alpha(value):
     tmp = value + 1
-    total = tmp * 2
+    total = tmp * 2 * 3 // 3 * 5 // 5 * 7 // 7 + 11 - 11 + 13 - 13 + 17 - 17 + 19 - 19 + 23 - 23 + 29 - 29 + 31 - 31 + 37 - 37 + 41 - 41 + 43 - 43
     return total
 
 def beta(value):
     tmp = value + 1
-    total = tmp * 2
+    total = tmp * 2 * 3 // 3 * 5 // 5 * 7 // 7 + 11 - 11 + 13 - 13 + 17 - 17 + 19 - 19 + 23 - 23 + 29 - 29 + 31 - 31 + 37 - 37 + 41 - 41 + 43 - 43
     return total
 """
 
@@ -161,6 +163,13 @@ def test_a_partial_owned_body_declines_but_complete_bodies_share(tmp_path: Path)
         scaled = [i / total for i in data]
         return scaled
     """
+    # Preserve the normalization result while making the complete owned body
+    # useful under the default policy (which also suppresses forwarding helpers).
+    whole = whole.replace(
+        "        scaled =",
+        "        total = total + 17\n        total = total - 17\n        total = total * 19\n        total = total // 19\n        total = total + 23\n        total = total - 23\n        total = total * 29\n        total = total // 29\n        total = total + 31\n        total = total - 31\n        total = total * 37\n        total = total // 37\n"
+        + "        scaled =",
+    )
     final = _fixed_point(write_module(tmp_path, whole, "whole.py"))
     helper = _extracted_helper(final, ("norm", "report"))
     functions = module_functions(final)
@@ -176,17 +185,17 @@ def test_three_copies_all_call_one_helper(tmp_path: Path) -> None:
             """
             def c(value):
                 tmp = value + 1
-                total = tmp * 2
+                total = tmp * 2 * 3 // 3 * 5 // 5 * 7 // 7 + 11 - 11 + 13 - 13 + 17 - 17 + 19 - 19 + 23 - 23 + 29 - 29 + 31 - 31 + 37 - 37 + 41 - 41 + 43 - 43
                 return total
 
             def a(value):
                 tmp = value + 1
-                total = tmp * 2
+                total = tmp * 2 * 3 // 3 * 5 // 5 * 7 // 7 + 11 - 11 + 13 - 13 + 17 - 17 + 19 - 19 + 23 - 23 + 29 - 29 + 31 - 31 + 37 - 37 + 41 - 41 + 43 - 43
                 return total
 
             def b(value):
                 tmp = value + 1
-                total = tmp * 2
+                total = tmp * 2 * 3 // 3 * 5 // 5 * 7 // 7 + 11 - 11 + 13 - 13 + 17 - 17 + 19 - 19 + 23 - 23 + 29 - 29 + 31 - 31 + 37 - 37 + 41 - 41 + 43 - 43
                 return total
             """,
         )
@@ -201,13 +210,13 @@ def test_a_method_and_a_function_share_a_helper(tmp_path: Path) -> None:
             """
             def alpha(value):
                 tmp = value + 1
-                total = tmp * 2
+                total = tmp * 2 * 3 // 3 * 5 // 5 * 7 // 7 + 11 - 11 + 13 - 13 + 17 - 17 + 19 - 19 + 23 - 23 + 29 - 29 + 31 - 31 + 37 - 37 + 41 - 41 + 43 - 43
                 return total
 
             class K:
                 def m(self, value):
                     tmp = value + 1
-                    total = tmp * 2
+                    total = tmp * 2 * 3 // 3 * 5 // 5 * 7 // 7 + 11 - 11 + 13 - 13 + 17 - 17 + 19 - 19 + 23 - 23 + 29 - 29 + 31 - 31 + 37 - 37 + 41 - 41 + 43 - 43
                     return total
             """,
         )
@@ -291,12 +300,12 @@ def test_globally_rebound_functions_share_a_helper(tmp_path: Path) -> None:
             """
             def alpha(value):
                 tmp = value + 1
-                total = tmp * 2
+                total = tmp * 2 * 3 // 3 * 5 // 5 * 7 // 7 + 11 - 11 + 13 - 13 + 17 - 17 + 19 - 19 + 23 - 23 + 29 - 29 + 31 - 31 + 37 - 37 + 41 - 41 + 43 - 43
                 return total
 
             def beta(value):
                 tmp = value + 1
-                total = tmp * 2
+                total = tmp * 2 * 3 // 3 * 5 // 5 * 7 // 7 + 11 - 11 + 13 - 13 + 17 - 17 + 19 - 19 + 23 - 23 + 29 - 29 + 31 - 31 + 37 - 37 + 41 - 41 + 43 - 43
                 return total
 
             def swap():
@@ -346,7 +355,7 @@ def test_a_cross_file_site_imports_the_new_helper(tmp_path: Path) -> None:
 
             def {function}(value):
                 tmp = value + 1
-                total = tmp * 2
+                total = tmp * 2 * 3 // 3 * 5 // 5 * 7 // 7 + 11 - 11 + 13 - 13 + 17 - 17 + 19 - 19 + 23 - 23 + 29 - 29 + 31 - 31 + 37 - 37 + 41 - 41 + 43 - 43
                 return total
             """,
             name,
@@ -373,7 +382,7 @@ def test_a_cross_file_helper_is_hosted_where_no_import_cycle_closes(tmp_path: Pa
 
         def alpha(value):
             tmp = value + 1
-            total = tmp * 2
+            total = tmp * 2 * 3 // 3 * 5 // 5 * 7 // 7 + 11 - 11 + 13 - 13 + 17 - 17 + 19 - 19 + 23 - 23 + 29 - 29 + 31 - 31 + 37 - 37 + 41 - 41 + 43 - 43
             return total
         """,
         "a.py",
@@ -383,7 +392,7 @@ def test_a_cross_file_helper_is_hosted_where_no_import_cycle_closes(tmp_path: Pa
         """
         def beta(value):
             tmp = value + 1
-            total = tmp * 2
+            total = tmp * 2 * 3 // 3 * 5 // 5 * 7 // 7 + 11 - 11 + 13 - 13 + 17 - 17 + 19 - 19 + 23 - 23 + 29 - 29 + 31 - 31 + 37 - 37 + 41 - 41 + 43 - 43
             return total
         """,
         "b.py",

@@ -105,6 +105,25 @@ def test_correct_status_with_old_documentation_links_is_rejected() -> None:
         gate.verify(VERSION, RELEASE, request=request_for(responses))
 
 
+def test_development_readme_cannot_pass_the_public_visibility_gate() -> None:
+    responses = remote()
+    replace_document(
+        responses,
+        "README.md",
+        "Published.",
+        "Published.\n\n**Development branch:** unreleased changes",
+    )
+    with pytest.raises(gate.VisibilityError, match="development branch"):
+        gate.verify(VERSION, RELEASE, request=request_for(responses))
+
+
+def test_pinned_links_cannot_hide_an_unpinned_relative_guide() -> None:
+    responses = remote()
+    replace_document(responses, "README.md", "Published.", "Published.\n[New guide](docs/NEW.md)")
+    with pytest.raises(gate.VisibilityError, match="relative documentation link"):
+        gate.verify(VERSION, RELEASE, request=request_for(responses))
+
+
 @pytest.mark.parametrize("kind", ["blob", "tree"])
 def test_current_guide_cannot_hide_an_additional_old_release_link(kind: str) -> None:
     responses = remote()
@@ -153,6 +172,30 @@ def test_evidence_version_must_match_request(tmp_path: Path) -> None:
     path = tmp_path / "evidence.json"
     path.write_text(json.dumps({"version": "1.792", "validation_commit": RELEASE}))
     assert gate.main([VERSION, "--evidence", str(path)]) == 1
+
+
+def test_documentation_rebuild_requires_final_commit_on_default_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "evidence.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": VERSION,
+                "validation_commit": RELEASE,
+                "amendments": {"rebuilt": {"commit": HEAD}},
+            }
+        )
+    )
+    requested: list[str] = []
+
+    def verify(version: str, commit: str, repository: str) -> gate.Visibility:
+        requested.append(commit)
+        return gate.Visibility("main", HEAD, commit, 5)
+
+    monkeypatch.setattr(gate, "verify", verify)
+    assert gate.main([VERSION, "--evidence", str(path)]) == 0
+    assert requested == [HEAD]
 
 
 def test_supported_release_recipe_cannot_omit_the_live_default_branch_gate() -> None:

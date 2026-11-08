@@ -15,13 +15,17 @@
 """Run Towel on a case and compare the program's behaviour before and after.
 
 Towel runs in this process through its library entry, exactly as the hostile
-batteries run it: ``UnificationRefactorEngine(min_lines=3)``, in place on a
+batteries run it, in place on a
 copy, ``refactor_to_fixed_point`` for a single file and
 ``refactor_directory_to_fixed_point`` for a project. ``--no-types`` is
 ``annotate_helpers=False`` with no type oracle, as ``towel dry`` builds it;
 the typed mode takes the checker the project configures, as ``towel dry``
 does by default. Evaluation is serial (``TOWEL_WORKERS=1``), so a case runs
-the same whatever the machine.
+the same whatever the machine. Semantic runs use the existing
+``skip_trivial_helpers=False`` API option so tiny generated programs still
+exercise transformations even when their interfaces are not useful to users.
+A mode can enable the normal usefulness policy for product-level controls;
+all binding, lifetime, source-correspondence and checker guards remain active.
 
 The original and the refactored program are each observed in a fresh
 interpreter, the one running this code (:mod:`tests.differential.observer`),
@@ -49,6 +53,7 @@ from typing import cast, Any, Dict, List, Literal, Optional, Tuple
 
 from tests.differential.cases import Case
 from tests.differential.comparison import Difference, behaviour_changes
+from tests.differential.process_memory import resident_bytes as _resident_bytes
 from tests.differential.scope_grammar import FAMILY as SCOPE_FAMILY
 from tests.hostile_execution import ISOLATED_ENV, ScopeWatch
 from towel.diagnostics import Settings
@@ -84,6 +89,7 @@ class Mode:
 
     cross_module: bool = False
     types: bool = False
+    skip_trivial_helpers: bool = False
 
     @property
     def label(self) -> str:
@@ -125,9 +131,15 @@ class Outcome:
         )
         if SCOPE_FAMILY in case.features:
             how += f" --family {SCOPE_FAMILY}"
+        if self.mode.skip_trivial_helpers:
+            how += " --product-policy"
         lines = [
             f"{case.name} (seed {case.seed}{', typed' if case.typed else ''}, {case.layout} layout),"
             f" towel {self.mode.label or '(types on)'}: {self.status}. {self.detail}".rstrip(),
+            "Usefulness policy: "
+            + (
+                "product default" if self.mode.skip_trivial_helpers else "semantic coverage opt-out"
+            ),
             f"Reproduce: python -m tests.differential.fuzz --count 1 --seed {case.seed} {how}",
             "",
             "--- generated source ---",
@@ -194,6 +206,7 @@ def _refactor(
     """
     engine = UnificationRefactorEngine(
         min_lines=3,
+        skip_trivial_helpers=mode.skip_trivial_helpers,
         cross_module_helpers=mode.cross_module,
         annotate_helpers=mode.types,
         type_oracle=oracle,
@@ -212,28 +225,6 @@ def _observation_incomplete(record: Record) -> bool:
     return bool(
         record.get("observer_timeout") or record.get("timed_out") or record.get("observer_resource")
     )
-
-
-def _resident_bytes(pid: int) -> int:
-    """Sample the owned observer's RSS; a process that just exited has no RSS."""
-    if sys.platform == "linux":
-        try:
-            status = Path(f"/proc/{pid}/status").read_text()
-        except FileNotFoundError:
-            return 0
-        for line in status.splitlines():
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1]) * 1024
-        return 0  # exited/zombie processes have no VmRSS field
-    else:
-        sampled = subprocess.run(
-            ["ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True, timeout=5
-        )
-        if sampled.returncode == 1 and not sampled.stdout.strip():
-            return 0
-        if sampled.returncode != 0:
-            raise RuntimeError(f"Cannot measure observer RSS: {sampled.stderr}")
-        return int(sampled.stdout.strip()) * 1024
 
 
 def _kill_observer(process: subprocess.Popen[bytes]) -> None:

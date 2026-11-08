@@ -10,6 +10,36 @@ mnemonics with PEP 440 ordering; see the
 
 ## [Unreleased]
 
+## [1.949]
+
+Unpublished candidate for the product-experience and maturity improvements below.
+Validation is in progress; no publication or completed release campaign is claimed.
+
+- Select extractions using the complete helper and every rendered caller,
+  including ownership boxes and deletions. Larger bodies and control flow no
+  longer bypass the usefulness check. Small safe transformations remain available
+  through the existing Python API opt-out; semantic verification is unchanged.
+- Show one concise summary and diff in complete preview. Add `--summary`,
+  `--diff`, `--inventory`, versioned preview/dry `--json` results, and `--explain`
+  for source-located decline reasons. Human-readable output has changed; scripts
+  should use the documented JSON schema instead of parsing console text.
+- Return failure for declined confirmation or closed interactive input; send
+  human errors consistently to stderr. Explicit interruption returns 130.
+- Add `--time-limit SECONDS` to preview and dry. An expired run exits 124 before
+  publishing output. Final publication and cleanup finish safely even when that
+  extends beyond the time limit. Structured errors distinguish unknown dry
+  publication state from a confirmed absence of output.
+- Put installation and a complete copy, extract, rename, test and adopt tutorial
+  first. Preserve historical release evidence in its own guide. Naming a copied
+  complete project no longer requires adopting it first.
+- Define CLI, JSON and library compatibility commitments; expose supported
+  library entry points through `towel.api`. Warn on newer Python interpreters
+  outside the validated 3.11–3.13 range and add installed-wheel macOS CI.
+- Allow documentation-only release amendments to reuse unchanged runtime
+  evidence while independently checking rebuilt archive contents, tool versions,
+  installation smokes and documentation. Runtime, configuration, version and
+  harness changes still require fresh complete validation.
+
 ## [1.948]
 
 Correctness and CLI repairs after 1.947. See the
@@ -2623,7 +2653,7 @@ affected project's own tests.
 - The PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and
   are not a recommended installation target.
 
-[Unreleased]: https://github.com/ericeallen/towel/compare/v1.947...HEAD
+[Unreleased]: https://github.com/ericeallen/towel/compare/v1.948...HEAD
 [1.947]: https://github.com/ericeallen/towel/compare/v1.946...v1.947
 [1.946]: https://github.com/ericeallen/towel/compare/v1.792...v1.946
 [1.792]: https://github.com/ericeallen/towel/compare/v1.772...v1.792

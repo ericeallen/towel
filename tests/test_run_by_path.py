@@ -106,7 +106,11 @@ def _observe(
 
 def _refactor(root: Path) -> int:
     engine = UnificationRefactorEngine(
-        min_lines=3, cross_module_helpers=True, parameterize_builtins=True
+        # Small script bodies isolate path/import behavior from readability.
+        min_lines=3,
+        cross_module_helpers=True,
+        parameterize_builtins=True,
+        skip_trivial_helpers=False,
     )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(

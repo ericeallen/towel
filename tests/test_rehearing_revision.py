@@ -35,6 +35,8 @@ from towel.unification.fixed_point import (
 )
 from towel.unification.models import RefactoringProposal, Replacement, source_digest_of
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
 from towel.unification.rehearing import (
     checker_context,
     exact_candidate_key,
@@ -63,7 +65,7 @@ def test_whole_revision_not_local_dependency_and_current_exact_skip(
     for path in (a, b, c):
         path.write_text("VALUE = 0\n")
     attempted: list[str] = []
-    engine = UnificationRefactorEngine()
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     engine._analysis_paths = tuple(str(p) for p in (a, b, c))
     engine._type_run_oracle = object.__new__(PyrightOracle)
     run = _DirectoryRun()
@@ -106,7 +108,7 @@ def test_current_revision_transient_or_unknown_failure_retried(
     for path in (b, c):
         path.write_text("VALUE = 0\n")
     attempted: list[str] = []
-    engine = UnificationRefactorEngine()
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     engine._analysis_paths = (str(b), str(c))
     engine._type_run_oracle = object.__new__(PyrightOracle)
 
@@ -207,7 +209,7 @@ def test_only_normal_ladder_exhaustion_is_a_completed_refusal(
     path = tmp_path / "m.py"
     path.write_text("VALUE = 0\n")
     candidate = proposal(path)
-    engine = UnificationRefactorEngine()
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     engine._type_run_oracle = object.__new__(PyrightOracle)
     declined = Rejection(
         (TypeDiagnostic(str(path), "rejected", 1),),
@@ -241,7 +243,7 @@ def test_only_normal_ladder_exhaustion_is_a_completed_refusal(
 def test_custom_callbacks_disable_execution_retention(tmp_path: Path, callback: str) -> None:
     path = tmp_path / "m.py"
     path.write_text("VALUE = 0\n")
-    engine = UnificationRefactorEngine()
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     engine._analysis_paths = (str(path),)
     engine._type_run_oracle = object.__new__(PyrightOracle)
     assert execution_context(engine) is not None
@@ -259,7 +261,7 @@ def test_exact_engine_options_and_known_reference_invalidate(tmp_path: Path) -> 
 
     path = tmp_path / "m.py"
     path.write_text("VALUE = 0\n")
-    engine = UnificationRefactorEngine()
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     engine._analysis_paths = (str(path),)
     engine._type_run_oracle = object.__new__(PyrightOracle)
     before = execution_context(engine)
@@ -288,7 +290,9 @@ def test_actual_builtin_ruff_pipeline_is_registered_and_reconfiguration_invalida
     assert finishing is not None and finishing(str(path), "VALUE = 0\n") == "VALUE = 0\n"
     assert formatting.formatting_repeatability(formatter) is not None
     assert formatting.formatting_repeatability(finishing) is not None
-    engine = UnificationRefactorEngine(snippet_formatter=formatter, file_finisher=finishing)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, snippet_formatter=formatter, file_finisher=finishing
+    )
     engine._analysis_paths = (str(path),)
     engine._type_run_oracle = object.__new__(PyrightOracle)
     before = execution_context(engine)
@@ -338,7 +342,7 @@ def test_malformed_extended_formatter_config_is_uncached(tmp_path: Path) -> None
     (tmp_path / "pyproject.toml").write_text('[project]\nname="fixture"\nversion="0"\n')
     (tmp_path / "ruff.toml").write_text('extend="missing.toml"\n')
     formatter = formatting.ruff_formatter(path)
-    engine = UnificationRefactorEngine(snippet_formatter=formatter)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, snippet_formatter=formatter)
     engine._analysis_paths = (str(path),)
     engine._type_run_oracle = object.__new__(PyrightOracle)
     assert execution_context(engine) is None
@@ -349,7 +353,7 @@ def test_mutable_parent_environment_invalidates_context(
 ) -> None:
     path = tmp_path / "m.py"
     path.write_text("VALUE = 0\n")
-    engine = UnificationRefactorEngine()
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     engine._analysis_paths = (str(path),)
     engine._type_run_oracle = object.__new__(PyrightOracle)
     before = execution_context(engine)
@@ -367,7 +371,7 @@ def test_real_discovery_and_render_restore_the_exact_candidate_and_name_seed(
         for name, offset in (("first", 3), ("second", 4))
     )
     path.write_text(source)
-    engine = UnificationRefactorEngine(min_lines=2)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
     discovered = engine.analyze_file(str(path))
     assert discovered
     candidate = discovered[0]
@@ -490,7 +494,7 @@ def test_undeclared_record_metadata_is_never_omitted(tmp_path: Path) -> None:
 def test_empty_ladder_is_unknown_not_completed_checker_refusal(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text("VALUE = 0\n")
-    engine = UnificationRefactorEngine()
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     with (
         patch.object(engine, "_active_type_oracle", return_value=object.__new__(PyrightOracle)),
         patch.object(engine, "_infer_helper_annotations"),
@@ -507,7 +511,7 @@ def test_explicit_engine_settings_are_bound_not_only_parent_environment(tmp_path
 
     path = tmp_path / "m.py"
     path.write_text("VALUE = 0\n")
-    engine = UnificationRefactorEngine()
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     engine._analysis_paths = (str(path),)
     engine._type_run_oracle = object.__new__(PyrightOracle)
     before = execution_context(engine)

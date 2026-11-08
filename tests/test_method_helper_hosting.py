@@ -29,6 +29,8 @@ compares what it printed; inspecting the generated source only confirms where
 the helper went.
 """
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -112,7 +114,7 @@ def _run(directory: Path, driver: str, *path: Path) -> str:
 
 def _refactor(package: Path) -> int:
     """Refactor ``package`` in place to a fixed point, as ``towel dry PKG PKG --no-types`` does."""
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(package), str(package), progress="none"
@@ -333,7 +335,9 @@ def test_the_module_function_siblings_share_passes_mypy_strict_and_pyright_stric
     before = _run(tmp_path, driver, tmp_path)
     oracle = MypyInferrer()
     try:
-        engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, min_lines=3, type_oracle=oracle
+        )
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             _, applied, _ = engine.refactor_to_fixed_point(str(path))
     finally:
@@ -382,7 +386,7 @@ def test_capture_only_receiver_does_not_restore_an_unused_method_parameter(
     path = tmp_path / "subject.py"
     path.write_text(source)
     engine = UnificationRefactorEngine(
-        min_lines=3, max_parameters=4, reuse_existing_functions=False
+        skip_trivial_helpers=False, min_lines=3, max_parameters=4, reuse_existing_functions=False
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -423,7 +427,7 @@ class C:
     path = tmp_path / "subject.py"
     path.write_text(source)
     engine = UnificationRefactorEngine(
-        min_lines=3, max_parameters=5, reuse_existing_functions=False
+        skip_trivial_helpers=False, min_lines=3, max_parameters=5, reuse_existing_functions=False
     )
     proposals = engine.analyze_file(str(path))
     assert proposals and proposals[0].insert_into_class == "C"

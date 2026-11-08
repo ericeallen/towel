@@ -37,6 +37,8 @@ import pytest
 
 from towel.type_inference import CheckSuccess, MypyInferrer, checker_module_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
 from towel.unification.type_bindings import (
     TypeKind,
     TypeResolver,
@@ -480,7 +482,10 @@ def test_a_relatively_imported_class_gets_a_type_variable_end_to_end(tmp_path: P
     oracle = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         proposals = engine.analyze_file(str(path))
         assert proposals
@@ -549,7 +554,10 @@ def test_the_callable_a_signature_writes_is_imported_end_to_end(tmp_path: Path) 
     oracle = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         proposals = engine.analyze_file(str(path))
         assert proposals
@@ -686,7 +694,10 @@ def test_an_unread_receiver_is_omitted_without_losing_type_correlations(tmp_path
     oracle = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         proposals = engine.analyze_file(str(path))
         assert proposals
@@ -735,7 +746,10 @@ def _extract_first(path: Path) -> str:
     oracle = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         proposals = engine.analyze_file(str(path))
         assert proposals
@@ -862,7 +876,10 @@ def test_returned_values_follow_the_arguments_they_are_end_to_end(tmp_path: Path
     oracle = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         unchanged, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
     finally:
@@ -973,6 +990,7 @@ def _extract_across_modules(package: Path) -> dict[str, str]:
     oracle = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False,
             min_lines=2,
             reuse_existing_functions=False,
             type_oracle=oracle,

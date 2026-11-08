@@ -102,24 +102,38 @@ def b():
 
 
 def _two_round_project(root: Path) -> None:
-    """Two extractions, the second found only after the first is applied (a localized re-analysis)."""
+    """Two useful extractions; rewriting their shared host triggers local re-analysis."""
     root.mkdir()
+    prices = (
+        "    total = 0\n    for item in items:\n"
+        "        base = item * 3\n        tax = base * 0.1\n"
+        "        taxed = base + tax\n        discounted = taxed - 2\n"
+        "        fee = discounted * 0.02\n        charged = discounted + fee\n"
+        "        rounded = (charged * 100) // 1 / 100\n        total += rounded\n"
+    )
+    names = (
+        "    names = []\n    for record in records:\n"
+        "        stripped = record.name.strip()\n        lower = stripped.lower()\n"
+        "        words = lower.replace('-', ' ')\n        punctuated = words.replace('.', ' ')\n"
+        "        spaces = punctuated.replace('  ', ' ')\n        tabs = spaces.replace('\\t', ' ')\n"
+        "        cleaned = tabs.strip()\n        names.append(cleaned)\n"
+    )
     (root / "a.py").write_text(
-        "def alpha(items):\n    total = 0\n    for item in items:\n        total += item * 3\n"
-        '    print(total, "alpha")\n    return total\n\n\n'
-        "def alpha_two(records):\n    names = []\n    for record in records:\n"
-        "        names.append(record.name.strip().lower())\n"
-        '    print(names, "alpha_two")\n    return names\n'
+        "def alpha(items):\n"
+        + prices
+        + '    print(total, "alpha")\n    return total\n\n'
+        + "def alpha_two(records):\n"
+        + names
+        + '    print(names, "alpha_two")\n    return names\n'
     )
     # Two top-level modules share a helper only when the borrower imports the host.
     (root / "b.py").write_text(
-        "import a\n\n\ndef beta(values):\n    total = 0\n    for value in values:\n        total += value * 3\n"
-        '    print(total, "beta")\n    return total\n'
+        "import a\n\ndef beta(items):\n" + prices + '    print(total, "beta")\n    return total\n'
     )
     (root / "c.py").write_text(
-        "import a\n\n\ndef gamma(entries):\n    names = []\n    for entry in entries:\n"
-        "        names.append(entry.name.strip().lower())\n"
-        '    print(names, "gamma")\n    return names\n'
+        "import a\n\ndef gamma(records):\n"
+        + names
+        + '    print(names, "gamma")\n    return names\n'
     )
 
 
@@ -172,7 +186,7 @@ def test_preview_honours_progress_none(tmp_path: Path, monkeypatch: pytest.Monke
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         main()
-    assert "Analyzing directory" in out.getvalue()
+    assert "Would apply" in out.getvalue()
     # No bar of either kind; the file count is an ordinary log line, not progress.
     assert (
         "it/s" not in err.getvalue() and "%|" not in err.getvalue() and "\r" not in err.getvalue()

@@ -32,6 +32,8 @@ from towel.unification.bounded_cache import memoization_disabled
 from towel.unification.models import FunctionNode
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 
 def _function(source: str) -> FunctionNode:
     function = ast.parse(source).body[0]
@@ -158,7 +160,7 @@ def test_declaration_memo_preserves_fixed_point_output(
     outputs: list[str] = []
     for memoized in (True, False):
         path.write_text(DECLARED_GLOBAL)
-        engine = UnificationRefactorEngine(annotate_helpers=False)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, annotate_helpers=False)
         with contextlib.ExitStack() as stack:
             if not memoized:
                 stack.enter_context(memoization_disabled())

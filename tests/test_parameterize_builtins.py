@@ -39,6 +39,7 @@ from typing import Dict, List, Mapping, Optional, Tuple, TypedDict
 import pytest
 
 from towel.cli import DryOptions, PreviewOptions, _build_parser
+from towel.type_inference import type_oracle_for_project
 from towel.unification.annotations import (
     _joined_revealed,
     annotation_from_revealed,
@@ -79,6 +80,9 @@ def _refactor(target: Path, parameterize_builtins: bool) -> Tuple[int, Mapping[s
     """
     engine = UnificationRefactorEngine(
         min_lines=3,
+        # Small semantic controls must exercise lookup preservation even when
+        # their generated interface would not repay its cost in user code.
+        skip_trivial_helpers=False,
         # The complete body includes its header effect and argument owner.
         max_parameters=6,
         parameterize_builtins=parameterize_builtins,
@@ -485,6 +489,14 @@ def test_the_flag_reaches_the_engine_from_the_command_line(
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
     assert completed.returncode == 0, completed.stderr
+    # The CLI reaches the enabled lookup analysis, then declines this tiny
+    # five-input helper on usefulness. Keep the semantic signature exercised
+    # through the API's explicit opt-out rather than silently testing a no-op.
+    assert "unprofitable_helper" in completed.stdout + completed.stderr
+    assert (tmp_path / "m.py").read_text() == MIXED + "\n"
+    assert not _helpers(tmp_path)
+    applied, _ = _refactor(tmp_path / "m.py", parameterize_builtins=True)
+    assert applied == 1
     assert _parameters(tmp_path) == [["__param_0", "__param_1", "name", "rows", "_towel_owner"]]
 
 
@@ -643,6 +655,30 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )
     assert completed.returncode == 0, completed.stderr
+    assert _run(tmp_path, "check.py") == expected
+    assert "unprofitable_helper" in completed.stdout + completed.stderr
+    assert not _helpers(tmp_path / "pkg")
+    # Retain the real configured checker and every callable/signature/runtime
+    # assertion while exercising this small semantic fixture through the API.
+    package = (tmp_path / "pkg").resolve()
+    checker = type_oracle_for_project(package).tool
+    assert checker is not None
+    try:
+        engine = UnificationRefactorEngine(
+            min_lines=3,
+            max_parameters=8,
+            parameterize_builtins=True,
+            cross_module_helpers=True,
+            skip_trivial_helpers=False,
+            type_oracle=checker,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            results, _ = engine.refactor_directory_to_fixed_point(
+                str(package), str(package), progress="none"
+            )
+        assert sum(count for count, _ in results.values()) > 0
+    finally:
+        checker.close()
     assert _run(tmp_path, "check.py") == expected
     (helper,) = _helpers(tmp_path / "pkg")
     parameters = helper.args.posonlyargs + helper.args.args

@@ -23,11 +23,11 @@ from __future__ import annotations
 
 import argparse
 import ast
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass
-from difflib import unified_diff
 import json
 import logging
+import math
 import os
 import re
 import signal
@@ -49,7 +49,6 @@ from typing import (
     Set,
     TYPE_CHECKING,
     Tuple,
-    TypedDict,
 )
 
 if TYPE_CHECKING:
@@ -59,7 +58,20 @@ if TYPE_CHECKING:
     from towel.unification.models import RefactoringProposal
     from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, journals_covering, pending_journal_remedy, recover
-from towel.diagnostics import LOG, Settings, configure_stderr_logging
+from towel.execution_budget import BudgetExpired, execution_budget
+from towel.cli_reporting import (
+    BindingRecord as BindingRecord,
+    CallRecord as CallRecord,
+    ChangeRecord as ChangeRecord,
+    CommandResult as CommandResult,
+    HelperInventory as HelperInventory,
+    HelperRecord as HelperRecord,
+    HelperScopeKind as HelperScopeKind,
+    ParameterRecord as ParameterRecord,
+    render_preview,
+    source_diff,
+)
+from towel.diagnostics import LOG, REJECTIONS, Settings, configure_stderr_logging
 from towel.program_files import is_exclusion_name, refuse_unparsed_program
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source, source_lines
@@ -91,7 +103,7 @@ Examples:
   towel preview src/                    # Preview duplicates (read-only)
   towel dry src/ cleaned/               # Apply refactorings to new directory
   towel dry src/ src/                   # Apply refactorings in-place
-  towel rename-helpers src/             # Rename extracted functions with LLM assistance
+  towel rename-helpers src/             # Prepare and apply helper-name changes
 
 For more help on a specific command:
   towel <command> --help
@@ -123,11 +135,39 @@ def main() -> None:
     _install_signal_handling()
     parser = _build_parser()
     args = parser.parse_args()
+    if args.command == "dry" and args.json and args.interactive:
+        parser.error("dry --json requires --no-interactive")
+    if (
+        args.command == "preview"
+        and args.quick
+        and any((args.json, args.summary, args.diff, args.inventory))
+    ):
+        parser.error("--quick cannot be combined with --json, --summary, --diff or --inventory")
+    result_stdout = sys.stdout
     configure_stderr_logging()
     _settings().enable_debug_logging()
+    if sys.version_info[:2] > (3, 13):
+        print(
+            "Warning: Towel is validated on Python 3.11–3.13; this interpreter is outside "
+            "that range. Review changes and run your project's tests.",
+            file=sys.stderr,
+        )
     try:
-        _dispatch(parser, args)
+        with (
+            _explain_rejections(bool(getattr(args, "explain", False))),
+            execution_budget(getattr(args, "time_limit", None)),
+        ):
+            _dispatch(parser, args)
+    except BudgetExpired:
+        # A signal may arrive while redirect_stdout.__enter__ has assigned
+        # sys.stdout but before the with statement can register its __exit__.
+        # Restore the result channel explicitly before emitting the failure.
+        sys.stdout = result_stdout
+        _write_failure_result(args, "incomplete", "time_limit", "Time limit exceeded")
+        parser.exit(124, "Time limit exceeded; no output was published. Cleanup completed.\n")
     except KeyboardInterrupt:
+        sys.stdout = result_stdout
+        _write_failure_result(args, "incomplete", "interrupted", "Interrupted")
         parser.exit(130, "Interrupted.\n")
     except BrokenPipeError:
         # The reader went away (``towel preview ... | head``); nothing is wrong.
@@ -136,6 +176,18 @@ def main() -> None:
 
 
 _SETTINGS: Optional[Settings] = None
+
+
+@contextmanager
+def _explain_rejections(enabled: bool) -> Iterator[None]:
+    """Source-located decline traces for this invocation, without changing later runs."""
+    previous = REJECTIONS.level
+    if enabled:
+        REJECTIONS.setLevel(logging.DEBUG)
+    try:
+        yield
+    finally:
+        REJECTIONS.setLevel(previous)
 
 
 def _settings() -> Settings:
@@ -184,6 +236,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
         except BrokenPipeError:
             raise
         except (OSError, ValueError, TowelError) as error:
+            _write_failure_result(args, "error", "error", str(error))
             parser.exit(1, f"Error: {error}\n")
     elif args.command == "preview":
         try:
@@ -191,6 +244,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
         except BrokenPipeError:
             raise
         except (OSError, ValueError, TowelError) as error:
+            _write_failure_result(args, "error", "error", str(error))
             parser.exit(1, f"Error: {error}\n")
     elif args.command == "rename-helpers":
         try:
@@ -376,8 +430,42 @@ Examples:
     )
 
 
-def _add_execution_flags(parser: argparse.ArgumentParser) -> None:
+def _seconds(text: str) -> float:
+    """A finite positive wall-clock budget."""
+    try:
+        seconds = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("time limit must be a positive finite number") from None
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise argparse.ArgumentTypeError("time limit must be a positive finite number")
+    return seconds
+
+
+def _add_execution_flags(
+    parser: argparse.ArgumentParser,
+    *,
+    presentation: Optional[argparse._MutuallyExclusiveGroup] = None,
+) -> None:
     """Options shared by dry and the complete preview of that same run."""
+    parser.add_argument(
+        "--explain",
+        action="store_true",
+        help="Explain declined candidate pairs on stderr, including source files and line ranges",
+    )
+    parser.add_argument(
+        "--time-limit",
+        type=_seconds,
+        metavar="SECONDS",
+        help="Limit setup, analysis and verification to this many seconds; expiry exits 124 "
+        "without publishing output. Final publication and cleanup finish safely and may "
+        "extend past the limit.",
+    )
+    (parser if presentation is None else presentation).add_argument(
+        "--json",
+        action="store_true",
+        help="Write one versioned JSON result to stdout; diagnostics go to stderr. "
+        "dry also requires --no-interactive.",
+    )
     parser.add_argument(
         "--max-refactorings",
         dest="max_refactorings",
@@ -492,7 +580,17 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     _add_cross_module_flag(parser)
     _add_parameterize_builtins_flag(parser)
     _add_tuning_flags(parser)
-    _add_execution_flags(parser)
+    presentation = parser.add_mutually_exclusive_group()
+    _add_execution_flags(parser, presentation=presentation)
+    presentation.add_argument(
+        "--summary", action="store_true", help="Show the result summary without the diff"
+    )
+    presentation.add_argument(
+        "--diff", action="store_true", help="Write only the unified diff to stdout"
+    )
+    parser.add_argument(
+        "--inventory", action="store_true", help="Include the helper inventory for naming"
+    )
     parser.add_argument(
         "--quick",
         action="store_true",
@@ -514,12 +612,12 @@ def _add_rename_helpers_parser(
     """Add 'rename-helpers' subcommand parser."""
     parser = subparsers.add_parser(
         "rename-helpers",
-        help="Rename extracted functions using LLM assistance",
+        help="Rename helpers from a JSON mapping or a pasted assistant response",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description="""
 Rename auto-generated _extracted_func_* and __extracted_func_* helpers into meaningful names.
 
-This tool analyzes the extracted functions and uses an LLM to suggest better names
+This tool prepares source excerpts for a coding assistant to suggest better names
 based on the code's purpose and context. You can use Claude Code, ChatGPT, or any
 other AI coding assistant to generate the names.
 
@@ -626,80 +724,6 @@ Examples:
 
 
 CHANGE_SIDECAR_NAME = ".towel-helpers.json"
-
-
-class ChangeRecord(TypedDict):
-    """One rewritten call site as the sidecar and the inventory record it."""
-
-    file: str
-    line: int
-    before: str
-    after: str
-
-
-class CallRecord(TypedDict):
-    """A call of a generated helper as found in the refactored tree."""
-
-    file: str
-    line: int
-    bound: bool
-    statement: str
-    arguments: List[str]
-
-
-class BindingRecord(TypedDict):
-    """The argument expression one call site passes for a parameter."""
-
-    file: str
-    line: int
-    expression: str
-
-
-class ParameterRecord(TypedDict):
-    """A helper parameter: its evaluation kind, rename key, and what each site passes."""
-
-    name: str
-    kind: ParameterKind
-    rename_key: str
-    bindings: List[BindingRecord]
-
-
-HelperScopeKind = Literal["module", "class", "function"]
-"""Where a helper was placed; the inventory's ``scope`` is this, then ``:<name>`` unless module.
-
-A class's name is its dotted qualname within the module.
-"""
-
-
-class HelperRecord(TypedDict):
-    """Everything a naming assistant is given about one generated helper."""
-
-    file: str
-    line: int
-    name: str
-    scope: str
-    rename_key: str
-    renameable: bool
-    parameters: List[ParameterRecord]
-    source: str
-    calls: List[CallRecord]
-    changes: List[ChangeRecord]
-
-
-class MappingFormat(TypedDict):
-    """How rename keys are spelled, for the assistant that writes the rename file."""
-
-    helper: str
-    parameter: str
-    notes: str
-
-
-class HelperInventory(TypedDict):
-    """The JSON document ``rename-helpers --list --json`` prints."""
-
-    target: str
-    mapping_format: MappingFormat
-    helpers: List[HelperRecord]
 
 
 def _change_sidecar_path(target: "Path") -> "Path":
@@ -867,7 +891,8 @@ def _type_oracle(project_path: "Path") -> Optional["TypeOracle"]:
     if choice.tool is None:
         print(
             f"Note: {choice.note}, so helper annotations are copied from the call sites but not "
-            'inferred or verified. Install the types extra (pip install "code-towel[types]").'
+            'inferred or verified. Install the types extra (pip install "code-towel[types]").',
+            file=sys.stderr,
         )
     return choice.tool
 
@@ -888,11 +913,13 @@ def _generated_code_formatter(
         if choice.tool is None:
             print(
                 f"Note: {choice.note}, so generated code is inserted unformatted. "
-                'Install the format extra (pip install "code-towel[format]") to format it.'
+                'Install the format extra (pip install "code-towel[format]") to format it.',
+                file=sys.stderr,
             )
         elif "not installed" in choice.note:
             print(
-                f"Note: {choice.note}; formatting generated code with {choice.note.split(';')[0]}."
+                f"Note: {choice.note}; formatting generated code with {choice.note.split(';')[0]}.",
+                file=sys.stderr,
             )
 
     return formatter_factory_for_project(project_path, report)
@@ -906,7 +933,7 @@ def _file_finisher(
 
     choice = file_finisher_for_project(project_path, sort_imports=sort_imports)
     if "not installed" in choice.note:
-        print(f"Note: {choice.note}.")
+        print(f"Note: {choice.note}.", file=sys.stderr)
     return choice.tool
 
 
@@ -921,13 +948,21 @@ def _existing_target(path: str) -> Tuple[bool, bool]:
     """``(is_file, is_dir)`` for a path the command may work on; exits with a message otherwise."""
 
     if not os.path.exists(path):
-        print(f"Error: '{path}' does not exist")
-        sys.exit(1)
+        raise ValueError(f"'{path}' does not exist")
     is_file, is_dir = os.path.isfile(path), os.path.isdir(path)
     if not is_file and not is_dir:
-        print(f"Error: '{path}' is neither a file nor a directory")
-        sys.exit(1)
+        raise ValueError(f"'{path}' is neither a file nor a directory")
     return is_file, is_dir
+
+
+def _resolve_cli_path(path: str) -> Path:
+    """Resolve a user path, reporting older pathlib's symlink-loop failure normally."""
+    try:
+        return Path(path).resolve()
+    except RuntimeError as error:
+        # Python 3.11/3.12 report symlink loops as RuntimeError. Keep this
+        # conversion local to resolution so unrelated programming errors surface.
+        raise ValueError(f"Cannot resolve path {path!r}: {error}") from error
 
 
 @dataclass(frozen=True)
@@ -948,6 +983,10 @@ class DryOptions:
     exclude: Tuple[str, ...]
     cross_module: bool = False
     stats: bool = False
+    json: bool = False
+    summary: bool = False
+    diff: bool = False
+    inventory: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -966,6 +1005,10 @@ class DryOptions:
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
             stats=bool(args.stats),
+            json=bool(args.json),
+            summary=bool(getattr(args, "summary", False)),
+            diff=bool(getattr(args, "diff", False)),
+            inventory=bool(getattr(args, "inventory", False)),
         )
 
 
@@ -986,6 +1029,10 @@ class PreviewOptions:
     exclude: Tuple[str, ...] = ()
     cross_module: bool = False
     stats: bool = False
+    json: bool = False
+    summary: bool = False
+    diff: bool = False
+    inventory: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -1003,6 +1050,10 @@ class PreviewOptions:
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
             stats=bool(args.stats),
+            json=bool(args.json),
+            summary=bool(getattr(args, "summary", False)),
+            diff=bool(getattr(args, "diff", False)),
+            inventory=bool(getattr(args, "inventory", False)),
         )
 
     def dry_options(self, output: str) -> DryOptions:
@@ -1022,6 +1073,10 @@ class PreviewOptions:
             exclude=self.exclude,
             cross_module=self.cross_module,
             stats=self.stats,
+            json=self.json,
+            summary=self.summary,
+            diff=self.diff,
+            inventory=self.inventory,
         )
 
 
@@ -1058,10 +1113,17 @@ def _run_dry(args: argparse.Namespace) -> None:
     """Run the dry command."""
     options = DryOptions.from_namespace(args)
     _warn_about_retired_flags(args)
-    _execute_dry(options)
+    if options.json and options.interactive:
+        raise ValueError("dry --json requires --no-interactive")
+    if options.json:
+        with redirect_stdout(sys.stderr):
+            result = _execute_dry(options)
+        print(json.dumps(result, indent=2))
+    else:
+        _execute_dry(options)
 
 
-def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
+def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResult":
     """Run the shared pipeline; only its presentation and destination differ for preview."""
     # Import here to avoid loading heavy modules if not needed
     from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -1077,11 +1139,11 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
         # here would block on an open stdin, or read a closed one as "no"
         # and exit 0 having written nothing. The file was named explicitly.
         if options.interactive and not _confirm("Analyze anyway? (y/N): "):
-            return
+            raise ValueError("Aborted; no output was published")
 
     # Resolve aliases before checking containment or creating any output.
-    source = Path(input_path).resolve()
-    destination = Path(output_path).resolve()
+    source = _resolve_cli_path(input_path)
+    destination = _resolve_cli_path(output_path)
     if source != destination:
         if source in destination.parents or destination in source.parents:
             raise ValueError("Input and output must not contain one another")
@@ -1093,28 +1155,19 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
     if options.cross_module and is_dir:
         _judge_import_problems(source, options.exclude)
 
-    print("=" * 70)
-    _banner(
-        "PREVIEWING REFACTORINGS (COMPLETE DRY RUN)"
-        if preview
-        else "APPLYING REFACTORINGS (FIXED-POINT ITERATION)"
-    )
-    if preview:
-        print(
-            "Running the complete dry pipeline in private temporary output; input stays unchanged."
-        )
-    else:
+    if not preview:
+        print("=" * 70)
+        _banner("APPLYING REFACTORINGS (FIXED-POINT ITERATION)")
         print("This will apply refactorings one at a time until no more are found.")
-    print("Helpers go before the first definition of their module,")
-    print("or inside the class or function the duplicates share.")
-    print()
+        print("Helpers go before the first definition of their module,")
+        print("or inside the class or function the duplicates share.")
+        print()
 
     if options.interactive:
         for line in _verification_cost(Path(input_path), options.types, options.exclude):
             print(line)
         if not _confirm("Proceed? (y/N): "):
-            print("Aborted.")
-            return
+            raise ValueError("Aborted; no output was published")
 
     journal = _pending_journal(source, options.exclude)
     if journal is not None and source == destination:
@@ -1147,12 +1200,12 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
             type_oracle=oracle,
         )
 
-        print()
+        if not preview:
+            print()
 
         if is_file:
-            print(
-                f"Analyzing file: {input_path}" if preview else f"Refactoring file: {output_path}"
-            )
+            if not preview:
+                print(f"Refactoring file: {output_path}")
             final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
                 input_path,
                 max_iterations=options.max_refactorings,
@@ -1161,10 +1214,10 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
             )
             applied = num_applied
 
+            termination = (
+                "iteration_cap" if 0 < options.max_refactorings <= applied else "fixed_point"
+            )
             if preview:
-                termination = (
-                    "iteration_cap" if 0 < options.max_refactorings <= applied else "fixed_point"
-                )
                 _print_complete_preview(engine, options, applied, descriptions, termination)
             elif num_applied > 0:
                 print(f"\nApplied {num_applied} refactoring(s):")
@@ -1173,11 +1226,8 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
             else:
                 print("\nNo refactorings found!")
         else:
-            print(
-                f"Analyzing directory: {input_path}"
-                if preview
-                else f"Refactoring directory: {output_path}"
-            )
+            if not preview:
+                print(f"Refactoring directory: {output_path}")
             results, termination_reason = engine.refactor_directory_to_fixed_point(
                 input_path,
                 output_path,
@@ -1185,6 +1235,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
                 progress=options.progress,
             )
             applied = sum(count for count, _ in results.values())
+            termination = termination_reason
 
             if preview:
                 descriptions = [
@@ -1212,7 +1263,8 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
                 f"\n{engine.checker_failures} proposal(s) were dropped because the type checker"
                 " could not run for them (see the warnings above); they were not judged."
             )
-        _print_declined(engine.run_report, applied)
+        if not (options.json or options.diff):
+            _print_declined(engine.run_report, applied)
         if options.stats:
             _print_statistics(engine.run_report)
         if not preview:
@@ -1227,6 +1279,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> None:
                     " available without call-site before/after metadata.",
                     error,
                 )
+        return _command_result(engine, options, applied, termination, preview=preview)
     finally:
         if oracle is not None:
             oracle.close()
@@ -1462,9 +1515,16 @@ def _print_declined(report: "RunReport", applied: int) -> None:
             f"{counted_reasons(report.declined_pairs)}"
         )
     if lines:
-        print("\nDeclined (DEBUG_PROPOSAL_REJECTIONS=1 traces each candidate pair):")
+        print("\nDeclined (use --explain for source locations and reasons):")
         for line in lines:
             print(line)
+        if report.declined_pairs.get("unprofitable_helper", 0) or report.declined_proposals.get(
+            "unprofitable helper", 0
+        ):
+            print(
+                "  The shared work does not repay the helper and caller complexity; "
+                "these blocks were left unchanged."
+            )
 
 
 def _print_statistics(report: "RunReport") -> None:
@@ -1582,6 +1642,10 @@ def _run_preview(args: argparse.Namespace) -> None:
     options = PreviewOptions.from_namespace(args)
     _warn_about_retired_flags(args)
     if options.quick:
+        if options.json or options.summary or options.diff or options.inventory:
+            raise ValueError(
+                "--quick cannot be combined with --json, --summary, --diff or --inventory"
+            )
         if options.stats:
             print("--stats accounts for a complete run; a --quick list has no statistics.")
         _run_quick_preview(options)
@@ -1591,7 +1655,15 @@ def _run_preview(args: argparse.Namespace) -> None:
         output = Path(temporary) / Path(options.target).resolve().name
         dry_options = options.dry_options(str(output))
         with _preview_paths(dry_options):
-            _execute_dry(dry_options, preview=True)
+            if options.json or options.diff:
+                with redirect_stdout(sys.stderr):
+                    result = _execute_dry(dry_options, preview=True)
+                if options.json:
+                    print(json.dumps(result, indent=2))
+                else:
+                    print(result["diff"], end="")
+            else:
+                _execute_dry(dry_options, preview=True)
 
 
 def _preview_text(text: str, options: DryOptions) -> str:
@@ -1634,64 +1706,101 @@ def _print_complete_preview(
     termination: str,
 ) -> None:
     """Report only the completed pipeline's accepted changes, in their execution order."""
-    print("\n" + "=" * 70)
-    print("REFACTORING OPPORTUNITIES (COMPLETE PREVIEW)")
-    print("=" * 70)
-    print(f"Would apply {applied} refactoring(s).")
-    print(f"  Termination: {termination}")
-    if not applied:
-        if engine.run_report.declined_pairs or engine.run_report.declined_proposals:
-            print("No applicable refactorings found.")
-        else:
-            print("No duplicates found!")
-    for index, description in enumerate(descriptions, 1):
-        print(f"  {index}. {_preview_text(description, options)}")
-    changes = engine.change_log
-    if changes:
-        print("\n   Call sites (- before / + after):")
-        print("   Blocks and line numbers are shown at the step when they would change.")
-        target = Path(options.input).resolve()
-        for change in changes[:30]:
-            path = Path(_preview_text(change.path, options))
-            location = os.path.relpath(path, target) if target.is_dir() else path.name
-            print(f"      {location}:{change.line} ({change.helper})")
-            for line in change.before.splitlines():
-                print(f"        - {line}")
-            for line in change.after.splitlines():
-                print(f"        + {line}")
-        if len(changes) > 30:
-            print(f"      ... ({len(changes) - 30} more call site(s))")
-    _print_preview_artifacts(engine, options)
-    print("\nInput files were not changed.")
+    if options.json or options.diff:
+        return
+    print(
+        render_preview(
+            applied,
+            termination,
+            bool(engine.run_report.declined_pairs or engine.run_report.declined_proposals),
+            (
+                ""
+                if options.summary
+                else source_diff(Path(options.input), Path(options.output), options.exclude)
+            ),
+            _preview_inventory(engine, options) if options.inventory else None,
+        ),
+        end="",
+    )
 
 
-def _print_preview_artifacts(engine: "UnificationRefactorEngine", options: DryOptions) -> None:
-    """Show the complete final source diff and the same inventory used for naming."""
+def _preview_inventory(engine: "UnificationRefactorEngine", options: DryOptions) -> HelperInventory:
     source, output = Path(options.input).resolve(), Path(options.output).resolve()
     output_base = output if output.is_dir() else output.parent
-    for after in python_sources(output, excluded=options.exclude):
-        relative = after.relative_to(output_base)
-        before = source / relative if source.is_dir() else source
-        old = read_source(before) if before.exists() else ""
-        new = read_source(after)
-        if old == new:
-            continue
-        print()
-        for line in unified_diff(
-            old.splitlines(keepends=True),
-            new.splitlines(keepends=True),
-            fromfile=f"before/{relative}",
-            tofile=f"after/{relative}",
-        ):
-            print(line, end="" if line.endswith("\n") else "\n\\ No newline at end of file\n")
     helpers = _find_extracted_helpers(output, None, None)
-    if helpers:
-        inventory = helper_inventory(
-            output_base, helpers, changes_by_helper=_change_records(engine, options.output)
-        )
-        inventory["target"] = str(source if source.is_dir() else source.parent)
-        print("\nHelper inventory:")
-        print(json.dumps(inventory, indent=2))
+    inventory = helper_inventory(
+        output_base, helpers, changes_by_helper=_change_records(engine, options.output)
+    )
+    inventory["target"] = str(source if source.is_dir() else source.parent)
+    return inventory
+
+
+def _command_result(
+    engine: "UnificationRefactorEngine",
+    options: DryOptions,
+    applied: int,
+    termination: str,
+    *,
+    preview: bool,
+) -> CommandResult:
+    inventory = None
+    if options.json:
+        try:
+            inventory = _preview_inventory(engine, options)
+            if not preview:
+                output = Path(options.output).resolve()
+                inventory["target"] = str(output if output.is_dir() else output.parent)
+        except (OSError, ValueError) as error:
+            # A naming aid is optional; a failed read after dry has committed
+            # must not turn published output into a reported failed operation.
+            LOG.warning("Helper inventory unavailable: %s", error)
+    return {
+        "schema_version": 1,
+        "command": "preview" if preview else "dry",
+        "status": "complete",
+        "input": str(Path(options.input).resolve()),
+        "output": None if preview else str(Path(options.output).resolve()),
+        "published": not preview,
+        "applied": applied,
+        "termination": termination,
+        "diff": (
+            source_diff(Path(options.input), Path(options.output), options.exclude)
+            if preview and (options.json or options.diff)
+            else ""
+        ),
+        "helpers": inventory,
+        "error": None,
+    }
+
+
+def _write_failure_result(
+    args: argparse.Namespace,
+    status: Literal["incomplete", "error"],
+    termination: str,
+    error: str,
+) -> None:
+    if args.command not in {"dry", "preview"} or not getattr(args, "json", False):
+        return
+    result: CommandResult = {
+        "schema_version": 1,
+        "command": args.command,
+        "status": status,
+        # Failure reporting must not repeat the filesystem operation that
+        # failed: lexical absolute paths work even for inaccessible/looped paths.
+        "input": os.path.abspath(args.input if args.command == "dry" else args.target),
+        "output": os.path.abspath(args.output) if args.command == "dry" else None,
+        "published": False if args.command == "preview" or termination == "time_limit" else None,
+        "applied": 0,
+        "termination": termination,
+        "diff": "",
+        "helpers": None,
+        "error": error,
+    }
+    try:
+        print(json.dumps(result, indent=2))
+    except BrokenPipeError:
+        # Preserve the operation's failure status when its reader has gone.
+        _close_stdout_quietly()
 
 
 def _run_quick_preview(options: PreviewOptions) -> None:
@@ -1771,12 +1880,10 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
     target = options.target
 
     if not target.exists():
-        print(f"Error: '{target}' does not exist")
-        sys.exit(1)
+        raise ValueError(f"'{target}' does not exist")
 
     if not target.is_dir():
-        print(f"Error: '{target}' must be a directory")
-        sys.exit(1)
+        raise ValueError(f"'{target}' must be a directory")
     journal = _pending_journal(target)
     if journal is not None:
         LOG.warning("%s", pending_journal_remedy(journal, "a rename here would change"))
@@ -1788,7 +1895,7 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
         include_named=bool(options.rename_file and not options.list),
     )
 
-    if not helpers and not options.rename_file:
+    if not helpers and not options.rename_file and not (options.list and options.json):
         # A mapping may still rename parameters of helpers renamed earlier;
         # the planner validates every key against the current source.
         print(f"No extracted helper functions found in {target}")
@@ -1824,7 +1931,7 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
         if options.json:
             print(json.dumps({"applied": False, "dry_run": options.preview, "error": reason}))
         else:
-            print(f"Error: {reason}")
+            print(f"Error: {reason}", file=sys.stderr)
         sys.exit(2)
 
     if options.rename_file:
@@ -1896,10 +2003,10 @@ def _load_modules(target: Path) -> Dict[Path, Tuple[str, ast.Module]]:
 
 
 def _confirm(prompt: str) -> bool:
-    """Ask a yes/no question; a closed stdin or an interrupt answers no."""
+    """Ask a yes/no question; unavailable stdin declines, an interrupt propagates."""
     try:
         return input(prompt).strip().lower() == "y"
-    except (EOFError, KeyboardInterrupt, OSError, RuntimeError):
+    except (EOFError, OSError, RuntimeError):
         # A closed or lost stdin answers no; ``input`` raises RuntimeError for
         # a closed descriptor and OSError for one that cannot be read.
         print()
@@ -2193,7 +2300,7 @@ def _apply_rename_file(
         if as_json:
             print(json.dumps({"applied": False, "dry_run": dry_run, "error": str(error)}))
         else:
-            print(f"Error: {error}")
+            print(f"Error: {error}", file=sys.stderr)
         sys.exit(2)
     if as_json:
         print(
@@ -2315,15 +2422,9 @@ def _run_interactive_llm_mode(
     )
     print()
 
-    try:
-        llm_response = sys.stdin.read().strip()
-    except KeyboardInterrupt:
-        print("\nAborted.")
-        return
-
+    llm_response = sys.stdin.read().strip()
     if not llm_response:
-        print("No response provided. Aborted.")
-        return
+        raise ValueError("No response provided. Aborted; no names were changed")
 
     json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", llm_response, re.DOTALL)
     if json_match:
@@ -2338,13 +2439,10 @@ def _run_interactive_llm_mode(
     try:
         renames = json.loads(json_str)
     except json.JSONDecodeError as e:
-        print(f"\nError parsing JSON response: {e}")
-        print("Please ensure the response is valid JSON.")
-        sys.exit(1)
+        raise ValueError(f"Error parsing JSON response: {e}. Supply a valid JSON object") from e
 
     if not isinstance(renames, dict):
-        print("Error: Response must be a JSON object (dict)")
-        sys.exit(1)
+        raise ValueError("Response must be a JSON object (dict)")
 
     print("\n" + "=" * 70)
     _banner("STEP 2: APPLYING RENAMINGS")

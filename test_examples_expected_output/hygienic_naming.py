@@ -6,24 +6,6 @@ collide with variables in the surrounding scope or in the calling context.
 """
 
 
-def __extracted_func_1(cache, key, processed, temp, validated):
-    if validated:
-        temp.append(processed)
-        cache[key] = processed
-
-
-def __extracted_func_0(__param_0, values, x, y, _towel_owner):
-    output = []
-    for val in values:
-        # This block references outer 'x' and 'y'
-        # Same structure but different constant
-        a = val + x
-        b = a * y
-        c = b - __param_0
-        output.append(c)
-    return output
-
-
 def process_with_temp_var_v1(data, result):
     """Version 1: Uses 'result' in outer scope, 'x' in duplicate block."""
     result = []
@@ -50,20 +32,26 @@ def process_with_temp_var_v2(data, result):
 
 def calculate_nested_scope_a(values, x, y):
     """Uses x and y as parameters - extracted function must avoid these."""
-    _towel_arguments = [(y, x, values)]
-    del values
-    del x
-    del y
-    return __extracted_func_0(5, _towel_arguments[0][2], _towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
+    output = []
+    for val in values:
+        # This block references outer 'x' and 'y'
+        a = val + x
+        b = a * y
+        c = b - 5
+        output.append(c)
+    return output
 
 
 def calculate_nested_scope_b(values, x, y):
     """Same outer variable names - extracted function needs hygienic naming."""
-    _towel_arguments = [(y, x, values)]
-    del values
-    del x
-    del y
-    return __extracted_func_0(10, _towel_arguments[0][2], _towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
+    output = []
+    for val in values:
+        # Same structure but different constant
+        a = val + x
+        b = a * y
+        c = b - 10
+        output.append(c)
+    return output
 
 
 def transform_with_shadowing_v1(data, temp, cache):
@@ -75,7 +63,9 @@ def transform_with_shadowing_v1(data, temp, cache):
         # Block that modifies outer 'temp' and 'cache'
         processed = value.upper()
         validated = len(processed) > 5
-        __extracted_func_1(cache, key, processed, temp, validated)
+        if validated:
+            temp.append(processed)
+            cache[key] = processed
 
     return temp, cache
 
@@ -89,7 +79,9 @@ def transform_with_shadowing_v2(data, temp, cache):
         # Same pattern, different validation condition
         processed = value.lower()
         validated = len(processed) > 3
-        __extracted_func_1(cache, key, processed, temp, validated)
+        if validated:
+            temp.append(processed)
+            cache[key] = processed
 
     return temp, cache
 

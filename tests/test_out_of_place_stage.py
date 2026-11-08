@@ -31,6 +31,8 @@ from towel.filesystem import ProjectTooLarge, staged_project
 from towel.unification import fixed_point
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
+
 BODY = "    total = 0\n    for item in items:\n        total += item * {factor}\n    return total\n"
 MODULE = "def a1(items):\n" + BODY.format(factor=2) + "\n\ndef a2(items):\n" + BODY.format(factor=3)
 
@@ -90,9 +92,9 @@ def test_a_project_too_large_to_stage_is_refused_before_anything_is_written(
     monkeypatch.setattr(fixed_point, "MAXIMUM_FILES", 2)
     output = tmp_path / "out"
     with pytest.raises(ProjectTooLarge, match="give the code one"):
-        UnificationRefactorEngine(min_lines=3).refactor_directory_to_fixed_point(
-            str(package), str(output), progress="none"
-        )
+        UnificationRefactorEngine(
+            skip_trivial_helpers=False, min_lines=3
+        ).refactor_directory_to_fixed_point(str(package), str(output), progress="none")
     assert not output.exists()
     assert _leftovers(private_temp) == []
 
@@ -107,7 +109,7 @@ def test_a_failed_run_leaves_neither_output_nor_stage(
     def interrupted(*_args: object, **_kwargs: object) -> None:
         raise KeyboardInterrupt
 
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     monkeypatch.setattr(engine, "analyze_files", interrupted)
     monkeypatch.setattr(engine, "analyze_directory", interrupted)
     output = tmp_path / ("out.py" if single_file else "out")
@@ -129,7 +131,7 @@ def test_a_single_file_is_refactored_in_its_project_and_published_alone(
     project = tmp_path / "project"
     package = _project(project)
     output = tmp_path / "out.py"
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     _code, applied, _ = engine.refactor_to_fixed_point(
         str(package / "a.py"), progress="none", output_path=str(output)
     )

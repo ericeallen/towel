@@ -2,15 +2,16 @@
 
 [Documentation index](README.md)
 
-**1.948 repairs four silent `dry` miscompilations in 1.947** and corrects
-CLI help, cost reporting and progress output. The
-[changelog](../CHANGELOG.md#1948) describes the changes. The dated
-[preparation checkpoint](PRODUCTION_READINESS.md#1948-preparation-checkpoint-november-5-2026)
-retains its original status; completed validation and publication records belong
-in the [release history](https://github.com/ericeallen/towel/releases). Freeze the final versioned source before running
-the complete gates below. Keep final validation and publication outcomes
-external to the shipped source. Earlier releases and checkpoints below retain
-their own identities and results.
+**1.949 is an unpublished candidate** for the product-experience and maturity
+improvements in the [changelog](../CHANGELOG.md#1949). The fixes are implemented
+and local validation is in progress. The
+[preparation checkpoint](PRODUCTION_READINESS.md#1949-preparation-checkpoint-november-8-2026)
+records the current scope without claiming a complete release campaign or new
+runtime performance measurements. **1.948 remains the latest published release**;
+its [publication record](PRODUCTION_READINESS.md#1948-published-release-november-7-2026)
+and all earlier checkpoints retain their original source identities and results.
+Freeze the final versioned source before the complete gates below, and keep final
+validation and publication outcomes external to the shipped source.
 
 **1.947 was published October 26, 2026** on
 [PyPI](https://pypi.org/project/code-towel/1.947/) and
@@ -83,8 +84,12 @@ its memory, output or time budget is inconclusive, and the transformed observer
 is not launched. Transformed-only exhaustion remains a finding; unexplained
 process exits remain harness errors. Each observer has a 256 MiB memory budget,
 a 60-second overall deadline, and the existing per-call timeout. Linux enforces
-the memory limit with `RLIMIT_AS`; the parent also samples RSS (`/proc` on Linux,
-`ps` on macOS). Sampled RSS can overshoot between checks, so native macOS has
+the memory limit with `RLIMIT_AS`; the parent also samples RSS (`/proc` on Linux).
+The original macOS sampler used `ps`; the current harness reads the owned
+child's native `libproc` task RSS directly, so a sandbox that refuses the setuid
+`ps` executable does not disable observation. It requires a complete native
+record and treats only an exited PID as absent; permission and measurement
+failures remain errors. Sampled RSS can overshoot between checks, so native macOS has
 no hard memory guarantee. Failed RSS measurements fail closed. Run release
 campaigns in disposable Linux containers with an outer memory limit too.
 Captured streams stop at 20,000 characters, output files at a sampled 16 MiB,
@@ -248,12 +253,14 @@ Towel uses increasing, normalized PEP 440 identifiers with mathematical
 mnemonics: 1.772 names the square root of pi, 1.792 names ln 6, and 1.946 names
 ln 7. These two-component versions are not a strict Semantic Versioning scheme.
 The maintainer selected 1.947 for audit repairs after 1.946 and 1.948 for the
-following correctness and CLI repairs; neither adds a mathematical mnemonic.
+following correctness and CLI repairs. The unpublished 1.949 candidate continues
+that sequence for product-experience and maturity improvements; these repair
+versions do not add mathematical mnemonics.
 The 1.947 rename CLI introduced the complete-consumer scope requirement; see
 the [1.947 overview](RELEASE_1_947.md). A future 2.0 should accompany a deliberate
 major transition, rather than the size of a patch or a nearby mathematical value.
 
-At three decimal places, 1.948 leaves 51 larger labels below 2.000, from 1.949
+At three decimal places, 1.949 leaves 50 larger labels below 2.000, from 1.950
 through 1.999. Choose each future mnemonic and identifier explicitly; the current
 choice does not schedule 2.0. Version tools compare integer components, not real
 numbers: `1.9461` sorts after `1.999`, so adding decimal precision is not a way to
@@ -270,7 +277,7 @@ import-problem refusals among 141 projects. Its completed results remain in the
 under their original source and environment identities. They do not describe
 the later 1.792 release or the prepared 1.946 version.
 
-- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` (September 15, 2026), `1.618` (September 17, 2026), and `1.732` and `1.732.post1` (September 19, 2026) are published and not yanked. Version `1.772` is also published (release dated September 26; PyPI upload September 27 UTC). The verified 1.792 release followed on October 8 from `44d7795`. The published 1.946 release was verified on October 19, 2026, as recorded above. The 1.947 release followed on October 26, 2026, as recorded above. None may be rebuilt or replaced. Prepare 1.948 as a new version under the same release gates.
+- [PyPI's project metadata](https://pypi.org/pypi/code-towel/json) lists versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are yanked with the reason `broken import handling`. Those versions were uploaded December 3–4, 2025. A yanked version is still used; do not rebuild and attempt to replace its files. `1.414` (September 15, 2026), `1.618` (September 17, 2026), and `1.732` and `1.732.post1` (September 19, 2026) are published and not yanked. Version `1.772` is also published (release dated September 26; PyPI upload September 27 UTC). The verified 1.792 release followed on October 8 from `44d7795`. The published 1.946 release was verified on October 19, 2026, as recorded above. The 1.947 release followed on October 26, 2026, as recorded above. None may be rebuilt or replaced. Prepare future versions under the same release gates; never replace published artifacts.
 - The GitHub repository was made public on September 15, 2026, and its default branch is `main`. Earlier authenticated inspection (while private) found historical releases `v0.5.0` and `v0.5.1`, an active CI workflow, and an unprotected `main` branch. Verify the actual remote settings before relying on any of them.
 - PyPI embeds each uploaded distribution's README. A new distribution must carry the current version's documentation links, known limitations and Python requirement; editing GitHub afterward does not update an uploaded description.
 
@@ -423,9 +430,76 @@ subsequent edit requires recording them again.
 
 Validation-only verification can reconcile later documentation against old
 validation artifacts while retaining their exact original source identity.
-For an actual release, changes to a file already shipped in those archives
-refuse the gate: freeze and validate the final release contents and artifacts
-instead. No version-only drift exception is provided.
+For an actual release, an old archive cannot stand in for changed shipping
+documentation. Rebuild the final archives and check them as described below.
+Version, runtime, configuration, lockfile, harness and test changes still
+require a new full campaign; there is no version-only drift exception.
+
+#### Rebuilding documentation without repeating the runtime campaign
+
+Use this path only after a complete successful campaign, when **every** Git
+change since `validation_commit` is prose: root `.md` files or `.md`, `.rst`
+and `.txt` files under `docs/`. Python files, data assets, project settings,
+the package version and every other file must be byte-identical. This is a
+documentation correction to an unpublished candidate, not permission to
+replace an artifact already published under that version.
+
+Keep the original bundle and artifacts. Commit the final documentation, then:
+
+1. Build new wheel and sdist in a new directory inside that evidence bundle,
+   using the same pinned development environment and `python -m build
+   --no-isolation --outdir REBUILD/dist`. Record the installed tool versions
+   again with `python scripts/audit_dependencies.py`; they must match the
+   original `dependencies-dev.txt` exactly. Isolated builds may resolve
+   different backend versions, so they are not accepted for this shortcut.
+2. Repeat artifact inspection, strict Twine checks, the dependency audit, diagrams, all six clean
+   wheel installation smokes and the documentation tests from the new sdist.
+   Use the existing record formats and filenames in `REBUILD`. The verifier
+   checks the actual new archive contents, wheel metadata and RECORD, and
+   requires the smoke records to name the new wheel/sdist hashes. Wheel install
+   commands must name the rebuilt wheel's actual path; relative operands need
+   an absolute `cwd` in their command record. In `sdist-docs-result.json`, add
+   an initial `extract` step recording `tar -xzf /absolute/new/archive.tar.gz
+   -C /absolute/unpack-directory`. Record the absolute `cwd` of the existing
+   `sync`, `source` and `tests` steps: each must be the new archive's root
+   directory under that unpack directory. The old
+   matrix, fuzz, corpus and self-dogfood observations retain their original
+   commit and artifact identities.
+3. Put the review in `REBUILD/amendment-review.md`. Record the supplemental
+   documentation checks in `REBUILD/amendment-checks.json`: an array using
+   the check shape above, with each `log` a filename relative to `REBUILD`
+   and `files` omitted. Include the actual command, start/end times, exit
+   status and changed paths covered; the assembly command adds exact source
+   hashes. `build-results.json` retains its five existing step names; its
+   unchanged-source quality result may be carried forward with its original
+   times, while its build and distribution steps describe the new artifacts.
+
+The assembly command computes the references and verifies the combined result;
+you do not need to construct another full evidence manifest:
+
+```sh
+uv run --frozen python scripts/verify_release_evidence.py VERSION \
+  /path/to/bundle/release-evidence.json \
+  --prepare-docs-rebuild /path/to/bundle/rebuilt \
+  --output /path/to/bundle/release-with-docs.json
+just release VERSION /path/to/bundle/release-with-docs.json
+```
+
+`--output` must be a new file beside the original bundle. Preparation never
+executes recorded commands or invents successful results. Missing or failed
+checks refuse verification; an unsuccessful preparation leaves its output
+for inspection and cannot overwrite the original. The second command also
+checks that GitHub's default branch contains the final documentation commit.
+Both commands print the **rebuilt** artifacts to publish.
+
+For integrations, `amendments.rebuilt` contains `commit`, `artifacts` and
+`records` using the ordinary file-reference shapes. Its record keys are
+exported as `DOCUMENTATION_REBUILD_RECORDS` by the verifier. Only these final
+package records are overlaid; all original runtime records are verified first.
+The wheel may change only its README description and corresponding RECORD
+hashes. The sdist may change only prose and its generated documentation
+metadata, including the source-file listing; generated dependencies and
+entry points must remain identical too.
 
 ## Local evidence required
 
@@ -456,6 +530,7 @@ run on an ancestor or a different pull-request merge is insufficient.
 | --- | --- | --- | --- |
 | Full tests and coverage | `ubuntu-latest` | 3.11, 3.12, 3.13 | 85% coverage gate |
 | Quality and distributions | `ubuntu-latest` | 3.13 | Black, Flake8, mypy, Bandit, dependency audit, build |
+| Installed-wheel integration | `macos-latest` | 3.13 | CLI, file publication/recovery, checker and formatter worker lifecycle |
 | Scheduled/manual corpus | `ubuntu-latest` | 3.13 | untyped (`--no-types`); 2 concurrent projects; 180-minute job limit |
 
 `tests/test_release_documentation.py` compares this table with the workflow
@@ -778,10 +853,15 @@ but does not currently require a secret-scan record.
 PyPI renders the README embedded in the distribution metadata. Pushing a README
 change to GitHub does not update an already uploaded release's description.
 PyPI also does not resolve repository-relative Markdown links against GitHub.
-Use absolute GitHub URLs pinned to the release tag for README links to other
-repository files; fragment-only links within the README can stay relative.
-Update the pinned tag in those URLs when changing the package version. The
-documentation-link tests reject relative file links and mismatched tags.
+A development README may link to its current guides with repository-relative
+paths while it explicitly identifies itself as a development branch. Before
+freezing a release, remove that development notice, update its release-status
+line to the chosen version, and convert current-guide links to absolute GitHub
+URLs pinned to that release tag. Fragment-only links within the README can stay
+relative. Retain immutable historical evidence under its original release.
+Do not publish the development wording or its relative guide links: PyPI cannot
+resolve them against the checkout. The documentation-link tests require
+portable links when the development notice is absent and reject mismatched tags.
 `twine check --strict` checks description rendering, not whether links reach
 the intended documents. Checking that PyPI received the correct README text
 does not establish that its links work there; verify the URL destinations too.
@@ -836,7 +916,7 @@ require repeating acceptance work:
 
 1. Move completed changes from `[Unreleased]` into `## [X.Y]` in [CHANGELOG.md](../CHANGELOG.md) and leave an empty `[Unreleased]` above it. Add a date only if it is already known; publication metadata can record the actual date without changing frozen artifacts.
 2. Add a preparation entry to [RELEASE_LOG.md](RELEASE_LOG.md) naming the version, summary, existing evidence and its limits. Record the final commit, artifact hashes, completed outcomes and CI run externally alongside the artifacts; do not edit a shipped file after its validation freeze.
-3. Update the current-version summary in this document and the readiness report. Do not describe a planned check or publication as completed.
+3. Update the current-version summary in this document and the readiness report. Replace the README development notice with truthful release wording, update its release status, and pin current-guide links to the chosen release tag before building. Preserve historical evidence links. Do not describe a planned check or publication as completed.
 
 After exact-commit CI and the live PyPI availability check, the maintainer may
 tag `vX.Y` as specified above. Inspect current tags rather than relying on a

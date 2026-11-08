@@ -19,6 +19,8 @@ programs in separate interpreters: successful compilation cannot detect a helper
 reading a different binding, or reading the right binding on an untaken path.
 """
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -45,7 +47,7 @@ def _assert_preserved(
     before.write_text(textwrap.dedent(source))
     if safe_companion:
         # Retain the original owned-frame refusal and its binding observations.
-        guarded = UnificationRefactorEngine(settings=SERIAL)
+        guarded = UnificationRefactorEngine(skip_trivial_helpers=False, settings=SERIAL)
         unchanged, count, _ = guarded.refactor_to_fixed_point(str(before), progress="none")
         assert count == 0 and unchanged == before.read_text()
         assert observe("before.py", tmp_path) == (0, expected, [])
@@ -69,7 +71,7 @@ def _assert_preserved(
         module.body.insert(0, ast.parse("_lexical_events = []").body[0])
         source = ast.unparse(ast.fix_missing_locations(module))
         before.write_text(source)
-    engine = UnificationRefactorEngine(settings=SERIAL)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, settings=SERIAL)
     final, applied, _ = engine.refactor_to_fixed_point(str(before), progress="none")
     assert applied > 0, "The regression must exercise a real transformation"
     (tmp_path / "after.py").write_text(final)

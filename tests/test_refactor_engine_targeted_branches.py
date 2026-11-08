@@ -23,6 +23,8 @@ from typing import FrozenSet, List, Optional
 
 from towel.unification.exceptions import RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
 from tests.test_helpers import TemporaryModuleTestCase
 from towel.unification.overlap import filter_overlapping_proposals
 from towel.unification.models import RefactoringProposal, Replacement
@@ -49,7 +51,9 @@ class TestRefactorEngineTargetedBranches(TemporaryModuleTestCase):
                 return inner1() + inner2()
             """)
         path = self._write_temp(code)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, max_parameters=5, min_lines=2
+        )
         proposals = engine.analyze_file(path)
         # Expect at least one proposal extracting common inner blocks
         self.assertTrue(proposals, "Expected a proposal for similar inner blocks")
@@ -85,7 +89,9 @@ class TestRefactorEngineTargetedBranches(TemporaryModuleTestCase):
                 return y
             """).lstrip("\n")
         path = self._write_temp(code)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, max_parameters=5, min_lines=2
+        )
         proposals = engine.analyze_file(path)
         self.assertTrue(proposals, "Expected proposal for identical module-level functions")
         modified = engine.apply_refactoring(path, proposals[0])
@@ -111,7 +117,9 @@ class TestRefactorEngineTargetedBranches(TemporaryModuleTestCase):
                 return value
             """)
         path = self._write_temp(code)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1
+        )
         proposals = engine.analyze_file(path)
         # Should reject trivial single-line return blocks (only 'return <name>' duplicated)
         self.assertFalse(any("trivial" in p.description.lower() for p in proposals))
@@ -134,7 +142,9 @@ class TestRefactorEngineTargetedBranches(TemporaryModuleTestCase):
                 b = 3  # no return in else path
             """)
         path = self._write_temp(code)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, max_parameters=5, min_lines=2
+        )
         proposals = engine.analyze_file(path)
         # Should reject due to missing complete return coverage
         self.assertFalse(proposals, "Expected no proposals due to incomplete return coverage")
@@ -173,7 +183,9 @@ class TestRefactorEngineTargetedBranches(TemporaryModuleTestCase):
             observed(local, "f1()")
         self.assertIn("UnboundLocalError", failure.exception.stderr)
         path = self._write_temp(code)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, max_parameters=5, min_lines=3
+        )
         self.assertEqual(engine.analyze_file(path), [])
         self.assertEqual(Path(path).read_text(), code)
         self.assertEqual(observed(code, "print(f1(), f2(), G)"), "3 4 2\n")
@@ -231,7 +243,9 @@ class TestRefactorEngineTargetedBranches(TemporaryModuleTestCase):
                 return inner1() + inner2()
             """)
         path = self._write_temp(code)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, max_parameters=5, min_lines=3
+        )
         proposals = engine.analyze_file(path)
         # Should skip due to nonlocal presence
         self.assertFalse(proposals, "Expected no proposals when nonlocal variables present")
@@ -289,7 +303,9 @@ class TestRefactorEngineTargetedBranches(TemporaryModuleTestCase):
                     return interim
             """).lstrip("\n")
         path = self._write_temp(positive, name="method_positive.py")
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1
+        )
         helper_func = ast.parse("def helper(self, value):\n    return value + self.offset\n").body[
             0
         ]
@@ -392,7 +408,7 @@ def consumer(data):
             )
 
             engine = UnificationRefactorEngine(
-                max_parameters=5, min_lines=1, cross_module_helpers=True
+                skip_trivial_helpers=False, max_parameters=5, min_lines=1, cross_module_helpers=True
             )
 
             helper_func = ast.parse("def helper(value):\n    return value\n").body[0]

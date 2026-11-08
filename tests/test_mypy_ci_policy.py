@@ -192,7 +192,10 @@ def test_unrelated_valid_extraction_remains_useful_under_ci_strict(tmp_path: Pat
     module.write_text(source)
     oracle = MypyInferrer()
     try:
-        engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+        # Exercise typed materialization independently of the default usefulness threshold.
+        engine = UnificationRefactorEngine(
+            min_lines=3, type_oracle=oracle, skip_trivial_helpers=False
+        )
         proposals = engine.analyze_files([str(module)], progress="none")
         assert proposals
         changed = engine.apply_refactoring(str(module), proposals[0])

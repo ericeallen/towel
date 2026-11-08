@@ -341,15 +341,38 @@ for name in (('first', 'second', 'third') if sys.argv[3] == 'additional_unsafe_c
 """
 
 
+def _substantial_branch(body: str) -> str:
+    """Keep the real CLI controls profitable while retaining the observed branch effects."""
+    lines: list[str] = []
+    for line in body.splitlines(keepends=True):
+        if line.lstrip().startswith(("answer = doubled +", "final = twice +")):
+            indent = line[: len(line) - len(line.lstrip())]
+            value = "twice" if "final =" in line else "doubled"
+            # A chained arithmetic calculation provides useful shared work. Each
+            # overload, exception and intermediate lifetime remains in the oracle.
+            current = value
+            for index, coefficient in enumerate((2, 3, 5, 7, 11, 13, 17, 19)):
+                target = f"polynomial_{index}"
+                lines.append(f"{indent}{target} = {current} * 2 + {coefficient}\n")
+                current = target
+            line = line.replace(f"= {value} +", f"= {current} +")
+        lines.append(line)
+    return "".join(lines)
+
+
 def _source(case: BranchCase) -> str:
-    before, after = case.second.rsplit("    return ", 1)
+    substantial = case.useful or case.name == "six_arguments"
+    first = _substantial_branch(case.first) if substantial else case.first
+    body = _substantial_branch(case.second) if substantial else case.second
+    before, after = body.rsplit("    return ", 1)
     second = before + "    consume('second-continuation')\n    return " + after
     source = (
         case.definitions
-        + f"\ndef first({case.signature}):\n{case.first}\ndef second({case.signature}):\n{second}"
+        + f"\ndef first({case.signature}):\n{first}\ndef second({case.signature}):\n{second}"
     )
     if case.third is not None:
-        source += f"\ndef third({case.signature}):\n{case.third}"
+        third = _substantial_branch(case.third) if substantial else case.third
+        source += f"\ndef third({case.signature}):\n{third}"
     return source
 
 

@@ -37,6 +37,8 @@ import pytest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 BODY = """
     print("begin {tag}")
     total = 0
@@ -145,7 +147,11 @@ def test_the_typed_project_still_checks_after_the_extraction(
     program = "from alpha import a, b; print(a.fa([1, -2], 2), b.fb([1, -2], 3))"
     expected = _calls(tmp_path / "src", program)
     engine = UnificationRefactorEngine(
-        min_lines=3, max_parameters=8, annotate_helpers=False, cross_module_helpers=True
+        skip_trivial_helpers=False,
+        min_lines=3,
+        max_parameters=8,
+        annotate_helpers=False,
+        cross_module_helpers=True,
     )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(

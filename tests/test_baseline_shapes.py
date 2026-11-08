@@ -24,6 +24,9 @@ copy's, and an error on a line the change left alone by that line's. No
 checker runs here: the errors are synthetic, the texts real Python.
 """
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 from __future__ import annotations
 
 import importlib.util
@@ -419,7 +422,9 @@ def test_mypy_d6_the_union_that_fills_the_freed_slots_is_refused(tmp_path: Path)
     module.write_text(BEFORE.split("\n\nWRONG")[0] + "\n", encoding="utf-8")
     oracle = MypyInferrer()
     try:
-        engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, min_lines=3, type_oracle=oracle
+        )
         engine.refactor_to_fixed_point(str(module), progress="none")
         written = module.read_text(encoding="utf-8")
         result = oracle.check_project({str(module): written})

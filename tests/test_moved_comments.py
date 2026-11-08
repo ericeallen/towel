@@ -72,7 +72,11 @@ def _without_comments(source: str) -> str:
 
 
 def _engine(**options: object) -> UnificationRefactorEngine:
-    return UnificationRefactorEngine(min_lines=3, settings=SERIAL, **options)  # type: ignore[arg-type]
+    # Minimal fixtures isolate comment placement and directive safety from
+    # the optional readability policy. The CLI control keeps product defaults.
+    return UnificationRefactorEngine(
+        min_lines=3, settings=SERIAL, skip_trivial_helpers=False, **options  # type: ignore[arg-type]
+    )
 
 
 def _refactor(path: Path, **options: object) -> str:
@@ -1418,7 +1422,25 @@ def test_the_run_reports_an_unreadable_configuration(tmp_path: Path) -> None:
     project.mkdir()
     (project / "setup.py").write_text("")
     (project / ".coveragerc").write_text("[report\nexclude_lines = x\n")
-    _write(project, _LOOP.format(comment=""))
+    # Give the public CLI useful shared work so this control reaches the
+    # extraction and configuration-warning paths with its default policy.
+    source = textwrap.dedent(_LOOP.format(comment="")).replace(
+        "    return total + 1",
+        """    total = total + 17
+    total = total * 19
+    total = total - 23
+    total = total // 29
+    total = total + 31
+    total = total * 37
+    total = total - 41
+    total = total // 43
+    total = total + 47
+    total = total * 53
+    total = total - 59
+    total = total // 61
+    return total + 1""",
+    )
+    _write(project, source)
     completed = subprocess.run(
         [
             sys.executable,

@@ -8,26 +8,6 @@ Tests that:
 """
 
 
-def __extracted_func_2(__param_0, __param_1, name):
-    prefix = __param_0
-    suffix = __param_1
-    return prefix + name + suffix
-
-
-def __extracted_func_1(value, _towel_owner):
-    precision = 2
-    result = f'Value: {value:.{precision}f}'
-    return result
-
-
-def __extracted_func_0(__param_0, __param_1, item):
-    threshold = __param_0
-    multiplier = __param_1
-    if item > threshold:
-        return item * multiplier
-    return 0
-
-
 def log_user(user_id, name):
     """Log user with f-string."""
     status = "active"
@@ -48,36 +28,48 @@ def log_admin(admin_id, name):
 
 def format_number_a(value):
     """F-string with formatting."""
-    _towel_arguments = [(value,)]
-    del value
-    return __extracted_func_1(_towel_arguments[0][0], _towel_arguments.pop())
+    precision = 2
+    result = f"Value: {value:.{precision}f}"
+    return result
 
 
 def format_number_b(value):
     """F-string with formatting (same literal - should unify)."""
-    _towel_arguments = [(value,)]
-    del value
-    return __extracted_func_1(_towel_arguments[0][0], _towel_arguments.pop())
+    precision = 2
+    result = f"Value: {value:.{precision}f}"
+    return result
 
 
 def const_parameterization_a(item):
     """Test constant parameterization."""
-    return __extracted_func_0(100, 2, item)
+    threshold = 100
+    multiplier = 2
+    if item > threshold:
+        return item * multiplier
+    return 0
 
 
 def const_parameterization_b(item):
     """Test constant parameterization (different constants)."""
-    return __extracted_func_0(200, 3, item)
+    threshold = 200
+    multiplier = 3
+    if item > threshold:
+        return item * multiplier
+    return 0
 
 
 def string_const_a(name):
     """String constants."""
-    return __extracted_func_2('Mr. ', ' Esq.', name)
+    prefix = "Mr. "
+    suffix = " Esq."
+    return prefix + name + suffix
 
 
 def string_const_b(name):
     """String constants (different values)."""
-    return __extracted_func_2('Dr. ', ' PhD', name)
+    prefix = "Dr. "
+    suffix = " PhD"
+    return prefix + name + suffix
 
 
 def mixed_fstring_a(x, y):

@@ -30,6 +30,23 @@ from towel.unification.compiler_literals import pooled_literal_parts, retained_l
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.unifier import Unifier
 
+# CLI controls keep the production readability policy. A substantial shared
+# numeric calculation makes extraction useful while preserving the distinct
+# compiler-literal sites whose identities each observer checks.
+_CALCULATION = """    total = total + 17
+    total = total * 19
+    total = total - 23
+    total = total // 29
+    total = total + 31
+    total = total * 37
+    total = total - 41
+    total = total // 43
+    total = total + 47
+    total = total * 53
+    total = total - 59
+    total = total // 61
+"""
+
 
 @dataclass(frozen=True)
 class _Observation:
@@ -126,7 +143,7 @@ def test_complete_cli_preserves_repeated_pooled_literal_identity(
     project.mkdir()
     (project / "pyproject.toml").write_text('[project]\nname="pool-control"\nversion="0"\n')
     source = "\n".join(
-        f"def {name}(value):\n    literal = {literal}\n    subtotal = sum(value) + 11\n    total = subtotal * 13\n    return literal, total\n"
+        f"def {name}(value):\n    literal = {literal}\n    subtotal = sum(value) + 11\n    total = subtotal * 13\n{_CALCULATION}    return literal, total\n"
         for name, literal in (("f", first), ("g", second))
     )
     original = project / "input.py"
@@ -153,7 +170,7 @@ def test_identical_pooled_descendant_is_not_replaced_by_an_outside_structural_ma
 
 def test_whole_pooled_root_can_still_be_passed_from_its_original_caller(tmp_path: Path) -> None:
     source = "\n".join(
-        f"def {name}(value, literal_input):\n    literal = {literal}\n    subtotal = value + 11\n    total = subtotal * 13\n    return literal, total\n"
+        f"def {name}(value, literal_input):\n    literal = {literal}\n    subtotal = value + 11\n    total = subtotal * 13\n{_CALCULATION}    return literal, total\n"
         for name, literal in (("f", "(1000000, 1000000)"), ("g", "literal_input"))
     )
     original = tmp_path / "input.py"
@@ -169,7 +186,7 @@ def test_whole_pooled_root_can_still_be_passed_from_its_original_caller(tmp_path
 
 def test_dynamic_tuple_still_has_useful_parameterization(tmp_path: Path) -> None:
     source = "\n".join(
-        f"def {name}(value):\n    literal = (value, {literal})\n    subtotal = sum(value) + 11\n    total = subtotal * 13\n    return literal, total\n"
+        f"def {name}(value):\n    literal = (value, {literal})\n    subtotal = sum(value) + 11\n    total = subtotal * 13\n{_CALCULATION}    return literal, total\n"
         for name, literal in (("f", "1000000"), ("g", "1000001"))
     )
     original = tmp_path / "input.py"
@@ -222,7 +239,11 @@ def test_complete_cross_module_cli_preserves_common_literal_and_outside_correlat
     project = tmp_path / "project"
     project.mkdir()
     (project / "pyproject.toml").write_text('[project]\nname="pool-cross"\nversion="0"\n')
-    body = "outside = {literal}\ndef {name}(value):\n    literal = {literal}\n    subtotal = value + 11\n    total = subtotal * {factor}\n    return literal, total\n"
+    body = (
+        "outside = {literal}\ndef {name}(value):\n    literal = {literal}\n    subtotal = value + 11\n    total = subtotal * {factor}\n"
+        + _CALCULATION
+        + "    return literal, total\n"
+    )
     (project / "a.py").write_text(body.format(literal=literal, name="f", factor=5))
     (project / "b.py").write_text("import a\n" + body.format(literal=literal, name="g", factor=7))
     before = _cross_observe(project)
@@ -240,7 +261,11 @@ def test_cross_module_callers_keep_useful_fully_parameterized_or_singleton_liter
     project = tmp_path / "project"
     project.mkdir()
     (project / "pyproject.toml").write_text('[project]\nname="pool-positive"\nversion="0"\n')
-    body = "outside = {literal}\ndef {name}(value):\n    literal = {literal}\n    subtotal = value + {offset}\n    total = subtotal * {factor}\n    return literal, total\n"
+    body = (
+        "outside = {literal}\ndef {name}(value):\n    literal = {literal}\n    subtotal = value + {offset}\n    total = subtotal * {factor}\n"
+        + _CALCULATION
+        + "    return literal, total\n"
+    )
     for file, name, literal, offset, factor in (
         ("a.py", "f", "1000000", 5, 7),
         ("b.py", "g", "1000001", 6, 8),
@@ -296,7 +321,7 @@ def test_runtime_literal_facts_ignore_metadata_targets_and_slices() -> None:
 def test_literal_membership_keeps_ordinary_hash_and_equality_effects(tmp_path: Path) -> None:
     modulus = sys.hash_info.modulus
     source = "\n".join(
-        f"def {name}(value):\n    matched = value in {{{left}, {right}}}\n    subtotal = 11\n    total = subtotal * 13\n    return matched, total\n"
+        f"def {name}(value):\n    matched = value in {{{left}, {right}}}\n    subtotal = 11\n    total = subtotal * 13\n{_CALCULATION}    return matched, total\n"
         for name, left, right in (("f", modulus, modulus * 2), ("g", modulus * 3, modulus * 4))
     )
 
@@ -339,7 +364,11 @@ def test_literal_carrier_preserves_same_module_and_cross_module_cluster_correlat
     project = tmp_path / "project"
     project.mkdir()
     (project / "pyproject.toml").write_text('[project]\nname="pool-cluster"\nversion="0"\n')
-    body = "def {name}(value):\n    literal = (1000000, 1000000)\n    subtotal = value + 11\n    total = subtotal * {factor}\n    return literal, total\n"
+    body = (
+        "def {name}(value):\n    literal = (1000000, 1000000)\n    subtotal = value + 11\n    total = subtotal * {factor}\n"
+        + _CALCULATION
+        + "    return literal, total\n"
+    )
     (project / "a.py").write_text(
         body.format(name="f", factor=5) + body.format(name="f_again", factor=7)
     )
@@ -401,7 +430,7 @@ def test_complete_cli_preserves_distinct_nan_compiler_occurrences(
 ) -> None:
     source = "\n".join(
         f"def {name}(value):\n    first = {literal}\n    second = {literal}\n"
-        f"    subtotal = value + {factor}\n    total = subtotal * 11\n    return first, second, total\n"
+        f"    subtotal = value + {factor}\n    total = subtotal * 11\n{_CALCULATION}    return first, second, total\n"
         for name, factor in (("f", 5), ("g", 7))
     )
     observer = "print(f(1)[0] is g(1)[0]); print(f(1)[0] is f(1)[1]); print([f(1)[0]] == [g(1)[0]])"
@@ -439,7 +468,7 @@ def test_default_typed_carrier_preserves_float_operand_and_outside_identity(tmp_
         (project / f"{module}.py").write_text(
             prefix + f"outside = 1000000.25\ndef {function}(value: float) -> tuple[float, float]:\n"
             "    literal = 1000000.25\n    subtotal = value + literal\n"
-            f"    total = subtotal * literal\n    return literal, total + {factor}\n"
+            f"    total = subtotal * literal\n{_CALCULATION}    return literal, total + {factor}\n"
         )
 
     def observe(root: Path) -> str:
@@ -522,7 +551,7 @@ def test_default_typed_heterogeneous_carrier_keeps_precise_selectors(tmp_path: P
             "    number = 1000000\n    fraction = 1000000.25\n"
             "    label = 'a label with spaces'\n    data = b'a byte label'\n"
             "    samples = (1000002,1000003)\n"
-            f"    subtotal = value + {factor}\n    total = subtotal * 11\n"
+            f"    subtotal = value + {factor}\n    total = subtotal * 11\n{_CALCULATION}"
             "    return number,fraction,label,data,samples,total\n"
         )
     (project / "consumer.py").write_text(
@@ -612,7 +641,7 @@ def test_whole_root_thunk_preserves_unused_branch_and_exception_order(tmp_path: 
     source = "\n".join(
         f"def {name}(value):\n    print('start')\n    if value:\n        literal = +{label!r}\n"
         "    else:\n        literal = 'safe'\n"
-        f"    subtotal = value + {factor}\n    total = subtotal * 11\n    return literal,total\n"
+        f"    subtotal = value + {factor}\n    total = subtotal * 11\n{_CALCULATION}    return literal,total\n"
         for name, label, factor in (("f", "unsupported a", 5), ("g", "unsupported b", 7))
     )
     observer = """for function in (f,g):

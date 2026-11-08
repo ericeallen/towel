@@ -6,25 +6,12 @@ and don't accidentally capture or modify variables incorrectly.
 """
 
 
-def __extracted_func_1(accumulator, multiplier, value, _towel_owner):
-    processed = value * multiplier
-    validated = processed > 0
-    if validated:
-        accumulator.append(processed)
-    return processed
-
-
-def __extracted_func_0(__param_0, cache, data, metrics, _towel_owner):
-    for key, value in data.items():
-        # Modifies both cache and metrics
-        # Same pattern, different multiplier
-        processed = value * __param_0
-        cache[key] = processed
-        metrics['count'] += 1
-        metrics['total'] += processed
-        if processed > 100:
-            metrics['high_value'] += 1
-    return (cache, metrics)
+def __extracted_func_0(cache, key, metrics, processed):
+    cache[key] = processed
+    metrics['count'] += 1
+    metrics['total'] += processed
+    if processed > 100:
+        metrics['high_value'] += 1
 
 
 def update_mutable_state_v1(items, counter):
@@ -89,10 +76,11 @@ def accumulate_with_closure_v1(items, accumulator):
 
     def add_processed(value, multiplier):
         # Closure captures 'accumulator'
-        _towel_arguments_1 = [(multiplier, value)]
-        del value
-        del multiplier
-        return __extracted_func_1(accumulator, _towel_arguments_1[0][0], _towel_arguments_1[0][1], _towel_arguments_1.pop())
+        processed = value * multiplier
+        validated = processed > 0
+        if validated:
+            accumulator.append(processed)
+        return processed
 
     results = [add_processed(item, 2) for item in items]
     return accumulator, results
@@ -104,10 +92,11 @@ def accumulate_with_closure_v2(items, accumulator):
 
     def add_processed(value, multiplier):
         # Same closure pattern
-        _towel_arguments_1 = [(multiplier, value)]
-        del value
-        del multiplier
-        return __extracted_func_1(accumulator, _towel_arguments_1[0][0], _towel_arguments_1[0][1], _towel_arguments_1.pop())
+        processed = value * multiplier
+        validated = processed > 0
+        if validated:
+            accumulator.append(processed)
+        return processed
 
     results = [add_processed(item, 3) for item in items]
     return accumulator, results
@@ -251,17 +240,19 @@ def nested_scope_capture_valid_v2(outer_data, processor):
 
 def modify_external_state_a(data, cache, metrics):
     """Version A: Modifies multiple external objects."""
-    _towel_arguments = [(metrics, cache, data)]
-    del data
-    del cache
-    del metrics
-    return __extracted_func_0(2, _towel_arguments[0][1], _towel_arguments[0][2], _towel_arguments[0][0], _towel_arguments.pop())
+    for key, value in data.items():
+        # Modifies both cache and metrics
+        processed = value * 2
+        __extracted_func_0(cache, key, metrics, processed)
+
+    return cache, metrics
 
 
 def modify_external_state_b(data, cache, metrics):
     """Version B: Different multiplier, same modification pattern."""
-    _towel_arguments = [(metrics, cache, data)]
-    del data
-    del cache
-    del metrics
-    return __extracted_func_0(3, _towel_arguments[0][1], _towel_arguments[0][2], _towel_arguments[0][0], _towel_arguments.pop())
+    for key, value in data.items():
+        # Same pattern, different multiplier
+        processed = value * 3
+        __extracted_func_0(cache, key, metrics, processed)
+
+    return cache, metrics

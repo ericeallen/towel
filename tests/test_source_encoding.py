@@ -33,6 +33,8 @@ from towel.source_text import (
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 DUPLICATES = (
     "def f(a):\n    x = a + 1\n    y = x * 2\n    z = y + compute(a)\n    return z\n\n\n"
     "def g(b):\n    x = b + 1\n    y = x * 2\n    z = y + compute(b)\n    return z\n\n\n"
@@ -41,7 +43,9 @@ DUPLICATES = (
 
 
 def _dry(source_dir: Path, out: Path) -> int:
-    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(source_dir), str(out), max_iterations=0, progress="none"
@@ -132,7 +136,9 @@ def test_an_escape_the_rendering_spelled_as_a_character_is_written_back_escaped(
     module = source / "m.py"
     module.write_bytes(UNENCODABLE.encode("latin-1"))
     out = tmp_path / ("out.py" if single_file else "out")
-    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
+    )
     with contextlib.redirect_stdout(io.StringIO()):
         if single_file:
             _code, applied, _ = engine.refactor_to_fixed_point(

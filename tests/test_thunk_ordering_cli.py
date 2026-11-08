@@ -81,7 +81,18 @@ _CASES = (
     OrderingCase("unbound", ("d[~MISSING_LEFT] = +1", "d[~MISSING_RIGHT] = +2"), True),
 )
 
-_TAIL = "    marker = (1, 2, 3, 4, 5, 6, 7, 8)\n    same = (marker, marker)\n    return d, same\n"
+# Derive the same observed marker through enough shared work to repay the
+# complete helper interface; the preceding assignments still exercise ordering.
+_MARKER = (
+    "    marker_zero = 0\n    marker_one = marker_zero + 1\n"
+    "    marker_two = marker_one + 1\n    marker_three = marker_two + 1\n"
+    "    marker_four = marker_three + 1\n    marker_five = marker_four + 1\n"
+    "    marker_six = marker_five + 1\n    marker_seven = marker_six + 1\n"
+    "    marker_eight = marker_seven + 1\n"
+    "    marker = (marker_one, marker_two, marker_three, marker_four, "
+    "marker_five, marker_six, marker_seven, marker_eight)\n"
+)
+_TAIL = _MARKER + "    same = (marker, marker)\n    return d, same\n"
 _MODES = ("ok", "store-error", "property-error", "prepare-error", "value-error", "false", "rebind")
 _DRIVER = r"""import gc
 import json

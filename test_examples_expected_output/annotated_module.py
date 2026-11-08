@@ -10,17 +10,9 @@ the frozen dataclass are the surrounding code the helpers must still fit.
 
 from dataclasses import dataclass
 from typing import Final
-import typing as _typing
 
 SCALE: Final[float] = 100.0
 EMPTY_LABEL: Final[str] = "empty"
-
-
-def __extracted_func_0(counts: _typing.Any, key: _typing.Any, order: _typing.Any) -> None:
-    if key not in counts:
-        counts[key] = 0
-        order.append(key)
-    counts[key] += 1
 
 
 @dataclass(frozen=True)
@@ -71,7 +63,10 @@ def describe_counts(items: list[object], *, width: int = 8) -> list[str]:
     order: list[str] = []
     for item in items:
         key: str = str(item)
-        __extracted_func_0(counts, key, order)
+        if key not in counts:
+            counts[key] = 0
+            order.append(key)
+        counts[key] += 1
     order.sort(key=lambda key: (-counts[key], key))
     return [f"{key:<{width}}{counts[key]}" for key in order]
 
@@ -82,7 +77,10 @@ def describe_shares(items: list[object], *, width: int = 8) -> list[str]:
     order: list[str] = []
     for item in items:
         key: str = str(item)
-        __extracted_func_0(counts, key, order)
+        if key not in counts:
+            counts[key] = 0
+            order.append(key)
+        counts[key] += 1
     order.sort(key=lambda key: (-counts[key], key))
     total = sum(counts.values())
     return [f"{key:<{width}}{counts[key] / total:.2f}" for key in order]

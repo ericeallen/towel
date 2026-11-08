@@ -34,6 +34,8 @@ from towel.type_inference import (
     TypeDiagnostic,
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
 from tests.probe_answers import answer_probes
 
 POISON = "never acceptable"
@@ -127,7 +129,7 @@ def _applied_and_hearings(
     (source / "program.py").write_text(_module())
     oracle = _RejectsThePoisonedHelper(relents_beside)
     engine = UnificationRefactorEngine(
-        min_lines=3, reuse_existing_functions=False, type_oracle=oracle
+        skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False, type_oracle=oracle
     )
     if directory:
         results, reason = engine.refactor_directory_to_fixed_point(

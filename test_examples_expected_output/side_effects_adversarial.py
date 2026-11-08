@@ -10,41 +10,12 @@ counter = 0
 log = []
 
 
-def __extracted_func_4(__param_0, __param_1, _towel_owner):
-    for item in __param_0:
-        __param_1.append(item)
-    return len(__param_1)
-
-
-def __extracted_func_3(__param_0, __param_1, __param_2):
-    __param_0[__param_1] = __param_2
-    __param_0['modified'] = True
-    return __param_0
-
-
-def __extracted_func_2(__param_0, cache):
-    if __param_0 in cache:
-        return True
-    cache.append(__param_0)
-    return False
-
-
-def __extracted_func_1(__param_0, __param_1, _towel_owner):
-    temp = __param_0[:]
+def __extracted_func_0(__param_0, __param_1, __param_2):
     __param_0.clear()
     __param_0.extend(__param_1)
     __param_1.clear()
-    __param_1.extend(temp)
+    __param_1.extend(__param_2)
     return len(__param_0) + len(__param_1)
-
-
-def __extracted_func_0(__param_0, _towel_owner):
-    global counter
-    result = []
-    for x in __param_0:
-        counter += 1
-        result.append(x * 2)
-    return result
 
 
 def append_and_sum_a(items):
@@ -70,69 +41,79 @@ def append_and_sum_b(values):
 # Mutable default argument - classic Python gotcha
 def process_with_cache_a(item, cache=[]):
     """Uses mutable default argument."""
-    return __extracted_func_2(item, cache)
+    if item in cache:
+        return True
+    cache.append(item)
+    return False
 
 
 def process_with_cache_b(value, cache=[]):
     """Similar pattern with mutable default."""
-    return __extracted_func_2(value, cache)
+    if value in cache:
+        return True
+    cache.append(value)
+    return False
 
 
 # Side effects in comprehensions
 def filter_and_log_a(items):
     """Side effect in list comprehension via global."""
-    _towel_arguments = [(items,)]
-    del items
-    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
+    global counter
+    result = []
+    for x in items:
+        counter += 1
+        result.append(x * 2)
+    return result
 
 
 def filter_and_log_b(values):
     """Similar side effect pattern."""
-    _towel_arguments = [(values,)]
-    del values
-    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
+    global counter
+    output = []
+    for y in values:
+        counter += 1
+        output.append(y * 2)
+    return output
 
 
 # Mutable object modification
 def modify_dict_a(data, key, value):
     """Modifies dict in place and returns it."""
-    return __extracted_func_3(data, key, value)
+    data[key] = value
+    data["modified"] = True
+    return data
 
 
 def modify_dict_b(config, k, v):
     """Similar dict modification pattern."""
-    return __extracted_func_3(config, k, v)
+    config[k] = v
+    config["modified"] = True
+    return config
 
 
 # List mutation
 def extend_and_return_a(lst, items):
     """Extends list in place."""
-    _towel_arguments_2 = [(items, lst)]
-    del lst
-    del items
-    return __extracted_func_4(_towel_arguments_2[0][0], _towel_arguments_2[0][1], _towel_arguments_2.pop())
+    for item in items:
+        lst.append(item)
+    return len(lst)
 
 
 def extend_and_return_b(target, values):
     """Similar list extension pattern."""
-    _towel_arguments_2 = [(values, target)]
-    del target
-    del values
-    return __extracted_func_4(_towel_arguments_2[0][0], _towel_arguments_2[0][1], _towel_arguments_2.pop())
+    for value in values:
+        target.append(value)
+    return len(target)
 
 
 # Multiple mutable arguments
 def swap_contents_a(list1, list2):
     """Swaps contents of two lists."""
-    _towel_arguments_1 = [(list2, list1)]
-    del list1
-    del list2
-    return __extracted_func_1(_towel_arguments_1[0][1], _towel_arguments_1[0][0], _towel_arguments_1.pop())
+    temp = list1[:]
+    return __extracted_func_0(list1, list2, temp)
 
 
 def swap_contents_b(a, b):
     """Similar swap pattern."""
-    _towel_arguments_1 = [(b, a)]
-    del a
-    del b
-    return __extracted_func_1(_towel_arguments_1[0][1], _towel_arguments_1[0][0], _towel_arguments_1.pop())
+    backup = a[:]
+    return __extracted_func_0(a, b, backup)

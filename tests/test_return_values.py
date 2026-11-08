@@ -27,6 +27,8 @@ import ast
 import tempfile
 from pathlib import Path
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
 from tests.test_helpers import get_test_example_path, assert_file_not_modified
 
 
@@ -36,7 +38,7 @@ class TestReturnValuePropagation(unittest.TestCase):
     def setUp(self):
         # Use min_lines=1 to test short code blocks
         self.engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=1, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1, parameterize_constants=True
         )
         # Capture original content to verify it's never modified
         self.example_path = get_test_example_path("return_values.py")

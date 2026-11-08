@@ -25,6 +25,9 @@ IMPORTANT: These tests NEVER modify test_examples files.
 All tests read from test_examples in read-only mode.
 """
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 import unittest
 import ast
 import tempfile
@@ -38,7 +41,7 @@ class TestForLoopBindings(unittest.TestCase):
 
     def setUp(self):
         self.engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=4, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=4, parameterize_constants=True
         )
         # Capture original content to verify it's never modified
         self.example_path = get_test_example_path("bindings_for_loops.py")
@@ -148,7 +151,7 @@ class TestScopingEdgeCases(unittest.TestCase):
 
     def setUp(self):
         self.engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=4, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=4, parameterize_constants=True
         )
         # Capture original content to verify it's never modified
         self.example_path = get_test_example_path("scoping_edge_cases.py")

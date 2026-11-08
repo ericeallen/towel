@@ -155,7 +155,10 @@ class TestRefactorEngineApplyEdgeCases(TemporaryModuleTestCase):
 
     def setUp(self):
         super().setUp()
-        self.engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
+        # These minimal semantic fixtures must still exercise materialization.
+        self.engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=2, skip_trivial_helpers=False
+        )
 
     def test_apply_with_invalid_line_numbers(self):
         """Test applying refactoring with invalid line numbers."""

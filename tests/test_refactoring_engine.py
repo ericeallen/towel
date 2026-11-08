@@ -26,6 +26,8 @@ import ast
 import tempfile
 from pathlib import Path
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
 from tests.test_helpers import (
     temporary_test_directory,
     copy_example_to_temp,
@@ -39,7 +41,7 @@ class TestRefactoringEngine(unittest.TestCase):
 
     def setUp(self):
         self.engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=4, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=4, parameterize_constants=True
         )
 
     def test_example1_simple(self):
@@ -149,7 +151,9 @@ class TestRefactoringEngine(unittest.TestCase):
         original_content = example_path.read_text()
 
         # Create engine with low parameter limit
-        engine = UnificationRefactorEngine(max_parameters=2, min_lines=4)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, max_parameters=2, min_lines=4
+        )
 
         proposals = engine.analyze_file(str(example_path))
 
@@ -173,7 +177,9 @@ class TestRefactoringEngine(unittest.TestCase):
         original_content = example_path.read_text()
 
         # Create engine with high min_lines
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=10)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, max_parameters=5, min_lines=10
+        )
 
         proposals = engine.analyze_file(str(example_path))
 
@@ -193,7 +199,11 @@ class TestDirectoryAnalysis(unittest.TestCase):
 
     def setUp(self):
         self.engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=4, parameterize_constants=True, cross_module_helpers=True
+            skip_trivial_helpers=False,
+            max_parameters=5,
+            min_lines=4,
+            parameterize_constants=True,
+            cross_module_helpers=True,
         )
 
     def test_analyze_directory(self):

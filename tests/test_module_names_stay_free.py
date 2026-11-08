@@ -21,6 +21,8 @@ parameter there; a clustered occurrence whose same-spelled name is a local
 does not join.
 """
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -112,7 +114,7 @@ def _helper_signature(source: str) -> str:
 def test_module_names_are_read_bare_inside_a_same_file_helper(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(TWO_SITES)
-    engine = UnificationRefactorEngine(min_lines=3, settings=SERIAL)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3, settings=SERIAL)
     final, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
     assert applied == 0
     assert ast.dump(ast.parse(final)) == ast.dump(ast.parse(TWO_SITES))
@@ -170,7 +172,11 @@ def test_a_cross_file_helper_still_takes_module_names(tmp_path: Path) -> None:
             return total - 1
         """))
     engine = UnificationRefactorEngine(
-        min_lines=3, settings=SERIAL, cross_module_helpers=True, parameterize_builtins=True
+        skip_trivial_helpers=False,
+        min_lines=3,
+        settings=SERIAL,
+        cross_module_helpers=True,
+        parameterize_builtins=True,
     )
     results, _ = engine.refactor_directory_to_fixed_point(
         str(tmp_path / "pkg"), str(tmp_path / "out"), progress="none"
@@ -188,6 +194,7 @@ def test_a_cross_file_helper_still_takes_module_names(tmp_path: Path) -> None:
     driver = "from pkg import a, b; print(a.first([1, 2]), b.second([1, 2])); a.scale=lambda x:x*10; print(a.first([1, 2]), b.second([1, 2]))"
     expected = _trace(tmp_path, driver)
     engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False,
         min_lines=3,
         max_parameters=8,
         settings=SERIAL,

@@ -120,6 +120,10 @@ def test_min_lines_from_the_command_line_changes_what_is_found(tmp_path: Path) -
                 z = y * 2
                 return z + delta
             """))
-    loose = UnificationRefactorEngine(min_lines=2, settings=SERIAL).analyze_file(str(path))
-    strict = UnificationRefactorEngine(min_lines=4, settings=SERIAL).analyze_file(str(path))
+    loose = UnificationRefactorEngine(
+        min_lines=2, settings=SERIAL, skip_trivial_helpers=False
+    ).analyze_file(str(path))
+    strict = UnificationRefactorEngine(
+        min_lines=4, settings=SERIAL, skip_trivial_helpers=False
+    ).analyze_file(str(path))
     assert loose and not strict

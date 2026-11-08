@@ -6,66 +6,35 @@ data validation, ETL pipelines, error handling, and logging.
 """
 
 
-def __extracted_func_6(__param_0, e, error_handler, failed, i, item, metrics):
+def __extracted_func_5(__param_0, e, error_handler, failed, i, item, metrics):
     error_handler.log(e, context={'index': i, 'item': item})
     failed.append({'index': i, 'error': str(e), 'item': item})
     metrics.increment(__param_0)
 
 
-def __extracted_func_5(__param_0, metrics, processed, processor, result):
-    processor.enrich(result)
-    processed.append(result)
-    metrics.increment(__param_0)
-
-
-def __extracted_func_4(logger, request, validated):
-    if not validated:
-        logger.error('Invalid payload')
-        return ({'error': 'Bad request'}, 400)
-    logger.info(f'Processing request for user {request.user_id}')
-    return ({'status': 'success'}, 200)
-
-
-def __extracted_func_3(__param_0, cache, database, key, _towel_owner):
-    cached = cache.get(key)
-    if cached is not None:
-        cache.increment_hits()
-        return cached
-    cache.increment_misses()
-    # Fallback to database
-    try:
-        data = database.query(key)
-        if data:
-            # Cache for 3600 seconds
-            # Cache for 7200 seconds
-            cache.set(key, data, ttl=__param_0)
-            cache.record_fill(key)
-            return data
-    except Exception as e:
-        cache.record_error(e)
+def __extracted_func_4(e, logger, max_retries, retry_count):
+    logger.warn(f'Extract failed (attempt {retry_count}): {e}')
+    if retry_count >= max_retries:
+        logger.error('Extract phase failed')
         raise
-    return None
 
 
-def __extracted_func_2(__param_0, config, logger, source, _towel_owner):
+def __extracted_func_3(logger):
     logger.info('Starting extract phase')
     # Extract with retry logic
     # Same retry logic, different timeout
     max_retries = 3
     retry_count = 0
     data = None
-    while retry_count < max_retries:
-        try:
-            data = source.fetch(endpoint=config['endpoint'], params=config['params'], timeout=__param_0)
-            logger.info(f'Extracted {len(data)} records')
-            break
-        except Exception as e:
-            retry_count += 1
-            logger.warn(f'Extract failed (attempt {retry_count}): {e}')
-            if retry_count >= max_retries:
-                logger.error('Extract phase failed')
-                raise
-    return data
+    return (data, max_retries, retry_count)
+
+
+def __extracted_func_2(logger, request, validated):
+    if not validated:
+        logger.error('Invalid payload')
+        return ({'error': 'Bad request'}, 400)
+    logger.info(f'Processing request for user {request.user_id}')
+    return ({'status': 'success'}, 200)
 
 
 def __extracted_func_1(__param_0, audit_log, data, rules_engine, _towel_owner):
@@ -123,7 +92,7 @@ def handle_api_request_v1(request, auth, rate_limiter, logger):
     data = request.json()
     validated = auth.validate_payload(data)
 
-    return __extracted_func_4(logger, request, validated)
+    return __extracted_func_2(logger, request, validated)
 
 
 def handle_api_request_v2(request, auth, rate_limiter, logger):
@@ -141,25 +110,39 @@ def handle_api_request_v2(request, auth, rate_limiter, logger):
     data = request.json()
     validated = auth.validate_payload(data)
 
-    return __extracted_func_4(logger, request, validated)
+    return __extracted_func_2(logger, request, validated)
 
 
 def etl_pipeline_extract_a(source, config, logger):
     """Version A: ETL extract phase."""
-    _towel_arguments_2 = [(logger, config, source)]
-    del source
-    del config
-    del logger
-    return __extracted_func_2(30, _towel_arguments_2[0][1], _towel_arguments_2[0][0], _towel_arguments_2[0][2], _towel_arguments_2.pop())
+    data, max_retries, retry_count = __extracted_func_3(logger)
+
+    while retry_count < max_retries:
+        try:
+            data = source.fetch(endpoint=config["endpoint"], params=config["params"], timeout=30)
+            logger.info(f"Extracted {len(data)} records")
+            break
+        except Exception as e:
+            retry_count += 1
+            __extracted_func_4(e, logger, max_retries, retry_count)
+
+    return data
 
 
 def etl_pipeline_extract_b(source, config, logger):
     """Version B: Different timeout, same extraction pattern."""
-    _towel_arguments_2 = [(logger, config, source)]
-    del source
-    del config
-    del logger
-    return __extracted_func_2(60, _towel_arguments_2[0][1], _towel_arguments_2[0][0], _towel_arguments_2[0][2], _towel_arguments_2.pop())
+    data, max_retries, retry_count = __extracted_func_3(logger)
+
+    while retry_count < max_retries:
+        try:
+            data = source.fetch(endpoint=config["endpoint"], params=config["params"], timeout=60)
+            logger.info(f"Extracted {len(data)} records")
+            break
+        except Exception as e:
+            retry_count += 1
+            __extracted_func_4(e, logger, max_retries, retry_count)
+
+    return data
 
 
 def validate_business_rules_v1(data, rules_engine, audit_log):
@@ -195,10 +178,12 @@ def process_batch_with_errors_a(items, processor, error_handler, metrics):
                 continue
 
             result = processor.transform(item)
-            __extracted_func_5('processed', metrics, processed, processor, result)
+            processor.enrich(result)
+            processed.append(result)
+            metrics.increment("processed")
 
         except Exception as e:
-            __extracted_func_6('processing_errors', e, error_handler, failed, i, item, metrics)
+            __extracted_func_5('processing_errors', e, error_handler, failed, i, item, metrics)
 
     return {"processed": processed, "failed": failed, "total": len(items)}
 
@@ -218,10 +203,12 @@ def process_batch_with_errors_b(items, processor, error_handler, metrics):
                 continue
 
             result = processor.transform(item)
-            __extracted_func_5('success_count', metrics, processed, processor, result)
+            processor.enrich(result)
+            processed.append(result)
+            metrics.increment("success_count")
 
         except Exception as e:
-            __extracted_func_6('error_count', e, error_handler, failed, i, item, metrics)
+            __extracted_func_5('error_count', e, error_handler, failed, i, item, metrics)
 
     return {"processed": processed, "failed": failed, "total": len(items)}
 
@@ -229,23 +216,51 @@ def process_batch_with_errors_b(items, processor, error_handler, metrics):
 def cache_with_fallback_v1(key, cache, database, ttl):
     """Version 1: Cache with database fallback."""
     # Try cache first
-    _towel_arguments_3 = [(ttl, database, cache, key)]
-    del key
-    del cache
-    del database
-    del ttl
-    return __extracted_func_3(3600, _towel_arguments_3[0][2], _towel_arguments_3[0][1], _towel_arguments_3[0][3], _towel_arguments_3.pop())
+    cached = cache.get(key)
+    if cached is not None:
+        cache.increment_hits()
+        return cached
+
+    cache.increment_misses()
+
+    # Fallback to database
+    try:
+        data = database.query(key)
+        if data:
+            # Cache for 3600 seconds
+            cache.set(key, data, ttl=3600)
+            cache.record_fill(key)
+            return data
+    except Exception as e:
+        cache.record_error(e)
+        raise
+
+    return None
 
 
 def cache_with_fallback_v2(key, cache, database, ttl):
     """Version 2: Different TTL, same caching pattern."""
     # Same pattern, different TTL
-    _towel_arguments_3 = [(ttl, database, cache, key)]
-    del key
-    del cache
-    del database
-    del ttl
-    return __extracted_func_3(7200, _towel_arguments_3[0][2], _towel_arguments_3[0][1], _towel_arguments_3[0][3], _towel_arguments_3.pop())
+    cached = cache.get(key)
+    if cached is not None:
+        cache.increment_hits()
+        return cached
+
+    cache.increment_misses()
+
+    # Fallback to database
+    try:
+        data = database.query(key)
+        if data:
+            # Cache for 7200 seconds
+            cache.set(key, data, ttl=7200)
+            cache.record_fill(key)
+            return data
+    except Exception as e:
+        cache.record_error(e)
+        raise
+
+    return None
 
 
 def aggregate_metrics_a(events, time_window, aggregator):

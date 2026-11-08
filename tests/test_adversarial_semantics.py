@@ -14,6 +14,9 @@
 
 """Behavioral checks for lexical scope and caller-owned AST boundaries."""
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 import ast
 import contextlib
 import io
@@ -37,7 +40,7 @@ from towel.unification.substitution import Substitution
 def _rewrites(tmp_path: Path, source: str) -> list[str]:
     path = tmp_path / "subject.py"
     path.write_text(source, encoding="utf-8")
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         proposals = engine.analyze_files([str(path)], progress="none")
     return [engine.apply_refactoring(str(path), proposal) for proposal in proposals]

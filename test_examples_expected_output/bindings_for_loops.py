@@ -5,15 +5,8 @@ Tests alpha-renaming: different loop variable names (i vs j) should unify.
 """
 
 
-def __extracted_func_2(pairs, _towel_owner):
-    result = {}
-    for key, value in pairs:
-        if value is not None:
-            result[key] = value * 2
-    return result
-
-
-def __extracted_func_1(items, _towel_owner):
+def process_list_a(items):
+    """Process list with loop variable 'i'."""
     result = []
     for i in range(len(items)):
         if items[i] > 0:
@@ -21,7 +14,17 @@ def __extracted_func_1(items, _towel_owner):
     return result
 
 
-def __extracted_func_0(matrix, _towel_owner):
+def process_list_b(items):
+    """Process list with loop variable 'j' (should unify with i)."""
+    result = []
+    for j in range(len(items)):
+        if items[j] > 0:
+            result.append(items[j] * 2)
+    return result
+
+
+def nested_loops_a(matrix):
+    """Nested loops with i, j."""
     total = 0
     for i in range(len(matrix)):
         for j in range(len(matrix[i])):
@@ -30,43 +33,29 @@ def __extracted_func_0(matrix, _towel_owner):
     return total
 
 
-def process_list_a(items):
-    """Process list with loop variable 'i'."""
-    _towel_arguments_1 = [(items,)]
-    del items
-    return __extracted_func_1(_towel_arguments_1[0][0], _towel_arguments_1.pop())
-
-
-def process_list_b(items):
-    """Process list with loop variable 'j' (should unify with i)."""
-    _towel_arguments_1 = [(items,)]
-    del items
-    return __extracted_func_1(_towel_arguments_1[0][0], _towel_arguments_1.pop())
-
-
-def nested_loops_a(matrix):
-    """Nested loops with i, j."""
-    _towel_arguments = [(matrix,)]
-    del matrix
-    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
-
-
 def nested_loops_b(matrix):
     """Nested loops with x, y (should unify with i, j)."""
-    _towel_arguments = [(matrix,)]
-    del matrix
-    return __extracted_func_0(_towel_arguments[0][0], _towel_arguments.pop())
+    total = 0
+    for x in range(len(matrix)):
+        for y in range(len(matrix[x])):
+            if matrix[x][y] > 0:
+                total += matrix[x][y]
+    return total
 
 
 def tuple_unpacking_a(pairs):
     """For loop with tuple unpacking."""
-    _towel_arguments_2 = [(pairs,)]
-    del pairs
-    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
+    result = {}
+    for key, value in pairs:
+        if value is not None:
+            result[key] = value * 2
+    return result
 
 
 def tuple_unpacking_b(pairs):
     """For loop with tuple unpacking (different var names)."""
-    _towel_arguments_2 = [(pairs,)]
-    del pairs
-    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
+    result = {}
+    for k, v in pairs:
+        if v is not None:
+            result[k] = v * 2
+    return result

@@ -4,12 +4,12 @@
 
 Support requirements are separate from resource measurements. The measurements below describe specific workloads and machines, not minimum hardware.
 
-This source targets **1.947**, published October 26, 2026 with the post-1.946
-audit repairs.
-[Readiness](PRODUCTION_READINESS.md) and the [release procedure](RELEASING.md)
-record the exact source, artifact and validation status. Python 3.11–3.13
-remains the supported range. Dated audit and performance observations retain
-their original identities; they do not establish results for a later artifact.
+The supported interpreter range is Python 3.11–3.13. Package metadata permits
+installation on newer Python versions so users can evaluate them, but Towel
+warns that those interpreters are outside the validated range. Installation
+success is not a support guarantee. See [compatibility](COMPATIBILITY.md).
+Dated measurements below retain their original source identities and do not
+establish results for a later artifact.
 
 On this page:
 
@@ -23,6 +23,12 @@ On this page:
 ### Platform
 
 Python 3.11 to 3.13 on a POSIX system (macOS or Linux). Applying changes needs POSIX filesystem semantics. Parallel analysis uses the `fork` start method; under other start methods analysis runs on a single core. Windows is not a supported or validated release platform.
+
+Pull requests and pushes to `main` or `release/**` run the full Linux suite on Python 3.11–3.13.
+A macOS Python 3.13 integration job builds and installs the wheel, verifies that
+the tests import that installation, and exercises CLI behavior, file publication,
+recovery and checker/formatter process lifecycle. This narrower macOS lane
+complements the full Linux matrix; it does not run the complete corpus.
 
 ### CPU
 

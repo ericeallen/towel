@@ -56,6 +56,14 @@ def {name}(values):
         else:
             total -= value
     total = total + 1
+    scaled = total * 3
+    shifted = scaled + 12
+    unshifted = shifted - 12
+    recovered = unshifted // 3
+    raised = recovered + 9
+    paired = raised * 2
+    restored = paired // 2
+    total = restored - 9
     return total
 """
 
@@ -293,9 +301,20 @@ class {name}(Exception):
         self.context = context
 
     def __str__(self) -> str:
+        message = self.message.strip()
+        message = message.replace('\\r\\n', '\\n')
+        message = message.replace('\\r', '\\n')
+        message = message.replace('\\t', ' ')
+        message = message.replace('  ', ' ')
+        message = message.replace(' :', ':')
+        message = message.replace(' ,', ',')
+        message = message.replace(' ;', ';')
+        message = message.replace(' .', '.')
+        message = message.replace('( ', '(')
+        message = message.replace(' )', ')')
         if self.context:
-            return f"{{self.message}} in {{self.context!r}}"
-        return self.message
+            return f"{{message}} in {{self.context!r}}"
+        return message
 """
 
 _SUMMARY = """
@@ -307,7 +326,16 @@ def summary_{name}(values: list[int]) -> int:
             total += value * 2
         else:
             total -= value
-    return total + 1
+    total = total + 1
+    scaled = total * 3
+    shifted = scaled + 12
+    unshifted = shifted - 12
+    recovered = unshifted // 3
+    raised = recovered + 9
+    paired = raised * 2
+    restored = paired // 2
+    total = restored - 9
+    return total
 """
 
 

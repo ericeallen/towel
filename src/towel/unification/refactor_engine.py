@@ -404,13 +404,13 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 whose annotations need a type another module defines still
                 gets a type-only import under ``if 0 > 1:``, which never
                 runs (docs/DECISIONS.md, *Cross-module extraction is opt-in*).
-            skip_trivial_helpers: Apply optional forwarding and tiny straight-line
-                interface-cost filters (default: True). The latter compares the
-                complete signature and call-wrapper burden with work shared by
-                at most two simple statements across the sites. False bypasses
+            skip_trivial_helpers: Apply optional forwarding and complete-syntax
+                usefulness filters (default: True). The latter compares the
+                complete helper and rendered callers with the work shared across
+                their sites. False bypasses
                 those output-quality filters, not semantic checks or unconditional
-                no-logic refusals (docs/DECISIONS.md, "Tiny helpers must repay
-                their interface cost").
+                no-logic refusals (docs/DECISIONS.md, "Complete extractions must
+                repay their generated syntax").
             reuse_existing_functions: Deprecated, and has no effect. It chose
                 whether a site that is the whole body of a plain module-level
                 function was left alone and the other sites rewritten to call

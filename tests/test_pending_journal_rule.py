@@ -43,6 +43,7 @@ from towel.unification.fixed_point import _name_public_paths
 from tests.test_cli_integration import CliResult, invoke
 from tests.test_recovery_journal import _interrupted_transaction
 
+# Substantial shared work keeps these CLI journal controls extracting by default.
 DUPLICATES = """\
 def first(rows):
     print("start")
@@ -50,6 +51,18 @@ def first(rows):
     for row in rows:
         total += row * 2
     total = total + 1
+    total = total + 17
+    total = total * 19
+    total = total - 23
+    total = total // 29
+    total = total + 31
+    total = total * 37
+    total = total - 41
+    total = total // 43
+    total = total + 47
+    total = total * 53
+    total = total - 59
+    total = total // 61
     return total * 3
 
 
@@ -59,6 +72,18 @@ def second(items):
     for row in items:
         total += row * 2
     total = total + 1
+    total = total + 17
+    total = total * 19
+    total = total - 23
+    total = total // 29
+    total = total + 31
+    total = total * 37
+    total = total - 41
+    total = total // 43
+    total = total + 47
+    total = total * 53
+    total = total - 59
+    total = total // 61
     return total * 5
 """
 

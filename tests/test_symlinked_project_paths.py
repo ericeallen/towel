@@ -53,6 +53,8 @@ from towel.type_inference import (
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
 
 
@@ -212,7 +214,9 @@ def _applied(root: Path) -> Tuple[int, Mapping[str, int]]:
     module = _module(root, TWINS)
     oracle = MypyInferrer()
     try:
-        engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, min_lines=3, type_oracle=oracle
+        )
         results, _ = engine.refactor_directory_to_fixed_point(
             str(module.parent), str(module.parent), progress="none"
         )

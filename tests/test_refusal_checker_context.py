@@ -122,7 +122,9 @@ def test_public_same_run_retry_hears_a_custom_oracle_again(tmp_path: Path) -> No
     path.write_text(original)
     oracle = _TransientPolicy(MypyInferrer(tmp_path / "cache"))
     try:
-        engine = UnificationRefactorEngine(type_oracle=oracle, min_lines=3)
+        engine = UnificationRefactorEngine(
+            type_oracle=oracle, min_lines=3, skip_trivial_helpers=False
+        )
         proposal = engine.analyze_file(str(path))[0]
         engine.begin_refactoring_run([str(path)])
         with pytest.raises(TypeRejectedExtraction):

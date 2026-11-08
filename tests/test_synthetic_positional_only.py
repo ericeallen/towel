@@ -33,6 +33,8 @@ from towel.unification.extractor import HygienicExtractor
 from towel.unification.instantiation import instantiation_mismatch
 from towel.unification.placement import HelperPlacement
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
 from towel.unification.substitution import Substitution
 
 
@@ -154,7 +156,10 @@ def test_engine_respects_declared_python_floor_and_keeps_call_results(
     path = tmp_path / "program.py"
     path.write_text(SOURCE)
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, annotate_helpers=annotate
+        skip_trivial_helpers=False,
+        min_lines=2,
+        reuse_existing_functions=False,
+        annotate_helpers=annotate,
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -220,7 +225,10 @@ def test_typed_method_helpers_keep_receiver_dispatch_with_synthetic_inputs(
     try:
         assert oracle.check(str(path), source) == CheckSuccess()
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         proposals = engine.analyze_file(str(path))
         assert proposals
@@ -288,7 +296,9 @@ def test_cross_module_repeated_passes_preserve_binding_and_origin_target(
         path = package / f"{name}.py"
         path.write_text(path.read_text().replace("n * 2", f"n * {multiplier}"))
     expected = _runtime(root, 3)
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True
+    )
     results, reason = engine.refactor_directory_to_fixed_point(
         str(root), str(output), progress="none"
     )

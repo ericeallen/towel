@@ -29,6 +29,8 @@ import pytest
 from towel.unification.bounded_cache import memoization_disabled
 from towel.unification.placement import _dispatches_on
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
 from tests.test_helpers import method_helper_calls
 
 METHODS = """class Box:
@@ -85,7 +87,7 @@ def test_placement_memos_preserve_exact_fixed_point_output(
     outputs: list[str] = []
     for memoized in (True, False):
         source.write_text(METHODS)
-        engine = UnificationRefactorEngine(annotate_helpers=False)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, annotate_helpers=False)
         with contextlib.ExitStack() as stack:
             if not memoized:
                 stack.enter_context(memoization_disabled())

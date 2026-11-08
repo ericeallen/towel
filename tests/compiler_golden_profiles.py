@@ -13,39 +13,49 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Exact original compiler profiles for the four reviewed ownership goldens."""
+"""Exact original compiler profiles for the reviewed ownership goldens."""
 
 from inspect import CO_VARARGS, CO_VARKEYWORDS
 from pathlib import Path
 from types import CodeType
 from typing import Mapping
 
-# These four inputs have parameter cells only when their comprehensions create
+# These inputs have parameter cells only when their comprehensions create
 # separate code objects. The ownership guard then retains exactly the original
-# twelve definitions; their other useful extractions remain required. Select
+# four definitions; their other useful extractions remain required. Select
 # reviewed goldens by original compiler facts, never by a version prefix.
 PARAMETER_CELL_GOLDENS: dict[str, dict[str, frozenset[str]]] = {
     "edge_cases_stress_test.py": {
         "mixed_comprehensions_v1": frozenset({"mappers", "filters"}),
         "mixed_comprehensions_v2": frozenset({"mappers", "filters"}),
     },
-    "method_chains.py": {
-        "query_database_v1": frozenset({"mapper"}),
-        "query_database_v2": frozenset({"mapper"}),
-    },
     "nested_structures.py": {
         "chain_nested_operations_v1": frozenset({"processor"}),
         "chain_nested_operations_v2": frozenset({"processor"}),
-        "transform_with_comprehension_a": frozenset({"filter_func"}),
-        "transform_with_comprehension_b": frozenset({"filter_func"}),
-    },
-    "syntactic_coverage_comprehensive.py": {
-        "complex_expr_a": frozenset({"y", "x"}),
-        "complex_expr_b": frozenset({"a", "b"}),
-        "list_comp_a": frozenset({"data"}),
-        "list_comp_b": frozenset({"items"}),
     },
 }
+
+# These formerly compiler-dependent extractions now fail the default
+# profitability check even with cell-free parameters: their generated
+# signatures, calls and ownership transfers outweigh the shared statements.
+# Pin original-body preservation separately instead of retaining redundant
+# compiler goldens or weakening the exact cell-profile check above.
+PROFITABILITY_RETAINED_DEFINITIONS: dict[str, tuple[str, ...]] = {
+    "method_chains.py": ("query_database_v1", "query_database_v2"),
+    "nested_structures.py": ("transform_with_comprehension_a", "transform_with_comprehension_b"),
+    "syntactic_coverage_comprehensive.py": (
+        "complex_expr_a",
+        "complex_expr_b",
+        "list_comp_a",
+        "list_comp_b",
+    ),
+}
+
+# Retained as historical fixtures, not selected by _compiler_baseline. The
+# default policy now uses each file's common, cell-independent golden.
+HISTORICAL_PARAMETER_CELL_GOLDENS = frozenset(
+    {"method_chains.py", "syntactic_coverage_comprehensive.py"}
+)
 
 
 def _compiled_parameter_cells(source: str, names: set[str]) -> dict[str, frozenset[str]]:

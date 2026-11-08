@@ -2,10 +2,10 @@
 
 [Documentation index](README.md)
 
-Towel finds repeated Python code and extracts each group of duplicates into one
-helper function, rewriting the duplicates as calls. It verifies every extraction
-and leaves the naming to you. Refactoring changes your code, so the workflow is:
-preview, apply to a copy, review the diff, and run your tests.
+This example keeps the original project, extracts repeated pricing calculations
+into a complete copy, names the helper, tests the result, and adopts one reviewed
+file. It uses only Python's standard library and requires no assistant account.
+Run the commands from a fresh working directory on macOS or Linux.
 
 ## Install
 
@@ -15,104 +15,162 @@ towel --version
 ```
 
 The PyPI package is `code-towel` and the command is `towel`. Do not install
-`towel`: that name belongs to a different, unrelated project, so `pip install
-towel` and `uvx towel` will not get this tool. Python 3.11–3.13 on macOS or
-Linux, no runtime dependencies. Optionally, `pip install "code-towel[format,types]"`
-adds the formatter and type checker Towel uses, when present, to format the
-code it inserts and to annotate and type-check the helpers it generates.
+`towel`: that name belongs to a different, unrelated project. Python 3.11–3.13
+are supported. These checkout documents describe development for the next
+release; to try unreleased behavior, install this checkout with
+`pip install -e .` instead of the published package.
 
-## 1. See what it would change (read-only)
-
-```bash
-towel preview path/to/project
-```
-
-`preview` runs the complete `dry` pipeline in a disposable copy, including type checking, formatting, repeated extraction and final verification with the same options. It prints the final source diff and helper inventory without changing the input. Use `--quick` for a partial, untyped analysis; its proposals are not the final result or an upper bound on what `dry` can extract.
-
-By default a helper is shared only between duplicates in one module; add `--cross-module` to share helpers between modules too, which adds imports between them.
-
-On a large project, raise `--min-lines` to reduce candidate work or use
-`--max-pairs N` to cap evaluated pairs. Neither is a time or memory limit;
-progress is printed to stderr.
-
-## 2. Refactor into a fresh copy
-
-Never refactor in place on your first run — write to a new directory and diff it.
+## 1. Create and test a small project
 
 ```bash
-towel dry path/to/project path/to/cleaned --no-interactive
-diff -ru path/to/project path/to/cleaned | less   # or redirect to a file outside a terminal
+mkdir demo
+printf '[project]\nname = "towel-demo"\nversion = "0.0.0"\n' > demo/pyproject.toml
 ```
 
-`--no-interactive` skips the confirmation `towel dry` would otherwise ask for.
-Without it, on a directory of 25 or more Python files with `--types` enabled
-and a type checker installed, it first names the checker and reports what
-verification will involve on this project — how many
-files each candidate signature is checked against and how many third-party
-packages their imports pull in — and then asks `Proceed? (y/N): ` before
-doing any of it (smaller targets prompt directly). On a large annotated project
-that is worth reading: a full run can take a while, and `--max-refactorings N`
-stops after N.
+Save this as `demo/charges.py`:
 
-If the run refuses because a file of the project does not parse on the Python
-Towel runs on, run Towel on a Python that parses it, or, for deliberately
-invalid test data, leave it out with the `--exclude` the refusal names.
+```python
+def checkout_total(amount):
+    base = max(amount, 0)
+    discount = base * 0.1
+    discounted = base - discount
+    tax = discounted * 0.08
+    shipping = 5 if discounted < 100 else 0
+    with_shipping = discounted + shipping
+    total = with_shipping + tax
+    return round(total, 2)
 
-The diff also shows one file that is not code: `.towel-helpers.json`, which
-`dry` writes into the output for the naming step below. It is safe to delete.
 
-The output compiles and, for every proposal, the generated helper is verified to
-reproduce the exact code it replaced. Helpers get placeholder names like
-`__extracted_func_3`. Inserted code is formatted the way the project formats
-its own, and in annotated code each helper carries the annotations its call
-sites declare or the project's type checker verifies, when those tools are
-installed; `--no-format` and `--no-types` turn either off. A duplicate that is
-the whole body of an existing function is extracted like any other: that
-function and the other copies all call the new helper, and none is rewritten
-to call another, which a test patching one of them would then change too.
+def quote_total(amount):
+    base = max(amount, 0)
+    discount = base * 0.1
+    discounted = base - discount
+    tax = discounted * 0.08
+    shipping = 5 if discounted < 100 else 0
+    with_shipping = discounted + shipping
+    total = with_shipping + tax
+    return round(total, 2)
 
-When a type checker is available, Towel checks the complete original project
-before creating output, and says what that check reports. Errors it already
-reports are left as they are: a change is rejected only for an error it adds,
-and a file where the checker cannot type what it imports is left alone. If the
-checker cannot run at all, fix what stops it or rerun the same command with
-`--no-types`, which preserves existing source annotations and leaves new
-helpers unannotated. See
-[Type checking and helper annotations](TYPING.md).
 
-## 3. Give the helpers real names (optional, LLM-assisted)
+def invoice_total(amount):
+    base = max(amount, 0)
+    discount = base * 0.1
+    discounted = base - discount
+    tax = discounted * 0.08
+    shipping = 5 if discounted < 100 else 0
+    with_shipping = discounted + shipping
+    total = with_shipping + tax
+    return round(total, 2)
+```
 
-Review the diff and adopt the cleaned output into its project first, using
-your normal version-control workflow. The rename checker needs the package
-in its real import context. The commands below assume `path/to/project` now
-contains the adopted result.
+Save this as `demo/test_charges.py`:
+
+```python
+import unittest
+
+from charges import checkout_total, invoice_total, quote_total
+
+
+class PricingTests(unittest.TestCase):
+    def test_all_entry_points(self):
+        for calculate in (checkout_total, invoice_total, quote_total):
+            for amount, expected in ((0, 5.0), (50, 53.6), (150, 145.8)):
+                with self.subTest(function=calculate.__name__, amount=amount):
+                    self.assertEqual(calculate(amount), expected)
+```
 
 ```bash
-towel rename-helpers path/to/project --list --json > helpers.json
-# Have a coding assistant read helpers.json and write renames.json,
-# then apply the batch (it aborts whole if any name is unsafe):
-towel rename-helpers path/to/project --complete-scope --rename-file renames.json --preview
-towel rename-helpers path/to/project --complete-scope --rename-file renames.json
+python -m unittest discover -s demo
 ```
 
-Select the complete project root; use path-qualified keys to choose individual
-definitions. Unmarked projects require `--complete-scope` to declare that root
-contains every ordinary consumer. See [rename scope](NAMING.md#definition-selection-and-consumer-scope).
-
-See the [naming guide](NAMING.md) for inventory keys, class-private names
-and the full review workflow.
-
-## 4. Review and test
+## 2. Preview and extract into a copy
 
 ```bash
-# run from the project containing the reviewed result:
-pytest   # or your project's own test command
+towel preview demo --no-types --no-format
+towel dry demo cleaned --no-interactive --no-types --no-format
+diff -u demo/charges.py cleaned/charges.py
 ```
 
-## Next
+`diff` exits 1 when it finds changes. The `cleaned` directory must not already
+exist. The original `demo` is unchanged. This example disables optional tools
+to make its result independent of installed formatters and type checkers.
+For your own project, use the defaults or install
+`pip install "code-towel[format,types]"` to enable those checks and formatting.
+
+The repeated calculation moves into a helper such as `__extracted_func_0`.
+Each caller retains bookkeeping that preserves argument cleanup order; its
+purpose is explained in [generated code](GENERATED_CODE.md#arguments-and-evaluation).
+Review those callers as well as the helper. Small duplicates whose new
+interfaces cost more than they save can be left unchanged.
+
+Complete preview runs the same pipeline as `dry` without publishing its output.
+It shows a summary and final diff; `--inventory` additionally shows the helper
+inventory. `--quick` is a partial structural listing, not a prediction of the
+final result. See [CLI output formats](CLI_GUIDE.md#diagnostics).
+
+## 3. Name the helper in the copied project
+
+Because `cleaned` is a complete project with the same internal module names,
+you can rename and test it before adopting anything into `demo`.
+
+```bash
+towel rename-helpers cleaned --list --json > helpers.json
+```
+
+Read the inventory. It includes the helper's source, callers, parameters and
+exact `rename_key`. For this example, save the following as `renames.json`:
+
+```json
+{
+  "charges.py:__extracted_func_0": "discounted_total_with_shipping"
+}
+```
+
+Always use the key your own inventory reports; numbering can change when the
+input changes. A mapping can also rename parameters. You can write it yourself
+or ask an assistant to propose names; Towel calls no LLM service.
+
+```bash
+towel rename-helpers cleaned --complete-scope --rename-file renames.json --preview
+towel rename-helpers cleaned --complete-scope --rename-file renames.json
+python -m unittest discover -s cleaned
+```
+
+The rename batch aborts completely if a name is unsafe. `--complete-scope`
+declares that this target contains every ordinary consumer, as this example
+does. For a package copied out of a larger project, restore its original import
+context first; see [consumer scope](NAMING.md#definition-selection-and-consumer-scope).
+
+## 4. Review and adopt the result
+
+```bash
+diff -u demo/charges.py cleaned/charges.py
+# After reviewing that one file and its passing tests:
+cp cleaned/charges.py demo/charges.py
+python -m unittest discover -s demo
+```
+
+The original project now contains the named, tested refactoring. In a real
+repository, make this change on a branch, inspect every changed file, and use
+its normal test and commit workflow. Copy only the files whose differences you
+have reviewed. `.towel-helpers.json` is optional naming metadata; after naming,
+it is not needed to run the refactored program.
+
+## Use the workflow on your project
+
+Start at the complete project root, write into a fresh sibling directory, and
+keep the original until the copied project's own checks pass. By default,
+helpers are shared only within one module. `--cross-module` also introduces
+imports to share helpers between modules.
+
+For bounded experiments, use `--time-limit 60`; expiration exits 124 and
+publishes no result. `--max-refactorings N` intentionally stops after N changes.
+`--max-pairs N` limits candidate pairs, not elapsed time or memory. For unattended
+commands, always pass `--no-interactive`. Errors and progress go to stderr;
+use `--json` for a structured result. See [compatibility](COMPATIBILITY.md).
 
 - [Command-line guide](CLI_GUIDE.md) — options, exclusions and recovery
-- [Requirements](REQUIREMENTS.md) and [performance](PERFORMANCE.md) — resources and timing
-- [Known limitations](KNOWN_LIMITATIONS.md) — what is verified, rejected, and outside the model
-- [Python API guide](USAGE_GUIDE.md) — using `UnificationRefactorEngine` directly
-- [Architecture](ARCHITECTURE.md) — how it works
+- [Naming guide](NAMING.md) — rename mappings and project context
+- [Requirements](REQUIREMENTS.md) and [performance](PERFORMANCE.md) — support and resources
+- [Known limitations](KNOWN_LIMITATIONS.md) — what is verified and outside the model
+- [Python API guide](USAGE_GUIDE.md) — library integration

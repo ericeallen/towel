@@ -14,6 +14,8 @@
 
 """Generic method extraction keeps descriptor dispatch and scoped type relationships."""
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -71,7 +73,7 @@ def _extract(
     source = path.read_text()
     assert oracle.check(str(path), source) == CheckSuccess()
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=oracle
     )
     proposals = engine.analyze_file(str(path))
     static = method_kind == "staticmethod"

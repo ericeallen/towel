@@ -25,6 +25,7 @@ import sys
 
 import pytest
 import towel
+from tests.test_thunk_ordering_cli import _MARKER
 
 _CASES = (
     (
@@ -152,7 +153,7 @@ def test_opaque_factory_results_keep_their_original_lifetimes(
     project = tmp_path / name
     project.mkdir()
     output = tmp_path / (name + "-output")
-    marker = "    marker = (1, 2, 3, 4, 5, 6, 7, 8)\n"
+    marker = _MARKER
     source = "def left(d):\n" + left + marker + tail
     source += "\ndef right(d):\n" + right + marker + tail
     original = project / "case.py"

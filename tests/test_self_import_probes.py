@@ -236,7 +236,7 @@ def test_a_target_without_self_support_keeps_its_unknown_import(tmp_path: Path) 
 
 
 @requires_pyright
-def test_default_typed_extraction_preserves_a_file_with_self_annotations(tmp_path: Path) -> None:
+def test_typed_extraction_preserves_a_file_with_self_annotations(tmp_path: Path) -> None:
     (tmp_path / "pyrightconfig.json").write_text(
         '{"pythonVersion":"3.12","typeCheckingMode":"strict"}'
     )
@@ -249,7 +249,10 @@ class Example:
     path.write_text(source)
     oracle = PyrightOracle(language_server=False)
     try:
-        engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+        # Exercise the Self import proof even for this small arithmetic fixture.
+        engine = UnificationRefactorEngine(
+            min_lines=3, type_oracle=oracle, skip_trivial_helpers=False
+        )
         results, _ = engine.refactor_directory_to_fixed_point(
             str(tmp_path), str(tmp_path), progress="none"
         )

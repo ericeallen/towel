@@ -137,7 +137,7 @@ def test_r9my_a_typed_run_checks_a_package_named_env_as_it_now_stands(tmp_path: 
         },
     )
     oracle = _RecordingMypy()
-    engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3, type_oracle=oracle)
     try:
         results, _ = engine.refactor_directory_to_fixed_point(
             str(tmp_path), str(tmp_path), progress="none"

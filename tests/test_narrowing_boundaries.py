@@ -38,6 +38,8 @@ from tests.typed_fixtures import CountingMypy, STRICT, apply_one, requires_mypy
 from towel.unification.narrowing import caller_narrowing_leaves_with_block
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 PACKAGING = """
 def _key(a: int, b: int) -> tuple[int, int]:
     return (a, b)
@@ -81,7 +83,10 @@ def test_packaging_cache_initialization_never_reaches_signature_validation(tmp_p
     checker = CountingMypy()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=checker,
         )
         assert engine.analyze_file(str(path)) == []
         # Discovery may establish the original baseline, but must never ask

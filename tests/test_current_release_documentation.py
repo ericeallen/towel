@@ -30,6 +30,7 @@ from urllib.parse import unquote, urlsplit
 import pytest
 
 from tests.test_next_validation_documentation import _number, _rows, _table
+from tests.test_readme_links import _check_repository_links
 
 ROOT = Path(__file__).resolve().parents[1]
 PAGES = ("README.md", "SECURITY.md", "CHANGELOG.md", "CONTRIBUTING.md", "docs/RELEASING.md")
@@ -39,8 +40,7 @@ def _check_current_version(documents: Mapping[str, str], version: str) -> None:
     assert f"**Release status: {version} (beta).**" in documents["README.md"]
     assert f"This source tree targets **{version}**" in documents["SECURITY.md"]
     assert f"## [{version}]\n" in documents["CHANGELOG.md"]
-    links = re.findall(r"https://github.com/ericeallen/towel/blob/([^/]+)/", documents["README.md"])
-    assert links and set(links) == {f"v{version}"}
+    _check_repository_links(documents["README.md"], version)
     for name in ("CONTRIBUTING.md", "docs/RELEASING.md"):
         assert "`just release VERSION /path/to/release-evidence.json`" in documents[name]
         assert "`just release VERSION`" not in documents[name]
@@ -126,7 +126,12 @@ def test_preparation_performance_summaries_match_all_retained_samples() -> None:
     assert evidence["active_container_count"] == 0
     documents = {
         name: " ".join((ROOT / name).read_text().split())
-        for name in ("README.md", "CHANGELOG.md", "docs/RELEASE_1_946.md", "docs/PERFORMANCE.md")
+        for name in (
+            "docs/RELEASE_HISTORY.md",
+            "CHANGELOG.md",
+            "docs/RELEASE_1_946.md",
+            "docs/PERFORMANCE.md",
+        )
     }
     for project in ("click", "rich"):
         selected = [row for row in runs if row["project"] == project]
@@ -189,18 +194,7 @@ def test_directory_guide_example_reanalyzes_and_preserves_input(
     monkeypatch.chdir(tmp_path)
     source = tmp_path / "src"
     source.mkdir()
-    code = """def first(value):
-    a = value + 1
-    b = a * 2
-    c = b - 3
-    return c
-
-def second(value):
-    a = value + 1
-    b = a * 2
-    c = b - 3
-    return c
-"""
+    code = (ROOT / "docs/QUICKSTART.md").read_text().split("```python\n", 1)[1].split("```", 1)[0]
     (source / "example.py").write_text(code)
     guide = (ROOT / "docs/USAGE_GUIDE.md").read_text()
     section = guide.split("### 3. Analyze an Entire Directory\n", 1)[1]
@@ -213,6 +207,10 @@ def second(value):
     assert "__extracted_func_" in output
     before: dict[str, object] = {}
     after: dict[str, object] = {}
-    exec(code + "\nobservations = [(first(n), second(n)) for n in range(-5, 6)]", before)
-    exec(output + "\nobservations = [(first(n), second(n)) for n in range(-5, 6)]", after)
+    observe = (
+        "\nobservations = [(checkout_total(n), quote_total(n), invoice_total(n)) "
+        "for n in range(-5, 151)]"
+    )
+    exec(code + observe, before)
+    exec(output + observe, after)
     assert before["observations"] == after["observations"]

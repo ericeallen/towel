@@ -50,6 +50,8 @@ from tests.test_helpers import method_helper_calls
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 _SHARED_BLOCK = (
     "        first = value + 1\n        second = first * 2\n        third = second + 5\n"
 )
@@ -85,7 +87,7 @@ def _refactored(tmp_path: Path, source: str) -> Tuple[str, Any]:
     original_outcome = _outcome(source)
     original_path = tmp_path / "original.py"
     original_path.write_text(source)
-    original_engine = UnificationRefactorEngine()
+    original_engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     initial_proposals = original_engine.analyze_file(str(original_path))
     if "self.offset" in source:
         assert initial_proposals == []
@@ -129,7 +131,7 @@ def _refactored(tmp_path: Path, source: str) -> Tuple[str, Any]:
     project.mkdir()
     (project / "program.py").write_text(source)
     output = tmp_path / "output"
-    UnificationRefactorEngine().refactor_directory_to_fixed_point(
+    UnificationRefactorEngine(skip_trivial_helpers=False).refactor_directory_to_fixed_point(
         str(project), str(output), progress="none"
     )
     written = (output / "program.py").read_text()

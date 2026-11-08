@@ -34,6 +34,8 @@ import pytest
 from towel.unification.parameterization import _parameterizable
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 
 def _index(source: str) -> ast.expr:
     """The index of the subscript ``source``, as the unifier meets it."""
@@ -122,7 +124,7 @@ def test_r9p2_numbaggs_tuple_index_builds_no_proposal_that_cannot_render(tmp_pat
     source = tmp_path / "r9p2_grid"
     source.mkdir()
     (source / "grid.py").write_text(R9P2_GRID)
-    engine = UnificationRefactorEngine()
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     engine.refactor_directory_to_fixed_point(str(source), str(tmp_path / "out"), progress="none")
     assert "could not be rendered" not in engine.run_report.declined_proposals
     assert (tmp_path / "out" / "grid.py").read_text() == R9P2_GRID
@@ -147,7 +149,7 @@ def test_r9p2_tuple_indices_differing_inside_still_share_a_helper(tmp_path: Path
             return total
         """)
     (source / "rows.py").write_text(module)
-    engine = UnificationRefactorEngine(min_lines=2)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
     engine.refactor_directory_to_fixed_point(str(source), str(tmp_path / "out"), progress="none")
     written = (tmp_path / "out" / "rows.py").read_text()
     assert "__extracted_func_0" in written

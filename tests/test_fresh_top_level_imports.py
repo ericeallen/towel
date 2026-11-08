@@ -11,6 +11,9 @@
 
 """A newly imported top-level helper host must not introduce ordinary failures."""
 
+# These minimal fixtures test semantic behavior, including small extractions
+# that the default product usefulness filter intentionally declines.
+
 from __future__ import annotations
 
 import contextlib
@@ -23,16 +26,14 @@ import sys
 import pytest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.test_cli_integration import BODY
 
 
 def _write_project(root: Path, prefix: str, *, independent_import: bool) -> None:
     (root / "pyproject.toml").write_text('[project]\nname="fresh-host"\nversion="0"\n')
-    body = """def {name}(seed):
-    total = seed + 1
-    result = total * 2
-    added = result + 3
-    return added * {factor}
-"""
+    body = "def {name}(seed):\n" + BODY.replace("x", "seed").replace(
+        "return k", "return k * {factor}"
+    )
     (root / "a.py").write_text(prefix + body.format(name="first", factor=5))
     (root / "b.py").write_text(
         "def unused():\n    import a\n\n" + body.format(name="second", factor=7)
@@ -63,7 +64,9 @@ def _run(root: Path) -> str:
 
 
 def _refactor(root: Path) -> int:
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         applied, _ = engine.refactor_directory_to_fixed_point(str(root), str(root), progress="none")
     return sum(count for count, _ in applied.values())
@@ -127,6 +130,6 @@ def test_complete_cross_module_preview_handles_non_table_tool_settings(
         env={**os.environ, "TOWEL_WORKERS": "1"},
     )
     assert result.returncode == 0, result.stderr
-    assert "COMPLETE PREVIEW" in result.stdout
+    assert "Termination: fixed_point" in result.stdout
     assert "2 refactoring" in result.stdout
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before

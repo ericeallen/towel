@@ -93,6 +93,30 @@ REQUIRED_RECORDS = (
     )
 )
 
+# A documentation rebuild keeps the original runtime campaign intact. Only the
+# final package checks below need new observations, using the same record shapes.
+DOCUMENTATION_REBUILD_RECORDS = (
+    "artifacts.json",
+    "build-results.json",
+    "twine-313.log",
+    "dependencies-audit-command.json",
+    "dependencies-dev-audit.log",
+    "dependencies-dev.txt",
+    "diagrams-command.json",
+    "diagrams-writable-cache.log",
+    "wheel-smoke/results.json",
+    "sdist-docs-result.json",
+    "sdist-docs-tests.log",
+) + tuple(
+    name
+    for version in VERSIONS
+    for name in (
+        f"wheel-smoke/{version}-bare/commands.json",
+        f"wheel-smoke/{version}-extras/commands.json",
+        f"wheel-smoke/{version}-extras/cold-check.json",
+    )
+)
+
 
 class EvidenceError(ValueError):
     """Evidence cannot establish the requested local release gate."""
@@ -623,7 +647,24 @@ def verify_artifacts(
     return refs["wheel"].sha256, refs["sdist"].sha256, shipped
 
 
-def verify_smokes(records: Records, wheel: str, archive: str, version: str) -> None:
+def recorded_path(value: str, command: Mapping[str, object]) -> Path:
+    """Resolve a command operand only against its recorded working directory."""
+    path = Path(value)
+    if not path.is_absolute():
+        cwd = Path(text(command.get("cwd")))
+        require(cwd.is_absolute(), "Artifact command needs an absolute recorded cwd")
+        path = cwd / path
+    return path.resolve()
+
+
+def verify_smokes(
+    records: Records,
+    wheel: str,
+    archive: str,
+    version: str,
+    *,
+    rebuilt_paths: Mapping[str, Path] | None = None,
+) -> None:
     results = rows(records.value("wheel-smoke/results.json"))
     expected = {f"{v}-{mode}" for v in VERSIONS for mode in ("bare", "extras")}
     require(
@@ -668,6 +709,20 @@ def verify_smokes(records: Records, wheel: str, archive: str, version: str) -> N
             ),
             f"Smoke {case} installed another artifact",
         )
+        if rebuilt_paths is not None:
+            require(
+                any(
+                    "install" in strings(command.get("args"))
+                    and any(
+                        recorded_path(token.removesuffix("[format,types]"), command)
+                        == rebuilt_paths["wheel"].resolve()
+                        for token in strings(command.get("args"))
+                        if token.removesuffix("[format,types]").endswith(".whl")
+                    )
+                    for command in commands
+                ),
+                f"Smoke {case} did not install the verified rebuilt wheel path",
+            )
         previews = [item for item in commands if "preview" in strings(item.get("args"))]
         require(
             any("Would apply 1 refactoring(s)" in text(item.get("stdout")) for item in previews),
@@ -693,7 +748,39 @@ def verify_smokes(records: Records, wheel: str, archive: str, version: str) -> N
             )
     docs = records.table("sdist-docs-result.json")
     require(docs.get("archive_sha256") == archive, "Sdist tests exercised another archive")
-    named_steps(docs.get("steps"), ("sync", "source", "tests"))
+    steps = named_steps(
+        docs.get("steps"),
+        (
+            ("sync", "source", "tests")
+            if rebuilt_paths is None
+            else ("extract", "sync", "source", "tests")
+        ),
+    )
+    if rebuilt_paths is not None:
+        extraction = steps[0]
+        args = strings(extraction.get("args"))
+        require(
+            len(args) == 5
+            and Path(args[0]).name == "tar"
+            and args[1] == "-xzf"
+            and args[3] == "-C",
+            "Rebuilt sdist needs a recorded tar -xzf ARCHIVE -C DIRECTORY extraction",
+        )
+        require(
+            recorded_path(args[2], extraction) == rebuilt_paths["sdist"].resolve(),
+            "Sdist tests extracted another archive path",
+        )
+        with tarfile.open(rebuilt_paths["sdist"]) as distribution:
+            root = PurePosixPath(distribution.getmembers()[0].name).parts[0]
+        source_directory = recorded_path(args[4], extraction) / root
+        require(
+            all(
+                Path(text(step.get("cwd"))).is_absolute()
+                and Path(text(step.get("cwd"))).resolve() == source_directory
+                for step in steps[1:]
+            ),
+            "Sdist checks did not run in the rebuilt archive's extracted tree",
+        )
     suite(records.text("sdist-docs-tests.log"))
 
 
@@ -970,6 +1057,138 @@ def amendment_path(name: str, old: Mapping[str, bytes], new: Mapping[str, bytes]
     return name.startswith("docs/") or ("/" not in name and name.endswith(".md"))
 
 
+def documentation_path(name: str) -> bool:
+    """Only prose can reuse runtime evidence; executable docs and assets cannot."""
+    path = PurePosixPath(name)
+    return (name.startswith("docs/") and path.suffix in {".md", ".rst", ".txt"}) or (
+        "/" not in name and path.suffix == ".md"
+    )
+
+
+def require_documentation_diff(repo: Path, before: str, after: str) -> None:
+    """Git paths include mode-only changes that a byte-content inventory cannot see."""
+    changed = git(repo, "diff", "--no-ext-diff", "--no-renames", "--name-only", "-z", before, after)
+    for raw in changed.split(b"\0"):
+        if raw:
+            name = raw.decode()
+            require(
+                documentation_path(name),
+                f"Documentation rebuild requires identical runtime/config/harness (including modes): {name}",
+            )
+
+
+def verify_rebuilt_sdist(before: Mapping[str, bytes], after: Mapping[str, bytes]) -> None:
+    """Only documentation and its generated metadata may change in the source archive."""
+    for name in sorted(set(before) | set(after)):
+        if documentation_path(name):
+            continue
+        require(name in before and name in after, f"Documentation rebuild changed sdist: {name}")
+        if name == "PKG-INFO" or name.endswith(".egg-info/PKG-INFO"):
+            require(
+                BytesParser().parsebytes(before[name]).items()
+                == BytesParser().parsebytes(after[name]).items(),
+                "Documentation rebuild changed sdist metadata headers",
+            )
+            require(
+                after[name].partition(b"\n\n")[2] == after["README.md"],
+                "Documentation rebuild has stale sdist README metadata",
+            )
+        elif name.endswith(".egg-info/SOURCES.txt"):
+            modified = set(before[name].decode().splitlines()) ^ set(
+                after[name].decode().splitlines()
+            )
+            require(
+                all(documentation_path(path) for path in modified),
+                "Documentation rebuild changed non-documentation source inventory",
+            )
+        else:
+            require(before[name] == after[name], f"Documentation rebuild changed sdist: {name}")
+
+
+def verify_documentation_rebuild(
+    records: Records,
+    original_artifacts: Mapping[str, object],
+    raw: object,
+    old: Mapping[str, bytes],
+    new: Mapping[str, bytes],
+    head: str,
+    version: str,
+) -> Mapping[str, object]:
+    """Inspect rebuilt packages while retaining the unchanged runtime's original evidence."""
+    changed = {name for name in set(old) | set(new) if old.get(name) != new.get(name)}
+    require(bool(changed), "Documentation rebuild has no source changes")
+    for name in sorted(changed):
+        require(
+            documentation_path(name),
+            f"Documentation rebuild requires identical runtime/config/harness: {name}",
+        )
+    rebuilt = table(raw)
+    require(rebuilt.get("commit") == head, "Documentation rebuild is not from current HEAD")
+    replacements = {
+        name: FileRef.read(value) for name, value in table(rebuilt.get("records")).items()
+    }
+    require(
+        set(replacements) == set(DOCUMENTATION_REBUILD_RECORDS),
+        "Documentation rebuild needs exactly its final package/check records",
+    )
+    final = Records(records.root, {**records.files, **replacements})
+    for name in DOCUMENTATION_REBUILD_RECORDS:
+        final.bytes(name)
+    require(
+        final.bytes("dependencies-dev.txt") == records.bytes("dependencies-dev.txt"),
+        "Documentation rebuild changed the pinned tool environment",
+    )
+    steps = rows(final.value("build-results.json"))
+    build = [step for step in steps if step.get("name") == "build-313"]
+    require(
+        len(build) == 1 and "--no-isolation" in strings(build[0].get("args")),
+        "Documentation rebuild must use the recorded tools with build --no-isolation",
+    )
+    require(
+        not re.search(
+            r"validation.only|never upload|not for upload|local validation",
+            str(final.table("artifacts.json").get("publication_status", "")),
+            re.IGNORECASE,
+        ),
+        "Rebuilt artifacts explicitly marked not for publication",
+    )
+    artifacts = table(rebuilt.get("artifacts"))
+    wheel, archive, _ = verify_artifacts(final, artifacts, new, head, version)
+    # Git parity alone cannot detect a changed build backend or injected wheel
+    # metadata. The final wheel may differ only in its README and RECORD hashes.
+    before = archive_files(records.root / FileRef.read(original_artifacts["wheel"]).path)
+    after = archive_files(records.root / FileRef.read(artifacts["wheel"]).path)
+    require(set(before) == set(after), "Documentation rebuild changed wheel members")
+    for name in before:
+        if name.endswith(".dist-info/RECORD"):
+            continue  # verify_artifacts has independently checked every new entry.
+        if name.endswith(".dist-info/METADATA"):
+            require(
+                BytesParser().parsebytes(before[name]).items()
+                == BytesParser().parsebytes(after[name]).items(),
+                "Documentation rebuild changed package metadata headers",
+            )
+        else:
+            require(before[name] == after[name], f"Documentation rebuild changed wheel: {name}")
+    # Inspect generated sdist metadata too: unchanged tracked source alone does
+    # not establish that its dependencies/entry points survived the rebuild.
+    verify_rebuilt_sdist(
+        archive_files(records.root / FileRef.read(original_artifacts["sdist"]).path),
+        archive_files(records.root / FileRef.read(artifacts["sdist"]).path),
+    )
+    verify_commands(final, version)
+    verify_smokes(
+        final,
+        wheel,
+        archive,
+        version,
+        rebuilt_paths={
+            name: records.root / FileRef.read(value).path for name, value in artifacts.items()
+        },
+    )
+    return artifacts
+
+
 def verify_amendments(
     root: Path,
     raw: object,
@@ -977,6 +1196,8 @@ def verify_amendments(
     new: Mapping[str, bytes],
     shipped: set[str],
     releasing: bool,
+    *,
+    rebuilt: bool = False,
 ) -> None:
     changed = {
         name: digest(new[name]) if name in new else None
@@ -996,7 +1217,7 @@ def verify_amendments(
             f"Runtime/config/harness change invalidates evidence: {name}",
         )
         require(
-            not releasing or name not in shipped,
+            not releasing or rebuilt or name not in shipped,
             f"Release artifact predates shipped amendment: {name}",
         )
     require(bool(FileRef.read(amendment.get("report")).bytes(root)), "Missing amendment review")
@@ -1093,6 +1314,10 @@ def verify(
         "Frozen runtime hashes mismatch",
     )
     if not validation_only:
+        require(
+            "**Development branch:" not in current["README.md"].decode(),
+            "Development branch README must be finalized before publication",
+        )
         for row in (frozen, records.table("artifacts.json")):
             require(
                 not re.search(
@@ -1105,8 +1330,18 @@ def verify(
     wheel, archive, shipped = verify_artifacts(
         records, table(bundle.get("artifacts")), source, commit, version
     )
+    amendment = bundle.get("amendments")
+    rebuild = table(amendment).get("rebuilt") if amendment is not None else None
+    if rebuild is not None:
+        require_documentation_diff(repo, commit, head)
     verify_amendments(
-        records.root, bundle.get("amendments"), source, current, shipped, not validation_only
+        records.root,
+        amendment,
+        source,
+        current,
+        shipped,
+        not validation_only,
+        rebuilt=rebuild is not None,
     )
     verify_matrix(records, commit, runtime, source)
     verify_commands(records, version)
@@ -1118,11 +1353,65 @@ def verify(
         "Review source/artifact identity mismatch",
     )
     verify_corpus(records, commit, wheel, source, review)
-    artifacts = table(bundle["artifacts"])
+    artifacts: Mapping[str, object] = table(bundle["artifacts"])
+    if rebuild is not None:
+        artifacts = verify_documentation_rebuild(
+            records, artifacts, rebuild, source, current, head, version
+        )
     return (
         records.root / FileRef.read(artifacts["wheel"]).path,
         records.root / FileRef.read(artifacts["sdist"]).path,
     )
+
+
+def prepare_documentation_rebuild(
+    repo: Path, evidence: Path, directory: Path, output: Path, version: str
+) -> None:
+    """Assemble references to observed rebuild results; never run or invent checks."""
+    root, directory = evidence.resolve().parent, directory.resolve()
+    require(output.resolve().parent == root, "Prepared evidence must stay beside the original")
+    require(not output.exists(), "Prepared evidence output already exists")
+    require(directory.is_relative_to(root), "Rebuild records must stay inside the evidence bundle")
+    bundle = table(decode(evidence.read_bytes()))
+    require(bundle.get("version") == version, "Requested version differs from evidence")
+    old = source_tree(repo, text(bundle.get("validation_commit")))
+    head = git(repo, "rev-parse", "HEAD").decode().strip()
+    new = source_tree(repo, head)
+    require_documentation_diff(repo, text(bundle.get("validation_commit")), head)
+    changed = {
+        name: digest(new[name]) if name in new else None
+        for name in sorted(set(old) | set(new))
+        if old.get(name) != new.get(name)
+    }
+    require(bool(changed), "Documentation rebuild has no source changes")
+    require(all(documentation_path(name) for name in changed), "Rebuild changes are not docs-only")
+
+    def reference(name: str) -> dict[str, str]:
+        path = (directory / name).resolve()
+        require(path.is_relative_to(directory), f"Rebuild file escapes its directory: {name}")
+        return {"path": str(path.relative_to(root)), "sha256": digest(path.read_bytes())}
+
+    checks = rows(decode((directory / "amendment-checks.json").read_bytes()))
+    bundle["amendments"] = {
+        "files": changed,
+        "report": reference("amendment-review.md"),
+        "checks": [
+            {**check, "files": changed, "log": reference(text(check.get("log")))}
+            for check in checks
+        ],
+        "rebuilt": {
+            "commit": head,
+            "artifacts": {
+                "wheel": reference(f"dist/code_towel-{version}-py3-none-any.whl"),
+                "sdist": reference(f"dist/code_towel-{version}.tar.gz"),
+            },
+            "records": {name: reference(name) for name in DOCUMENTATION_REBUILD_RECORDS},
+        },
+    }
+    # Exclusive creation preserves both the original evidence and an earlier
+    # preparation attempt. The ordinary verifier checks this file immediately.
+    with output.open("x") as stream:
+        stream.write(json.dumps(bundle, indent=2) + "\n")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1135,8 +1424,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Validate local evidence; never authorize upload",
     )
+    parser.add_argument(
+        "--prepare-docs-rebuild",
+        type=Path,
+        metavar="DIRECTORY",
+        help="Assemble and verify fresh package records for a documentation-only amendment",
+    )
+    parser.add_argument("--output", type=Path, help="New evidence JSON beside the original")
     args = parser.parse_args(argv)
+    if (args.prepare_docs_rebuild is None) != (args.output is None):
+        parser.error("--prepare-docs-rebuild and --output must be supplied together")
     try:
+        if args.prepare_docs_rebuild is not None:
+            prepare_documentation_rebuild(
+                args.repo, args.evidence, args.prepare_docs_rebuild, args.output, args.version
+            )
+            args.evidence = args.output
         wheel, archive = verify(
             args.repo, args.evidence, args.version, validation_only=args.validation_only
         )

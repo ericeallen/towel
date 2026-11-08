@@ -161,7 +161,11 @@ VERSION = """\
 
 
 def _refactored(root: Path, oracle: object) -> Sequence[str]:
-    engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)  # type: ignore[arg-type]
+    engine = UnificationRefactorEngine(
+        min_lines=3,
+        type_oracle=oracle,  # type: ignore[arg-type]
+        skip_trivial_helpers=False,
+    )
     try:
         results, _ = engine.refactor_directory_to_fixed_point(
             str(root / "pkg"), str(root / "pkg"), progress="none"

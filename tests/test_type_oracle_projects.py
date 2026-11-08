@@ -197,6 +197,7 @@ def test_cross_file_extraction_keeps_verified_annotations(
             f"    return total * {multiplier}\n"
         )
     engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False,
         min_lines=2,
         reuse_existing_functions=False,
         type_oracle=oracle,
@@ -231,7 +232,10 @@ def test_project_any_rule_triggers_annotation_fallback(tmp_path: Path) -> None:
     try:
         assert checker.check(str(path), path.read_text()) == CheckSuccess()
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=checker,
         )
         proposal = engine.analyze_file(str(path))[0]
         result = engine.apply_refactoring(str(path), proposal)
@@ -358,7 +362,7 @@ def test_timeout_is_unknown_and_never_certifies_generated_types(
     assert checker.is_subtype(str(path), path.read_text(), [("str", "int")]) == [Subtyping.UNKNOWN]
     assert isinstance(checker.check(str(path), path.read_text()), CheckFailure)
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=checker
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=checker
     )
     proposal = engine.analyze_file(str(path))[0]
     with pytest.raises(RefactoringError, match="type check failed"):

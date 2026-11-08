@@ -25,6 +25,9 @@ statements that bind it. The end-to-end tests run the audit's reproductions
 under mypy and compare what each program does before and after.
 """
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 from __future__ import annotations
 
 import ast
@@ -372,7 +375,9 @@ def _refactored(host: Path) -> str:
     """The first proposal for ``host`` applied under mypy, written back to it."""
     oracle = MypyInferrer()
     try:
-        engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, min_lines=3, type_oracle=oracle
+        )
         proposals = engine.analyze_file(str(host))
         assert proposals
         changed = engine.apply_refactoring(str(host), proposals[0])

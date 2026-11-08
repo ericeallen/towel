@@ -45,6 +45,8 @@ from towel.unification.import_graph import (
 from towel.unification.program_imports import program_imports
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
+
 _BLOCK = """
 def {name}(values):
     total = 0
@@ -149,7 +151,10 @@ def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(
     original = ast.parse((root / "pkg/b_borrower.py").read_text()).body[0]
     assert isinstance(original, ast.FunctionDef)
     engine = UnificationRefactorEngine(
-        min_lines=3, cross_module_helpers=True, excluded_directories=["_vendor"]
+        skip_trivial_helpers=False,
+        min_lines=3,
+        cross_module_helpers=True,
+        excluded_directories=["_vendor"],
     )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(

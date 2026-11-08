@@ -18,7 +18,7 @@ On this page:
 
 ```bash
 # Complete checked, formatted fixed-point preview in private temporary output.
-# Shows the final diff, helper inventory and call-site before/after records.
+# Shows a concise summary and the final diff.
 towel preview path/to/project
 
 # Faster partial structural listing, without checks or follow-up extractions.
@@ -31,7 +31,8 @@ towel dry path/to/project path/to/cleaned --no-interactive
 towel dry path/to/project path/to/project --no-interactive
 ```
 
-`dry` asks for confirmation unless `--no-interactive` is given. The command
+`dry` asks for confirmation unless `--no-interactive` is given. A declined
+confirmation or closed input stream exits 1 without writing. The command
 defaults are `--min-lines 3`, `--max-parameters 5`, typing and formatting on,
 cross-module sharing off, and an unlimited fixed-point run (`--max-refactorings
 0`). Typed `dry`
@@ -145,6 +146,9 @@ or `setup.py`, or move it out of the larger tree.
 # Stop after at most ten applied extractions.
 towel dry example.py cleaned.py --no-interactive --max-refactorings 10
 
+# Give setup, analysis and verification a 60-second budget.
+towel dry path/to/project path/to/cleaned --no-interactive --time-limit 60
+
 # Explicitly disable typing and formatting.
 towel dry path/to/project path/to/cleaned --no-interactive --no-types --no-format
 ```
@@ -181,8 +185,13 @@ The [typing guide](TYPING.md) explains checker selection and typed declines.
 
 Progress is written to stderr so stdout can be redirected. Optional `tqdm`
 adds progress bars that name the proposal being evaluated and refresh on a
-heartbeat. There is no elapsed-time budget; see [performance and timing](PERFORMANCE.md)
-for workload limits and measurements.
+heartbeat. `--time-limit SECONDS` accepts a positive finite elapsed-time budget
+for setup, analysis and verification in `dry` and complete `preview`. Expiration
+returns exit status 124 and publishes no output. Publication starts only after
+the budget check passes; finishing publication and cleaning up owned resources
+may extend past the deadline so a timeout cannot interrupt a safe commit or
+rollback. It is not a memory limit or a hard process-kill deadline. See
+[performance and timing](PERFORMANCE.md) for measured workloads.
 
 The Python API separately offers `promote_equal_hof_literals=True`; the CLI
 does not promote equal higher-order factory literals by default. Repeated class
@@ -258,10 +267,39 @@ The refusal explains this procedure rather than silently discarding backups.
 
 ## Diagnostics
 
+Complete preview defaults to a concise result summary and one unified diff.
+Choose the output needed for the task:
+
+```bash
+towel preview project --summary                 # counts and termination only
+towel preview project --diff > changes.diff     # diff-only stdout
+towel preview project --inventory               # also print helper inventory
+towel preview project --json > result.json      # one versioned JSON result
+towel preview project --explain                 # source-located decline traces on stderr
+towel dry project cleaned --no-interactive --json > result.json
+```
+
+`--summary`, `--diff` and `--json` are mutually exclusive. These presentation flags and
+`--json` apply to complete preview; `--quick` rejects them because its partial
+structural proposals are a different result. `--inventory` is optional for
+human output; JSON results include the inventory directly. Errors, warnings,
+tool-selection notes and progress go to stderr, so the output stream can be
+redirected. `--progress none` suppresses progress, not result output.
+
+Use the [compatibility contract](COMPATIBILITY.md) for exit statuses, JSON
+schema fields and upgrade guarantees. Human-readable wording is not a parsing
+interface. Invalid arguments can fail before a JSON result is created.
+
 A `dry` run reports declined proposals by reason, such as a type-check refusal,
 a caller-narrowing boundary, class-attribute declarations, or text that cannot
 be represented in the file's encoding. If nothing was applied, it also
 summarizes candidate-pair declines.
+
+Add `--explain` to `preview` or `dry` to locate declined candidate pairs in
+the source and see their individual reasons on stderr. A profitability refusal
+means the helper and rewritten callers would add more structure than the
+shared work repays; it does not mean the original code is invalid. These traces
+can be large, so the default result keeps the summary concise.
 
 `--stats` (for `dry` and the complete `preview`) adds an account of where the
 duplicates went. Each candidate pair of the run's last whole analysis is

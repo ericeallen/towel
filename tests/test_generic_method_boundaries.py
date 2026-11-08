@@ -14,6 +14,8 @@
 
 """Method generalization retains class contracts and checks the actual host class."""
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -44,7 +46,7 @@ def checker(request: pytest.FixtureRequest) -> Iterator[TypeOracle]:
 
 def _engine(checker: TypeOracle) -> UnificationRefactorEngine:
     return UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=checker
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=checker
     )
 
 

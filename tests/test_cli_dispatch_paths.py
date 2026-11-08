@@ -97,7 +97,7 @@ def test_input_without_a_py_suffix_is_analyzed_only_on_confirmation(
     source.write_text(DUPLICATES)
     out = tmp_path / "out.py"
     result = invoke(["dry", str(source), str(out), flag, "--progress", "none"], stdin=answer)
-    assert result.status == 0, result.stderr
+    assert result.status == (0 if analyzed else 1), result.stderr
     assert f"Warning: '{source}' is not a Python file (.py)" in result.stdout
     assert ("Analyze anyway?" in result.stdout) is (flag == "--interactive")
     assert out.exists() is analyzed

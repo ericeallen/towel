@@ -14,6 +14,8 @@
 
 """An inert module body does not justify advancing its observable import."""
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import contextlib
@@ -188,7 +190,9 @@ def test_importing_an_inert_host_still_overwrites_its_parent_binding(
     before = run()
     assert before.returncode == 0 and before.stdout == "8\n77 45\n", before.stderr
     assert import_change(str(host), str(borrower), ImportGraphCache()) is ImportChange.IMPORT_ORDER
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         engine.refactor_directory_to_fixed_point(str(package), str(package), progress="none")
     after = run()
@@ -257,7 +261,9 @@ def test_a_new_submodule_import_cannot_replace_an_external_package_attribute(
 
     before = run()
     assert before.returncode == 0 and before.stdout == "8 77\n", before.stderr
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         engine.refactor_directory_to_fixed_point(
             str(host.parent), str(host.parent), progress="none"
@@ -276,7 +282,9 @@ def test_explicitly_loaded_module_still_shares_a_helper_end_to_end(
     )
     host, borrower = _program(tmp_path, body.format(name="first", factor=5), regular=regular)
     borrower.write_text("import pkg.a\n" + body.format(name="second", factor=7))
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(host.parent), str(host.parent), progress="none"
@@ -337,7 +345,9 @@ def test_a_partially_initialized_import_does_not_prove_its_later_imports_ran(
 
     before = run()
     assert before.returncode == 0 and before.stdout == "8\n77 45\n", before.stderr
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         engine.refactor_directory_to_fixed_point(str(package), str(package), progress="none")
     after = run()

@@ -48,7 +48,7 @@ from towel.diagnostics import REJECTIONS
 from towel.unification.parallel import ParallelEvaluation
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.probe_answers import answer_probes
-from tests.test_cli_integration import invoke
+from tests.test_cli_integration import DUPLICATES, invoke
 
 BLOCK = """
 def {name}(items: list[int], scale: int) -> int:
@@ -153,7 +153,7 @@ def test_a_refusal_by_the_checker_is_called_that(
     root = tmp_path / "project"
     (root / "pkg").mkdir(parents=True)
     (root / "pkg" / "m.py").write_text(
-        BLOCK.format(name="fa", tag="a", number=1) + BLOCK.format(name="fb", tag="a", number=2),
+        DUPLICATES.replace("(x):", "(x: int) -> int:"),
         encoding="utf-8",
     )
     monkeypatch.setattr("towel.cli._type_oracle", lambda path: _RefusesEveryCandidate())

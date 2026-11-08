@@ -454,6 +454,8 @@ def compare_executions(
     return not differences, differences
 
 
+# Exercise semantically safe small transformations too. The product's optional
+# usefulness filter must not turn preservation checks into no-change successes.
 class TestAutomaticObservationalEquivalenceWithConstants(unittest.TestCase):
     """Observational equivalence across all example files, with constant parameterization."""
 
@@ -462,7 +464,7 @@ class TestAutomaticObservationalEquivalenceWithConstants(unittest.TestCase):
         from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
 
         self.engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=4, parameterize_constants=True
+            max_parameters=5, min_lines=4, parameterize_constants=True, skip_trivial_helpers=False
         )
         self.tester = AutomaticEquivalenceTester(self.engine)
 
@@ -536,7 +538,7 @@ class TestObservationalEquivalence(TemporaryModuleTestCase):
     def setUp(self):
         super().setUp()
         self.engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=4, parameterize_constants=True
+            max_parameters=5, min_lines=4, parameterize_constants=True, skip_trivial_helpers=False
         )
 
     def test_example1_simple_observational_equivalence(self):
@@ -843,7 +845,9 @@ class TestAutomaticObservationalEquivalence(unittest.TestCase):
         """Set up the test environment."""
         from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
 
-        self.engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
+        self.engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=4, skip_trivial_helpers=False
+        )
         self.tester = AutomaticEquivalenceTester(self.engine)
 
     def test_all_examples_automatically(self):

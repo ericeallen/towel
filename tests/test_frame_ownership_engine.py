@@ -31,6 +31,35 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 FIXTURES = Path(__file__).parent / "hostile_cases"
 
 
+def _substantial_value_return_source() -> str:
+    """Keep real ownership events while making the default extraction worthwhile.
+
+    Reuse policy is coupled to the default filter, and the CLI exposes that policy,
+    so these controls need useful shared work instead of an engine-only opt-out.
+    """
+    return (
+        (FIXTURES / "r1792_value_return_owner.py")
+        .read_text()
+        .replace(
+            "    value = 3\n",
+            """    value = 3
+    value = value + 17
+    value = value * 19
+    value = value - 23
+    value = value // 29
+    value = value + 31
+    value = value * 37
+    value = value - 41
+    value = value // 43
+    value = value + 47
+    value = value * 53
+    value = value - 59
+    value = value // 61
+""",
+        )
+    )
+
+
 def _run(path: Path) -> bytes:
     completed = subprocess.run([sys.executable, "-B", str(path)], capture_output=True, check=True)
     assert not completed.stderr
@@ -55,7 +84,9 @@ def test_actual_proposals_and_fixed_point_preserve_original_finalizer_order(
     original = FIXTURES / ("r1792_" + case + ".py")
     source = _source(tmp_path, original.read_text())
     before_bytes, before_events = source.read_bytes(), _run(source)
-    engine = UnificationRefactorEngine(annotate_helpers=False)
+    # These original minimal hostile fixtures isolate cleanup safety, not
+    # whether a user would choose their generated abstraction.
+    engine = UnificationRefactorEngine(annotate_helpers=False, skip_trivial_helpers=False)
     proposals = engine.analyze_file(str(source))
     if case == "external_exception_partial":
         assert not proposals  # The asymmetric prefix forces only the unsafe partial shape.
@@ -105,16 +136,24 @@ class _ReuseObservedEngine(UnificationRefactorEngine):
 def test_handoff_keeps_fresh_helper_and_safe_no_new_owner_still_considers_reuse(
     tmp_path: Path,
 ) -> None:
-    original = (FIXTURES / "r1792_value_return_owner.py").read_text()
+    original = _substantial_value_return_source()
     source = _source(tmp_path, original)
     handoff_engine = _ReuseObservedEngine(annotate_helpers=False)
     handoff = handoff_engine.analyze_file(str(source))
     assert handoff and handoff_engine.reuse_calls == 0
     assert all(p.reused_function is None for p in handoff)
+    # Keep every bound local a literal: assigning arithmetic results would
+    # introduce opaque owners and require a handoff again. Put substantial
+    # shared computation directly in the return expression instead.
+    unowned = (FIXTURES / "r1792_value_return_owner.py").read_text()
     source.write_text(
-        original.replace("inner = Resource('inner:first')", "x = 1\n    y = 2\n    inner = 3")
+        unowned.replace("inner = Resource('inner:first')", "x = 1\n    y = 2\n    inner = 3")
         .replace("inner = Resource('inner:second')", "x = 1\n    y = 2\n    inner = 3")
-        .replace("return value", "return x * y + inner + value")
+        .replace(
+            "return value",
+            "return ((x * y + inner + value) * (value + 17) - (inner * 19)) // (x + y)"
+            " + (value * 23 - inner) * (x + 29)",
+        )
     )
     safe_engine = _ReuseObservedEngine(annotate_helpers=False)
     safe = safe_engine.analyze_file(str(source))
@@ -129,7 +168,7 @@ def test_handoff_keeps_fresh_helper_and_safe_no_new_owner_still_considers_reuse(
 
 
 def test_default_typed_cli_preserves_whole_body_parameter_cleanup(tmp_path: Path) -> None:
-    text = (FIXTURES / "r1792_value_return_owner.py").read_text()
+    text = _substantial_value_return_source()
     text = text.replace("events = []", "events: list[str] = []")
     text = text.replace("def __init__(self, name):", "def __init__(self, name: str) -> None:")
     text = text.replace("def __del__(self):", "def __del__(self) -> None:")

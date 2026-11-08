@@ -158,6 +158,21 @@ for module_name, function_name, index in FUNCTIONS:
 """
 
 
+# Keep the complete typed CLI fixture useful while retaining every original
+# operand, literal-pool observation and effect-order check.
+_CHECKED_STEPS = """    checked = checked + 13
+    checked = checked + 17
+    checked = checked + 19
+    checked = checked + 23
+    checked = checked + 29
+    checked = checked + 31
+    checked = checked + 37
+    checked = checked + 41
+    checked = checked + 43
+    checked = checked + 47
+"""
+
+
 def _body(case: _Case, row: tuple[str, ...]) -> str:
     if case.formatting:
         expression = f"x + {row[0]} + x * {case.common}"
@@ -175,6 +190,15 @@ def _body(case: _Case, row: tuple[str, ...]) -> str:
             text = f'f"head: {{{expression}{suffix}}} tail"'
         return (
             f"    text = {text}\n"
+            "    text = text.replace('  ', ' ')\n"
+            "    text = text.replace(' -', '-')\n"
+            "    text = text.replace('- ', '-')\n"
+            "    text = text.replace(' .', '.')\n"
+            "    text = text.replace(' ,', ',')\n"
+            "    text = text.replace(' ;', ';')\n"
+            "    text = text.replace(' :', ':')\n"
+            "    text = text.removeprefix(' ')\n"
+            "    text = text.removesuffix(' ')\n"
             "    upper = text.upper()\n"
             "    lower = text.lower()\n"
             "    combined = upper + lower\n"
@@ -185,7 +209,9 @@ def _body(case: _Case, row: tuple[str, ...]) -> str:
     lines.append("    total = value0 + scale")
     lines.extend(f"    total = total + value{index}" for index in range(1, len(row)))
     # Keep enough original work for the actual CLI path, even for a single column.
-    lines.extend(["    checked = total + 11", "    return checked"])
+    lines.append("    checked = total + 11")
+    lines.extend(_CHECKED_STEPS.splitlines())
+    lines.append("    return checked")
     return "\n".join(lines) + "\n"
 
 
@@ -409,8 +435,7 @@ def test_mixed_constant_expression_boundary_preserves_effects_and_failures(
             f"    first = x + {offset}\n"
             "    scale = x * 2\n"
             "    total = first + scale\n"
-            "    checked = total + 11\n"
-            "    return checked\n\n"
+            "    checked = total + 11\n" + _CHECKED_STEPS + "    return checked\n\n"
         )
     program = """import gc
 import m

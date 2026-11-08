@@ -25,6 +25,7 @@ is a defect to fix, not a limitation to document.
 - [Unreadable input](#2026-09-25-a-file-that-does-not-parse-refuses-the-run) · [Scope constraints](#2026-09-27-recover-valid-blocks-without-moving-unrelated-scope-constraints)
 - [Fresh variant checks](#2026-10-06-rendered-variant-refusals-require-fresh-checker-requests)
 - [Tiny helper interface cost](#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
+- [Complete extraction usefulness](#2026-11-08-complete-extractions-must-repay-their-generated-syntax)
 - [Exact constants, thunk order and IF outputs](#2026-10-08-retained-proposals-need-source-and-lifetime-proofs)
 - [Scoped facts and native warning behavior](#2026-10-10-share-immutable-facts-without-caching-admission)
 - [Per-analysis source-correspondence proof (amended for 1.946)](#2026-10-18-one-analysis-may-reuse-its-source-correspondence-proof)
@@ -1670,6 +1671,34 @@ optional forwarding policy; it does not disable semantic checks or unconditional
 no-logic rejections. No new CLI opt-out is added. Changes to the calibration
 require behavioral and useful-extraction controls, with the decision updated
 alongside the implementation (`unification/profitability.py`).
+
+## 2026-11-08: Complete extractions must repay their generated syntax
+
+The product audit found that the two-statement filter above admitted the
+README's four-statement example even though its eleven lines became eighteen.
+Its cost input also retained only the final ownership call, omitting the box
+assignment and deletion prefix. The next release replaces that narrow policy.
+
+Count each AST statement, expression, argument, keyword and comprehension clause
+as one syntax unit. Identifier length, source locations and physical line
+wrapping do not affect the count. Estimate the original repeated work as the
+helper's meaningful body cost multiplied by its number of sharing sites; ignore
+global/nonlocal declarations, pass and constant expression statements when
+estimating that work. Require the complete generated helper plus every complete
+rendered caller replacement to have a strictly smaller cost. The helper's
+signature, annotations, receiver and lifetime holder count; so do the ownership
+box assignment, independent deletions, indexing and supplier wrappers at every
+site. No statement-count or control-flow exemption remains.
+
+This is an intentionally conservative selection heuristic, not a semantic
+argument or an exact source-size calculation. Caller expressions substituted for
+helper parameters can contain additional work that the estimate does not credit.
+Soundness checks still run independently. The existing API option
+`skip_trivial_helpers=False` permits small semantic transformations, and safety
+fixtures use it explicitly when declining the example would make the test
+vacuous. Default CLI controls must still demonstrate useful transformations.
+The previous README example is a permanent decline/opt-out regression; useful
+multi-site computations and before/after behavior are positive controls.
 
 ## 2026-10-06: Rendered-variant refusals require fresh checker requests
 

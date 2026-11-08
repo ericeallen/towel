@@ -129,7 +129,7 @@ def test_r9my_a_file_no_check_has_seen_is_checked_to_find_out(tmp_path: Path) ->
 
 
 def _helper_signature(root: Path, target: str, oracle: TypeOracle) -> str:
-    engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3, type_oracle=oracle)
     try:
         results, _ = engine.refactor_directory_to_fixed_point(str(root), str(root), progress="none")
     finally:

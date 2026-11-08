@@ -268,11 +268,23 @@ def test_a_refactoring_of_a_plugin_project_passes_the_projects_own_mypy(tmp_path
     for path in (root / "src" / "alpha" / "a.py", borrower):
         source = path.read_text().replace(
             "    for item in items:\n        print(value, item)\n        print(item, value)\n    print(value)",
-            "    consume(value)\n    consume(value)\n    consume(value)",
+            "".join(
+                f"    consume(value, {label!r})\n"
+                for label in (
+                    "received",
+                    "queued",
+                    "started",
+                    "validated",
+                    "processed",
+                    "stored",
+                    "published",
+                    "finished",
+                )
+            ).rstrip(),
         )
         source = source.replace(
             "from alpha.magic import magic\n",
-            "from alpha.magic import magic\n\ndef consume(value: str) -> None:\n    print('value', value)\n",
+            "from alpha.magic import magic\n\ndef consume(value: str, label: str) -> None:\n    print(label, value)\n",
         )
         path.write_text(source)
 

@@ -34,10 +34,23 @@ from towel.unification.pipeline import analyze_scopes, collect_functions, parse_
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import refactor_to_fixed_point_silently
 
+# Keep positive controls useful under the default policy, including reuse checks.
 BODY = """    total = 0
     for item in values:
         total += item * 2
     total += 7
+    total = total + 17
+    total = total - 17
+    total = total * 19
+    total = total // 19
+    total = total + 23
+    total = total - 23
+    total = total * 29
+    total = total // 29
+    total = total + 31
+    total = total - 31
+    total = total * 37
+    total = total // 37
     return total
 """
 
@@ -221,6 +234,18 @@ def test_marked_outer_keeps_nested_functions_and_methods_opaque(tmp_path: Path) 
         for item in values:
             total += item * 2
         total += 7
+        total = total + 17
+        total = total - 17
+        total = total * 19
+        total = total // 19
+        total = total + 23
+        total = total - 23
+        total = total * 29
+        total = total // 29
+        total = total + 31
+        total = total - 31
+        total = total * 37
+        total = total // 37
         return total
     class Nested:
         def inner_two(self, values):
@@ -228,6 +253,18 @@ def test_marked_outer_keeps_nested_functions_and_methods_opaque(tmp_path: Path) 
             for item in values:
                 total += item * 2
             total += 7
+            total = total + 17
+            total = total - 17
+            total = total * 19
+            total = total // 19
+            total = total + 23
+            total = total - 23
+            total = total * 29
+            total = total // 29
+            total = total + 31
+            total = total - 31
+            total = total * 37
+            total = total // 37
             return total
     return inner_one, Nested
 
@@ -285,6 +322,18 @@ def test_marked_async_multiline_method_preserves_its_body_with_method_extraction
         for item in values:
             total+=item*2
         total+=7
+        total = total + 17
+        total = total - 17
+        total = total * 19
+        total = total // 19
+        total = total + 23
+        total = total - 23
+        total = total * 29
+        total = total // 29
+        total = total + 31
+        total = total - 31
+        total = total * 37
+        total = total // 37
         return total
 
 """ + textwrap.indent(_function("alpha") + _function("beta"), "    ")
@@ -393,7 +442,7 @@ def test_literal_non_lf_characters_do_not_shift_exclusion_spans(
         + _function("beta")
     )
     (definition,) = protected_definitions(source, ast.parse(source))
-    assert definition.line_range == (2, 7)
+    assert definition.line_range == (2, 19)
     assert definition.text == _function("protected", "  # towel: no-extract").rstrip() + "\n"
     path = _write(tmp_path, source)
     final, applied = refactor_to_fixed_point_silently(str(path), min_lines=3)

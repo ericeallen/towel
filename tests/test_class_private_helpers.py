@@ -26,7 +26,8 @@ underscores are dropped, a class named only with underscores mangles nothing
 and so gets no method helper, and a nested class mangles with its own name.
 
 Every test runs the program before and after in a fresh interpreter and
-compares what it printed.
+compares what it printed. Minimal method bodies explicitly bypass the optional
+readability filter so the tests exercise private-name semantics after extraction.
 """
 
 from __future__ import annotations
@@ -105,7 +106,9 @@ def _run(directory: Path, driver: str, *path: Path) -> str:
 
 def _refactor(package: Path, **options: object) -> int:
     """Refactor ``package`` in place to a fixed point; the number of refactorings applied."""
-    engine = UnificationRefactorEngine(min_lines=3, **options)  # type: ignore[arg-type]
+    engine = UnificationRefactorEngine(
+        min_lines=3, skip_trivial_helpers=False, **options  # type: ignore[arg-type]
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(package), str(package), progress="none"
@@ -411,7 +414,7 @@ def test_a_second_run_numbers_past_the_first_runs_helpers(tmp_path: Path) -> Non
     )
     before = _run(root, driver, root)
     # One helper per run: the first run is capped at a single refactoring.
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=False)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         engine.refactor_directory_to_fixed_point(
             str(root / "pkg"), str(root / "pkg"), progress="none", max_iterations=1
@@ -594,7 +597,9 @@ def test_a_class_private_helper_passes_mypy_strict_and_pyright_strict(
     before = _run(tmp_path, driver, tmp_path)
     oracle = MypyInferrer()
     try:
-        engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+        engine = UnificationRefactorEngine(
+            min_lines=3, type_oracle=oracle, skip_trivial_helpers=False
+        )
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             _, applied, _ = engine.refactor_to_fixed_point(str(tmp_path / "ledger.py"))
     finally:

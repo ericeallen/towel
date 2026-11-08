@@ -108,7 +108,7 @@ def test_complete_preview_matches_dry_bytes_and_requested_cap(
     assert f"Termination: {'iteration_cap' if cap else 'fixed_point'}" in preview.stdout
     assert "Applied " not in preview.stdout
     assert "towel-preview-" not in preview.stdout + preview.stderr
-    assert "Call sites (- before / + after):" in preview.stdout
+    assert "--- before/" in preview.stdout and "+++ after/" in preview.stdout
     assert _snapshot(root) == before
     assert len(completed) == 1
     temporary, predicted = completed[0]
@@ -162,7 +162,7 @@ def test_preview_shows_final_helper_definitions_and_dry_inventory(
     (root / "module.py").write_text(DUPLICATES)
     target = root if directory else root / "module.py"
     flags = ["--no-types", "--no-format", "--progress", "none"]
-    result = invoke(["preview", str(target), "--interactive", *flags])
+    result = invoke(["preview", str(target), "--interactive", "--inventory", *flags])
     assert result.status == 0, result
     assert "--- before/module.py" in result.stdout
     assert "+++ after/module.py" in result.stdout
@@ -184,7 +184,7 @@ def test_preview_shows_final_helper_definitions_and_dry_inventory(
     assert inventory["helpers"][0]["parameters"]
     assert "towel-preview-" not in result.stdout
     assert (root / "module.py").read_text() == DUPLICATES
-    compatible = invoke(["preview", str(target), "--no-interactive", *flags])
+    compatible = invoke(["preview", str(target), "--no-interactive", "--inventory", *flags])
     assert compatible.stdout == result.stdout and compatible.status == 0
 
 

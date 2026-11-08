@@ -27,6 +27,8 @@ does not establish whether its operators or subscriptions invoke user code.
 Interpreter syntax accounting is test_annotations_for_the_oldest_python's subject.
 """
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -46,7 +48,11 @@ def _refactor(tmp_path: Path, code: str, **engine_options: Unpack[EngineOptions]
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "m"\nrequires-python = ">=3.10"\n')
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent(code))
-    options: EngineOptions = {"reuse_existing_functions": False, **engine_options}
+    options: EngineOptions = {
+        "reuse_existing_functions": False,
+        "skip_trivial_helpers": False,
+        **engine_options,
+    }
     engine = UnificationRefactorEngine(min_lines=2, **options)
     proposals = engine.analyze_file(str(path))
     assert proposals, "the fixture must produce a proposal"
@@ -415,7 +421,10 @@ def test_cross_file_helper_keeps_only_builtin_annotations(tmp_path: Path) -> Non
                     ((label or "") + "{{}}".format(value * 2)).upper()
                 """))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, cross_module_helpers=True
+        skip_trivial_helpers=False,
+        min_lines=2,
+        reuse_existing_functions=False,
+        cross_module_helpers=True,
     )
     proposals = engine.analyze_directory(str(package))
     assert proposals
@@ -545,7 +554,9 @@ def test_original_owned_annotated_local_partial_stays_refused(tmp_path: Path) ->
     )
     path = tmp_path / "owned_partial.py"
     path.write_text(source)
-    engine = UnificationRefactorEngine(min_lines=2, annotate_helpers=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=2, annotate_helpers=False
+    )
     assert engine.analyze_file(str(path)) == []
     assert "owned_binding_frame_boundary" in engine.declined_pairs
     assert path.read_text() == source

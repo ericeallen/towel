@@ -55,7 +55,10 @@ def _run(root: Path, search_paths: tuple[Path, ...] = ()) -> str:
 
 
 def _refactor(package: Path) -> int:
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    # The small bodies isolate import timing; readability is tested separately.
+    engine = UnificationRefactorEngine(
+        min_lines=3, cross_module_helpers=True, skip_trivial_helpers=False
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(package), str(package), progress="none"
@@ -289,7 +292,10 @@ def test_generic_helper_can_run_before_its_signature_declarations(tmp_path: Path
             ).body
         ),
     )
-    engine = UnificationRefactorEngine(annotate_helpers=False, cross_module_helpers=True)
+    # This manually constructed identity helper exercises declaration placement.
+    engine = UnificationRefactorEngine(
+        annotate_helpers=False, cross_module_helpers=True, skip_trivial_helpers=False
+    )
     modified = engine._materialize_once(proposal)
     for filename, source in modified.items():
         Path(filename).write_text(source)

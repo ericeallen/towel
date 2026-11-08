@@ -28,7 +28,13 @@ import pytest
 
 from towel import cli
 
-BODY = "    a = x + 1\n    b = a * 2\n    c = b + 3\n    return c\n"
+# A complete integer pipeline repays the generated helper's call interface.
+BODY = (
+    "    a = x + 1\n    b = a * 2\n    c = b + 3\n"
+    "    d = c + 4\n    e = d * 3\n    f = e - 12\n"
+    "    g = f // 3\n    h = g + 9\n    i = h * 2\n"
+    "    j = i - 18\n    k = j // 2\n    return k\n"
+)
 DUPLICATES = "def first(x):\n" + BODY + "\ndef second(x):\n" + BODY
 HELPER = "def __extracted_func_0(x):\n    return x * 2\n\nRESULT = __extracted_func_0(7)\n"
 
@@ -97,12 +103,14 @@ def test_preview_finds_duplicates_without_changing_files(tmp_path: Path, directo
     before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
     result = invoke(["preview", str(tmp_path if directory else source)])
     assert result.status == 0
-    assert "REFACTORING OPPORTUNITIES" in result.stdout
+    assert "Would apply 1 refactoring(s)." in result.stdout
     assert "first" in result.stdout and "second" in result.stdout
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
-    # The human preview shows each call site's original block and generated call.
-    assert "Call sites (- before / + after):" in result.stdout
-    assert "        - " in result.stdout and "        + " in result.stdout
+    # One unified diff includes the source and generated helper, without duplicate inventories.
+    assert "--- before/module.py" in result.stdout and "+++ after/module.py" in result.stdout
+    assert "+def __extracted_func" in result.stdout
+    assert "Call sites (- before / + after):" not in result.stdout
+    assert "Helper inventory:" not in result.stdout
 
 
 def test_preview_no_duplicates_is_a_successful_read_only_result(tmp_path: Path) -> None:
@@ -236,8 +244,8 @@ def test_invalid_interactive_json_reports_problem_without_writing(
     source = tmp_path / "helpers.py"
     source.write_text(HELPER)
     result = invoke(["rename-helpers", str(tmp_path), "--complete-scope"], stdin=response)
-    assert diagnostic in result.stdout
-    assert result.status == (1 if response else 0)
+    assert diagnostic in result.stderr
+    assert result.status == 1
     assert source.read_text() == HELPER
 
 

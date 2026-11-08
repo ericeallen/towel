@@ -24,6 +24,8 @@ from typing import Callable, Iterator, cast
 import unittest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
 from towel.unification.semantic_safety import nested_bindings_escape
 from towel.unification.import_graph import would_create_import_cycle
 from towel.unification.import_graph import ImportGraphCache
@@ -52,7 +54,7 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
     def rewrite(self, source: str) -> str:
         path = self.root / "example.py"
         path.write_text(source, encoding="utf-8")
-        engine = UnificationRefactorEngine()
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False)
         with contextlib.redirect_stdout(io.StringIO()):
             proposals = engine.analyze_files([str(path)], progress="none")
         self.assertTrue(proposals, "Fixture must exercise a real extraction")
@@ -69,7 +71,9 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         path = self.root / "example.py"
         path.write_text(source, encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()):
-            proposals = UnificationRefactorEngine().analyze_files([str(path)], progress="none")
+            proposals = UnificationRefactorEngine(skip_trivial_helpers=False).analyze_files(
+                [str(path)], progress="none"
+            )
         self.assertEqual(proposals, [])
 
     def test_list_rebinding_does_not_mutate_alias(self) -> None:
@@ -186,7 +190,7 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
                 }
                 path = self.root / filename
                 path.write_text(source, encoding="utf-8")
-                engine = UnificationRefactorEngine(min_lines=3)
+                engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
                 with (
                     contextlib.redirect_stdout(io.StringIO()),
                     contextlib.redirect_stderr(io.StringIO()),
@@ -271,7 +275,7 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
                 )
                 path = self.root / "bindings.py"
                 path.write_text(source, encoding="utf-8")
-                engine = UnificationRefactorEngine(min_lines=3)
+                engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
                 with (
                     contextlib.redirect_stdout(io.StringIO()),
                     contextlib.redirect_stderr(io.StringIO()),
@@ -311,7 +315,9 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         path.write_text(source, encoding="utf-8")
         # Clustering onto a shared helper is under test; with reuse the
         # attribute functions would simply call ``attributes_a``.
-        engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
+        )
         with contextlib.redirect_stdout(io.StringIO()):
             proposals = engine.analyze_files([str(path)], progress="none")
         proposal = next(
@@ -366,9 +372,9 @@ class TestSemanticSafetyRegressions(unittest.TestCase):
         a.write_text("import b\n\ndef first(x):\n" + body, encoding="utf-8")
         b.write_text("def second(x):\n" + body, encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()):
-            proposals = UnificationRefactorEngine(cross_module_helpers=True).analyze_files(
-                [str(a), str(b)], progress="none"
-            )
+            proposals = UnificationRefactorEngine(
+                skip_trivial_helpers=False, cross_module_helpers=True
+            ).analyze_files([str(a), str(b)], progress="none")
         self.assertEqual(len(proposals), 1)
         self.assertEqual(Path(proposals[0].file_path).name, "b.py")
 

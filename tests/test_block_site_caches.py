@@ -29,6 +29,9 @@ batteries hold the audit's reproducers (the ``r7c_`` and ``xf7c_`` fixtures),
 and ``test_memoization_is_invisible`` the property behind them.
 """
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 from __future__ import annotations
 
 import ast
@@ -52,14 +55,14 @@ from towel.unification.semantic_safety import nested_bindings_escape
 
 NESTED = """
     def f():
-        print("start", x)
+        print("start", x * 2 + 1, x * 3 + 2, x * 4 + 3)
         cb()
-        print("after", x)
+        print("after", x * 2 + 1, x * 3 + 2, x * 4 + 3)
 
     def g():
-        print("start", x)
+        print("start", x * 2 + 1, x * 3 + 2, x * 4 + 3)
         cb()
-        print("after", x)
+        print("after", x * 2 + 1, x * 3 + 2, x * 4 + 3)
 
     f()
     g()
@@ -94,7 +97,7 @@ def _engine_over(tmp_path: Path, sources: Dict[str, str]) -> Tuple[
 
     Its functions, by module and name, and each module's scope analyzer.
     """
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     functions: Dict[Tuple[str, str], FunctionNode] = {}
     analyzers: Dict[str, ScopeAnalyzer] = {}
     for name, source in sources.items():
@@ -168,7 +171,7 @@ def test_each_copy_of_a_block_is_judged_where_it_stands(
 
 
 def test_a_block_of_a_function_the_analysis_did_not_record_is_judged_afresh() -> None:
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     function = ast.parse(LOOP_COPY).body[0]
     assert isinstance(function, ast.FunctionDef)
     assert engine._block_site(function, function.body[:3]) is None

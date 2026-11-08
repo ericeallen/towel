@@ -17,6 +17,9 @@
 from __future__ import annotations
 
 import os
+import ctypes
+import errno
+from functools import lru_cache
 from pathlib import Path
 import signal
 import subprocess
@@ -52,19 +55,56 @@ DRIVER = textwrap.dedent("""
     """)
 
 
+@lru_cache(maxsize=1)
+def _libproc() -> ctypes.CDLL:
+    library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+    library.proc_listchildpids.argtypes = (ctypes.c_int, ctypes.c_void_p, ctypes.c_int)
+    library.proc_listchildpids.restype = ctypes.c_int
+    return library
+
+
+def _list_children(pid: int, buffer: ctypes.Array[ctypes.c_int]) -> tuple[int, int]:
+    # Unlike proc_listpids, proc_listchildpids returns PID count, not byte count.
+    function = _libproc().proc_listchildpids
+    ctypes.set_errno(0)
+    count = int(function(pid, buffer, ctypes.sizeof(buffer)))
+    return count, ctypes.get_errno()
+
+
+def _macos_children_of(pid: int) -> list[int]:
+    capacity = 64
+    while capacity <= 65536:
+        buffer = (ctypes.c_int * capacity)()
+        count, error = _list_children(pid, buffer)
+        if count < 0 or (count == 0 and error):
+            number = error or errno.EIO
+            raise OSError(number, f"Cannot enumerate children of {pid}: {os.strerror(number)}")
+        if count < capacity:
+            return [child for child in buffer[:count] if child > 0]
+        capacity *= 2
+    raise RuntimeError(f"Cannot enumerate children of {pid}: more than 65535 child PIDs")
+
+
 def _children_of(pid: int) -> list[int]:
-    listing = subprocess.run(
-        ["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, check=True
-    ).stdout
-    return [int(row.split()[0]) for row in listing.splitlines() if int(row.split()[1]) == pid]
+    if sys.platform == "darwin":
+        # libproc uses the parent PID directly and needs no setuid ps executable.
+        return _macos_children_of(pid)
+    else:
+        listing = subprocess.run(
+            ["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, check=True
+        ).stdout
+        return [int(row.split()[0]) for row in listing.splitlines() if int(row.split()[1]) == pid]
 
 
 def _alive(pids: list[int]) -> list[int]:
-    listing = subprocess.run(
-        ["ps", "-axo", "pid="], capture_output=True, text=True, check=True
-    ).stdout
-    present = {int(row) for row in listing.split()}
-    return [pid for pid in pids if pid in present]
+    present: list[int] = []
+    for pid in pids:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            continue
+        present.append(pid)
+    return present
 
 
 @pytest.mark.skipif(
@@ -99,9 +139,46 @@ def test_workers_exit_after_the_parent_is_killed() -> None:
     assert not survivors, f"workers outlived their parent: {survivors}"
 
 
-@pytest.mark.parametrize("observer", ["children", "alive"])
-def test_process_observer_failure_never_reports_an_empty_process_set(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, observer: str
+def test_native_enumeration_failure_never_reports_an_empty_process_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failed(pid: int, buffer: ctypes.Array[ctypes.c_int]) -> tuple[int, int]:
+        return 0, errno.EPERM
+
+    monkeypatch.setattr(sys.modules[__name__], "_list_children", failed)
+    with pytest.raises(PermissionError, match="Cannot enumerate children"):
+        _macos_children_of(os.getpid())
+
+
+def test_native_enumeration_retries_a_full_buffer_and_refuses_its_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sizes: list[int] = []
+
+    def full(pid: int, buffer: ctypes.Array[ctypes.c_int]) -> tuple[int, int]:
+        sizes.append(len(buffer))
+        return len(buffer), 0
+
+    monkeypatch.setattr(sys.modules[__name__], "_list_children", full)
+    with pytest.raises(RuntimeError, match="more than 65535"):
+        _macos_children_of(os.getpid())
+    assert sizes == [2**power for power in range(6, 17)]
+
+
+def test_alive_observer_failure_never_reports_an_empty_process_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failed(pid: int, sig: int) -> None:
+        raise PermissionError(errno.EPERM, "simulated process observer failure")
+
+    monkeypatch.setattr(os, "kill", failed)
+    with pytest.raises(PermissionError, match="simulated process observer failure"):
+        _alive([os.getpid()])
+
+
+def test_portable_enumeration_failure_never_reports_an_empty_process_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Run an owned executable, never the machine's process listing. An empty
     # stdout from a failed observer says nothing about whether workers exist.
@@ -114,11 +191,9 @@ def test_process_observer_failure_never_reports_an_empty_process_set(
     )
     executable.chmod(0o700)
     monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "linux")
     with pytest.raises(subprocess.CalledProcessError) as failure:
-        if observer == "children":
-            _children_of(os.getpid())
-        else:
-            _alive([os.getpid()])
+        _children_of(os.getpid())
     assert failure.value.returncode == 73
     assert failure.value.stdout == ""
     assert failure.value.stderr == "simulated process observer failure\n"

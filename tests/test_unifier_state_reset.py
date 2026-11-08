@@ -83,7 +83,7 @@ class TestEngineEndToEndStability(unittest.TestCase):
 
     def setUp(self):
         self.engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=1, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1, parameterize_constants=True
         )
         self.example_path = get_test_example_path("fstrings_constants.py")
 

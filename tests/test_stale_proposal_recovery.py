@@ -41,6 +41,8 @@ from towel.unification import fixed_point
 from towel.unification.models import RefactoringProposal
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 # Two block shapes, one per file, so each file holds exactly one same-file
 # duplicate and nothing pairs across the files.
 ARITHMETIC = """
@@ -91,7 +93,7 @@ def test_stale_proposal_is_dropped_and_the_run_still_reaches_the_fixed_point(
 ) -> None:
     files = _project(tmp_path)
     expected = {name: _behaviour(path) for name, path in files.items()}
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     original = UnificationRefactorEngine.apply_refactoring_multi_file
     edited: List[str] = []
 
@@ -167,7 +169,7 @@ def test_tqdm_bar_receives_one_update_per_applied_proposal(
     monkeypatch.setattr(fixed_point, "load_tqdm", lambda: FakeBar)
     results, reason = _run(
         tmp_path,
-        UnificationRefactorEngine(min_lines=3),
+        UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3),
         progress="tqdm",
         max_iterations=max_iterations,
     )
@@ -194,9 +196,9 @@ def test_auto_without_tqdm_draws_the_inline_bar_and_ends_its_line(
     out = io.StringIO()
     err = io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        results, reason = UnificationRefactorEngine(min_lines=3).refactor_directory_to_fixed_point(
-            str(tmp_path), str(tmp_path), progress="auto"
-        )
+        results, reason = UnificationRefactorEngine(
+            skip_trivial_helpers=False, min_lines=3
+        ).refactor_directory_to_fixed_point(str(tmp_path), str(tmp_path), progress="auto")
     assert reason == "fixed_point" and sum(count for count, _ in results.values()) == 2
     # The bar redraws with carriage returns on stderr, like tqdm's, so stdout
     # (a redirected report) stays clean.
@@ -219,5 +221,9 @@ def test_a_bar_that_cannot_be_constructed_costs_only_its_display(
         return FakeBar(*args, **kwargs)
 
     monkeypatch.setattr(fixed_point, "load_tqdm", lambda: broken_factory)
-    results, reason = _run(tmp_path, UnificationRefactorEngine(min_lines=3), progress="tqdm")
+    results, reason = _run(
+        tmp_path,
+        UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3),
+        progress="tqdm",
+    )
     assert reason == "fixed_point" and sum(count for count, _ in results.values()) == 2

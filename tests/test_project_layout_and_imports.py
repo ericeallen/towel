@@ -19,6 +19,8 @@ from tests.test_helpers import write_file
 from towel.import_model import build_import_model
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
+
 
 def test_the_retired_absolute_preference_no_longer_decides_an_import():
     # prefer_absolute_imports is accepted and ignored: between two modules of
@@ -72,6 +74,7 @@ def fb(x):
         )
 
         engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False,
             max_parameters=5,
             min_lines=3,
             parameterize_constants=True,
@@ -158,6 +161,7 @@ def test_same_dir_helper_uses_relative_import_under_non_identifier_root():
         )
 
         engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False,
             max_parameters=5,
             min_lines=3,
             prefer_absolute_imports=True,
@@ -207,6 +211,7 @@ def test_out_of_place_package_import_is_relative_not_output_dir_name():
         )
 
         engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False,
             max_parameters=5,
             min_lines=3,
             prefer_absolute_imports=True,

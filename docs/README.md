@@ -4,28 +4,15 @@ Towel finds repeated Python code and extracts it into shared helpers. Start
 with the [Quick start](QUICKSTART.md) for a first refactoring; use the guides
 below when you need a particular task or a precise rule.
 
-This documentation describes the source version you are reading. Dated
+This documentation describes the unpublished **1.949** candidate. Dated
 benchmarks, validation reports and proposals retain their original source and
 artifact identities; they do not establish results for a later release.
 
-**This documentation describes 1.948**, published November 7, 2026 (see the
-[publication record](PRODUCTION_READINESS.md#1948-published-release-november-7-2026)). Its
-[changelog](../CHANGELOG.md#1948) describes four silent `dry` miscompilation
-repairs and corrected CLI reporting. See the
-[GitHub release history](https://github.com/ericeallen/towel/releases) and
-[PyPI](https://pypi.org/project/code-towel/) for publication records. The dated
-[preparation record](PRODUCTION_READINESS.md#1948-preparation-checkpoint-november-5-2026)
-retains the status of its original checkpoint.
-
-**1.947 was published October 26, 2026** on
-[PyPI](https://pypi.org/project/code-towel/1.947/) and
-[GitHub](https://github.com/ericeallen/towel/releases/tag/v1.947).
-The [1.947 overview](RELEASE_1_947.md) describes the audit repairs after 1.946
-and the rename-scope requirement. The
-[publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
-summarizes completed validation and its limits; earlier preparation checkpoints
-remain historical. The tagged source and PyPI distributions are immutable;
-post-publication documentation on the default branch adds the completed outcomes.
+The latest published release is **1.948**, published November 7, 2026; its
+completed checks are in the
+[publication record](PRODUCTION_READINESS.md#1948-published-release-november-7-2026).
+New behavior documented here requires this checkout until **1.949** is published. [Historical release evidence](RELEASE_HISTORY.md) retains earlier
+source-specific results.
 
 ## Start and use Towel
 
@@ -38,6 +25,7 @@ post-publication documentation on the default branch adds the completed outcomes
 | Share helpers between modules or resolve an import refusal | [Cross-module guide](CROSS_MODULE.md) |
 | Give generated helpers and parameters meaningful names | [Naming guide](NAMING.md) |
 | Call Towel from Python | [Python API guide](USAGE_GUIDE.md) |
+| Integrate Towel into scripts or understand upgrade guarantees | [Compatibility contract](COMPATIBILITY.md) |
 
 ## Understand the result
 

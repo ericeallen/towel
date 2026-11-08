@@ -90,7 +90,7 @@ class _FailingAfterTheBaseline(MypyInferrer):
 def _run(tmp_path: Path, oracle: _FailingAfterTheBaseline) -> None:
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\n", encoding="utf-8")
     (tmp_path / "m.py").write_text(textwrap.dedent(TWO_PAIRS), encoding="utf-8")
-    engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3, type_oracle=oracle)
     try:
         engine.refactor_directory_to_fixed_point(str(tmp_path), str(tmp_path), progress="none")
     finally:

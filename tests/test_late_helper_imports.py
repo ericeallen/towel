@@ -14,6 +14,8 @@
 
 """Sharing a helper must not advance imports past definitions they depend on."""
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import contextlib
@@ -100,7 +102,9 @@ def test_helper_import_does_not_advance_a_late_module_load(
 ) -> None:
     package = _program(tmp_path, host_prefix, borrower_prefix, driver_prefix)
     assert _run(tmp_path) == expected
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         engine.refactor_directory_to_fixed_point(str(package), str(package), progress="none")
     assert _run(tmp_path) == expected
@@ -110,7 +114,9 @@ def test_an_already_loaded_host_still_shares_the_helper(tmp_path: Path) -> None:
     package = _program(tmp_path, "print('host')\n", "import pkg.a\n", "")
     expected = "host\n55 105\n"
     assert _run(tmp_path) == expected
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(package), str(package), progress="none"
@@ -131,7 +137,9 @@ def test_a_future_directive_can_reenter_through_a_local_module(tmp_path: Path) -
     )
     expected = "55 105\n"
     assert _run(tmp_path) == expected
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(package), str(package), progress="none"
@@ -168,7 +176,9 @@ def test_running_package_initializers_have_not_completed_their_later_imports(
     )
     expected = "55 105\n"
     assert _run(tmp_path) == expected
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         engine.refactor_directory_to_fixed_point(str(package), str(package), progress="none")
     assert _run(tmp_path) == expected

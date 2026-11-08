@@ -19,6 +19,9 @@ and none was accepted: 70 followed an all-``Any`` rejection whose errors lay at
 the call site, which no spelling of the helper's signature can reach.
 """
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 from __future__ import annotations
 
 import ast
@@ -147,7 +150,10 @@ def test_a_call_site_error_under_every_any_ends_the_ladder(
     oracle = _RecordingOracle()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         (proposal,) = engine.analyze_file(str(path))
         with pytest.raises(RefactoringError, match="Every helper annotation variant"):

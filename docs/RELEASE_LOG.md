@@ -14,6 +14,7 @@ the entries below do not transfer approval to a later source or version.
 
 **Contents — release checkpoints**
 
+- [1.949 preparation](#2026-11-08-1949-preparation)
 - [1.948 completed publication](#2026-11-07-1948-published-release)
 - [1.948 preparation](#2026-11-05-1948-preparation)
 - [1.947 completed publication](#2026-10-26-1947-published-release)
@@ -36,6 +37,16 @@ the entries below do not transfer approval to a later source or version.
 - [September 17, 2026](#2026-09-17) · [September 15, 2026](#2026-09-15)
 - [November 2025 entries](#2025-11-25)
 - [Measurement environment](#measurement-environment)
+
+## 2026-11-08: 1.949 preparation
+
+Prepared **1.949** as an unpublished candidate for the product-experience and
+maturity fixes summarized in the [changelog](../CHANGELOG.md#1949). Local testing
+is in progress. This entry claims neither a complete exact-candidate release
+campaign nor new runtime performance measurements, remote CI or publication.
+The [readiness checkpoint](PRODUCTION_READINESS.md#1949-preparation-checkpoint-november-8-2026)
+describes the scope and remaining release work. The latest published version
+remains **1.948**; its completed evidence below keeps its original identity.
 
 ## 2026-11-07: 1.948 published release
 

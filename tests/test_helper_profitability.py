@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tiny abstractions must repay their interface and call-site burden."""
+"""Every abstraction must repay its complete interface and call-site burden."""
 
 import ast
 from collections.abc import Callable
@@ -44,7 +44,7 @@ def test_five_inputs_for_two_simple_statements_need_more_than_two_sites() -> Non
 
 
 def test_final_receiver_holder_and_deferred_wrappers_count_as_interface_cost() -> None:
-    body = "    a.append(b+c)\n    a.append(b*c)\n"
+    body = "    a.append(b+c)\n    a.append(b*c)\n    a.append(c+d)\n"
     assert worthwhile_helper(_helper("a,b,c,d", body), _sites("helper(a,b,c,d)"))
     assert not worthwhile_helper(
         _helper("self,a,b,c,_towel_owner", body), _sites("self.helper(a,b,c,owner)")
@@ -53,16 +53,78 @@ def test_final_receiver_holder_and_deferred_wrappers_count_as_interface_cost() -
 
 
 @pytest.mark.parametrize(
-    "body",
+    ("body", "worthwhile_at_eight_sites"),
     [
-        "    if a:\n        return b(c,d)\n    return e\n",
-        "    return [b(x,c,d) for x in a if e(x)]\n",
-        "    return b(c,d) if a else e\n",
-        "    a.append(b+c)\n    a.append(b*d)\n    a.append(e)\n",
+        ("    if a:\n        return b(c,d)\n    return e\n", False),
+        ("    return [b(x,c,d) for x in a if e(x)]\n", True),
+        ("    return b(c,d) if a else e\n", False),
+        ("    a.append(b+c)\n    a.append(b*d)\n    a.append(e)\n", True),
     ],
 )
-def test_short_control_flow_or_larger_logic_is_preserved(body: str) -> None:
-    assert worthwhile_helper(_helper("a,b,c,d,e", body), _sites("helper(a,b,c,d,e)"))
+def test_control_flow_and_larger_bodies_must_repay_their_interfaces(
+    body: str, worthwhile_at_eight_sites: bool
+) -> None:
+    helper = _helper("a,b,c,d,e", body)
+    assert not worthwhile_helper(helper, _sites("helper(a,b,c,d,e)"))
+    assert worthwhile_helper(helper, _sites("helper(a,b,c,d,e)", 8)) == worthwhile_at_eight_sites
+
+
+def test_syntax_cost_does_not_depend_on_identifier_length_or_line_wrapping() -> None:
+    helper = _helper("a,b,c,d,e", "    a.append(b+c+d+e)\n    a.append(b*c*d*e)\n")
+    original = ast.dump(helper)
+    sites = _sites("helper(a,b,c,d,e)", 3)
+    assert worthwhile_helper(helper, sites)
+    assert ast.dump(helper) == original
+    helper.name = "a_descriptive_name_that_does_not_make_the_abstraction_more_complex"
+    long_sites = _sites(f"{helper.name}(\n a,\n b,\n c,\n d,\n e\n)", 3)
+    assert worthwhile_helper(helper, long_sites)
+
+
+def test_complete_ownership_plumbing_declines_the_old_readme_example(tmp_path: Path) -> None:
+    body = (
+        "    items = [i for i in order.items if i.in_stock]\n"
+        "    subtotal = sum(i.price for i in items)\n"
+        "    total = round(subtotal * 1.08, 2)\n"
+        "    return f'{label} {order.id}: ${total}'\n"
+    )
+    source = (
+        'def order_summary(order, label="Order"):\n'
+        + body
+        + '\ndef quote_summary(quote, label="Quote"):\n'
+        + body.replace("order", "quote")
+    )
+    path = tmp_path / "summary.py"
+    path.write_text(source)
+    for filtering, expected in ((True, 0), (False, 1)):
+        engine = UnificationRefactorEngine(skip_trivial_helpers=filtering)
+        output, count, _ = engine.refactor_to_fixed_point(
+            str(path), output_path=str(tmp_path / f"output-{filtering}.py"), progress="none"
+        )
+        assert count == expected
+        assert (output == source) == filtering
+    assert path.read_text() == source
+
+
+def test_analysis_counts_the_minimum_completed_annotation_signature(tmp_path: Path) -> None:
+    original = (Path(__file__).parents[1] / "test_examples" / "annotated_module.py").read_text()
+    functions: list[ast.stmt] = [
+        node
+        for node in ast.parse(original).body
+        if isinstance(node, ast.FunctionDef) and node.name in {"describe_counts", "describe_shares"}
+    ]
+    source = ast.unparse(ast.Module(body=functions, type_ignores=[])) + "\n"
+    path = tmp_path / "counts.py"
+    path.write_text(source)
+    bare = UnificationRefactorEngine(annotate_helpers=False)
+    proposals = bare.analyze_file(str(path))
+    assert proposals
+    for proposal in proposals:
+        assert bare.apply_refactoring(str(path), proposal) != source
+    # Completing the generated partly annotated signature adds three Any
+    # parameters. Do not offer a proposal that application will then refuse.
+    annotated = UnificationRefactorEngine()
+    assert annotated.analyze_file(str(path)) == []
+    assert path.read_text() == source
 
 
 def _source(wrapped: bool) -> str:

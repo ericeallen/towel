@@ -483,7 +483,10 @@ def test_every_mode_refuses_before_writing_anything(tmp_path: Path, mode: str) -
 
 def _refactored(root: Path, target: str, excluded: Tuple[str, ...], cross_module: bool) -> int:
     engine = UnificationRefactorEngine(
-        min_lines=3, excluded_directories=excluded, cross_module_helpers=cross_module
+        skip_trivial_helpers=False,
+        min_lines=3,
+        excluded_directories=excluded,
+        cross_module_helpers=cross_module,
     )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
@@ -576,7 +579,7 @@ def test_a_3_12_file_refuses_a_3_11_run(tmp_path: Path) -> None:
 def test_same_file_library_analysis_does_not_scan_unrelated_instrumenters(tmp_path: Path) -> None:
     """Ordinary same-file extraction no longer needs the project instrumentation index."""
     project = _project(tmp_path, {"pkg/fast.py": NEWER + HAND_APPLIED})
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     proposals = engine.analyze_files([str(project / "pkg" / "kernels.py")], progress="none")
     assert proposals == []
     kernels = project / "pkg" / "kernels.py"

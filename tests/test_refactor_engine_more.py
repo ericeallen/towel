@@ -18,6 +18,8 @@ import tempfile
 import unittest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
 from towel.unification.overlap import filter_overlapping_proposals
 from towel.unification.models import RefactoringProposal, Replacement
 
@@ -62,7 +64,10 @@ def b(m, n):
             # The helper's import is under test; keep the extraction rather
             # than having ``b`` call ``a``.
             engine = UnificationRefactorEngine(
-                min_lines=3, reuse_existing_functions=False, cross_module_helpers=True
+                skip_trivial_helpers=False,
+                min_lines=3,
+                reuse_existing_functions=False,
+                cross_module_helpers=True,
             )
             proposals = engine.analyze_directory(td, recursive=False)
             self.assertTrue(proposals, "Expected at least one proposal")
@@ -93,7 +98,7 @@ def outer():
 """.lstrip(),
             )
 
-            engine = UnificationRefactorEngine(min_lines=3)
+            engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
             proposals = engine.analyze_file(fn)
             self.assertEqual(
                 [p.description for p in proposals], ["Extract common code from f and g"]

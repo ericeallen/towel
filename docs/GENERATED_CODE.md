@@ -285,16 +285,22 @@ Ownership and parameter-budget checks remain independent requirements.
 
 ## Choosing a worthwhile helper
 
-Correctness does not imply that a tiny abstraction is useful. Towel's initial
-interface-cost rule declines some helpers with at most two simple straight-line
-statements when their complete signature and call wrappers outweigh the work
-shared across their sites. It counts the actual receiver, lifetime holder and
-rendered wrappers after ownership rewriting;
-wrapping a long signature over more source lines adds no benefit. Three or more
-meaningful statements, real control flow and nested computations stay outside
-this narrow filter, subject to the other guards.
+Correctness does not imply that an abstraction is useful. Towel compares the
+shared work with the complete generated helper and every replacement caller.
+Its conservative syntax-cost estimate counts statements, expressions, parameters,
+keyword arguments and comprehension clauses. Names count once regardless of
+length; line wrapping adds no benefit. The final signature, annotations, lookup
+suppliers, ownership boxes, deletion statements and calls all contribute cost.
 
-The [recorded calibration](DECISIONS.md#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
+The repeated work is estimated from the helper body at each sharing site.
+The generated syntax must cost strictly less. Branches, comprehensions and larger
+bodies contribute their structure instead of bypassing the rule. A short pair
+may therefore remain unchanged while a larger computation or more sharing sites
+repay the same interface. Differing caller expressions can make this estimate
+conservative. It is a readability heuristic, not a proof of maintainability or a
+promise to minimize source lines.
+
+The [recorded calibration](DECISIONS.md#2026-11-08-complete-extractions-must-repay-their-generated-syntax)
 gives the exact cost and sharing rule. The existing Python API
 `skip_trivial_helpers=False` bypasses this output-quality filter, while semantic
 and unconditional no-logic checks remain active. The CLI has no new opt-out.

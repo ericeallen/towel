@@ -21,6 +21,8 @@ kind of line a module can open with, and the end-to-end cases run the
 written files the way their first lines say they run.
 """
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -136,7 +138,7 @@ def _duplicates(first_lines: str, literal: str = "v") -> str:
 
 
 def _refactor(directory: Path, **options: object) -> int:
-    engine = UnificationRefactorEngine(min_lines=3, **options)  # type: ignore[arg-type]
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3, **options)  # type: ignore[arg-type]
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(directory), str(directory), progress="none"

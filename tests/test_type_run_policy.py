@@ -55,7 +55,15 @@ def _source(*, typed: bool = True) -> str:
         f"def {name}({signature}:\n"
         "    total = value + 1\n"
         "    doubled = total * 2\n"
-        "    answer = doubled - 3\n"
+        "    scaled = doubled * 3\n"
+        "    shifted = scaled + 12\n"
+        "    unshifted = shifted - 12\n"
+        "    recovered = unshifted // 3\n"
+        "    raised = recovered + 9\n"
+        "    paired = raised * 2\n"
+        "    restored = paired // 2\n"
+        "    adjusted = restored - 9\n"
+        "    answer = adjusted - 3\n"
         "    return answer\n"
         for name in ("first", "second")
     )

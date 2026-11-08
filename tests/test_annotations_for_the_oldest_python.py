@@ -192,6 +192,7 @@ def fa(items: List[int], table: Dict[str, int]) -> Optional[int]:
         print(v, item)
         print(item, v)
     print(v)
+    print("optional value", v, v is None, v is not None, v == 0, v == 1)
     print("done", 1)
     return v
 """
@@ -214,6 +215,7 @@ def fb(items: List[int], table: Dict[str, int]) -> Optional[int]:
         print(v, item)
         print(item, v)
     print(v)
+    print("optional value", v, v is None, v is not None, v == 0, v == 1)
     print("done", 2)
     return v
 """

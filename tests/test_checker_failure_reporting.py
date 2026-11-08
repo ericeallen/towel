@@ -20,6 +20,9 @@ refactorings found! Termination: fixed_point" and exited 0: a checker that
 never answered read as a project with nothing to do.
 """
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 from __future__ import annotations
 
 import contextlib
@@ -43,6 +46,7 @@ from towel.type_inference import (
 from towel.unification.exceptions import CheckerCannotCheckTheProject
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.probe_answers import answer_probes
+from tests.test_cli_integration import DUPLICATES
 
 PAIR = "".join(
     f"def {name}(value):\n    total = value + 1\n    doubled = total * 2\n"
@@ -83,11 +87,11 @@ def _timed_out(_sources: Mapping[str, str]) -> CheckResult:
     return CheckFailure("the checker timed out")
 
 
-def _project(tmp_path: Path) -> Path:
+def _project(tmp_path: Path, source: str = PAIR) -> Path:
     project = tmp_path / "project"
     project.mkdir()
-    (project / "a.py").write_text(PAIR)
-    (project / "b.py").write_text(PAIR.replace("first", "third").replace("second", "fourth"))
+    (project / "a.py").write_text(source)
+    (project / "b.py").write_text(source.replace("first", "third").replace("second", "fourth"))
     return project
 
 
@@ -95,6 +99,7 @@ def _engine(
     verdict: Callable[[Mapping[str, str]], CheckResult], oracle: _Oracle | None = None
 ) -> UnificationRefactorEngine:
     return UnificationRefactorEngine(
+        skip_trivial_helpers=False,
         min_lines=3,
         reuse_existing_functions=False,
         annotate_helpers=False,
@@ -170,7 +175,8 @@ def _dry(arguments: list[str], oracle: _Oracle) -> tuple[int, str]:
 def test_the_command_exits_nonzero_when_the_checker_prevented_every_refactoring(
     tmp_path: Path,
 ) -> None:
-    project = _project(tmp_path)
+    # The public command must reach the checker under its default usefulness policy.
+    project = _project(tmp_path, DUPLICATES)
     output = tmp_path / "out"
     status, printed = _dry(
         [str(project), str(output), "--no-interactive", "--progress", "none", "--no-format"],

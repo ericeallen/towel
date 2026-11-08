@@ -66,7 +66,7 @@ def _run(
     (tmp_path / "pyproject.toml").write_text(config, encoding="utf-8")
     path = tmp_path / "m.py"
     path.write_text(source, encoding="utf-8")
-    engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)  # type: ignore[arg-type]
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3, type_oracle=oracle)  # type: ignore[arg-type]
     _, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
     return path.read_text(encoding="utf-8"), applied, engine
 

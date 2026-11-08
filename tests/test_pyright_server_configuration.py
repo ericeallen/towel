@@ -339,7 +339,10 @@ def test_a_src_layout_project_is_refactored_and_confirmed(tmp_path: Path) -> Non
     oracle = PyrightOracle()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=3, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=3,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         _, applied, _ = engine.refactor_to_fixed_point(str(module), progress="none")
         assert served_by_a_language_server(oracle), "the run was not checked by a server"

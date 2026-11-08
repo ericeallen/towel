@@ -74,6 +74,18 @@ TWINS = """
         total = 0
         for value in values:
             total += value * 2
+        scaled = total * 3
+        shifted = scaled + 12
+        unshifted = shifted - 12
+        recovered = unshifted // 3
+        raised = recovered + 9
+        paired = raised * 2
+        restored = paired // 2
+        weighted = restored * 5
+        adjusted = weighted + 25
+        unweighted = adjusted - 25
+        normalized = unweighted // 5
+        total = normalized - 9
         return total + delta
 
 
@@ -81,6 +93,18 @@ TWINS = """
         total = 0
         for value in values:
             total += value * 2
+        scaled = total * 3
+        shifted = scaled + 12
+        unshifted = shifted - 12
+        recovered = unshifted // 3
+        raised = recovered + 9
+        paired = raised * 2
+        restored = paired // 2
+        weighted = restored * 5
+        adjusted = weighted + 25
+        unweighted = adjusted - 25
+        normalized = unweighted // 5
+        total = normalized - 9
         return total + delta
 """
 UNCHECKED_TEST = """

@@ -1,3 +1,5 @@
+# These minimal fixtures test semantic behavior, including small extractions
+# that the default product usefulness filter intentionally declines.
 # Copyright 2025-2026 Eric Allen
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,6 +69,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self, *, min_lines: int = 2, reuse_existing_functions: bool = True
     ) -> UnificationRefactorEngine:
         return UnificationRefactorEngine(
+            skip_trivial_helpers=False,
             max_parameters=5,
             min_lines=min_lines,
             parameterize_constants=True,
@@ -1272,6 +1275,7 @@ class TestCrossFileImports(unittest.TestCase):
                 encoding="utf-8",
             )
             engine = UnificationRefactorEngine(
+                skip_trivial_helpers=False,
                 max_parameters=5,
                 min_lines=2,
                 parameterize_constants=True,
@@ -1326,6 +1330,7 @@ class TestCrossFileImports(unittest.TestCase):
                 orig_b = [b_mod.fb(i) for i in (0, 1, 5)]
 
                 engine = UnificationRefactorEngine(
+                    skip_trivial_helpers=False,
                     max_parameters=5,
                     min_lines=2,
                     parameterize_constants=True,
@@ -1379,7 +1384,9 @@ class TestCrossFileImports(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "mod.py"
             p.write_text(textwrap.dedent(code).strip() + "\n", encoding="utf-8")
-            engine = UnificationRefactorEngine(max_parameters=3, min_lines=3)
+            engine = UnificationRefactorEngine(
+                skip_trivial_helpers=False, max_parameters=3, min_lines=3
+            )
             proposals = engine.analyze_file(str(p))
             # Expect no proposals due to structural mismatch
             self.assertEqual(proposals, [])
@@ -1402,7 +1409,9 @@ class TestCrossFileImports(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "mod.py"
             p.write_text(textwrap.dedent(code).strip() + "\n", encoding="utf-8")
-            engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
+            engine = UnificationRefactorEngine(
+                skip_trivial_helpers=False, max_parameters=5, min_lines=2
+            )
             proposals = engine.analyze_file(str(p))
             # Only partial blocks match; their initial binding is outside the block.
             self.assertEqual(proposals, [])
@@ -1451,7 +1460,9 @@ class TestCrossFileImports(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "mod.py"
             path.write_text(source, encoding="utf-8")
-            engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
+            engine = UnificationRefactorEngine(
+                skip_trivial_helpers=False, max_parameters=5, min_lines=2
+            )
             proposals = engine.analyze_file(str(path))
             self.assertEqual(len(proposals), 1)
             functions = [
@@ -1496,7 +1507,9 @@ class TestCrossFileImports(unittest.TestCase):
         # into the extracted function body for hygiene
         m = TempModule(code)
         self.addCleanup(m.cleanup)
-        engine = UnificationRefactorEngine(max_parameters=5, min_lines=2)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, max_parameters=5, min_lines=2
+        )
         props = engine.analyze_file(str(m.path))
         self.assertTrue(props, "Expected proposals where global assignment occurs")
         out = engine.apply_refactoring(str(m.path), props[0])

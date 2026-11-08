@@ -53,7 +53,10 @@ def _apply(path: Path) -> str:
     oracle = CountingMypy()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         (proposal,) = engine.analyze_file(str(path))
         return engine.apply_refactoring(str(path), proposal)

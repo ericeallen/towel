@@ -7,7 +7,11 @@
 # OF ANY KIND, either express or implied. See the License for the specific
 # language governing permissions and limitations under the License.
 
-"""Other program files can replace a function's definition-time builtin mapping."""
+"""Other program files can replace a function's definition-time builtin mapping.
+
+Engines disable only the optional readability filter: minimal positive controls
+must reach extraction so changes in project-wide safety facts remain observable.
+"""
 
 from __future__ import annotations
 
@@ -49,6 +53,7 @@ def test_circular_import_writer_preserves_captured_mapping(
     assert expected == "306 306\n"
     engine = UnificationRefactorEngine(
         min_lines=3,
+        skip_trivial_helpers=False,
         max_parameters=6,
         parameterize_builtins=flag,
         excluded_directories=("replacement.py",) if excluded else (),
@@ -139,7 +144,9 @@ def test_new_writer_rechecks_unchanged_pairs_and_cached_cluster_membership(
     _write(tmp_path, {"target.py": source, "writer.py": "VALUE = 1\n"})
     target = tmp_path / "target.py"
     writer = tmp_path / "writer.py"
-    engine = UnificationRefactorEngine(min_lines=3, max_parameters=6, parameterize_builtins=True)
+    engine = UnificationRefactorEngine(
+        min_lines=3, max_parameters=6, parameterize_builtins=True, skip_trivial_helpers=False
+    )
     scans: list[Path] = []
     original = writes.project_may_replace_builtin_mapping
 
@@ -199,7 +206,9 @@ def test_project_mapping_writer_keeps_lexical_extraction_useful(tmp_path: Path, 
     )
     expected = _run(tmp_path, "target.py")
     assert expected == "27 30\n"
-    engine = UnificationRefactorEngine(min_lines=3, max_parameters=6, parameterize_builtins=flag)
+    engine = UnificationRefactorEngine(
+        min_lines=3, max_parameters=6, parameterize_builtins=flag, skip_trivial_helpers=False
+    )
     final, applied, _ = engine.refactor_to_fixed_point(str(tmp_path / "target.py"), progress="none")
     (tmp_path / "target.py").write_text(final)
     assert applied > 0
@@ -215,7 +224,7 @@ def test_new_project_marker_refreshes_the_scanned_scope(tmp_path: Path) -> None:
         },
     )
     target = tmp_path / "inner/target.py"
-    engine = UnificationRefactorEngine(min_lines=3, max_parameters=6)
+    engine = UnificationRefactorEngine(min_lines=3, max_parameters=6, skip_trivial_helpers=False)
     assert engine.analyze_file(str(target))
     (tmp_path / "pyproject.toml").write_text('[project]\nname="pkg"\nversion="0"\n')
     assert not engine.analyze_file(str(target))
@@ -239,6 +248,7 @@ def test_local_subset_keeps_other_project_facts_until_they_are_rechecked(
     paths = [str(root / "target.py") for root in roots]
     engine = UnificationRefactorEngine(
         min_lines=3,
+        skip_trivial_helpers=False,
         max_parameters=6,
         excluded_directories=("writer.py",) if excluded else (),
     )
@@ -270,7 +280,7 @@ def test_changed_project_root_rechecks_pairs_even_when_both_facts_are_false(
 ) -> None:
     _write(tmp_path, {"inner/target.py": _source()})
     target = str(tmp_path / "inner/target.py")
-    engine = UnificationRefactorEngine(min_lines=3, max_parameters=6)
+    engine = UnificationRefactorEngine(min_lines=3, max_parameters=6, skip_trivial_helpers=False)
     seen: list[frozenset[str] | None] = []
     original = engine.find_block_pairs
 
@@ -291,7 +301,7 @@ def test_evicted_mapping_observation_rechecks_instead_of_assuming_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _write(tmp_path, {"first.py": _source(), "second.py": _source()})
-    engine = UnificationRefactorEngine(min_lines=3, max_parameters=6)
+    engine = UnificationRefactorEngine(min_lines=3, max_parameters=6, skip_trivial_helpers=False)
     engine._builtin_mapping_snapshots = BoundedCache(1)
     first, second = (str(tmp_path / name) for name in ("first.py", "second.py"))
     assert engine.analyze_file(first)

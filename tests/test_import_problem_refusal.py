@@ -57,6 +57,13 @@ def {name}(values, tag={tag!r}):
         else:
             total -= value
     total = total + 1
+    base = total if total > 0 else 0
+    discount = base * 0.1
+    discounted = base - discount
+    tax = discounted * 0.08
+    shipping = 5 if discounted < 100 else 0
+    with_shipping = discounted + shipping
+    total = with_shipping + tax
     return total
 """
 
@@ -70,7 +77,15 @@ def {name}(words, tag={tag!r}):
         cleaned = word.strip().lower()
         if cleaned and cleaned not in seen:
             seen.append(cleaned)
-    return ", ".join(seen)
+    seen.sort()
+    title = ", ".join(seen)
+    heading = title.capitalize()
+    compact = heading.replace("  ", " ")
+    escaped = compact.replace("<", "&lt;")
+    safe_heading = escaped.replace(">", "&gt;")
+    clipped = safe_heading[:80]
+    decorated = "[" + clipped + "]"
+    return decorated
 """
 
 _SETUPTOOLS = (

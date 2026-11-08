@@ -47,6 +47,8 @@ from towel.unification.extractor import has_complete_return_coverage, is_value_p
 from towel.unification.models import RejectReason
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 RETURNING = """
 def returning(value):
     total = value + 1
@@ -83,7 +85,7 @@ def _rejections(
 ) -> List[str]:
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent(source))
-    engine = UnificationRefactorEngine(min_lines=2)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
     with (
         caplog.at_level(logging.DEBUG, logger="towel.rejections"),
         contextlib.redirect_stdout(io.StringIO()),
@@ -131,7 +133,7 @@ def test_first_block_coverage_guard_is_shadowed_by_block_enumeration(
     path.write_text(
         textwrap.dedent(PARTIAL_RETURN + PARTIAL_RETURN.replace("partial", "partial_twin"))
     )
-    engine = UnificationRefactorEngine(min_lines=2)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
     module = ast.parse(path.read_text())
     for function in module.body:
         assert isinstance(function, ast.FunctionDef)

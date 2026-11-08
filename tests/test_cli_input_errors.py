@@ -31,6 +31,7 @@ from typing import Callable
 import pytest
 
 from towel.cli import _build_parser, _run_dry, _run_preview
+from tests.test_cli_integration import DUPLICATES
 
 
 def _dry_arguments(source: Path, destination: Path) -> argparse.Namespace:
@@ -89,10 +90,7 @@ def test_preview_of_one_file_is_silent_under_progress_none(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     source = tmp_path / "m.py"
-    source.write_text(
-        "def a(v):\n    x = v + 1\n    y = x * 2\n    z = y - 3\n    return z\n\n"
-        "def b(v):\n    x = v + 1\n    y = x * 2\n    z = y - 3\n    return z\n"
-    )
+    source.write_text(DUPLICATES)
     arguments = _build_parser().parse_args(["preview", str(source), "--progress", "none"])
     _run_preview(arguments)
     captured = capsys.readouterr()

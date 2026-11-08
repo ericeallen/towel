@@ -25,32 +25,54 @@ towel dry path/to/project path/to/cleaned --no-interactive
 diff -ru path/to/project path/to/cleaned
 ```
 
-Before renaming, adopt the reviewed output into the project using your normal
-version-control workflow. In particular, a copied package directory may have
-the output directory's name instead of its import name. The rename checker
-needs the package in its real project context to find and update importers.
-It refuses a batch when it cannot match those imports.
+Rename in a **complete project context**. If the output copies the whole
+project and preserves its internal module names, you can rename and run its
+tests there before adopting any changes into the original. Use an environment
+whose imports resolve to that copy: an editable installation that still points
+at the original project can make the copied package ambiguous. Install the copy
+editable in its own environment when the project needs installation. The
+[runnable quick start](QUICKSTART.md) demonstrates this with exact commands.
 
-The commands below assume `path/to/project` now contains the adopted result.
+If you copied only a package directory, its new directory name or missing
+surrounding modules can change what imports mean. Put the reviewed files into
+a separate development checkout at their original relative paths before
+renaming. The checker refuses when it cannot resolve the package's importers.
+Do not use `--complete-scope` to claim that known outside consumers do not exist.
+
+The commands below assume `path/to/cleaned` is the complete copied project.
 
 ## Export, propose and apply names
 
 ```bash
-# Export the helper and parameter inventory.
-towel rename-helpers path/to/project --list --json > helpers.json
-
-# Read helpers.json and prepare renames.json yourself or with a coding assistant.
-# Each key must be an inventory key; its value is the proposed new name.
-
-# Preview the batch, apply it, then run the project's tests.
-towel rename-helpers path/to/project --complete-scope --rename-file renames.json --preview
-towel rename-helpers path/to/project --complete-scope --rename-file renames.json
+towel rename-helpers path/to/cleaned --list --json > helpers.json
 ```
 
-Review the proposed names before applying. The shared `towel-rename` skill in
-the agent-skills repository guides an assistant through extraction, review,
-naming and tests. Towel's interactive naming mode also works without an
-assistant and calls no LLM service.
+Read each helper and its call sites. Copy the exact `rename_key` from the
+inventory into a JSON object whose values are your chosen names. For example,
+if the inventory reports these keys, `renames.json` can contain:
+
+```json
+{
+  "charges.py:__extracted_func_0": "discounted_total_with_shipping",
+  "charges.py:__extracted_func_0.__param_0": "amount"
+}
+```
+
+Only include keys present in your inventory. The parameter entry is optional;
+a helper whose input is already named `amount` does not have that `__param_0`
+key. A single helper-name entry is a complete valid batch.
+
+```bash
+towel rename-helpers path/to/cleaned --complete-scope --rename-file renames.json --preview
+towel rename-helpers path/to/cleaned --complete-scope --rename-file renames.json
+# Run the copied project's tests before adopting its changed files.
+```
+
+You can prepare this mapping entirely by hand. A coding assistant can also
+suggest names after reading the inventory; review those suggestions before
+applying them. Towel's interactive mode prints a prompt and accepts pasted
+JSON, and calls no LLM service. The shared `towel-rename` skill in the
+agent-skills repository guides an assistant through the same review workflow.
 
 ## What the inventory contains
 

@@ -126,6 +126,7 @@ def _check_automation(documents: Mapping[str, str]) -> None:
     workflow = documents[".github/workflows/ci.yml"]
     tests = _job(workflow, "tests")
     quality = _job(workflow, "quality")
+    macos = _job(workflow, "macos-integration")
     versions = _python_matrix(tests)
     project = _table(_table(tomllib.loads(documents["pyproject.toml"]))["project"])
     classifiers = project["classifiers"]
@@ -150,6 +151,22 @@ def _check_automation(documents: Mapping[str, str]) -> None:
         _section(documents["docs/KNOWN_LIMITATIONS.md"], "## Resources and platform"), platform
     )
     quality_python = _one(r"^\s+python-version: '([\d.]+)'$", quality)
+    macos_python = _one(r"^\s+python-version: '([\d.]+)'$", macos)
+    assert _runner(macos) == "macos-latest"
+    assert macos_python in versions
+    for command in (
+        "uv run --frozen python -m build",
+        "uv pip install --reinstall --no-deps dist/*.whl",
+        "pathlib.Path(towel.__file__).is_relative_to(sys.prefix)",
+        ".venv/bin/towel --version",
+        ".venv/bin/python -m pytest -q",
+        "tests/test_cli_integration.py",
+        "tests/test_change_transactions.py",
+        "tests/test_recovery_journal.py",
+        "tests/test_mypy_worker_isolation.py",
+        "tests/test_formatting_worker_sharing.py",
+    ):
+        _contains(_commands(macos), command)
     coverage = _one(r"coverage report --fail-under=(\d+)", _commands(tests))
     _contains(_commands(tests), "uv run --frozen coverage run -m pytest -q")
     _contains(_commands(tests), "uv run --frozen coverage combine")
@@ -174,6 +191,8 @@ def _check_automation(documents: Mapping[str, str]) -> None:
         f"{coverage}% coverage gate |\n"
         f"| Quality and distributions | `{_runner(quality)}` | {quality_python} | "
         "Black, Flake8, mypy, Bandit, dependency audit, build |\n"
+        f"| Installed-wheel integration | `{_runner(macos)}` | {macos_python} | "
+        "CLI, file publication/recovery, checker and formatter worker lifecycle |\n"
         f"| Scheduled/manual corpus | `{_runner(ecosystem)}` | {ecosystem_python} | "
         f"{mode}; {workers} concurrent projects; {timeout}-minute job limit |",
     )

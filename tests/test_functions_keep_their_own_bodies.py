@@ -43,11 +43,25 @@ from tests.test_helpers import (
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Keep default reuse/profitability enabled: the shared numeric pipeline must
+# repay ownership-transfer calls before the monkeypatch assertions are reached.
 SAME_BODIES = """
 def f1(xs):
     total = 0
     for x in xs:
         total += x * 2
+    total = total + 17
+    total = total * 19
+    total = total - 23
+    total = total // 29
+    total = total + 31
+    total = total * 37
+    total = total - 41
+    total = total // 43
+    total = total + 47
+    total = total * 53
+    total = total - 59
+    total = total // 61
     print("done", total)
     return total
 
@@ -56,6 +70,18 @@ def f2(ys):
     total = 0
     for y in ys:
         total += y * 2
+    total = total + 17
+    total = total * 19
+    total = total - 23
+    total = total // 29
+    total = total + 31
+    total = total * 37
+    total = total - 41
+    total = total // 43
+    total = total + 47
+    total = total * 53
+    total = total - 59
+    total = total // 61
     print("done", total)
     return total
 """
@@ -196,6 +222,18 @@ def test_a_function_in_another_module_is_not_called_in_place_of_a_duplicate(
                 total = 0
                 for item in items:
                     total += item * 3
+                total = total + 17
+                total = total * 19
+                total = total - 23
+                total = total // 29
+                total = total + 31
+                total = total * 37
+                total = total - 41
+                total = total // 43
+                total = total + 47
+                total = total * 53
+                total = total - 59
+                total = total // 61
                 emit("done", total)
                 return total
             """,
@@ -208,6 +246,18 @@ def test_a_function_in_another_module_is_not_called_in_place_of_a_duplicate(
                 total = 0
                 for value in values:
                     total += value * 3
+                total = total + 17
+                total = total * 19
+                total = total - 23
+                total = total // 29
+                total = total + 31
+                total = total * 37
+                total = total - 41
+                total = total // 43
+                total = total + 47
+                total = total * 53
+                total = total - 59
+                total = total // 61
                 emit("done", total)
                 return total
             """,
@@ -242,12 +292,36 @@ def test_two_whole_bodies_both_become_calls_of_the_new_helper(
         def {helper_name}(result, x):
             y = x + 10
             z = y ** 2
+            z = z + 17
+            z = z * 19
+            z = z - 23
+            z = z // 29
+            z = z + 31
+            z = z * 37
+            z = z - 41
+            z = z // 43
+            z = z + 47
+            z = z * 53
+            z = z - 59
+            z = z // 61
             result.append(z)
 
 
         def other(result, x):
             y = x + 10
             z = y ** 2
+            z = z + 17
+            z = z * 19
+            z = z - 23
+            z = z // 29
+            z = z + 31
+            z = z * 37
+            z = z - 41
+            z = z // 43
+            z = z + 47
+            z = z * 53
+            z = z - 59
+            z = z // 61
             result.append(z)
         """
     target = tmp_path / "m.py"

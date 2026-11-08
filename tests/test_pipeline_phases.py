@@ -34,6 +34,8 @@ from towel.unification.pipeline import (
 from towel.unification.models import RawModule, RefactoringProposal
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
+
 # The one proposal single-file analysis of example1_simple leaves after
 # overlap filtering, and the one example2_classes adds to it.
 USER_ADMIN = "Extract common code from process_user_data and process_admin_data"
@@ -258,7 +260,7 @@ class TestPairBlocks:
         files = example_paths(["example1_simple.py"])
         mods = analyze_scopes(parse_modules(files))
         funcs = collect_functions(mods)
-        eng = UnificationRefactorEngine()
+        eng = UnificationRefactorEngine(skip_trivial_helpers=False)
 
         pairs = pair_blocks(eng, funcs, progress="none")
         # The three functions of example1_simple pair into 48 candidate block
@@ -271,7 +273,7 @@ class TestPairBlocks:
         files = example_paths(["example1_simple.py"])
         mods = analyze_scopes(parse_modules(files))
         funcs = collect_functions(mods)
-        eng = UnificationRefactorEngine()
+        eng = UnificationRefactorEngine(skip_trivial_helpers=False)
 
         # Should not raise even if tqdm is unavailable
         pairs = pair_blocks(eng, funcs, progress="auto")
@@ -282,7 +284,7 @@ class TestPairBlocks:
         files = example_paths(["example1_simple.py"])
         mods = analyze_scopes(parse_modules(files))
         funcs = collect_functions(mods)
-        eng = UnificationRefactorEngine()
+        eng = UnificationRefactorEngine(skip_trivial_helpers=False)
 
         # Should gracefully fall back if tqdm unavailable
         pairs = pair_blocks(eng, funcs, progress="tqdm")
@@ -298,7 +300,7 @@ class TestUnifyBlocks:
         mods = analyze_scopes(parse_modules(files))
         funcs = collect_functions(mods)
         classes = collect_classes(mods)
-        eng = UnificationRefactorEngine()
+        eng = UnificationRefactorEngine(skip_trivial_helpers=False)
         pairs = pair_blocks(eng, funcs, progress="none")
 
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
@@ -332,7 +334,7 @@ class TestFilterOverlaps:
         mods = analyze_scopes(parse_modules(files))
         funcs = collect_functions(mods)
         classes = collect_classes(mods)
-        eng = UnificationRefactorEngine()
+        eng = UnificationRefactorEngine(skip_trivial_helpers=False)
         pairs = pair_blocks(eng, funcs, progress="none")
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
 
@@ -351,11 +353,16 @@ class TestCacheInvalidation:
         files = example_paths(["example1_simple.py"])
 
         # Run once to populate cache
-        proposals1 = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
+        proposals1 = run_pipeline(
+            files, engine=UnificationRefactorEngine(skip_trivial_helpers=False), progress="none"
+        )
 
         # Run again with invalidation
         proposals2 = run_pipeline(
-            files, engine=UnificationRefactorEngine(), progress="none", invalidate_paths=files
+            files,
+            engine=UnificationRefactorEngine(skip_trivial_helpers=False),
+            progress="none",
+            invalidate_paths=files,
         )
 
         # Should produce same results (cache invalidation shouldn't affect correctness)
@@ -366,10 +373,14 @@ class TestCacheInvalidation:
         files = example_paths(["example1_simple.py", "example2_classes.py"])
 
         # Run once
-        run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
+        run_pipeline(
+            files, engine=UnificationRefactorEngine(skip_trivial_helpers=False), progress="none"
+        )
 
         # Run again - should use cache
-        proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
+        proposals = run_pipeline(
+            files, engine=UnificationRefactorEngine(skip_trivial_helpers=False), progress="none"
+        )
         assert descriptions(proposals) == [USER_ADMIN, PROCESS_PROCESS]
 
 
@@ -379,17 +390,23 @@ class TestProgressBars:
     def test_run_pipeline_with_auto_progress(self):
         """run_pipeline should handle progress='auto'."""
         files = example_paths(["example1_simple.py"])
-        proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="auto")
+        proposals = run_pipeline(
+            files, engine=UnificationRefactorEngine(skip_trivial_helpers=False), progress="auto"
+        )
         assert descriptions(proposals) == [USER_ADMIN]
 
     def test_run_pipeline_with_tqdm_progress(self):
         """run_pipeline should handle progress='tqdm' (may fall back)."""
         files = example_paths(["example1_simple.py"])
-        proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="tqdm")
+        proposals = run_pipeline(
+            files, engine=UnificationRefactorEngine(skip_trivial_helpers=False), progress="tqdm"
+        )
         assert descriptions(proposals) == [USER_ADMIN]
 
     def test_run_pipeline_with_none_progress(self):
         """run_pipeline should handle progress='none'."""
         files = example_paths(["example1_simple.py"])
-        proposals = run_pipeline(files, engine=UnificationRefactorEngine(), progress="none")
+        proposals = run_pipeline(
+            files, engine=UnificationRefactorEngine(skip_trivial_helpers=False), progress="none"
+        )
         assert descriptions(proposals) == [USER_ADMIN]

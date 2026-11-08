@@ -60,6 +60,7 @@ from .exceptions import (
     CheckerUnavailableError,
     TypeRejectedExtraction,
     RefactoringError,
+    UnprofitableHelper,
     UncheckedCodeError,
     Untypeable,
     UntypeableExtraction,
@@ -125,6 +126,7 @@ DeclineReason = Union[
         "the formatter changed its code or failed",
         "the configured Ruff check failed or introduced diagnostics",
         "could not be rendered",
+        "unprofitable helper",
         "changed nothing",
     ],
     Untypeable,
@@ -368,6 +370,9 @@ class FixedPointDrivers(Materialization):
         combined change is one journaled plan, so an interruption part way
         through it is rolled back or recoverable with ``towel recover``.
         """
+        from towel.execution_budget import finish_before_publication
+
+        finish_before_publication()
         if stage.in_place:
             apply_changes(staged_changes(stage))
         else:
@@ -459,13 +464,12 @@ class FixedPointDrivers(Materialization):
     def _rendered_or_none(
         self, file_path: str, proposal: RefactoringProposal, original: bytes
     ) -> Optional[str]:
-        """The file with ``proposal`` applied, or None when rendering it fails.
+        """The file with ``proposal`` applied, or None when it is declined.
 
-        A proposal the materializer or the compiler rejects is a defect in
-        the rendering of that one extraction; it is dropped with a warning
-        and the run goes on, rather than aborting after whatever was applied
-        before it. So is one whose text the file's encoding (``original``'s)
-        cannot hold.
+        The final interface can be declined by the usefulness policy. Actual
+        rendering or compiler failures are dropped with a warning and the run
+        goes on, rather than aborting after whatever was applied before them.
+        So is text the file's encoding (``original``'s) cannot hold.
         """
         recorded = len(self._change_log)
         self._checker_refusals = 0
@@ -492,6 +496,7 @@ class FixedPointDrivers(Materialization):
     def _report_dropped(self, proposal: RefactoringProposal, error: BaseException) -> None:
         """Say why ``proposal`` was not applied, and count it under that reason.
 
+        A final usefulness refusal is counted without a rendering warning.
         Told apart by type, never by wording: a checker that could not run
         judged nothing; one that could run but cannot see what the proposal's
         file imports was not asked; a refusal no signature of the helper could
@@ -503,6 +508,11 @@ class FixedPointDrivers(Materialization):
         its file's encoding cannot hold is a limit of that file; anything else
         is a rendering Towel could not produce.
         """
+        if isinstance(error, UnprofitableHelper):
+            self._decline(proposal, "unprofitable helper")
+            if debugging(REJECTIONS):
+                REJECTIONS.debug("UNPROFITABLE HELPER: %s :: %s", proposal.description, error)
+            return
         reason: DeclineReason
         if _is_checker_failure(error):
             self._unchecked = self._unchecked | {_RejectedProposals.identity(proposal)}

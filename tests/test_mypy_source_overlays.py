@@ -222,7 +222,10 @@ def test_constructor_fixture_keeps_useful_typed_extraction(tmp_path: Path) -> No
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
     checker = MypyInferrer()
     try:
-        engine = UnificationRefactorEngine(min_lines=3, type_oracle=checker)
+        # This regression exercises checker overlays, independently of helper size.
+        engine = UnificationRefactorEngine(
+            min_lines=3, type_oracle=checker, skip_trivial_helpers=False
+        )
         proposals = engine.analyze_files([str(module)], progress="none")
         assert proposals
         transformed = engine.apply_refactoring(str(module), proposals[0])

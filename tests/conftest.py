@@ -150,7 +150,7 @@ def _typed_runs_are_not_vacuous(
         )
 
 
-def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
+def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> Optional[bool]:
     """Prevent pytest from treating example and temporary directories as tests.
 
     We exclude:
@@ -179,7 +179,9 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
         return True
     if "tmp_out" in p:
         return True
-    return False
+    # This is a first-result hook. Defer ordinary paths to pytest so explicit
+    # --ignore/--ignore-glob selections and its normal exclusions still apply.
+    return None
 
 
 @pytest.fixture

@@ -54,6 +54,16 @@ def _project(root: Path) -> Path:
 
                     def render(self, width: int) -> str:
                         body = str(self.tag).strip()
+                        body = body.replace('\\t', ' ')
+                        body = body.replace('\\r', ' ')
+                        body = body.replace('\\n', ' ')
+                        body = body.replace('  ', ' ')
+                        body = body.replace(' -', '-')
+                        body = body.replace('- ', '-')
+                        body = body.replace(' .', '.')
+                        body = body.replace(' ,', ',')
+                        body = body.removeprefix(' ')
+                        body = body.removesuffix(' ')
                         padded = body.rjust(width, ".")
                         return padded.upper()
                 """).lstrip(),

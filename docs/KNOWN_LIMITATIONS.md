@@ -2093,10 +2093,12 @@ structurally distinct candidates, and large test modules with hundreds of
 similar methods were the worst case. Current complete-path costs require fresh
 attribution; the older phase measurements do not identify the current bottleneck.
 Progress is reported per phase.
-There is no time budget, but `--max-pairs` (20,000,000 by default) bounds
-the candidate pairs one analysis evaluates by leaving out the largest
-groups of similar blocks with a warning; interrupt with Ctrl-C, which
-leaves files unchanged. The ecosystem check applies a 30-minute limit per
+`--time-limit SECONDS` bounds setup, analysis and verification; expiration
+returns status 124 without publishing output. Final publication and cleanup
+may extend past the deadline so they can finish safely. `--max-pairs`
+(20,000,000 by default) separately bounds candidate pairs by leaving out the
+largest groups with a warning. Neither option bounds peak memory. Ctrl-C
+interrupts analysis without publishing its temporary result. The ecosystem check applies a 30-minute limit per
 phase by
 default, longer for named projects, and reports `TIMEOUT`. It executes
 the manifest's projects with the caller's privileges and refuses to run

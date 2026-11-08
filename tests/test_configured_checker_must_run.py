@@ -39,7 +39,20 @@ requires_pyright = pytest.mark.skipif(
     importlib.util.find_spec("pyright") is None, reason="pyright absent"
 )
 
-BODY = "    total = value + 1\n    doubled = total * 2\n    answer = doubled - 3\n"
+# Keep the public CLI's readability policy enabled: this shared arithmetic is
+# substantial enough that disabling an unavailable checker still extracts it.
+BODY = """    total = value + 1
+    doubled = total * 2
+    answer = doubled - 3
+    answer = answer + 17
+    answer = answer * 19
+    answer = answer - 23
+    answer = answer // 29
+    answer = answer + 31
+    answer = answer * 37
+    answer = answer - 41
+    answer = answer // 43
+"""
 SOURCE = (
     'def first(value: int) -> int:\n    print("first")\n' + BODY + "    return answer\n\n\n"
     'def second(value: int) -> int:\n    print("second")\n' + BODY + "    return answer\n"

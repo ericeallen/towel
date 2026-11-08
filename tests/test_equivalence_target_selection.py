@@ -48,16 +48,17 @@ def test_clustered_third_occurrence_is_verified_despite_two_name_description(
     source = tmp_path / "cluster.py"
     source.write_text(THREE_FUNCTIONS)
     # Keep the three-site helper: reusing ``first`` would leave two sites.
-    engine = UnificationRefactorEngine(reuse_existing_functions=False)
+    # Target selection must exercise every small semantic site, including the third.
+    engine = UnificationRefactorEngine(reuse_existing_functions=False, skip_trivial_helpers=False)
     proposal = engine.analyze_file(str(source))[0]
     assert len(proposal.replacements) == 3
     assert "third" not in proposal.description
     assert affected_functions(proposal, {source: THREE_FUNCTIONS}) == {
         source.resolve(): ("first", "second", "third")
     }
-    passed, failed, errors = AutomaticEquivalenceTester(CorruptThirdOccurrence()).test_file(
-        str(source)
-    )
+    passed, failed, errors = AutomaticEquivalenceTester(
+        CorruptThirdOccurrence(skip_trivial_helpers=False)
+    ).test_file(str(source))
     assert passed == 0 and failed == 1
     assert any("third:" in error and "incorrect" in error for error in errors)
     assert AutomaticEquivalenceTester(engine).test_file(str(source)) == (1, 0, [])

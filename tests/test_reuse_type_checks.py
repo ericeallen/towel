@@ -37,11 +37,15 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
 def _source(second_type: str) -> str:
+    body = (
+        "    a = x + 1\n    b = a * 2\n    c = b - 3\n"
+        "    d = c + 4\n    e = d * 3\n    f = e - 12\n"
+        "    g = f // 3\n    h = g + 9\n    i = h * 2\n"
+        "    j = i - 18\n    k = j // 2\n    return k\n"
+    )
     return (
-        "def first(x: int) -> int:\n"
-        "    a = x + 1\n    b = a * 2\n    c = b - 3\n    return c\n\n"
-        f"def second(x: {second_type}) -> {second_type}:\n"
-        "    a = x + 1\n    b = a * 2\n    c = b - 3\n    return c\n"
+        "def first(x: int) -> int:\n" + body + "\n"
+        f"def second(x: {second_type}) -> {second_type}:\n" + body
     )
 
 
@@ -110,6 +114,15 @@ def test_default_cli_preserves_strict_types_of_whole_body_duplicates(
         if isinstance(node, ast.FunctionDef)
     }
     assert source.read_text() == original
+    before: dict[str, object] = {}
+    after: dict[str, object] = {}
+    exec(original, before)
+    exec(output.read_text(), after)
+    for name in ("first", "second"):
+        original_function, changed_function = before[name], after[name]
+        assert callable(original_function) and callable(changed_function)
+        arguments = (-3, 0, 2, 1.5) if name == "second" and second_type == "float" else (-3, 0, 2)
+        assert [changed_function(x) for x in arguments] == [original_function(x) for x in arguments]
     if second_type == "int":
         assert "__extracted_func" in output.read_text(), "the shared body is extracted"
         assert "return first(x)" not in output.read_text()

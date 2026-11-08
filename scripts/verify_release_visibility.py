@@ -69,6 +69,13 @@ def github(endpoint: str) -> bytes:
 def document_links(readme: str, repository: str, version: str) -> tuple[str, ...]:
     """Check every repository document link, retaining unrelated external links."""
     paths: set[str] = set()
+    for destination in re.findall(r"\]\(([^)\s]+)\)", readme):
+        parsed = urlsplit(destination)
+        require(
+            bool(parsed.scheme or parsed.netloc)
+            or PurePosixPath(parsed.path).suffix not in {".md", ".rst", ".txt"},
+            f"Default-branch README has an unpinned relative documentation link: {destination}",
+        )
     for destination in re.findall(r"https://github\.com/[^)\s>]+", readme):
         parsed = urlsplit(destination)
         prefix = f"/{repository}/"
@@ -91,6 +98,10 @@ def document_links(readme: str, repository: str, version: str) -> tuple[str, ...
 
 
 def verify_documents(documents: Mapping[str, str], version: str, repository: str) -> None:
+    require(
+        "**Development branch:" not in documents["README.md"],
+        "Default-branch README still identifies an unreleased development branch",
+    )
     project = object_value(tomllib.loads(documents["pyproject.toml"]).get("project"))
     require(project.get("version") == version, "Default-branch package version is stale")
     statuses = re.findall(r"\*\*Release status: ([^ ]+) \(beta\)\.\*\*", documents["README.md"])
@@ -176,6 +187,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             evidence = object_value(raw)
             require(evidence.get("version") == args.version, "Evidence version differs")
             commit = commit_id(evidence.get("validation_commit"))
+            amendments = evidence.get("amendments")
+            rebuilt = object_value(amendments).get("rebuilt") if amendments is not None else None
+            if rebuilt is not None:
+                commit = commit_id(object_value(rebuilt).get("commit"))
         result = verify(args.version, commit_id(commit), args.github_repo)
     except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print(f"Release visibility refused: {error}", file=sys.stderr)

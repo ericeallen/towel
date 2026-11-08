@@ -59,7 +59,7 @@ def _typed_run(target: Path, excluded: Sequence[str] = ()) -> list[str]:
     """The names of the files a typed run on ``target`` changed, in place."""
     oracle = MypyInferrer()
     engine = UnificationRefactorEngine(
-        min_lines=3, type_oracle=oracle, excluded_directories=excluded
+        skip_trivial_helpers=False, min_lines=3, type_oracle=oracle, excluded_directories=excluded
     )
     try:
         results, _ = engine.refactor_directory_to_fixed_point(

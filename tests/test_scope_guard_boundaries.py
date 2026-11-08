@@ -36,6 +36,8 @@ from towel.type_inference import MypyInferrer
 from towel.unification.pair_evaluation import _module_namespace_names
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 
 def _extract(tmp_path: Path, source: str, *, safe_arithmetic: bool = False) -> tuple[str, int]:
     if safe_arithmetic:
@@ -51,7 +53,9 @@ def _extract(tmp_path: Path, source: str, *, safe_arithmetic: bool = False) -> t
     original = textwrap.dedent(source)
     path.write_text(original)
     after = tmp_path / "after.py"
-    engine = UnificationRefactorEngine(min_lines=3, annotate_helpers=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, annotate_helpers=False
+    )
     with contextlib.redirect_stdout(io.StringIO()):
         result, count, _ = engine.refactor_to_fixed_point(
             str(path), progress="none", output_path=str(after)
@@ -217,7 +221,7 @@ def test_annotation_only_cross_module_type_is_not_a_runtime_argument(
     checker = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=3, cross_module_helpers=True, type_oracle=checker
+            skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True, type_oracle=checker
         )
         with contextlib.redirect_stdout(io.StringIO()):
             result, reason = engine.refactor_directory_to_fixed_point(

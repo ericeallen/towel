@@ -27,6 +27,8 @@ from towel.changes import apply_changes
 from towel.project_layout import find_project_root, is_package_dir, load_pyproject, package_chain
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
+
 
 def test_the_nearest_packaging_marker_is_the_root(tmp_path: Path) -> None:
     for marker in ("pyproject.toml", "setup.cfg", "setup.py"):
@@ -118,7 +120,9 @@ def test_vcs_root_does_not_control_crossfile_imports(tmp_path: Path, packaged: b
     command = [sys.executable, "-c", imports + "; print(first(2),second(2))"]
     cwd = tmp_path if packaged else target
     before = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=True)
-    engine = UnificationRefactorEngine(min_lines=2, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=2, cross_module_helpers=True
+    )
     proposal = engine.analyze_files([str(a), str(b)], progress="none")[0]
     apply_changes(engine.plan_refactoring(proposal))
     after = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=True)

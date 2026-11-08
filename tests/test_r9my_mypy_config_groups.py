@@ -56,7 +56,7 @@ def _write(root: Path, files: Mapping[str, str]) -> None:
 
 def _typed_run(root: Path) -> UnificationRefactorEngine:
     oracle = MypyInferrer()
-    engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3, type_oracle=oracle)
     try:
         engine.refactor_directory_to_fixed_point(str(root), str(root), progress="none")
     finally:

@@ -14,6 +14,8 @@
 
 """Local annotations must follow the same scoped binders as generic signatures."""
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -106,7 +108,7 @@ def test_scoped_local_annotations_follow_the_fresh_signature_binder(
     path.write_text(original)
     assert oracle.check(str(path), original) == CheckSuccess()
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=oracle
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -221,7 +223,7 @@ def test_concrete_local_type_columns_follow_the_same_signature_generalization(
     path.write_text(source)
     assert oracle.check(str(path), source) == CheckSuccess()
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=oracle
     )
     proposal = engine.analyze_file(str(path))[0]
     rendered = engine.apply_refactoring(str(path), proposal)

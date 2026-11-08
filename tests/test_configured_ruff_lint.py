@@ -191,7 +191,11 @@ def test_lint_refusal_does_not_hide_a_useful_neighbor(tmp_path: Path) -> None:
     neighbors = 'def first(x):\n    print(x)\n    print("hello")\n\ndef second(y):\n    print(y)\n    print("hello")\n'
     (source / "neighbors.py").write_text(neighbors)
     engine = UnificationRefactorEngine(
-        min_lines=2, file_finisher=file_finisher_for_project(source).tool
+        # The minimal neighbor isolates continued processing after a lint
+        # refusal, independently of the optional readability policy.
+        min_lines=2,
+        file_finisher=file_finisher_for_project(source).tool,
+        skip_trivial_helpers=False,
     )
     output = tmp_path / "out"
     results, _ = engine.refactor_directory_to_fixed_point(str(source), str(output), progress="none")
@@ -207,9 +211,26 @@ def test_lint_refusal_does_not_hide_a_useful_neighbor(tmp_path: Path) -> None:
 def test_cli_preserves_lint_baseline_with_and_without_formatting(
     tmp_path: Path, formatting_enabled: bool
 ) -> None:
+    # Keep the CLI's product defaults and the exact RET504-producing tail,
+    # while giving the shared computation enough substance to reach linting.
+    source = DUPLICATED_LABELS.replace(
+        "    cp = ord(label[pos])\n",
+        """    tab_free = label.replace('\\t', ' ')
+    return_free = tab_free.replace('\\r', ' ')
+    single_line = return_free.replace('\\n', ' ')
+    compact = single_line.replace('  ', ' ')
+    left_dash = compact.replace(' -', '-')
+    right_dash = left_dash.replace('- ', '-')
+    dotted = right_dash.replace(' .', '.')
+    punctuated = dotted.replace(' ,', ',')
+    left_trimmed = punctuated.removeprefix(' ')
+    cleaned = left_trimmed.removesuffix(' ')
+    cp = ord(cleaned[pos])
+""",
+    )
     module = _module(
         tmp_path,
-        DUPLICATED_LABELS,
+        source,
         '"RET504"',
     )
     # The original warnings must not pay for a new warning in the helper.

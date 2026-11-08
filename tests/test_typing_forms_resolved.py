@@ -86,7 +86,7 @@ def _refactor(tmp_path: Path, files: Dict[str, str], target: str) -> Tuple[str, 
     write_file(tmp_path / "pyproject.toml", PYPROJECT)
     for name, text in files.items():
         write_file(tmp_path / name, text)
-    return refactor_to_fixed_point_silently(str(tmp_path / target), 1)
+    return refactor_to_fixed_point_silently(str(tmp_path / target), 1, skip_trivial_helpers=False)
 
 
 # Each case: the module's imports, and the form as each block spells it.
@@ -194,7 +194,7 @@ def test_blocks_of_one_structure_calling_different_casts_are_judged_apart(
     write_file(tmp_path / "pyproject.toml", PYPROJECT)
     own = _pair("def cast(kind, value):\n    return value\n", "cast(Alpha, raw)", "cast(Beta, raw)")
     typed = _pair("from typing import cast", "cast(Alpha, raw)", "cast(Beta, raw)")
-    engine = UnificationRefactorEngine(min_lines=1)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=1)
     finals: Dict[str, str] = {}
     for name, source in (("own.py", own), ("typed.py", typed)):
         write_file(tmp_path / name, source)

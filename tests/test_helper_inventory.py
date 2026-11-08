@@ -14,6 +14,8 @@
 
 """The JSON inventory a naming assistant reads before proposing renames."""
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import json
@@ -149,7 +151,9 @@ def test_inventory_includes_before_after_from_the_dry_sidecar(tmp_path: Path) ->
     )
     out = tmp_path / "cleaned"
     # A generated helper is what the sidecar names; ``g`` reusing ``f`` logs nothing.
-    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         engine.refactor_directory_to_fixed_point(str(src), str(out), progress="none")
         # The engine recorded the true original block and generated call per site.
@@ -222,7 +226,9 @@ def test_the_sidecar_spells_each_file_relative_to_an_output_reached_through_a_li
     )
     linked = tmp_path / "linked"
     linked.symlink_to(real, target_is_directory=True)
-    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         engine.refactor_directory_to_fixed_point(
             str(linked / "src"), str(linked / "src"), progress="none"

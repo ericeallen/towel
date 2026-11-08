@@ -14,6 +14,8 @@
 
 """Parametric extraction preserves relationships under real project checkers."""
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -56,7 +58,7 @@ def _extract(path: Path, oracle: TypeOracle) -> tuple[str, ast.FunctionDef]:
     original = path.read_text()
     assert oracle.check(str(path), original) == CheckSuccess()
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=oracle
     )
     proposals = engine.analyze_file(str(path))
     assert proposals, original
@@ -297,7 +299,9 @@ def test_free_legacy_parameters_with_different_names_are_freshened(
 
 def test_no_checker_does_not_invent_generic_contracts(tmp_path: Path) -> None:
     path = _project(tmp_path, ADDITION)
-    engine = UnificationRefactorEngine(min_lines=2, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False
+    )
     proposal = engine.analyze_file(str(path))[0]
     assert "TypeVar" not in engine.apply_refactoring(str(path), proposal)
 
@@ -384,7 +388,11 @@ def test_cross_file_generic_helper_respects_project_rules_and_unchanged_consumer
     )
     original_consumer = consumer.read_text()
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=oracle, cross_module_helpers=True
+        skip_trivial_helpers=False,
+        min_lines=2,
+        reuse_existing_functions=False,
+        type_oracle=oracle,
+        cross_module_helpers=True,
     )
     proposals = engine.analyze_files([str(first), str(second), str(consumer)])
     proposal = next(

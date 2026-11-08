@@ -6,13 +6,6 @@ including nested calls, arithmetic, boolean logic, and method chains.
 """
 
 
-def __extracted_func_0(processor, result, validated):
-    if validated:
-        processor.store(result)
-        return result
-    return None
-
-
 def process_user_score_v1(user, threshold):
     """Version 1: Complex expression with nested arithmetic."""
     if user.get_score() * 2 + 10 > threshold:
@@ -55,14 +48,20 @@ def transform_data_format_a(data, processor):
     """Format A: Nested method calls and indexing."""
     result = processor.normalize(data["values"]).upper().strip()
     validated = processor.validate(result)
-    return __extracted_func_0(processor, result, validated)
+    if validated:
+        processor.store(result)
+        return result
+    return None
 
 
 def transform_data_format_b(data, processor):
     """Format B: Different nested calls, same pattern."""
     result = processor.normalize(data["items"]).lower().strip()
     validated = processor.validate(result)
-    return __extracted_func_0(processor, result, validated)
+    if validated:
+        processor.store(result)
+        return result
+    return None
 
 
 def compute_metrics_slow(dataset, multiplier, offset):

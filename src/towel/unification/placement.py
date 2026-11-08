@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import ast
 import copy
-from dataclasses import replace
+from dataclasses import dataclass
 
 from weakref import WeakKeyDictionary
 from typing import (
@@ -55,10 +55,10 @@ from .models import (
     RefactoringProposal,
     Replacement,
 )
+from .argument_ownership import render_argument_handoff
 from .class_private import is_class_private, mangling_prefix, rewritten_identifiers
 from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import needs_class_body
-from .argument_ownership import render_argument_handoff
 from .function_scope import identifiers
 from .exceptions import RefactoringError
 from .module_bindings import ModuleBindings, dotted_name, global_bindings, import_origin
@@ -475,6 +475,16 @@ def method_helper_position(
     return holder.end_lineno or holder.lineno
 
 
+@dataclass(frozen=True)
+class _HelperNaming:
+    """The helper's name before and after allocation, and where its receiver sits."""
+
+    original_name: str
+    final_name: str
+    receiver_parameter_index: Optional[int]
+    parameter_count: int
+
+
 class _CallRenamer(ast.NodeTransformer):
     """Rename every call of one plain name to another, in place."""
 
@@ -605,6 +615,79 @@ class HelperPlacement(EngineState):
         return visit_as(_CallRenamer(original_name, final_name), node)
 
     @staticmethod
+    def _helper_naming(
+        proposal: RefactoringProposal,
+        *,
+        original_name: Optional[str] = None,
+        reserve_ownership_holder: bool = False,
+    ) -> _HelperNaming:
+        """Describe the original argument mapping without allocating a helper name.
+
+        Receiver indices refer to the unplaced signature: class insertion moves
+        that parameter only after callers have been rewritten. Analysis reserves
+        the final holder; materialization has already appended it to its copy.
+        """
+        helper = proposal.extracted_function
+        receiver_name = proposal.method_param_name or (
+            "cls" if proposal.method_kind == "classmethod" else "self"
+        )
+        parameters = [arg.arg for arg in (*helper.args.posonlyargs, *helper.args.args)]
+        holder = reserve_ownership_holder and any(
+            replacement.argument_handoff is not None for replacement in proposal.replacements
+        )
+        return _HelperNaming(
+            original_name=original_name if original_name is not None else helper.name,
+            final_name=helper.name,
+            receiver_parameter_index=(
+                parameters.index(receiver_name) if receiver_name in parameters else None
+            ),
+            parameter_count=len(parameters) + int(holder),
+        )
+
+    def _rendered_call_sites(
+        self, proposal: RefactoringProposal, *, reserve_ownership_holder: bool = False
+    ) -> List[ast.AST]:
+        """Render the same complete callers used by publication, without mutation."""
+        naming = self._helper_naming(proposal, reserve_ownership_holder=reserve_ownership_holder)
+        return [
+            self._call_site(proposal, naming, replacement) for replacement in proposal.replacements
+        ]
+
+    def _call_site(
+        self, proposal: RefactoringProposal, naming: _HelperNaming, repl: Replacement
+    ) -> ast.AST:
+        """Retarget first, then transfer certified original argument ownership."""
+        node: ast.AST = copy.deepcopy(repl.node)
+        handed = any(
+            replacement.argument_handoff is not None for replacement in proposal.replacements
+        )
+        if proposal.insert_into_class and repl.class_name:
+            node = self._rewrite_call_for_method(
+                node,
+                naming.original_name,
+                naming.final_name,
+                repl.method_kind or proposal.method_kind,
+                repl.implicit_param or proposal.method_param_name,
+                repl.class_name,
+                naming.receiver_parameter_index,
+                naming.parameter_count - int(handed),
+            )
+        elif naming.original_name != naming.final_name:
+            node = self._retarget_helper_calls(node, naming.original_name, naming.final_name)
+        if repl.argument_handoff is not None:
+            return render_argument_handoff(node, repl.argument_handoff, naming.final_name)
+        if handed:
+            for call in ast.walk(node):
+                if isinstance(call, ast.Call) and (
+                    isinstance(call.func, ast.Name)
+                    and call.func.id == naming.final_name
+                    or isinstance(call.func, ast.Attribute)
+                    and call.func.attr == naming.final_name
+                ):
+                    call.args.append(ast.Constant(value=None))
+        return node
+
+    @staticmethod
     def _append_holder_parameter(helper: ast.FunctionDef) -> None:
         """Append the same hygienic holder to an owned signature or interface preview."""
         arguments = helper.args
@@ -649,25 +732,6 @@ class HelperPlacement(EngineState):
             if len(args.posonlyargs) + len(args.args) > self.unifier.max_parameters:
                 raise RefactoringError("The final helper exceeds the ownership parameter budget")
         return helper
-
-    @staticmethod
-    def _profitability_sites(proposal: RefactoringProposal) -> List[Replacement]:
-        """Actual ownership capture wrappers, without publishing or changing a proposal."""
-        return [
-            (
-                replace(
-                    replacement,
-                    node=render_argument_handoff(
-                        replacement.node,
-                        replacement.argument_handoff,
-                        proposal.extracted_function.name,
-                    ).body[-1],
-                )
-                if replacement.argument_handoff is not None
-                else replacement
-            )
-            for replacement in proposal.replacements
-        ]
 
     def _prepare_extracted_method_signature(
         self,

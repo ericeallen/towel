@@ -70,13 +70,17 @@ def test_a_relative_output_directory_reaches_the_same_fixed_point(
         (tmp_path / name / "n.py").write_text(
             TWO_ROUNDS.replace("alpha", "gamma").replace("beta", "delta")
         )
-    absolute = UnificationRefactorEngine(min_lines=3).refactor_directory_to_fixed_point(
+    # Exercise path equivalence on the same small semantic fixture independently
+    # of the optional readability policy.
+    absolute = UnificationRefactorEngine(
+        min_lines=3, skip_trivial_helpers=False
+    ).refactor_directory_to_fixed_point(
         str(tmp_path / "absolute"), str(tmp_path / "absolute"), progress="none"
     )
     monkeypatch.chdir(tmp_path)
-    relative = UnificationRefactorEngine(min_lines=3).refactor_directory_to_fixed_point(
-        "relative", "relative", progress="none"
-    )
+    relative = UnificationRefactorEngine(
+        min_lines=3, skip_trivial_helpers=False
+    ).refactor_directory_to_fixed_point("relative", "relative", progress="none")
     applied_absolute = sum(count for count, _ in absolute[0].values())
     applied_relative = sum(count for count, _ in relative[0].values())
     assert applied_relative == applied_absolute > 0
@@ -193,9 +197,11 @@ def test_a_package_named_env_is_refactored_like_any_other(tmp_path: Path, in_pla
     (project / "env" / "__init__.py").write_text("")
     (project / "env" / "m.py").write_text(TWO_ROUNDS)
     output = project if in_place else tmp_path / "output"
-    results, _ = UnificationRefactorEngine(min_lines=3).refactor_directory_to_fixed_point(
-        str(project), str(output), progress="none"
-    )
+    # Discovery must include this package even when the fixture is too small
+    # to repay a generated helper under the product's readability policy.
+    results, _ = UnificationRefactorEngine(
+        min_lines=3, skip_trivial_helpers=False
+    ).refactor_directory_to_fixed_point(str(project), str(output), progress="none")
     assert sum(applied for applied, _ in results.values()) > 0
     assert (output / "env" / "m.py").read_text() != TWO_ROUNDS
 

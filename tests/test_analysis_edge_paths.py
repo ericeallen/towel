@@ -20,6 +20,9 @@ reflection on modules and unresolved names, a variable passed by keyword to a
 call, the validation trace, and mypy configuration found in ``setup.cfg``.
 """
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 from __future__ import annotations
 
 import ast
@@ -123,7 +126,7 @@ def test_validation_debugging_traces_both_blocks_of_a_pair(
     body = "    y = x + 1\n    z = y * 2\n    return z\n"
     path.write_text("def first(x):\n" + body + "\ndef second(x):\n" + body)
     settings = Settings(**{**Settings.from_environ().__dict__, "debug_validation": True})
-    engine = UnificationRefactorEngine(min_lines=2, settings=settings)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2, settings=settings)
     with (
         caplog.at_level(logging.DEBUG, logger="towel.validation"),
         contextlib.redirect_stdout(io.StringIO()),

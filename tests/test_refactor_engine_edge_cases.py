@@ -26,6 +26,8 @@ import textwrap
 import ast
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
 from tests.test_helpers import (
     original_argument_name,
     TemporaryModuleTestCase,
@@ -38,7 +40,9 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
 
     def setUp(self):
         super().setUp()
-        self.engine = UnificationRefactorEngine(max_parameters=5, min_lines=1)
+        self.engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1
+        )
 
     def test_analyze_directory_nonexistent(self):
         """Engine gracefully handles analyzing a missing directory."""

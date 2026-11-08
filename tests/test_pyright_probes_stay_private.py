@@ -109,7 +109,10 @@ def test_an_out_of_place_run_without_a_language_server_leaves_its_input_alone(
     output = tmp_path / "out"
     try:
         engine = UnificationRefactorEngine(
-            min_lines=3, reuse_existing_functions=False, type_oracle=oracle
+            min_lines=3,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
+            skip_trivial_helpers=False,
         )
         with contextlib.redirect_stdout(io.StringIO()):
             results, _ = engine.refactor_directory_to_fixed_point(

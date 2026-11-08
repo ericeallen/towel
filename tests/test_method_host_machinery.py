@@ -19,6 +19,8 @@ Namespace inspection and extra attribute-lookup events are outside equivalence;
 explicit decorators, declared receiver types and private naming still apply.
 """
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import contextlib
@@ -82,7 +84,9 @@ def _refactored(
     path = tmp_path / "box.py"
     path.write_text(source)
     before = _run(tmp_path, driver)
-    final, applied = refactor_to_fixed_point_silently(str(path), min_lines=3)
+    final, applied = refactor_to_fixed_point_silently(
+        str(path), skip_trivial_helpers=False, min_lines=3
+    )
     assert (applied > 0) == moves
     assert moves or final == source
     path.write_text(final)
@@ -96,7 +100,7 @@ def _refactored_project(
     for name, text in files.items():
         (tmp_path / name).write_text(textwrap.dedent(text).lstrip("\n"))
     before = _run(tmp_path, driver)
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(tmp_path), str(tmp_path), progress="none"

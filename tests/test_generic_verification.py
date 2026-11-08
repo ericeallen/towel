@@ -14,6 +14,8 @@
 
 """Generic hypotheses need complete checker agreement and transactional rollback."""
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -90,7 +92,7 @@ class _RecordingOracle:
 
 def _engine(oracle: TypeOracle) -> UnificationRefactorEngine:
     return UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=oracle
     )
 
 

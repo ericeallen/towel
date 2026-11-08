@@ -89,7 +89,10 @@ def _proposals(tmp_path: Path, source: str, *, min_lines: int = 2) -> List[str]:
     path = tmp_path / "m.py"
     path.write_text(source, encoding="utf-8")
     engine = UnificationRefactorEngine(
-        min_lines=min_lines, reuse_existing_functions=False, type_oracle=None
+        min_lines=min_lines,
+        reuse_existing_functions=False,
+        type_oracle=None,
+        skip_trivial_helpers=False,
     )
     return [proposal.description for proposal in engine.analyze_file(str(path))]
 
@@ -101,7 +104,10 @@ def test_a_guard_separated_from_its_use_is_refused(tmp_path: Path) -> None:
 def test_a_guard_whose_narrowing_nothing_left_behind_needs_is_kept(tmp_path: Path) -> None:
     """The refusal must cost only the extractions that would actually break."""
     assert _proposals(tmp_path, INDEPENDENT) != []
-    engine = UnificationRefactorEngine(min_lines=2, reuse_existing_functions=False)
+    # Test the narrowing boundary, including small but semantically valid moves.
+    engine = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, skip_trivial_helpers=False
+    )
     written, applied, _ = engine.refactor_to_fixed_point(str(tmp_path / "m.py"), progress="none")
     assert applied > 0
     for source in (INDEPENDENT, written):

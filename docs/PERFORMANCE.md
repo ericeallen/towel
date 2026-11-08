@@ -596,7 +596,18 @@ records the rest. Expect other hardware to differ.
 
 ### Planning and bounding a run
 
-There is no time budget; progress is reported per phase on stderr, so stdout can be piped or redirected. Ctrl-C and SIGTERM both end the run cleanly (an interrupted apply is rolled back from its journal), and a reader that closes the pipe early is not an error.
+Use `--time-limit SECONDS` to bound setup, analysis and verification. Expiration
+returns status 124 and publishes no output. Final publication and cleanup may
+extend beyond that limit to finish safely; this is not a hard process-kill or
+memory bound. Progress goes to stderr, so stdout can be redirected. Ctrl-C and
+SIGTERM request cleanup; interrupted publication uses its recovery journal.
+See [CLI controls](CLI_GUIDE.md#control-tools-and-work) and
+[exit statuses](COMPATIBILITY.md#cli-contract).
+
+Complete preview performs the full transformation pipeline and discards its
+private result. If you intend to adopt the work, `dry` into a fresh complete
+project copy lets you review, name and test that result without repeating the
+analysis; the [quick start](QUICKSTART.md) demonstrates this workflow.
 
 Pairing is quadratic in the number of candidate blocks per file, so a few large modules with many near-identical methods are the worst case, not total line count. With N near-identical blocks in one file every pair proposes the same N-site extraction; each distinct proposal is kept once, but evaluating the pairs still grows as N cubed until the first application collapses them into one helper. `--max-pairs` bounds the candidate pairs one analysis evaluates (the largest groups of similar blocks are left out, with a warning) and `--min-lines` raises the smallest block considered.
 

@@ -59,7 +59,7 @@ def test_cancel_does_not_create_output(tmp_path: Path) -> None:
     source = tmp_path / "source.py"
     source.write_text("x = 1\n")
     destination = tmp_path / "output.py"
-    with patch("builtins.input", return_value="n"):
+    with patch("builtins.input", return_value="n"), pytest.raises(ValueError, match="Aborted"):
         _run_dry(arguments(source, destination))
     assert not destination.exists()
     assert source.read_text() == "x = 1\n"

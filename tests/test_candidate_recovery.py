@@ -22,6 +22,9 @@ See CONTRIBUTING.md, "Preserve the intent of policy regressions", before
 weakening these requirements to accommodate a changed proposal list.
 """
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 from __future__ import annotations
 
 import ast
@@ -82,6 +85,7 @@ def _apply_pair(tmp_path: Path, source: str, *, covering: str) -> str:
     path = tmp_path / "module.py"
     path.write_text(textwrap.dedent(source))
     engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False,
         min_lines=2,
         reuse_existing_functions=False,
         type_oracle=None,
@@ -248,7 +252,7 @@ def g(subject):
     path = tmp_path / "module.py"
     path.write_text(source)
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=None
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=None
     )
     assert engine.analyze_file(str(path)) == []
     invocation = "print(f({'go': 2}), g({'run': 3}), f({}), g({}))"
@@ -286,7 +290,9 @@ def g(items):
     # and result. Keep it as a refusal; the companion creates no new binding.
     path = tmp_path / "unsafe.py"
     path.write_text(source)
-    engine = UnificationRefactorEngine(min_lines=2, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False
+    )
     assert engine.analyze_file(str(path)) == []
     original = _observe(source, "print(f([0, 1, 0]), g([0, 1, 1]))")
     assert original == ("[7] [10]\n" if control == "break" else "[7, 7] [10, 10]\n")
@@ -360,7 +366,9 @@ def test_except_star_body_extraction_keeps_subgroups_cleanup_and_finally(
     """A handler helper consumes its subgroup while the original except* owns target cleanup."""
     path = tmp_path / "unsafe.py"
     path.write_text(EXCEPT_STAR)
-    engine = UnificationRefactorEngine(min_lines=2, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False
+    )
     proposals = engine.analyze_file(str(path))
     caught_lines = {
         index
@@ -425,7 +433,7 @@ def f(subject):
         second = 4
 """).body[0]
     assert isinstance(function, ast.FunctionDef)
-    engine = UnificationRefactorEngine(min_lines=2, type_oracle=None)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2, type_oracle=None)
     blocks = engine._extract_code_blocks(function)
     match = function.body[0]
     tried = function.body[1]

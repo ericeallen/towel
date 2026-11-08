@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Whole-body handoff preserves cleanup without retaining arguments in the caller."""
+"""Whole-body handoff preserves cleanup without retaining arguments in the caller.
+
+These minimal semantic fixtures explicitly bypass the optional usefulness filter:
+their ownership transformations must still run, even when users would decline them.
+"""
 
 from __future__ import annotations
 
@@ -89,7 +93,10 @@ def _proposal(
     path = tmp_path / "p.py"
     path.write_text(source)
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, max_parameters=budget
+        skip_trivial_helpers=False,
+        min_lines=2,
+        reuse_existing_functions=False,
+        max_parameters=budget,
     )
     proposals = [
         proposal
@@ -199,7 +206,9 @@ def test_other_runtime_does_not_claim_cpython_cleanup_proof(
     monkeypatch.setattr(argument_ownership, "_supported_runtime", lambda: False)
     path = tmp_path / "p.py"
     path.write_text(SOURCE)
-    engine = UnificationRefactorEngine(min_lines=2, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, skip_trivial_helpers=False
+    )
     assert not engine.analyze_file(str(path))
 
 
@@ -564,12 +573,18 @@ def test_analysis_reserves_the_final_holder_in_the_parameter_budget(tmp_path: Pa
         proposal.extracted_function.args.args
     )
     refused = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, max_parameters=semantic_count
+        skip_trivial_helpers=False,
+        min_lines=2,
+        reuse_existing_functions=False,
+        max_parameters=semantic_count,
     )
     assert refused.analyze_file(str(path)) == []
     assert "ownership_parameter_budget" in refused.declined_pairs
     admitted = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, max_parameters=semantic_count + 1
+        skip_trivial_helpers=False,
+        min_lines=2,
+        reuse_existing_functions=False,
+        max_parameters=semantic_count + 1,
     )
     candidates = admitted.analyze_file(str(path))
     assert candidates
@@ -606,7 +621,7 @@ def test_method_budget_includes_implicit_super_receiver_and_holder(tmp_path: Pat
     path = tmp_path / "p.py"
     path.write_text(SUPER_CAPTURED_RECEIVER)
     refused = UnificationRefactorEngine(
-        min_lines=3, max_parameters=4, reuse_existing_functions=False
+        skip_trivial_helpers=False, min_lines=3, max_parameters=4, reuse_existing_functions=False
     )
     assert refused.analyze_file(str(path)) == []
     assert "ownership_parameter_budget" in refused.declined_pairs

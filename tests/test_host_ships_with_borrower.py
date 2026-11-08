@@ -24,6 +24,8 @@ host is refused. Each case here imports every module of the refactored
 project with only the shipped packages on the path.
 """
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import contextlib
@@ -104,7 +106,9 @@ def _write(root: Path, files: Dict[str, str]) -> None:
 
 
 def _refactor(root: Path, target: str) -> bool:
-    engine = UnificationRefactorEngine(min_lines=3, max_parameters=8, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, max_parameters=8, cross_module_helpers=True
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(root / target), str(root / target), progress="none"

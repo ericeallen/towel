@@ -37,7 +37,24 @@ import pytest
 from towel import cli
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-BODY = "    total = 0\n    for item in items:\n        total += item * {factor}\n    return total\n"
+# The CLI control keeps its default profitability policy enabled.
+BODY = """    total = 0
+    for item in items:
+        total += item * {factor}
+    total = total + 17
+    total = total * 19
+    total = total - 23
+    total = total // 29
+    total = total + 31
+    total = total * 37
+    total = total - 41
+    total = total // 43
+    total = total + 47
+    total = total * 53
+    total = total - 59
+    total = total // 61
+    return total
+"""
 MODULE = "def a1(items):\n" + BODY.format(factor=2) + "\n\ndef a2(items):\n" + BODY.format(factor=3)
 LINKED = "def b1(items):\n" + BODY.format(factor=2)
 

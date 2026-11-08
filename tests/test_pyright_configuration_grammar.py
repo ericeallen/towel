@@ -225,7 +225,10 @@ def test_a_confirmation_that_failed_quotes_the_checker(tmp_path: Path) -> None:
     oracle = _SessionThenFailingCommandLine(_failing_pyright(tmp_path))
     try:
         engine = UnificationRefactorEngine(
-            min_lines=3, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=3,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         with pytest.raises(RefactoringError) as refused:
             engine.refactor_to_fixed_point(str(path), progress="none")

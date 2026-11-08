@@ -60,6 +60,14 @@ BLOCK = """
     doubled = value + 1
     scaled = doubled * 2
     scaled = scaled + 5
+    offset = scaled + 4
+    tripled = offset * 3
+    adjusted = tripled - 12
+    base = adjusted // 3
+    shifted = base + 9
+    expanded = shifted * 2
+    contracted = expanded - 18
+    scaled = contracted // 2
 """
 
 METADATA_PROGRAM = f"""

@@ -108,11 +108,13 @@ class Bundle:
         git(self.repo, "commit", "-qm", "Synthetic source amendment")
 
 
-def artifacts(bundle: Bundle) -> tuple[str, str]:
+def artifacts(bundle: Bundle, *, extra_metadata: bytes = b"") -> tuple[str, str]:
     wheel_name = f"dist/code_towel-{VERSION}-py3-none-any.whl"
     sdist_name = f"dist/code_towel-{VERSION}.tar.gz"
     metadata = (
-        f"Metadata-Version: 2.4\nName: code-towel\nVersion: {VERSION}\n\n".encode()
+        f"Metadata-Version: 2.4\nName: code-towel\nVersion: {VERSION}\n".encode()
+        + extra_metadata
+        + b"\n"
         + bundle.source["README.md"]
     )
     wheel_files = {
@@ -634,6 +636,308 @@ def test_release_rejects_amendment_to_prebuilt_shipped_document(bundle: Bundle) 
     with pytest.raises(gate.EvidenceError, match="predates shipped"):
         bundle.check()
     bundle.check(validation_only=True)
+
+
+def documentation_rebuild(bundle: Bundle) -> Bundle:
+    """Build synthetic final archives and fresh package observations, leaving old evidence intact."""
+    head = git(bundle.repo, "rev-parse", "HEAD")
+    final = Bundle(
+        bundle.repo,
+        bundle.root / "rebuilt",
+        {"records": {}},
+        gate.source_tree(bundle.repo, head),
+        head,
+    )
+    original = gate.table(bundle.value["records"])
+    for name in gate.DOCUMENTATION_REBUILD_RECORDS:
+        value = gate.FileRef.read(original[name]).bytes(bundle.root)
+        records = gate.table(final.value["records"])
+        records[name] = final.ref(name, value)
+        final.value["records"] = records
+    wheel, archive = artifacts(final)
+    steps = gate.rows(final.read("build-results.json"))
+    steps[1]["args"] = ["python", "-m", "build", "--no-isolation"]
+    final.write("build-results.json", steps)
+    smokes = gate.rows(final.read("wheel-smoke/results.json"))
+    final.write("wheel-smoke/results.json", [{**row, "wheel_sha256": wheel} for row in smokes])
+    for smoke in smokes:
+        case = gate.text(smoke["case"])
+        name = f"wheel-smoke/{case}/commands.json"
+        commands = gate.rows(final.read(name))
+        commands[0]["args"] = [
+            "uv",
+            "pip",
+            "install",
+            str(final.root / f"dist/code_towel-{VERSION}-py3-none-any.whl")
+            + ("[format,types]" if case.endswith("extras") else ""),
+        ]
+        final.write(name, commands)
+    docs = gate.table(final.read("sdist-docs-result.json"))
+    extracted = final.root / "unpacked"
+    docs["archive_sha256"] = archive
+    docs["steps"] = [
+        command(
+            name="extract",
+            args=[
+                "tar",
+                "-xzf",
+                str(final.root / f"dist/code_towel-{VERSION}.tar.gz"),
+                "-C",
+                str(extracted),
+            ],
+        ),
+        *[
+            {**step, "cwd": str(extracted / f"code_towel-{VERSION}")}
+            for step in gate.rows(docs["steps"])
+        ],
+    ]
+    final.write("sdist-docs-result.json", docs)
+    attach_documentation_rebuild(bundle, final)
+    return final
+
+
+def attach_documentation_rebuild(bundle: Bundle, final: Bundle) -> None:
+    def rebased(value: object) -> dict[str, object]:
+        ref = gate.FileRef.read(value)
+        return {"path": "rebuilt/" + ref.path, "sha256": ref.sha256}
+
+    amendment = gate.table(bundle.value["amendments"])
+    amendment["rebuilt"] = {
+        "commit": final.commit,
+        "artifacts": {
+            name: rebased(ref) for name, ref in gate.table(final.value["artifacts"]).items()
+        },
+        "records": {name: rebased(ref) for name, ref in gate.table(final.value["records"]).items()},
+    }
+    bundle.value["amendments"] = amendment
+    bundle.save()
+
+
+def test_documentation_only_rebuild_reuses_runtime_checks_and_returns_final_artifacts(
+    bundle: Bundle,
+) -> None:
+    original_records = gate.table(bundle.value["records"])
+    bundle.commit_file("README.md", "Corrected final shipping text\n")
+    amendment(bundle, "README.md")
+    final = documentation_rebuild(bundle)
+    wheel, archive = bundle.check()
+    assert wheel.parent == archive.parent == final.root / "dist"
+    assert gate.archive_files(wheel)[f"code_towel-{VERSION}.dist-info/METADATA"].endswith(
+        b"Corrected final shipping text\n"
+    )
+    assert bundle.value["validation_commit"] == bundle.commit
+    assert gate.table(bundle.value["records"]) == original_records
+
+
+@pytest.mark.parametrize(
+    "name", ["docs/run.py", "docs/data.json", "tests/test_example.py", "uv.lock", "LICENSE"]
+)
+def test_documentation_rebuild_refuses_non_prose_changes(bundle: Bundle, name: str) -> None:
+    bundle.commit_file(name, "changed\n")
+    amendment(bundle, name)
+    documentation_rebuild(bundle)
+    with pytest.raises(gate.EvidenceError, match="invalidates evidence|requires identical"):
+        bundle.check()
+
+
+def test_documentation_rebuild_refuses_runtime_mode_changes_in_verification_and_preparation(
+    bundle: Bundle,
+) -> None:
+    runtime = bundle.repo / "src/towel/__init__.py"
+    runtime.chmod(0o755)
+    git(bundle.repo, "update-index", "--chmod=+x", "src/towel/__init__.py")
+    git(bundle.repo, "commit", "-qm", "Runtime mode change")
+    bundle.commit_file("README.md", "Corrected final shipping text\n")
+    amendment(bundle, "README.md")
+    final = documentation_rebuild(bundle)
+    with pytest.raises(gate.EvidenceError, match="including modes.*src/towel"):
+        bundle.check()
+    output = bundle.root / "prepared.json"
+    with pytest.raises(gate.EvidenceError, match="including modes.*src/towel"):
+        gate.prepare_documentation_rebuild(bundle.repo, bundle.path, final.root, output, VERSION)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "name, change, message",
+    [
+        ("dependencies-dev.txt", "pytest==99.0\n", "pinned tool environment"),
+        ("sdist-docs-tests.log", "1 failed, 1 passed in 1.00s\n", "contains failures"),
+        ("twine-313.log", "not checked\n", "strict distribution"),
+    ],
+)
+def test_documentation_rebuild_requires_fresh_successful_package_checks(
+    bundle: Bundle, name: str, change: str, message: str
+) -> None:
+    bundle.commit_file("README.md", "Corrected final shipping text\n")
+    amendment(bundle, "README.md")
+    final = documentation_rebuild(bundle)
+    final.write(name, change)
+    attach_documentation_rebuild(bundle, final)
+    with pytest.raises(gate.EvidenceError, match=message):
+        bundle.check()
+
+
+def test_documentation_rebuild_rejects_old_wheel_smoke_and_isolated_build(bundle: Bundle) -> None:
+    bundle.commit_file("README.md", "Corrected final shipping text\n")
+    amendment(bundle, "README.md")
+    final = documentation_rebuild(bundle)
+    steps = gate.rows(final.read("build-results.json"))
+    steps[1]["args"] = ["python", "-m", "build"]
+    final.write("build-results.json", steps)
+    attach_documentation_rebuild(bundle, final)
+    with pytest.raises(gate.EvidenceError, match="no-isolation"):
+        bundle.check()
+    steps[1]["args"] = [*gate.strings(steps[1]["args"]), "--no-isolation"]
+    final.write("build-results.json", steps)
+    final.write("wheel-smoke/results.json", bundle.read("wheel-smoke/results.json"))
+    attach_documentation_rebuild(bundle, final)
+    with pytest.raises(gate.EvidenceError, match="another wheel"):
+        bundle.check()
+
+
+@pytest.mark.parametrize("wrong", ["wheel", "sdist", "cwd"])
+def test_documentation_rebuild_requires_commands_to_use_the_actual_new_artifacts(
+    bundle: Bundle, wrong: str
+) -> None:
+    bundle.commit_file("README.md", "Corrected final shipping text\n")
+    amendment(bundle, "README.md")
+    final = documentation_rebuild(bundle)
+    if wrong == "wheel":
+        name = "wheel-smoke/3.11-bare/commands.json"
+        commands = gate.rows(final.read(name))
+        commands[0]["args"] = [
+            "uv",
+            "pip",
+            "install",
+            str(bundle.root / f"dist/code_towel-{VERSION}-py3-none-any.whl"),
+        ]
+        final.write(name, commands)
+    else:
+        docs = gate.table(final.read("sdist-docs-result.json"))
+        steps = gate.rows(docs["steps"])
+        if wrong == "sdist":
+            args = gate.strings(steps[0]["args"])
+            args[2] = str(bundle.root / f"dist/code_towel-{VERSION}.tar.gz")
+            steps[0]["args"] = args
+        else:
+            steps[-1]["cwd"] = str(bundle.root / "old-source")
+        docs["steps"] = steps
+        final.write("sdist-docs-result.json", docs)
+    attach_documentation_rebuild(bundle, final)
+    with pytest.raises(
+        gate.EvidenceError, match="rebuilt wheel path|another archive path|extracted tree"
+    ):
+        bundle.check()
+
+
+def test_documentation_rebuild_accepts_relative_artifact_paths_only_with_recorded_cwd(
+    bundle: Bundle,
+) -> None:
+    bundle.commit_file("README.md", "Corrected final shipping text\n")
+    amendment(bundle, "README.md")
+    final = documentation_rebuild(bundle)
+    name = "wheel-smoke/3.11-bare/commands.json"
+    commands = gate.rows(final.read(name))
+    commands[0]["args"] = ["uv", "pip", "install", f"dist/code_towel-{VERSION}-py3-none-any.whl"]
+    commands[0]["cwd"] = str(final.root)
+    final.write(name, commands)
+    attach_documentation_rebuild(bundle, final)
+    bundle.check()
+    commands[0]["cwd"] = str(bundle.root)
+    final.write(name, commands)
+    attach_documentation_rebuild(bundle, final)
+    with pytest.raises(gate.EvidenceError, match="rebuilt wheel path"):
+        bundle.check()
+
+
+def test_development_readme_cannot_authorize_publication(bundle: Bundle) -> None:
+    bundle.commit_file("README.md", "**Development branch:** unreleased changes\n")
+    amendment(bundle, "README.md")
+    documentation_rebuild(bundle)
+    with pytest.raises(gate.EvidenceError, match="Development branch"):
+        bundle.check()
+    bundle.check(validation_only=True)
+
+
+def test_rebuilt_archive_cannot_inject_generated_dependencies_outside_git(bundle: Bundle) -> None:
+    bundle.commit_file("README.md", "Corrected final shipping text\n")
+    amendment(bundle, "README.md")
+    final = documentation_rebuild(bundle)
+    # The source tree is still documentation-only. A manipulated build adds
+    # generated dependency metadata, which ordinary tracked-source parity misses.
+    final.source = {**final.source, "src/code_towel.egg-info/requires.txt": b"unreviewed-package\n"}
+    artifacts(final)
+    attach_documentation_rebuild(bundle, final)
+    with pytest.raises(gate.EvidenceError, match="changed sdist"):
+        bundle.check()
+
+
+def test_rebuilt_wheel_cannot_change_dependencies_despite_valid_record_hashes(
+    bundle: Bundle,
+) -> None:
+    bundle.commit_file("README.md", "Corrected final shipping text\n")
+    amendment(bundle, "README.md")
+    final = documentation_rebuild(bundle)
+    artifacts(final, extra_metadata=b"Requires-Dist: unreviewed-package\n")
+    attach_documentation_rebuild(bundle, final)
+    with pytest.raises(gate.EvidenceError, match="changed package metadata headers"):
+        bundle.check()
+
+
+@pytest.mark.parametrize("name", ["src/towel/__init__.py", "src/code_towel.egg-info/requires.txt"])
+def test_rebuilt_sdist_cannot_change_non_documentation_payload(name: str) -> None:
+    before = {"README.md": b"old\n", name: b"original\n"}
+    after = {"README.md": b"new\n", name: b"injected\n"}
+    with pytest.raises(gate.EvidenceError, match="changed sdist"):
+        gate.verify_rebuilt_sdist(before, after)
+
+
+def test_rebuilt_sdist_compares_utf8_readme_bytes_without_email_payload_decoding() -> None:
+    old, new = "Original café\n".encode(), "Corrected café — now current\n".encode()
+    headers = b"Metadata-Version: 2.4\nDescription-Content-Type: text/markdown\n\n"
+    gate.verify_rebuilt_sdist(
+        {"README.md": old, "PKG-INFO": headers + old},
+        {"README.md": new, "PKG-INFO": headers + new},
+    )
+
+
+def test_prepare_documentation_rebuild_hashes_records_without_rewriting_original(
+    bundle: Bundle,
+) -> None:
+    bundle.commit_file("README.md", "Corrected final shipping text\n")
+    amendment(bundle, "README.md")
+    final = documentation_rebuild(bundle)
+    checks = gate.rows(gate.table(bundle.value["amendments"])["checks"])
+    for index, check in enumerate(checks):
+        ref = gate.FileRef.read(check["log"])
+        name = f"supplemental-{index}.log"
+        (final.root / name).write_bytes(ref.bytes(bundle.root))
+        check["log"] = name
+        check.pop("files")
+    (final.root / "amendment-checks.json").write_text(json.dumps(checks))
+    (final.root / "amendment-review.md").write_text("Reviewed all documentation changes.\n")
+    # The command starts from the original campaign, not a hand-authored
+    # combined bundle, and retains its bytes and original source identity.
+    bundle.value["amendments"] = None
+    bundle.save()
+    original = bundle.path.read_bytes()
+    output = bundle.root / "release-with-docs.json"
+    args = [
+        VERSION,
+        str(bundle.path),
+        "--repo",
+        str(bundle.repo),
+        "--prepare-docs-rebuild",
+        str(final.root),
+        "--output",
+        str(output),
+    ]
+    assert gate.main(args) == 0
+    assert bundle.path.read_bytes() == original
+    combined = gate.table(gate.decode(output.read_bytes()))
+    assert combined["validation_commit"] == bundle.commit
+    assert gate.main(args) == 1, "Preparing again must not overwrite an earlier record"
 
 
 @pytest.mark.parametrize("optimized", [False, True])

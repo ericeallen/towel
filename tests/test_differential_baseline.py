@@ -328,6 +328,11 @@ def test_the_report_counts_by_file_and_names_what_it_will_not_change(tmp_path: P
 
 
 # --- The engine, with checkers whose verdicts are fixed ------------------------
+# These deliberately small fixtures test type-checker acceptance and rejection,
+# not whether an extraction pays for its interface. Every API engine explicitly
+# bypasses only the optional usefulness filter so those checks remain exercised.
+# The CLI control below instead uses a substantial three-site calculation and
+# retains the normal product policy.
 
 
 class _Oracle:
@@ -409,7 +414,7 @@ def test_a_project_whose_check_reports_errors_is_refactored_with_types(tmp_path:
     consumer.write_text('broken: int = "wrong"\n')
     existing = TypeDiagnostic(_resolved(consumer), "Incompatible types [assignment]", 1)
     oracle = _Oracle(lambda _: CheckSuccess((existing,)))
-    engine = UnificationRefactorEngine(type_oracle=oracle)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=oracle)
     proposal = engine.analyze_files([str(program), str(consumer)])[0]
     written = engine.apply_refactoring(str(program), proposal)
     _typed_value_helper(written)
@@ -464,7 +469,7 @@ def test_a_change_that_adds_an_error_is_rejected_and_one_that_adds_none_is_accep
         return CheckSuccess(tuple(errors))
 
     oracle = _Oracle(verdict)
-    engine = UnificationRefactorEngine(type_oracle=oracle)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=oracle)
     results, _ = engine.refactor_directory_to_fixed_point(
         str(tmp_path), str(tmp_path), progress="none"
     )
@@ -514,7 +519,7 @@ PARTIAL = textwrap.dedent("""
 def test_original_owned_partials_do_not_bypass_the_frame_boundary(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(OWNED_PARTIAL)
-    engine = UnificationRefactorEngine(annotate_helpers=False)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, annotate_helpers=False)
     assert engine.analyze_file(str(path)) == []
     assert "owned_binding_frame_boundary" in engine.declined_pairs
     assert path.read_text() == OWNED_PARTIAL
@@ -552,7 +557,7 @@ def test_an_error_only_its_message_matches_is_not_one_the_project_had(
             line = _line_of(text, "total = 1")
         return CheckSuccess((TypeDiagnostic(checked, message, line),))
 
-    engine = UnificationRefactorEngine(type_oracle=_Oracle(verdict))
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=_Oracle(verdict))
     proposal = engine.analyze_file(str(path))[0]
     assert proposal.reused_function is None
     assert len(proposal.replacements) == 2 and "print" not in ast.unparse(
@@ -581,7 +586,9 @@ def test_what_the_original_check_reports_is_said_before_anything_is_changed(
         TypeDiagnostic(_resolved(tmp_path / f"module_{index % 7}.py"), f"diagnostic {index}", 1)
         for index in range(9)
     )
-    engine = UnificationRefactorEngine(type_oracle=_Oracle(lambda _: CheckSuccess(errors)))
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, type_oracle=_Oracle(lambda _: CheckSuccess(errors))
+    )
     caplog.set_level(logging.DEBUG, logger="towel.types")
     engine.begin_refactoring_run([str(program)])
     summary = next(r.getMessage() for r in caplog.records if "original project" in r.getMessage())
@@ -605,7 +612,7 @@ def test_a_checker_that_cannot_run_for_a_change_still_refuses_what_it_did_not_ju
             return CheckFailure("checker timed out")
         return CheckSuccess((existing,))
 
-    engine = UnificationRefactorEngine(type_oracle=_Oracle(verdict))
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=_Oracle(verdict))
     with pytest.raises(RefactoringError, match=r"(?s)could not run for 1 proposal.*--no-types"):
         engine.refactor_to_fixed_point(str(program), progress="none")
     assert program.read_text() == TWINS
@@ -628,7 +635,7 @@ def test_a_configured_checker_whose_first_answer_is_old_errors_does_not_speak_fo
 
     secondary = _Oracle(dissent)
     combined = CombinedOracle(primary, [secondary])
-    engine = UnificationRefactorEngine(type_oracle=combined)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=combined)
     proposal = engine.analyze_files([str(program), str(consumer)])[0]
     with pytest.raises(RefactoringError, match="introduces project type errors"):
         engine.apply_refactoring(str(program), proposal)
@@ -674,7 +681,7 @@ def test_a_later_change_cannot_spend_an_error_an_earlier_one_removed(tmp_path: P
             errors.append(TypeDiagnostic(path, message, 1))
         return CheckSuccess(tuple(errors))
 
-    engine = UnificationRefactorEngine(type_oracle=_Oracle(verdict))
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=_Oracle(verdict))
     _, applied, _ = engine.refactor_to_fixed_point(str(program), progress="none")
     result = program.read_text()
     assert applied == 1
@@ -694,7 +701,7 @@ def test_a_file_whose_imports_the_checker_cannot_resolve_is_left_alone(
         1,
     )
     oracle = _Oracle(lambda _: CheckSuccess((unresolved,)))
-    engine = UnificationRefactorEngine(type_oracle=oracle)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=oracle)
     caplog.set_level(logging.WARNING, logger="towel")
     results, _ = engine.refactor_directory_to_fixed_point(
         str(tmp_path), str(tmp_path), progress="none"
@@ -722,7 +729,9 @@ def _mypy_run(tmp_path: Path, source: str) -> tuple[str, int]:
     path.write_text(textwrap.dedent(source).lstrip(), encoding="utf-8")
     oracle = MypyInferrer()
     try:
-        engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, min_lines=3, type_oracle=oracle
+        )
         _, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
     finally:
         oracle.close()
@@ -857,7 +866,9 @@ def test_the_cold_confirmation_compares_with_what_the_project_already_reports(
     path.write_text(original, encoding="utf-8")
     oracle = _WithAnOldError(only_cold="invented: missed while warm" if missed_while_warm else "")
     try:
-        engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, min_lines=3, type_oracle=oracle
+        )
         if missed_while_warm:
             with pytest.raises(
                 RefactoringError, match="did not report while the run was in progress"
@@ -913,7 +924,9 @@ def test_an_error_only_a_cold_check_reports_is_loud_only_if_the_original_lacks_i
     path.write_text(TWINS, encoding="utf-8")
     oracle = _ColdSeesMore(only_with_the_change=only_with_the_change)
     try:
-        engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, min_lines=3, type_oracle=oracle
+        )
         if only_with_the_change:
             with pytest.raises(
                 RefactoringError, match="did not report while the run was in progress"
@@ -930,6 +943,23 @@ def test_an_error_only_a_cold_check_reports_is_loud_only_if_the_original_lacks_i
 
 PACKAGING = '[project]\nname = "pkg"\nversion = "0"\nrequires-python = ">=3.11"\n'
 
+CLI_CALCULATIONS = "\n\n".join(
+    f"def {name}(value: int) -> int:\n"
+    + textwrap.indent(
+        "total = value + 1\n"
+        "doubled = total * 2\n"
+        "answer = doubled - 3\n"
+        "offset = answer + 7\n"
+        "scaled = offset * 2\n"
+        "trimmed = scaled - 4\n"
+        "restored = trimmed // 2\n"
+        "return restored\n",
+        "    ",
+    )
+    for name in ("first", "second", "third")
+)
+"""The real CLI must exercise baseline typing with its normal usefulness policy."""
+
 
 @requires_mypy
 def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
@@ -939,8 +969,10 @@ def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
     package = tmp_path / "pkg"
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
-    (package / "blind.py").write_text("import towel_absent_module\n\n\n" + TWINS, encoding="utf-8")
-    (package / "seen.py").write_text(TWINS, encoding="utf-8")
+    (package / "blind.py").write_text(
+        "import towel_absent_module\n\n\n" + CLI_CALCULATIONS, encoding="utf-8"
+    )
+    (package / "seen.py").write_text(CLI_CALCULATIONS, encoding="utf-8")
     run = subprocess.run(
         [sys.executable, "-c", "from towel.cli import main; main()", "dry", "pkg", "pkg"]
         + ["--no-format", "--no-interactive", "--progress", "none"],
@@ -956,7 +988,7 @@ def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
     assert "No change to these 1 file(s) is attempted" in run.stderr
     assert "pkg/blind.py:1: Cannot find implementation or library stub" in run.stderr
     assert (package / "blind.py").read_text(encoding="utf-8") == (
-        "import towel_absent_module\n\n\n" + TWINS
+        "import towel_absent_module\n\n\n" + CLI_CALCULATIONS
     )
     seen = (package / "seen.py").read_text(encoding="utf-8")
     _typed_value_helper(seen, return_type="int")

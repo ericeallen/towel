@@ -33,6 +33,14 @@ class RefactoringError(TowelError):
     """
 
 
+class UnprofitableHelper(RefactoringError):
+    """The final helper and callers cost more than the work they share.
+
+    An expected usefulness-policy refusal, including annotations and ownership
+    plumbing added during materialization, rather than a rendering failure.
+    """
+
+
 class TypeRejectedExtraction(RefactoringError):
     """Every offered helper variant completed checking and introduced type errors.
 

@@ -44,6 +44,8 @@ from towel.unification.models import RefactoringProposal
 from towel.unification.parallel import ParallelEvaluation
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
+
 pytestmark = pytest.mark.skipif(
     "fork" not in multiprocessing.get_all_start_methods(), reason="needs the fork start method"
 )
@@ -83,7 +85,9 @@ def _lower_thresholds(monkeypatch: pytest.MonkeyPatch) -> None:
 def _analyze(
     path: Path, workers: int
 ) -> Tuple[UnificationRefactorEngine, List[RefactoringProposal]]:
-    engine = UnificationRefactorEngine(min_lines=3, settings=_settings(workers))
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, settings=_settings(workers)
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         proposals = engine.analyze_files([str(path)], progress="none")
     return engine, proposals
@@ -179,7 +183,9 @@ def test_too_few_pairs_for_two_workers_stays_serial(
 
 
 def test_default_worker_count_is_bounded_by_cores_and_memory() -> None:
-    engine = UnificationRefactorEngine(min_lines=3, settings=_settings(None))
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, settings=_settings(None)
+    )
     workers = engine._parallel_workers()
     assert 1 <= workers <= max(1, os.cpu_count() or 1)
     assert ParallelEvaluation._workers_that_fit_in_memory() >= 0

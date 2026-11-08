@@ -36,12 +36,15 @@ def test_other_attributes_are_still_errors() -> None:
         towel.unification.nope
 
 
-def test_importing_an_analysis_module_leaves_the_engine_unloaded() -> None:
+@pytest.mark.parametrize(
+    "modules",
+    [("towel.unification.unifier", "towel.unification.scope_analyzer"), ("towel.cli",)],
+)
+def test_importing_lightweight_modules_leaves_the_engine_unloaded(modules: tuple[str, ...]) -> None:
     probe = (
         "import sys\n"
-        "import towel.unification.unifier\n"
-        "import towel.unification.scope_analyzer\n"
-        "print('towel.unification.refactor_engine' in sys.modules)\n"
+        + "".join(f"import {module}\n" for module in modules)
+        + "print('towel.unification.refactor_engine' in sys.modules)\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, check=True

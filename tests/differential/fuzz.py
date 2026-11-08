@@ -18,7 +18,7 @@ Usage::
 
     python -m tests.differential.fuzz [--count N] [--seed START] [--modes default,cross]
         [--forms grammar,bindings] [--typed-every K] [--family grammar|scope]
-        [--jobs J] [--out DIR]
+        [--jobs J] [--out DIR] [--product-policy]
 
 Seeds ``START`` to ``START + N - 1`` are generated (:mod:`tests.differential.grammar`,
 or with ``--family scope`` :mod:`tests.differential.scope_grammar`) and each
@@ -32,6 +32,12 @@ generated typed and run in the typed mode, with the checker its project
 configures; the scope family draws no typed cases. With no ``--seed`` the
 start is drawn at random and printed, so any run can be repeated exactly.
 
+The default semantic campaign bypasses only the optional usefulness filter
+(``skip_trivial_helpers=False``), so low-value generated examples still exercise
+all transformation safety checks. ``--product-policy`` instead uses the normal
+usefulness filter. The run header and each failure record identify the policy;
+the reproduction command preserves it.
+
 Each failure is written under ``DIR`` as a hostile fixture ready to commit,
 named with ``--prefix``, with a note saying where it goes and what the
 batteries must be told (:mod:`tests.differential.export`). Progress is printed as the run goes. The
@@ -43,7 +49,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import multiprocessing
 import os
 from pathlib import Path
@@ -172,6 +178,11 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
         "--typed", action="store_true", help="run the seeds typed only (to reproduce a typed case)"
     )
     parser.add_argument(
+        "--product-policy",
+        action="store_true",
+        help="apply the normal usefulness filter; by default exercise safe low-value extractions too",
+    )
+    parser.add_argument(
         "--family",
         choices=sorted(GENERATORS),
         default="grammar",
@@ -211,9 +222,15 @@ def main(argv: Sequence[str]) -> int:
         ]
     else:
         jobs = jobs_for(seeds, arguments.modes, arguments.typed_every, arguments.forms, family)
+    jobs = [
+        replace(job, mode=replace(job.mode, skip_trivial_helpers=arguments.product_policy))
+        for job in jobs
+    ]
     print(
         f"Fuzzing {family} seeds {start}..{start + arguments.count - 1}: {len(jobs)} runs"
-        f" on {arguments.jobs} worker(s); failures go to {out}",
+        f" on {arguments.jobs} worker(s); usefulness "
+        f"{'product default' if arguments.product_policy else 'semantic coverage opt-out'}; "
+        f"failures go to {out}",
         flush=True,
     )
     counts: Counter[str] = Counter()

@@ -108,6 +108,8 @@ def apply_one(
     ``pick`` is a substring of the proposal's description. ``oracle`` replaces
     the counting mypy, for a test that needs to script what the checker says;
     it must count its own checks in a ``checked`` list as ``CountingMypy`` does.
+    These minimal typing fixtures bypass optional output-quality selection so
+    a no-change result cannot conceal a missing annotation or semantic check.
     """
     (tmp_path / "pyproject.toml").write_text(config)
     path = tmp_path / name
@@ -115,7 +117,10 @@ def apply_one(
     checker = oracle if oracle is not None else CountingMypy()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=checker,
+            skip_trivial_helpers=False,
         )
         chosen = [p for p in engine.analyze_file(str(path)) if pick in p.description]
         assert len(chosen) == 1, [p.description for p in engine.analyze_file(str(path))]

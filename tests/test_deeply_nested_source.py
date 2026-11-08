@@ -47,7 +47,8 @@ def test_a_file_too_deep_to_analyze_is_skipped_and_the_others_are_refactored(
     deep = _function("a", 4, chain) + "\n\n" + _function("b", 5, chain)
     (project / "deep.py").write_text(deep)
     (project / "ok.py").write_text(_function("c", 4) + "\n\n" + _function("d", 5))
-    engine = UnificationRefactorEngine(min_lines=3)
+    # Exercise the valid neighbor even when this minimal example has no UX benefit.
+    engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=False)
     with contextlib.redirect_stdout(io.StringIO()):
         results, termination = engine.refactor_directory_to_fixed_point(
             str(project), str(project), progress="none"

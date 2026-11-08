@@ -19,6 +19,8 @@ Protocol. Class decorators do not impose an additional restriction: inspecting
 or rebuilding a class's namespace is outside the equivalence contract.
 """
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -124,7 +126,7 @@ def test_classes_the_rule_accepts_keep_their_helpers_as_methods(tmp_path: Path) 
     """The positive control: a rule that refused every class would pass the battery."""
     module = tmp_path / "m.py"
     shutil.copy(CASES / "p18_known_class_decorators_keep_the_helper.py", module)
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         _, applied, _ = engine.refactor_to_fixed_point(str(module))
     assert applied == 3

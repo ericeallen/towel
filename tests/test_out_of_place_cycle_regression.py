@@ -47,6 +47,13 @@ _SHARED = (
     "    for it in seq:\n"
     "        total += it * factor\n"
     "        total -= it % 3\n"
+    "        total += it * it\n"
+    "        total -= factor // 2\n"
+    "        total += it % 5\n"
+    "        total -= factor % 3\n"
+    "        total += it * factor + (it - factor) * (it + factor)\n"
+    "        total -= it // 2 + (factor - it) * (factor + it)\n"
+    "        total += it % 7 + (it + factor) * (it - factor)\n"
     "    return total\n"
 )
 _OTHER = (
@@ -54,6 +61,10 @@ _OTHER = (
     "    for it in seq:\n"
     "        out.append(it * factor + 7)\n"
     "        out.append(it - 2)\n"
+    "        out.append(it * it)\n"
+    "        out.append(factor // 2)\n"
+    "        out.append(it % 5)\n"
+    "        out.append(factor % 3)\n"
     "    return out\n"
 )
 

@@ -6,26 +6,22 @@ map/filter/reduce patterns, and functional composition.
 """
 
 
-def __extracted_func_2(__param_0, result):
+def __extracted_func_2(result):
     if result:
-        return __param_0()
+        return sorted(result, key=lambda x: -x)[:100]
     return []
 
 
 def __extracted_func_1(result):
-    if len(result) > 0:
-        return sorted(result, key=lambda x: x, reverse=True)
+    if result:
+        return sorted(result, key=lambda x: (x % 10, x))
     return []
 
 
-def __extracted_func_0(__param_0, data, filter_func, map_func, _towel_owner):
-    step1 = filter(lambda x: x is not None and x > 0, data)
-    step2 = map(lambda x: x * __param_0, step1)
-    step3 = filter(filter_func, step2)
-    step4 = map(map_func, step3)
-    result = list(step4)
-    # Final transformation
-    return __extracted_func_2(lambda: sorted(result, key=lambda x: (x % 10, x)), result)
+def __extracted_func_0(result):
+    if len(result) > 0:
+        return sorted(result, key=lambda x: x, reverse=True)
+    return []
 
 
 def apply_transformation_v1(data, multiplier):
@@ -35,7 +31,7 @@ def apply_transformation_v1(data, multiplier):
     filtered = filter(lambda x: x > 0, data)
     result = list(map(transform, filtered))
 
-    return __extracted_func_1(result)
+    return __extracted_func_0(result)
 
 
 def apply_transformation_v2(data, multiplier):
@@ -45,7 +41,7 @@ def apply_transformation_v2(data, multiplier):
     filtered = filter(lambda x: x > 0, data)
     result = list(map(transform, filtered))
 
-    return __extracted_func_1(result)
+    return __extracted_func_0(result)
 
 
 def reduce_with_lambda_a(values, initial, combiner):
@@ -77,21 +73,27 @@ def reduce_with_lambda_b(values, initial, combiner):
 def chain_functional_ops_v1(data, filter_func, map_func):
     """Version 1: Chained functional operations."""
     # Functional pipeline
-    _towel_arguments = [(map_func, filter_func, data)]
-    del data
-    del filter_func
-    del map_func
-    return __extracted_func_0(2, _towel_arguments[0][2], _towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
+    step1 = filter(lambda x: x is not None and x > 0, data)
+    step2 = map(lambda x: x * 2, step1)
+    step3 = filter(filter_func, step2)
+    step4 = map(map_func, step3)
+    result = list(step4)
+
+    # Final transformation
+    return __extracted_func_1(result)
 
 
 def chain_functional_ops_v2(data, filter_func, map_func):
     """Version 2: Different multiplier, same pipeline."""
     # Same pipeline, different multiplier
-    _towel_arguments = [(map_func, filter_func, data)]
-    del data
-    del filter_func
-    del map_func
-    return __extracted_func_0(3, _towel_arguments[0][2], _towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
+    step1 = filter(lambda x: x is not None and x > 0, data)
+    step2 = map(lambda x: x * 3, step1)
+    step3 = filter(filter_func, step2)
+    step4 = map(map_func, step3)
+    result = list(step4)
+
+    # Final transformation
+    return __extracted_func_1(result)
 
 
 def higher_order_function_a(data, threshold):
@@ -277,7 +279,7 @@ def generator_with_lambda_a(data, predicate):
 
     # Consume generator
     result = list(squared)
-    return __extracted_func_2(lambda: sorted(result, key=lambda x: -x)[:100], result)
+    return __extracted_func_2(result)
 
 
 def generator_with_lambda_b(data, predicate):
@@ -289,6 +291,4 @@ def generator_with_lambda_b(data, predicate):
 
     # Consume generator
     result = list(squared)
-    if result:
-        return sorted(result, key=lambda x: -x)[:100]
-    return []
+    return __extracted_func_2(result)

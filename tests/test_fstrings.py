@@ -25,6 +25,9 @@ IMPORTANT: These tests NEVER modify test_examples files.
 All tests read from test_examples in read-only mode.
 """
 
+# These minimal fixtures test semantic behavior, including small extractions
+# that the default product usefulness filter intentionally declines.
+
 import unittest
 import ast
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -37,7 +40,7 @@ class TestFStringHandling(unittest.TestCase):
     def setUp(self):
         # Use min_lines=1 for f-string tests since test cases are short
         self.engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=1, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1, parameterize_constants=True
         )
         # Capture original content to verify it's never modified
         self.example_path = get_test_example_path("fstrings_constants.py")
@@ -121,7 +124,7 @@ class TestConstantParameterization(unittest.TestCase):
     def setUp(self):
         # Use min_lines=1 for short test cases
         self.engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=1, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1, parameterize_constants=True
         )
         # Capture original content to verify it's never modified
         self.example_path = get_test_example_path("fstrings_constants.py")
@@ -152,7 +155,7 @@ class TestConstantParameterization(unittest.TestCase):
     def test_constant_parameterization_disabled(self):
         """Test behavior when constant parameterization is disabled."""
         engine_no_const = UnificationRefactorEngine(
-            max_parameters=5, min_lines=4, parameterize_constants=False
+            skip_trivial_helpers=False, max_parameters=5, min_lines=4, parameterize_constants=False
         )
 
         proposals = engine_no_const.analyze_file(str(self.example_path))
@@ -165,7 +168,7 @@ class TestConstantParameterization(unittest.TestCase):
         # The same limits with the flag on do find them, so the flag is what
         # made the difference.
         engine_const = UnificationRefactorEngine(
-            max_parameters=5, min_lines=4, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=4, parameterize_constants=True
         )
         with_flag = [
             p

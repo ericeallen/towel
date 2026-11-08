@@ -372,7 +372,16 @@ def test_complete_cli_preserves_wide_defaults_and_explicit_call_results(tmp_path
         f"def {name}(values={literal}):\n"
         "    items = list(values)\n"
         "    subtotal = sum(items)\n"
-        "    total = subtotal * 2\n"
+        "    scaled = subtotal * 2\n"
+        "    discounted = scaled - 3\n"
+        "    taxable = discounted + 7\n"
+        "    weighted = taxable * 5\n"
+        "    gross = weighted - 20\n"
+        "    quotient = gross // 5\n"
+        "    shifted = quotient + 9\n"
+        "    expanded = shifted * 2\n"
+        "    contracted = expanded - 18\n"
+        "    total = contracted // 2\n"
         f"    return total + {number}\n"
         for name, number in (("f", 3), ("g", 7))
     )

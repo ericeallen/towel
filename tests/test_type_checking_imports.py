@@ -89,7 +89,18 @@ def _package(root: Path) -> Path:
 
                     def render(self, width: int) -> str:
                         body = str(self.tag).strip()
-                        padded = body.rjust(width, ".")
+                        lower = body.lower()
+                        words = lower.replace("-", " ")
+                        punctuated = words.replace(".", " ")
+                        spaces = punctuated.replace("  ", " ")
+                        tabs = spaces.replace("\\t", " ")
+                        newlines = tabs.replace("\\n", " ")
+                        returns = newlines.replace("\\r", " ")
+                        commas = returns.replace(",", " ")
+                        semicolons = commas.replace(";", " ")
+                        colons = semicolons.replace(":", " ")
+                        cleaned = colons.strip()
+                        padded = cleaned.rjust(width, ".")
                         return padded.upper()
                 """).lstrip(),
             encoding="utf-8",

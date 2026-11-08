@@ -247,7 +247,9 @@ def second(value: int) -> int:
     path.write_text(source)
     oracle = MypyInferrer()
     try:
-        engine = UnificationRefactorEngine(min_lines=2, type_oracle=oracle)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, min_lines=2, type_oracle=oracle
+        )
         engine.refactor_directory_to_fixed_point(str(package), str(package), progress="none")
     finally:
         oracle.close()

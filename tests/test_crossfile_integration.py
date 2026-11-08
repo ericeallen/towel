@@ -23,6 +23,9 @@ refactoring workflows beyond just observational equivalence, focusing on:
 - Edge cases and error handling
 """
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 from __future__ import annotations
 
 import ast
@@ -107,7 +110,7 @@ class TestCrossFileProposalStructure:
         files = get_crossfile_project_files("simple_crossfile")
         assert len(files) == 2, "simple_crossfile should have 2 files"
 
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files(files)
 
         # The one duplicate is the whole body of validate_admin_email, so the
@@ -117,7 +120,7 @@ class TestCrossFileProposalStructure:
     def test_crossfile_proposal_has_replacements_in_multiple_files(self):
         """Cross-file proposals should have replacements spanning multiple files."""
         files = get_crossfile_project_files("simple_crossfile")
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files(files)
 
         # Every proposal spans both modules: a site in each, the helper in one.
@@ -128,7 +131,7 @@ class TestCrossFileProposalStructure:
     def test_crossfile_proposal_has_valid_file_paths(self):
         """All file paths in proposals should point to actual input files."""
         files = get_crossfile_project_files("simple_crossfile")
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files(files)
 
         file_set = set(files)
@@ -141,7 +144,7 @@ class TestCrossFileProposalStructure:
     def test_crossfile_proposal_has_consistent_parameters(self):
         """All replacements in a proposal should reference same parameter count."""
         files = get_crossfile_project_files("simple_crossfile")
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files(files)
 
         for proposal in proposals:
@@ -158,7 +161,7 @@ class TestCrossFileImportGeneration:
     def test_crossfile_proposal_includes_file_path(self):
         """Cross-file proposals should include file_path for extraction location."""
         files = get_crossfile_project_files("simple_crossfile")
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files(files)
 
         # Every proposal is hosted in one of the analyzed files.
@@ -169,7 +172,7 @@ class TestCrossFileImportGeneration:
     def test_crossfile_extracted_function_name_is_valid(self):
         """Extracted function names should be valid Python identifiers."""
         files = get_crossfile_project_files("simple_crossfile")
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files(files)
 
         for proposal in proposals:
@@ -189,7 +192,9 @@ class TestCrossFileWithPipeline:
         """run_pipeline should work with cross-file scenarios."""
         files = get_crossfile_project_files("simple_crossfile")
         proposals = run_pipeline(
-            files, engine=UnificationRefactorEngine(cross_module_helpers=True), progress="none"
+            files,
+            engine=UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True),
+            progress="none",
         )
 
         assert [p.description for p in proposals] == [ADMIN_EMAIL_HELPER]
@@ -198,7 +203,7 @@ class TestCrossFileWithPipeline:
         """Pipeline and engine should produce same results for cross-file."""
         files = get_crossfile_project_files("simple_crossfile")
 
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         engine_proposals = engine.analyze_files(files)
         pipeline_proposals = run_pipeline(files, engine=engine, progress="none")
 
@@ -232,7 +237,7 @@ class TestNestedStructureCrossFile:
         """Nested package structure should be analyzable."""
         files = get_crossfile_project_files("nested_structure")
 
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files(files)
 
         # Should complete without errors
@@ -251,7 +256,7 @@ class TestMultiLevelCrossFile:
         """Multi-level duplication scenarios should be analyzable."""
         files = get_crossfile_project_files("multi_level")
 
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files(files)
 
         # Should complete without errors
@@ -263,7 +268,7 @@ class TestCrossFileErrorHandling:
 
     def test_empty_file_list(self):
         """Empty file list should return no proposals."""
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files([])
         assert proposals == []
 
@@ -272,7 +277,7 @@ class TestCrossFileErrorHandling:
         files = get_crossfile_project_files("simple_crossfile")
 
         # Just analyze first file
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files([files[0]])
 
         # Should complete without errors (may or may not have proposals)
@@ -282,7 +287,7 @@ class TestCrossFileErrorHandling:
         """Nonexistent files should be skipped gracefully."""
         files = [str(PROJECT_ROOT / "this_file_definitely_does_not_exist.py")]
 
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files(files)
 
         # Should return empty list without crashing
@@ -295,7 +300,7 @@ class TestCrossFileErrorHandling:
         invalid = str(PROJECT_ROOT / "nonexistent.py")
         mixed = valid_files + [invalid]
 
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files(mixed)
 
         # Should process valid files
@@ -309,7 +314,7 @@ class TestCrossFileProposalApplication:
         """Replacement ranges should be within file bounds."""
         files = get_crossfile_project_files("simple_crossfile")
 
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files(files)
 
         for proposal in proposals:
@@ -335,7 +340,7 @@ class TestCrossFileProposalApplication:
 
         files = get_crossfile_project_files("simple_crossfile")
 
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files(files)
 
         for proposal in proposals:
@@ -368,7 +373,7 @@ class TestCrossFilePerformance:
         from unittest.mock import patch
 
         files = get_crossfile_project_files("simple_crossfile")
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         evaluated: list[tuple[str, tuple[int, int], str, tuple[int, int]]] = []
         original = UnificationRefactorEngine.process_block_pairs
 
@@ -390,7 +395,9 @@ class TestCrossFilePerformance:
         files = get_crossfile_project_files("simple_crossfile")
 
         proposals = run_pipeline(
-            files, engine=UnificationRefactorEngine(cross_module_helpers=True), progress="none"
+            files,
+            engine=UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True),
+            progress="none",
         )
         assert [p.description for p in proposals] == [ADMIN_EMAIL_HELPER]
 
@@ -416,7 +423,7 @@ class TestExampleThreeCrossFile:
     def test_example3_modules_that_never_import_each_other_share_nothing(self):
         file1, file2 = get_example3_files()
 
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         assert engine.analyze_files([file1, file2]) == []
         assert engine.analyze_file(file1) == [] and engine.analyze_file(file2) == []
 
@@ -436,7 +443,7 @@ class TestExampleThreeCrossFile:
     def test_example3_finds_cross_file_duplication(self, tmp_path: Path):
         file1, file2 = self._premium_imports_regular(tmp_path / "example3")
 
-        engine = UnificationRefactorEngine(cross_module_helpers=True)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files([file1, file2])
 
         assert [p.description for p in proposals] == [EXAMPLE3_HELPER]
@@ -449,7 +456,7 @@ class TestExampleThreeCrossFile:
 
         with contextlib.redirect_stdout(io.StringIO()):
             results, termination = UnificationRefactorEngine(
-                cross_module_helpers=True
+                skip_trivial_helpers=False, cross_module_helpers=True
             ).refactor_directory_to_fixed_point(str(source), str(out), progress="none")
 
         assert termination == "fixed_point"

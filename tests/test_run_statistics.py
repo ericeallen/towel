@@ -39,7 +39,9 @@ from towel.unification.materialize import Materialization
 from towel.unification.models import PairTally
 from towel.unification.parallel import ParallelEvaluation
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.test_cli_integration import invoke
+
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
+from tests.test_cli_integration import DUPLICATES, invoke
 from tests.test_declined_run_reports import BLOCK, _RefusesEveryCandidate, _similar_functions
 
 
@@ -53,7 +55,9 @@ def _analyzed(engine: UnificationRefactorEngine, path: Path) -> Tuple[PairTally,
 def test_every_candidate_pair_is_counted_exactly_once(tmp_path: Path) -> None:
     """Twenty similar functions: most pairs repeat a proposal, and some proposals overlap."""
     path = _similar_functions(tmp_path / "project", 20)
-    tally, declined, emitted = _analyzed(UnificationRefactorEngine(min_lines=2), path)
+    tally, declined, emitted = _analyzed(
+        UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2), path
+    )
     assert tally.candidate_pairs > 0
     assert tally.duplicate_pairs > 0, "the cluster's pairs repeat each other's proposal"
     assert tally.candidate_pairs == declined + tally.duplicate_pairs + tally.distinct_proposals
@@ -63,7 +67,9 @@ def test_every_candidate_pair_is_counted_exactly_once(tmp_path: Path) -> None:
 def test_an_analysis_without_pairs_counts_nothing(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text("def only(x):\n    return x + 1\n", encoding="utf-8")
-    tally, declined, emitted = _analyzed(UnificationRefactorEngine(min_lines=2), path)
+    tally, declined, emitted = _analyzed(
+        UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2), path
+    )
     assert (tally, declined, emitted) == (PairTally(), 0, 0)
 
 
@@ -75,7 +81,7 @@ def test_forked_evaluation_tallies_what_serial_evaluation_tallies(
 ) -> None:
     """Duplicates are decided when verdicts settle in pair order, so forking moves no count."""
     path = _similar_functions(tmp_path / "project", 24)
-    serial = _analyzed(UnificationRefactorEngine(min_lines=2), path)
+    serial = _analyzed(UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2), path)
     monkeypatch.setattr(ParallelEvaluation, "PARALLEL_PAIR_THRESHOLD", 1)
     monkeypatch.setattr(ParallelEvaluation, "PARALLEL_PROBE_PAIRS", 8)
     monkeypatch.setattr(ParallelEvaluation, "PARALLEL_MIN_PROJECTED_SECONDS", 0.0)
@@ -88,7 +94,7 @@ def test_forked_evaluation_tallies_what_serial_evaluation_tallies(
         return original(self, *args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(ParallelEvaluation, "_evaluate_pairs_parallel", recording)
-    parallel = _analyzed(UnificationRefactorEngine(min_lines=2), path)
+    parallel = _analyzed(UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2), path)
     assert forked, "the second analysis forked"
     assert parallel == serial
 
@@ -97,7 +103,7 @@ def test_the_run_report_accounts_for_the_last_whole_analysis(tmp_path: Path) -> 
     """At the fixed point, the report's pair counts add up and match a fresh analysis."""
     root = tmp_path / "project"
     _similar_functions(root, 6)
-    engine = UnificationRefactorEngine(min_lines=2)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         engine.refactor_directory_to_fixed_point(str(root), str(tmp_path / "out"), progress="none")
     report = engine.run_report
@@ -108,7 +114,7 @@ def test_the_run_report_accounts_for_the_last_whole_analysis(tmp_path: Path) -> 
         + report.overlapping_proposals
         + report.emitted_proposals
     )
-    fresh = UnificationRefactorEngine(min_lines=2)
+    fresh = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
     tally, declined, emitted = _analyzed(fresh, tmp_path / "out" / "m.py")
     assert report.candidate_pairs == tally.candidate_pairs
     assert report.emitted_proposals == emitted
@@ -131,7 +137,7 @@ def _typed_run(
     """``towel dry --stats`` on two duplicated functions; its stdout, and each attempt's verdict."""
     (root / "pkg").mkdir(parents=True)
     (root / "pkg" / "m.py").write_text(
-        BLOCK.format(name="fa", tag="a", number=1) + BLOCK.format(name="fb", tag="a", number=2),
+        DUPLICATES,
         encoding="utf-8",
     )
     monkeypatch.setattr("towel.cli._type_oracle", lambda path: oracle)
@@ -211,7 +217,7 @@ def test_a_quick_preview_says_it_has_no_statistics(tmp_path: Path) -> None:
 def test_overlapping_proposals_are_the_ones_the_filter_drops(tmp_path: Path) -> None:
     """The report's overlap count is exactly what the overlap filter removes from the distinct list."""
     path = _similar_functions(tmp_path / "project", 20)
-    engine = UnificationRefactorEngine(min_lines=2)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
     distinct: List[int] = []
     original = UnificationRefactorEngine.process_block_pairs
 

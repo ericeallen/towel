@@ -72,7 +72,10 @@ def _proposal(
 
 def _engine() -> UnificationRefactorEngine:
     return UnificationRefactorEngine(
-        annotate_helpers=False, reuse_existing_functions=False, cross_module_helpers=True
+        skip_trivial_helpers=False,
+        annotate_helpers=False,
+        reuse_existing_functions=False,
+        cross_module_helpers=True,
     )
 
 

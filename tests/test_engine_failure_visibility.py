@@ -14,6 +14,9 @@
 
 """Unexpected compiler failures cannot masquerade as no refactoring opportunities."""
 
+# These minimal fixtures test semantic behavior, including small extractions
+# that the default product usefulness filter intentionally declines.
+
 from pathlib import Path
 from unittest.mock import patch
 
@@ -35,10 +38,12 @@ def test_unexpected_engine_error_propagates(tmp_path: Path, component: str, meth
     source.write_text(
         "def first(x):\n    y=x+1\n    z=y*2\n    return z\n\ndef second(x):\n    y=x+1\n    z=y*2\n    return z\n"
     )
-    assert UnificationRefactorEngine(min_lines=3).analyze_files([str(source)], progress="none")
+    assert UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3).analyze_files(
+        [str(source)], progress="none"
+    )
     # A second engine, so no structural cache from the first run can serve
     # the answer without calling the component.
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     with patch.object(
         getattr(engine, component), method, side_effect=RuntimeError("invariant failed")
     ):

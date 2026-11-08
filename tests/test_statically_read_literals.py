@@ -49,6 +49,7 @@ from towel.unification.static_positions import (
     configured_translation_keywords,
 )
 from towel.unification.unifier import Unifier
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Each keyword's arguments, and the 1-based ones extraction reads (messages and
 # contexts), as pybabel 2.18 extracts them: Babel's DEFAULT_KEYWORDS, then
@@ -347,8 +348,11 @@ def test_a_configuration_pybabel_could_not_read_configures_nothing(
 def test_an_unconfigured_name_is_an_ordinary_call(tmp_path: Path) -> None:
     # Without configuration ``_l`` is no marker, and its literal may differ.
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "labelled"\nversion = "0"\n')
-    final, applied = refactor_to_fixed_point_silently(
-        write_module(tmp_path, _labelled_totals("_l")), 1
+    # Exercise the literal guard on one small semantic extraction. With the
+    # quality filters disabled, later forwarding work is a separate concern.
+    engine = UnificationRefactorEngine(min_lines=1, skip_trivial_helpers=False)
+    final, applied, _ = engine.refactor_to_fixed_point(
+        write_module(tmp_path, _labelled_totals("_l")), max_iterations=1, progress="none"
     )
     assert applied == 1
     assert "_l(__param_0)" in final

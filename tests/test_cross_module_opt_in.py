@@ -43,6 +43,8 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 
 SERIAL = Settings.from_environ({"TOWEL_WORKERS": "1"})
 
+# Shared by CLI opt-in and formatter tests: enough useful computation to
+# exercise extraction with the product's default readability policy enabled.
 _BLOCK = """
 from builtins import print as emit
 
@@ -56,6 +58,14 @@ def {name}(values):
         else:
             total -= value
     total = total + 1
+    total = total * 7
+    total = total - 11
+    total = total // 13
+    total = total + 17
+    total = total * 19
+    total = total - 23
+    total = total // 29
+    total = total + 31
     return total
 """
 

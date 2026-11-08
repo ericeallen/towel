@@ -476,7 +476,10 @@ def _refactored(
         snippet = black_formatter(BlackSettings())
     elif formatter == "ruff":
         snippet = ruff_formatter(path)
-    engine = UnificationRefactorEngine(min_lines=3, settings=SERIAL, snippet_formatter=snippet)
+    # Minimal layouts isolate directive preservation from profitability.
+    engine = UnificationRefactorEngine(
+        min_lines=3, settings=SERIAL, snippet_formatter=snippet, skip_trivial_helpers=False
+    )
     proposals = engine.analyze_file(str(path))
     if not proposals:
         return path.read_text(encoding="utf-8"), engine

@@ -26,6 +26,8 @@ import pytest
 from towel.unification.models import is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 
 @pytest.mark.parametrize(
     "imports, call",
@@ -53,7 +55,7 @@ def test_source_reading_calls_move_into_helpers_without_warning(
             for name in ("first", "second")
         )
     )
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     stderr = io.StringIO()
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
         output, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
@@ -85,7 +87,9 @@ def test_asserts_can_be_shared_between_modules_pytest_rewrites_differently(tmp_p
     rewritten = tmp_path / "test_values.py"
     plain.write_text("def first(value):\n" + body)
     rewritten.write_text("import plain\n\ndef second(value):\n" + body)
-    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True
+    )
     stderr = io.StringIO()
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
         results, _ = engine.refactor_directory_to_fixed_point(

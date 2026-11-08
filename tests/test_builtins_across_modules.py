@@ -88,6 +88,9 @@ def _refactor(
     """Refactor ``project/pkg`` in place; how many refactorings applied, and why pairs were declined."""
     # Every pair here spans modules, which is opt-in (docs/DECISIONS.md).
     engine = UnificationRefactorEngine(
+        # These minimal binding cases test semantics, independently of the
+        # product's default readability filter.
+        skip_trivial_helpers=False,
         # Full-body sharing preserves the header effect and needs one literal
         # tag, two builtin lookups, two arguments and the ownership holder.
         min_lines=3,
@@ -599,7 +602,9 @@ def test_a_same_module_helper_is_unchanged_by_a_patch_of_its_module(tmp_path: Pa
     before, after = tmp_path / "before", tmp_path / "after"
     for root in (before, after):
         _write(root, {"m.py": SAME_MODULE, "check.py": SAME_MODULE_CHECK})
-    final, applied = refactor_to_fixed_point_silently(str(after / "m.py"), min_lines=3)
+    final, applied = refactor_to_fixed_point_silently(
+        str(after / "m.py"), min_lines=3, skip_trivial_helpers=False
+    )
     assert applied == 1
     (after / "m.py").write_text(final)
     helpers = [f for name, f in module_functions(final).items() if name.startswith("__extracted")]

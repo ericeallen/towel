@@ -14,6 +14,9 @@
 
 """Fault injection tests assert target bytes, modes and recovery state."""
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 import ast
 import logging
 import os
@@ -175,7 +178,7 @@ def test_planning_is_repeatable_does_not_mutate_and_rejects_stale_source(tmp_pat
     path.write_text(
         "def a(x):\n    y = x + 1\n    z = y * 2\n    return z\n\ndef b(x):\n    y = x + 1\n    z = y * 2\n    return z\n"
     )
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     proposal = engine.analyze_file(str(path))[0]
     original = ast.dump(proposal.extracted_function, include_attributes=True)
     plan = engine.plan_refactoring(proposal)
@@ -259,7 +262,7 @@ def test_crlf_fixed_point_uses_original_bytes_for_stale_check(tmp_path):
     path.write_bytes(
         b"def a(x):\r\n    y=x+1\r\n    z=y*2\r\n    return z\r\n\r\ndef b(x):\r\n    y=x+1\r\n    z=y*2\r\n    return z\r\n"
     )
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     result, count, _ = engine.refactor_to_fixed_point(str(path), max_iterations=1)
     assert count == 1
     # The file keeps its line endings; the returned text is LF like every source in memory.

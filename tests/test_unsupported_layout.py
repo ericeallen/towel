@@ -38,9 +38,14 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 # ``compute`` is defined below its callers: the helper reads it as a bare
 # module name, so the same-file extraction still applies.
 SAME_FILE = (
-    "def f1(a):\n    x = a + 1\n    y = x * 2\n    z = y + compute(a)\n    return z\n\n\n"
-    "def f2(b):\n    x = b + 1\n    y = x * 2\n    z = y + compute(b)\n    return z\n\n\n"
-    "def compute(v):\n    return v\n\n\n"
+    "\n".join(
+        f"def {name}({arg}):\n    x = {arg} + 1\n    y = x * 2\n    z = y + compute({arg})\n"
+        "    scaled = z * 3\n    shifted = scaled + 12\n    unshifted = shifted - 12\n"
+        "    recovered = unshifted // 3\n    raised = recovered + 9\n    paired = raised * 2\n"
+        "    restored = paired // 2\n    answer = restored - 9\n    return answer\n"
+        for name, arg in (("f1", "a"), ("f2", "b"))
+    )
+    + "\ndef compute(v):\n    return v\n\n\n"
 )
 CROSS_A = (
     "from builtins import print as emit\n\ndef g(items, tag='g'):\n    names = []\n    for item in items:\n"
@@ -83,7 +88,9 @@ print(b.h([SimpleNamespace(name='c ')]))
 def test_same_file_extractions_still_happen(tmp_path: Path) -> None:
     _hatch_project(tmp_path / "proj")
     expected = _behavior(tmp_path / "proj")
-    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, reason = engine.refactor_directory_to_fixed_point(
             str(tmp_path / "proj"), str(tmp_path / "out"), max_iterations=0, progress="none"
@@ -101,7 +108,10 @@ def test_the_cross_module_pair_is_shared_when_asked(tmp_path: Path) -> None:
     # Sharing also requires the borrower to load the host before definitions.
     (tmp_path / "proj" / "pkg" / "b.py").write_text("from .a import g\n\n" + CROSS_B)
     engine = UnificationRefactorEngine(
-        min_lines=3, reuse_existing_functions=False, cross_module_helpers=True
+        skip_trivial_helpers=False,
+        min_lines=3,
+        reuse_existing_functions=False,
+        cross_module_helpers=True,
     )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(

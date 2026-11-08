@@ -14,6 +14,8 @@
 
 """Real checker expression types retain generic relationships through extraction."""
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -71,7 +73,7 @@ def extract(path: Path, oracle: TypeOracle) -> tuple[str, ast.FunctionDef]:
     source = path.read_text()
     assert oracle.check(str(path), source) == CheckSuccess()
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=oracle
     )
     proposals = engine.analyze_file(str(path))
     assert proposals
@@ -90,7 +92,9 @@ def extract(path: Path, oracle: TypeOracle) -> tuple[str, ast.FunctionDef]:
 def _binding_free_companion(path: Path, old: str, new: str) -> None:
     """Keep the unsafe owned-local split as a refusal before measuring a safe helper."""
     source = path.read_text()
-    engine = UnificationRefactorEngine(min_lines=2, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False
+    )
     assert engine.analyze_file(str(path)) == []
     assert source.count(old) == 2
     path.write_text(source.replace(old, new))
@@ -309,7 +313,10 @@ def test_constrained_local_specializations_are_not_silently_narrowed(
     if isinstance(oracle, MypyInferrer):
         assert reveals == {}, "Distinct int/str specializations must not retain only str"
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         proposals = engine.analyze_file(str(path))
         assert proposals == [], "The original owned-local split remains unsafe"

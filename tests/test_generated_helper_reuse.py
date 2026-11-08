@@ -40,9 +40,20 @@ from tests.typed_fixtures import requires_mypy
 
 BODY = (
     "    acc = n * 2\n    acc = acc - 11\n    msg = 'value %d' % acc\n"
-    "    msg = msg.strip()\n    return acc\n"
+    "    msg = msg.strip()\n"
+    "    msg = msg.replace('value', 'amount')\n"
+    "    msg = msg.replace('  ', ' ')\n"
+    "    msg = msg.replace(' -', '-')\n"
+    "    msg = msg.replace('- ', '-')\n"
+    "    msg = msg.replace(' .', '.')\n"
+    "    msg = msg.replace(' ,', ',')\n"
+    "    msg = msg.replace(' ;', ';')\n"
+    "    msg = msg.replace(' :', ':')\n"
+    "    msg = msg.removeprefix(' ')\n"
+    "    msg = msg.removesuffix(' ')\n"
+    "    return acc\n"
 )
-"""A whole body with no module lookup to introduce an unrelated caller thunk."""
+"""Useful owned work without a module lookup; result stays n * 2 - 11."""
 
 
 BINDING_FREE_BODY = "    n * 2\n    n - 11\n    return n * 2 - 11\n"

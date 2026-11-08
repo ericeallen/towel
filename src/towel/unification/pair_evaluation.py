@@ -94,6 +94,7 @@ from .semantic_safety import (
 from .clustering import Clustering
 from .reuse import ExistingFunctionReuse
 from .annotation_wiring import HelperAnnotationWiring
+from .annotations import complete_with_any
 from .placement import HelperPlacement, _helper_reads_class_private_names
 from .profitability import worthwhile_helper
 from .block_analysis import BlockAnalysis
@@ -2000,13 +2001,22 @@ class PairEvaluation(
                     RejectReason.EXISTING_HELPER_BECOMES_FORWARDER, pair, detail=forwarder
                 )
                 return None
-        if self.skip_trivial_helpers and proposal.reused_function is None:
-            helper = self._prepare_helper_interface(proposal, reserve_ownership_holder=True)
-            if not worthwhile_helper(helper, self._profitability_sites(proposal)):
-                self._debug_reject(RejectReason.UNPROFITABLE_HELPER, pair)
-                return None
         if self.annotate_helpers:
             proposal = self._with_helper_annotations(proposal, functions)
+        if self.skip_trivial_helpers and proposal.reused_function is None:
+            helper = self._prepare_helper_interface(proposal, reserve_ownership_holder=True)
+            if proposal.wants_type_inference:
+                # Materialization completes partially annotated signatures. Even
+                # without a checker, each bare parameter acquires an Any; count
+                # that minimum interface before offering a marginal proposal.
+                helper = complete_with_any(helper, None, self._receiver_name(proposal)).helper
+            if not worthwhile_helper(
+                helper,
+                proposal.replacements,
+                self._rendered_call_sites(proposal, reserve_ownership_holder=True),
+            ):
+                self._debug_reject(RejectReason.UNPROFITABLE_HELPER, pair)
+                return None
         return proposal
 
     def _resolve_pair_context(

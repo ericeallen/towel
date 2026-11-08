@@ -27,6 +27,8 @@ from tests.test_cli_integration import invoke
 from towel.unification.assignment_analyzer import analyze_assignments
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 
 @pytest.mark.parametrize(
     "case",
@@ -46,7 +48,7 @@ def test_protocol_results_preserve_finalizer_order(tmp_path: Path, case: str) ->
     source, output = tmp_path / "input.py", tmp_path / "output.py"
     text = original.read_text()
     source.write_text(text)
-    engine = UnificationRefactorEngine(annotate_helpers=False)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, annotate_helpers=False)
     _, applied, _ = engine.refactor_to_fixed_point(
         str(source), output_path=str(output), progress="none"
     )
@@ -99,7 +101,7 @@ def test_safe_protocol_companion_stays_useful(tmp_path: Path, case: str) -> None
     source, output = tmp_path / "input.py", tmp_path / "output.py"
     text = _safe_companion(case)
     source.write_text(text)
-    engine = UnificationRefactorEngine(annotate_helpers=False)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, annotate_helpers=False)
     _, applied, _ = engine.refactor_to_fixed_point(
         str(source), output_path=str(output), progress="none"
     )
@@ -114,6 +116,19 @@ def test_safe_protocol_companion_stays_useful(tmp_path: Path, case: str) -> None
 def test_default_typed_safe_companion_stays_useful(tmp_path: Path, case: str) -> None:
     source, output = tmp_path / "input.py", tmp_path / "output.py"
     text = _safe_companion(case)
+    if case == "property":
+        # Enough useful numeric work to repay the owned helper interface;
+        # the property, retained resource and continuation effects stay intact.
+        text = text.replace(
+            "    total = len(lower)\n",
+            "    count = len(lower)\n"
+            "    base = count * 7\n"
+            "    scaled = base + count\n"
+            "    discount = scaled // 5\n"
+            "    subtotal = scaled - discount\n"
+            "    fee = subtotal % 3\n"
+            "    total = subtotal + fee\n",
+        )
     source.write_text(text)
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
     before = subprocess.run([sys.executable, "-B", str(source)], capture_output=True, check=True)
@@ -138,7 +153,7 @@ def test_nested_binding_positions_exclude_the_candidate_and_include_its_continua
     branch = function.body[0]
     assert isinstance(branch, ast.If)
     block = branch.body[:2]
-    engine = UnificationRefactorEngine()
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     span = engine._block_line_span(block)
     assert span is not None
     snapshot = engine._compute_block_binding_snapshot(
@@ -157,7 +172,7 @@ def test_semicolon_binding_positions_do_not_treat_siblings_as_preceding() -> Non
     function = ast.parse("def f():\n    first = 1; second = 2; third = 3\n").body[0]
     assert isinstance(function, ast.FunctionDef)
     block = function.body[1:2]
-    engine = UnificationRefactorEngine()
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     span = engine._block_line_span(block)
     assert span is not None
     snapshot = engine._compute_block_binding_snapshot(

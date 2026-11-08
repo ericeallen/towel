@@ -15,8 +15,8 @@
 """How the hostile batteries refactor a fixture, and which fixtures are expected to fail.
 
 Towel runs through its library entry, ``UnificationRefactorEngine(min_lines=3)``,
-in place on a copy: :func:`refactor_script` for a single-file fixture and
-:func:`refactor_package` for a package. The differential harness
+with ``skip_trivial_helpers=False`` in place on a copy: :func:`refactor_script`
+for a single-file fixture and :func:`refactor_package` for a package. The differential harness
 (:mod:`tests.differential`) checks each fixture it writes with the same two,
 so a fixture it hands over fails its battery the way it failed the harness.
 
@@ -44,13 +44,21 @@ Fixture = TypeVar("Fixture")
 
 
 def refactor_script(
-    script: Path, *, file_finisher: Optional[Callable[[str, str], str]] = None
+    script: Path,
+    *,
+    file_finisher: Optional[Callable[[str, str], str]] = None,
+    skip_trivial_helpers: bool = False,
 ) -> int:
     """Refactor the single file ``script`` in place, as the file battery does; the count applied.
 
     ``file_finisher`` sees each file Towel would write (``ScopeWatch``).
+    ``skip_trivial_helpers`` is normally false for semantic coverage; an
+    explicit true retains a fixture that pins the product profitability refusal.
     """
-    engine = UnificationRefactorEngine(min_lines=3, file_finisher=file_finisher)
+    # Exercise semantic safety even when these tiny fixtures are not useful extractions.
+    engine = UnificationRefactorEngine(
+        min_lines=3, file_finisher=file_finisher, skip_trivial_helpers=skip_trivial_helpers
+    )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         _, applied, _ = engine.refactor_to_fixed_point(str(script))
     return applied
@@ -95,6 +103,8 @@ def refactor_package(
     try:
         engine = UnificationRefactorEngine(
             min_lines=3,
+            # Semantic coverage must still exercise tiny safe transformations.
+            skip_trivial_helpers=False,
             cross_module_helpers=cross_module,
             parameterize_builtins=parameterize_builtins,
             type_oracle=oracle,

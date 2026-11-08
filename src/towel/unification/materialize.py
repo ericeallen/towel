@@ -36,7 +36,6 @@ import hashlib
 import os
 import re
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 from .annotation_imports import (
@@ -51,7 +50,6 @@ from .annotation_imports import (
 from .block_comments import excluded_lines, weave_comments
 from .argument_ownership import (
     argument_handoff_fits,
-    render_argument_handoff,
     verify_argument_handoff,
 )
 from .profitability import worthwhile_helper
@@ -63,6 +61,7 @@ from .exceptions import (
     ProjectScanLimitError,
     RefactoringError,
     TypeRejectedExtraction,
+    UnprofitableHelper,
     UntypeableExtraction,
 )
 from .import_graph import (
@@ -99,18 +98,8 @@ from .reuse import ExistingFunctionReuse
 from .annotation_ladder import Hearing, Rejection, Verified
 from .annotation_wiring import HelperAnnotationWiring
 from .insertion import InsertionPoints
-from .placement import HelperPlacement, method_helper_position
+from .placement import HelperPlacement, _HelperNaming, method_helper_position
 from .statement_facts import bindings_of, loaded_names
-
-
-@dataclass(frozen=True)
-class _HelperNaming:
-    """The helper's name before and after allocation, and where its receiver sits."""
-
-    original_name: str
-    final_name: str
-    receiver_parameter_index: Optional[int]
-    parameter_count: int
 
 
 def _padded(lines: List[str], insert_at: int, block: List[str]) -> List[str]:
@@ -355,9 +344,11 @@ class Materialization(
         if (
             self.skip_trivial_helpers
             and proposal.reused_function is None
-            and not worthwhile_helper(helper, self._profitability_sites(proposal))
+            and not worthwhile_helper(
+                helper, proposal.replacements, self._rendered_call_sites(proposal)
+            )
         ):
-            raise RefactoringError("The helper interface outweighs its shared logic")
+            raise UnprofitableHelper("The helper interface outweighs its shared logic")
         replacements_by_file: Dict[str, List[Replacement]] = {}
         for repl in proposal.replacements:
             file_path = repl.file_path or proposal.file_path
@@ -453,24 +444,7 @@ class Materialization(
                 )
         if proposal.extracted_function.name in declaration_names:
             raise RefactoringError("The helper name conflicts with its type declarations")
-        receiver_name = proposal.method_param_name or (
-            "cls" if proposal.method_kind == "classmethod" else "self"
-        )
-        parameters = [
-            arg.arg
-            for arg in (
-                *proposal.extracted_function.args.posonlyargs,
-                *proposal.extracted_function.args.args,
-            )
-        ]
-        return _HelperNaming(
-            original_name=original_name,
-            final_name=proposal.extracted_function.name,
-            receiver_parameter_index=(
-                parameters.index(receiver_name) if receiver_name in parameters else None
-            ),
-            parameter_count=len(parameters),
-        )
+        return self._helper_naming(proposal, original_name=original_name)
 
     def _method_helper_name(
         self,
@@ -680,40 +654,6 @@ class Materialization(
                     )
                 )
             lines[start_line - 1 : end_line] = spliced.lines
-
-    def _call_site(
-        self, proposal: RefactoringProposal, naming: _HelperNaming, repl: Replacement
-    ) -> ast.AST:
-        """Retarget first, then transfer certified original argument ownership."""
-        node: ast.AST = copy.deepcopy(repl.node)
-        handed = any(
-            replacement.argument_handoff is not None for replacement in proposal.replacements
-        )
-        if proposal.insert_into_class and repl.class_name:
-            node = self._rewrite_call_for_method(
-                node,
-                naming.original_name,
-                naming.final_name,
-                repl.method_kind or proposal.method_kind,
-                repl.implicit_param or proposal.method_param_name,
-                repl.class_name,
-                naming.receiver_parameter_index,
-                naming.parameter_count - int(handed),
-            )
-        elif naming.original_name != naming.final_name:
-            node = self._retarget_helper_calls(node, naming.original_name, naming.final_name)
-        if repl.argument_handoff is not None:
-            return render_argument_handoff(node, repl.argument_handoff, naming.final_name)
-        if handed:
-            for call in ast.walk(node):
-                if isinstance(call, ast.Call) and (
-                    isinstance(call.func, ast.Name)
-                    and call.func.id == naming.final_name
-                    or isinstance(call.func, ast.Attribute)
-                    and call.func.attr == naming.final_name
-                ):
-                    call.args.append(ast.Constant(value=None))
-        return node
 
     def _insert_helper(
         self, proposal: RefactoringProposal, file_path: str, lines: List[str]

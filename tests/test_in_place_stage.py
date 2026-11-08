@@ -24,6 +24,8 @@ change applied to the project as one journaled plan. A failure anywhere
 before that leaves the project exactly as it was.
 """
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import contextlib
@@ -43,7 +45,14 @@ from tests.test_cli_integration import invoke
 
 pytest.importorskip("mypy")
 
-BODY = "    total = value + 1\n    doubled = total * 2\n    answer = doubled - {offset}\n"
+# The CLI must reach publication and cold confirmation under the default usefulness policy.
+BODY = (
+    "    total = value + 1\n    doubled = total * 2\n    answer = doubled - {offset}\n"
+    "    base = answer if answer > 0 else 0\n    discount = base // 10\n"
+    "    discounted = base - discount\n    tax = discounted * 8 // 100\n"
+    "    shipping = 5 if discounted < 100 else 0\n"
+    "    with_shipping = discounted + shipping\n    answer = with_shipping + tax\n"
+)
 MODULE = "".join(
     f"def {name}(value: int) -> int:\n    print({name!r})\n"
     + BODY.format(offset=offset)
@@ -117,7 +126,10 @@ def test_a_refused_confirmation_leaves_the_project_exactly_as_it_was(
     oracle = _BlindWhileWarm()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=3, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=3,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         with pytest.raises(RefactoringError, match="Nothing was written"):
             with contextlib.redirect_stdout(io.StringIO()):
@@ -166,7 +178,9 @@ def test_a_successful_run_writes_the_project_in_one_journaled_plan(
         original_apply(plan)
 
     monkeypatch.setattr(fixed_point, "apply_changes", recording_apply)
-    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
+    )
     with contextlib.redirect_stdout(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(root / "pkg"), str(root / "pkg"), progress="none"
@@ -186,7 +200,9 @@ def test_an_edit_made_during_the_run_stops_the_write_and_survives(
     """The stage holds the project as it was; a file edited since cannot take the result."""
     root = tmp_path / "project"
     files = _project(root)
-    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
+    )
     original = engine.analyze_directory
     edited = "# edited while Towel ran\n" + MODULE
     edits: List[int] = []
@@ -225,7 +241,9 @@ def test_an_edit_made_while_the_project_was_being_copied_is_kept(
             source.write_text(edited, encoding="utf-8")
 
     monkeypatch.setattr(filesystem, "_copy_entry", copy_then_edit)
-    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
+    )
     with pytest.raises(changes.StaleSource, match="changed while"):
         with contextlib.redirect_stdout(io.StringIO()):
             engine.refactor_directory_to_fixed_point(
@@ -240,7 +258,9 @@ def test_an_interrupted_run_leaves_the_project_and_no_stage(
     root = tmp_path / "project"
     _project(root)
     before = _snapshot(root)
-    engine = UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, reuse_existing_functions=False
+    )
     applied: List[int] = []
     original = engine._apply_and_refresh
 

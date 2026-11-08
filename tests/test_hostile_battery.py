@@ -604,7 +604,12 @@ def test_refactoring_preserves_program_output(case: str) -> None:
         shutil.copy(fixture, before)
         shutil.copy(fixture, after)
         scopes = ScopeWatch()
-        applied = refactor_script(after, file_finisher=scopes)
+        # This historical control deliberately pins the default trivial-helper refusal.
+        applied = refactor_script(
+            after,
+            file_finisher=scopes,
+            skip_trivial_helpers=case == "r86_annotated_assignment_live",
+        )
         transformed = before.read_bytes() != after.read_bytes()
         assert transformed == (applied > 0)
         # No change Towel rendered moves a name a kept function reads to

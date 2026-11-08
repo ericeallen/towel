@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 import ast
 import subprocess
 import sys
@@ -49,7 +51,7 @@ class User:
         src = Path(td) / "user.py"
         write_file(src, code)
 
-        engine = UnificationRefactorEngine(min_lines=3)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
         proposals = engine.analyze_file(str(src))
         assert proposals, "Expected proposal from method bodies"
 
@@ -174,6 +176,6 @@ def b(xs):
         src = Path(td) / "comp.py"
         write_file(src, code)
 
-        engine = UnificationRefactorEngine(min_lines=2)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
         proposals = engine.analyze_file(str(src))
         assert proposals, "Expected proposal from comprehension bodies with differing iter names"

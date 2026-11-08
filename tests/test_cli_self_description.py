@@ -102,8 +102,8 @@ def test_interactive_run_without_a_checker_does_not_announce_type_checking(
     project = _project(tmp_path / "project", cli._COST_NOTE_FILES)
     _without_checkers(monkeypatch)
     result = invoke(["dry", str(project), str(tmp_path / "out"), "--interactive"], stdin="n\n")
-    assert result.status == 0, result.stderr
-    assert "Proceed? (y/N)" in result.stdout and "Aborted." in result.stdout
+    assert result.status == 1, result.stderr
+    assert "Proceed? (y/N)" in result.stdout and "Aborted" in result.stderr
     assert "Type checking is on" not in result.stdout
 
 

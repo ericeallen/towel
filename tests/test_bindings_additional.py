@@ -22,6 +22,9 @@ Additional binding construct tests:
 These tests create temporary modules to avoid modifying fixtures.
 """
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 import textwrap
 import unittest
 from pathlib import Path
@@ -54,7 +57,7 @@ class TestAdditionalBindings(unittest.TestCase):
         """
         path = self._write_temp_py(code)
         engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=1, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1, parameterize_constants=True
         )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
@@ -77,7 +80,7 @@ class TestAdditionalBindings(unittest.TestCase):
         """
         path = self._write_temp_py(code)
         engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=1, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1, parameterize_constants=True
         )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
@@ -98,7 +101,7 @@ class TestAdditionalBindings(unittest.TestCase):
         """
         path = self._write_temp_py(code)
         engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=1, parameterize_constants=True
+            skip_trivial_helpers=False, max_parameters=5, min_lines=1, parameterize_constants=True
         )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)

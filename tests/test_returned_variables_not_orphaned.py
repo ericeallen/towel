@@ -32,6 +32,8 @@ from types import SimpleNamespace
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 OWNED_PARTIAL = textwrap.dedent("""
     def order_summary(order):
         items = [i for i in order.items if i.in_stock]
@@ -65,7 +67,7 @@ def _run(source: str) -> list[str]:
 def test_readme_example_extracts_with_the_returned_variable(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(README_EXAMPLE)
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     with contextlib.redirect_stdout(io.StringIO()):
         final, applied, _ = engine.refactor_to_fixed_point(str(path))
     assert applied == 1
@@ -100,7 +102,9 @@ def test_a_name_bound_before_and_rebound_in_the_block_is_still_an_orphan(tmp_pat
                     print(item)
                 return count * 2
             """))
-    engine = UnificationRefactorEngine(min_lines=2, reuse_existing_functions=False)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False
+    )
     proposals = engine.analyze_file(str(path))
     assert all(
         "count" not in ast.unparse(proposal.extracted_function).split("\n", 1)[0]
@@ -118,7 +122,7 @@ def test_a_name_bound_before_and_rebound_in_the_block_is_still_an_orphan(tmp_pat
 def test_original_partial_example_is_refused_without_changing_behavior(tmp_path: Path) -> None:
     path = tmp_path / "partial.py"
     path.write_text(OWNED_PARTIAL)
-    engine = UnificationRefactorEngine(min_lines=3)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     assert engine.analyze_file(str(path)) == []
     assert "owned_binding_frame_boundary" in engine.declined_pairs
     assert _run(OWNED_PARTIAL) == ["Order 7: $10.8", "Quote 7: $10.8"]

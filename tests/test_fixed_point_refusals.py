@@ -146,7 +146,10 @@ def test_real_checker_failure_terminates_directory_run(tmp_path: Path) -> None:
     try:
         assert isinstance(checker.check(str(path), original), CheckFailure)
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=checker,
+            skip_trivial_helpers=False,
         )
         proposals = engine.analyze_directory(str(tmp_path), progress="none")
         assert proposals, "The failing checker must encounter a real extraction"

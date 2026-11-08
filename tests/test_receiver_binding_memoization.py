@@ -29,6 +29,8 @@ import pytest
 from towel.unification import placement
 from towel.unification.bounded_cache import memoization_disabled
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
 from tests.test_helpers import method_helper_calls
 
 
@@ -136,7 +138,7 @@ class Box:
     outputs: list[str] = []
     for memoized in (True, False):
         path.write_text(source)
-        engine = UnificationRefactorEngine(annotate_helpers=False)
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, annotate_helpers=False)
         with contextlib.ExitStack() as stack:
             if not memoized:
                 stack.enter_context(memoization_disabled())

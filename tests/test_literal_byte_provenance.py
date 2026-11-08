@@ -11,6 +11,8 @@
 
 """Ordinary byte identities survive source rendering and structural memo reuse."""
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -45,6 +47,13 @@ def _body(name: str, literal: str, factor: int) -> str:
     return (
         f"def {name}(value):\n    literal = {literal}\n"
         f"    subtotal = value + 11\n    total = subtotal * {factor}\n"
+        "    bounded = max(total, 0)\n"
+        "    discounted = bounded * 0.9\n"
+        "    tax = discounted * 0.08\n"
+        "    shipping = 5 if discounted < 100 else 0\n"
+        "    subtotal_with_tax = discounted + tax\n"
+        "    with_shipping = subtotal_with_tax + shipping\n"
+        "    total = round(with_shipping, 2)\n"
         "    return literal, total\n"
     )
 
@@ -221,7 +230,9 @@ def test_structural_memo_warmed_on_short_source_cannot_certify_long_token_source
     assert canonical_dump(ast.parse(safe)) == canonical_dump(ast.parse(unsafe))
     original = tmp_path / "program.py"
     original.write_text(safe)
-    engine = UnificationRefactorEngine(settings=Settings.from_environ({"TOWEL_WORKERS": "1"}))
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, settings=Settings.from_environ({"TOWEL_WORKERS": "1"})
+    )
     assert engine.analyze_files([str(original)], progress="none")
     assert engine._unify_cache
     original.write_text(unsafe)

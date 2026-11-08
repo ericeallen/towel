@@ -48,8 +48,9 @@ def test_lone_raise_is_skipped_by_default(tmp_path):
     assert UnificationRefactorEngine(min_lines=1, skip_trivial_helpers=False).analyze_file(path)
 
 
-def test_real_two_statement_body_is_still_extracted(tmp_path):
-    # A genuine shared computation is NOT trivial forwarding and stays proposed.
+def test_real_two_statement_body_remains_available_without_the_usefulness_filter(tmp_path):
+    # This computes a result, so the semantic pipeline must still exercise it;
+    # the default declines its larger ownership wrappers as an adoption choice.
     path = write_module(
         tmp_path,
         "def first(value):\n"
@@ -59,7 +60,8 @@ def test_real_two_statement_body_is_still_extracted(tmp_path):
         "    tmp = value + 1\n"
         "    return tmp * 2\n",
     )
-    assert UnificationRefactorEngine(min_lines=1).analyze_file(path)
+    assert not UnificationRefactorEngine(min_lines=1).analyze_file(path)
+    assert UnificationRefactorEngine(min_lines=1, skip_trivial_helpers=False).analyze_file(path)
 
 
 def test_assign_then_return_of_the_call_is_forwarding_too(tmp_path):

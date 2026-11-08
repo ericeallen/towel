@@ -21,8 +21,13 @@ observed in fresh interpreters and compared (:mod:`tests.differential`). A
 failure names the seed in the test id and prints the generated source,
 Towel's change and every difference, then the command that reruns it alone.
 
-The seeds are fixed and were chosen by measurement on Python 3.13, where the
-whole module runs in well under a minute:
+Semantic modes bypass the optional usefulness filter, preserving coverage of
+small but semantically interesting transformations. A separate positive control
+uses the normal product policy and must still extract and preserve behavior.
+
+The fixed seeds and the following timings were chosen by measurement on Python
+3.13 before the usefulness filter was strengthened; these historical timings
+do not measure the current semantic campaign:
 
 - the default mode (``--no-types``) on seeds 0 to 299, less the two whose
   original program never finishes its probes. About 45% of these extract,
@@ -129,6 +134,14 @@ single-pass loop, including unchanged lambda parameter forms in its remainder.
 KNOWN_DEFECTS: Dict[Mode, Dict[int, str]] = {DEFAULT: {}, CROSS_MODULE: {}, TYPED: {}}
 """Seeds whose defect is reported and not yet fixed, by mode, each with its reason from
 ``tests/audit_defects.py``. None is open."""
+
+
+def test_product_default_extracts_a_generated_case_and_keeps_its_behavior(tmp_path: Path) -> None:
+    """Semantic opt-outs must not become the only exercised path through the grammar."""
+    case = generate_case(2026100801792001000000000000000270)
+    outcome = run_case(case, Mode(skip_trivial_helpers=True), tmp_path)
+    assert outcome.status == "equivalent", outcome.report()
+    assert outcome.applied > 0
 
 
 @pytest.mark.parametrize("bindings", [False, True], ids=["grammar", "bindings"])

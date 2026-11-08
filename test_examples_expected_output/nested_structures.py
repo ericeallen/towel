@@ -6,13 +6,6 @@ lists, dicts, comprehensions, and deeply nested expressions.
 """
 
 
-def __extracted_func_3(__param_0, data, filter_func, _towel_owner):
-    processed = [x * __param_0 for x in data if x > 0]
-    filtered = [item for item in processed if filter_func(item)]
-    result = {'values': filtered, 'count': len(filtered), 'sum': sum(filtered)}
-    return result
-
-
 def __extracted_func_2(__param_0, __param_1, __param_2, dict1, dict2, key, merger, result):
     if key in dict2:
         result[key] = {__param_0: dict1[key][__param_2], __param_1: dict2[key][__param_2], 'merged': merger(dict1[key][__param_2], dict2[key][__param_2])}
@@ -76,18 +69,18 @@ def process_nested_dict_v2(data, config):
 
 def transform_with_comprehension_a(data, filter_func):
     """Version A: List comprehension as expression."""
-    _towel_arguments_2 = [(filter_func, data)]
-    del data
-    del filter_func
-    return __extracted_func_3(2, _towel_arguments_2[0][1], _towel_arguments_2[0][0], _towel_arguments_2.pop())
+    processed = [x * 2 for x in data if x > 0]
+    filtered = [item for item in processed if filter_func(item)]
+    result = {"values": filtered, "count": len(filtered), "sum": sum(filtered)}
+    return result
 
 
 def transform_with_comprehension_b(data, filter_func):
     """Version B: Different multiplier in comprehension."""
-    _towel_arguments_2 = [(filter_func, data)]
-    del data
-    del filter_func
-    return __extracted_func_3(3, _towel_arguments_2[0][1], _towel_arguments_2[0][0], _towel_arguments_2.pop())
+    processed = [x * 3 for x in data if x > 0]
+    filtered = [item for item in processed if filter_func(item)]
+    result = {"values": filtered, "count": len(filtered), "sum": sum(filtered)}
+    return result
 
 
 def build_complex_structure_v1(items, metadata):

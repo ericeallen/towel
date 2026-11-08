@@ -14,6 +14,8 @@
 
 """Extraction coverage across standard-library bases, without a runtime base allowlist."""
 
+# Tiny semantic fixtures exercise extraction independently of product usefulness.
+
 from __future__ import annotations
 
 import ast
@@ -56,7 +58,9 @@ def _source(origin: str, suffix: str = "", members: str = "") -> str:
 
 def _refactor(path: Path, source: str) -> str:
     path.write_text(source)
-    final, applied = refactor_to_fixed_point_silently(str(path), min_lines=3)
+    final, applied = refactor_to_fixed_point_silently(
+        str(path), skip_trivial_helpers=False, min_lines=3
+    )
     assert applied > 0
     compile(final, str(path), "exec")
     klass = next(node for node in ast.parse(final).body if isinstance(node, ast.ClassDef))

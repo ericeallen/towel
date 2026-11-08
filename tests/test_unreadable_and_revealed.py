@@ -110,7 +110,7 @@ def test_a_file_that_cannot_be_read_is_left_alone_and_the_typed_run_goes_on(
     (tmp_path / "data").mkdir()
     (tmp_path / "data" / "latin.py").write_bytes(LATIN)
     oracle = _Fixed()
-    engine = UnificationRefactorEngine(type_oracle=oracle)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=oracle)
     results, _ = engine.refactor_directory_to_fixed_point(
         str(tmp_path), str(tmp_path), progress="none"
     )

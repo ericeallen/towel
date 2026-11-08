@@ -24,6 +24,9 @@ what imports the change, and a mypy run is confirmed the same way, from an
 empty cache and a fresh scan.
 """
 
+# Minimal semantic fixtures must exercise extraction even when its generated
+# syntax is not worthwhile for adoption; keep every safety/behavior assertion.
+
 from __future__ import annotations
 
 import importlib.util
@@ -98,7 +101,10 @@ def test_a_clean_run_is_confirmed_and_says_nothing(tmp_path: Path) -> None:
     oracle = PyrightOracle()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=3, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=3,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         _, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
     finally:
@@ -140,7 +146,10 @@ def test_a_run_the_warm_checker_waved_through_fails_loudly_at_the_end(tmp_path: 
     oracle = _AgreeableWhileWarm()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=3, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=3,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         with pytest.raises(RefactoringError, match="did not report while the run was in progress"):
             engine.refactor_to_fixed_point(str(path), progress="none")
@@ -188,7 +197,10 @@ def test_a_mypy_run_is_confirmed_once_from_nothing(tmp_path: Path) -> None:
     try:
         assert holds_warm_state(oracle) is False, "nothing checked yet"
         engine = UnificationRefactorEngine(
-            min_lines=3, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=3,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         _, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
     finally:
@@ -245,7 +257,10 @@ def test_a_mypy_run_its_warm_state_waved_through_fails_loudly_at_the_end(tmp_pat
     oracle = _MypyAgreeableWhileWarm()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=3, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=3,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         with pytest.raises(RefactoringError, match="did not report while the run was in progress"):
             engine.refactor_to_fixed_point(str(path), progress="none")
@@ -261,7 +276,10 @@ def test_a_run_that_applied_nothing_is_not_checked_again(tmp_path: Path) -> None
     oracle = _CountingMypy()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=3, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=3,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         _, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
     finally:
@@ -289,7 +307,10 @@ def test_a_confirmation_that_could_not_run_is_not_silence(tmp_path: Path) -> Non
     oracle = _WarmThenUncheckable()
     try:
         engine = UnificationRefactorEngine(
-            min_lines=3, reuse_existing_functions=False, type_oracle=oracle
+            skip_trivial_helpers=False,
+            min_lines=3,
+            reuse_existing_functions=False,
+            type_oracle=oracle,
         )
         with pytest.raises(RefactoringError, match="could not be confirmed"):
             engine.refactor_to_fixed_point(str(path), progress="none")

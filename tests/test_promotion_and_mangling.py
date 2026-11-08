@@ -20,11 +20,14 @@ import textwrap
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
+
 
 def _engine(
     min_lines: int = 2, *, promote_equal_hof_literals: bool = False
 ) -> UnificationRefactorEngine:
     return UnificationRefactorEngine(
+        skip_trivial_helpers=False,
         max_parameters=5,
         min_lines=min_lines,
         parameterize_constants=True,

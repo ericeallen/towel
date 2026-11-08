@@ -55,6 +55,8 @@ from towel.unification.class_private import is_class_private
 from towel.unification.models import is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 DRIVER = "from pkg.lib import main\nmain()\n"
 
 
@@ -153,7 +155,9 @@ def _refactored(
     before = _run(root, driver, root)
     if original_output is not None:
         assert before == original_output, "The companion must preserve the original fixture effects"
-    engine = UnificationRefactorEngine(min_lines=3, max_parameters=max_parameters)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False, min_lines=3, max_parameters=max_parameters
+    )
     with (
         caplog.at_level(logging.DEBUG, logger="towel.rejections"),
         contextlib.redirect_stdout(io.StringIO()),
@@ -1118,7 +1122,9 @@ def test_a_super_helper_passes_mypy_strict_and_pyright_strict(tmp_path: Path) ->
     assert before == expected
     oracle = MypyInferrer()
     try:
-        engine = UnificationRefactorEngine(min_lines=3, type_oracle=oracle)
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False, min_lines=3, type_oracle=oracle
+        )
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             _, applied, _ = engine.refactor_to_fixed_point(str(tmp_path / "ledger.py"))
     finally:

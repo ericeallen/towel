@@ -49,6 +49,8 @@ from typing import Dict, List, Mapping, Set, Tuple
 import pytest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
 from towel.unification.scope_analyzer import ScopeAnalyzer
 from towel.unification.semantic_safety import builtins_passed
 
@@ -73,7 +75,10 @@ def _refactor(target: Path) -> Tuple[int, Mapping[str, int]]:
     which its cases make; a module is refactored in the default mode.
     """
     engine = UnificationRefactorEngine(
-        min_lines=3, max_parameters=6, cross_module_helpers=target.is_dir()
+        skip_trivial_helpers=False,
+        min_lines=3,
+        max_parameters=6,
+        cross_module_helpers=target.is_dir(),
     )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         if target.is_dir():

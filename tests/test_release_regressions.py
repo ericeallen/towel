@@ -25,21 +25,32 @@ from towel.cli import _rename_function_in_directory
 from towel.unification.pipeline import run_pipeline
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise extraction mechanics independently of the usefulness policy.
+
 
 def test_analysis_observes_external_edits(tmp_path: Path) -> None:
     path = tmp_path / "example.py"
     body = "    a = x + 1\n    b = a * 2\n    c = b + 3\n    return c\n"
     path.write_text("def first(x):\n" + body + "\ndef second(x):\n" + body)
-    assert run_pipeline([str(path)], engine=UnificationRefactorEngine(), progress="none")
+    assert run_pipeline(
+        [str(path)], engine=UnificationRefactorEngine(skip_trivial_helpers=False), progress="none"
+    )
     path.write_text("def unrelated():\n    return None\n")
-    assert run_pipeline([str(path)], engine=UnificationRefactorEngine(), progress="none") == []
+    assert (
+        run_pipeline(
+            [str(path)],
+            engine=UnificationRefactorEngine(skip_trivial_helpers=False),
+            progress="none",
+        )
+        == []
+    )
 
 
 def test_directory_api_rejects_nested_output_before_creation(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     with pytest.raises(ValueError, match="contain"):
-        UnificationRefactorEngine().refactor_directory_to_fixed_point(
+        UnificationRefactorEngine(skip_trivial_helpers=False).refactor_directory_to_fixed_point(
             str(source), str(source / "output"), progress="none"
         )
     assert not (source / "output").exists()
@@ -51,8 +62,13 @@ def test_discovery_ignores_symlinked_python_files(tmp_path: Path) -> None:
     outside = tmp_path / "outside.py"
     outside.write_text("x = 1\n")
     (source / "linked.py").symlink_to(outside)
-    assert UnificationRefactorEngine()._find_python_files(str(source)) == []
-    assert UnificationRefactorEngine()._find_python_files(str(source), False) == []
+    assert (
+        UnificationRefactorEngine(skip_trivial_helpers=False)._find_python_files(str(source)) == []
+    )
+    assert (
+        UnificationRefactorEngine(skip_trivial_helpers=False)._find_python_files(str(source), False)
+        == []
+    )
 
 
 def test_rename_preserves_text_and_updates_bare_references(tmp_path: Path) -> None:
@@ -90,7 +106,7 @@ def test_helper_available_during_module_initialization(tmp_path: Path) -> None:
     source = '"""Module docs."""\nfrom __future__ import annotations\n'
     source += "def first(x):\n" + body + "\ndef second(x):\n" + body + "\nRESULT = first(1)\n"
     path.write_text(source)
-    engine = UnificationRefactorEngine()
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     proposals = engine.analyze_file(str(path))
     assert [p.description for p in proposals] == ["Extract common code from first and second"]
     namespace: dict[str, object] = {}
@@ -106,9 +122,9 @@ def test_module_data_is_read_where_the_block_read_it_across_callbacks(tmp_path: 
     source += "def first():\n" + body + "    return before\n"
     source += "def second():\n    value_seen = value\n" + body + "    return after + value_seen\n"
     path.write_text(source)
-    final, applied, _ = UnificationRefactorEngine().refactor_to_fixed_point(
-        str(path), progress="none"
-    )
+    final, applied, _ = UnificationRefactorEngine(
+        skip_trivial_helpers=False
+    ).refactor_to_fixed_point(str(path), progress="none")
     assert applied == 0 and final == source
 
     # A binding-free callback body has no competing frame owners.
@@ -118,7 +134,7 @@ def test_module_data_is_read_where_the_block_read_it_across_callbacks(tmp_path: 
     source += "def second():\n" + body + "    return value\n"
     path.write_text(source)
     final, applied, _ = UnificationRefactorEngine(
-        reuse_existing_functions=False
+        skip_trivial_helpers=False, reuse_existing_functions=False
     ).refactor_to_fixed_point(str(path), progress="none")
     assert applied == 1
     helper = next(line for line in final.splitlines() if line.startswith("def __extracted_func"))
@@ -142,7 +158,10 @@ def test_global_and_local_with_same_spelling_are_not_conflated(tmp_path: Path) -
     # ``second``, so it must not be extracted. (At the default three-line minimum
     # the engine instead extracts the trailing ``y = x * 2; z = y + 3; return z``,
     # which never reads ``value`` and is safe -- a different, valid proposal.)
-    assert UnificationRefactorEngine(min_lines=4).analyze_file(str(path)) == []
+    assert (
+        UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=4).analyze_file(str(path))
+        == []
+    )
 
 
 def test_cross_file_global_declarations_are_not_relocated(tmp_path: Path) -> None:
@@ -150,7 +169,12 @@ def test_cross_file_global_declarations_are_not_relocated(tmp_path: Path) -> Non
     paths = [tmp_path / "a.py", tmp_path / "b.py"]
     for path, initial in zip(paths, (10, 100)):
         path.write_text(f"count = {initial}\ndef increment():\n" + body)
-    assert UnificationRefactorEngine().analyze_files([str(path) for path in paths]) == []
+    assert (
+        UnificationRefactorEngine(skip_trivial_helpers=False).analyze_files(
+            [str(path) for path in paths]
+        )
+        == []
+    )
 
 
 def test_file_qualified_json_rename_is_applied(tmp_path: Path) -> None:

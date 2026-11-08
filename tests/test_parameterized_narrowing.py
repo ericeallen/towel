@@ -39,6 +39,8 @@ from towel.unification.import_graph import ImportGraphCache
 from towel.unification.models import FunctionArtifact, Replacement
 from towel.unification.narrowing import parameterized_narrowing_lost
 from towel.unification.refactor_engine import UnificationRefactorEngine
+
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
 from towel.unification.scope_analyzer import ScopeAnalyzer
 
 MATCHES = """
@@ -106,7 +108,10 @@ def test_imported_project_callee_preserves_the_same_proof(tmp_path: Path) -> Non
         sources = {str(file): file.read_text() for file in (tmp_path / "pkg").glob("*.py")}
         assert checker.check_project(sources) == CheckSuccess()
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=checker,
         )
         assert engine.analyze_file(str(path)) == []
         assert all(
@@ -155,7 +160,7 @@ def test_imported_stub_prevents_claiming_the_runtime_signature(tmp_path: Path) -
     path = tmp_path / "pkg" / "ranges.py"
     path.write_text(source)
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=None
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=None
     )
     assert engine.analyze_file(str(path))
 
@@ -175,7 +180,10 @@ def test_erased_none_test_never_reaches_signature_validation(tmp_path: Path) -> 
     try:
         assert checker.check_project({str(path): path.read_text()}) == CheckSuccess()
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=checker,
         )
         assert engine.analyze_file(str(path)) == []
         assert all(
@@ -216,7 +224,7 @@ def test_redundant_none_test_does_not_cost_an_extraction(tmp_path: Path) -> None
     path = tmp_path / "module.py"
     path.write_text(textwrap.dedent(source))
     engine = UnificationRefactorEngine(
-        min_lines=2, reuse_existing_functions=False, type_oracle=None
+        skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=None
     )
     assert engine.analyze_file(str(path))
 
@@ -433,7 +441,10 @@ def test_none_refinement_after_an_effect_is_rejected_before_checker_fallback(
     try:
         assert checker.check_project({str(path): source}) == CheckSuccess()
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=checker,
         )
         assert engine.analyze_file(str(path)) == []
         assert len(checker.checked) == 1

@@ -33,6 +33,8 @@ from towel.type_inference import CheckResult, CheckSuccess, PyrightOracle
 from towel.unification.exceptions import TypeRejectedExtraction, Untypeable, UntypeableExtraction
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# Small fixtures exercise semantic guards independently of the product usefulness policy.
+
 pytestmark = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
 
 
@@ -336,7 +338,10 @@ def test_optional_aware_converter_stays_useful_and_precisely_generic(
     try:
         assert checker.check_project({str(path): fixture.source}) == CheckSuccess()
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=checker,
         )
         proposals = [
             proposal
@@ -383,7 +388,10 @@ def test_required_nonoptional_converter_cannot_be_hidden_by_any(
     try:
         assert checker.check_project({str(path): fixture.source}) == CheckSuccess()
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=checker,
         )
         proposals = [
             proposal
@@ -407,7 +415,7 @@ def test_required_nonoptional_converter_cannot_be_hidden_by_any(
 
 
 @pytest.mark.parametrize("fixture", POSITIVE_FIXTURES, ids=lambda fixture: fixture.name)
-def test_optional_converter_cli_preserves_callbacks_errors_and_finalizers(
+def test_default_cli_declines_tiny_optional_converters_without_changing_observations(
     tmp_path: Path, fixture: Fixture
 ) -> None:
     original = _write_project(tmp_path / "source", fixture)
@@ -438,15 +446,11 @@ def test_optional_converter_cli_preserves_callbacks_errors_and_finalizers(
     assert completed.returncode == 0, completed.stdout + completed.stderr
     transformed = output / "subject.py"
     written = transformed.read_text()
-    assert written != fixture.source
+    # The API case above still extracts and verifies this generic signature.
+    # A one-conditional helper with three callbacks is not useful by default.
+    assert written == fixture.source
     assert original.read_text() == fixture.source
-    helper = next(
-        node
-        for node in ast.parse(written).body
-        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
-    )
-    assert "Any" not in ast.unparse(helper)
-    assert helper.returns is not None and "_TowelT" in ast.unparse(helper.returns)
+    assert "extracted_func" not in written
     checker = CountingMypy()
     try:
         assert checker.check_project({str(original): written}) == CheckSuccess()
@@ -975,7 +979,10 @@ def test_both_checkers_refuse_required_nullable_refinement_before_any(
     try:
         assert checker.check_project({str(path): fixture.source}) == CheckSuccess()
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=checker,
         )
         proposals = [
             proposal
@@ -1306,7 +1313,10 @@ def test_optional_aware_keyword_consumer_stays_precise_and_preserves_owned_effec
         assert checker.check_project({str(original): fixture.source}) == CheckSuccess()
         if interface == "api":
             engine = UnificationRefactorEngine(
-                min_lines=2, reuse_existing_functions=False, type_oracle=checker
+                skip_trivial_helpers=False,
+                min_lines=2,
+                reuse_existing_functions=False,
+                type_oracle=checker,
             )
             proposals = [
                 p
@@ -1352,19 +1362,23 @@ def test_optional_aware_keyword_consumer_stays_precise_and_preserves_owned_effec
         assert checker.check_project({str(original): written}) == CheckSuccess()
     finally:
         checker.close()
-    assert written != fixture.source
     assert original.read_text() == fixture.source
-    helper = next(
-        node
-        for node in ast.parse(written).body
-        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
-    )
-    assert "Any" not in ast.unparse(helper)
-    assert helper.returns is not None and "int" in ast.unparse(helper.returns)
-    assert all(
-        argument.annotation is not None
-        for argument in [*helper.args.posonlyargs, *helper.args.args]
-    )
+    if interface == "cli":
+        # Keep the default-policy refusal separate from the semantic API control.
+        assert written == fixture.source
+    else:
+        assert written != fixture.source
+        helper = next(
+            node
+            for node in ast.parse(written).body
+            if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+        )
+        assert "Any" not in ast.unparse(helper)
+        assert helper.returns is not None and "int" in ast.unparse(helper.returns)
+        assert all(
+            argument.annotation is not None
+            for argument in [*helper.args.posonlyargs, *helper.args.args]
+        )
     observer = tmp_path / "observe.py"
     observer.write_text(TASK_OBSERVER)
     before = _observe(original, observer, fixture)
@@ -1391,7 +1405,10 @@ def test_nullable_consumption_refusal_cannot_fall_through_to_an_accepted_any(
     try:
         assert checker.check_project({str(path): fixture.source}) == CheckSuccess()
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=checker,
         )
         proposals = [
             p
@@ -1438,7 +1455,10 @@ def test_return_and_assignment_refinements_are_not_erased_by_any(
     try:
         assert checker.check_project({str(original): fixture.source}) == CheckSuccess()
         engine = UnificationRefactorEngine(
-            min_lines=2, reuse_existing_functions=False, type_oracle=checker
+            skip_trivial_helpers=False,
+            min_lines=2,
+            reuse_existing_functions=False,
+            type_oracle=checker,
         )
         proposals = [
             proposal
@@ -1483,7 +1503,10 @@ def test_optional_aware_return_keeps_precise_annotations_and_owned_lifetimes(
         assert checker.check_project({str(original): fixture.source}) == CheckSuccess()
         if interface == "api":
             engine = UnificationRefactorEngine(
-                min_lines=2, reuse_existing_functions=False, type_oracle=checker
+                skip_trivial_helpers=False,
+                min_lines=2,
+                reuse_existing_functions=False,
+                type_oracle=checker,
             )
             proposals = [
                 proposal
@@ -1529,26 +1552,29 @@ def test_optional_aware_return_keeps_precise_annotations_and_owned_lifetimes(
         assert checker.check_project({str(original): written}) == CheckSuccess()
     finally:
         checker.close()
-    helper = next(
-        node
-        for node in ast.parse(written).body
-        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
-    )
-    assert not _uses_any_annotation(helper)
-    assert helper.returns is not None
-    annotation = (
-        ast.parse(helper.returns.value, mode="eval").body
-        if isinstance(helper.returns, ast.Constant) and isinstance(helper.returns.value, str)
-        else helper.returns
-    )
-    original_function = next(
-        node
-        for node in ast.parse(fixture.source).body
-        if isinstance(node, ast.FunctionDef) and node.name == "describe_total"
-    )
-    assert original_function.returns is not None
-    assert ast.dump(annotation) == ast.dump(original_function.returns)
-    assert written != fixture.source and original.read_text() == fixture.source
+    if interface == "cli":
+        assert written == fixture.source and original.read_text() == fixture.source
+    else:
+        helper = next(
+            node
+            for node in ast.parse(written).body
+            if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+        )
+        assert not _uses_any_annotation(helper)
+        assert helper.returns is not None
+        annotation = (
+            ast.parse(helper.returns.value, mode="eval").body
+            if isinstance(helper.returns, ast.Constant) and isinstance(helper.returns.value, str)
+            else helper.returns
+        )
+        original_function = next(
+            node
+            for node in ast.parse(fixture.source).body
+            if isinstance(node, ast.FunctionDef) and node.name == "describe_total"
+        )
+        assert original_function.returns is not None
+        assert ast.dump(annotation) == ast.dump(original_function.returns)
+        assert written != fixture.source and original.read_text() == fixture.source
     observer = tmp_path / "observe.py"
     observer.write_text(TASK_OBSERVER)
     before = _observe(original, observer, fixture)

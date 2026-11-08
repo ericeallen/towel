@@ -50,6 +50,13 @@ def {name}(values):
         else:
             total -= value
     total = total + 1
+    base = total if total > 0 else 0
+    discount = base * 0.1
+    discounted = base - discount
+    tax = discounted * 0.08
+    shipping = 5 if discounted < 100 else 0
+    with_shipping = discounted + shipping
+    total = with_shipping + tax
     return total
 """
 

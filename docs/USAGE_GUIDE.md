@@ -17,13 +17,19 @@ On this page:
 
 ## Getting started with the API
 
-There are three ways to use Towel, the code refactoring tool based on anti-unification:
+The supported library entry point is `towel.api`. It exports the engine, its
+proposal and change-plan types, publication function and catchable exceptions.
+The [compatibility contract](COMPATIBILITY.md#python-api) distinguishes supported
+operations from advanced implementation hooks. The CLI additionally configures
+formatters and checkers from the project; the examples below use the tools the
+caller explicitly supplies.
+
+There are three common workflows:
 
 ### 1. Analyze a Single File
 
 ```python
-from towel.changes import apply_changes
-from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.api import UnificationRefactorEngine, apply_changes
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
 
@@ -40,8 +46,7 @@ if proposals:
 Sharing a helper between modules is opt-in: it adds an import between them.
 
 ```python
-from towel.changes import apply_changes
-from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.api import UnificationRefactorEngine, apply_changes
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=3, cross_module_helpers=True)
 
@@ -57,7 +62,7 @@ if proposals:
 ### 3. Analyze an Entire Directory
 
 ```python
-from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.api import UnificationRefactorEngine
 
 engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
 
@@ -128,7 +133,8 @@ towel dry src/ src_cleaned/ --no-interactive
 ```
 
 `preview` runs the complete `dry` pipeline in a disposable copy and prints its
-final source diff and helper inventory. With the same options, it includes the
+concise summary and final source diff; `--inventory` adds helper metadata.
+With the same options, it includes the
 same type checking, formatting, repeated extraction and final verification.
 `--quick` requests a partial, untyped analysis whose proposals are not the final
 result or an upper bound. `dry` writes the verified refactored copy.
@@ -202,13 +208,16 @@ apply to CLI and API callers.
 ### Formatting and type-checker setup
 
 The CLI's `dry` command wires the formatter, import sorter, and type oracle
-from the project's own configuration. Library callers can do the same:
+from the project's own configuration. The following advanced integration uses
+implementation modules outside the supported `towel.api` surface; pin the exact
+Towel version when depending on these hooks. Library callers can use them as
+follows:
 
 ```python
 from pathlib import Path
 from towel.formatting import formatter_factory_for_project, file_finisher_for_project
 from towel.type_inference import type_oracle_for_project
-from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.api import UnificationRefactorEngine
 
 root = Path("src/")
 formatters = formatter_factory_for_project(root)

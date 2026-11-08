@@ -59,6 +59,19 @@ def f_{name}(items):
             total += item * 2
         else:
             total -= item
+    # Shared computation must repay the public CLI helper interface.
+    total = total + 17
+    total = total * 19
+    total = total - 23
+    total = total // 29
+    total = total + 31
+    total = total * 37
+    total = total - 41
+    total = total // 43
+    total = total + 47
+    total = total * 53
+    total = total - 59
+    total = total // 61
     result = total + 7
     return result * 3 + {extra}
 """
@@ -246,6 +259,16 @@ def test_a_checked_run_out_of_place_accepts_what_the_run_in_place_accepts(tmp_pa
 
     def render(self, width: int) -> str:
         body = str(self.tag).strip()
+        body = body.replace('\\t', ' ')
+        body = body.replace('\\r', ' ')
+        body = body.replace('\\n', ' ')
+        body = body.replace('  ', ' ')
+        body = body.replace(' -', '-')
+        body = body.replace('- ', '-')
+        body = body.replace(' .', '.')
+        body = body.replace(' ,', ',')
+        body = body.removeprefix(' ')
+        body = body.removesuffix(' ')
         padded = body.rjust(width, ".")
         return padded.upper()
 """

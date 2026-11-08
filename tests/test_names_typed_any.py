@@ -227,7 +227,8 @@ def test_a_file_whose_import_the_checker_types_as_any_is_left_alone_without_any_
     blind, seen = tmp_path / "blind.py", tmp_path / "seen.py"
     blind.write_text("import gone\n\n" + TWINS)
     seen.write_text(TWINS)
-    engine = UnificationRefactorEngine(type_oracle=_Silenced())
+    # Both proposals must reach verification to distinguish the blind and seen files.
+    engine = UnificationRefactorEngine(type_oracle=_Silenced(), skip_trivial_helpers=False)
     results, _ = engine.refactor_directory_to_fixed_point(
         str(tmp_path), str(tmp_path), progress="none"
     )
