@@ -16,9 +16,9 @@ towel --version
 
 The PyPI package is `code-towel` and the command is `towel`. Do not install
 `towel`: that name belongs to a different, unrelated project. Python 3.11–3.13
-are supported. These checkout documents describe development for the next
-release; to try unreleased behavior, install this checkout with
-`pip install -e .` instead of the published package.
+are supported. This guide describes version 1.949. To try a source checkout
+before its publication, install it with `pip install -e .` instead of the
+published package. Check `towel --version` before following the example.
 
 ## 1. Create and test a small project
 

@@ -2,8 +2,8 @@
 
 [Documentation index](README.md)
 
-This contract applies to **1.949 and later releases**. The 1.949 candidate is
-currently unpublished, and Towel remains beta. Correctness repairs may decline previously accepted extractions or change
+This contract applies to **1.949 and later releases**. Towel remains beta.
+Correctness repairs may decline previously accepted extractions or change
 the generated code; the contract does not freeze extraction counts, helper
 names, formatting, timing, diagnostic wording or human-readable console output.
 
