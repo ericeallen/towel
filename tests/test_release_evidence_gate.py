@@ -999,7 +999,7 @@ def test_assume_unchanged_cannot_hide_different_working_bytes(bundle: Bundle) ->
         bundle.check()
 
 
-@pytest.mark.parametrize("mode", ["flags", "import", "command"])
+@pytest.mark.parametrize("mode", ["flags", "import", "command", "xml", "xml-path"])
 def test_matrix_execution_scope_is_required(bundle: Bundle, mode: str) -> None:
     if mode == "flags":
         row = gate.table(bundle.read("matrix-3.11-result.json"))
@@ -1012,7 +1012,7 @@ def test_matrix_execution_scope_is_required(bundle: Bundle, mode: str) -> None:
             .replace("/work/src/towel/__init__.py", "/venv/site-packages/towel/__init__.py")
         )
         bundle.write("matrix-3.11.log", log)
-    else:
+    elif mode == "command":
         driver = (
             (bundle.root / "run-matrix.sh")
             .read_text()
@@ -1021,7 +1021,40 @@ def test_matrix_execution_scope_is_required(bundle: Bundle, mode: str) -> None:
             )
         )
         bundle.write("run-matrix.sh", driver)
+    else:
+        driver = (
+            (bundle.root / "run-matrix.sh")
+            .read_text()
+            .replace(
+                'uv run --frozen coverage xml -o "/evidence/coverage-$version.xml"',
+                "" if mode == "xml" else "uv run --frozen coverage xml -o /other/coverage.xml",
+            )
+        )
+        bundle.write("run-matrix.sh", driver)
     with pytest.raises(gate.EvidenceError, match="Matrix"):
+        bundle.check()
+
+
+@pytest.mark.parametrize("missing_xml", [False, True])
+def test_native_matrix_output_path_preserves_xml_requirement(
+    bundle: Bundle, missing_xml: bool
+) -> None:
+    driver = (
+        (bundle.root / "run-matrix.sh")
+        .read_text()
+        .replace(
+            'uv run --frozen coverage xml -o "/evidence/coverage-$version.xml"',
+            'uv run --frozen coverage xml -o "$evidence/coverage-$version.xml"',
+        )
+    )
+    bundle.write("run-matrix.sh", driver)
+    if missing_xml:
+        records = gate.table(bundle.value["records"])
+        records.pop("coverage-3.12.xml")
+        bundle.value["records"] = records
+        with pytest.raises(gate.EvidenceError, match="Missing required record"):
+            bundle.check()
+    else:
         bundle.check()
 
 

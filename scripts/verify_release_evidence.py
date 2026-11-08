@@ -278,8 +278,14 @@ MATRIX_FLAGS = {
 
 def verify_matrix(records: Records, commit: str, runtime: str, source: Mapping[str, bytes]) -> None:
     driver = records.text("run-matrix.sh")
+    commands = set(driver.splitlines())
+    # Native validation cannot write a container's /evidence mount. The XML
+    # record itself is independently checked below, including its source path.
+    native_xml = 'uv run --frozen coverage xml -o "$evidence/coverage-$version.xml"'
+    if native_xml in commands:
+        commands.add('uv run --frozen coverage xml -o "/evidence/coverage-$version.xml"')
     require(
-        all(command in driver.splitlines() for command in MATRIX_COMMANDS),
+        all(command in commands for command in MATRIX_COMMANDS),
         "Matrix driver omitted full-suite coverage commands",
     )
     require(
