@@ -93,7 +93,7 @@ Click averaged 56.69 versus 46.53 seconds (21.85% slower), and Rich averaged
 per workload. The
 [performance guide](https://github.com/ericeallen/towel/blob/v1.948/docs/PERFORMANCE.md)
 records all samples, CPU time, workload differences and measurement limits.
-README documentation links target the `v1.948` source snapshot. Dated
+The historical documentation links on this page target the `v1.948` source snapshot. Dated
 preparation records retain the status of their original checkpoints. The historical
 [1.947 GitHub release](https://github.com/ericeallen/towel/releases/tag/v1.947)
 records that version's completed publication and validation.

@@ -1550,12 +1550,14 @@ the proposals it built and did not apply, by reason:
   default (`skip_trivial_helpers=False` keeps it). One whose only
   computation is calling helpers Towel generated is declined under this
   reason whatever the setting.
-  The additional tiny-helper interface filter counts final formals (including
-  receiver and ownership holder), replacement-call lambdas and sharing sites.
-  It applies only to at most two meaningful straight-line statements. Actual
-  control flow, nested definitions/scopes and more substantial bodies remain
-  subject to other checks. This output-quality policy does not mean a necessary
-  supplier or holder can be eliminated. See [the calibration](DECISIONS.md#2026-10-06-tiny-helpers-must-repay-their-interface-cost).
+  The additional output-quality filter compares the complete generated helper
+  and every rendered caller replacement with the estimated repeated body cost.
+  Signatures, annotations, receivers, ownership holders, boxes, deletions and
+  lookup suppliers all contribute cost. Larger bodies, control flow and nested
+  scopes do not bypass this rule: the generated syntax must cost strictly less.
+  This conservative estimate does not credit all differing caller expressions,
+  and it does not mean a necessary supplier or holder can be eliminated. See
+  [the calibration](DECISIONS.md#2026-11-08-complete-extractions-must-repay-their-generated-syntax).
   `skip_trivial_helpers=False` bypasses this optional filter.
 - Orphans. `orphaned_variables`: a name the block binds is read afterwards
   on a path that does not rebind it first, and the helper does not return

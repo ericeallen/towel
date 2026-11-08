@@ -12,8 +12,11 @@ mnemonics with PEP 440 ordering; see the
 
 ## [1.949]
 
-Unpublished candidate for the product-experience and maturity improvements below.
-Validation is in progress; no publication or completed release campaign is claimed.
+Product-experience and maturity improvements. See the
+[release history](https://github.com/ericeallen/towel/releases) for completed
+validation and publication records. The dated
+[preparation checkpoint](docs/PRODUCTION_READINESS.md#1949-preparation-checkpoint-november-8-2026)
+retains the status of its original candidate.
 
 - Select extractions using the complete helper and every rendered caller,
   including ownership boxes and deletions. Larger bodies and control flow no
@@ -2653,7 +2656,9 @@ affected project's own tests.
 - The PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and
   are not a recommended installation target.
 
-[Unreleased]: https://github.com/ericeallen/towel/compare/v1.948...HEAD
+[Unreleased]: https://github.com/ericeallen/towel/compare/v1.949...HEAD
+[1.949]: https://github.com/ericeallen/towel/compare/v1.948...v1.949
+[1.948]: https://github.com/ericeallen/towel/compare/v1.947...v1.948
 [1.947]: https://github.com/ericeallen/towel/compare/v1.946...v1.947
 [1.946]: https://github.com/ericeallen/towel/compare/v1.792...v1.946
 [1.792]: https://github.com/ericeallen/towel/compare/v1.772...v1.792

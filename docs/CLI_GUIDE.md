@@ -159,8 +159,9 @@ towel dry path/to/project path/to/cleaned --no-interactive --no-types --no-forma
   certified whole-body ownership transfer additionally requires its complete
   positional signature, including the final holder argument, to fit this limit.
 - Increasing these limits does not require Towel to emit every candidate. Its
-  [tiny-helper interface policy](GENERATED_CODE.md#choosing-a-worthwhile-helper)
-  also considers the complete signature, call wrappers and sharing sites.
+  [output-quality policy](GENERATED_CODE.md#choosing-a-worthwhile-helper)
+  requires the complete helper and every rendered caller to cost less than the
+  estimated repeated work, including for larger bodies and control flow.
 - `--max-pairs` caps the candidate pairs considered in one analysis; groups
   omitted to meet the cap are reported. It does not bound block materialization,
   peak memory or elapsed time. Functions with no structural partner skip block

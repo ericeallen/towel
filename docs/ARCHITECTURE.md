@@ -302,13 +302,14 @@ after `import typing as t` is one and sqlglot's own `exp.cast(column, to)`
 is not.
 
 The output-quality rule in `profitability.py` is separate from that soundness
-proof. For at most two meaningful straight-line statements, it compares the
-complete interface (receiver/holder included) and rendered call-site lambda cost
-after ownership rewriting
-with work shared by all sites. Control flow and nested computation are outside
-this narrow calibration. [The decision](DECISIONS.md#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
-records its exact formula and API compatibility switch; physical wrapping does
-not add benefit.
+proof. It compares the syntax cost of the complete generated helper and every
+rendered caller replacement with the helper body's repeated work at all sites.
+The signature, annotations, receiver, ownership holder, boxes, deletions and
+lookup suppliers contribute cost. Larger bodies, control flow and nested
+computation contribute their structure instead of bypassing the rule; generated
+cost must be strictly smaller. [The decision](DECISIONS.md#2026-11-08-complete-extractions-must-repay-their-generated-syntax)
+records the estimate and API compatibility switch. Identifier length and
+physical wrapping do not add benefit.
 
 ## The soundness invariant
 

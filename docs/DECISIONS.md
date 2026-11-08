@@ -1633,6 +1633,10 @@ parameters and global/nonlocal declarations preserve the original spelling.
 
 ## 2026-10-06: Tiny helpers must repay their interface cost
 
+This historical calibration was superseded in 1.949 by the
+[complete generated-syntax rule](#2026-11-08-complete-extractions-must-repay-their-generated-syntax).
+The status and formula below describe the October 6 checkpoint.
+
 **Status:** focused unit and integration controls pass; final native, artifact
 and release validation of this audit follow-up are pending. This is an output-quality rule, separate from
 the preservation requirement and existing forwarding-only rejections.
@@ -1677,7 +1681,7 @@ alongside the implementation (`unification/profitability.py`).
 The product audit found that the two-statement filter above admitted the
 README's four-statement example even though its eleven lines became eighteen.
 Its cost input also retained only the final ownership call, omitting the box
-assignment and deletion prefix. The next release replaces that narrow policy.
+assignment and deletion prefix. Version 1.949 replaces that narrow policy.
 
 Count each AST statement, expression, argument, keyword and comprehension clause
 as one syntax unit. Identifier length, source locations and physical line

@@ -2,14 +2,16 @@
 
 [Documentation index](README.md)
 
-**1.949 is an unpublished candidate** for the product-experience and maturity
-improvements in the [changelog](../CHANGELOG.md#1949). The fixes are implemented
-and local validation is in progress. The
+**1.949** contains the product-experience and maturity improvements in the
+[changelog](../CHANGELOG.md#1949). At the November 8, 2026 preparation checkpoint,
+it was unpublished and local validation was in progress. The
 [preparation checkpoint](PRODUCTION_READINESS.md#1949-preparation-checkpoint-november-8-2026)
-records the current scope without claiming a complete release campaign or new
-runtime performance measurements. **1.948 remains the latest published release**;
+records that scope without claiming a complete release campaign or new
+runtime performance measurements. **1.948 was the latest published release at that checkpoint**;
 its [publication record](PRODUCTION_READINESS.md#1948-published-release-november-7-2026)
 and all earlier checkpoints retain their original source identities and results.
+Consult the [GitHub releases](https://github.com/ericeallen/towel/releases) for
+completed validation and publication records.
 Freeze the final versioned source before the complete gates below, and keep final
 validation and publication outcomes external to the shipped source.
 
@@ -253,7 +255,7 @@ Towel uses increasing, normalized PEP 440 identifiers with mathematical
 mnemonics: 1.772 names the square root of pi, 1.792 names ln 6, and 1.946 names
 ln 7. These two-component versions are not a strict Semantic Versioning scheme.
 The maintainer selected 1.947 for audit repairs after 1.946 and 1.948 for the
-following correctness and CLI repairs. The unpublished 1.949 candidate continues
+following correctness and CLI repairs. Version 1.949 continues
 that sequence for product-experience and maturity improvements; these repair
 versions do not add mathematical mnemonics.
 The 1.947 rename CLI introduced the complete-consumer scope requirement; see
@@ -310,7 +312,7 @@ cohorts left restoration unresolved and Rich pending for that source.
 The maintainer must review the measured regression before publication.
 
 The version and documentation update changes release contents. Freeze the final
-1.948 source, rebuild its artifacts, and run the full declared release campaign:
+source for the chosen version, rebuild its artifacts, and run the full declared release campaign:
 Python 3.11–3.13, coverage and quality, differential families, clean-wheel and
 sdist checks, self-dogfood, dependency/diagram checks, the 141-project corpus,
 source-bound evidence verification and exact-commit CI. Historical successes
