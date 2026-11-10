@@ -17,6 +17,7 @@
 import dataclasses
 import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
 import sys
@@ -258,3 +259,30 @@ def test_dateutil_missing_or_bad_payload_cannot_enter_baseline(
     assert result.post_install is not None
     output = Path(result.post_install.phase.log).read_text()
     assert ("FileNotFoundError" if payload is None else "SHA failed") in output
+
+
+WORKFLOW = MANIFEST.parents[2] / ".github/workflows/ecosystem.yml"
+
+
+def test_the_ecosystem_workflow_stages_dateutils_archive_where_the_corpus_reads_it() -> None:
+    """The hook above refuses a missing archive, so the scheduled run must stage it first.
+
+    The step clones the project where the harness clones it, which then reuses
+    the clone, and fetches the archive from a pinned URL checked against a
+    pinned SHA-256. If the harness's work directory moves, the archive no
+    longer reaches the hook, and python-dateutil is a SETUP_ERROR again.
+    """
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    stage = workflow.index("- name: Stage python-dateutil's timezone archive")
+    corpus = workflow.index("python scripts/ecosystem_check.py")
+    assert stage < corpus
+    step = workflow[stage:corpus]
+    pins = dict(re.findall(r"(?m)^\s+(TZDATA_\w+): (\S+)$", step))
+    assert pins["TZDATA_URL"] == (
+        f"https://data.iana.org/time-zones/releases/{pins['TZDATA_FILE']}"
+    )
+    assert re.fullmatch(r"[0-9a-f]{64}", pins["TZDATA_SHA256"])
+    assert "sha256sum --check --strict" in step
+    work = re.search(r'--work "([^"]+)"', workflow[corpus:])
+    assert work is not None
+    assert f'clone="{work.group(1)}/{dateutil().name}"' in step

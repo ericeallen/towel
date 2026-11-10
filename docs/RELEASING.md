@@ -725,7 +725,10 @@ Prepare its dependencies before starting the corpus:
   `https://data.iana.org/time-zones/releases/` into that clone. Verify its SHA-512
   against `tzdata_file_sha512` before running the corpus. The pinned revision
   names `tzdata2024a.tar.gz`; its unchanged `post_install` hook checks for the
-  archive and builds the zoneinfo data. A fresh clone does not contain it.
+  archive and builds the zoneinfo data. A fresh clone does not contain it. The
+  Ecosystem workflow's "Stage python-dateutil's timezone archive" step does
+  this with the archive's URL and SHA-256 pinned; update those pins together
+  with python-dateutil's revision.
 - **Give the harness a standalone clone detached at the release commit**, not a
   git worktree. A worktree's `.git` is a file pointing outside the mount, so
   the harness cannot read the revision and aborts. With a real clone it records

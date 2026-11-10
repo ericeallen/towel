@@ -23,6 +23,31 @@ jobs:
           python-version: '3.13'
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
       - run: uv sync --frozen --extra dev
+      # python-dateutil's post_install hook builds its zoneinfo from the IANA
+      # archive its pinned zonefile_metadata.json names, which a fresh clone
+      # lacks (docs/RELEASING.md). Clone it at the manifest's pin where the
+      # harness clones it, which then reuses the clone, and put the archive
+      # there from a pinned URL with a pinned SHA-256. dateutil's own script
+      # checks the SHA-512 its metadata records as well. A pin that names
+      # another archive stops here rather than in the corpus.
+      - name: Stage python-dateutil's timezone archive
+        env:
+          TZDATA_FILE: tzdata2024a.tar.gz
+          TZDATA_URL: https://data.iana.org/time-zones/releases/tzdata2024a.tar.gz
+          TZDATA_SHA256: 0d0434459acbd2059a7a8da1f3304a84a86591f6ed69c6248fffa502b6edffe3
+        run: |
+          set -euo pipefail
+          clone="$RUNNER_TEMP/ecosystem/python-dateutil"
+          read -r url rev < <(python -c "import tomllib; entry = next(p for p in tomllib.load(open('scripts/ecosystem/manifest.toml', 'rb'))['project'] if p['name'] == 'python-dateutil'); print(entry['url'], entry['rev'])")
+          git clone -q --filter=blob:none "$url" "$clone"
+          git -C "$clone" checkout -q "$rev"
+          named=$(python -c "import json, sys; print(json.load(open(sys.argv[1]))['tzdata_file'])" "$clone/zonefile_metadata.json")
+          if [ "$named" != "$TZDATA_FILE" ]; then
+            echo "::error::python-dateutil at $rev names $named, not the pinned $TZDATA_FILE; update the pin"
+            exit 1
+          fi
+          curl -fsSL --retry 3 -o "$clone/$TZDATA_FILE" "$TZDATA_URL"
+          echo "$TZDATA_SHA256  $clone/$TZDATA_FILE" | sha256sum --check --strict
       # The check clones and executes third-party code (see the script's
       # docstring); a hosted runner is discarded after the job, which is the
       # only setting where that opt-in is appropriate.
