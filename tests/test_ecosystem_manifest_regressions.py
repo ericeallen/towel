@@ -307,3 +307,9 @@ def test_reviewed_dependency_adjustments_are_pinned(name: str, requirement: str)
     ]
     assert [str(spec.specifier) for spec in declared] == [str(pinned.specifier)]
 
+
+def test_only_reviewed_refusals_are_expected() -> None:
+    """Each expected refusal is a reviewed decision; adding one is a change to review here."""
+    projects = ecosystem.load_manifest(ecosystem.REPO / "scripts/ecosystem/manifest.toml", [])
+    expecting = {project.name for project in projects if project.expected_refusal is not None}
+    assert expecting == {"invoke", "isort", "towel-main", "towel-v1.414", "towel-v1.618"}

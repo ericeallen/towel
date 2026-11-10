@@ -1115,7 +1115,7 @@ def set_corpus_row(bundle: Bundle, row: dict[str, object]) -> None:
     bundle.alter(
         "corpus-exit.json",
         lambda record: record.update(
-            status=int(verdict not in {"PASS", "NO_CHANGE", "BROKEN_KNOWN"})
+            status=int(verdict not in {"PASS", "NO_CHANGE", "BROKEN_KNOWN", "REFUSED"})
         ),
     )
 
@@ -1142,6 +1142,64 @@ def test_reviewed_no_change_refactor_refusal_is_admissible(bundle: Bundle) -> No
         bundle.check()
     reviewed_exception(bundle, "reviewed_nonaccepted", "accepted-refusal")
     bundle.check()
+
+
+def _verify_corpus_with_manifest(bundle: Bundle, entry: bytes) -> None:
+    """Verify the corpus against the fixture manifest with ``entry`` appended to its project."""
+    source = dict(bundle.source)
+    source["scripts/ecosystem/manifest.toml"] += entry
+    bundle.alter(
+        "corpus-environment.json",
+        lambda record: record.update(
+            manifest_sha256=gate.digest(source["scripts/ecosystem/manifest.toml"])
+        ),
+    )
+    records = gate.Records(
+        bundle.root,
+        {name: gate.FileRef.read(ref) for name, ref in gate.table(bundle.value["records"]).items()},
+    )
+    review = gate.table(bundle.read("review.json"))
+    gate.verify_corpus(records, bundle.commit, gate.text(review["wheel_sha256"]), source, review)
+
+
+EXPECTED_REFUSAL = (
+    b'[project.expected_refusal]\nreason = "reviewed"\nproblems = ["x could be any of: x; y"]\n'
+)
+
+
+@pytest.mark.parametrize(
+    "mutation,refusal",
+    [
+        ("none", ""),
+        ("unpinned", "Unpinned expected refusal"),
+        ("other_reason", "Unpinned expected refusal"),
+        ("unreviewed", "Unreviewed or stale corpus category: reviewed_nonaccepted"),
+        ("exit", "exit mismatch"),
+    ],
+)
+def test_an_expected_refusal_is_pinned_reviewed_and_does_not_fail_the_run(
+    bundle: Bundle, mutation: str, refusal: str
+) -> None:
+    row = gate.table(bundle.read("corpus-report/example.json"))
+    row.update(
+        verdict="REFUSED",
+        detail="other" if mutation == "other_reason" else "reviewed",
+        changed_files=0,
+        after=None,
+        refactor={"returncode": 1, "log": "/logs/example-refactor.log"},
+    )
+    set_corpus_row(bundle, row)
+    if mutation == "exit":
+        # The harness passes an expected refusal, so a failed run is another one.
+        bundle.alter("corpus-exit.json", lambda record: record.update(status=1))
+    if mutation != "unreviewed":
+        reviewed_exception(bundle, "reviewed_nonaccepted", "accepted-refusal")
+    entry = b"" if mutation == "unpinned" else EXPECTED_REFUSAL
+    if mutation == "none":
+        _verify_corpus_with_manifest(bundle, entry)
+    else:
+        with pytest.raises(gate.EvidenceError, match=refusal):
+            _verify_corpus_with_manifest(bundle, entry)
 
 
 @pytest.mark.parametrize(

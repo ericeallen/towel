@@ -35,7 +35,13 @@
 # extension the suite tests beside its Python counterpart is no reason),
 # cross_module (default true: the refactor extracts across modules, where the
 # corpus finds the most bugs; false only together with cross_module_reason, the
-# reason it is off, which the harness requires and the report lists).
+# reason it is off, which the harness requires and the report lists),
+# expected_refusal (a table of `reason`, why Towel is right to refuse the
+# project, and `problems`, exactly the lines its refusal lists under the
+# `Error:` line, with {site-packages} for the project environment's
+# site-packages and {work} for the work directory; the verdict is then REFUSED,
+# which passes, and stays CRASH when the refusal lists anything else, exits
+# otherwise or prints a traceback; put the table last in its entry).
 
 [[project]]
 name = "tabulate"
@@ -1273,6 +1279,16 @@ deps = [
 ]
 test = ["{python}", "-m", "pytest", "-q", "tests/unit"]
 
+[project.expected_refusal]
+reason = """\
+isort/stdlibs shares its name with the stdlibs distribution isort's dev \
+group requires, which scripts/mkstdlibs.py imports, so the top-level name \
+stdlibs is both the tree's directory and the installed distribution."""
+problems = [
+    "stdlibs could be any of: isort/stdlibs; outside the project ({site-packages}/stdlibs/__init__.py); the distribution the project requires (stdlibs>=2026.2.26 in pyproject.toml [dependency-groups].dev)",
+    "stdlibs is imported as a top-level name, and its only location isort/stdlibs is inside isort, which the program also imports as a package (scripts/mkstdlibs.py:4: from stdlibs import py38, py39, py310, py311, py312, py313, py314, py315)",
+]
+
 [[project]]
 name = "pyjwt"
 # Test context: Selected group:tests.
@@ -1853,6 +1869,16 @@ deps = [
     "releases>=2",
     "setuptools>56",
     "types-PyYAML==6.0.12.4",
+]
+
+[project.expected_refusal]
+reason = """\
+invoke's tests keep four config modules named invoke.py \
+(tests/_support/configs/*/invoke.py), so the tree gives the top-level name \
+invoke five locations and no cross-module import of a helper can be shown to \
+work."""
+problems = [
+    "invoke could be any of: invoke; tests/_support/configs/all-four/invoke.py; tests/_support/configs/json-and-python/invoke.py; tests/_support/configs/python/invoke.py; tests/_support/configs/three-of-em/invoke.py",
 ]
 
 [[project]]
@@ -2559,6 +2585,18 @@ deps = [
 ]
 timeout = 3600
 
+[project.expected_refusal]
+reason = """\
+The project is Towel itself. The candidate that runs the refactor is an \
+installed copy of the name towel outside the tree, wherever it is installed, \
+so towel names two modules and no cross-module import of a helper can be \
+shown to work. The tree also has three directories named src, two of them \
+test fixtures."""
+problems = [
+    "src could be any of: src; test_examples_crossfile/nested_structure/src; test_examples_crossfile_expected_output/nested_structure/src",
+    "towel could be any of: src/towel; outside the project ({site-packages}/towel/__init__.py)",
+]
+
 [[project]]
 name = "towel-v1.618"
 # Test context: Selected extra:dev.
@@ -2584,6 +2622,16 @@ deps = [
     "tqdm>=4.66.0",
 ]
 timeout = 3600
+
+[project.expected_refusal]
+reason = """\
+The project is Towel itself. The candidate that runs the refactor is an \
+installed copy of the name towel outside the tree, wherever it is installed, \
+so towel names two modules and no cross-module import of a helper can be \
+shown to work."""
+problems = [
+    "towel could be any of: src/towel; outside the project ({site-packages}/towel/__init__.py)",
+]
 
 [[project]]
 name = "towel-main"
@@ -2617,3 +2665,13 @@ deps = [
     "tqdm>=4.66.0",
 ]
 timeout = 3600
+
+[project.expected_refusal]
+reason = """\
+The project is Towel itself. The candidate that runs the refactor is an \
+installed copy of the name towel outside the tree, wherever it is installed, \
+so towel names two modules and no cross-module import of a helper can be \
+shown to work."""
+problems = [
+    "towel could be any of: src/towel; outside the project ({site-packages}/towel/__init__.py)",
+]

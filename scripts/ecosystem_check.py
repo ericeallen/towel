@@ -22,11 +22,11 @@ package (the documented workflow, which exercises import paths that survive
 relocation), run the suite again, and compare. A project qualifies when both
 runs have recognized, nonempty pytest or unittest outcomes that agree in exit
 status and normalized summary. Matching pre-existing test failures are allowed.
-Progress is printed as each phase completes; only PASS, NO_CHANGE and
-explicitly matched BROKEN_KNOWN verdicts satisfy the gate. Setup failures,
-incomplete test runs and unknown verdicts make it fail. An isolated retest
-match requires matching full-suite confirmations with the original test count
-before it can qualify.
+Progress is printed as each phase completes; only PASS, NO_CHANGE, and the
+explicitly matched BROKEN_KNOWN and REFUSED verdicts satisfy the gate. Setup
+failures, incomplete test runs, crashes, refusals the manifest does not expect
+and unknown verdicts make it fail. An isolated retest match requires matching
+full-suite confirmations with the original test count before it can qualify.
 
 Towel runs the way a user runs it: inside the project's own environment, after
 ``pip install "code-towel[format,types]"``. That environment holds the
@@ -80,6 +80,14 @@ and then reruns that project with ``--no-types`` so its behaviour is still
 covered. The report says which projects that was, and their verdicts are
 evidence about the untyped path only.
 
+A refactor that exits with an error is a crash, unless the manifest expects
+that refusal: an ``expected_refusal`` entry gives the reviewed reason and the
+problems the refusal lists, with this run's paths written as placeholders.
+The refusal is then REFUSED, which satisfies the gate, but only while it
+lists exactly those problems, exits as a reported error and prints no
+traceback. A new refusal, one that lists another problem, and a real crash
+all stay red.
+
 Trust boundary: this script executes code it does not review. It clones
 public repositories, runs each manifest entry's ``prepare`` command, installs
 the projects' test dependencies, and runs their test suites, all with the
@@ -107,6 +115,7 @@ import email.message
 import email.parser
 import fcntl
 import hashlib
+import itertools
 import json
 import functools
 import os
@@ -171,6 +180,38 @@ CROSS_MODULE_FLAG = "--cross-module"
 """The option that turns on extraction across modules, where the Towel under test has it."""
 
 
+SITE_PACKAGES = "{site-packages}"
+"""How an expected refusal writes the site-packages of the project's environment."""
+WORK = "{work}"
+"""How an expected refusal writes the work directory."""
+
+
+@dataclasses.dataclass(frozen=True)
+class ExpectedRefusal:
+    """A refusal reviewed as Towel's right answer for a project, and exactly what it lists.
+
+    ``problems`` are the lines a refusal lists under its ``Error:`` line, with
+    :data:`SITE_PACKAGES` and :data:`WORK` standing for this run's paths, so
+    that one entry holds on any runner and interpreter. Only the problems are
+    compared: the refusal's other lines count problems that would not stop the
+    run, which change with the project's unrelated code.
+    """
+
+    reason: str
+    problems: Tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.reason) is not str or not self.reason.strip():
+            raise ValueError("expected_refusal needs a reason saying why the refusal is right")
+        if (
+            type(self.problems) is not tuple
+            or not self.problems
+            or any(type(problem) is not str or not problem.strip() for problem in self.problems)
+            or len(set(self.problems)) != len(self.problems)
+        ):
+            raise ValueError("expected_refusal needs problems: distinct, nonempty lines")
+
+
 @dataclasses.dataclass(frozen=True)
 class Project:
     name: str
@@ -194,6 +235,8 @@ class Project:
     """Why this project turns ``cross_module`` off; required exactly when it does."""
     post_install: Tuple[str, ...] = ()
     """Literal argv run after installation and before baseline; {python} names that interpreter."""
+    expected_refusal: Optional[ExpectedRefusal] = None
+    """The refusal the refactor gives, reviewed as right; it is then REFUSED, not a crash."""
 
     def __post_init__(self) -> None:
         if type(self.post_install) is not tuple or any(
@@ -402,10 +445,26 @@ def load_manifest(path: Path, only: Sequence[str]) -> List[Project]:
             failure_exit_codes=tuple(entry.get("failure_exit_codes", (1,))),
             cross_module=entry.get("cross_module", True),
             cross_module_reason=entry.get("cross_module_reason", ""),
+            expected_refusal=_expected_refusal(entry["name"], entry.get("expected_refusal")),
         )
         if not only or project.name in only:
             projects.append(project)
     return projects
+
+
+def _expected_refusal(name: str, entry: object) -> Optional[ExpectedRefusal]:
+    """The manifest's ``expected_refusal`` table for project ``name``, checked; ``None`` if absent."""
+    if entry is None:
+        return None
+    if not isinstance(entry, dict) or set(entry) != {"reason", "problems"}:
+        raise ValueError(f"{name}: expected_refusal must be a table of exactly reason and problems")
+    problems = entry["problems"]
+    if type(problems) is not list:
+        raise ValueError(f"{name}: expected_refusal problems must be a list of lines")
+    try:
+        return ExpectedRefusal(entry["reason"], tuple(problems))
+    except ValueError as error:
+        raise ValueError(f"{name}: {error}") from error
 
 
 _PHASE_GROUPS: Set[int] = set()
@@ -3194,6 +3253,17 @@ def check_project(
         refused = _refusal(logs / log_name)
         result.verdict = "UNSUPPORTED" if refused else "CRASH"
         result.detail = refused or result.refactor.summary
+        if project.expected_refusal is not None:
+            # Reviewed as Towel's right answer, but only in exactly the words
+            # reviewed: a new problem, or one gone, is news, and so is a crash.
+            difference = unexpected_refusal(
+                project.expected_refusal, result.refactor, python.parent.parent, work
+            )
+            if difference is None:
+                result.verdict = "REFUSED"
+                result.detail = project.expected_refusal.reason
+            else:
+                result.detail = f"not the expected refusal: {difference}"[:500]
         return result
     # Adopt: replace the package with the cleaned copy in place. A package
     # directory is swapped wholesale (dropping the non-source helper sidecar the
@@ -3523,6 +3593,65 @@ def _malformed_refusal(declined: BaselineRefusal, log_path: Path) -> Optional[st
     if REMEDY not in text:
         return f"refusal did not name the way forward ({REMEDY!r} absent)"
     return None
+
+
+REPORTED_ERROR_EXIT = 1
+"""The CLI's exit status for an error it reports, as it reports every refusal."""
+TRACEBACK = "Traceback (most recent call last):"
+
+
+def written_as_expected(text: str, environment: Path, work: Path) -> str:
+    """``text`` with this run's paths written as an expected refusal writes them.
+
+    The project environment's site-packages becomes :data:`SITE_PACKAGES`,
+    whatever the interpreter's version, and the rest of the work directory
+    :data:`WORK`. Each path is matched as given and resolved, longest first,
+    since Towel reports resolved paths and ``/tmp`` is a link on some systems.
+    """
+    for root in sorted({str(environment), str(environment.resolve())}, key=len, reverse=True):
+        text = re.sub(
+            re.escape(root) + r"/lib/python\d+\.\d+/site-packages", lambda _: SITE_PACKAGES, text
+        )
+    for root in sorted({str(work), str(work.resolve())}, key=len, reverse=True):
+        text = text.replace(root, WORK)
+    return text
+
+
+def listed_problems(text: str) -> Optional[Tuple[str, ...]]:
+    """The problems a refusal lists: the indented lines right after its ``Error:`` line.
+
+    ``None`` when the output reports no error at all.
+    """
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("Error: "):
+            listed = itertools.takewhile(
+                lambda following: following.startswith("  "), lines[index + 1 :]
+            )
+            return tuple(problem.strip() for problem in listed)
+    return None
+
+
+def unexpected_refusal(
+    expected: ExpectedRefusal, refactor: Phase, environment: Path, work: Path
+) -> Optional[str]:
+    """How a failed refactor differs from the refusal the manifest expects; ``None`` if it is that one."""
+    if refactor.timed_out or refactor.returncode != REPORTED_ERROR_EXIT:
+        return f"exit {refactor.returncode}, where a refusal exits {REPORTED_ERROR_EXIT}"
+    text = Path(refactor.log).read_text(encoding="utf-8", errors="replace")
+    if TRACEBACK in text:
+        return "it printed a traceback"
+    listed = listed_problems(written_as_expected(text, environment, work))
+    if listed is None:
+        return "it reported no error"
+    unexpected = [problem for problem in listed if problem not in expected.problems]
+    missing = [problem for problem in expected.problems if problem not in listed]
+    if not unexpected and not missing:
+        return None
+    return "; ".join(
+        [f"also lists: {' | '.join(unexpected)}"] * bool(unexpected)
+        + [f"no longer lists: {' | '.join(missing)}"] * bool(missing)
+    )
 
 
 def _unchecked_code(log_path: Path) -> Optional[UncheckedCode]:
@@ -3926,6 +4055,13 @@ def main() -> int:
         and result.cross_module.enabled
         and not result.cross_module.requested
     }
+    refused = {result.name: result.detail for result in results if result.verdict == "REFUSED"}
+    expecting_refusal = {project.name for project in projects if project.expected_refusal}
+    refusals_not_seen = {
+        result.name: result.verdict
+        for result in results
+        if result.name in expecting_refusal and result.verdict != "REFUSED"
+    }
     lines = [
         f"# Ecosystem check — towel `{towel_commit or 'unavailable (source archive)'}`",
         "",
@@ -4001,6 +4137,20 @@ def main() -> int:
                 for name, found in sorted(unchecked.items())
             ),
         ]
+    if refused:
+        lines += [
+            "",
+            "Refused as expected (reviewed in the manifest): "
+            + "; ".join(f"{name} ({why})" for name, why in sorted(refused.items())),
+        ]
+    if refusals_not_seen:
+        lines += [
+            "",
+            "Expected refusals not seen (the manifest expects one; this run gave another verdict): "
+            + "; ".join(
+                f"{name} ({verdict})" for name, verdict in sorted(refusals_not_seen.items())
+            ),
+        ]
     lines += [
         "",
         "Cross-module extraction off: "
@@ -4036,6 +4186,8 @@ def main() -> int:
                 },
                 "cross_module_off": cross_module_off,
                 "cross_module_opt_out_not_applied": opt_out_not_applied,
+                "refused_as_expected": refused,
+                "expected_refusals_not_seen": refusals_not_seen,
                 "results": [dataclasses.asdict(r) for r in results],
             },
             indent=2,
@@ -4053,12 +4205,14 @@ def main() -> int:
                     "Typed against",
                     "Code the type",
                     "Cross-module extraction off",
+                    "Refused as expected",
+                    "Expected refusals not seen",
                 )
             )
         ),
         flush=True,
     )
-    accepted = {"PASS", "NO_CHANGE", "BROKEN_KNOWN"}
+    accepted = {"PASS", "NO_CHANGE", "BROKEN_KNOWN", "REFUSED"}
     return 0 if results and all(result.verdict in accepted for result in results) else 1
 
 

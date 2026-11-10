@@ -10,6 +10,13 @@ mnemonics with PEP 440 ordering; see the
 
 ## [Unreleased]
 
+- Ecosystem harness: a refusal the manifest reviews (`expected_refusal`) is
+  `REFUSED`, which passes only while it lists exactly the reviewed problems;
+  any other refusal or crash still fails. The manifest pins the reviewed
+  watchdog 6.0.0 (Werkzeug) and pytest 9.1.1 (Black), and the Ecosystem
+  workflow stages python-dateutil's timezone archive, so the weekly run
+  measures what the release campaign measures.
+
 ## [1.949]
 
 Product-experience and maturity improvements. See the

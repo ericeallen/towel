@@ -934,6 +934,7 @@ def verify_corpus(
         == {text(row.get("name")): row.get("verdict") for row in results},
         "Corpus console mismatch",
     )
+    unaccepted_refusals = False
     categories: dict[str, set[str]] = {
         name: set()
         for name in (
@@ -955,11 +956,11 @@ def verify_corpus(
             f"Corpus input revision mismatch: {name}",
         )
         require(
-            verdict in {"PASS", "NO_CHANGE", "BROKEN_KNOWN", "CRASH", "UNSUPPORTED"},
+            verdict in {"PASS", "NO_CHANGE", "BROKEN_KNOWN", "CRASH", "UNSUPPORTED", "REFUSED"},
             f"Incomplete or unaccepted corpus verdict: {name}/{verdict}",
         )
         before = phase_outcome(records, row.get("baseline"), manifest[name])
-        if verdict in {"CRASH", "UNSUPPORTED"}:
+        if verdict in {"CRASH", "UNSUPPORTED", "REFUSED"}:
             require(
                 row.get("after") is None
                 and integer(row.get("changed_files")) == 0
@@ -967,6 +968,18 @@ def verify_corpus(
                 f"Reviewed refusal must be a completed no-change refactor refusal: {name}",
             )
             categories["reviewed_nonaccepted"].add(name)
+        if verdict == "REFUSED":
+            # The harness passed it against the manifest's expectation; the
+            # review still decides whether this release accepts it.
+            pinned = manifest[name].get("expected_refusal")
+            require(isinstance(pinned, dict), f"Unpinned expected refusal: {name}")
+            expected = table(pinned)
+            require(
+                bool(strings(expected.get("problems")))
+                and expected.get("reason") == row.get("detail"),
+                f"Unpinned expected refusal: {name}",
+            )
+        unaccepted_refusals |= verdict in {"CRASH", "UNSUPPORTED"}
         if row.get("fallback"):
             categories["reviewed_fallbacks"].add(name)
         if verdict == "BROKEN_KNOWN":
@@ -1030,7 +1043,7 @@ def verify_corpus(
     exit_ = records.table("corpus-exit.json")
     require(
         exit_.get("oom_killed") is False
-        and integer(exit_.get("status")) == int(bool(categories["reviewed_nonaccepted"])),
+        and integer(exit_.get("status")) == int(unaccepted_refusals),
         "Corpus incomplete/resource-killed/exit mismatch",
     )
     launch = records.table("corpus-command.json")
