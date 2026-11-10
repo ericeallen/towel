@@ -717,7 +717,10 @@ deps = [
     "ephemeral-port-reserve",
     "pytest",
     "pytest-timeout",
-    "watchdog",
+    # Reviewed adjustment, applied since the 1.948 campaign: with watchdog
+    # 7.1.0 the pinned Werkzeug's reloader tests hang in tests/test_serving.py
+    # until the phase times out. 6.0.0 satisfies Werkzeug's own watchdog>=6.
+    "watchdog==6.0.0",
 ]
 
 [[project]]
@@ -1065,7 +1068,11 @@ deps = [
     "coverage>=5.3",
     "pytest-cov>=4.1.0",
     "pytest-xdist>=3.0.2",
-    "pytest>=7",
+    # Reviewed adjustment, applied since the 1.948 campaign: pytest 9.2.0 warns
+    # on config.inicfg, which the pinned Black's tests/optional.py reads, and
+    # Black's filterwarnings = ["error"] makes that an INTERNALERROR. 9.1.1
+    # satisfies Black's own pytest>=7.
+    "pytest==9.1.1",
     "tokenize-rt",
 ]
 
