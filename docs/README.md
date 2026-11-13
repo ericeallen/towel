@@ -4,7 +4,8 @@ Towel finds repeated Python code and extracts it into shared helpers. Start
 with the [Quick start](QUICKSTART.md) for a first refactoring; use the guides
 below when you need a particular task or a precise rule.
 
-This documentation describes **1.949**. Check the
+This documentation describes **1.949**, published November 10, 2026 (see the
+[publication record](PRODUCTION_READINESS.md#1949-published-release-november-10-2026)). Check the
 [GitHub releases](https://github.com/ericeallen/towel/releases) for completed
 validation and publication records. Dated
 benchmarks, validation reports and proposals retain their original source and

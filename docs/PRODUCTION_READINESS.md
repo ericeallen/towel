@@ -12,6 +12,59 @@ For completed validation and publication records, see the
 The dated preparation and publication checkpoints below retain their original
 source identities, measurements and validation scope.
 
+## 1.949 published release, November 10, 2026
+
+Towel **1.949** is published on [PyPI](https://pypi.org/project/code-towel/1.949/)
+and [GitHub](https://github.com/ericeallen/towel/releases/tag/v1.949) from
+`14dc1641b79e76cde8828c370eabad955a6b09f4`, tagged `v1.949`. Its runtime was
+validated on campaign source `ae2e946d3030f985b872ea6b9fba0f25b2ce3dd4`. The
+release commit changes only nine Markdown files, so both distributions were
+rebuilt from it through the documented prose-only path, with the campaign's
+pinned tools, and rechecked. The `ae2e946` archives were never published. The
+repository evidence verifier accepted the combined local records, all five
+[GitHub CI jobs](https://github.com/ericeallen/towel/actions/runs/42526205930)
+passed on the release commit, and the live default-branch gate passed before
+tagging.
+
+| Python | Local passed / skipped (`ae2e946`, macOS) | GitHub CI passed / skipped (`14dc164`, Linux) | Passing subtests in each run | Line coverage |
+| --- | ---: | ---: | ---: | ---: |
+| 3.11 | 11,277 / 335 | 11,206 / 337 | 45 | 93% |
+| 3.12 | 11,479 / 203 | 11,409 / 205 | 45 | 94% |
+| 3.13 | 11,466 / 223 | 11,392 / 225 | 45 | 94% |
+
+Native quality and strict typing, Bandit, dependency audits, strict Twine,
+distribution-content and credential-pattern checks passed. Installed-wheel macOS
+integration passed 188 tests locally and in CI. Six clean-wheel smoke checks
+covered bare and formatter/checker-extra installations across Python 3.11–3.13.
+The exact rebuilt source archive passed 133 documentation tests, and all five
+Mermaid diagrams rendered. Differential grammar and scope fuzzing on Linux, from
+fresh seeds, completed 10,340 runs: 4,798 equivalent, 5,511 unchanged,
+31 inconclusive and zero failures. Self-dogfood applied five refactorings across
+five files and passed strict typing and the Python 3.13 suite. All 111 generated
+runtime files were unchanged by testing.
+
+All **141 corpus projects completed** on Linux under the default typing policy:
+**75 PASS, 61 NO_CHANGE and five reviewed import-ambiguity refusals (invoke,
+isort, towel-v1.414, towel-v1.618 and towel-main)**. Docker reported
+`OOMKilled=false`. This is not a claim that all upstream suites were clean:
+20 projects had pre-existing baseline failures, and three explicit no-types
+fallbacks were reviewed separately. 1.948's two warning-location limitations no
+longer occur: Beautiful Soup passes and Pluggy is unchanged. Fewer projects
+change than under 1.948 because of the new usefulness check. The weekly
+Ecosystem workflow on the release commit reported the same five refusals and
+three failures before Towel ran, as it did on 1.947. Those three projects are
+Black, Werkzeug and python-dateutil, whose reviewed dependency pins and timezone
+archive that workflow does not yet apply.
+
+PyPI received the validated distributions on November 10, 2026, at 02:56 UTC.
+Both downloaded files matched the validated SHA-256 hashes
+(`a008bc93a2b9aa938b5dec5c8cc9b30d6cb221a6ca21e6c641cc6ca333372b10` for the wheel,
+`b9065b8d7bdbbeff1b7595254557c72569a7ac808671c5ed11e3ee5388aa85e9` for the sdist),
+and so did the assets of the GitHub release, created November 13, 2026, at
+00:31 UTC. PyPI's description matched the frozen README, all 14 README
+documentation links resolved at the tag, and a fresh PyPI installation passed
+its CLI checks. No performance claim is made for this release.
+
 ## 1.949 preparation checkpoint, November 8, 2026
 
 Towel **1.949** is an unpublished candidate. The product-experience and maturity
