@@ -316,3 +316,10 @@ def test_only_reviewed_refusals_are_expected() -> None:
     projects = ecosystem.load_manifest(ecosystem.REPO / "scripts/ecosystem/manifest.toml", [])
     expecting = {project.name for project in projects if project.expected_refusal is not None}
     assert expecting == {"invoke", "isort", "towel-main", "towel-v1.414", "towel-v1.618"}
+
+
+def test_pytest_pexpect_flake_is_known_and_nothing_else_is() -> None:
+    """Only the pexpect timing flake seen in the untouched original is excused."""
+    project = _project("pytest")
+    assert project.expect_broken.startswith("flaky: ")
+    assert project.known_failures == ("testing/test_debugging.py::TestPDB::test_pdb_and_capsys",)

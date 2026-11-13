@@ -1040,6 +1040,11 @@ deps = [
     "xmlschema",
 ]
 test = ["{python}", "-m", "pytest", "-q", "testing"]
+# A flake, not a limitation: in Ecosystem run 43337986255 the untouched original
+# failed this test with the same pexpect timeout in its full-suite rerun, and the
+# refactored tree passed it. It passed alone in both trees.
+expect_broken = "flaky: TestPDB::test_pdb_and_capsys drives pdb through pexpect and can time out under load, in the original as well as the refactored tree"
+known_failures = ["testing/test_debugging.py::TestPDB::test_pdb_and_capsys"]
 
 [[project]]
 name = "sphinx"
