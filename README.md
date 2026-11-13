@@ -4,9 +4,11 @@ Towel finds repeated Python code and extracts it into shared helper functions.
 Preview the changes, review the generated code, give the helpers meaningful
 names, and run your project's tests before adopting the result.
 
-**Release status: 1.949 (beta).** At the November 8, 2026 preparation
-checkpoint, this candidate is unpublished and its release validation is in progress.
-At that checkpoint: **Latest published release: 1.948.** Check the
+**Release status: 1.949 (beta).** **Latest published release: 1.949.**
+It was published on [PyPI](https://pypi.org/project/code-towel/1.949/) on
+November 10, 2026, and its
+[GitHub release](https://github.com/ericeallen/towel/releases/tag/v1.949)
+followed on November 13. Check the
 [GitHub releases](https://github.com/ericeallen/towel/releases) for completed
 validation and publication records.
 
@@ -129,8 +131,14 @@ its source files carry Eric Allen copyright headers.
 
 ## Releases and validation
 
-1.948 repairs four silent `dry` miscompilations found in 1.947. Its
+1.949 improves the product experience: complete-caller extraction selection,
+concise preview output with versioned JSON results, time limits, and a
+tutorial-first guide. Its
+[published release](https://github.com/ericeallen/towel/releases/tag/v1.949)
+carries the validated artifacts, and the repository's publication record
+describes how they were validated and published.
+1.948 repairs four silent `dry` miscompilations found in 1.947; its
 [published release](https://github.com/ericeallen/towel/releases/tag/v1.948)
-retains the completed validation record and artifacts under their original
-source identity. Earlier releases and their evidence remain in the
+retains its validation record and artifacts under their original source
+identity. Earlier releases and their evidence remain in the
 [release history](https://github.com/ericeallen/towel/releases).
