@@ -1938,7 +1938,11 @@ deps = [
     "coverage",
     "gevent",
     "gevent>=24.10.1",
-    "gunicorn_h1c>=0.6.9",
+    # Reviewed adjustment: gunicorn_h1c 0.6.14 (2026-11-09) rejects valid/009.http
+    # ("Transfer-Encoding does not end with chunked"), so the unmodified
+    # baseline fails test_http_parser[fast-...009.http]. 0.6.12, which the
+    # Ecosystem run before it installed, passes the whole suite.
+    "gunicorn_h1c==0.6.12",
     "h2>=4.4.1",
     "httpx[http2]>=0.23.0",
     "inotify>=0.2.10; sys_platform == \"linux\"",

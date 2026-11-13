@@ -295,6 +295,9 @@ def test_anyio_build_artifacts_are_excluded_from_the_source_model() -> None:
         # pytest 9.2.0's config.inicfg warning is an INTERNALERROR under Black's
         # filterwarnings = ["error"].
         pytest.param("black", "pytest==9.1.1", id="black-warning-free-pytest"),
+        # gunicorn_h1c 0.6.14 rejects a request file the pinned gunicorn's own
+        # suite treats as valid, so the unmodified baseline fails.
+        pytest.param("gunicorn", "gunicorn_h1c==0.6.12", id="gunicorn-baseline-h1c"),
     ],
 )
 def test_reviewed_dependency_adjustments_are_pinned(name: str, requirement: str) -> None:
