@@ -1302,3 +1302,35 @@ def test_hash_bound_coverage_xml_cannot_declare_entities(bundle: Bundle, encodin
     bundle.value["records"] = records
     with pytest.raises(gate.EvidenceError, match="Unsafe coverage XML"):
         bundle.check()
+
+
+@pytest.mark.parametrize("recorded_trees", [True, False])
+def test_a_failure_whose_id_holds_its_tree_is_the_same_in_both_trees(
+    bundle: Bundle, recorded_trees: bool
+) -> None:
+    """With each phase's tree recorded, ids that differ only by that tree are one failure."""
+    row = gate.table(bundle.read("corpus-report/example.json"))
+    for phase, tree in [("baseline", "/w/example"), ("after", "/w/example-ready")]:
+        step = gate.table(row[phase])
+        step["returncode"] = 1
+        if recorded_trees:
+            step["cwd"] = tree
+        row[phase] = step
+        bundle.write(
+            "corpus-logs/" + Path(gate.text(step["log"])).name,
+            f"FAILED test_fixture.py::test_file[{tree}/request.http]\n"
+            "1 failed, 19 passed in 1.00s\n",
+        )
+    bundle.write("corpus-report/example.json", row)
+    bundle.alter("corpus-report/summary.json", lambda summary: summary.update(results=[row]))
+    if not recorded_trees:
+        with pytest.raises(gate.EvidenceError, match="retest.json"):
+            bundle.check()
+        return
+    detail = {
+        "reason": "Pre-existing failure in this run/environment, unchanged after transformation.",
+        "disposition": "pre-existing-baseline",
+        "evidence": [gate.table(bundle.value["records"])["corpus-logs/example-before.log"]],
+    }
+    bundle.review(lambda review: review.update(reviewed_baseline_failures={"example": detail}))
+    bundle.check()

@@ -1839,3 +1839,93 @@ def test_a_phase_killed_before_its_deadline_is_not_a_timeout(tmp_path: Path) -> 
     )
     assert phase.returncode == -signal.SIGKILL
     assert not phase.timed_out
+
+
+_PATH_PARAMETRIZED = (
+    "import pathlib\n\nimport pytest\n\n"
+    "HERE = pathlib.Path(__file__).resolve().parent\n\n\n"
+    "@pytest.mark.parametrize('request_file', [str(HERE / 'requests' / 'valid.http')])\n"
+    "def test_parser(request_file):\n"
+    "    assert not (HERE / 'broken').exists()\n"
+)
+"""A test whose id holds its tree's absolute path, as gunicorn's request-file tests do."""
+
+
+def _path_parametrized_trees(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """An original tree and its refactored copy, named as the harness names them."""
+    work = tmp_path.resolve()
+    source, ready, logs = work / "project", work / "project-ready", work / "logs"
+    for tree in (source, ready):
+        (tree / "requests").mkdir(parents=True)
+        (tree / "test_requests.py").write_text(_PATH_PARAMETRIZED)
+    logs.mkdir()
+    return source, ready, logs
+
+
+_PATH_TEST_ENV = {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTHONDONTWRITEBYTECODE": "1"}
+
+
+def test_the_same_failure_in_two_trees_is_one_failure(tmp_path: Path) -> None:
+    """A path-bearing id names the same test in both trees once the tree is a placeholder."""
+    source, ready, logs = _path_parametrized_trees(tmp_path)
+    for tree in (source, ready):
+        (tree / "broken").touch()
+    command = ecosystem._prepare_test_command([sys.executable, "-m", "pytest", "-q"])
+    before = ecosystem.run(command, source, _PATH_TEST_ENV, 20, logs / "before.log")
+    after = ecosystem.run(command, ready, _PATH_TEST_ENV, 20, logs / "after.log")
+    assert ecosystem.failed_tests(before.log) != ecosystem.failed_tests(after.log)
+    expected = {f"test_requests.py::test_parser[{ecosystem.TREE}/requests/valid.http]"}
+    assert ecosystem.phase_failures(before) == ecosystem.phase_failures(after) == expected
+
+
+def test_a_flipped_path_bearing_failure_is_retested_in_each_tree(tmp_path: Path) -> None:
+    """The retest selects the id with each tree's own path, so pytest finds it in both."""
+    source, ready, logs = _path_parametrized_trees(tmp_path)
+    command = ecosystem._prepare_test_command([sys.executable, "-m", "pytest", "-q"])
+    (source / "broken").touch()
+    initial_before = ecosystem.run(command, source, _PATH_TEST_ENV, 20, logs / "initial-b.log")
+    (source / "broken").unlink()
+    initial_after = ecosystem.run(command, ready, _PATH_TEST_ENV, 20, logs / "initial-a.log")
+    differing = sorted(
+        ecosystem.phase_failures(initial_before) ^ ecosystem.phase_failures(initial_after)
+    )
+    assert differing == [f"test_requests.py::test_parser[{ecosystem.TREE}/requests/valid.http]"]
+    assert ecosystem._retest_agrees(
+        command,
+        differing,
+        source,
+        ready,
+        _PATH_TEST_ENV,
+        20,
+        logs,
+        ecosystem.Project("paths", "unused", "pinned", "test_requests.py"),
+        initial_before,
+        initial_after,
+    )
+    evidence = json.loads((logs / "paths-retest.json").read_text())
+    assert evidence["test_ids"] == differing
+    assert f"test_requests.py::test_parser[{source}/requests/valid.http]" in evidence["command"]
+    assert (
+        f"test_requests.py::test_parser[{ready}/requests/valid.http]" in evidence["after_command"]
+    )
+    assert evidence["before"]["summary"] == evidence["after"]["summary"] == "1 passed"
+
+
+@pytest.mark.parametrize(
+    "identity,expected",
+    [
+        (
+            "t.py::test[fast-/w/gunicorn/requests/009.http]",
+            "t.py::test[fast-{tree}/requests/009.http]",
+        ),
+        ("t.py::test[/w/gunicorn]", "t.py::test[{tree}]"),
+        ("t.py::test[fast-/w/gunicorn-ready/requests/009.http]", None),
+        ("t.py::test[/w/gunicornish/x]", None),
+        ("t.py::test[w/gunicorn/x]", None),
+    ],
+)
+def test_only_the_tree_itself_becomes_the_placeholder(
+    identity: str, expected: Optional[str]
+) -> None:
+    """The original tree is a prefix of its refactored copy's path, which must stay as it is."""
+    assert ecosystem._without_tree(identity, "/w/gunicorn") == (expected or identity)

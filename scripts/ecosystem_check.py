@@ -21,7 +21,9 @@ of place with the requested typing mode, adopt the cleaned copy back over the
 package (the documented workflow, which exercises import paths that survive
 relocation), run the suite again, and compare. A project qualifies when both
 runs have recognized, nonempty pytest or unittest outcomes that agree in exit
-status and normalized summary. Matching pre-existing test failures are allowed.
+status and normalized summary. Matching pre-existing test failures are allowed;
+failed-test ids are compared with each tree's own path written as ``{tree}``,
+since pytest builds some ids from absolute paths.
 Progress is printed as each phase completes; only PASS, NO_CHANGE, and the
 explicitly matched BROKEN_KNOWN and REFUSED verdicts satisfy the gate. Setup
 failures, incomplete test runs, crashes, refusals the manifest does not expect
@@ -184,6 +186,12 @@ SITE_PACKAGES = "{site-packages}"
 """How an expected refusal writes the site-packages of the project's environment."""
 WORK = "{work}"
 """How an expected refusal writes the work directory."""
+TREE = "{tree}"
+"""How a failed-test id compared between trees writes the tree its suite ran in.
+
+pytest builds some ids from absolute paths (gunicorn parametrizes a test with
+each request file's path), so the same failure in the original and in the
+refactored copy otherwise reads as two different ones."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -268,6 +276,8 @@ class Phase:
     summary: str
     log: str
     timed_out: bool = False
+    cwd: str = ""
+    """The tree the phase ran in, written as :data:`TREE` in its failed-test ids."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -288,11 +298,15 @@ class FullRetestEvidence:
 @dataclasses.dataclass(frozen=True)
 class RetestEvidence:
     command: Tuple[str, ...]
+    """The narrowed command run in the original tree."""
     test_ids: Tuple[str, ...]
+    """The ids as compared, with :data:`TREE` for the tree's path."""
     failure_exit_codes: Tuple[int, ...]
     before: Phase
     after: Phase
     full: Optional[FullRetestEvidence] = None
+    after_command: Tuple[str, ...] = ()
+    """The narrowed command run in the refactored tree: ``command`` with its path."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -532,7 +546,9 @@ def run(
             with _PHASE_GROUPS_LOCK:
                 _PHASE_GROUPS.discard(process.pid)
     output = log.read_text(encoding="utf-8", errors="replace")
-    return Phase(returncode, time.monotonic() - start, summarize(output), str(log), timed_out)
+    return Phase(
+        returncode, time.monotonic() - start, summarize(output), str(log), timed_out, str(cwd)
+    )
 
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -3094,7 +3110,7 @@ def prepare_installed_project(
         # The phase never spawned, but still needs an explicit failed receipt and log.
         message = f"could not start post-install preparation: {error}"
         log.write_text(header + message + "\n", encoding="utf-8")
-        phase = Phase(127, time.monotonic() - start, message, str(log))
+        phase = Phase(127, time.monotonic() - start, message, str(log), cwd=str(source))
     return Preparation(command, phase)
 
 
@@ -3287,8 +3303,8 @@ def check_project(
             f"incomplete test run (exit {result.after.returncode}): {result.after.summary}"
         )
         return result
-    before_failed = failed_tests(result.baseline.log)
-    after_failed = failed_tests(result.after.log)
+    before_failed = phase_failures(result.baseline)
+    after_failed = phase_failures(result.after)
     if after_outcome == baseline_outcome and before_failed == after_failed:
         result.verdict = "PASS"
         return result
@@ -3463,8 +3479,9 @@ def _retest_agrees(
         # unittest (including custom runners) does not accept pytest node ids
         # or options. Preserve the observed difference instead of guessing.
         return False
-    command = _retest_command(test, test_ids)
-    if command is None:
+    command = _retest_command(test, _in_tree(test_ids, source))
+    after_command = _retest_command(test, _in_tree(test_ids, ready))
+    if command is None or after_command is None:
         return False
     initial_before_outcome = _completed_test_run(initial_before, project.failure_exit_codes)
     initial_after_outcome = _completed_test_run(initial_after, project.failure_exit_codes)
@@ -3476,9 +3493,14 @@ def _retest_agrees(
         return False
     with original_installed():
         before = run(command, source, env, timeout, logs / f"{project.name}-retest-before.log")
-    after = run(command, ready, env, timeout, logs / f"{project.name}-retest-after.log")
+    after = run(after_command, ready, env, timeout, logs / f"{project.name}-retest-after.log")
     evidence = RetestEvidence(
-        tuple(command), tuple(test_ids), project.failure_exit_codes, before, after
+        tuple(command),
+        tuple(test_ids),
+        project.failure_exit_codes,
+        before,
+        after,
+        after_command=tuple(after_command),
     )
     (logs / f"{project.name}-retest.json").write_text(
         json.dumps(dataclasses.asdict(evidence), indent=2) + "\n", encoding="utf-8"
@@ -3491,8 +3513,8 @@ def _retest_agrees(
         or before_outcome.collected != len(set(test_ids))
     ):
         return False
-    before_failed = failed_tests(before.log)
-    if before_failed != failed_tests(after.log) or not before_failed <= set(test_ids):
+    before_failed = phase_failures(before)
+    if before_failed != phase_failures(after) or not before_failed <= set(test_ids):
         return False
     full_command = _prepare_test_command(test)
     with original_installed():
@@ -3517,7 +3539,7 @@ def _retest_agrees(
         full_before_outcome is not None
         and full_before_outcome == full_after_outcome
         and full_before_outcome.collected == initial_before_outcome.collected
-        and failed_tests(full_before.log) == failed_tests(full_after.log)
+        and phase_failures(full_before) == phase_failures(full_after)
     )
 
 
@@ -3724,8 +3746,31 @@ def _node_id(reported: str) -> str:
     return reported.strip()
 
 
-def _failed_test_ids(output: str) -> Set[str]:
-    """Full pytest node ids and unittest failure headers, without diagnostic suffixes."""
+def _without_tree(identity: str, tree: str) -> str:
+    """``identity`` with ``tree``, as given or resolved, written as :data:`TREE`.
+
+    Only a whole path component matches, so the original tree ``.../gunicorn``
+    is not found inside the refactored ``.../gunicorn-ready``. Longest first,
+    since ``/tmp`` is a link on some systems and either form may be reported.
+    """
+    if not tree:
+        return identity
+    for root in sorted({tree, str(Path(tree).resolve())}, key=len, reverse=True):
+        identity = re.sub(re.escape(root) + r"(?![^/\s\]\[(),:])", lambda _: TREE, identity)
+    return identity
+
+
+def _in_tree(test_ids: Sequence[str], tree: Path) -> List[str]:
+    """The ids as pytest selects them in ``tree``: :data:`TREE` back to its path."""
+    return [identity.replace(TREE, str(tree)) for identity in test_ids]
+
+
+def _failed_test_ids(output: str, tree: str = "") -> Set[str]:
+    """Full pytest node ids and unittest failure headers, without diagnostic suffixes.
+
+    With ``tree``, the directory the suite ran in, each id writes that path as
+    :data:`TREE`, so runs in different trees can be compared.
+    """
     lines = _plain_lines(output)
     # Captured subprocess diagnostics also begin with ERROR:. Recognize each
     # family's complete protocol before treating its headers as identities.
@@ -3737,20 +3782,25 @@ def _failed_test_ids(output: str) -> Set[str]:
     for line in lines:
         pytest_failure = FAILED_LINE.fullmatch(line) if pytest_run else None
         if pytest_failure is not None:
-            identities.add(_node_id(pytest_failure[1]))
+            identities.add(_without_tree(_node_id(pytest_failure[1]), tree))
         unittest_failure = UNITTEST_FAILED_LINE.fullmatch(line) if unittest_run else None
         if unittest_failure is not None:
-            identities.add(f"unittest:{unittest_failure[1]}")
+            identities.add(f"unittest:{_without_tree(unittest_failure[1], tree)}")
     return identities
 
 
-def failed_tests(log_path: str) -> Set[str]:
-    """Test ids reported as failed or errored by pytest or unittest."""
+def failed_tests(log_path: str, tree: str = "") -> Set[str]:
+    """Test ids reported as failed or errored by pytest or unittest (see ``_failed_test_ids``)."""
     try:
         text = Path(log_path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return set()
-    return _failed_test_ids(text)
+    return _failed_test_ids(text, tree)
+
+
+def phase_failures(phase: Phase) -> Set[str]:
+    """The phase's failed-test ids, with the tree it ran in written as :data:`TREE`."""
+    return failed_tests(phase.log, phase.cwd)
 
 
 def _isolate_worker() -> None:

@@ -862,7 +862,10 @@ def phase_outcome(
         )
     else:
         require(status == 0, "Corpus test tally disagrees with process status")
-    failed = frozenset(ecosystem._failed_test_ids(output))
+    # As the harness compares them: the tree the phase ran in is a placeholder.
+    # Evidence from before phases recorded their tree has none to replace.
+    tree = phase.get("cwd")
+    failed = frozenset(ecosystem._failed_test_ids(output, tree if isinstance(tree, str) else ""))
     require(not outcome.returncode or bool(failed), "Failed suite has no failed test identities")
     return ecosystem.TestOutcome(outcome.summary, status, outcome.collected), failed
 
