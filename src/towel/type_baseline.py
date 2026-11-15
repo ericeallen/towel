@@ -668,6 +668,25 @@ _NAMES_ANY = re.compile(
 )
 
 
+_UNRESOLVED_MODULE = re.compile(
+    r"(?:module(?: named)?|Library stubs not installed for|Skipping analyzing|"
+    r'Import|imported from|Stub file not found for) "([^"\n]+)"'
+)
+
+
+def unverifiable_summary(path: str, errors: Sequence[TypeDiagnostic]) -> str:
+    """Name the user's file and count modules once across checker and probe diagnostics."""
+    modules = {
+        match.group(1) for error in errors for match in _UNRESOLVED_MODULE.finditer(error.message)
+    }
+    cause = (
+        f"has {len(modules)} unresolved module(s)"
+        if modules
+        else "contains names the type checker cannot type"
+    )
+    return f"{path} {cause}, so a change there cannot be verified: {errors[0].message}"
+
+
 def makes_names_any(error: TypeDiagnostic) -> bool:
     """Whether ``error`` leaves a name the checker treats as ``Any`` wherever it goes.
 

@@ -112,6 +112,7 @@ from ..type_baseline import (
     resolved_path,
     unchanged_lines,
     unlooked_warning,
+    unverifiable_summary,
 )
 from ..reachability import PROBE, Place, probe_plan
 from ..type_inference import (
@@ -1758,8 +1759,7 @@ class HelperAnnotationWiring(EngineState):
             errors = self._type_names_any.get(self._where_checked(path))
             if errors:
                 raise UnverifiableChangeError(
-                    f"{path} holds {len(errors)} name(s) the type checker cannot type, "
-                    f"so a change there cannot be verified: {errors[0].message}\n{UNTYPED_REMEDY}"
+                    f"{unverifiable_summary(self._where_checked(path), errors)}\n{UNTYPED_REMEDY}"
                 )
 
     def _names_the_checker_cannot_type(

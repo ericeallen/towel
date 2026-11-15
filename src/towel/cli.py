@@ -1536,7 +1536,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                 f" {TYPE_CHECKING_REMEDIES}"
             )
         if not (options.json or options.diff):
-            _print_declined(engine.run_report, applied)
+            _print_declined(engine.run_report, applied, target=source)
         if options.stats:
             _print_statistics(engine.run_report)
         if not preview:
@@ -1768,7 +1768,7 @@ def _problems_involving(model: "ImportModel", target: Path) -> List["ImportProbl
     ]
 
 
-def _print_declined(report: "RunReport", applied: int) -> None:
+def _print_declined(report: "RunReport", applied: int, *, target: Optional[Path] = None) -> None:
     """Say what the run declined, and why, so "No refactorings found!" is never the whole story.
 
     Proposals that were built and then not applied are always counted. The
@@ -1794,9 +1794,13 @@ def _print_declined(report: "RunReport", applied: int) -> None:
             f"{counted_reasons(other_proposals)}"
         )
     if unresolved := report.declined_proposals.get(unresolved_reason, 0):
+        problem = report.first_unverifiable_reason
+        if problem and target is not None:
+            root = target if target.is_dir() else target.parent
+            problem = problem.removeprefix(str(root.resolve()) + os.sep)
         detail = (
-            f" First problem: {report.first_unverifiable_reason}"
-            if report.first_unverifiable_reason
+            f" First problem: {problem}"
+            if problem
             else " A name used by the code has no type the checker can establish."
         )
         lines.append(

@@ -716,7 +716,7 @@ def test_a_file_whose_imports_the_checker_cannot_resolve_is_left_alone(
         caplog.text
     )
     proposal = engine.analyze_file(str(first))[0]
-    with pytest.raises(UnverifiableChangeError, match="cannot type"):
+    with pytest.raises(UnverifiableChangeError, match=r"first.py has 1 unresolved module\(s\)"):
         engine.apply_refactoring(str(first), proposal)
     assert oracle.inferences == 0 or "_extracted_func" not in first.read_text()
 

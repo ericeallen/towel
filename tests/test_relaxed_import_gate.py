@@ -145,3 +145,32 @@ def test_signature_comments_keep_the_import_gate(
     with pytest.raises(UnverifiableChangeError):
         engine.apply_refactoring(str(path), proposal)
     assert path.read_text() == source
+
+
+@pytest.mark.parametrize("directory", [False, True])
+@pytest.mark.parametrize("command", ["preview", "dry"])
+def test_unresolved_summary_names_user_file_and_counts_modules(
+    tmp_path: Path, directory: bool, command: str
+) -> None:
+    """Typed round 2 finding 4: staged runs report user paths and unique missing imports."""
+    from tests.test_cli_integration import invoke
+
+    pytest.importorskip("mypy")
+    (tmp_path / "mypy.ini").write_text("[mypy]\nno_site_packages = True\n")
+    target = tmp_path / "selected"
+    target.mkdir()
+    path = target / "program.py"
+    source = "import absent_dependency\n" + _source(typed=True)
+    path.write_text(source)
+    selected = target if directory else path
+    arguments = [command, str(selected)]
+    if command == "dry":
+        arguments += [str(selected), "--no-interactive"]
+    result = invoke([*arguments, "--no-format", "--progress", "none"])
+    assert result.status == 0, result.stderr
+    summary = next(line for line in result.stdout.splitlines() if "First problem:" in line)
+    assert "First problem: program.py" in summary
+    assert "1 unresolved module(s)" in summary
+    assert "absent_dependency" in summary
+    assert "towel-stage-" not in summary
+    assert path.read_text() == source
