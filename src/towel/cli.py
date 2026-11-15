@@ -1372,7 +1372,8 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
             raise ValueError("Input and output must not contain one another")
         if destination.exists() or Path(output_path).is_symlink():
             raise ValueError(
-                "Output already exists; choose a new path or explicitly refactor in place"
+                "Output already exists; choose a new path"
+                " (to refactor in place, give the same path twice)"
             )
     refuse_unparsed_program(source, options.exclude)
     if options.cross_module and is_dir:

@@ -61,8 +61,10 @@ def test_an_existing_destination_is_refused_unless_empty_and_allowed(tmp_path: P
         copy_project(source, occupied, allow_empty=True)
     empty = tmp_path / "empty"
     empty.mkdir()
-    with pytest.raises(ValueError, match="already exists"):
+    with pytest.raises(ValueError, match="already exists") as refusal:
         copy_project(source, empty)
+    # User audit, error case 30: the refusal did not say how to refactor in place.
+    assert "(to refactor in place, give the same path twice)" in str(refusal.value)
     copy_project(source, empty, allow_empty=True)
     assert (empty / "m.py").read_text() == "x = 1\n"
 
