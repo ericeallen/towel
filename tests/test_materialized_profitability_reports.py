@@ -111,10 +111,10 @@ def test_unexpected_programming_errors_still_abort_without_output(
     assert not destination.exists()
 
 
-def test_typing_decline_does_not_inherit_candidate_profitability_explanation(
+def test_mixed_declines_explain_profitability_only_after_the_unprofitable_pairs(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Typed audit item 3 (R10): typing refusals are not helper-cost refusals."""
+    """Typed round 2 finding 6: real unprofitable pairs keep their own explanation."""
     from towel.cli import _print_declined
     from towel.unification.fixed_point import RunReport
 
@@ -125,7 +125,9 @@ def test_typing_decline_does_not_inherit_candidate_profitability_explanation(
     _print_declined(report, applied=0)
     output = capsys.readouterr().out
     assert "refused by the type checker" in output
-    assert "does not repay" not in output
+    lines = output.splitlines()
+    explanation = next(i for i, line in enumerate(lines) if "does not repay" in line)
+    assert "unprofitable_helper 4" in lines[explanation - 1]
 
 
 def test_unresolved_import_summary_names_the_first_module_and_remedies(
@@ -149,3 +151,25 @@ def test_unresolved_import_summary_names_the_first_module_and_remedies(
     assert "install the project's dependencies where Towel runs" in output
     assert "its file holds a name" not in output
     assert "does not repay" not in output
+
+
+@pytest.mark.parametrize("applied", [0, 1])
+@pytest.mark.parametrize("proposal_unprofitable", [False, True])
+def test_profitability_explanation_follows_only_a_reported_cost_decline(
+    capsys: pytest.CaptureFixture[str], applied: int, proposal_unprofitable: bool
+) -> None:
+    """Typed round 2 finding 6: typing and hidden pair counts never get a cost explanation."""
+    from towel.cli import _print_declined
+    from towel.unification.fixed_point import DeclineReason, RunReport
+
+    declines: dict[DeclineReason, int] = {"refused by the type checker": 1}
+    if proposal_unprofitable:
+        declines["unprofitable helper"] = 2
+    report = RunReport(declined_pairs={"unprofitable_helper": 4}, declined_proposals=declines)
+    _print_declined(report, applied=applied)
+    lines = capsys.readouterr().out.splitlines()
+    explanations = [i for i, line in enumerate(lines) if "does not repay" in line]
+    assert len(explanations) == int(proposal_unprofitable) + int(applied == 0)
+    for index in explanations:
+        assert "unprofitable" in lines[index - 1]
+        assert "type checker" not in lines[index - 1]

@@ -1780,13 +1780,22 @@ def _print_declined(report: "RunReport", applied: int, *, target: Optional[Path]
     from towel.unification.fixed_point import DeclineReason, counted_reasons
 
     lines: List[str] = []
+    profitability = (
+        "  The shared work does not repay the helper and caller complexity; "
+        "these blocks were left unchanged."
+    )
+    if unprofitable := report.declined_proposals.get("unprofitable helper", 0):
+        lines.append(
+            f"  {unprofitable} proposal(s) not applied: unprofitable helper {unprofitable}"
+        )
+        lines.append(profitability)
     unresolved_reason: DeclineReason = (
         "not verifiable: its file holds a name the type checker cannot type"
     )
     other_proposals = {
         reason: count
         for reason, count in report.declined_proposals.items()
-        if reason != unresolved_reason
+        if reason not in {unresolved_reason, "unprofitable helper"}
     }
     if other_proposals:
         lines.append(
@@ -1819,17 +1828,12 @@ def _print_declined(report: "RunReport", applied: int, *, target: Optional[Path]
             f"  {sum(report.declined_pairs.values())} candidate pair(s) declined: "
             f"{counted_reasons(report.declined_pairs)}"
         )
+        if report.declined_pairs.get("unprofitable_helper", 0):
+            lines.append(profitability)
     if lines:
         print("\nDeclined (use --explain for source locations and reasons):")
         for line in lines:
             print(line)
-        if report.declined_proposals.get("unprofitable helper", 0) or (
-            not report.declined_proposals and report.declined_pairs.get("unprofitable_helper", 0)
-        ):
-            print(
-                "  The shared work does not repay the helper and caller complexity; "
-                "these blocks were left unchanged."
-            )
 
 
 def _print_statistics(report: "RunReport") -> None:
