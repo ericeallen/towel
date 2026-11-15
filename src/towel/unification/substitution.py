@@ -110,6 +110,8 @@ class Substitution:
     # has no effect on behavior until a promotion pass populates it.
     promoted_literal_args: Dict[str, Dict[int, ast.AST]] = field(default_factory=dict)
     aug_assign_mappings: Dict[str, Dict[int, str]] = field(default_factory=dict)
+    # Shared text retained around a differing raw f-string fragment.
+    fstring_affixes: Dict[str, Tuple[str, str]] = field(default_factory=dict)
     literal_pool: Optional[LiteralPool] = None
 
     def add_mapping(
@@ -185,6 +187,7 @@ class Substitution:
         """Forget ``param_name``: its expressions, the mappings to it, and its thunk variables."""
         if self.literal_pool is not None and self.literal_pool.parameter == param_name:
             self.literal_pool = None
+        self.fstring_affixes.pop(param_name, None)
         self.param_expressions.pop(param_name, None)
         self.function_params.pop(param_name, None)
         self.occurrence_mappings = {

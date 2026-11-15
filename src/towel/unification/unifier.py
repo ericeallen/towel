@@ -26,12 +26,14 @@ for a substitution making two terms equal.
 """
 
 import ast
+from os.path import commonprefix
 from typing import Callable, Dict, Optional, List, Tuple, Any, Sequence, Type, Union, Iterator
 
 from .constant_consistency import constant_identity
 from .ast_paths import Path, has_shared_expressions, path_map, resolve_path
 from .compiler_literals import (
     common_literal_candidates,
+    literal_fragment_transfer_supported,
     immutable_literal_value,
     is_pooled_expression,
     pooled_expression_positions,
@@ -372,8 +374,8 @@ class Unifier(Parameterization, LiteralPromotion):
         # A construct that binds names (loop targets, lambda parameters,
         # comprehension targets, with-items, handler names, walrus targets)
         # is unified by a method of its own: the bound names are
-        # alpha-equivalent, never parameterized, and f-string literal parts
-        # and annotations are compared, never parameterized, likewise.
+        # alpha-equivalent, never parameterized. F-string text needs fields
+        # of its own; annotations retain their static syntax.
         handler = self._BINDING_CONSTRUCT_UNIFIERS.get(type(first_node))
         if handler is not None:
             return handler(self, nodes, substitution, list(block_indices))
@@ -1124,22 +1126,7 @@ class Unifier(Parameterization, LiteralPromotion):
     def _unify_joined_str(
         self, nodes: List[ast.JoinedStr], substitution: Substitution, block_indices: List[int]
     ) -> bool:
-        """
-        Unify f-strings (JoinedStr), never parameterizing Constant children.
-
-        F-strings have strict structure requirements:
-        - values list can only contain Constant or FormattedValue nodes
-        - Constant nodes are string literals and must NEVER be parameterized
-        - FormattedValue nodes contain expressions that CAN be unified/parameterized
-
-        Args:
-            nodes: List of JoinedStr nodes
-            substitution: Current substitution
-            block_indices: Block indices
-
-        Returns:
-            True if unification succeeded
-        """
+        """Unify text fragments through exact-string formatting, retaining shared affixes."""
         values_lists = [n.values for n in nodes]
         if not all(len(v) == len(values_lists[0]) for v in values_lists):
             # Different number of components - can't unify
@@ -1155,11 +1142,33 @@ class Unifier(Parameterization, LiteralPromotion):
                 return False
 
             if all_instances(components, ast.Constant):
-                # String literal parts are compared, never parameterized
                 values = [c.value for c in components]
                 if not all(v == values[0] for v in values):
-                    # Different string literals - can't unify f-strings with different text
-                    return False
+                    if (
+                        not self.parameterize_constants
+                        or not literal_fragment_transfer_supported()
+                        or not all(type(value) is str for value in values)
+                        or self._read_where_it_stands(components, block_indices, occurrences=True)
+                        or len(substitution.param_expressions) >= self.max_parameters
+                    ):
+                        return False
+                    texts = [str(value) for value in values]
+                    # A single chunk is returned by identity, including when
+                    # used as a format spec. Never split that pooled object.
+                    prefix = commonprefix(texts) if len(values_lists[0]) > 1 else ""
+                    tails = [text[len(prefix) :] for text in texts]
+                    suffix = (
+                        commonprefix([tail[::-1] for tail in tails])[::-1]
+                        if len(values_lists[0]) > 1
+                        else ""
+                    )
+                    parameter = self._fresh_parameter_name()
+                    substitution.fstring_affixes[parameter] = (prefix, suffix)
+                    for index, component in zip(block_indices, components):
+                        path = substitution.source_path(index, component)
+                        if path is None:
+                            return False
+                        substitution.add_occurrence_mapping(index, path, component, parameter)
 
             elif all_instances(components, ast.FormattedValue):
                 value_exprs = [c.value for c in components]
@@ -1173,7 +1182,7 @@ class Unifier(Parameterization, LiteralPromotion):
 
                 # format_spec can be None or another JoinedStr
                 format_specs = [c.format_spec for c in components]
-                if format_specs[0] is not None:
+                if any(spec is not None for spec in format_specs):
                     if not all_instances(format_specs, ast.JoinedStr):
                         return False
                     if not self._unify_joined_str(format_specs, substitution, block_indices):

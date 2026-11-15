@@ -225,8 +225,8 @@ class ParameterSubstituter(ast.NodeTransformer):
 
     def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
         # JoinedStr (f-string) can only have Constant or FormattedValue as direct children
-        # Ordinary substitutions never replace f-string text; certified
-        # caller literal slots retain its exact object through formatting.
+        # Exact strings use no-spec fields; other expressions keep their
+        # original formatting and evaluation order.
         new_values: List[ast.expr] = []
         previous_state = self.in_joinedstr
         self.in_joinedstr = True
@@ -239,6 +239,20 @@ class ParameterSubstituter(ast.NodeTransformer):
                     pool = self.subst.literal_pool
                     path = self._template_paths.get(value)
                     parameter = self.subst.get_param_for_expr(self.block_idx, value, path=path)
+                    if parameter in self.subst.fstring_affixes and parameter in self.param_names:
+                        prefix, suffix = self.subst.fstring_affixes[parameter]
+                        if prefix:
+                            new_values.append(ast.Constant(prefix))
+                        new_values.append(
+                            ast.FormattedValue(
+                                value=ast.Name(id=parameter, ctx=ast.Load()),
+                                conversion=-1,
+                                format_spec=None,
+                            )
+                        )
+                        if suffix:
+                            new_values.append(ast.Constant(suffix))
+                        continue
                     slot = None if pool is None else pool.index_at(self.block_idx, path)
                     if (
                         pool is not None
@@ -760,6 +774,12 @@ def _unified_argument(
     for expr_block_idx, expr in substitution.param_expressions[param_name]:
         if expr_block_idx != block_idx:
             continue
+        if param_name in substitution.fstring_affixes:
+            assert isinstance(expr, ast.Constant) and type(expr.value) is str
+            prefix, suffix = substitution.fstring_affixes[param_name]
+            return ast.copy_location(
+                ast.Constant(expr.value[len(prefix) : len(expr.value) - len(suffix)]), expr
+            )
         if substitution.is_function_param(param_name):
             return _thunk(expr, substitution.get_function_param_vars(param_name))
         if param_name in substitution.params_used_as_callee:

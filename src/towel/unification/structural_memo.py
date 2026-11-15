@@ -99,6 +99,7 @@ class StoredSubstitution:
     inlined_parameters: Tuple[str, ...]
     promoted_literal_args: Tuple[Tuple[str, Tuple[Tuple[int, Path], ...]], ...]
     renames: Tuple[Tuple[Tuple[str, str], ...], ...]
+    fstring_affixes: Tuple[Tuple[str, Tuple[str, str]], ...] = ()
     literal_pool: Optional[StoredLiteralPool] = None
 
 
@@ -114,6 +115,7 @@ def store_substitution(
         return maps[block_index][node]
 
     return StoredSubstitution(
+        fstring_affixes=tuple(sorted(substitution.fstring_affixes.items())),
         mappings=tuple(sorted(substitution.mappings.items())),
         occurrence_mappings=tuple(sorted(substitution.occurrence_mappings.items())),
         param_expressions=tuple(
@@ -154,6 +156,7 @@ def load_substitution(
 ) -> Tuple[Substitution, List[Dict[str, str]]]:
     """A fresh substitution over ``blocks``, plus the hygienic renames to hand back."""
     substitution = Substitution(
+        fstring_affixes=dict(stored.fstring_affixes),
         mappings=dict(stored.mappings),
         occurrence_mappings=dict(stored.occurrence_mappings),
         param_expressions={

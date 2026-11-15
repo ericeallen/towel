@@ -121,11 +121,15 @@ class TestUnifierBatch2(unittest.TestCase):
         assert subst is not None
         self.assertGreaterEqual(len(subst.param_expressions), 1)
 
-    def test_fstring_literal_mismatch_failure(self) -> None:
+    def test_fstring_literal_mismatch_parameterizes_text(self) -> None:
+        """Audit D1: differing text is supported through a formatted string field."""
         b0 = parse_block("s = f'hi {x}'")
         b1 = parse_block("s = f'bye {x}'")
         uni = Unifier()
-        self.assertIsNone(uni.unify_blocks([b0, b1], [{}, {}]))
+        substitution = uni.unify_blocks([b0, b1], [{}, {}])
+        self.assertIsNotNone(substitution)
+        assert substitution is not None
+        self.assertEqual(substitution.fstring_affixes, {"__param_0": ("", " ")})
 
     def test_bound_var_param_refusal_in_loop_body(self) -> None:
         b0 = parse_block("for i in xs:\n    y = i + a")
