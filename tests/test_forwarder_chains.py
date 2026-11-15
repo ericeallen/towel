@@ -99,12 +99,13 @@ def _summaries(source: str, names: list[str]) -> list[object]:
 
 
 def _chain(count: int) -> str:
+    # Distinct field counts retain the live-variable suffix after D1 text parameterization.
     return "order = None\n" + textwrap.dedent("\n".join(f"""
         def f{index}():
             items = [i for i in order.items if i.in_stock]
             subtotal = sum(i.price for i in items)
             total = round(subtotal * 1.08, 2)
-            return f"F{index} {{order.id}}: ${{total}}"
+            return f"F{index} {{order.id}}: ${'{total}' * (index + 1)}"
         """ for index in range(count)))
 
 
@@ -129,6 +130,7 @@ def test_identical_blocks_with_a_live_variable_share_one_helper(tmp_path: Path) 
 
 
 def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: Path) -> None:
+    # Audit D1 shares literal text; distinct conversions keep the caller tails separate.
     final, _applied = refactor_to_fixed_point_silently(
         write_module(
             tmp_path,
@@ -137,19 +139,19 @@ def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: 
                 tmp = v + 1
                 base = tmp - 3
                 total = base * 2
-                return f"a {total}"
+                return f"a {total!s}"
 
             def b(v):
                 tmp = v + 1
                 base = tmp - 3
                 total = base * 2
-                return f"b {total}"
+                return f"b {total!r}"
 
             def c(v):
                 step = v + 1
                 offset = step - 3
                 amount = offset * 2
-                return f"c {amount}"
+                return f"c {amount!a}"
             """),
         ),
         3,
@@ -161,7 +163,7 @@ def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: 
     assert _applied == 1
     assert (
         unparsed_body(functions["c"])
-        == "_towel_keep_step, _towel_keep_offset, amount = __extracted_func_0()\nreturn f'c {amount}'"
+        == "_towel_keep_step, _towel_keep_offset, amount = __extracted_func_0()\nreturn f'c {amount!a}'"
     )
 
 

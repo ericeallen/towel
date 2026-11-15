@@ -38,6 +38,7 @@ from towel.unification.unifier import Unifier
         ('f"{x=} ERROR"', 'f"{x=} WARN"'),
         ('rf"\\path\\ERROR {x}"', 'rf"\\path\\WARN {x}"'),
         ('f"{x} {{inside}}"', 'f"{x} {{other}}"'),
+        ('f"{x} {{a}} value"', 'f"{x} b value"'),
         ('f"{x}" " ERROR"', 'f"{x}" " WARN"'),
         ("f\"{x} {b'ERROR'!r}\"", "f\"{x} {b'WARN'!r}\""),
         ("f\"{x} {f'ERROR {x}'}\"", "f\"{x} {f'WARN {x}'}\""),

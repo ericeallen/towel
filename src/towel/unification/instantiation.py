@@ -303,9 +303,10 @@ def _binding_form(
 class _ConstantStringFormats(ast.NodeTransformer):
     """No-spec formatting of an exact literal string keeps that same object.
 
-    Normalize only copied proof syntax, preserving individual JoinedStr
-    chunks and their order. Conversions, format specs and dynamic values
-    remain intact; no user-defined formatting operation is erased.
+    Normalize only copied proof syntax, coalescing adjacent literal chunks
+    only when a dynamic field still requires string assembly. Conversions,
+    format specs and dynamic values remain intact; no user-defined
+    formatting operation is erased.
     """
 
     def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:

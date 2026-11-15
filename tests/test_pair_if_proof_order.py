@@ -275,9 +275,8 @@ def test_accepted_pair_retains_both_fresh_proofs_for_each_caller(
 
 
 def test_unification_failure_avoids_initial_certificates(tmp_path: Path) -> None:
-    source = SOURCE.replace("answer = doubled + 3", "answer = f'{doubled}:first'").replace(
-        "answer = doubled + 7", "answer = f'{doubled}:second'"
-    )
+    # Audit D1 now unifies differing f-string text; distinct operators still fail.
+    source = SOURCE.replace("answer = doubled + 7", "answer = doubled - 7")
     early = _inputs(tmp_path, source)
     assert _proposal(early) is None
     assert len(early.engine.proofs) == 2 and all(item[2] for item in early.engine.proofs)

@@ -309,13 +309,13 @@ def test_runtime_literal_facts_ignore_metadata_targets_and_slices() -> None:
         )
         is None
     )
-    assert (
-        Unifier().unify_blocks(
-            [ast.parse("return f'one {value}'").body, ast.parse("return f'two {value}'").body],
-            [{}, {}],
-        )
-        is None
+    # Audit D1 intentionally permits text fragments while retaining pool identity.
+    substitution = Unifier().unify_blocks(
+        [ast.parse("return f'one {value}'").body, ast.parse("return f'two {value}'").body],
+        [{}, {}],
     )
+    assert substitution is not None
+    assert substitution.fstring_affixes == {"__param_0": ("", " ")}
 
 
 def test_literal_membership_keeps_ordinary_hash_and_equality_effects(tmp_path: Path) -> None:
