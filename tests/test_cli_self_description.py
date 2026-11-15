@@ -26,7 +26,7 @@ from typing import Iterator, List, Optional, Tuple
 import pytest
 
 from towel import cli, type_inference
-from tests.test_cli_integration import invoke
+from tests.test_cli_integration import DUPLICATES, HELPER, invoke
 
 _EXAMPLE = re.compile(r"^\s*towel (?P<arguments>[^#]*?)\s*(#.*)?$")
 
@@ -197,6 +197,56 @@ def test_every_help_example_is_a_valid_command_line(example: str) -> None:
         cli._build_parser().parse_args(shlex.split(example))
     except SystemExit as error:
         pytest.fail(f"towel {example} is refused by the parser (exit {error.code})")
+
+
+def test_the_top_level_help_says_what_towel_does_in_one_sentence() -> None:
+    """Kimi docs review 7: "Explain 'DRYs'"; the description was "A Python tool that DRYs your
+    code - finds and refactors repeated code"."""
+    description = cli._build_parser().description or ""
+    assert "DRY" not in description
+    assert len(re.findall(r"[.!?](?:\s|$)", description)) == 1, description
+    assert "helper function" in description
+
+
+@pytest.mark.parametrize("command", COMMANDS, ids=lambda command: " ".join(command) or "towel")
+def test_no_help_text_uses_towels_internal_vocabulary(
+    command: List[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """User audit CLI-04: the first line of ``dry --help`` said "anti-unification"."""
+    text = " ".join(_help(command, monkeypatch).split())
+    assert not JARGON.search(text) and "DRYs" not in text, JARGON.search(text)
+
+
+@pytest.mark.parametrize("command", ["preview", "dry", "rename-helpers"])
+def test_every_command_has_a_description_and_examples(command: str) -> None:
+    """User audit CLI-04 and Kimi docs review 7: preview had no examples."""
+    parser = _command(command)
+    assert parser.description
+    examples = [line for line in (parser.epilog or "").splitlines() if _EXAMPLE.match(line)]
+    assert 2 <= len(examples) <= 3, examples
+
+
+SOURCES = {"orders.py": DUPLICATES, "helpers.py": HELPER}
+"""``src/`` for the examples: a module with a duplicate, and one with a helper to name."""
+
+ANSWERS = {"dry": "y\n", "rename-helpers": '{"__extracted_func_0": "doubled"}\n'}
+"""What a person types at each command's question: yes, and an assistant's suggested name."""
+
+
+@pytest.mark.parametrize("example", _examples())
+def test_every_help_example_works_in_a_directory_holding_only_src(
+    example: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """User audit CLI-06: ``towel rename-helpers src/``, the help's own example, was refused in
+    a directory holding only ``src/`` for want of project metadata."""
+    (tmp_path / "src").mkdir()
+    for name, text in SOURCES.items():
+        (tmp_path / "src" / name).write_text(text)
+    monkeypatch.chdir(tmp_path)
+    arguments = shlex.split(example)
+    result = invoke(arguments, stdin=ANSWERS.get(arguments[0], ""))
+    assert result.status == 0, result
+    assert "Error" not in result.stderr, result.stderr
 
 
 def _project(root: Path, files: int, *, under: str = "") -> Path:

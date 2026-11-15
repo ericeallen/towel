@@ -107,18 +107,23 @@ def _build_parser() -> argparse.ArgumentParser:
     """The command-line parser, shared by ``main`` and the tests."""
     parser = argparse.ArgumentParser(
         prog="towel",
-        description="A Python tool that DRYs your code - finds and refactors repeated code",
+        description="""\
+Towel finds repeated code in Python files, including copies that differ in a
+few names or values, and replaces it with calls to new helper functions.""",
         formatter_class=_HelpFormatter,
-        epilog="""
-Examples:
-  towel preview src/                    # Preview duplicates (read-only)
-  towel dry src/ cleaned/               # Apply refactorings to new directory
-  towel dry src/ src/                   # Apply refactorings in-place
-  towel rename-helpers src/             # Prepare and apply helper-name changes
+        epilog="""\
+Examples, in a directory holding src/:
+  towel preview src/          # Show what would change, changing nothing
+  towel dry src/ cleaned/     # Write a refactored copy of src/ to cleaned/
+  towel dry src/ src/         # Refactor in place (commit your work first)
+  towel rename-helpers src/ --complete-scope    # Name the new helpers
 
-For more help on a specific command:
-  towel <command> --help
-        """,
+Run towel COMMAND --help for a command's options and examples, and see
+docs/QUICKSTART.md for a first run.
+
+Exit status: 0 done, including when there was nothing to change; 1 failed,
+refused, or answered "no"; 2 invalid arguments, or a rename refused; 124 time
+limit reached; 130 interrupted; 143 terminated.""",
     )
 
     parser.add_argument(
@@ -127,10 +132,10 @@ For more help on a specific command:
         version=f"towel {version('code-towel')}",
     )
 
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    subparsers = parser.add_subparsers(dest="command", title="commands", metavar="COMMAND")
 
-    _add_dry_parser(subparsers)
     _add_preview_parser(subparsers)
+    _add_dry_parser(subparsers)
     _add_rename_helpers_parser(subparsers)
     recovery = subparsers.add_parser("recover", help="Roll back an interrupted local transaction")
     recovery.add_argument(
@@ -429,16 +434,29 @@ def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentPar
     """Add 'dry' subcommand parser."""
     parser = subparsers.add_parser(
         "dry",
-        help="Apply refactorings to remove duplicate code",
+        help="Refactor repeated code, into a new directory or in place",
         formatter_class=_HelpFormatter,
-        description="Analyze and apply refactorings using anti-unification to files or directories.",
-        epilog="""
-Examples:
-  towel dry src/ cleaned/                    # Refactor until nothing changes
-  towel dry file.py out.py --no-interactive  # Skip the confirmation prompt
-  towel dry src/ out/ --max-refactorings 50  # Stop after 50 refactorings
-  towel dry src/ out/ --progress detail      # Verbose per-phase output
-        """,
+        description="""\
+Extract each piece of repeated code into a helper function and replace the
+copies with calls to it. dry writes the result to output, a new path, and
+leaves input unchanged; give the same path twice to refactor in place. It asks
+before writing anything, then keeps going until nothing more can be
+extracted. Run towel preview first to see what would change.""",
+        epilog="""\
+Examples, in a directory holding src/:
+  # Write a refactored copy of src/ to cleaned/
+  towel dry src/ cleaned/
+
+  # Refactor src/ in place (commit your work first, to review the change)
+  towel dry src/ src/
+
+  # Unattended: no question, and give up after ten minutes
+  towel dry src/ out/ --no-interactive --time-limit 600
+
+When it changes anything, dry also writes .towel-helpers.json into output (or
+output.towel-helpers.json beside an output file): each new helper's call
+sites, for naming the helpers with rename-helpers. Delete it once you no
+longer need it. TOWEL_WORKERS=N limits the analysis to N worker processes.""",
     )
 
     parser.add_argument(
@@ -626,10 +644,22 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     """Add 'preview' subcommand parser."""
     parser = subparsers.add_parser(
         "preview",
-        help="Preview the complete dry run without modifying input files",
+        help="Show what dry would change, changing nothing",
         formatter_class=_HelpFormatter,
-        description="""Run dry's complete pipeline in temporary output, including type checks,
-formatting and follow-up extractions, without modifying input files.""",
+        description="""\
+Show what towel dry would change, without changing any file: preview runs the
+same complete refactoring as dry, with its type checks and formatting, on a
+temporary copy, then prints a summary and a unified diff.""",
+        epilog="""\
+Examples, in a directory holding src/:
+  # The summary and diff of everything dry would change
+  towel preview src/
+
+  # Only the summary: how many refactorings, and any that were declined
+  towel preview src/ --summary
+
+  # A faster, rougher list, without type checks or formatting
+  towel preview src/ --quick""",
     )
 
     parser.add_argument(
@@ -678,52 +708,30 @@ def _add_rename_helpers_parser(
     """Add 'rename-helpers' subcommand parser."""
     parser = subparsers.add_parser(
         "rename-helpers",
-        help="Rename helpers from a JSON mapping or a pasted assistant response",
+        help="Give the generated helpers meaningful names, updating every call",
         formatter_class=_HelpFormatter,
-        description="""
-Rename auto-generated _extracted_func_* and __extracted_func_* helpers into
-meaningful names.
+        description="""\
+Rename the helpers Towel generated (__extracted_func_0 and so on) to
+meaningful names, updating every call.
 
-This tool prepares source excerpts for a coding assistant to suggest better
-names based on the code's purpose and context. You can use Claude Code,
-ChatGPT, or any other AI coding assistant to generate the names.
+Without --rename-file, rename-helpers prints a prompt that shows each helper's
+code to an AI assistant such as Claude or ChatGPT; paste the assistant's JSON
+answer back and the names are applied. With --rename-file, it applies a JSON
+file that maps old names to new ones, such as
+  {"__extracted_func_0": "order_total"}
 
-The tool works in two modes:
+Give the project's root, so that Towel sees every file that uses the helpers:
+the directory with pyproject.toml, setup.cfg or setup.py, or a package (a
+directory with __init__.py). If it has none of these, add --complete-scope to
+declare that the directory you give holds every such file. A file outside it
+is never changed: a rename it would need is refused. --list needs neither.""",
+        epilog="""\
+Examples, in a directory holding src/:
+  # List the helpers Towel generated
+  towel rename-helpers src/ --list
 
-1. INTERACTIVE MODE (default):
-   Generates a prompt for an LLM to review your code and suggest new names.
-   You paste the LLM's response back, and the tool applies the renamings.
-
-2. FILE MODE (--rename-file):
-   Provide a JSON file with old_name -> new_name mappings.
-   Select the project root so ordinary consumers are included. Use
-   path-qualified keys or --file to select definitions. A narrow target is
-   refused if a consumer outside it needs an edit; files outside the target
-   are never changed.
-   For a project without metadata or regular-package ancestry, --complete-scope
-   explicitly declares that the target contains every ordinary consumer.
-        """,
-        epilog="""
-Examples:
-  # Interactive mode: generate LLM prompt and apply suggestions
-  towel rename-helpers path/to/project
-
-  # List all extracted helpers
-  towel rename-helpers path/to/project --list
-
-  # Apply renamings from a JSON file
-  towel rename-helpers path/to/project --rename-file renames.json
-
-  # Show the renames without writing files
-  towel rename-helpers path/to/project --rename-file renames.json --preview
-
-  # Specify specific files or functions
-  towel rename-helpers path/to/project --file src/mymodule.py
-  towel rename-helpers path/to/project --function __extracted_func_7
-
-  # An unmarked project: explicitly declare its complete consumer scope
-  towel rename-helpers project/ --complete-scope --rename-file renames.json
-        """,
+  # Name them with an AI assistant (src/ holds every file that uses them)
+  towel rename-helpers src/ --complete-scope""",
     )
 
     parser.add_argument(
