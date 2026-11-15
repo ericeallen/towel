@@ -1347,12 +1347,16 @@ class HelperAnnotationWiring(EngineState):
                 innermost = node
         return innermost.returns if innermost is not None else None
 
-    def _parsed_host(self, file_path: str) -> Optional[ast.Module]:
+    def _parsed_host(self, file_path: str, *, type_comments: bool = False) -> Optional[ast.Module]:
         source = try_read_source(file_path)
         if source is None:
             return None
         try:
-            return self._parse_source(source)
+            return (
+                ast.parse(source, type_comments=True)
+                if type_comments
+                else self._parse_source(source)
+            )
         except SyntaxError:
             return None
 
@@ -1705,7 +1709,7 @@ class HelperAnnotationWiring(EngineState):
             return False
         for replacement in proposal.replacements:
             path = replacement.file_path or proposal.file_path
-            tree = self._parsed_host(path)
+            tree = self._parsed_host(path, type_comments=True)
             if tree is None:
                 return False
             enclosing = [

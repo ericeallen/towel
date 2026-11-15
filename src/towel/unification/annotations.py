@@ -153,7 +153,11 @@ def function_uses_annotations(function: FunctionNode) -> bool:
         every.append(arguments.vararg)
     if arguments.kwarg:
         every.append(arguments.kwarg)
-    return function.returns is not None or any(arg.annotation is not None for arg in every)
+    return (
+        function.type_comment is not None
+        or function.returns is not None
+        or any(arg.annotation is not None or arg.type_comment is not None for arg in every)
+    )
 
 
 def _parameter_annotations(function: FunctionNode) -> Dict[str, ast.expr]:

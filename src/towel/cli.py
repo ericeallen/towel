@@ -1119,15 +1119,15 @@ def _target_has_annotations(project_path: Path, excluded: Sequence[str]) -> bool
     """Whether any selected source has annotations an optional checker could verify."""
     for path in python_sources(project_path, excluded=excluded):
         try:
-            tree = ast.parse(read_source(path))
+            tree = ast.parse(read_source(path), type_comments=True)
         except (OSError, UnicodeError, SyntaxError, ValueError):
             continue  # This census only chooses a note; analysis handles unreadable source.
         if any(
             isinstance(node, ast.AnnAssign)
             or isinstance(node, ast.arg)
-            and node.annotation is not None
+            and (node.annotation is not None or node.type_comment is not None)
             or isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.returns is not None
+            and (node.returns is not None or node.type_comment is not None)
             for node in ast.walk(tree)
         ):
             return True

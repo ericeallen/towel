@@ -117,3 +117,31 @@ def test_scenario_16_with_real_mypy_and_unavailable_pytest(
             assert "extracted_func" in result
     finally:
         oracle.close()
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("annotate_helpers", [False, True])
+def test_signature_comments_keep_the_import_gate(
+    tmp_path: Path, strict: bool, annotate_helpers: bool
+) -> None:
+    """Typed round 2 finding 2: signature comments are checked bodies, never bare callers."""
+    path = tmp_path / "program.py"
+    source = "import absent_dependency\n" + _source(typed=False).replace(
+        "def first(value):", "def first(value):\n    # type: (int) -> int"
+    ).replace("def second(value):", "def second(value):\n    # type: (int) -> int")
+    assert "# type:" in source
+    path.write_text(source)
+    missing = TypeDiagnostic(
+        str(path),
+        'Cannot find implementation or library stub for module named "absent_dependency"',
+        1,
+    )
+    engine = UnificationRefactorEngine(
+        type_oracle=_Oracle(lambda _: CheckSuccess((missing,))),
+        strict=strict,
+        annotate_helpers=annotate_helpers,
+    )
+    proposal = engine.analyze_file(str(path))[0]
+    with pytest.raises(UnverifiableChangeError):
+        engine.apply_refactoring(str(path), proposal)
+    assert path.read_text() == source

@@ -30,6 +30,7 @@ from tests.test_cli_integration import invoke
         ("def f(value: int):\n    return value + 1\n", True),
         ("def f(value) -> int:\n    return value + 1\n", True),
         ("answer: int = 42\n", True),
+        ("def f(value):\n    # type: (int) -> int\n    return value + 1\n", True),
     ],
 )
 def test_missing_optional_checkers_note_only_annotated_targets(
