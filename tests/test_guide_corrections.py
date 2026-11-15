@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import re
+import tomllib
 
 import pytest
 
@@ -350,3 +351,87 @@ def test_selective_application_example_gives_the_result_of_the_calls_it_replaced
     assert results["after"] == results["before"]
     assert "__extracted_func_0" in results["after"]["utils.py"]
     assert results["after"]["orders.py"] == sources["orders.py"]
+
+
+def _command_blocks(page: str) -> list[list[str]]:
+    """The command lines of each ```bash block, without their trailing comments."""
+    return [
+        [line.split("  #", 1)[0].rstrip() for line in block.splitlines() if line.strip()]
+        for block in re.findall(r"(?ms)^```bash\n(.*?)^```", page)
+    ]
+
+
+def _bare_pip_installs(page: str) -> list[str]:
+    """`pip install` lines that would reach a system Python: no environment was activated."""
+    return [
+        line
+        for block in _command_blocks(page)
+        for index, line in enumerate(block)
+        if re.match(r"(python3? -m )?pip3? install\b", line)
+        and not any("/bin/activate" in earlier for earlier in block[:index])
+    ]
+
+
+def test_install_instructions_do_not_depend_on_a_system_pip() -> None:
+    """Audit finding 4: the first command a stranger runs must work.
+
+    The README led with `pip install code-towel`. On macOS that is `pip: command not
+    found`, and Homebrew's `python3 -m pip` answers externally-managed-environment
+    (PEP 668; Debian marks its Python the same way, which was not run here). The
+    section now leads with a tool install, then a virtual environment, and still
+    warns about the unrelated `towel` distribution.
+
+    Checked against the published 1.949 on macOS, 2026-11-14: `uv tool install
+    code-towel` with only the 3.9 of macOS's developer tools on PATH fetched a Python
+    and installed 1.949; `pipx install` (pipx run through uvx), the virtual-environment
+    recipe on 3.13 and 3.14, the extras, the three upgrade commands and `uvx --from`
+    all worked as printed.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    install = _section(readme, "## Install")
+    commands = [line for block in _command_blocks(install) for line in block]
+    assert commands[0] == "uv tool install code-towel"
+    assert "# or: pipx install code-towel" in install
+    assert 'python3 -m venv .venv && .venv/bin/pip install "code-towel>=1.414"' in commands
+    assert "belongs to an unrelated project" in _compact(install)
+    for page in (readme, _guide("QUICKSTART.md")):
+        assert _bare_pip_installs(page) == []
+    assert _bare_pip_installs("```bash\npip install code-towel\n```\n") == [
+        "pip install code-towel"
+    ]
+    assert _bare_pip_installs("```bash\npython3 -m pip install code-towel  # system\n```\n")
+    activated = "```bash\n. .venv/bin/activate\npip install code-towel\n```\n"
+    assert _bare_pip_installs(activated) == []
+
+    classifiers = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["classifiers"]
+    minors = sorted(
+        (int(minor) for minor in re.findall(r"Python :: 3\.(\d+)", "\n".join(classifiers)))
+    )
+    supported = f"Towel runs on Python 3.{minors[0]} to 3.{minors[-1]}."
+    assert supported in _compact(install), "The Install section states the classifiers' range"
+
+
+def test_pip_recipes_cannot_fall_back_to_a_withdrawn_release() -> None:
+    """Found while checking the install commands against the published 1.949.
+
+    Releases 1.0.0 to 1.0.4 are yanked for broken import handling and accept Python
+    3.9; every later release needs 3.11. The pip 21.2.4 that comes with the Python
+    3.9.6 of macOS's developer tools therefore answers `pip install code-towel` by
+    installing 1.0.4, whose `towel --version` prints 1.0.2. With a lower bound of
+    1.414, the first release that is not yanked, the same pip exits 1.
+    """
+    history = _compact(_guide("RELEASING.md"))
+    assert "versions `1.0.0` through `1.0.4`; all of their wheel and source artifacts are" in (
+        history
+    )
+    assert "`1.414` (September 15, 2026)" in history
+    for page in ((ROOT / "README.md").read_text(encoding="utf-8"), _guide("QUICKSTART.md")):
+        installs = [
+            line
+            for block in _command_blocks(page)
+            for line in block
+            if "pip install" in line and "code-towel" in line and "--upgrade" not in line
+        ]
+        assert installs, "Expected a pip-based recipe to check"
+        for line in installs:
+            assert ">=1.414" in line, line

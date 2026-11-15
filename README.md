@@ -15,22 +15,44 @@ The PyPI package is **[`code-towel`](https://pypi.org/project/code-towel/)**;
 the command is **`towel`**. The PyPI name `towel` belongs to an unrelated project,
 so `pip install towel` and `uvx towel` will not install this tool.
 
+Towel runs on Python 3.11 to 3.13. Install it as a command-line tool in an
+environment of its own, with [uv](https://docs.astral.sh/uv/) or
+[pipx](https://pipx.pypa.io/):
+
 ```bash
-pip install code-towel
+uv tool install code-towel     # or: pipx install code-towel
 towel --version
 towel --help
 ```
 
-The runtime uses only the standard library. Optional tools format inserted
-code and annotate and type-check generated helpers:
+uv downloads a suitable Python when the machine has none. Without uv or pipx,
+make a virtual environment with a Python in that range and install into it:
 
 ```bash
-pip install "code-towel[format,types]"
+python3 --version              # must be in that range
+python3 -m venv .venv && .venv/bin/pip install "code-towel>=1.414"
+.venv/bin/towel --version
+```
+
+A bare `pip install code-towel` often fails on a system Python: there may be
+no `pip` command, and Homebrew's and Debian's Pythons refuse to install outside
+an environment. The `>=1.414` stops an older Python with an old pip, such as
+the 3.9 that comes with macOS's developer tools, from installing a withdrawn
+1.0 release in place of this one.
+
+The runtime uses only the standard library. Optional tools format inserted
+code and annotate and type-check generated helpers. Install them into the
+same environment as Towel:
+
+```bash
+uv tool install "code-towel[format,types]"     # or: pipx install "code-towel[format,types]"
+.venv/bin/pip install "code-towel[format,types]>=1.414"
 ```
 
 Towel uses these tools when installed; `--no-format` and `--no-types` turn
-either behavior off. Update with `pip install --upgrade code-towel`, or run
-without installing with `uvx --from code-towel towel --help`.
+either behavior off. Update with `uv tool upgrade code-towel`,
+`pipx upgrade code-towel` or `.venv/bin/pip install --upgrade code-towel`, or
+run without installing with `uvx --from code-towel towel --help`.
 
 ## Try it on your project
 

@@ -10,7 +10,16 @@ Run the commands from a fresh working directory on macOS or Linux.
 ## Install
 
 ```bash
-pip install code-towel
+uv tool install code-towel     # or: pipx install code-towel
+towel --version
+```
+
+Without uv or pipx, create a virtual environment in this working directory and
+keep it active while you follow the example:
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install "code-towel>=1.414"
 towel --version
 ```
 
@@ -79,7 +88,7 @@ class PricingTests(unittest.TestCase):
 ```
 
 ```bash
-python -m unittest discover -s demo
+python3 -m unittest discover -s demo
 ```
 
 ## 2. Preview and extract into a copy
@@ -93,8 +102,8 @@ diff -u demo/charges.py cleaned/charges.py
 `diff` exits 1 when it finds changes. The `cleaned` directory must not already
 exist. The original `demo` is unchanged. This example disables optional tools
 to make its result independent of installed formatters and type checkers.
-For your own project, use the defaults or install
-`pip install "code-towel[format,types]"` to enable those checks and formatting.
+For your own project, use the defaults, and install `"code-towel[format,types]"`
+in place of `code-towel` to enable those checks and formatting.
 
 The repeated calculation moves into a helper such as `__extracted_func_0`.
 Each caller retains bookkeeping that preserves argument cleanup order; its
@@ -132,7 +141,7 @@ or ask an assistant to propose names; Towel calls no LLM service.
 ```bash
 towel rename-helpers cleaned --complete-scope --rename-file renames.json --preview
 towel rename-helpers cleaned --complete-scope --rename-file renames.json
-python -m unittest discover -s cleaned
+python3 -m unittest discover -s cleaned
 ```
 
 The rename batch aborts completely if a name is unsafe. `--complete-scope`
@@ -146,7 +155,7 @@ context first; see [consumer scope](NAMING.md#definition-selection-and-consumer-
 diff -u demo/charges.py cleaned/charges.py
 # After reviewing that one file and its passing tests:
 cp cleaned/charges.py demo/charges.py
-python -m unittest discover -s demo
+python3 -m unittest discover -s demo
 ```
 
 The original project now contains the named, tested refactoring. In a real
