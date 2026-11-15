@@ -3554,7 +3554,8 @@ REFUSAL = re.compile(
 )
 
 CHECKER_FAILED = re.compile(r"^Original project type check failed: (.+)$")
-REMEDY = "rerun with --no-types"
+# Accept the current explanation and archived logs from before the 2.0 wording.
+REMEDY = re.compile(r"(?:rerun with|To proceed without type verification, use) --no-types\b")
 PRE_EXISTING = re.compile(
     r"^The original project's type check reports (\d+) error\(s\) in (\d+) file\(s\)\.", re.M
 )
@@ -3564,9 +3565,14 @@ NAMES_ANY = re.compile(
     r"checker cannot type",
     re.M,
 )
-NAMES_ANY_FILES = re.compile(r"^No change to these (\d+) file\(s\) is attempted", re.M)
+NAMES_ANY_FILES = re.compile(
+    r"^(?:No change to these|Changes involving annotations in these) (\d+) file\(s\) "
+    r"(?:is attempted|are declined)",
+    re.M,
+)
 UNVERIFIABLE = re.compile(
-    r"not verifiable: its file holds a name the type checker cannot type (\d+)"
+    r"(?:not verifiable: its file holds a name the type checker cannot type |"
+    r"The type checker could not verify )(\d+)"
 )
 UNLOOKED = re.compile(r"^warning: the type checker does not look at (\d+) region\(s\)", re.M)
 UNLOOKED_DECLINED = re.compile(
@@ -3612,8 +3618,8 @@ def _malformed_refusal(declined: BaselineRefusal, log_path: Path) -> Optional[st
     means every project in the corpus that trips it is a test of the wording.
     """
     text = log_path.read_text(encoding="utf-8", errors="replace")
-    if REMEDY not in text:
-        return f"refusal did not name the way forward ({REMEDY!r} absent)"
+    if REMEDY.search(text) is None:
+        return "refusal did not name the way forward (how to proceed with --no-types absent)"
     return None
 
 
