@@ -305,6 +305,8 @@ class _PrefixScan:
             for node in ast.walk(helper)
             if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load)
         }
+        # Module-level and builtin names the helper reads as its sites do.
+        self._certain = policy.certain_names - self._own_names
 
     def block(self, statements: Sequence[ast.stmt]) -> bool:
         """Scan ``statements``; whether what follows them is still part of the prefix."""
@@ -358,7 +360,7 @@ class _PrefixScan:
             self.rebound |= _names_bound_by(step)
             return True
         if isinstance(step, ast.Name) and isinstance(step.ctx, ast.Load):
-            if step.id in self.policy.certain_names - self._own_names:
+            if step.id in self._certain:
                 return True
         if self.policy.plain_values and _quiet(step):
             self.pure = False
@@ -378,14 +380,17 @@ class _PrefixScan:
             self.helper, name
         )
         first = self.pure or (self.policy.plain_values and self.lookups)
-        if not repeated:
+        # Relaxed mode also declines to move a read of a name past the
+        # prefix's own binding of it; strict mode's prefix was never asked.
+        movable = not repeated and not (self.policy.plain_values and self._reads_rebound(name))
+        if movable:
             if first and not self.in_try:
                 if self.policy.any_result or _immutable_thunk_results(self.substitution, name):
                     # Strict mode keeps every inlined thunk in signature order.
                     unordered = plain and self.policy.plain_values
                     self.found.append(_Candidate(name, calls=not unordered))
                     return True
-            elif plain and self.policy.plain_values and not self._reads_rebound(name):
+            elif plain and self.policy.plain_values:
                 self.found.append(_Candidate(name, calls=False))
                 return True
         # It stays a thunk. One that calls nothing is a quiet step.
