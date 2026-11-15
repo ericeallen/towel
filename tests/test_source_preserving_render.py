@@ -91,6 +91,26 @@ end"""
         assert original() == changed()
 
 
+@pytest.mark.parametrize("strict", [False, True])
+def test_module_helper_uses_the_files_tabs(tmp_path: Path, strict: bool) -> None:
+    """Audit shape 4: even module-level helpers use the surrounding file's tabs."""
+    source = """def first(x):
+\tamount = 12.50
+\tresult = amount + x
+\treturn result * 2
+
+def second(y):
+\tamount = 12.50
+\tresult = amount + y
+\treturn result * 3
+"""
+    result = render(tmp_path, source, strict=strict)
+    helper = ast.parse(result).body[0]
+    assert isinstance(helper, ast.FunctionDef)
+    assert helper.name.startswith("__extracted_func")
+    assert result.splitlines()[helper.body[0].lineno - 1].startswith("\t")
+
+
 def test_unicode_arguments_and_stale_byte_locations_fall_back_safely() -> None:
     """Audit shape 2: inherited locations cannot split UTF-8 or select another value."""
     from towel.unification.source_render import preserve_call_source
@@ -143,3 +163,45 @@ def test_reindent_preserves_multiline_fstrings_and_rejects_changed_trees() -> No
         assert ast.dump(ast.Module(body=outer.body, type_ignores=[])) == ast.dump(ast.parse(source))
     # A form-feed indentation unit resets the lexer column; do not publish its changed tree.
     assert indent_rendered("if True:\n    value = 1", "", "\f") == "if True:\n    value = 1"
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_tab_indented_method_preserves_literal_values(tmp_path: Path, strict: bool) -> None:
+    """Audit shape 4: method helper indentation follows tabs without changing literals."""
+    source = '''class Example:
+\tsuffix = "!"
+\tdef first(self, x):
+\t\tamount = 12.50
+\t\ttext = """first
+\t\tinside
+last"""
+\t\tresult = (amount + x)
+\t\treturn text + self.suffix, result * 2
+
+\tdef second(self, y):
+\t\tamount = 12.50
+\t\ttext = """first
+\t\tinside
+last"""
+\t\tresult = (amount + y)
+\t\treturn text + self.suffix, result * 3
+'''
+    result = render(tmp_path, source, strict=strict)
+    owner = ast.parse(result).body[0]
+    assert isinstance(owner, ast.ClassDef)
+    helper = next(
+        node
+        for node in owner.body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func")
+    )
+    assert result.splitlines()[helper.lineno - 1].startswith("\tdef ")
+    assert result.splitlines()[helper.body[0].lineno - 1].startswith("\t\t")
+    assert '"""first\n\t\tinside\nlast"""' in result
+    before: dict[str, object] = {}
+    after: dict[str, object] = {}
+    exec(source, before)
+    exec(result, after)
+    original, changed = before["Example"], after["Example"]
+    assert isinstance(original, type) and isinstance(changed, type)
+    assert original().first(3) == changed().first(3)
+    assert original().second(4) == changed().second(4)

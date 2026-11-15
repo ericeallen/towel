@@ -105,6 +105,17 @@ def reindent_source(text: str, prefix: str, old_prefix: str = "") -> str:
     )
 
 
+def indentation_unit(source: str) -> str:
+    """The first actual suite's indent, ignoring strings and continuation lines."""
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(source).readline):
+            if token.type == tokenize.INDENT:
+                return "\t" if "\t" in token.string else token.string
+    except (tokenize.TokenError, IndentationError):
+        pass
+    return "    "
+
+
 def indent_rendered(text: str, prefix: str, unit: str = "    ") -> str:
     """Indent a snippet and translate four-space levels to the file's unit."""
     protected = _string_lines(text)

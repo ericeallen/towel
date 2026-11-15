@@ -76,6 +76,7 @@ from .import_graph import (
 from .insertion import early_helper_line
 from .source_render import (
     indent_rendered,
+    indentation_unit,
     preserve_call_source,
     preserve_helper_source,
 )
@@ -689,7 +690,7 @@ class Materialization(
         fn_insert_info = self._find_function_insert_position_before_body_statements(
             "".join(lines), proposal.insert_into_function
         )
-        unit = "    "
+        unit = indentation_unit("".join(self._source_lines(proposal.file_path)))
         inner_indent = fn_insert_info[1] + unit if fn_insert_info is not None else ""
         fn_lines = [
             line + "\n"
@@ -728,7 +729,7 @@ class Materialization(
                 proposal, proposal.extracted_function, method_indent
             ).split("\n")
         ]
-        unit = "\t" if "\t" in method_indent else "    "
+        unit = indentation_unit("".join(self._source_lines(file_path)))
         indented = indent_rendered("".join(method_lines), method_indent, unit).splitlines(
             keepends=True
         )
@@ -769,7 +770,7 @@ class Materialization(
                 lines[declared_at:declared_at] = _padded(lines, declared_at, declaration_lines)
             source = "".join(lines)
             insert_line = early_helper_line(lines, self._parse_source(source))
-            unit = "    "
+            unit = indentation_unit("".join(self._source_lines(proposal.file_path)))
             func_lines = [
                 line + "\n"
                 for line in indent_rendered(self._helper_text(proposal, helper), "", unit).split(
@@ -790,7 +791,7 @@ class Materialization(
                 type_ignores=[],
             )
             dependencies |= self._type_declaration_dependencies(proposal)
-        unit = "    "
+        unit = indentation_unit("".join(self._source_lines(proposal.file_path)))
         func_lines = [
             line + "\n"
             for line in indent_rendered(self._helper_text(proposal, node), "", unit).split("\n")
