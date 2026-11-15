@@ -51,11 +51,13 @@ def _assert_preserved(
 ) -> None:
     before = tmp_path / "before.py"
     before.write_text(textwrap.dedent(source))
+    original_source = before.read_bytes()
     if safe_companion:
         # Retain the original owned-frame refusal and its binding observations.
         guarded = UnificationRefactorEngine(skip_trivial_helpers=False, settings=SERIAL)
         unchanged, count, _ = guarded.refactor_to_fixed_point(str(before), progress="none")
-        assert count == 0 and unchanged == before.read_text()
+        assert count == 0 and unchanged.encode() == original_source
+        assert before.read_bytes() == original_source
         assert observe("before.py", tmp_path) == (0, expected, [])
         module = ast.parse(textwrap.dedent(source))
         for function in list(ast.walk(module)):
@@ -77,17 +79,19 @@ def _assert_preserved(
         module.body.insert(0, ast.parse("_lexical_events = []").body[0])
         source = ast.unparse(ast.fix_missing_locations(module))
         before.write_text(source)
+    original_source = before.read_bytes()
+    original = observe("before.py", tmp_path)
+    assert original == (0, expected, [])
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, settings=SERIAL)
     final, applied, _ = engine.refactor_to_fixed_point(str(before), progress="none")
     if lifetime_transfer and not argument_ownership._supported_runtime():
         assert applied == 0
-        assert final == before.read_text()
+        assert final.encode() == original_source
+        assert before.read_bytes() == original_source
         assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
     else:
         assert applied > 0, "The regression must exercise a real transformation"
     (tmp_path / "after.py").write_text(final)
-    original = observe("before.py", tmp_path)
-    assert original == (0, expected, [])
     assert observe("after.py", tmp_path) == original
 
 

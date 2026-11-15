@@ -29,8 +29,10 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 
+from tests.compiler_golden_profiles import lifetime_refusal_profile
 from tests.test_next_validation_documentation import _number, _rows, _table
 from tests.test_readme_links import _check_repository_links
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 ROOT = Path(__file__).resolve().parents[1]
 PAGES = ("README.md", "SECURITY.md", "CHANGELOG.md", "CONTRIBUTING.md", "docs/RELEASING.md")
@@ -204,7 +206,14 @@ def test_directory_guide_example_reanalyzes_and_preserves_input(
     assert namespace["reason"] == "fixed_point"
     assert (source / "example.py").read_text() == code
     output = (tmp_path / "src_cleaned/example.py").read_text()
-    assert "__extracted_func_" in output
+    if lifetime_refusal_profile():
+        engine = namespace["engine"]
+        assert isinstance(engine, UnificationRefactorEngine)
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert namespace["results"] == {}
+        assert output == code
+    else:
+        assert "__extracted_func_" in output
     before: dict[str, object] = {}
     after: dict[str, object] = {}
     observe = (

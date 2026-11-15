@@ -209,7 +209,7 @@ def test_representative_body_can_come_from_either_original_scope(tmp_path: Path)
     candidate = candidates[0].helper
     local = [node for node in ast.walk(candidate) if isinstance(node, ast.AnnAssign)]
     assert _annotation(local[1].annotation) == _annotation(candidate.returns)
-    assert ast.dump(local[0].annotation) == "Name(id='int', ctx=Load())"
+    assert ast.dump(local[0].annotation) == ast.dump(ast.Name(id="int", ctx=ast.Load()))
     assert ast.dump(helper, include_attributes=True) == before
 
 
@@ -250,7 +250,7 @@ def test_concrete_local_type_columns_follow_the_same_signature_generalization(
     assert _annotation(locals_[1].annotation) == _annotation(helper.args.args[0].annotation)
     assert _annotation(locals_[1].annotation) == _annotation(helper.returns)
     assert "TypeVar" in rendered and "Any" not in rendered
-    assert ast.dump(locals_[0].annotation) == "Name(id='int', ctx=Load())"
+    assert ast.dump(locals_[0].annotation) == ast.dump(ast.Name(id="int", ctx=ast.Load()))
     assert path.read_text() == source
 
 

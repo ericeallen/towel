@@ -41,7 +41,7 @@ from towel.diagnostics import LOG
 from towel.filesystem import StagedProject, staged_project
 from towel.formatting import FormattingChangedCode
 from towel.type_inference import CheckFailure, CheckSuccess, TypeDiagnostic, TypeOracle
-from towel.unification import argument_ownership, fixed_point
+from towel.unification import fixed_point
 from towel.unification.exceptions import RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -211,14 +211,9 @@ def test_complete_preview_keeps_cross_module_followups_and_exclusions(
     ]
     preview = invoke(["preview", str(root), *flags])
     assert preview.status == 0, preview
-    if argument_ownership._supported_runtime():
-        assert "Would apply 4 refactoring(s)" in preview.stdout
-        assert "Discovered 2 proposal(s)" in preview.stderr
-        assert "Discovered 1 proposal(s)" in preview.stderr
-    else:
-        assert "Would apply 0 refactoring(s)" in preview.stdout
-        assert "lifetime_order_uncertified" in preview.stdout
-        assert completed[0][1] == _contents(root)
+    assert "Would apply 4 refactoring(s)" in preview.stdout
+    assert "Discovered 2 proposal(s)" in preview.stderr
+    assert "Discovered 1 proposal(s)" in preview.stderr
     assert "Termination: fixed_point" in preview.stdout
     assert "towel-preview-" not in preview.stdout + preview.stderr
     output = tmp_path / "output"

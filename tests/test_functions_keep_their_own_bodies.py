@@ -36,11 +36,8 @@ from typing import Dict
 
 import pytest
 
-from tests.test_helpers import (
-    module_functions,
-    refactor_to_fixed_point_silently,
-    unparsed_body,
-)
+from tests.compiler_golden_profiles import lifetime_refusal_profile
+from tests.test_helpers import module_functions, unparsed_body
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Keep default reuse/profitability enabled: the shared numeric pipeline must
@@ -118,20 +115,47 @@ def _run(root: Path, script: str) -> str:
     return completed.stdout
 
 
-def _refactor_module(path: Path) -> int:
+def _refactor_module(path: Path, *, lifetime_refusal: bool = False) -> int:
     """Refactor one module to a fixed point in place; how many refactorings applied."""
-    final, applied = refactor_to_fixed_point_silently(str(path), min_lines=3)
+    original = path.read_text()
+    engine = UnificationRefactorEngine(min_lines=3)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        final, applied, _ = engine.refactor_to_fixed_point(
+            str(path), max_iterations=0, progress="none"
+        )
+    if lifetime_refusal:
+        assert applied == 0
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert final == path.read_text() == original
     path.write_text(final)
     return applied
 
 
-def _refactor_directory(target: Path) -> int:
+def _refactor_directory(target: Path, *, lifetime_refusal: bool = False) -> int:
+    original = {path: path.read_bytes() for path in target.rglob("*.py")}
     engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(target), str(target), progress="none"
         )
-    return sum(applied for applied, _ in results.values())
+    applied = sum(applied for applied, _ in results.values())
+    if lifetime_refusal:
+        assert applied == 0
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert {path: path.read_bytes() for path in original} == original
+    return applied
+
+
+def _assert_fresh_helper_call(function: ast.FunctionDef, helper: ast.FunctionDef) -> None:
+    """The literal-only whole body calls a new helper without transferring ownership."""
+    assert len(function.body) == 1
+    invocation = function.body[0]
+    assert isinstance(invocation, (ast.Return, ast.Expr))
+    assert isinstance(invocation.value, ast.Call)
+    assert ast.dump(invocation.value) == ast.dump(
+        ast.Call(func=ast.Name(id=helper.name, ctx=ast.Load()), args=[], keywords=[])
+    )
+    assert not helper.args.posonlyargs and not helper.args.args
 
 
 def _assert_owned_helper_call(
@@ -197,21 +221,44 @@ def _assert_owned_helper_call(
     )
 
 
-def test_patching_one_function_leaves_its_duplicate_alone(tmp_path: Path) -> None:
+@pytest.mark.parametrize("owned_arguments", [True, False], ids=["owned", "literal"])
+def test_patching_one_function_leaves_its_duplicate_alone(
+    tmp_path: Path, owned_arguments: bool
+) -> None:
     before, after = tmp_path / "before", tmp_path / "after"
+    source, driver = SAME_BODIES, PATCHING_DRIVER
+    if not owned_arguments:
+        for parameter, item in (("xs", "x"), ("ys", "y")):
+            source = source.replace(f"({parameter}):", "():").replace(
+                f"    total = 0\n    for {item} in {parameter}:\n        total += {item} * 2",
+                "    total = 2",
+            )
+        driver = (
+            driver.replace("([1])", "()").replace("([2])", "()").replace("lambda xs:", "lambda:")
+        )
     for root in (before, after):
-        _write(root, {"c.py": SAME_BODIES, "drive.py": PATCHING_DRIVER})
-    assert _refactor_module(after / "c.py") > 0
+        _write(root, {"c.py": source, "drive.py": driver})
+    refused = owned_arguments and lifetime_refusal_profile()
+    assert (_refactor_module(after / "c.py", lifetime_refusal=refused) > 0) is not refused
     assert _run(after, "drive.py") == _run(before, "drive.py")
     functions = module_functions((after / "c.py").read_text())
     helpers = [name for name in functions if name.startswith("__extracted_func")]
-    assert len(helpers) == 1
-    _assert_owned_helper_call(functions["f1"], functions[helpers[0]], ("xs",))
-    _assert_owned_helper_call(functions["f2"], functions[helpers[0]], ("ys",))
+    if refused:
+        assert helpers == []
+    else:
+        assert len(helpers) == 1
+        if owned_arguments:
+            _assert_owned_helper_call(functions["f1"], functions[helpers[0]], ("xs",))
+            _assert_owned_helper_call(functions["f2"], functions[helpers[0]], ("ys",))
+        else:
+            _assert_fresh_helper_call(functions["f1"], functions[helpers[0]])
+            _assert_fresh_helper_call(functions["f2"], functions[helpers[0]])
 
 
+@pytest.mark.parametrize("owned_arguments", [True, False], ids=["owned", "literal"])
 def test_a_function_in_another_module_is_not_called_in_place_of_a_duplicate(
     tmp_path: Path,
+    owned_arguments: bool,
 ) -> None:
     files = {
         "pkg/__init__.py": "",
@@ -270,17 +317,34 @@ def test_a_function_in_another_module_is_not_called_in_place_of_a_duplicate(
                 print(pkg.a.fa([1]), pkg.b.fb([2]))
             """,
     }
+    if not owned_arguments:
+        for path, parameter, item in (
+            ("pkg/a.py", "items", "item"),
+            ("pkg/b.py", "values", "value"),
+        ):
+            files[path] = (
+                files[path]
+                .replace(f"({parameter}):", "():")
+                .replace(
+                    f"                total = 0\n                for {item} in {parameter}:\n"
+                    f"                    total += {item} * 3",
+                    "                total = 3",
+                )
+            )
+        files["run.py"] = files["run.py"].replace("([1])", "()").replace("([2])", "()")
     before, after = tmp_path / "before", tmp_path / "after"
     _write(before, files)
     _write(after, files)
-    assert _refactor_directory(after / "pkg") > 0
+    refused = owned_arguments and lifetime_refusal_profile()
+    assert (_refactor_directory(after / "pkg", lifetime_refusal=refused) > 0) is not refused
     assert _run(after, "run.py") == _run(before, "run.py")
     assert "fa(" not in unparsed_body(module_functions((after / "pkg" / "b.py").read_text())["fb"])
 
 
 @pytest.mark.parametrize("helper_name", ["__extracted_func_0", "square_shifted"])
+@pytest.mark.parametrize("owned_arguments", [True, False], ids=["owned", "literal"])
 def test_two_whole_bodies_both_become_calls_of_the_new_helper(
-    tmp_path: Path, helper_name: str
+    tmp_path: Path, helper_name: str, owned_arguments: bool
 ) -> None:
     """Even where one of them is a helper an earlier pass inserted.
 
@@ -324,14 +388,29 @@ def test_two_whole_bodies_both_become_calls_of_the_new_helper(
             z = z // 61
             result.append(z)
         """
+    if not owned_arguments:
+        source = "result = []\n" + (
+            textwrap.dedent(source)
+            .replace("(result, x):", "():")
+            .replace("y = x + 10", "y = 12")
+            .replace("result.append(z)", "return result.append(z)")
+        )
     target = tmp_path / "m.py"
     _write(tmp_path, {"m.py": source})
-    assert _refactor_module(target) > 0
+    refused = owned_arguments and lifetime_refusal_profile()
+    assert (_refactor_module(target, lifetime_refusal=refused) > 0) is not refused
     functions = module_functions(target.read_text())
     new = [name for name in functions if name not in {helper_name, "other"}]
-    assert len(new) == 1
-    _assert_owned_helper_call(functions[helper_name], functions[new[0]], ("result", "x"))
-    _assert_owned_helper_call(functions["other"], functions[new[0]], ("result", "x"))
+    if refused:
+        assert new == []
+    else:
+        assert len(new) == 1
+        if owned_arguments:
+            _assert_owned_helper_call(functions[helper_name], functions[new[0]], ("result", "x"))
+            _assert_owned_helper_call(functions["other"], functions[new[0]], ("result", "x"))
+        else:
+            _assert_fresh_helper_call(functions[helper_name], functions[new[0]])
+            _assert_fresh_helper_call(functions["other"], functions[new[0]])
     driver = f"""from unittest import mock
 import m
 with mock.patch('m.{helper_name}', return_value='patched'):
@@ -343,6 +422,13 @@ with mock.patch('m.other', return_value='patched'):
     m.{helper_name}(values, 3)
     print(values)
 """
+    if not owned_arguments:
+        driver = (
+            driver.replace("values = []", "m.result = []")
+            .replace("m.other(values, 2)", "m.other()")
+            .replace(f"m.{helper_name}(values, 3)", f"m.{helper_name}()")
+            .replace("print(values)", "print(m.result)")
+        )
     _write(tmp_path, {"drive.py": driver})
     observed = _run(tmp_path, "drive.py")
     _write(tmp_path, {"m.py": source})
