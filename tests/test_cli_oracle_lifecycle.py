@@ -23,6 +23,7 @@ import pytest
 from towel import cli
 from towel.type_inference import CheckFailure, CheckResult, CheckSuccess, TypeDiagnostic, TypeOracle
 from tests.test_cli_integration import invoke
+from tests.probe_answers import answer_probes
 
 
 @pytest.mark.parametrize("fail", [False, True])
@@ -94,6 +95,7 @@ def test_cli_reports_the_originals_errors_and_goes_on_to_close_the_checker(
     oracle.check_project.return_value = CheckSuccess(
         (TypeDiagnostic(str(source), "Existing type error"),)
     )
+    oracle.reveal.side_effect = answer_probes
     monkeypatch.setattr(cli, "_type_oracle", lambda path: oracle)
     result = invoke(
         ["dry", str(source), str(output), "--no-interactive", "--no-format", "--progress", "none"]
@@ -101,6 +103,7 @@ def test_cli_reports_the_originals_errors_and_goes_on_to_close_the_checker(
     assert result.status == 0, result.stderr
     assert "The original project's type check reports 1 error(s) in 1 file(s)." in result.stderr
     assert "--no-types" not in result.stderr
+    assert "does not look at" not in result.stderr
     oracle.close.assert_called_once_with()
     assert source.read_text() == "value = 3\n" == output.read_text()
 
