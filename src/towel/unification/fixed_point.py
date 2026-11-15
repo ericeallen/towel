@@ -162,6 +162,8 @@ class RunReport:
     emitted_proposals: int = 0
     signatures_verified: int = 0
     signatures_refused: int = 0
+    first_unverifiable_reason: Optional[str] = None
+    """The first import/type diagnostic from a proposal still declined for unresolved names."""
 
 
 _Reason = TypeVar("_Reason", bound=str)
@@ -185,6 +187,7 @@ class FixedPointDrivers(Materialization):
     # Every proposal the last run built and did not apply, by identity, with
     # the latest reason; and what its last whole analysis declined.
     _declined: Dict[str, DeclineReason] = {}
+    _unverifiable_details: Dict[str, str] = {}
     _last_declined_pairs: Dict[str, int] = {}
     # How the last whole analysis's pairs ended, and how many proposals it emitted.
     _last_pair_tally: PairTally = PairTally()
@@ -209,6 +212,15 @@ class FixedPointDrivers(Materialization):
             emitted_proposals=self._last_emitted,
             signatures_verified=self._signatures_verified,
             signatures_refused=self._signatures_refused,
+            first_unverifiable_reason=next(
+                (
+                    detail
+                    for identity, detail in self._unverifiable_details.items()
+                    if self._declined.get(identity)
+                    == "not verifiable: its file holds a name the type checker cannot type"
+                ),
+                None,
+            ),
         )
 
     def _note_analysis(
@@ -245,6 +257,7 @@ class FixedPointDrivers(Materialization):
     def _begin_counting_checker_failures(self) -> None:
         self._unchecked, self._unchecked_reason = frozenset(), ""
         self._declined, self._last_declined_pairs = {}, {}
+        self._unverifiable_details = {}
         self._pair_tally = self._last_pair_tally = PairTally()
         self._last_emitted = self._signatures_verified = self._signatures_refused = 0
 
@@ -527,6 +540,10 @@ class FixedPointDrivers(Materialization):
                 "the type checker could not verify",
             )
         elif isinstance(error, UnverifiableChangeError):
+            self._unverifiable_details = {
+                **self._unverifiable_details,
+                _RejectedProposals.identity(proposal): str(error).splitlines()[0],
+            }
             reason, said = (
                 "not verifiable: its file holds a name the type checker cannot type",
                 "the type checker could not verify",

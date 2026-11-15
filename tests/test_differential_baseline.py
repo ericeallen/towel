@@ -992,4 +992,6 @@ def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
     )
     seen = (package / "seen.py").read_text(encoding="utf-8")
     _typed_value_helper(seen, return_type="int")
-    assert "not verifiable: its file holds a name the type checker cannot type 1" in run.stdout
+    assert "The type checker could not verify 1 proposed refactoring(s)" in run.stdout
+    assert 'module named "towel_absent_module"' in run.stdout
+    assert "--no-types" in run.stdout

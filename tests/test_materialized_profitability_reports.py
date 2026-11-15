@@ -109,3 +109,43 @@ def test_unexpected_programming_errors_still_abort_without_output(
         )
     assert source.read_text() == DUPLICATES
     assert not destination.exists()
+
+
+def test_typing_decline_does_not_inherit_candidate_profitability_explanation(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Typed audit item 3 (R10): typing refusals are not helper-cost refusals."""
+    from towel.cli import _print_declined
+    from towel.unification.fixed_point import RunReport
+
+    report = RunReport(
+        declined_pairs={"unprofitable_helper": 4},
+        declined_proposals={"refused by the type checker": 1},
+    )
+    _print_declined(report, applied=0)
+    output = capsys.readouterr().out
+    assert "refused by the type checker" in output
+    assert "does not repay" not in output
+
+
+def test_unresolved_import_summary_names_the_first_module_and_remedies(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Typed audit item 3: an unresolved import needs a name and actionable remedies."""
+    from towel.cli import _print_declined
+    from towel.unification.fixed_point import RunReport
+
+    report = RunReport(
+        declined_proposals={
+            "not verifiable: its file holds a name the type checker cannot type": 2,
+        },
+        first_unverifiable_reason='Cannot find implementation or library stub for module named "missing_widget"',
+    )
+    _print_declined(report, applied=0)
+    output = capsys.readouterr().out
+    assert "could not verify 2 proposed refactoring(s)" in output
+    assert "missing_widget" in output
+    assert "--no-types" in output
+    assert "install the project's dependencies where Towel runs" in output
+    assert "its file holds a name" not in output
+    assert "does not repay" not in output

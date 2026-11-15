@@ -1200,6 +1200,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         # interrupted change left them, which the user should know first.
         LOG.warning("%s", pending_journal_remedy(journal, "this output is refactored from"))
 
+    from towel.type_baseline import TYPE_CHECKING_REMEDIES
     from towel.type_inference import CheckerNotInstalled
 
     annotate_helpers = options.types
@@ -1306,6 +1307,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
             print(
                 f"\n{engine.checker_failures} proposal(s) were dropped because the type checker"
                 " could not run for them (see the warnings above); they were not judged."
+                f" {TYPE_CHECKING_REMEDIES}"
             )
         if not (options.json or options.diff):
             _print_declined(engine.run_report, applied)
@@ -1547,14 +1549,41 @@ def _print_declined(report: "RunReport", applied: int) -> None:
     candidate pairs the analysis declined are counted when nothing was
     applied, which is when a reader asks why.
     """
-    from towel.unification.fixed_point import counted_reasons
+    from towel.type_baseline import TYPE_CHECKING_REMEDIES
+    from towel.unification.exceptions import Untypeable
+    from towel.unification.fixed_point import DeclineReason, counted_reasons
 
     lines: List[str] = []
-    if report.declined_proposals:
+    unresolved_reason: DeclineReason = (
+        "not verifiable: its file holds a name the type checker cannot type"
+    )
+    other_proposals = {
+        reason: count
+        for reason, count in report.declined_proposals.items()
+        if reason != unresolved_reason
+    }
+    if other_proposals:
         lines.append(
-            f"  {sum(report.declined_proposals.values())} proposal(s) not applied: "
-            f"{counted_reasons(report.declined_proposals)}"
+            f"  {sum(other_proposals.values())} proposal(s) not applied: "
+            f"{counted_reasons(other_proposals)}"
         )
+    if unresolved := report.declined_proposals.get(unresolved_reason, 0):
+        detail = (
+            f" First problem: {report.first_unverifiable_reason}"
+            if report.first_unverifiable_reason
+            else " A name used by the code has no type the checker can establish."
+        )
+        lines.append(
+            f"  The type checker could not verify {unresolved} proposed refactoring(s), "
+            f"so those blocks were left unchanged.{detail}"
+        )
+    if any(
+        isinstance(reason, Untypeable)
+        or reason == "refused by the type checker"
+        or reason.startswith(("not judged:", "not verifiable:"))
+        for reason in report.declined_proposals
+    ):
+        lines.append(f"  {TYPE_CHECKING_REMEDIES}")
     if not applied and report.declined_pairs:
         lines.append(
             f"  {sum(report.declined_pairs.values())} candidate pair(s) declined: "
@@ -1564,8 +1593,8 @@ def _print_declined(report: "RunReport", applied: int) -> None:
         print("\nDeclined (use --explain for source locations and reasons):")
         for line in lines:
             print(line)
-        if report.declined_pairs.get("unprofitable_helper", 0) or report.declined_proposals.get(
-            "unprofitable helper", 0
+        if report.declined_proposals.get("unprofitable helper", 0) or (
+            not report.declined_proposals and report.declined_pairs.get("unprofitable_helper", 0)
         ):
             print(
                 "  The shared work does not repay the helper and caller complexity; "

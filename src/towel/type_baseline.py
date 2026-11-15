@@ -119,6 +119,7 @@ from .unification.statement_facts import bindings_of
 from .unification.visitors import ScopeVisitor, annotation_expressions, evaluated_before_definition
 
 __all__ = [
+    "TYPE_CHECKING_REMEDIES",
     "IMPORT_PROBE_PREFIX",
     "NO_SHAPE",
     "ChangeShape",
@@ -138,6 +139,11 @@ __all__ = [
     "unchanged_lines",
     "unlooked_warning",
 ]
+
+TYPE_CHECKING_REMEDIES = (
+    "To proceed without type verification, use --no-types; for a typed run, "
+    "install the project's dependencies where Towel runs (including their type stubs)."
+)
 
 
 def resolved_path(path: str) -> str:
@@ -1540,10 +1546,7 @@ def names_any_warning(
             if strict
             else f"Changes involving annotations in these {len(declined)} file(s) are declined"
         )
-        lines.append(
-            f"{policy}; install what they import, and its stubs, where Towel runs "
-            "to have them refactored with types:"
-        )
+        lines.append(f"{policy}. {TYPE_CHECKING_REMEDIES}")
         listed = [(path, error) for path in declined for error in names_any[path]]
         lines += [
             f"  {_shown(path, root)}:{error.line or '?'}: {error.message}"
@@ -1571,7 +1574,7 @@ def unlooked_warning(regions: Mapping[str, Sequence[Tuple[int, int]]], root: Pat
         "for (a sys.platform, sys.version_info or TYPE_CHECKING test it makes false, an assert "
         "it knows fails) or because the declared types rule them out (an isinstance test they "
         "always pass), so it reports nothing there and a check says nothing about a change. "
-        "No change to them is attempted:"
+        f"No change to them is attempted. {TYPE_CHECKING_REMEDIES}"
     ]
     lines += [f"  {_shown(path, root)}:{start}-{end}" for path, start, end in listed[:_FILES_SHOWN]]
     if len(listed) > _FILES_SHOWN:
