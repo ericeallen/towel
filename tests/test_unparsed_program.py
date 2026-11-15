@@ -62,6 +62,8 @@ from towel.unification.exceptions import UnparsedProgramError
 from towel.unification.namespace_writes import scan_project_writes
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+pytestmark = pytest.mark.strict_mode
+
 NEWER = "def future_syntax(:\n"
 """Malformed source standing for syntax the running interpreter cannot parse."""
 
@@ -199,8 +201,8 @@ def test_the_program_leaves_out_tool_directories_and_environments(tmp_path: Path
         (b"x = 1\n", None),
         (b"def f(:\n    pass\n", "line 1: "),
         (NEWER.encode(), "line 1: "),
-        (b'def f():\n    return "caf\xe9"\n', None),
-        (b"# -*- coding: lala -*-\nx = 1\n", None),
+        (b'def f():\n    return "caf\xe9"\n', "cannot be decoded"),
+        (b"# -*- coding: lala -*-\nx = 1\n", "cannot be decoded"),
         (b"x = 1\0\n", "null bytes"),
     ],
     ids=["parses", "syntax error", "newer syntax", "does not decode", "no such codec", "null byte"],
@@ -227,9 +229,8 @@ def test_the_program_is_read_whole_and_the_target_with_it(tmp_path: Path) -> Non
         },
     )
     found = unparsed_program_files(tmp_path / "pkg", frozenset({"data"}))
-    # The target's own build directory, which the scans skip, is still analyzed.
+    # Build output is outside analysis as well as the whole-program scans.
     assert _relative([failure.path for failure in found], tmp_path.resolve()) == [
-        "pkg/build/generated.py",
         "tests/test_b.py",
     ]
 
@@ -302,7 +303,8 @@ def test_the_refusal_names_the_file_the_complaint_and_both_remedies(tmp_path: Pa
     _project(tmp_path, {"tests/test_b.py": NEWER + PATCHES_LEN})
     text = _refusal(tmp_path / "pkg")
     assert "  tests/test_b.py: line 1: invalid syntax" in text
-    assert "Run Towel on a Python that parses it: the newest Python" in text
+    assert "Run Towel on a Python" not in text
+    assert text.startswith("--exclude test_b.py")
     assert "--exclude test_b.py." in text and "if it is not meant to run" in text
     refuse_unparsed_program(tmp_path / "pkg", ["test_b.py"])  # and the remedy works
     refuse_unparsed_program(tmp_path / "pkg", ["tests"])  # and so does its directory
@@ -342,7 +344,9 @@ def test_the_refusal_names_the_newest_python_the_project_declares(
         "newer": f"{sys.version_info.major}.{sys.version_info.minor + 1}",
         "upper": f"{sys.version_info.major}.{sys.version_info.minor + 2}",
     }
-    _project(tmp_path, {"pkg/fast.py": NEWER}, pyproject.format_map(versions))
+    if sys.version_info >= (3, 15):
+        pytest.skip("Python 3.15 already parses lazy imports")
+    _project(tmp_path, {"pkg/fast.py": "lazy import sys\n"}, pyproject.format_map(versions))
     assert remedy.format_map(versions) in _refusal(tmp_path)
 
 
@@ -395,7 +399,7 @@ def test_the_file_being_refactored_is_never_excluded(tmp_path: Path) -> None:
     _project(tmp_path, {"pkg/broken.py": NEWER})
     target = tmp_path / "pkg" / "broken.py"
     assert "pkg/broken.py: the file the run was given to refactor" in _refusal(target)
-    assert "fix it, or run Towel on a Python that parses it" in _refusal(target, ("broken.py",))
+    assert "fix it, or select its parent directory" in _refusal(target, ("broken.py",))
 
 
 def test_an_exclusion_of_the_target_itself_is_refused(tmp_path: Path) -> None:
@@ -490,7 +494,7 @@ def test_every_mode_refuses_before_writing_anything(tmp_path: Path, mode: str) -
     ran = invoke([command, *places, *flags, *asked, "--progress", "none"])
     assert ran.status == 1, ran.stderr
     assert "pkg/fast.py: line 1: invalid syntax" in ran.stderr
-    assert "Run Towel on a Python that parses it" in ran.stderr
+    assert "Run Towel on a Python" not in ran.stderr
     assert "--exclude" in ran.stderr
     assert not output.exists()
     assert {path: path.read_bytes() for path in before} == before
