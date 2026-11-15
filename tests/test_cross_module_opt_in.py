@@ -189,7 +189,8 @@ def test_a_duplicate_across_modules_is_shared_only_when_asked(tmp_path: Path) ->
 
     alone = tmp_path / "alone"
     log = _dry(root / "zzshared", alone / "zzshared")
-    assert "No refactorings found!" in log, log
+    # 2.0: without --cross-module the modules' blocks are never compared (audit finding 3).
+    assert "No repeated code found in 3 files." in log, log
     for name, text in originals.items():
         assert (alone / "zzshared" / name).read_text(encoding="utf-8") == text
 

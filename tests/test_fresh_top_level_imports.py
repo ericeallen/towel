@@ -130,6 +130,6 @@ def test_complete_cross_module_preview_handles_non_table_tool_settings(
         env={**os.environ, "TOWEL_WORKERS": "1"},
     )
     assert result.returncode == 0, result.stderr
-    assert "Termination: fixed_point" in result.stdout
+    assert "Termination" not in result.stdout and "Stopped at the limit" not in result.stdout
     assert "2 refactoring" in result.stdout
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before

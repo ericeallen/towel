@@ -14,10 +14,13 @@
 
 """Final usefulness refusals stay distinct from broken rendering and programming errors."""
 
+import logging
 from pathlib import Path
+import re
 
 import pytest
 
+from towel.diagnostics import REJECTIONS
 from towel.unification import materialize
 from towel.unification.exceptions import RefactoringError, UnprofitableHelper
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -47,20 +50,26 @@ def test_final_usefulness_refusal_is_counted_without_a_rendering_warning(
     source = root / "example.py"
     source.write_text(DUPLICATES)
     monkeypatch.setattr(materialize, "worthwhile_helper", lambda *args: False)
-    result = invoke(
-        [
-            "preview",
-            str(root if directory else source),
-            "--no-types",
-            "--no-format",
-            "--progress",
-            "none",
-            "--explain",
-        ]
-    )
+    # The developer trace is DEBUG_PROPOSAL_REJECTIONS's, no longer --explain's (2.0).
+    level = REJECTIONS.level
+    REJECTIONS.setLevel(logging.DEBUG)
+    try:
+        result = invoke(
+            [
+                "preview",
+                str(root if directory else source),
+                "--no-types",
+                "--no-format",
+                "--progress",
+                "none",
+                "--explain",
+            ]
+        )
+    finally:
+        REJECTIONS.setLevel(level)
     assert result.status == 0, result.stderr
-    assert "unprofitable helper 1" in result.stdout
-    assert "does not repay" in result.stdout
+    assert re.search(r"^ +1  .*does not repay.*\[unprofitable helper\]$", result.stdout, re.M)
+    assert "example.py:" in result.stdout
     assert "UNPROFITABLE HELPER:" in result.stderr
     assert "could not be rendered" not in result.stdout + result.stderr
     assert "RENDER FAILED" not in result.stderr
@@ -79,7 +88,7 @@ def test_a_real_rendering_failure_keeps_its_existing_classification(
     monkeypatch.setattr(materialize, "worthwhile_helper", broken)
     result = invoke(["preview", str(source), "--no-types", "--no-format", "--progress", "none"])
     assert result.status == 0, result.stderr
-    assert "could not be rendered 1" in result.stdout
+    assert re.search(r"^ +1  .*\[could not be rendered\]$", result.stdout, re.M)
     assert "test rendering failure" in result.stderr
     assert "unprofitable helper" not in result.stdout
 

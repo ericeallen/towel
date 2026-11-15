@@ -30,6 +30,7 @@ written back to its file.
 
 from __future__ import annotations
 
+import re
 import contextlib
 import io
 from pathlib import Path
@@ -92,5 +93,8 @@ def test_the_command_line_writes_no_sidecar_for_a_run_that_applied_nothing(
         ]
     )
     assert result.status == 0, result
-    assert "No refactorings found" in result.stdout
+    assert re.search(
+        r"No repeated code found in \d+ files?\.|Found \d+ places? with similar code and extracted none\.",
+        result.stdout,
+    )
     assert not (path.parent / ".towel-helpers.json").exists()

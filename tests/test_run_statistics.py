@@ -206,12 +206,13 @@ def test_stats_change_nothing_the_run_writes(tmp_path: Path) -> None:
     assert "signature attempt(s)" not in counted_stdout, "no checker judged a signature"
 
 
-def test_a_quick_preview_says_it_has_no_statistics(tmp_path: Path) -> None:
+def test_a_quick_preview_refuses_statistics_like_its_other_reports(tmp_path: Path) -> None:
+    """Since 2.0 ``--quick --stats`` is an argument error like ``--quick --json`` (audit finding 7)."""
     source = _project(tmp_path / "project")
     result = invoke(["preview", str(source), "--quick", "--stats", "--progress", "none"])
-    assert result.status == 0, result
-    assert "a --quick list has no statistics" in result.stdout
-    assert "candidate pair(s):" not in result.stdout
+    assert result.status == 2, result
+    assert result.stdout == ""
+    assert "--quick cannot be combined with" in result.stderr and "--stats" in result.stderr
 
 
 def test_overlapping_proposals_are_the_ones_the_filter_drops(tmp_path: Path) -> None:

@@ -132,7 +132,7 @@ def test_json_dry_requires_explicit_unattended_operation(tmp_path: Path) -> None
     assert output.exists() and output.read_text() != DUPLICATES
 
 
-@pytest.mark.parametrize("mode", ["--json", "--summary", "--diff", "--inventory"])
+@pytest.mark.parametrize("mode", ["--json", "--summary", "--diff", "--inventory", "--stats"])
 def test_quick_preview_result_modes_are_argument_errors(tmp_path: Path, mode: str) -> None:
     source = _source(tmp_path)
     result = invoke(["preview", str(source), "--quick", mode, *FLAGS])
@@ -147,7 +147,7 @@ def test_declining_or_closed_stdin_never_reports_success(tmp_path: Path, stdin: 
     source, output = _source(tmp_path), tmp_path / "output.py"
     result = invoke(["dry", str(source), str(output), *FLAGS], stdin=stdin)
     assert result.status == 1
-    assert "Aborted" in result.stderr
+    assert "Cancelled; nothing was written." in result.stderr
     assert not output.exists()
     assert source.read_text() == DUPLICATES
 
@@ -388,9 +388,12 @@ def test_timeout_restores_an_unrelated_alarm_handler_and_emits_json(tmp_path: Pa
         signal.signal(signal.SIGALRM, previous)
 
 
-def test_explain_locates_declined_blocks_and_does_not_leak_into_next_command(
-    tmp_path: Path,
-) -> None:
+def test_explain_locates_declined_blocks_in_sentences(tmp_path: Path) -> None:
+    """``--explain`` lists each place left alone with a sentence, not the trace (audit finding 7).
+
+    The developer trace (``REJECT[code]: ...``) is kept for
+    ``DEBUG_PROPOSAL_REJECTIONS`` and is not part of ``--explain`` since 2.0.
+    """
     source = tmp_path / "tiny.py"
     source.write_text(
         "def first(x):\n    a = x + 1\n    b = a * 2\n    return b\n\n"
@@ -398,8 +401,7 @@ def test_explain_locates_declined_blocks_and_does_not_leak_into_next_command(
     )
     result = invoke(["preview", str(source), "--explain", *FLAGS])
     assert result.status == 0
-    assert "unprofitable_helper" in result.stderr
-    assert "tiny.py::first@" in result.stderr and "tiny.py::second@" in result.stderr
-    assert "does not repay" in result.stdout
-    ordinary = invoke(["preview", str(source), *FLAGS])
-    assert "REJECT[" not in ordinary.stderr
+    assert "[unprofitable_helper]" in result.stdout
+    assert "tiny.py:2-4 and tiny.py:7-9: The shared code does not repay the helper" in result.stdout
+    assert "REJECT[" not in result.stdout + result.stderr
+    assert str(tmp_path) not in result.stdout

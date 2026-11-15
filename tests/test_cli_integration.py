@@ -179,7 +179,9 @@ def test_preview_no_duplicates_is_a_successful_read_only_result(tmp_path: Path) 
     source.write_text("def lone():\n    return 3\n")
     result = invoke(["preview", str(source)])
     assert result.status == 0
-    assert "No duplicates found" in result.stdout
+    # 2.0 (audit finding 3): one wording per outcome, with what was read.
+    assert "Analysed 1 Python file (1 function)." in result.stdout
+    assert "No repeated code found in 1 file." in result.stdout
     assert source.read_text() == "def lone():\n    return 3\n"
 
 

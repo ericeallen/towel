@@ -952,6 +952,23 @@ PRE_EXISTING_REPORT = (
 )
 """What Towel says, before it begins, of a project whose check already reports errors."""
 
+PRE_EXISTING_REPORT_2_0 = PRE_EXISTING_REPORT[
+    : PRE_EXISTING_REPORT.index("Declined (DEBUG_PROPOSAL_REJECTIONS")
+] + (
+    "\nWhy code was left alone (most frequent first; --explain locates each place):\n"
+    "  2  Its file uses a name the type checker cannot type, such as an import it cannot"
+    " resolve, so a change there could not be checked. [not verifiable: its file holds a name"
+    " the type checker cannot type]\n"
+    "     What you can do: Install the package or its stubs where the type checker can find"
+    " them.\n"
+    "  1  The project's type checker reported a new error with the helper in place."
+    " [refused by the type checker]\n"
+    "  1  The type checker takes this code to be unreachable on the platform and Python"
+    " version it checks for, so a change to it could not be checked. [not verifiable: the type"
+    " checker does not look at the code it changes]\n"
+)
+"""The same report as Towel 2.0 prints its reasons: one line each, its code in brackets."""
+
 
 @pytest.mark.parametrize(
     "diagnostic,expected",
@@ -1032,16 +1049,21 @@ def test_a_project_whose_checker_cannot_run_is_rerun_without_types(
     assert result.after is not None and result.pre_existing is None
 
 
+@pytest.mark.parametrize("report", [PRE_EXISTING_REPORT, PRE_EXISTING_REPORT_2_0])
 def test_a_project_whose_check_has_errors_is_refactored_with_types_and_recorded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, report: str
 ) -> None:
-    """No retry: Towel refactors it typed, against its errors, and the row gives the count."""
+    """No retry: Towel refactors it typed, against its errors, and the row gives the count.
+
+    Towel 2.0 prints each reason as a sentence with its code in brackets; the
+    harness reads the counts from both forms.
+    """
     result = _check(
         tmp_path,
         monkeypatch,
         (0, "3 passed in 0.01s\n"),
         (0, "3 passed in 0.01s\n"),
-        refactor=(0, PRE_EXISTING_REPORT),
+        refactor=(0, report),
     )
     assert result.verdict == "PASS" and result.typing_mode == "default"
     assert result.fallback == ""
