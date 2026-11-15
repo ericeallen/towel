@@ -43,8 +43,17 @@ from .visitors import body_without_docstring
 
 
 def _supported_runtime() -> bool:
-    """The transfer proof uses CPython reference-count/local-slot cleanup."""
-    return sys.implementation.name == "cpython"
+    """Only reviewed reference-count/local-slot cleanup can certify a handoff.
+
+    On CPython 3.14.7 and 3.15.2, the two-unused-argument regression observes
+    local/b/a cleanup before extraction but local/a/b afterwards. Retain the
+    frame-boundary refusal until a proof covers the new cleanup semantics.
+    """
+    return sys.implementation.name == "cpython" and sys.version_info[:2] in {
+        (3, 11),
+        (3, 12),
+        (3, 13),
+    }
 
 
 def _compilation_cannot_warn(helper: ast.FunctionDef) -> bool:

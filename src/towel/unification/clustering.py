@@ -50,6 +50,7 @@ from .block_analysis import (
 from .block_comments import call_argument_lines, directive_conflict, site_comments
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
+from .unsupported_syntax import unsupported_syntax
 from .instantiation import instantiation_mismatch
 from .retained_bindings import spell_retained_bindings
 from .argument_ownership import argument_handoff_fits
@@ -559,6 +560,8 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         boundary, moved scope declarations, reassignment of a name the block
         did not bind, and unbinding of a name bound before it.
         """
+        if unsupported_syntax(cand_nodes) is not None:
+            return None
         fn, fpath, analyzer = entry.node, entry.file_path, entry.scope_analyzer
         module = analyzer.analyzed_tree
         if unstable_literal_pool(cand_nodes) or unsafe_byte_literal_moves(

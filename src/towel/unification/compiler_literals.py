@@ -15,6 +15,12 @@ A literal-only operation may compile into one pooled object. Replacing its
 children with parameters instead computes new objects at runtime. Separately
 compiled modules also have separate literal pools; moving a retained literal
 into a common helper can merge or split ordinary ``is`` correlations.
+
+CPython 3.14.7 and 3.15.2 were measured independently: all small integers,
+Latin1 characters and single bytes, ASCII identifier strings, empty bytes,
+and exact-string no-spec formatting/join identity. The executable evidence
+lives in tests/test_compiler_runtime_facts.py; escaped long byte tokens still
+bypass the single-byte cache on both interpreters.
 """
 
 from __future__ import annotations
@@ -206,7 +212,7 @@ def immutable_literal_value(node: ast.AST) -> bool:
 
 def literal_fragment_transfer_supported() -> bool:
     """Exact-string formatting/join identity on the reviewed CPython compilers."""
-    return sys.implementation.name == "cpython" and (3, 9) <= sys.version_info[:2] <= (3, 13)
+    return sys.implementation.name == "cpython" and (3, 9) <= sys.version_info[:2] <= (3, 15)
 
 
 def common_literal_candidates(block: Sequence[ast.AST]) -> Iterator[ast.expr]:
@@ -273,7 +279,7 @@ def common_literal_candidates(block: Sequence[ast.AST]) -> Iterator[ast.expr]:
 
 
 def is_global_literal(value: object) -> bool:
-    """Objects shared by the reviewed CPython 3.9--3.13 literal constructors.
+    """Objects shared by the reviewed CPython 3.9--3.15 literal constructors.
 
     Other implementations/versions use only language singletons. Compiler
     string interning covers ASCII letters, digits and underscores; Unicode
@@ -282,7 +288,7 @@ def is_global_literal(value: object) -> bool:
     """
     if value is None or value is Ellipsis or type(value) is bool:
         return True
-    if sys.implementation.name != "cpython" or not (3, 9) <= sys.version_info[:2] <= (3, 13):
+    if sys.implementation.name != "cpython" or not (3, 9) <= sys.version_info[:2] <= (3, 15):
         return False
     if isinstance(value, int) and type(value) is int:
         return -5 <= value <= 256
@@ -436,7 +442,7 @@ def unsafe_byte_literal_moves(block: Sequence[ast.AST], module: Optional[ast.Mod
     if (
         module is None
         or sys.implementation.name != "cpython"
-        or not (3, 9) <= sys.version_info[:2] <= (3, 13)
+        or not (3, 9) <= sys.version_info[:2] <= (3, 15)
     ):
         return True
     unsafe: FrozenSet[int] = memoized_per_node(_UNSAFE_BYTES, module, _unsafe_byte_values)

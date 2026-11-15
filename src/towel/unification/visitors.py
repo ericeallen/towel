@@ -705,6 +705,7 @@ def visit_comprehension_result(
     """Visit what a comprehension produces: the key and value of a dict, else the element."""
     if isinstance(node, ast.DictComp):
         visitor.visit(node.key)
-        visitor.visit(node.value)
+        if node.value is not None:
+            visitor.visit(node.value)
     else:
         visitor.visit(node.elt)

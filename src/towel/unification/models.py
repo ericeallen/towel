@@ -374,6 +374,7 @@ class RejectReason(StrEnum):
     UNPROFITABLE_HELPER = "unprofitable_helper"
     UNPROVEN_IMPORT = "unproven_import"
     UNSUPPORTED_EXTRACTION = "unsupported_extraction"
+    UNSUPPORTED_SYNTAX = "unsupported_syntax"
     UNSAFE_REASSIGNMENT_BLOCK1 = "unsafe_reassignment_block1"
     UNSAFE_REASSIGNMENT_BLOCK2 = "unsafe_reassignment_block2"
     VALUE_PRODUCING_MISMATCH = "value_producing_mismatch"

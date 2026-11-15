@@ -37,6 +37,8 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import (
+    Callable,
+    cast,
     Dict,
     FrozenSet,
     Iterable,
@@ -419,6 +421,45 @@ def _header_nodes(
     ]
 
 
+def _runtime_lazy_imports() -> bool:
+    """The running interpreter's global mode is not covered by eager-import proofs."""
+    reader = getattr(sys, "get_lazy_imports", None)
+    return callable(reader) and cast(Callable[[], str], reader)() != "normal"
+
+
+def _lazy_imports_possible(tree: ast.Module) -> bool:
+    """Explicit lazy imports and source controls invalidate guaranteed eager reach.
+
+    Do not evaluate __lazy_modules__ or a lazy-import filter: both can execute
+    user code. Even a control inside a function can change later import timing.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and getattr(node, "is_lazy", False):
+            return True
+        if sys.version_info >= (3, 15):
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "sys"
+                and any(
+                    alias.name in {"set_lazy_imports", "set_lazy_imports_filter"}
+                    for alias in node.names
+                )
+            ):
+                return True
+            if isinstance(node, ast.Name) and node.id in {
+                "__lazy_modules__",
+                "set_lazy_imports",
+                "set_lazy_imports_filter",
+            }:
+                return True
+            if isinstance(node, ast.Attribute) and node.attr in {
+                "set_lazy_imports",
+                "set_lazy_imports_filter",
+            }:
+                return True
+    return False
+
+
 def _import_statements(
     tree: ast.Module, extent: ImportExtent, guards: TypeCheckingGuards
 ) -> List[Union[ast.Import, ast.ImportFrom]]:
@@ -481,6 +522,8 @@ def _import_edges(
     already present on that module, without loading any submodule. An
     ambiguous absolute name guarantees no particular local location.
     """
+    if _runtime_lazy_imports():
+        return None
     path = program.in_run(current)
     try:
         source, version = _current_source(path)
@@ -496,6 +539,8 @@ def _import_edges(
     files: Set[Path] = set()
     unseen = False
     guaranteed = extent in {"leading", "unconditionally"}
+    if guaranteed and _lazy_imports_possible(tree):
+        return cache.edges.put(key, None) if key is not None else None
     for node in _import_statements(tree, extent, TypeCheckingGuards(tree)):
         for level, module, names in _import_requests(node, guaranteed=guaranteed):
             if guaranteed and level == 0:
@@ -1209,14 +1254,16 @@ class ImportTimeCode:
         flags = self._regex_flags(call.args[1], order, body) if len(call.args) == 2 else 0
         if pattern is None or flags is None:
             return False
-        # CPython 3.11--3.14 warns about nested sets, possible set operations,
+        # CPython 3.11--3.15 warns about nested sets, possible set operations,
         # some conditional group names, and the obsolete TEMPLATE flag.
         # TEMPLATE's bit is 1; its public name was removed in Python 3.13.
         # Overmatching an escaped spelling only loses a quiet classification.
+        # Re-established from 3.14.7/3.15.2 Lib/re/{_parser,_compiler,__init__}.py:
+        # compile adds no other warning sites; native warning probes cover each.
         # Unknown compilers stay unknown.
         if (
             sys.implementation.name != "cpython"
-            or not (3, 11) <= sys.version_info[:2] <= (3, 14)
+            or not (3, 11) <= sys.version_info[:2] <= (3, 15)
             or flags & (re.DEBUG | 1)
             or any(spelling in pattern for spelling in ("[[", "--", "&&", "~~", "||", "(?("))
         ):
@@ -1858,6 +1905,8 @@ def leading_imports(tree: ast.Module) -> List[Union[ast.Import, ast.ImportFrom]]
     A helper's import goes after the last of them (``_find_import_position``),
     so they are the imports that run before it wherever the module runs.
     """
+    if _runtime_lazy_imports() or _lazy_imports_possible(tree):
+        return []
     found: List[Union[ast.Import, ast.ImportFrom]] = []
     for statement in tree.body:
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):

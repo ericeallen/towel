@@ -115,7 +115,8 @@ class _BindingContextFinder(ast.NodeVisitor):
 
             def visit_entries() -> None:
                 self.visit(node.key)
-                self.visit(node.value)
+                if node.value is not None:
+                    self.visit(node.value)
 
             self._visit_comprehension_node(node, visit_entries)
         else:

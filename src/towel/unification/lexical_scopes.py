@@ -163,7 +163,8 @@ def free_reads(node: ast.AST, own: FrozenSet[str] = frozenset()) -> Set[str]:
 def comprehension_results(node: Comprehension) -> List[ast.expr]:
     """What a comprehension produces: the key and value of a dict, else the element."""
     if isinstance(node, ast.DictComp):
-        return [node.key, node.value]
+        # Python 3.15 represents {**mapping for ...} with value=None.
+        return [node.key] if node.value is None else [node.key, node.value]
     return [node.elt]
 
 

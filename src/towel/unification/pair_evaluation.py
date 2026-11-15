@@ -97,6 +97,7 @@ from .annotation_wiring import HelperAnnotationWiring
 from .annotations import complete_with_any
 from .placement import HelperPlacement, _helper_reads_class_private_names
 from .profitability import worthwhile_helper
+from .unsupported_syntax import unsupported_syntax
 from .block_analysis import BlockAnalysis
 from .engine_state import BlockSite
 from .extractor import UnsupportedExtraction, has_complete_return_coverage
@@ -732,6 +733,11 @@ class PairEvaluation(
 
     def _guard_pair(self, pair: CodeBlockPair, functions: FunctionIndex) -> Optional[_PairSetup]:
         """Reject a pair whose blocks cannot move at all; otherwise resolve their context."""
+        for nodes in (pair.block1_nodes, pair.block2_nodes):
+            unsupported = unsupported_syntax(nodes)
+            if unsupported is not None:
+                self._debug_reject(RejectReason.UNSUPPORTED_SYNTAX, pair, detail=unsupported)
+                return None
         ctx = self._resolve_pair_context(pair, functions)
         blocks = (
             (

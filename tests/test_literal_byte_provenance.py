@@ -34,8 +34,8 @@ from towel.unification.compiler_literals import unsafe_byte_literal_moves
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 pytestmark = pytest.mark.skipif(
-    sys.implementation.name != "cpython" or not (3, 9) <= sys.version_info[:2] <= (3, 13),
-    reason="Lexical cache controls target the reviewed CPython 3.9--3.13 constructors",
+    sys.implementation.name != "cpython" or not (3, 9) <= sys.version_info[:2] <= (3, 15),
+    reason="Lexical cache controls target the reviewed CPython 3.9--3.15 constructors",
 )
 
 

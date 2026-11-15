@@ -1518,6 +1518,11 @@ def _print_declined(report: "RunReport", applied: int) -> None:
         print("\nDeclined (use --explain for source locations and reasons):")
         for line in lines:
             print(line)
+        if report.declined_pairs.get("unsupported_syntax", 0):
+            print(
+                "  These blocks contain syntax whose evaluation Towel cannot yet preserve; "
+                "they were left unchanged."
+            )
         if report.declined_pairs.get("unprofitable_helper", 0) or report.declined_proposals.get(
             "unprofitable helper", 0
         ):

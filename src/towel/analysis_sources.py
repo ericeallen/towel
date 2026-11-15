@@ -54,9 +54,14 @@ def parser_configuration() -> ParserConfiguration:
 
 _KNOWN_WARNING_SITES = sys.implementation.name == "cpython" and (3, 11) <= sys.version_info[:2] <= (
     3,
-    14,
+    15,
 )
-"""Other parsers may warn about other syntax, so their parses are never shared."""
+"""Reviewed against CPython 3.14.7/3.15.2 Parser warning sites and native probes.
+
+String escapes and numeric adjacency remain lexical; 3.15 additionally warns
+about spaced relative imports of ``lazy`` (Parser/action_helpers.c). The lexical
+guard excludes that token before permitting reuse. Unknown parsers stay uncached.
+"""
 
 _CODING_COOKIE = re.compile(rb"coding[:=]\s*([-\w.]+)", re.ASCII)
 _WARNING_FREE_ENCODINGS = frozenset(
