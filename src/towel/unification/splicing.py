@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from typing import FrozenSet, Sequence, Tuple
 
 from ..source_text import source_lines
+from .source_render import reindent_source
 
 
 @dataclass(frozen=True)
@@ -108,12 +109,9 @@ def splice_block(block_lines: Sequence[str], columns: BlockColumns, code: str) -
     head, tail = _around(first, last, columns)
     kept_tail = tail if holds_code(tail) else ""
     indentation = first[: len(first) - len(first.lstrip())]
-    code_lines = code.split("\n")
+    code_lines = reindent_source(code, indentation).removeprefix(indentation).split("\n")
     text = (
-        head
-        + code_lines[0]
-        + "".join("\n" + (indentation + line if line.strip() else "") for line in code_lines[1:])
-        + (kept_tail or "\n")
+        head + code_lines[0] + "".join("\n" + line for line in code_lines[1:]) + (kept_tail or "\n")
     )
     written = "".join(block_lines)
     removed = written[len(head) : len(written) - len(kept_tail)]
