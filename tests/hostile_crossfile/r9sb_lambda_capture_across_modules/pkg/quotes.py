@@ -16,6 +16,8 @@ from . import orders  # quotes already depends on orders
 
 
 def best_quote(quote, quotes):
-    best = max(quotes, key=lambda quote: quote["total"])
+    # Preserve the callback's keyword signature while testing that its own
+    # order binding cannot capture the other function's outer order argument.
+    best = max(quotes, key=lambda order: order["total"])
     print("best", best["id"], "current", quote["id"])
     return best["id"]
