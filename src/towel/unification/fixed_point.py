@@ -66,7 +66,15 @@ from .exceptions import (
     UntypeableExtraction,
     UnverifiableChangeError,
 )
-from .models import PairTally, RefactoringProposal, TerminationReason
+from .models import (
+    AnalysisCensus,
+    BlockLocation,
+    LeftAlone,
+    PairTally,
+    RefactoringProposal,
+    SkippedFile,
+    TerminationReason,
+)
 from .overlap import filter_overlapping_proposals
 from .progress import (
     DEFAULT_PROGRESS,
@@ -152,6 +160,12 @@ class RunReport:
     ``signatures_refused`` count, over the whole run, the helper signatures the
     project's type checker accepted and refused, each rung of a proposal's
     annotation ladder one attempt.
+
+    ``files_analysed`` and ``functions_analysed`` count what the run's first
+    analysis read, and ``skipped_files`` what it could not read, and why.
+    ``left_alone`` locates each declined pair of the last whole analysis and
+    each proposal not applied, under the reason it is counted under; its
+    paths name files as the run's results do.
     """
 
     declined_pairs: Mapping[str, int] = field(default_factory=dict)
@@ -162,6 +176,34 @@ class RunReport:
     emitted_proposals: int = 0
     signatures_verified: int = 0
     signatures_refused: int = 0
+    files_analysed: int = 0
+    functions_analysed: int = 0
+    skipped_files: Tuple[SkippedFile, ...] = ()
+    left_alone: Tuple[LeftAlone, ...] = ()
+
+
+@dataclass(frozen=True)
+class Publication:
+    """What a finished run is about to write, for a caller that may stop it first.
+
+    ``applied`` refactorings change ``files`` (named as the run's results name
+    them). ``destination`` is the output the run writes, or, when
+    ``in_place``, the target it changes.
+    """
+
+    applied: int
+    files: Tuple[str, ...]
+    destination: Path
+    in_place: bool
+
+
+BeforePublication = Callable[[Publication], None]
+"""Called once a run has finished and been confirmed, just before it writes anything.
+
+The time limit no longer runs when it is called. It may raise to stop the
+run: nothing is then written, and the exception propagates to the caller of
+the driver.
+"""
 
 
 _Reason = TypeVar("_Reason", bound=str)
@@ -189,6 +231,11 @@ class FixedPointDrivers(Materialization):
     # How the last whole analysis's pairs ended, and how many proposals it emitted.
     _last_pair_tally: PairTally = PairTally()
     _last_emitted: int = 0
+    # What the run's first analysis read; where the last whole analysis's
+    # declined pairs, and the proposals not applied, stand.
+    _run_census: Optional[AnalysisCensus] = None
+    _last_left_alone: Tuple[LeftAlone, ...] = ()
+    _declined_where: Dict[str, Tuple[BlockLocation, ...]] = {}
     # The stage copies of the files an in-place run must not write, since
     # the project holds them under more than one link.
     _unwritable_in_place: FrozenSet[Path] = frozenset()
@@ -200,6 +247,11 @@ class FixedPointDrivers(Materialization):
         for reason in self._declined.values():
             proposals[reason] = proposals.get(reason, 0) + 1
         tally = self._last_pair_tally
+        census = self._run_census or AnalysisCensus()
+        not_applied = tuple(
+            LeftAlone(self._declined_where.get(identity, ()), str(reason))
+            for identity, reason in self._declined.items()
+        )
         return RunReport(
             dict(self._last_declined_pairs),
             proposals,
@@ -209,6 +261,10 @@ class FixedPointDrivers(Materialization):
             emitted_proposals=self._last_emitted,
             signatures_verified=self._signatures_verified,
             signatures_refused=self._signatures_refused,
+            files_analysed=census.files,
+            functions_analysed=census.functions,
+            skipped_files=census.skipped,
+            left_alone=self._last_left_alone + not_applied,
         )
 
     def _note_analysis(
@@ -217,6 +273,9 @@ class FixedPointDrivers(Materialization):
         """Keep what a whole analysis of ``analyzed`` declined and emitted, for the run's report."""
         self._last_declined_pairs = dict(self._pair_rejections)
         self._last_pair_tally, self._last_emitted = self._pair_tally, emitted
+        self._last_left_alone = tuple(self._pair_left_alone)
+        if self._run_census is None:
+            self._run_census = self._census
         if reporter is not None and self._last_declined_pairs:
             reporter.detail(
                 f"Declined {sum(self._last_declined_pairs.values())} candidate pair(s): "
@@ -224,7 +283,36 @@ class FixedPointDrivers(Materialization):
             )
 
     def _decline(self, proposal: RefactoringProposal, reason: DeclineReason) -> None:
-        self._declined = {**self._declined, _RejectedProposals.identity(proposal): reason}
+        identity = _RejectedProposals.identity(proposal)
+        self._declined = {**self._declined, identity: reason}
+        self._declined_where = {
+            **self._declined_where,
+            identity: tuple(
+                BlockLocation(replacement.file_path or proposal.file_path, *replacement.line_range)
+                for replacement in proposal.replacements
+            ),
+        }
+
+    def _name_report_paths(self, public: Callable[[str], str]) -> None:
+        """Name the files the run's report locates by the paths the user knows them by."""
+
+        def located(blocks: Tuple[BlockLocation, ...]) -> Tuple[BlockLocation, ...]:
+            return tuple(dataclasses.replace(block, path=public(block.path)) for block in blocks)
+
+        self._last_left_alone = tuple(
+            dataclasses.replace(site, blocks=located(site.blocks)) for site in self._last_left_alone
+        )
+        self._declined_where = {
+            identity: located(blocks) for identity, blocks in self._declined_where.items()
+        }
+        if self._run_census is not None:
+            self._run_census = dataclasses.replace(
+                self._run_census,
+                skipped=tuple(
+                    dataclasses.replace(skipped, path=public(skipped.path))
+                    for skipped in self._run_census.skipped
+                ),
+            )
 
     def _applied(self, proposal: RefactoringProposal) -> None:
         """A proposal declined earlier and applied since, at a rehearing, was not declined."""
@@ -245,6 +333,8 @@ class FixedPointDrivers(Materialization):
     def _begin_counting_checker_failures(self) -> None:
         self._unchecked, self._unchecked_reason = frozenset(), ""
         self._declined, self._last_declined_pairs = {}, {}
+        self._run_census, self._last_left_alone, self._declined_where = None, (), {}
+        self._skips_reported = set()
         self._pair_tally = self._last_pair_tally = PairTally()
         self._last_emitted = self._signatures_verified = self._signatures_refused = 0
 
@@ -288,6 +378,7 @@ class FixedPointDrivers(Materialization):
         progress: ProgressMode = DEFAULT_PROGRESS,
         *,
         output_path: Optional[str] = None,
+        before_publication: Optional[BeforePublication] = None,
     ) -> Tuple[str, int, List[str]]:
         """Apply refactorings to one file, one at a time, until none remain.
 
@@ -308,6 +399,8 @@ class FixedPointDrivers(Materialization):
                 of each pass), or ``none``.
             output_path: An optional new file to write the result to instead,
                 when the run succeeds; the original is then only read.
+            before_publication: Called with what the run is about to write,
+                just before it writes it; see ``BeforePublication``.
 
         Returns:
             The final source, the number of refactorings applied, and their
@@ -348,7 +441,13 @@ class FixedPointDrivers(Materialization):
                 analysis_progress,
                 reporter,
             )
-            self._publish(stage)
+            applied = refactored[1]
+            files = (stage.public(str(stage.target)),) if applied else ()
+            self._publish(
+                stage,
+                before=before_publication,
+                publication=Publication(applied, files, destination, in_place),
+            )
             return refactored
 
     def _refuse_an_unreadable_program(self, target: Path) -> None:
@@ -362,17 +461,27 @@ class FixedPointDrivers(Materialization):
         """
         refuse_unparsed_program(target, self.import_graph.excluded_names)
 
-    @staticmethod
-    def _publish(stage: StagedProject, *, allow_empty: bool = False) -> None:
+    def _publish(
+        self,
+        stage: StagedProject,
+        *,
+        allow_empty: bool = False,
+        before: Optional[BeforePublication] = None,
+        publication: Optional[Publication] = None,
+    ) -> None:
         """Hand a finished, confirmed run to the user: the output, or the project itself.
 
         Nothing the user owns has been touched before this. An in-place run's
         combined change is one journaled plan, so an interruption part way
         through it is rolled back or recoverable with ``towel recover``.
+        ``before`` hears ``publication`` once the time limit has stopped, and
+        may raise to write nothing.
         """
         from towel.execution_budget import finish_before_publication
 
         finish_before_publication()
+        if before is not None and publication is not None:
+            before(publication)
         if stage.in_place:
             apply_changes(staged_changes(stage))
         else:
@@ -568,6 +677,8 @@ class FixedPointDrivers(Materialization):
         output_dir: str,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         progress: ProgressMode = DEFAULT_PROGRESS,
+        *,
+        before_publication: Optional[BeforePublication] = None,
     ) -> Tuple[Dict[str, Tuple[int, List[str]]], TerminationReason]:
         """
         Apply refactorings across a directory (recursively) until a fixed point.
@@ -594,6 +705,8 @@ class FixedPointDrivers(Materialization):
                 bars on stderr and a warning when tqdm is not installed),
                 ``auto`` (the same without the warning), ``detail`` (a log
                 of each pass), or ``none``.
+            before_publication: Called with what the run is about to write,
+                just before it writes it; see ``BeforePublication``.
 
         Returns:
             (results_dict, termination_reason)
@@ -628,10 +741,19 @@ class FixedPointDrivers(Materialization):
             results, termination_reason = self._refactor_directory_in_place(
                 stage.target, reporter, max_iterations
             )
-            self._publish(stage, allow_empty=True)
-            return {stage.public(path): result for path, result in results.items()}, (
-                termination_reason
+            public = {stage.public(path): result for path, result in results.items()}
+            self._publish(
+                stage,
+                allow_empty=True,
+                before=before_publication,
+                publication=Publication(
+                    sum(count for count, _ in public.values()),
+                    tuple(sorted(public)),
+                    destination,
+                    stage.in_place,
+                ),
             )
+            return public, termination_reason
 
     def _refactor_directory_in_place(
         self, directory: Path, reporter: "_ApplyProgress", max_iterations: int
@@ -731,6 +853,7 @@ class FixedPointDrivers(Materialization):
                     dataclasses.replace(change, path=stage.public(change.path))
                     for change in self._change_log
                 ]
+                self._name_report_paths(stage.public)
             except (OSError, ValueError, RefactoringError) as error:
                 _name_public_paths(error, stage.public_text)
                 raise

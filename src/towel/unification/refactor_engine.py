@@ -27,6 +27,7 @@ buckets out when the projected pair count exceeds ``max_candidate_pairs``.
 """
 
 import ast
+import dataclasses
 import sys
 from dataclasses import dataclass
 import os
@@ -96,6 +97,10 @@ from .if_binding_transfer import sharing_if_transfer_sources
 from .compiler_literals import sharing_compiler_literal_facts
 from .return_source_uses import sharing_return_source_uses
 from .models import (
+    AnalysisCensus,
+    BlockLocation,
+    LeftAlone,
+    SkippedFile,
     CodeBlockPair,
     FunctionArtifact,
     ClassInfo,
@@ -313,6 +318,12 @@ def _size_or_zero(path: str) -> int:
         return os.path.getsize(path)
     except OSError:
         return 0
+
+
+IMPORTS_A_MISSING_MODULE = (
+    "it imports a module the project lacks, so no extraction may change it (--cross-module)"
+)
+"""Why a cross-module run leaves out a file, in the words of the run's census."""
 
 
 class UnificationRefactorEngine(ParallelEvaluation):
@@ -592,6 +603,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._pair_rejection: Optional[RejectReason] = None
         self._pair_rejection_subject: Optional[str] = None
         self._pair_rejections: Dict[str, int] = {}
+        self._pair_left_alone: List[LeftAlone] = []
+        self._census = AnalysisCensus()
+        self._skips_reported: Set[str] = set()
         self._duplicate_pairs = 0
         self._proposing_pairs = 0
         self._pair_tally = PairTally()
@@ -706,6 +720,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         python_files = self._find_python_files(directory, recursive)
 
         if not python_files:
+            self._census = AnalysisCensus()
+            self._pair_rejections, self._pair_left_alone = {}, []
+            self._pair_tally = PairTally()
             return []
 
         LOG.debug("Found %d Python files in %s", len(python_files), directory)
@@ -783,6 +800,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
             # Outside a fixed-point run the analysis is the run.
             self._forget_run_lookups()
             self.import_graph.begin_run()
+            self._skips_reported = set()
         stale = {os.path.abspath(path) for path in (invalidate_paths or ())}
         stale.update(
             os.path.abspath(path) for path in file_paths if not self.analysis_session.reusable(path)
@@ -815,7 +833,24 @@ class UnificationRefactorEngine(ParallelEvaluation):
             # worker forked, once for the project; a run's stage has them.
             program = self.import_graph.program_for(Path(file_paths[0]))
             # A file importing a module the tree lacks takes part in no pair.
-            file_paths = [path for path in file_paths if not program.leaves_unchanged(Path(path))]
+            left_out = [path for path in file_paths if program.leaves_unchanged(Path(path))]
+            file_paths = [path for path in file_paths if path not in set(left_out)]
+        else:
+            left_out = []
+
+        def take_census(census: AnalysisCensus) -> None:
+            # Each pass of a run reads the files again; a file it cannot read
+            # is reported once a run, not once a pass.
+            for skipped in census.skipped:
+                if skipped.path not in self._skips_reported:
+                    self._skips_reported.add(skipped.path)
+                    LOG.warning("Skipping %s: %s", skipped.path, skipped.reason)
+            self._census = dataclasses.replace(
+                census,
+                skipped=census.skipped
+                + tuple(SkippedFile(path, IMPORTS_A_MISSING_MODULE) for path in left_out),
+            )
+
         return run_pipeline(
             file_paths,
             engine=self,
@@ -823,6 +858,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
             invalidate_paths=invalidate_paths,
             session=self.analysis_session,
             changed_files=changed_files,
+            census=take_census,
         )
 
     #: Entries kept per structural cache; oldest are dropped beyond this.
@@ -954,7 +990,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         *,
         progress: ProgressMode,
     ) -> List[RefactoringProposal]:
-        self._pair_rejections = {}
+        self._pair_rejections, self._pair_left_alone = {}, []
         self._duplicate_pairs = self._proposing_pairs = 0
         self._pair_tally = PairTally()
         if not block_pairs:
@@ -1048,6 +1084,15 @@ class UnificationRefactorEngine(ParallelEvaluation):
             self._pair_rejections[verdict.counted] = (
                 self._pair_rejections.get(verdict.counted, 0) + 1
             )
+            self._pair_left_alone.append(
+                LeftAlone(
+                    (
+                        BlockLocation(pair.file_path, *pair.block1_range),
+                        BlockLocation(pair.file_path2, *pair.block2_range),
+                    ),
+                    verdict.counted,
+                )
+            )
         elif verdict.proposal is None:
             # Its own judgement found the duplicate (``_finish_proposal``).
             self._duplicate_pairs += 1
@@ -1066,6 +1111,21 @@ class UnificationRefactorEngine(ParallelEvaluation):
     def declined_pairs(self) -> Mapping[str, int]:
         """How many candidate pairs the latest analysis declined, by ``RejectReason``."""
         return dict(self._pair_rejections)
+
+    @property
+    def last_census(self) -> AnalysisCensus:
+        """What the latest analysis read: its files, their functions, the files it skipped."""
+        return self._census
+
+    @property
+    def last_pair_tally(self) -> PairTally:
+        """How the latest analysis's candidate pairs ended, apart from the declined ones."""
+        return self._pair_tally
+
+    @property
+    def last_left_alone(self) -> Tuple[LeftAlone, ...]:
+        """Where each candidate pair the latest analysis declined stands, with its reason."""
+        return tuple(self._pair_left_alone)
 
     def _allocate_helper_name(
         self,
