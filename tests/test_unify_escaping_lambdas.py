@@ -165,3 +165,23 @@ assert saved(right=4) == 5
     ).refactor_to_fixed_point(str(path))
     for program in (source, transformed):
         exec(compile(program, "<declaration-outside-block>", "exec"), {})
+
+
+def test_closed_callback_parameter_does_not_capture_a_helper_argument(tmp_path: Path) -> None:
+    """Audit D4: an unchanged callback signature still shadows a helper's free argument."""
+    from tests.hostile_execution import ScopeWatch, observe
+    from tests.hostile_refactoring import refactor_script
+
+    source = (Path(__file__).parent / "hostile_cases/r9sb_lambda_parameter_capture.py").read_text()
+    # Retain the original capture regression with one shared keyword signature.
+    source = source.replace("lambda quote: quote", "lambda order: order").replace(
+        "lambda other: -other", "lambda order: -order"
+    )
+    script = tmp_path / "capture.py"
+    script.write_text(source)
+    before = observe(script.name, script.parent)
+    assert before[0] == 0
+    scopes = ScopeWatch()
+    assert refactor_script(script, file_finisher=scopes) > 0
+    assert scopes.found == []
+    assert observe(script.name, script.parent) == before

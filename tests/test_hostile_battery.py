@@ -206,8 +206,8 @@ HISTORICAL_EXTRACTIONS = {
     # annotations) is read from the caller.
     "r152_definition_time_reads",
     "r154_bare_annotation_reads_the_caller",
-    # Only the code around the objects that escape is extracted (r156); what
-    # the block only calls or consumes moves with it (r157).
+    # Closed factories may escape (D4, r156); captured objects retain their
+    # checks. What the block only calls or consumes moves with it (r157).
     "r156_created_objects_that_escape",
     "r157_created_objects_only_called",
     # The annotations' typing names are reached through a private alias of
@@ -409,6 +409,8 @@ HISTORICAL_EXTRACTIONS = {
 # earlier extraction pins predate the ownership proof: an exceptional exit
 # cannot hand new owned locals back to a caller retaining other values, and
 # a conditionally unbound local cannot be returned just to extend its lifetime.
+# Audit D1 recovers whole-body r108/r69 extractions; D3 recovers u0417
+# renamed locals, and D4 recovers closed callbacks in r156. Their runtime, scope and public-name checks remain intact.
 OWNERSHIP_REFUSALS: Dict[str, str] = {
     "h04_closure_freevar": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "h39_augassign_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
@@ -416,7 +418,6 @@ OWNERSHIP_REFUSALS: Dict[str, str] = {
     "h61_str_method_param": "retained local is not definitely bound on every block exit",
     "r103_lambda_parameter_spelling": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r107_unbound_global_argument": "owned bindings straddle a partial or uncertified whole-body frame boundary",
-    "r108_clustered_sites_assign_the_returned_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r109_eager_optional_import_failed": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r110_eager_type_checking_import": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r111_eager_module_except_as_name": "owned bindings straddle a partial or uncertified whole-body frame boundary",
@@ -439,7 +440,6 @@ OWNERSHIP_REFUSALS: Dict[str, str] = {
     "r142_module_data_rebound_by_callback": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r143_module_name_shadowed_by_a_local_elsewhere": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r154_bare_annotation_reads_the_caller": "owned bindings straddle a partial or uncertified whole-body frame boundary",
-    "r156_created_objects_that_escape": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r157_created_objects_only_called": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r1792_aliased_suppress_conditional_read": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r1792_factory_finalizer_continuation": "owned bindings straddle a partial or uncertified whole-body frame boundary",
@@ -447,7 +447,6 @@ OWNERSHIP_REFUSALS: Dict[str, str] = {
     "r39_cluster_alpha": "ordered retained-value slots do not align across sites",
     "r45_async_no_await": "retained local is not definitely bound on every block exit",
     "r46_nonlocal_counter": "retained local is not definitely bound on every block exit",
-    "r69_annassign": "retained local is not definitely bound on every block exit",
     "r76_return_order": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7bi_augassign_and_del_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7bi_except_name_in_nested_block": "retained local is not definitely bound on every block exit",
@@ -467,7 +466,6 @@ OWNERSHIP_REFUSALS: Dict[str, str] = {
     "r7fz_classhost_underscore_class_names": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_classhost_zero_arg_super": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_directives_fmt_off_region": "owned bindings straddle a partial or uncertified whole-body frame boundary",
-    "r7fz_grammar_u0417_augassign_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_late_after_block_augassign": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_late_after_block_del": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7fz_literals_cast_literal": "owned bindings straddle a partial or uncertified whole-body frame boundary",
@@ -505,8 +503,13 @@ REFLECTION_OWNERSHIP_REFUSALS: Dict[str, str] = {
 }
 # r162 retains its original behavior check, but its wildcard import and bare
 # print reads now require conservative builtin-mapping refusal.
+# D4 keeps r9sb closed callback signatures unchanged: the unifier lacks the
+# module/function context to prove those differently named callbacks cannot
+# escape. A matching-signature variant retains positive capture coverage.
 TRANSFORMED = (
-    HISTORICAL_EXTRACTIONS - OWNERSHIP_REFUSALS.keys() - {"r162_host_star_imports_callable"}
+    HISTORICAL_EXTRACTIONS
+    - OWNERSHIP_REFUSALS.keys()
+    - {"r162_host_star_imports_callable", "r9sb_lambda_parameter_capture"}
 ) | {
     # Occurrence-specific constants recover complete-body ownership handoffs.
     # Conditional bindings and loop deletion move with their unbound reads;
