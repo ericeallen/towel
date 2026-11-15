@@ -25,7 +25,7 @@ import argparse
 from pathlib import Path
 import re
 
-from tests.test_cli_integration import DUPLICATES, invoke
+from tests.test_cli_integration import DUPLICATES, HELPER, invoke
 from towel import cli
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -157,3 +157,33 @@ def test_command_line_guide_names_which_options_have_a_negative_form() -> None:
     assert {"--explain", "--json"} <= dry_single & preview_single
     rejected = invoke(["dry", "--no-explain", "project", "output"])
     assert rejected.status == 2 and "--no-explain" in rejected.stderr
+
+
+def test_exit_status_two_is_documented_for_a_rejected_rename_mapping(tmp_path: Path) -> None:
+    """Audit finding 12 (Kimi's review, finding 6).
+
+    The compatibility contract gave status 2 as "Invalid command-line arguments" only,
+    while `rename-helpers --help` promises it for a rejected mapping. A script that
+    reads the table would take a name collision for its own mistake in the arguments.
+    The consumer-scope refusal the row also names is pinned by
+    tests/test_rename_consumer_scope.py.
+    """
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "demo"\nversion = "0"\n')
+    module = tmp_path / "module.py"
+    module.write_text(HELPER)
+    for name, mapping in (
+        ("collision", '{"__extracted_func_0": "RESULT"}'),
+        ("keyword", '{"__extracted_func_0": "class"}'),
+    ):
+        renames = tmp_path / f"{name}.json"
+        renames.write_text(mapping)
+        rejected = invoke(["rename-helpers", str(tmp_path), "--rename-file", str(renames)])
+        assert rejected.status == 2, rejected.stdout + rejected.stderr
+        assert module.read_text() == HELPER
+    assert invoke(["rename-helpers", str(tmp_path), "--no-such-option"]).status == 2
+
+    rows = [line for line in _guide("COMPATIBILITY.md").splitlines() if line.startswith("| `2` |")]
+    assert len(rows) == 1
+    assert "Invalid command-line arguments." in rows[0]
+    assert "`rename-helpers`" in rows[0] and "rename mapping that was rejected" in rows[0]
+    assert "nothing is renamed" in rows[0]
