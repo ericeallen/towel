@@ -92,12 +92,23 @@ from towel.unification.defaults import (
 from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode, normalize_progress
 
 
+class _HelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Descriptions and examples as written; option text wrapped, never inside an option's name.
+
+    textwrap breaks a line after any hyphen, which split ``--no-interactive``
+    into ``--no-`` and ``interactive`` (user audit CLI-03).
+    """
+
+    def _split_lines(self, text: str, width: int) -> List[str]:
+        return textwrap.wrap(" ".join(text.split()), width, break_on_hyphens=False)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """The command-line parser, shared by ``main`` and the tests."""
     parser = argparse.ArgumentParser(
         prog="towel",
         description="A Python tool that DRYs your code - finds and refactors repeated code",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=_HelpFormatter,
         epilog="""
 Examples:
   towel preview src/                    # Preview duplicates (read-only)
@@ -340,9 +351,10 @@ def _add_exclude_flag(options: argparse._ActionsContainer) -> None:
         default=[],
         type=_excluded_name,
         metavar="NAME",
-        help="Name of a directory or file to leave unchanged (repeatable), at any depth, e.g."
-        " tests or benchmark.py; checks that read the whole program still read it, and one"
-        " there that does not parse is taken for no part of the program",
+        help="Leave out every file or directory named NAME, at any depth (repeatable), e.g."
+        " --exclude tests: Towel changes nothing in it. Give a name, not a path or a pattern;"
+        " by default only hidden directories, __pycache__, node_modules and virtual"
+        " environments are left out.",
     )
 
 
@@ -358,11 +370,10 @@ def _add_cross_module_flag(options: argparse._ActionsContainer) -> None:
         dest="cross_module",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Also share a helper between duplicates in different modules, importing it from "
-        "the module that hosts it into the others, spelled as the program's own imports "
-        "show that import works; a run refuses when those imports leave the names of the "
-        "package it refactors in doubt. --no-cross-module, the default, extracts only within "
-        "a module and adds no import between the project's modules that runs.",
+        help="Also extract duplicates that span modules: the helper goes in one module and the "
+        "others import it (docs/CROSS_MODULE.md explains when this is refused). Default: off: "
+        "only duplicates within one module are extracted, so no module starts importing "
+        "another.",
     )
 
 
@@ -377,15 +388,11 @@ def _add_parameterize_builtins_flag(options: argparse._ActionsContainer) -> None
         dest="parameterize_builtins",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Preserve each caller's builtin binding through a lookup thunk when sharing "
-        "code across modules or between different bindings. By default, cross-module "
-        "bare builtin reads are declined (except __debug__). Safe same-module reads stay bare. "
-        "If ordinary bindings, wildcard imports or __builtins__ attribute writes elsewhere in "
-        "the analyzed program may replace a module's mapping, its captured global-fallback "
-        "reads (including custom names) and implicit import/class operations decline even "
-        "with this flag. "
-        "Eager evaluation requires a proved single use "
-        "at the first effect and an immutable lookup result.",
+        help="Also extract duplicates that use a builtin such as len where the copies may not "
+        "mean the same len: copies in different modules (with --cross-module), or copies of "
+        "which only one has its own variable named len; each call then hands the helper its "
+        "own len. Default: off, and such duplicates are left alone; docs/GENERATED_CODE.md "
+        "lists the cases left alone even with this option.",
     )
 
 
@@ -423,7 +430,7 @@ def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentPar
     parser = subparsers.add_parser(
         "dry",
         help="Apply refactorings to remove duplicate code",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=_HelpFormatter,
         description="Analyze and apply refactorings using anti-unification to files or directories.",
         epilog="""
 Examples:
@@ -434,15 +441,24 @@ Examples:
         """,
     )
 
-    parser.add_argument("input", help="Input file or directory")
-    parser.add_argument("output", help="Output file or directory (can be same as input)")
+    parser.add_argument(
+        "input",
+        help="The file or directory to refactor; dry leaves it unchanged unless output "
+        "is the same path.",
+    )
+    parser.add_argument(
+        "output",
+        help="Where to write the refactored code: a path that does not exist yet, or the same "
+        "path as input to refactor in place.",
+    )
     sections = _sections(parser)
     sections.output.add_argument(
         "--interactive",
         dest="interactive",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Ask for confirmation before writing (the default); --no-interactive skips the prompt",
+        help="Ask for confirmation before writing anything (default: on); --no-interactive "
+        "writes without asking, as scripts need.",
     )
     sections.output.add_argument(  # earlier spelling, kept for scripts
         "--non-interactive", dest="interactive", action="store_false", help=argparse.SUPPRESS
@@ -489,8 +505,8 @@ def _add_json_flag(options: argparse._ActionsContainer) -> None:
     options.add_argument(
         "--json",
         action="store_true",
-        help="Write one versioned JSON result to stdout; diagnostics go to stderr. "
-        "dry also requires --no-interactive.",
+        help="Print the result as one JSON object on stdout, for scripts (docs/COMPATIBILITY.md "
+        "lists its fields); messages go to stderr. dry also needs --no-interactive.",
     )
 
 
@@ -499,16 +515,17 @@ def _add_report_flags(options: argparse._ActionsContainer) -> None:
     options.add_argument(
         "--explain",
         action="store_true",
-        help="Explain declined candidate pairs on stderr, including source files and line ranges",
+        help="Print on stderr each pair of similar blocks that was not extracted, with its files, "
+        "lines and a reason code (docs/KNOWN_LIMITATIONS.md explains the codes).",
     )
     options.add_argument(
         "--stats",
         dest="stats",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="After the run, account for every candidate pair of its last whole analysis "
-        "(declined, duplicated, overlapped or emitted) and count the helper signatures the "
-        "type checker verified and refused. Output files are the same with or without it.",
+        help="After the run, count the pairs of similar blocks its last analysis compared and "
+        "what became of each, and the helper signatures the type checker accepted and refused "
+        "(default: off). The result is the same with or without it.",
     )
 
 
@@ -519,16 +536,17 @@ def _add_limit_flags(options: argparse._ActionsContainer) -> None:
         type=_count,
         default=DEFAULT_MIN_LINES,
         metavar="N",
-        help=f"Fewest source lines a duplicated block may span (default: {DEFAULT_MIN_LINES})",
+        help=f"Consider only duplicated code at least N lines long (default: {DEFAULT_MIN_LINES}).",
     )
     options.add_argument(
         "--max-parameters",
         type=_count,
         default=DEFAULT_MAX_PARAMETERS,
         metavar="N",
-        help=f"Most newly parameterized differing expressions (default: {DEFAULT_MAX_PARAMETERS}); "
-        "ordinary free inputs may add arguments. Whole-body ownership transfer must fit its "
-        "complete positional signature, including the final lifetime holder, within this limit.",
+        help="Extract only duplicates whose differences need at most N parameters (default: "
+        f"{DEFAULT_MAX_PARAMETERS}); each distinct difference becomes a parameter of the helper. "
+        "Variables the copies read are passed as further arguments and usually do not count "
+        "(docs/GENERATED_CODE.md says when they do).",
     )
     options.add_argument(
         "--max-refactorings",
@@ -536,7 +554,8 @@ def _add_limit_flags(options: argparse._ActionsContainer) -> None:
         type=_count,
         default=DEFAULT_MAX_ITERATIONS,
         metavar="N",
-        help="Stop after N applied refactorings (0, the default, runs to a fixed point)",
+        help="Stop after applying N refactorings; 0 means no limit, so the run goes on until "
+        f"nothing more can be extracted (default: {DEFAULT_MAX_ITERATIONS}).",
     )
     options.add_argument(  # earlier spelling, kept for scripts; after the default it shares
         "--max-iterations",
@@ -549,19 +568,18 @@ def _add_limit_flags(options: argparse._ActionsContainer) -> None:
         "--time-limit",
         type=_seconds,
         metavar="SECONDS",
-        help="Limit setup, analysis and verification to this many seconds; expiry exits 124 "
-        "without publishing output. Final publication and cleanup finish safely and may "
-        "extend past the limit.",
+        help="Give up if setup, analysis and checking take more than SECONDS: nothing is "
+        "written and the exit status is 124 (default: no limit). Writing, once started, "
+        "always finishes.",
     )
     options.add_argument(
         "--max-pairs",
         type=_count,
         default=DEFAULT_MAX_CANDIDATE_PAIRS,
         metavar="N",
-        help=(
-            "Most candidate block pairs one analysis evaluates; past it the largest groups of "
-            f"similar blocks are left out with a warning (default: {DEFAULT_MAX_CANDIDATE_PAIRS})"
-        ),
+        help="Compare at most N pairs of similar blocks in one analysis; beyond that, the "
+        "largest groups of similar blocks are skipped with a warning (default: "
+        f"{DEFAULT_MAX_CANDIDATE_PAIRS:,}; 0 means no limit).",
     )
 
 
@@ -572,20 +590,19 @@ def _add_tool_flags(options: argparse._ActionsContainer) -> None:
         dest="types",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Annotate generated helpers (the default), in code that already uses annotations: "
-        "the annotations the call sites declare, and the types the project's checker (mypy or "
-        "pyright, the 'types' extra) infers and verifies for the rest. --no-types leaves "
-        "helpers bare.",
+        help="Annotate the helpers Towel writes in code that already uses type annotations, "
+        "and keep only changes that add no type error, checked with the project's mypy or "
+        "pyright (the 'types' extra) when installed. Default: on; --no-types writes "
+        "unannotated helpers and runs no checker, which is faster.",
     )
     options.add_argument(
         "--format",
         dest="format",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Format generated code (the default) with the project's formatter (ruff when "
-        "configured, else Black; the 'format' extra) at the line length the project declares, "
-        "and sort inserted imports the way the project does (ruff's I rules or isort). "
-        "--no-format inserts code as rendered. Configured Ruff lint checks remain active.",
+        help="Format the code Towel writes with the project's formatter (Ruff if the project "
+        "configures it, else Black; the 'format' extra) and sort the imports it adds the way "
+        "the project does. Default: on; --no-format inserts the code without a formatter.",
     )
 
 
@@ -610,35 +627,40 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     parser = subparsers.add_parser(
         "preview",
         help="Preview the complete dry run without modifying input files",
-        description="Run dry's complete pipeline in temporary output, including type checks, "
-        "formatting and follow-up extractions, without modifying input files.",
+        formatter_class=_HelpFormatter,
+        description="""Run dry's complete pipeline in temporary output, including type checks,
+formatting and follow-up extractions, without modifying input files.""",
     )
 
-    parser.add_argument("target", help="File or directory to analyze")
+    parser.add_argument(
+        "target", help="The file or directory to examine; preview changes nothing in it."
+    )
     sections = _sections(parser)
     presentation = sections.output.add_mutually_exclusive_group()
     presentation.add_argument(
-        "--summary", action="store_true", help="Show the result summary without the diff"
+        "--summary", action="store_true", help="Print the summary only, without the diff."
     )
     presentation.add_argument(
-        "--diff", action="store_true", help="Write only the unified diff to stdout"
+        "--diff", action="store_true", help="Print the unified diff only, e.g. to save it."
     )
     _add_json_flag(presentation)
     sections.output.add_argument(
         "--quick",
         action="store_true",
-        help="List one structural analysis only, skipping type checks, formatting and follow-ups. "
-        "This partial list is not an upper bound on eventual extractions; --max-refactorings "
-        "applies only to the complete preview.",
+        help="Faster and rougher: list what a single analysis finds, without the type checks, "
+        "formatting and further passes of a full run, so a full run may extract more or less.",
     )
     sections.output.add_argument(
-        "--inventory", action="store_true", help="Include the helper inventory for naming"
+        "--inventory",
+        action="store_true",
+        help="Also print, as JSON, each helper the run would create, with its parameters and "
+        "call sites, for choosing their names (see towel rename-helpers).",
     )
     sections.output.add_argument(
         "--interactive",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Accepted for dry compatibility; preview never prompts or changes the input",
+        help=argparse.SUPPRESS,  # accepted so a dry command line previews; nothing to ask
     )
     sections.output.add_argument("--non-interactive", action="store_true", help=argparse.SUPPRESS)
     _add_shared_options(sections)
@@ -657,7 +679,7 @@ def _add_rename_helpers_parser(
     parser = subparsers.add_parser(
         "rename-helpers",
         help="Rename helpers from a JSON mapping or a pasted assistant response",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        formatter_class=_HelpFormatter,
         description="""
 Rename auto-generated _extracted_func_* and __extracted_func_* helpers into
 meaningful names.
@@ -706,36 +728,36 @@ Examples:
 
     parser.add_argument(
         "target",
-        help="Project directory containing selected definitions and their ordinary consumers",
+        help="The project directory: it must hold the helpers and every file that uses them.",
     )
 
     parser.add_argument(
         "--complete-scope",
         action="store_true",
-        help="Declare target is the complete consumer root when project metadata is absent",
+        help="Declare that the target directory holds every file that uses the helpers. Needed "
+        "only when Towel cannot find the project's root: no pyproject.toml, setup.cfg or "
+        "setup.py, and the target is not a package (default: off).",
     )
 
     parser.add_argument(
         "--list",
         action="store_true",
-        help="List all extracted helper functions found",
+        help="List the helpers Towel generated (named like __extracted_func_0), renaming "
+        "nothing.",
     )
 
     parser.add_argument(
         "--json",
         action="store_true",
-        help=(
-            "With --list, print a JSON inventory of every helper: scope, parameters with "
-            "their evaluation kind, source, call sites, and the mapping keys that rename them. "
-            "With --rename-file, print a JSON result; a rejected mapping exits with status 2 "
-            "and the reason"
-        ),
+        help="Print JSON for scripts: with --list, every helper with its parameters, call "
+        "sites and the keys that rename them; with --rename-file, the result (a rejected "
+        "mapping exits with status 2).",
     )
     parser.add_argument(
         "--preview",
         dest="preview",
         action="store_true",
-        help="Show the renames without writing files",
+        help="Show what would be renamed without changing any file.",
     )
     parser.add_argument(  # earlier spelling, kept for scripts
         "--dry-run", dest="preview", action="store_true", help=argparse.SUPPRESS
@@ -744,21 +766,27 @@ Examples:
     parser.add_argument(
         "--rename-file",
         type=Path,
-        help="JSON file with old_name -> new_name mappings to apply",
+        metavar="FILE",
+        help="Apply the renames in this JSON file, an object from old names to new, such as "
+        '{"__extracted_func_0": "order_total"}. Default: none; rename-helpers prepares a '
+        "prompt for an AI assistant instead.",
     )
 
     parser.add_argument(
         "--file",
         action="append",
         dest="files",
-        help="Limit processing to specific file(s) (relative path)",
+        metavar="FILE",
+        help="Only consider helpers defined in FILE, a path relative to the target (repeatable; "
+        "default: every file).",
     )
 
     parser.add_argument(
         "--function",
         action="append",
         dest="functions",
-        help="Limit processing to specific function(s) by name",
+        metavar="NAME",
+        help="Only consider the helper named NAME (repeatable; default: every helper).",
     )
 
     parser.add_argument(

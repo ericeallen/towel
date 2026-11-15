@@ -21,7 +21,7 @@ import re
 import shlex
 import shutil
 from pathlib import Path
-from typing import Iterator, List, Optional
+from typing import Iterator, List, Optional, Tuple
 
 import pytest
 
@@ -133,6 +133,61 @@ def test_options_are_listed_in_the_order_a_newcomer_needs_them(
     text = _help([command], monkeypatch)
     headings = [text.index(f"\n{title}:\n") for title in ("positional arguments", *SECTIONS)]
     assert headings == sorted(headings)
+
+
+JARGON = re.compile(
+    r"\bthunks?\b|anti-unification|ownership transfer|lifetime holder|fixed point"
+    r"|\bborrowers?\b|\bhosts?\b",
+    re.IGNORECASE,
+)
+"""Towel's internal vocabulary, which no help may use without a plain gloss."""
+
+
+def _option_help() -> List[Tuple[str, str]]:
+    """``(command and argument, help text)`` for every listed argument of every command."""
+    return [
+        (
+            f"{parser.prog} {action.option_strings[-1] if action.option_strings else action.dest}",
+            action.help,
+        )
+        for parser in _parsers(cli._build_parser())
+        for action in parser._actions
+        if action.help and action.help != argparse.SUPPRESS
+    ]
+
+
+def test_option_help_is_in_a_python_developers_words() -> None:
+    """User audit CLI-04: option help spoke of "whole-body ownership transfer", "the final
+    lifetime holder", "a lookup thunk" and running "to a fixed point"."""
+    jargon = [
+        (argument, found[0]) for argument, text in _option_help() if (found := JARGON.search(text))
+    ]
+    assert not jargon, jargon
+
+
+def test_every_option_with_a_setting_states_its_default() -> None:
+    """User audit CLI-04: an option that takes a value, or has an on and an off form, says what
+    happens without it."""
+    silent = [
+        f"{parser.prog} {action.option_strings[0]}"
+        for parser in _parsers(cli._build_parser())
+        for action in parser._actions
+        if action.option_strings
+        and action.help != argparse.SUPPRESS
+        and (isinstance(action, argparse.BooleanOptionalAction) or action.nargs != 0)
+        and "default" not in (action.help or "").lower()
+    ]
+    assert not silent, silent
+
+
+@pytest.mark.parametrize("command", COMMANDS, ids=lambda command: " ".join(command) or "towel")
+def test_help_never_splits_an_option_name(
+    command: List[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """User audit CLI-03: wrapped help broke "--no-interactive" after "--no-"."""
+    for columns in (60, 80, 100):
+        text = _help(command, monkeypatch, columns)
+        assert not re.search(r"--[\w-]*-\n", text), text
 
 
 @pytest.mark.parametrize("example", _examples())
