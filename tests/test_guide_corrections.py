@@ -158,7 +158,10 @@ def test_command_line_guide_names_which_options_have_a_negative_form() -> None:
     }
     dry_paired, dry_single = _visible_flags("dry")
     preview_paired, preview_single = _visible_flags("preview")
-    assert listed_paired and listed_paired <= dry_paired & preview_paired
+    # A listed pair must be a pair on every command whose help shows it. `--interactive`
+    # is dry's: preview accepts it, so a dry command line previews, without listing it.
+    assert listed_paired and listed_paired <= dry_paired | preview_paired
+    assert not listed_paired & (dry_single | preview_single)
     assert listed_single <= dry_single | preview_single
     assert {"--explain", "--json"} <= dry_single & preview_single
     rejected = invoke(["dry", "--no-explain", "project", "output"])
