@@ -56,7 +56,14 @@ from .retained_bindings import spell_retained_bindings
 from . import argument_ownership
 from .argument_ownership import argument_handoff_fits
 from .compiler_literals import unsafe_byte_literal_moves, unstable_literal_pool
-from .models import ArgumentHandoff, FunctionArtifact, FunctionNode, RejectReason, Replacement
+from .models import (
+    ArgumentHandoff,
+    CodeBlockPair,
+    FunctionArtifact,
+    FunctionNode,
+    RejectReason,
+    Replacement,
+)
 from .orphan_detector import orphaned_variables
 from .scope_analyzer import ScopeAnalyzer
 from .statement_facts import bindings_of, statement_shape
@@ -532,7 +539,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 if not quick_filter(template_signature, cand_sig):
                     continue
                 candidate = self._admissible_candidate(
-                    entry, cand_nodes, self._block_site(fn, cand_nodes)
+                    entry, cand_nodes, self._block_site(fn, cand_nodes), pair=pair
                 )
                 if candidate is None:
                     continue
@@ -570,6 +577,8 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         entry: FunctionArtifact,
         cand_nodes: List[ast.stmt],
         site: Optional[BlockSite],
+        *,
+        pair: "CodeBlockPair",
     ) -> Optional["_ClusterCandidate"]:
         """The candidate block as a cluster candidate, or None when a semantic guard declines it.
 
@@ -578,7 +587,11 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         boundary, moved scope declarations, reassignment of a name the block
         did not bind, and unbinding of a name bound before it.
         """
-        if unsupported_syntax(cand_nodes) is not None:
+        unsupported = unsupported_syntax(cand_nodes)
+        if unsupported is not None:
+            self._debug_decline_site(
+                RejectReason.UNSUPPORTED_SYNTAX, pair, entry.node, cand_nodes, unsupported
+            )
             return None
         fn, fpath, analyzer = entry.node, entry.file_path, entry.scope_analyzer
         module = analyzer.analyzed_tree

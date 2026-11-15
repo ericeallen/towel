@@ -39,6 +39,8 @@ from towel.unification.import_graph import (
     leading_imports,
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.models import CodeBlockPair
+from towel.unification.pipeline import analyze_scopes, collect_functions, parse_modules
 from towel.unification.unsupported_syntax import unsupported_syntax
 
 NEW_EXPRESSIONS = [
@@ -58,6 +60,61 @@ def _run(path: Path) -> str:
     return subprocess.run(
         [sys.executable, "-I", "-B", str(path)], capture_output=True, text=True, check=True
     ).stdout
+
+
+@pytest.mark.parametrize("expression,observe,version", NEW_EXPRESSIONS)
+def test_cluster_admission_explains_unsupported_syntax(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    expression: str,
+    observe: str,
+    version: tuple[int, int],
+) -> None:
+    """Python audit: a further cluster site gets the same syntax reason as a pair."""
+    if sys.version_info < version:
+        pytest.skip("syntax is newer than this interpreter")
+    source = "\n".join(
+        f"def {name}(value):\n    result = {expression}\n    return {observe}\n"
+        for name in ("first", "second")
+    )
+    path = tmp_path / "m.py"
+    path.write_text(source)
+    first, second = collect_functions(analyze_scopes(parse_modules([str(path)])))
+    pair = CodeBlockPair(
+        str(path),
+        first.node.name,
+        second.node.name,
+        (first.node.body[0].lineno, first.node.end_lineno or first.node.lineno),
+        (second.node.body[0].lineno, second.node.end_lineno or second.node.lineno),
+        first.node.body,
+        second.node.body,
+        str(path),
+        None,
+        None,
+        None,
+        None,
+        [],
+        [],
+        first.scope_analyzer,
+        second.scope_analyzer,
+        first.root_scope,
+        second.root_scope,
+        source,
+        source,
+        first.node,
+        second.node,
+    )
+    engine = UnificationRefactorEngine()
+    with caplog.at_level(logging.DEBUG, logger="towel.rejections"):
+        assert engine._admissible_candidate(first, first.node.body, None, pair=pair) is None
+    explanation = unsupported_syntax(first.node.body)
+    assert explanation is not None
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "DECLINE-SITE[unsupported_syntax]" in message and explanation in message
+        for message in messages
+    )
+    assert path.read_text() == source
 
 
 @pytest.mark.parametrize("expression,observe,version", NEW_EXPRESSIONS)
