@@ -25,11 +25,13 @@ import argparse
 import ast
 from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass
+from gettext import gettext
 import json
 import logging
 import math
 import os
 import re
+import shlex
 import signal
 import sys
 import tempfile
@@ -44,6 +46,7 @@ from typing import (
     List,
     Literal,
     Mapping,
+    NoReturn,
     Optional,
     Sequence,
     Set,
@@ -91,6 +94,56 @@ from towel.unification.defaults import (
 )
 from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode, normalize_progress
 
+_MISSING_OUTPUT = gettext("the following arguments are required: %s") % "output"
+"""argparse's message, in its own translation, for a dry command line that names no output."""
+
+
+class _TowelParser(argparse.ArgumentParser):
+    """Towel's parsers: a dry command line without an output is told what to add.
+
+    argparse alone said only "the following arguments are required: output"
+    (user audit CLI-09). The input, which that message lacks, is recorded as
+    it is parsed (:class:`_DryInput`); every command's parser is of this class.
+    """
+
+    dry_input: Optional[str] = None
+
+    def error(self, message: str) -> NoReturn:
+        if self.dry_input is not None and message == _MISSING_OUTPUT:
+            message = _one_path_dry(self.dry_input)
+        super().error(message)
+
+
+class _DryInput(argparse.Action):
+    """Store dry's input path, and record it on the parser for a missing-output message."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: Optional[str] = None,
+    ) -> None:
+        setattr(namespace, self.dest, values)
+        if isinstance(parser, _TowelParser) and isinstance(values, str):
+            parser.dry_input = values
+
+
+def _one_path_dry(given: str) -> str:
+    """What to tell ``towel dry <given>``: a new output path, or the same path twice."""
+    path = Path(given)
+    if path.suffix == ".py":
+        kind, output = "file", str(path.with_name(f"{path.stem}_cleaned{path.suffix}"))
+    else:
+        kind, output = "directory", "cleaned"
+    return (
+        "dry needs an output path as well as the input.\n"
+        f"It writes the refactored code to a new {kind} and leaves {given} unchanged:\n"
+        f"  towel dry {shlex.quote(given)} {shlex.quote(output)}\n"
+        "To refactor in place instead, give the same path twice:\n"
+        f"  towel dry {shlex.quote(given)} {shlex.quote(given)}"
+    )
+
 
 class _HelpFormatter(argparse.RawDescriptionHelpFormatter):
     """Descriptions and examples as written; option text wrapped, never inside an option's name.
@@ -133,7 +186,7 @@ def _source_tree_version(root: Path) -> Optional[str]:
 
 def _build_parser() -> argparse.ArgumentParser:
     """The command-line parser, shared by ``main`` and the tests."""
-    parser = argparse.ArgumentParser(
+    parser = _TowelParser(
         prog="towel",
         allow_abbrev=False,
         description="""\
@@ -303,15 +356,28 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
             parser.exit(1, f"Error: {error}\n")
 
 
-def _count(text: str) -> int:
-    """An argparse type for a count: a whole number that is not negative."""
-    try:
-        value = int(text)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"expected a whole number, got {text!r}") from None
-    if value < 0:
-        raise argparse.ArgumentTypeError(f"{value} is negative; 0 runs to a fixed point")
-    return value
+@dataclass(frozen=True)
+class _Count:
+    """An argparse type for a count: a whole number that is not negative.
+
+    ``wanted`` follows "is negative;" and says what the option counts, in
+    its own words: one sentence for every count once told ``--min-lines -1``
+    that "0 runs to a fixed point" (user audit CLI-09).
+    """
+
+    wanted: str
+
+    def __call__(self, text: str) -> int:
+        try:
+            value = int(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"expected a whole number, got {text!r}") from None
+        if value < 0:
+            raise argparse.ArgumentTypeError(f"{value} is negative; {self.wanted}")
+        return value
+
+
+_REFACTORING_COUNT = _Count("give the most refactorings to apply, or 0 for no limit")
 
 
 def _add_import_layout_flags(parser: argparse.ArgumentParser) -> None:
@@ -455,7 +521,7 @@ def _sections(parser: argparse.ArgumentParser) -> _Sections:
     )
 
 
-def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+def _add_dry_parser(subparsers: "argparse._SubParsersAction[_TowelParser]") -> None:
     """Add 'dry' subcommand parser."""
     parser = subparsers.add_parser(
         "dry",
@@ -487,6 +553,7 @@ longer need it. TOWEL_WORKERS=N limits the analysis to N worker processes.""",
 
     parser.add_argument(
         "input",
+        action=_DryInput,
         help="The file or directory to refactor; dry leaves it unchanged unless output "
         "is the same path.",
     )
@@ -517,14 +584,28 @@ longer need it. TOWEL_WORKERS=N limits the analysis to N worker processes.""",
     )
 
 
+_LONGEST_TIME_LIMIT = 100_000_000
+"""The longest interval, in seconds, every supported platform's interval timer accepts.
+
+macOS refuses a longer ``setitimer`` interval with EINVAL, and a value past
+the platform's ``time_t`` overflows; either once ended a run in a traceback
+(user audit CLI-09). It is about three years.
+"""
+
+
 def _seconds(text: str) -> float:
-    """A finite positive wall-clock budget."""
+    """A finite positive wall-clock budget the interval timer can hold."""
     try:
         seconds = float(text)
     except ValueError:
         raise argparse.ArgumentTypeError("time limit must be a positive finite number") from None
     if not math.isfinite(seconds) or seconds <= 0:
         raise argparse.ArgumentTypeError("time limit must be a positive finite number")
+    if seconds > _LONGEST_TIME_LIMIT:
+        raise argparse.ArgumentTypeError(
+            f"time limit must be at most {_LONGEST_TIME_LIMIT} seconds (about three years);"
+            " leave out --time-limit for no limit"
+        )
     return seconds
 
 
@@ -577,14 +658,17 @@ def _add_limit_flags(options: argparse._ActionsContainer) -> None:
     """Add the options that bound what a run considers and how long it works."""
     options.add_argument(
         "--min-lines",
-        type=_count,
+        type=_Count(f"give the fewest lines a duplicate may span (default: {DEFAULT_MIN_LINES})"),
         default=DEFAULT_MIN_LINES,
         metavar="N",
         help=f"Consider only duplicated code at least N lines long (default: {DEFAULT_MIN_LINES}).",
     )
     options.add_argument(
         "--max-parameters",
-        type=_count,
+        type=_Count(
+            "give the most parameters a helper may take for the differences (default: "
+            f"{DEFAULT_MAX_PARAMETERS})"
+        ),
         default=DEFAULT_MAX_PARAMETERS,
         metavar="N",
         help="Extract only duplicates whose differences need at most N parameters (default: "
@@ -595,7 +679,7 @@ def _add_limit_flags(options: argparse._ActionsContainer) -> None:
     options.add_argument(
         "--max-refactorings",
         dest="max_refactorings",
-        type=_count,
+        type=_REFACTORING_COUNT,
         default=DEFAULT_MAX_ITERATIONS,
         metavar="N",
         help="Stop after applying N refactorings; 0 means no limit, so the run goes on until "
@@ -604,7 +688,7 @@ def _add_limit_flags(options: argparse._ActionsContainer) -> None:
     options.add_argument(  # earlier spelling, kept for scripts; after the default it shares
         "--max-iterations",
         dest="max_refactorings",
-        type=_count,
+        type=_REFACTORING_COUNT,
         metavar="N",
         help=argparse.SUPPRESS,
     )
@@ -618,7 +702,7 @@ def _add_limit_flags(options: argparse._ActionsContainer) -> None:
     )
     options.add_argument(
         "--max-pairs",
-        type=_count,
+        type=_Count("give the most pairs of similar blocks to compare, or 0 for no limit"),
         default=DEFAULT_MAX_CANDIDATE_PAIRS,
         metavar="N",
         help="Compare at most N pairs of similar blocks in one analysis; beyond that, the "
@@ -666,7 +750,7 @@ def _add_progress_flag(parser: argparse.ArgumentParser, detail: str) -> None:
     )
 
 
-def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+def _add_preview_parser(subparsers: "argparse._SubParsersAction[_TowelParser]") -> None:
     """Add 'preview' subcommand parser."""
     parser = subparsers.add_parser(
         "preview",
@@ -729,7 +813,7 @@ Examples, in a directory holding src/:
     _add_import_layout_flags(parser)
 
 
-def _add_recover_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+def _add_recover_parser(subparsers: "argparse._SubParsersAction[_TowelParser]") -> None:
     """Add 'recover' subcommand parser."""
     parser = subparsers.add_parser(
         "recover",
@@ -759,7 +843,7 @@ Example, after an in-place run on src/ was interrupted:
 
 
 def _add_rename_helpers_parser(
-    subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    subparsers: "argparse._SubParsersAction[_TowelParser]",
 ) -> None:
     """Add 'rename-helpers' subcommand parser."""
     parser = subparsers.add_parser(
