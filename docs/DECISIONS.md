@@ -1983,6 +1983,18 @@ here.
    to postpone garbage collection or omit it altogether". CPython makes it
    deterministic, and strict mode preserves what CPython does.
 
+   CPython itself changed it between two minor versions. Measured on
+   2026-11-15 with a class that prints in `__del__`, for
+   `def f(a, b): local1 = Noisy(); local2 = Noisy(); return 1` called with two
+   temporaries: CPython 3.11.14, 3.12.12 and 3.13.7 release
+   `a, b, local1, local2` as the frame exits; CPython 3.14.7 and 3.15.2
+   release `local2, local1, b, a`. Strict mode's exactness is therefore stated
+   for CPython 3.11 to 3.13, the versions its proofs were written against. On
+   3.14 and later strict mode declines an extraction whose proof assumes the
+   earlier order, and one predicate in `unification/argument_ownership.py`
+   answers whether the running interpreter's release order is certified.
+   Relaxed mode promises no release order and is the same on every version.
+
 **What follows from the first assumption.** In relaxed mode:
 
 - A caller calls its helper directly. There is no ownership transfer: no
@@ -2060,9 +2072,8 @@ in either mode.
   now exists with the opposite sense: `--strict` restores the obligations, and
   the default does without those that rest on finalization alone.
 
-The first assumption changes nothing else in those entries. In particular
-relaxed mode never redirects one existing function to another, and it keeps
-the reflection boundary of 2026-10-02.
+The first assumption changes nothing else in those entries. In particular it
+keeps the reflection boundary of 2026-10-02.
 
 *Status: implemented for 2.0. Strict mode is pinned by the tests and goldens
 that shipped with 1.949, which run it unchanged; relaxed mode by its own
