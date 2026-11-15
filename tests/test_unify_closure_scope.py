@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import ast
+import sys
 import textwrap
 
 import pytest
@@ -110,3 +111,40 @@ def test_nonlocal_declarations_do_not_make_captures_local() -> None:
             value = 10
         """)
     assert nested_scopes_cross_block_boundary(function, function.body[1:])
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12")
+@pytest.mark.parametrize("declaration", ["T: value", "T: (value, int)"])
+@pytest.mark.parametrize("async_prefix", ["", "async "])
+def test_generic_function_bounds_remain_captured(declaration: str, async_prefix: str) -> None:
+    """Audit D5: lazy type-parameter bounds see later enclosing-scope rebindings."""
+    function = _function(
+        f"def caller():\n"
+        f"    {async_prefix}def callback[{declaration}](value):\n"
+        f"        return value\n"
+        f"    value = str\n"
+    )
+    assert "value" in (_lazily_read_names(function.body[0]) or frozenset())
+    assert nested_scopes_cross_block_boundary(function, function.body[:1])
+    assert nested_scopes_cross_block_boundary(function, function.body[1:])
+
+
+@pytest.mark.skipif(sys.version_info < (3, 13), reason="Type defaults require Python 3.13")
+def test_generic_function_defaults_remain_captured() -> None:
+    """Audit D5: a lazy type default reads outside the function's parameter scope."""
+    function = _function(
+        "def caller():\n"
+        "    def callback[T = value](value):\n"
+        "        return value\n"
+        "    value = str\n"
+    )
+    assert _lazily_read_names(function.body[0]) == frozenset({"value"})
+    assert nested_scopes_cross_block_boundary(function, function.body[:1])
+    assert nested_scopes_cross_block_boundary(function, function.body[1:])
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 requires Python 3.12")
+def test_generic_bounds_own_type_parameters_are_not_captures() -> None:
+    """Audit D5: one type parameter used by another bound is local to their annotation scope."""
+    function = _function("def callback[T, U: T]():\n    return 0\n")
+    assert _lazily_read_names(function) == frozenset()

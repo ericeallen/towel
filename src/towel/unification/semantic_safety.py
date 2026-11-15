@@ -651,7 +651,19 @@ def _lazily_read_names(node: ast.AST) -> Optional[FrozenSet[str]]:
         # Parameters, locals and comprehension targets belong to their own
         # scopes. Defaults and a comprehension's first iterable still read
         # the enclosing scope, even when they spell one of those binders.
-        return frozenset(free_reads(node))
+        reads = free_reads(node)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # PEP 695 bounds/defaults have their own annotation scope. They
+            # remain lazy captures even when a regular parameter shadows
+            # their spelling in the function body.
+            own_type_parameters = type_parameter_names(node)
+            reads.update(
+                name
+                for expression in type_parameter_expressions(node)
+                for name in free_reads(expression)
+                if name not in own_type_parameters
+            )
+        return frozenset(reads)
     if _TYPE_ALIAS is not None and isinstance(node, _TYPE_ALIAS):
         # Its own type parameters are bound in its annotation scope.
         return frozenset(loaded_names(node) - type_parameter_names(node))
