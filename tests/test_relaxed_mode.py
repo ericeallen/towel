@@ -41,6 +41,7 @@ from typing import Tuple
 import pytest
 
 from towel.api import UnificationRefactorEngine
+from towel.unification import argument_ownership
 from towel.unification.block_analysis import first_assignment_order
 from tests.test_cli_integration import invoke
 
@@ -101,6 +102,28 @@ def _refactored(tmp_path: Path, source: str, *, strict: bool) -> Tuple[str, str,
     return changed.read_text(), _output(original), _output(changed)
 
 
+def _release_order_certified() -> bool:
+    """Whether strict mode's lifetime proofs hold here: CPython 3.11 to 3.13.
+
+    The tests below choose their mode, so they read the predicate itself
+    (``tests.test_helpers.lifetime_order_certified``). On 3.14 and later
+    CPython releases a frame's variables in reverse order, and strict mode
+    declines what its proofs would extract (``lifetime_order_uncertified``).
+    """
+    return argument_ownership._supported_runtime()
+
+
+def _strict_declines_for_release_order(tmp_path: Path, source: str) -> None:
+    """On an uncertified runtime strict mode leaves ``source`` alone, saying why."""
+    path = tmp_path / "declined.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=False, strict=True)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        engine.refactor_to_fixed_point(str(path))
+    assert path.read_text() == source
+    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+
+
 def _body(source: str, function: str) -> str:
     """The statements of ``function``'s body, unparsed."""
     for node in ast.walk(ast.parse(source)):
@@ -145,6 +168,10 @@ def test_strict_mode_keeps_the_quick_starts_ownership_transfer(tmp_path: Path) -
     result = invoke(["dry", str(source), str(output), "--no-interactive", "--strict", *UNTYPED])
     assert result.status == 0, result.stderr
     generated = output.read_text()
+    if not _release_order_certified():
+        assert generated == source.read_text()
+        assert "[lifetime_order_uncertified]" in result.stdout
+        return
     assert _body(generated, "checkout_total") == (
         "_towel_arguments = [(amount,)]\n"
         "del amount\n"
@@ -212,10 +239,20 @@ def test_strict_mode_still_leaves_the_declined_cases_alone(tmp_path: Path, name:
     assert _python_text(output) == _python_text(source)
 
 
+UNDECORATED_WHERE_UNCERTIFIED = ("copies4_functions",)
+"""Strict mode on 3.14 and later declines the ownership transfer that put ``_towel_`` names
+into this case, and extracts only the returned dictionary, which needs none."""
+
+
 @pytest.mark.parametrize("name", DECORATED_BY_1949)
 def test_strict_mode_still_decorates_the_cases_it_changes(tmp_path: Path, name: str) -> None:
     driver, source, output = _scenario(tmp_path, name, strict=True)
-    assert "_towel_" in _python_text(output)
+    generated = _python_text(output)
+    if name in UNDECORATED_WHERE_UNCERTIFIED and not _release_order_certified():
+        assert generated != _python_text(source)
+        assert "_towel_" not in generated
+    else:
+        assert "_towel_" in generated
     assert _output(driver, str(output)) == _output(driver, str(source))
 
 
@@ -277,17 +314,24 @@ def test_relaxed_mode_calls_a_whole_body_helper_directly(tmp_path: Path) -> None
 
     Nothing moves relative to other code: both finalizers still run as the
     function returns. Only their order differs, which relaxed mode assumes
-    no program depends on.
+    no program depends on. On 3.14 and later the original frame releases in
+    reverse order, local first, so there the two orders coincide.
     """
     generated, before, after = _refactored(tmp_path, WHOLE_FUNCTION, strict=False)
     assert _body(generated, "first") == "return __extracted_func_0('first', x)"
     assert "_towel_" not in generated
-    assert before.splitlines()[:3] == ["first 13", "released argument", "released local"]
+    if _release_order_certified():
+        assert before.splitlines()[:3] == ["first 13", "released argument", "released local"]
+    else:
+        assert before.splitlines()[:3] == ["first 13", "released local", "released argument"]
     assert after.splitlines()[:3] == ["first 13", "released local", "released argument"]
     assert sorted(after.splitlines()) == sorted(before.splitlines())
 
 
 def test_strict_mode_transfers_ownership_to_keep_the_release_order(tmp_path: Path) -> None:
+    if not _release_order_certified():
+        _strict_declines_for_release_order(tmp_path, WHOLE_FUNCTION)
+        return
     generated, before, after = _refactored(tmp_path, WHOLE_FUNCTION, strict=True)
     assert "_towel_arguments = [(x,)]" in generated and "_towel_owner" in generated
     assert after == before
@@ -333,6 +377,9 @@ def test_relaxed_mode_returns_only_what_later_code_reads(tmp_path: Path) -> None
 
 
 def test_strict_mode_holds_an_unread_local_until_the_function_returns(tmp_path: Path) -> None:
+    if not _release_order_certified():
+        _strict_declines_for_release_order(tmp_path, KEEP_HOLDER)
+        return
     generated, before, after = _refactored(tmp_path, KEEP_HOLDER, strict=True)
     assert "_towel_keep_handle, count = __extracted_func_0('first handle', 1)" in generated
     assert after == before
@@ -434,6 +481,9 @@ def test_relaxed_mode_passes_a_leading_argument_by_value_whatever_its_result(
 
 
 def test_strict_mode_keeps_the_thunk_of_an_opaque_result(tmp_path: Path) -> None:
+    if not _release_order_certified():
+        _strict_declines_for_release_order(tmp_path, LEADING_THUNK)
+        return
     generated, before, after = _refactored(tmp_path, LEADING_THUNK, strict=True)
     assert "value = __param_0()" in generated and "lambda" in generated
     assert after == before
