@@ -886,21 +886,29 @@ def _verification_cost(
 
 
 def _type_oracle(project_path: "Path") -> Optional["TypeOracle"]:
-    """The checker the project configures (mypy, pyright, or both), or None with a note.
-
-    A configured checker that is not installed is refused by the selection
-    itself (``CheckerNotInstalled``), before anything is written.
-    """
+    """Select the project's checker, raising when a configured checker is missing."""
     from towel.type_inference import type_oracle_for_project
 
-    choice = type_oracle_for_project(project_path)
-    if choice.tool is None:
-        print(
-            f"Note: {choice.note}, so helper annotations are copied from the call sites but not "
-            'inferred or verified. Install the types extra (pip install "code-towel[types]").',
-            file=sys.stderr,
-        )
-    return choice.tool
+    return type_oracle_for_project(project_path).tool
+
+
+def _target_has_annotations(project_path: Path, excluded: Sequence[str]) -> bool:
+    """Whether any selected source has annotations an optional checker could verify."""
+    for path in python_sources(project_path, excluded=excluded):
+        try:
+            tree = ast.parse(read_source(path))
+        except (OSError, UnicodeError, SyntaxError, ValueError):
+            continue  # This census only chooses a note; analysis handles unreadable source.
+        if any(
+            isinstance(node, ast.AnnAssign)
+            or isinstance(node, ast.arg)
+            and node.annotation is not None
+            or isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.returns is not None
+            for node in ast.walk(tree)
+        ):
+            return True
+    return False
 
 
 def _generated_code_formatter(
@@ -1205,6 +1213,13 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         print(
             f"Warning: {error} Continuing without type verification; generated helpers stay "
             "bare, as with --no-types. Use --strict to refuse instead.",
+            file=sys.stderr,
+        )
+    if oracle is None and annotate_helpers and _target_has_annotations(source, options.exclude):
+        print(
+            "Note: neither mypy nor pyright is installed, so helper annotations are copied "
+            "from the call sites but not inferred or verified. Install the types extra "
+            '(pip install "code-towel[types]").',
             file=sys.stderr,
         )
     types_status: TypesStatus = (
