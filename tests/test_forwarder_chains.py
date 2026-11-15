@@ -108,6 +108,7 @@ def _chain(count: int) -> str:
         """ for index in range(count)))
 
 
+@pytest.mark.strict_mode
 def test_identical_blocks_with_a_live_variable_share_one_helper(tmp_path: Path) -> None:
     source = textwrap.dedent(_chain(12))
     final, applied = refactor_to_fixed_point_silently(write_module(tmp_path, source))
@@ -128,6 +129,7 @@ def test_identical_blocks_with_a_live_variable_share_one_helper(tmp_path: Path) 
     assert _summaries(final, names) == _summaries(source, names)
 
 
+@pytest.mark.strict_mode
 def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: Path) -> None:
     final, _applied = refactor_to_fixed_point_silently(
         write_module(
@@ -165,6 +167,7 @@ def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: 
     )
 
 
+@pytest.mark.strict_mode
 def test_the_helper_returns_what_every_clustered_site_reads(tmp_path: Path) -> None:
     # The proposal built from the pair whose union of live names covers the
     # third site wins; a candidate reading a name its helper does not return
@@ -207,6 +210,7 @@ def test_the_helper_returns_what_every_clustered_site_reads(tmp_path: Path) -> N
     _assert_runtime_values(tmp_path, final, ["a", "b", "c"])
 
 
+@pytest.mark.strict_mode
 def test_a_function_that_is_the_block_plus_its_return_shares_the_helper(tmp_path: Path) -> None:
     final, _applied = refactor_to_fixed_point_silently(
         write_module(
@@ -255,6 +259,7 @@ def test_a_function_that_is_the_block_plus_its_return_shares_the_helper(tmp_path
     _assert_runtime_values(tmp_path, final, ["compute", "show", "label"])
 
 
+@pytest.mark.strict_mode
 def test_a_function_returning_the_names_in_another_order_keeps_its_order(
     tmp_path: Path,
 ) -> None:
@@ -417,6 +422,7 @@ def test_a_generated_helper_is_not_reduced_to_a_forwarder(tmp_path: Path) -> Non
     )
 
 
+@pytest.mark.strict_mode
 def test_the_forwarder_check_is_part_of_skipping_trivial_helpers(tmp_path: Path) -> None:
     final, applied = _continue_from_generated_helper(tmp_path, skip_trivial_helpers=False)
     assert applied == 1
@@ -426,6 +432,7 @@ def test_the_forwarder_check_is_part_of_skipping_trivial_helpers(tmp_path: Path)
     assert _collection_trace(final) == _collection_trace(GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT)
 
 
+@pytest.mark.strict_mode
 def test_a_user_named_function_may_specialize_the_new_helper(tmp_path: Path) -> None:
     # Only helpers this tool inserted are protected; a named function that
     # becomes a one-line specialization of the helper is a legitimate result.
@@ -543,6 +550,7 @@ def _binding_free_sql() -> str:
     return ast.unparse(ast.fix_missing_locations(tree)) + "\n"
 
 
+@pytest.mark.strict_mode
 def test_owned_sql_generator_is_not_split_across_frames(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -855,6 +863,7 @@ def test_retained_assignment_preserves_exact_whole_body_classification(
     assert engine._site_is_whole_body(replacement, function) is whole
 
 
+@pytest.mark.strict_mode
 def test_owned_partial_collection_does_not_enable_a_forwarding_fixture(tmp_path: Path) -> None:
     """Keep the original owning input as a refusal, alongside the safe positive."""
     source = OWNED_GENERATED_HELPER_WITH_A_DIFFERENT_CONSTANT

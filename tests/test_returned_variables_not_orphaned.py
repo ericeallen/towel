@@ -28,6 +28,7 @@ import contextlib
 import io
 from pathlib import Path
 import textwrap
+import pytest
 from types import SimpleNamespace
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -64,6 +65,7 @@ def _run(source: str) -> list[str]:
     return [namespace[name](record) for name in ("order_summary", "quote_summary")]  # type: ignore[operator]
 
 
+@pytest.mark.strict_mode
 def test_readme_example_extracts_with_the_returned_variable(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(README_EXAMPLE)
@@ -119,6 +121,7 @@ def test_a_name_bound_before_and_rebound_in_the_block_is_still_an_orphan(tmp_pat
         assert namespace["second"]([1, 2, 3]) == 12  # type: ignore[operator]
 
 
+@pytest.mark.strict_mode
 def test_original_partial_example_is_refused_without_changing_behavior(tmp_path: Path) -> None:
     path = tmp_path / "partial.py"
     path.write_text(OWNED_PARTIAL)

@@ -6,6 +6,26 @@ properly propagate return values in replacement calls.
 """
 
 
+def __extracted_func_4(x):
+    result = []
+    for i in range(x):
+        result.append(i * 2)
+
+
+def __extracted_func_3(items):
+    for item in items:
+        if item > 100:
+            return item
+    return None
+
+
+def __extracted_func_2(x):
+    if x < 0:
+        return None
+    result = x * 2
+    return result
+
+
 def __extracted_func_1(x):
     if x < 0:
         return 'negative'
@@ -26,18 +46,12 @@ def __extracted_func_0(x, y):
 
 def early_return_a(x):
     """Early return in if statement."""
-    if x < 0:
-        return None
-    result = x * 2
-    return result
+    return __extracted_func_2(x)
 
 
 def early_return_b(x):
     """Early return in if statement (duplicate)."""
-    if x < 0:
-        return None
-    result = x * 2
-    return result
+    return __extracted_func_2(x)
 
 
 def nested_return_a(x, y):
@@ -52,18 +66,12 @@ def nested_return_b(x, y):
 
 def loop_with_return_a(items):
     """Return inside loop."""
-    for item in items:
-        if item > 100:
-            return item
-    return None
+    return __extracted_func_3(items)
 
 
 def loop_with_return_b(items):
     """Return inside loop (duplicate)."""
-    for item in items:
-        if item > 100:
-            return item
-    return None
+    return __extracted_func_3(items)
 
 
 def multiple_returns_a(x):
@@ -78,15 +86,11 @@ def multiple_returns_b(x):
 
 def no_return_a(x):
     """Function with no explicit return (returns None)."""
-    result = []
-    for i in range(x):
-        result.append(i * 2)
+    __extracted_func_4(x)
     # No return statement
 
 
 def no_return_b(x):
     """Function with no explicit return (duplicate)."""
-    result = []
-    for i in range(x):
-        result.append(i * 2)
+    __extracted_func_4(x)
     # No return statement

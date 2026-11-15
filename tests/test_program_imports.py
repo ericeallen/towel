@@ -110,6 +110,7 @@ def test_an_import_into_an_excluded_directory_is_unknown_not_empty(tmp_path: Pat
     assert not would_create_import_cycle(borrower, {host}, excluded)
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("safe", [False, True])
 def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(
     tmp_path: Path, safe: bool

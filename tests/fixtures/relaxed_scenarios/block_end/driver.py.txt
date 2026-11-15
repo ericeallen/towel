@@ -1,0 +1,21 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import notify
+
+outbox = []
+ada = {"name": "Ada", "email": "ada@example.com", "referrer": "Grace"}
+bob = {"name": "Bob", "email": "bob@example.com"}
+order = {"id": "A-17", "items": [{"name": "towel", "price": 12.5}, {"name": "soap", "price": 3.25}]}
+print(notify.send_welcome(ada, outbox))
+print(notify.send_welcome(bob, outbox))
+print(notify.send_receipt(bob, order, outbox))
+print(notify.send_receipt(ada, {"id": "A-18", "items": []}, outbox))
+for message in outbox:
+    print(message)
+try:
+    notify.send_welcome({"name": "NoMail"}, outbox)
+except KeyError as exc:
+    print("KeyError", exc, len(outbox))
+print("ok")

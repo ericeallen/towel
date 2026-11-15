@@ -122,6 +122,7 @@ def test_mypy_inferrer_reveals_types_at_the_probe_line(tmp_path: Path) -> None:
     assert revealed[(str(module), 7, 2)].endswith("Box")
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_engine_fills_expression_arguments_and_the_return_from_mypy(
     tmp_path: Path,
@@ -159,6 +160,7 @@ def test_engine_fills_expression_arguments_and_the_return_from_mypy(
     exec(compile(result, "<inferred>", "exec"), {})
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_dry_infers_by_default_and_not_with_no_types(tmp_path: Path) -> None:
     source_dir = tmp_path / "source"
@@ -299,6 +301,7 @@ def test_inferrer_names_a_non_identifier_package_with_a_placeholder(
     assert revealed[(str(module), 5, 0)] == "_towel_package.m.Box"
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> None:
     # Python 3.10 supports the inferred type syntax; generated compound
@@ -336,6 +339,7 @@ def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> Non
     exec(compile(result, "<any>", "exec"), {})
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
     """Keep precise callable alternatives when attribute results remain deferred.
@@ -460,6 +464,7 @@ def test_unions_are_normalized_by_the_oracle(tmp_path: Path) -> None:
     ]
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_revealed_return_is_written_when_it_satisfies_every_declaration(
     tmp_path: Path,
@@ -492,6 +497,7 @@ def test_revealed_return_is_written_when_it_satisfies_every_declaration(
     )
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_declared_class_types_meet_through_the_oracle(tmp_path: Path) -> None:
     # ``Box`` is a subclass of ``Base``; only mypy knows, and the meet is Box.
@@ -526,6 +532,7 @@ def test_declared_class_types_meet_through_the_oracle(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_declared_return_meets_through_the_checker(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
@@ -599,6 +606,7 @@ class _Oracle:
         self.inner.close()
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_generated_code_that_fails_the_checker_degrades_to_any(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
@@ -793,6 +801,7 @@ def test_checker_follows_the_projects_configuration(tmp_path: Path) -> None:
     assert isinstance(oracle, MypyInferrer)
 
 
+@pytest.mark.strict_mode
 @requires_pyright
 def test_pyright_project_gets_pyright_types_end_to_end(tmp_path: Path) -> None:
     from towel.type_inference import PyrightOracle
@@ -900,6 +909,7 @@ def test_pyright_never_executes_a_project_package_that_shadows_the_standard_libr
         oracle.close()
 
 
+@pytest.mark.strict_mode
 def test_original_box_owned_tuple_partial_stays_refused(tmp_path: Path) -> None:
     # Exact original partial: opaque helper locals would cross a frame while
     # the caller still owns its original parameter. Keep that refusal covered.

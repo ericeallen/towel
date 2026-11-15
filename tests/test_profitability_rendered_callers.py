@@ -179,6 +179,7 @@ def test_method_dispatch_cost_matches_the_written_callers(
     assert observations[0] == observations[1] == [*range(12), 100, *range(1, 12)]
 
 
+@pytest.mark.strict_mode
 def test_mixed_ownership_cost_includes_the_unowned_callers_none_argument(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -207,6 +208,7 @@ def test_mixed_ownership_cost_includes_the_unowned_callers_none_argument(
         assert first(object()) == second_function() == 66
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("kind", ["instance", "classmethod"])
 def test_owned_method_dispatch_counts_the_reserved_and_appended_holder_identically(
     tmp_path: Path,

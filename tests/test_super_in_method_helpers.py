@@ -1139,6 +1139,7 @@ def test_a_super_helper_passes_mypy_strict_and_pyright_strict(tmp_path: Path) ->
         assert _strict_errors(tool, tmp_path / "ledger.py") == [], (tool, source)
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("source", [SINGLE, DIAMOND, CLASSMETHODS, CLUSTER, TYPED])
 def test_original_owned_super_partials_remain_refused(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, source: str

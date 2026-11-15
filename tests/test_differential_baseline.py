@@ -40,6 +40,7 @@ import textwrap
 
 import pytest
 
+from tests.test_helpers import child_mode_flags
 from towel.type_baseline import (
     KnownErrors,
     files_where_names_are_any,
@@ -407,6 +408,7 @@ def _resolved(path: Path) -> str:
     return str(path.resolve())
 
 
+@pytest.mark.strict_mode
 def test_a_project_whose_check_reports_errors_is_refactored_with_types(tmp_path: Path) -> None:
     """Refused before: 'Original project check reported 1 type error(s)'."""
     program, consumer = tmp_path / "program.py", tmp_path / "consumer.py"
@@ -516,6 +518,7 @@ PARTIAL = textwrap.dedent("""
 """Safe partials with no parameters or opaque caller locals, plus an untouched error."""
 
 
+@pytest.mark.strict_mode
 def test_original_owned_partials_do_not_bypass_the_frame_boundary(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(OWNED_PARTIAL)
@@ -738,6 +741,7 @@ def _mypy_run(tmp_path: Path, source: str) -> tuple[str, int]:
     return path.read_text(encoding="utf-8"), applied
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_mypy_an_error_below_the_helper_moves_with_it_and_is_still_the_same_error(
     tmp_path: Path,
@@ -961,6 +965,7 @@ CLI_CALCULATIONS = "\n\n".join(
 """The real CLI must exercise baseline typing with its normal usefulness policy."""
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
     tmp_path: Path,
@@ -975,7 +980,7 @@ def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
     (package / "seen.py").write_text(CLI_CALCULATIONS, encoding="utf-8")
     run = subprocess.run(
         [sys.executable, "-c", "from towel.cli import main; main()", "dry", "pkg", "pkg"]
-        + ["--no-format", "--no-interactive", "--progress", "none"],
+        + ["--no-format", "--no-interactive", "--progress", "none", *child_mode_flags()],
         cwd=tmp_path,
         env={**os.environ, "TOWEL_WORKERS": "1"},
         capture_output=True,

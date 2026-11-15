@@ -39,6 +39,7 @@ from typing import Mapping, Optional
 
 import pytest
 
+from tests.test_helpers import child_mode_flags
 import towel
 from towel.cli import (
     INSTALLED_COPY_REMEDY,
@@ -379,6 +380,7 @@ def _towel(root: Path, target: str, *flags: str) -> subprocess.CompletedProcess[
             "--no-types",
             "--no-format",
             "--cross-module",
+            *child_mode_flags(),
             *flags,
         ],
         capture_output=True,
@@ -586,6 +588,7 @@ def test_the_lacking_namesake_refuses_the_root_run_and_its_remedies_clear_it(
     assert _installed_behaviour(tmp_path / "project-out/zzapp", site, probe, tmp_path) == expected
 
 
+@pytest.mark.strict_mode
 def test_where_the_directory_is_what_the_program_means_the_import_that_lacks_is_left_out(
     tmp_path: Path,
 ) -> None:

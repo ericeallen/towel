@@ -388,6 +388,7 @@ def test_timeout_restores_an_unrelated_alarm_handler_and_emits_json(tmp_path: Pa
         signal.signal(signal.SIGALRM, previous)
 
 
+@pytest.mark.strict_mode
 def test_explain_locates_declined_blocks_and_does_not_leak_into_next_command(
     tmp_path: Path,
 ) -> None:

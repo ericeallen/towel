@@ -44,6 +44,7 @@ from ..diagnostics import REJECTIONS, debugging
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import (
     align_return_variables,
+    guarded_resource_crosses_exception_boundary,
     lifetime_order_preserved,
     owned_binding_crosses_exception_boundary,
 )
@@ -218,9 +219,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             )
             return None
         candidate_order = reorder_eligible_thunk_parameters(
-            candidate_helper, subst2, candidate_order
+            candidate_helper, subst2, candidate_order, any_result=not self.strict
         )
-        inline_leading_thunks(candidate_helper, subst2, candidate_order)
+        inline_leading_thunks(candidate_helper, subst2, candidate_order, any_result=not self.strict)
         if (
             candidate_order != template.param_order
             or canonical_dump(candidate_helper) != template.func_def_dump
@@ -241,7 +242,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         if aligned is None or aligned[0] != list(template.return_variables):
             return None
         returned = aligned[1]
-        if not lifetime_order_preserved(
+        if self.strict and not lifetime_order_preserved(
             candidate.nodes, candidate.function, candidate.analyzer, returned
         ):
             return None
@@ -351,6 +352,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             for name in used2
         ):
             return None
+        if not self.strict:
+            # Relaxed mode calls the helper directly: no transfer, no holder.
+            return call_node2, call_argument_lines(subst2, 1), None
         safe_call = spell_retained_bindings(candidate.function, candidate.nodes, call_node2)
         ownership = self._frame_ownership(candidate.function, candidate.nodes, site=candidate.site)
         handoff = (
@@ -573,8 +577,13 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         ):
             if self._block_rejected(frame_guard, cand_nodes, fn, analyzer, site=site):
                 return None
+        if not self.strict and self._block_rejected(
+            guarded_resource_crosses_exception_boundary, cand_nodes, fn, analyzer, site=site
+        ):
+            return None
+        lifetime_guards = (owned_binding_crosses_exception_boundary,) if self.strict else ()
         for guard in (
-            owned_binding_crosses_exception_boundary,
+            *lifetime_guards,
             nested_scopes_cross_block_boundary,
             moves_scope_declaration,
         ):
@@ -616,7 +625,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             site=site,
             snapshot=snapshot,
             return_variables=frozenset(
-                self._find_return_variables(fn, cand_range, snapshot.initially_bound, cand_nodes)
+                self._find_return_variables(
+                    fn, cand_range, snapshot.initially_bound, cand_nodes, module=module
+                )
             ),
         )
 

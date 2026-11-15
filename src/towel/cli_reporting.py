@@ -105,6 +105,11 @@ class HelperInventory(TypedDict):
 TypesStatus = Literal["verified", "unverified", "off"]
 
 
+def mode_name(strict: bool) -> Literal["relaxed", "strict"]:
+    """The result's name for the mode a run was asked for."""
+    return "strict" if strict else "relaxed"
+
+
 class CommandResult(TypedDict):
     """Version 1 of the complete-preview and dry result contract.
 
@@ -124,6 +129,7 @@ class CommandResult(TypedDict):
     schema_version: Literal[1]
     types: NotRequired[TypesStatus]
     command: Literal["preview", "dry"]
+    mode: Literal["relaxed", "strict"]
     status: Literal["complete", "incomplete", "error"]
     input: str
     output: str | None

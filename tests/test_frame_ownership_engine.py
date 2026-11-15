@@ -77,6 +77,7 @@ def _source(tmp_path: Path, text: str) -> Path:
     return source
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("case", ["external_exception_partial", "value_return_owner"])
 def test_actual_proposals_and_fixed_point_preserve_original_finalizer_order(
     tmp_path: Path, case: str
@@ -133,6 +134,7 @@ class _ReuseObservedEngine(UnificationRefactorEngine):
         return super()._reusing_generated_helper(proposal, functions)
 
 
+@pytest.mark.strict_mode
 def test_handoff_keeps_fresh_helper_and_safe_no_new_owner_still_considers_reuse(
     tmp_path: Path,
 ) -> None:
@@ -167,6 +169,7 @@ def test_handoff_keeps_fresh_helper_and_safe_no_new_owner_still_considers_reuse(
     assert applied > 0 and _run(output) == before
 
 
+@pytest.mark.strict_mode
 def test_default_typed_cli_preserves_whole_body_parameter_cleanup(tmp_path: Path) -> None:
     text = _substantial_value_return_source()
     text = text.replace("events = []", "events: list[str] = []")

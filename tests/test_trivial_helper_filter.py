@@ -22,6 +22,7 @@ duplicate, however small.
 
 from tests.test_helpers import write_module
 from towel.unification.refactor_engine import UnificationRefactorEngine
+import pytest
 
 
 def test_passthrough_return_is_skipped_by_default(tmp_path):
@@ -132,6 +133,7 @@ def test_a_body_that_only_binds_literals_and_parameters_is_not_extracted(tmp_pat
     ).analyze_file(path)
 
 
+@pytest.mark.strict_mode
 def test_partial_initialization_does_not_split_original_argument_ownership(tmp_path):
     source = (
         "def first(x):\n    depth = 0\n    seen = False\n    limit = x\n"

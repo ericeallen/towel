@@ -38,6 +38,7 @@ from typing import Dict, List, Mapping, Optional, Tuple, TypedDict
 
 import pytest
 
+from tests.test_helpers import child_mode_flags
 from towel.cli import DryOptions, PreviewOptions, _build_parser
 from towel.type_inference import type_oracle_for_project
 from towel.unification.annotations import (
@@ -209,6 +210,7 @@ CLUSTERED = "\n\n\n".join(
 )
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 def test_a_site_reading_the_builtin_shares_with_one_binding_its_name_only_with_the_flag(
     tmp_path: Path, flag: bool
@@ -226,6 +228,7 @@ def test_a_site_reading_the_builtin_shares_with_one_binding_its_name_only_with_t
     assert _run(after, "drive.py") == _run(before, "drive.py")
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 def test_local_owned_sites_do_not_reuse_their_eager_helper_for_a_builtin_site(
     tmp_path: Path, flag: bool
@@ -397,6 +400,7 @@ def test_reflection_does_not_request_builtin_parameterization(
         assert "builtin_may_differ_by_module" in declined
 
 
+@pytest.mark.strict_mode
 def test_the_flag_preserves_cross_module_lookups_and_same_module_bare_reads(tmp_path: Path) -> None:
     files = _package()
     _write(tmp_path, files)
@@ -443,6 +447,7 @@ def test_the_flag_still_declines_blocks_that_differ_in_a_builtin(
     assert "builtin_argument" in declined
 
 
+@pytest.mark.strict_mode
 def test_the_flag_reaches_the_engine_from_the_command_line(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -482,6 +487,7 @@ def test_the_flag_reaches_the_engine_from_the_command_line(
             "--progress",
             "none",
             "--parameterize-builtins",
+            *child_mode_flags(),
         ],
         cwd=tmp_path,
         capture_output=True,
@@ -611,6 +617,7 @@ def test_size() -> None:
 """
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_under_a_strict_checker_the_builtin_parameter_is_callable(
     tmp_path: Path,
@@ -648,6 +655,7 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(
             "--max-parameters",
             "8",
             "--parameterize-builtins",
+            *child_mode_flags(),
         ],
         cwd=tmp_path,
         capture_output=True,

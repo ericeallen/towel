@@ -1,0 +1,33 @@
+"""Settings read from the process environment."""
+
+import logging
+
+log = logging.getLogger("envconfig")
+
+
+def read_port(env):
+    raw = env.get("APP_PORT", "8080")
+    try:
+        value = int(raw)
+    except ValueError:
+        log.error("APP_PORT=%r is not an integer; using 8080", raw)
+        value = 8080
+    if value < 1:
+        value = 1
+    return value
+
+
+def read_workers(env):
+    raw = env.get("APP_WORKERS", "4")
+    try:
+        value = int(raw)
+    except ValueError:
+        log.error("APP_WORKERS=%r is not an integer; using 4", raw)
+        value = 4
+    if value < 1:
+        value = 1
+    return value
+
+
+def read_debug(env):
+    return env.get("APP_DEBUG", "").lower() in {"1", "true", "yes"}

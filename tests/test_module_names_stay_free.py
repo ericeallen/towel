@@ -30,6 +30,7 @@ from pathlib import Path
 import subprocess
 import sys
 import textwrap
+import pytest
 
 from towel.diagnostics import Settings
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -111,6 +112,7 @@ def _helper_signature(source: str) -> str:
     return ", ".join(arg.arg for arg in helper.args.args)
 
 
+@pytest.mark.strict_mode
 def test_module_names_are_read_bare_inside_a_same_file_helper(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(TWO_SITES)
@@ -144,6 +146,7 @@ def test_module_names_are_read_bare_inside_a_same_file_helper(tmp_path: Path) ->
     assert "lambda" not in final
 
 
+@pytest.mark.strict_mode
 def test_a_cross_file_helper_still_takes_module_names(tmp_path: Path) -> None:
     (tmp_path / "pkg").mkdir()
     (tmp_path / "pkg" / "__init__.py").write_text("")

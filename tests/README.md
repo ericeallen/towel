@@ -75,6 +75,19 @@ such a checker answered nowhere and the test verified nothing. A project
 path through a symbolic link (every temporary directory on macOS) once had
 every mypy answer dropped in exactly that way.
 
+Relaxed mode is the default, so a test runs relaxed unless it says otherwise.
+A test whose expectations are strict mode's (an ownership transfer or a kept
+binding in the generated text, a refusal that exists to keep release order,
+output that records when a `__del__` runs) is marked
+`@pytest.mark.strict_mode`, or its module sets `pytestmark` to it: engines
+it constructs and command lines it runs in this process are then strict
+unless they choose a mode. A command it runs in a child process passes
+`--strict` itself. The tests written before 2.0 that pin such behaviour carry
+the mark with their expectations unchanged. `pytest --towel-strict` runs
+every module that way, except the ones marked `relaxed_mode` because the
+default is what they pin; it is how to check that strict mode still passes
+the whole suite.
+
 A test that writes a module the engine will refactor puts it in a directory
 of its own: pytest's `tmp_path`, or `TemporaryModuleTestCase._write_temp` in
 a `unittest` class. Never `NamedTemporaryFile` or `mkstemp` at the temp root:
@@ -280,11 +293,21 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
 ### Test Examples (`test_examples/`, at the repository root)
 
 Real Python code examples used by the test suite. Their expected fixed-point
-outputs are the goldens in `test_examples_expected_output/` and, for the
+outputs in relaxed mode, the default, are the goldens in
+`test_examples_expected_output/`; `test_examples_strict_expected_output/` holds
+strict mode's, which are the goldens 1.949 shipped, unchanged, and
+`test_regression.py` holds each mode to its own set
+(`tests/generate_baseline.py --confirm --strict` rewrites the strict set, which
+should change only with a decision). The paragraphs below about
+`parameter_cells/` goldens, ownership-transfer calls and the sixteen unchanged
+goldens describe the strict set; relaxed mode renders the same on every
+compiler and leaves four inputs unchanged (`EXPECTED_UNCHANGED_EXAMPLES`;
+strict's sixteen are `STRICT_UNCHANGED_EXAMPLES`). The goldens for the
 cross-file packages in `test_examples_crossfile/` (`simple_crossfile`,
 `nested_structure`, `multi_level`, and `class_hierarchy`, a subclass in a
 second module repeating its base class's method body),
-`test_examples_crossfile_expected_output/`; regenerate them only after
+`test_examples_crossfile_expected_output/`, are the same in both modes;
+regenerate goldens only after
 verifying the new output (`just regenerate-baseline`) and review the diff,
 since regeneration is not validation.
 

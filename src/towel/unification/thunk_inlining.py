@@ -97,18 +97,25 @@ Step = Union[ast.AST, _Operation]
 
 
 def inline_leading_thunks(
-    helper: ast.FunctionDef, substitution: Substitution, param_order: Dict[str, int]
+    helper: ast.FunctionDef,
+    substitution: Substitution,
+    param_order: Dict[str, int],
+    *,
+    any_result: bool = False,
 ) -> Set[str]:
     """Inline thunks that the helper evaluates first, once, unconditionally.
 
-    Every caller must prove an immutable result. Thunks are considered in the
+    Every caller must prove an immutable result, unless ``any_result``: an
+    eager parameter holds its value until the helper returns, where the
+    thunk's result was a temporary, and only relaxed mode assumes that no
+    program observes the difference. Thunks are considered in the
     helper's evaluation order and must appear in increasing parameter
     position, because call-site arguments are evaluated
     left to right. Returns the inlined parameter names; ``helper`` and
     ``substitution`` are updated in place.
     """
     inlined: List[str] = []
-    for name in _eligible_leading_thunks(helper, substitution):
+    for name in _eligible_leading_thunks(helper, substitution, any_result=any_result):
         if inlined and param_order[name] <= param_order[inlined[-1]]:
             break
         inlined.append(name)
@@ -116,18 +123,19 @@ def inline_leading_thunks(
 
 
 def _eligible_leading_thunks(
-    helper: ast.FunctionDef, substitution: Substitution
+    helper: ast.FunctionDef, substitution: Substitution, *, any_result: bool = False
 ) -> Tuple[str, ...]:
     """The complete certified evaluation prefix, independent of signature discovery order.
 
     This discovery does not change the helper or substitution. A thunk is a
     function parameter with no bound variables; every caller must prove an
-    immutable result. Every other existing inlining guard applies here.
+    immutable result unless ``any_result``. Every other existing inlining
+    guard applies here.
     """
     candidates = {
         name
         for name, bound in substitution.function_params.items()
-        if not bound and _immutable_thunk_results(substitution, name)
+        if not bound and (any_result or _immutable_thunk_results(substitution, name))
     }
     if not candidates:
         return ()
@@ -169,7 +177,11 @@ def _ordered_thunk_slots(arguments: Sequence[ast.arg], ranks: Mapping[str, int])
 
 
 def reorder_eligible_thunk_parameters(
-    helper: ast.FunctionDef, substitution: Substitution, param_order: Dict[str, int]
+    helper: ast.FunctionDef,
+    substitution: Substitution,
+    param_order: Dict[str, int],
+    *,
+    any_result: bool = False,
 ) -> Dict[str, int]:
     """Order certified thunk slots in an owned helper signature before eager inlining.
 
@@ -192,7 +204,10 @@ def reorder_eligible_thunk_parameters(
     if len({argument.arg for argument in parameters}) != len(parameters):
         return param_order
     ranks = {
-        name: index for index, name in enumerate(_eligible_leading_thunks(helper, substitution))
+        name: index
+        for index, name in enumerate(
+            _eligible_leading_thunks(helper, substitution, any_result=any_result)
+        )
     }
     positional_only = _ordered_thunk_slots(arguments.posonlyargs, ranks)
     ordinary = _ordered_thunk_slots(arguments.args, ranks)

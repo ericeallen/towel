@@ -80,6 +80,7 @@ def _assert_preserved(
     assert observe("after.py", tmp_path) == original
 
 
+@pytest.mark.strict_mode
 @REQUIRES_TYPE_PARAMETERS
 @pytest.mark.parametrize("declaration", ["T", "*T", "**T"])
 @pytest.mark.parametrize("site_count", [2, 3])
@@ -97,6 +98,7 @@ def test_generic_functions_keep_their_own_type_parameter_identity(
     _assert_preserved(source, "True\n" * site_count, tmp_path, safe_companion=True)
 
 
+@pytest.mark.strict_mode
 @REQUIRES_TYPE_PARAMETERS
 def test_partial_generic_function_bodies_keep_type_parameter_bindings(
     tmp_path: Path,
@@ -167,6 +169,7 @@ def test_nested_functions_keep_an_enclosing_generic_parameter(tmp_path: Path) ->
     )
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("name", ["len", "value"])
 def test_unbound_local_shadows_builtins_and_module_bindings(name: str, tmp_path: Path) -> None:
     _assert_preserved(
@@ -235,6 +238,7 @@ def test_unbound_closure_cell_shadows_builtins_and_module_bindings(
     )
 
 
+@pytest.mark.strict_mode
 @REQUIRES_TYPE_PARAMETERS
 def test_unbound_function_local_shadows_its_type_parameter(tmp_path: Path) -> None:
     source = "\n".join(

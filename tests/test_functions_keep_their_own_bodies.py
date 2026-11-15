@@ -197,6 +197,7 @@ def _assert_owned_helper_call(
     )
 
 
+@pytest.mark.strict_mode
 def test_patching_one_function_leaves_its_duplicate_alone(tmp_path: Path) -> None:
     before, after = tmp_path / "before", tmp_path / "after"
     for root in (before, after):
@@ -278,6 +279,7 @@ def test_a_function_in_another_module_is_not_called_in_place_of_a_duplicate(
     assert "fa(" not in unparsed_body(module_functions((after / "pkg" / "b.py").read_text())["fb"])
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("helper_name", ["__extracted_func_0", "square_shifted"])
 def test_two_whole_bodies_both_become_calls_of_the_new_helper(
     tmp_path: Path, helper_name: str

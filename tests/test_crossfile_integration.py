@@ -449,6 +449,7 @@ class TestExampleThreeCrossFile:
         assert [p.description for p in proposals] == [EXAMPLE3_HELPER]
         assert _participating_files(proposals[0]) == {file1, file2}
 
+    @pytest.mark.strict_mode
     def test_example3_directory_run_imports_the_helper(self, tmp_path: Path):
         source = tmp_path / "example3"
         self._premium_imports_regular(source)

@@ -218,6 +218,7 @@ _SUMMARY = (
 )
 
 
+@pytest.mark.strict_mode
 def test_r9xh_the_borrowers_own_patch_still_runs_before_the_host(tmp_path: Path) -> None:
     """Round 4's P1-7: ``from .a import ...`` went above ``time.sleep = patch``."""
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'shop'\nversion = '0'\n")
@@ -263,6 +264,7 @@ def test_r9xh_the_borrowers_own_patch_still_runs_before_the_host(tmp_path: Path)
     assert run() == before == "patched sleep 0\nBN=41\n"
 
 
+@pytest.mark.strict_mode
 def test_latin1_literal_carrier_respects_the_complete_default_holder_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

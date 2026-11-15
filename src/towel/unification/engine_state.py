@@ -252,6 +252,10 @@ class EngineState:
     parameterize_builtins: bool
     """Whether a builtin that may differ between sites is passed as a parameter instead of declined."""
 
+    strict: bool
+    """Whether 1.949's guarantees are kept in full: exact object lifetimes, and typed verification that
+    gates even unannotated proposals on resolved imports. Relaxed mode, the default, assumes neither is needed."""
+
     max_candidate_pairs: int
     """Candidate pairs an analysis evaluates before it leaves the largest buckets out."""
 
@@ -271,9 +275,6 @@ class EngineState:
 
     annotate_helpers: bool
     """Whether helpers carry the annotations their call sites declare."""
-
-    strict: bool
-    """Whether even bare proposals require every imported name to have a known type."""
 
     _unannotated_imports_noted: bool
     """Whether this run has explained its relaxed import-resolution policy."""

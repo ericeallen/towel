@@ -8,6 +8,12 @@ Tests that:
 """
 
 
+def __extracted_func_0(value):
+    precision = 2
+    result = f'Value: {value:.{precision}f}'
+    return result
+
+
 def log_user(user_id, name):
     """Log user with f-string."""
     status = "active"
@@ -28,16 +34,12 @@ def log_admin(admin_id, name):
 
 def format_number_a(value):
     """F-string with formatting."""
-    precision = 2
-    result = f"Value: {value:.{precision}f}"
-    return result
+    return __extracted_func_0(value)
 
 
 def format_number_b(value):
     """F-string with formatting (same literal - should unify)."""
-    precision = 2
-    result = f"Value: {value:.{precision}f}"
-    return result
+    return __extracted_func_0(value)
 
 
 def const_parameterization_a(item):

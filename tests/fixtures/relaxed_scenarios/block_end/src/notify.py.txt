@@ -1,0 +1,25 @@
+"""Outgoing mail for the shop."""
+
+
+def send_welcome(user, outbox):
+    subject = f"Welcome, {user['name']}!"
+    body = "Thanks for signing up.\n"
+    if user.get("referrer"):
+        body += f"{user['referrer']} will be glad you joined.\n"
+    message = {"to": user["email"], "subject": subject, "body": body}
+    message["id"] = f"msg-{len(outbox) + 1:04d}"
+    message["size"] = len(subject) + len(body)
+    outbox.append(message)
+    return message["id"]
+
+
+def send_receipt(user, order, outbox):
+    subject = f"Receipt for order {order['id']}"
+    lines = [f"{item['name']}: {item['price']:.2f}" for item in order["items"]]
+    total = sum(item["price"] for item in order["items"])
+    body = "\n".join(lines) + f"\nTotal: {total:.2f}\n"
+    message = {"to": user["email"], "subject": subject, "body": body}
+    message["id"] = f"msg-{len(outbox) + 1:04d}"
+    message["size"] = len(subject) + len(body)
+    outbox.append(message)
+    return message["id"]

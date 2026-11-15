@@ -1,0 +1,53 @@
+"""Paged listings over the in-memory store used by the demo server."""
+
+
+def list_users(store, page=1, per_page=20):
+    items = sorted(store.get("users", {}).values(), key=lambda item: item["id"])
+    start = (page - 1) * per_page
+    chunk = items[start:start + per_page]
+    return {
+        "kind": "users",
+        "items": chunk,
+        "page": page,
+        "total": len(items),
+        "has_more": start + per_page < len(items),
+    }
+
+
+def list_orders(store, page=1, per_page=20):
+    items = sorted(store.get("orders", {}).values(), key=lambda item: item["id"])
+    start = (page - 1) * per_page
+    chunk = items[start:start + per_page]
+    return {
+        "kind": "orders",
+        "items": chunk,
+        "page": page,
+        "total": len(items),
+        "has_more": start + per_page < len(items),
+    }
+
+
+def list_products(store, page=1, per_page=20):
+    items = sorted(store.get("products", {}).values(), key=lambda item: item["id"])
+    start = (page - 1) * per_page
+    chunk = items[start:start + per_page]
+    return {
+        "kind": "products",
+        "items": chunk,
+        "page": page,
+        "total": len(items),
+        "has_more": start + per_page < len(items),
+    }
+
+
+def list_invoices(store, page=1, per_page=20):
+    items = sorted(store.get("invoices", {}).values(), key=lambda item: item["id"])
+    start = (page - 1) * per_page
+    chunk = items[start:start + per_page]
+    return {
+        "kind": "invoices",
+        "items": chunk,
+        "page": page,
+        "total": len(items),
+        "has_more": start + per_page < len(items),
+    }

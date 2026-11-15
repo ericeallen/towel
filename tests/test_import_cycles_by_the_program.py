@@ -37,6 +37,7 @@ from typing import List, Mapping, Tuple
 
 import pytest
 
+from tests.test_helpers import child_mode_flags
 import towel
 from towel.unification.import_graph import ImportGraphCache, would_create_import_cycle
 
@@ -119,6 +120,7 @@ def test_the_guard_sees_a_cycle_through_a_sibling_package(tmp_path: Path) -> Non
     assert not would_create_import_cycle(str(borrower), {str(host)}, ImportGraphCache())
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("safe", [False, True])
 def test_the_helper_goes_where_importing_it_closes_no_cycle(tmp_path: Path, safe: bool) -> None:
     original = _write(tmp_path / "original", safe=safe)
@@ -137,6 +139,7 @@ def test_the_helper_goes_where_importing_it_closes_no_cycle(tmp_path: Path, safe
             "--cross-module",
             "--progress",
             "none",
+            *child_mode_flags(),
         ],
         capture_output=True,
         text=True,

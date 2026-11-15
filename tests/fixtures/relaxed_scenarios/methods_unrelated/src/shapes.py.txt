@@ -1,0 +1,44 @@
+"""Shapes for the floor-plan estimator."""
+
+import math
+
+
+class Circle:
+    name = "circle"
+
+    def __init__(self, radius):
+        self.radius = radius
+
+    def area(self):
+        return math.pi * self.radius ** 2
+
+    def perimeter(self):
+        return 2 * math.pi * self.radius
+
+    def describe(self, unit="m"):
+        area = round(self.area(), 2)
+        perimeter = round(self.perimeter(), 2)
+        ratio = round(area / perimeter, 3) if perimeter else 0.0
+        label = self.name.capitalize()
+        return f"{label}: area {area} {unit}^2, perimeter {perimeter} {unit}, ratio {ratio}"
+
+
+class Rectangle:
+    name = "rectangle"
+
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+
+    def area(self):
+        return self.width * self.height
+
+    def perimeter(self):
+        return 2 * (self.width + self.height)
+
+    def describe(self, unit="m"):
+        area = round(self.area(), 2)
+        perimeter = round(self.perimeter(), 2)
+        ratio = round(area / perimeter, 3) if perimeter else 0.0
+        label = self.name.capitalize()
+        return f"{label}: area {area} {unit}^2, perimeter {perimeter} {unit}, ratio {ratio}"

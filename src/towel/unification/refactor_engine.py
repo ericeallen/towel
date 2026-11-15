@@ -78,7 +78,12 @@ from .engine_state import (
     PerBlockKey,
     UnifyKey,
 )
-from .defaults import DEFAULT_MAX_CANDIDATE_PAIRS, DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
+from .defaults import (
+    DEFAULT_MAX_CANDIDATE_PAIRS,
+    DEFAULT_MAX_PARAMETERS,
+    DEFAULT_MIN_LINES,
+    DEFAULT_STRICT,
+)
 from .extraction_policy import protected_definitions
 from .function_index import FunctionIndex
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
@@ -335,12 +340,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
         pep420_namespace_packages: Optional[bool] = None,
         promote_equal_hof_literals: bool = False,
         parameterize_builtins: bool = False,
+        strict: bool = DEFAULT_STRICT,
         excluded_directories: Sequence[str] = (),
         cross_module_helpers: bool = False,
         skip_trivial_helpers: bool = True,
         reuse_existing_functions: bool = True,
         annotate_helpers: bool = True,
-        strict: bool = False,
         type_oracle: Optional[TypeOracle] = None,
         snippet_formatter: Optional[Callable[[str], str]] = None,
         snippet_formatter_for_file: Optional[
@@ -356,9 +361,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
 
         Args:
             max_parameters: Maximum newly parameterized differing expressions
-                (default: 5); ordinary free inputs may add arguments. A certified
-                whole-body ownership transfer must fit its complete positional
-                signature, including the final lifetime holder, within this limit.
+                (default: 5); ordinary free inputs may add arguments. In strict
+                mode a certified whole-body ownership transfer must fit its
+                complete positional signature, including the final lifetime
+                holder, within this limit.
             min_lines: Minimum number of source lines a duplicated block must span
                 to be considered (default: 3).
             max_candidate_pairs: Most block pairs one analysis evaluates. Blocks
@@ -389,6 +395,15 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 Each original use reads that caller's current binding. The same
                 spelling across modules does not prove equal bindings; same-module
                 builtin reads stay bare. Other binding checks still apply.
+            strict: Preserve exactly when objects are released, as releases
+                through 1.949 did (default: False). Relaxed mode, the default,
+                assumes the program does not depend on when or in what order
+                objects are finalized once it has stopped using them, so its
+                callers call helpers directly; strict mode transfers argument
+                ownership, returns names held only for their lifetime, and
+                refuses blocks whose release order it cannot keep
+                (docs/DECISIONS.md, "Relaxed mode is the default; strict mode
+                keeps exact lifetimes").
             excluded_directories: Names of directories, or of files, to leave
                 unchanged, matched at any depth, such as a package's own test
                 suite. The checks that read the whole program still read them,
@@ -476,7 +491,6 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.skip_trivial_helpers = skip_trivial_helpers
         # reuse_existing_functions is accepted and ignored; see the docstring.
         self.annotate_helpers = annotate_helpers
-        self.strict = strict
         self._unannotated_imports_noted = False
         self.type_oracle = type_oracle
         self._type_run_oracle = type_oracle
@@ -500,6 +514,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.cross_module_helpers = cross_module_helpers
         self.parameterize_constants = parameterize_constants
         self.parameterize_builtins = parameterize_builtins
+        self.strict = strict
         self.unifier = Unifier(
             max_parameters=max_parameters,
             parameterize_constants=parameterize_constants,

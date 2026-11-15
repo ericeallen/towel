@@ -1,0 +1,30 @@
+"""Shipping quotes."""
+
+ZONE_SURCHARGE = {"eu": 4.0, "na": 6.5, "apac": 9.0}
+
+
+def domestic_quote(parcel):
+    weight = max(parcel["weight_kg"], 0.1)
+    volume = parcel["length"] * parcel["width"] * parcel["height"] / 5000
+    billable = max(weight, volume)
+    base = 4.50 + 1.20 * billable
+    if parcel.get("fragile"):
+        base += 2.00
+    surcharge = 0.0
+    total = round(base + surcharge, 2)
+    return {"billable_kg": round(billable, 2), "price": total, "currency": "USD"}
+
+
+def international_quote(parcel, zone):
+    weight = max(parcel["weight_kg"], 0.1)
+    volume = parcel["length"] * parcel["width"] * parcel["height"] / 5000
+    billable = max(weight, volume)
+    base = 9.00 + 3.10 * billable
+    if parcel.get("fragile"):
+        base += 2.00
+    if billable > 2:
+        surcharge = ZONE_SURCHARGE.get(zone, 12.0)
+    else:
+        surcharge = 0.0
+    total = round(base + surcharge, 2)
+    return {"billable_kg": round(billable, 2), "price": total, "currency": "USD"}

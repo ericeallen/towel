@@ -6,52 +6,61 @@ collide with variables in the surrounding scope or in the calling context.
 """
 
 
+def __extracted_func_2(__param_0, data, result):
+    for item in data:
+        # This block should be extracted, but 'x' might collide
+        # Same block - extracted function must avoid collision with 'result'
+        x = item * __param_0
+        y = x + 10
+        z = y ** 2
+        result.append(z)
+    return result
+
+
+def __extracted_func_1(__param_0, values, x, y):
+    output = []
+    for val in values:
+        # This block references outer 'x' and 'y'
+        # Same structure but different constant
+        a = val + x
+        b = a * y
+        c = b - __param_0
+        output.append(c)
+    return output
+
+
+def __extracted_func_0(__param_0, __param_1, data):
+    results = []
+    for item in data:
+        # This block could have naming conflicts with nested functions
+        # Different computation, same structure
+        a = item ** __param_0
+        b = a + __param_1
+        c = b * 3
+        results.append(c)
+    return results
+
+
 def process_with_temp_var_v1(data, result):
     """Version 1: Uses 'result' in outer scope, 'x' in duplicate block."""
     result = []
-    for item in data:
-        # This block should be extracted, but 'x' might collide
-        x = item * 2
-        y = x + 10
-        z = y**2
-        result.append(z)
-    return result
+    return __extracted_func_2(2, data, result)
 
 
 def process_with_temp_var_v2(data, result):
     """Version 2: Same pattern but 'result' is a parameter name."""
     result = []
-    for item in data:
-        # Same block - extracted function must avoid collision with 'result'
-        x = item * 3
-        y = x + 10
-        z = y**2
-        result.append(z)
-    return result
+    return __extracted_func_2(3, data, result)
 
 
 def calculate_nested_scope_a(values, x, y):
     """Uses x and y as parameters - extracted function must avoid these."""
-    output = []
-    for val in values:
-        # This block references outer 'x' and 'y'
-        a = val + x
-        b = a * y
-        c = b - 5
-        output.append(c)
-    return output
+    return __extracted_func_1(5, values, x, y)
 
 
 def calculate_nested_scope_b(values, x, y):
     """Same outer variable names - extracted function needs hygienic naming."""
-    output = []
-    for val in values:
-        # Same structure but different constant
-        a = val + x
-        b = a * y
-        c = b - 10
-        output.append(c)
-    return output
+    return __extracted_func_1(10, values, x, y)
 
 
 def transform_with_shadowing_v1(data, temp, cache):
@@ -121,15 +130,7 @@ def nested_function_scope_v1(data, helper, processor):
     def processor(x):
         return x + 5
 
-    results = []
-    for item in data:
-        # This block could have naming conflicts with nested functions
-        a = item**2
-        b = a + 100
-        c = b * 3
-        results.append(c)
-
-    return results
+    return __extracted_func_0(2, 100, data)
 
 
 def nested_function_scope_v2(data, helper, processor):
@@ -141,12 +142,4 @@ def nested_function_scope_v2(data, helper, processor):
     def processor(x):
         return x + 5
 
-    results = []
-    for item in data:
-        # Different computation, same structure
-        a = item**3
-        b = a + 200
-        c = b * 3
-        results.append(c)
-
-    return results
+    return __extracted_func_0(3, 200, data)

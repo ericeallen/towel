@@ -149,6 +149,7 @@ def _run(source: str, statements: str) -> object:
     return namespace["observed"]
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("method_kind", ["instance", "staticmethod", "classmethod"])
 def test_constrained_generic_methods_preserve_dispatch_and_reject_mixed_arguments(
     tmp_path: Path, oracle: TypeOracle, method_kind: MethodKind

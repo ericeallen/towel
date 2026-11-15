@@ -25,6 +25,7 @@ import subprocess
 import sys
 
 import pytest
+from tests.test_helpers import child_mode_flags
 import towel
 
 
@@ -298,6 +299,7 @@ def _dry(project: Path, output: Path, *, cross_module: bool, memo: bool = True) 
         "3",
         "--progress",
         "none",
+        *child_mode_flags(),
     ]
     if cross_module:
         command.append("--cross-module")
@@ -350,6 +352,7 @@ def _assert_moved_and_bounded(output: Path, names: tuple[str, ...]) -> None:
     )
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)
 def test_complete_typed_formatted_cli_recovers_occurrence_vectors(
     tmp_path: Path, case: _Case
@@ -364,6 +367,7 @@ def test_complete_typed_formatted_cli_recovers_occurrence_vectors(
     assert before[0] == 0
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("common", ["1000000", "1000000.25"])
 @pytest.mark.parametrize("cross_module", [False, True], ids=["same-module", "cross-module"])
 def test_retained_operand_keeps_its_caller_pool_identity(
@@ -401,6 +405,7 @@ def test_evaluated_fstring_constants_recover_without_changing_format_effects(
     assert before[0] == 0
 
 
+@pytest.mark.strict_mode
 def test_cli_memo_disabled_and_reparsed_copy_preserve_occurrence_behavior(tmp_path: Path) -> None:
     case = _Case("copied_permutation", (("1", "2"), ("2", "1")))
     sources, program = _sources(case, False)
@@ -417,6 +422,7 @@ def test_cli_memo_disabled_and_reparsed_copy_preserve_occurrence_behavior(tmp_pa
     assert outputs[0] == outputs[1] == outputs[2]
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("expression", ["OFFSET", "supply()"], ids=["module-name", "call"])
 def test_mixed_constant_expression_boundary_preserves_effects_and_failures(
     tmp_path: Path, expression: str

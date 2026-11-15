@@ -23,6 +23,7 @@ import pytest
 from tests.test_cli_integration import invoke
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize(
     "fixture",
     [
@@ -71,6 +72,7 @@ def test_release_audit_behavior(
     assert source.read_text() == original_text
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("typed", [False, True])
 @pytest.mark.parametrize("alias", [False, True])
 def test_multiple_finalizers_keep_their_cleanup_order(
@@ -98,6 +100,7 @@ def test_multiple_finalizers_keep_their_cleanup_order(
     assert source.read_text() == original_text
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("typed", [False, True])
 @pytest.mark.parametrize("alias", [False, True])
 def test_safe_retained_finalizers_keep_their_original_cleanup_order(

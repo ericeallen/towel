@@ -24,6 +24,7 @@ import unittest
 from pathlib import Path
 import textwrap
 import ast
+import pytest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -151,6 +152,7 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
         proposal = proposals[0]
         return self.engine.apply_refactoring(str(temp_path), proposal)
 
+    @pytest.mark.strict_mode
     def test_instance_methods_extracted_into_class(self):
         """Duplicate instance methods should extract helper into the same class."""
 
@@ -198,6 +200,7 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
                 self.assertEqual(original_argument_name(method, call.func.value), "self")
                 self.assertEqual(call.func.attr, helper_name)
 
+    @pytest.mark.strict_mode
     def test_classmethods_extracted_into_class(self):
         """Duplicate class methods should place helper inside the class with @classmethod."""
 
@@ -250,6 +253,7 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
             self.assertEqual(original_argument_name(method, call.args[0]), "value")
             self.assertEqual(ast.unparse(call.args[-1]), "_towel_arguments.pop()")
 
+    @pytest.mark.strict_mode
     def test_staticmethods_share_a_module_level_helper(self):
         """Duplicate static methods call a module function: a static helper had to be
         reached through the class's name, which the method cannot be sure of."""
@@ -298,6 +302,7 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
                 ],
             )
 
+    @pytest.mark.strict_mode
     def test_sibling_instance_methods_share_a_module_helper_taking_the_receiver(self):
         """Methods of two subclasses share a module function; their base gains nothing.
 

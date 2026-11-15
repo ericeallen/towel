@@ -22,6 +22,7 @@ import sys
 import textwrap
 import unittest
 import tempfile
+import pytest
 from pathlib import Path
 from typing import Any
 
@@ -673,6 +674,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         exec(new_src, ns2)
         self.assertEqual(orig, ns2["f"](5))
 
+    @pytest.mark.strict_mode
     def test_dce_with_async_nested_functions_inserts_into_enclosing_async_outer(self):
         # Async outer with two inner async functions sharing a duplicate block.
         # Helper should be inserted into the async outer function body, not at module scope.
@@ -907,6 +909,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             "No proposal inserted helper into the inner common ancestor function",
         )
 
+    @pytest.mark.strict_mode
     def test_dce_mixed_async_sync_within_same_async_outer(self):
         # Mixed async/sync inner functions under an async outer. The shared block should extract
         # into the async outer function scope. Validate runtime equivalence.
@@ -1061,6 +1064,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         exec(new_src, ns2)
         self.assertEqual(orig, ns2["outer"](7))
 
+    @pytest.mark.strict_mode
     def test_dce_keeps_nonlocal_access_at_the_site(self):
         """The nonlocal read stays; the independent suffix remains extractable.
 

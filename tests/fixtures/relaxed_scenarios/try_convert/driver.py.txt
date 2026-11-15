@@ -1,0 +1,26 @@
+import logging
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import envconfig
+
+
+class PrintHandler(logging.Handler):
+    def emit(self, record):
+        print("LOG", record.levelname, record.getMessage())
+
+
+envconfig.log.addHandler(PrintHandler())
+envconfig.log.propagate = False
+
+envs = [
+    {},
+    {"APP_PORT": "9000", "APP_WORKERS": "16", "APP_DEBUG": "TRUE"},
+    {"APP_PORT": "http", "APP_WORKERS": "many"},
+    {"APP_PORT": "0", "APP_WORKERS": "-3"},
+    {"APP_PORT": " 81 ", "APP_WORKERS": "2.5"},
+]
+for env in envs:
+    print(env, envconfig.read_port(env), envconfig.read_workers(env), envconfig.read_debug(env))
+print("ok")

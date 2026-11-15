@@ -1,0 +1,12 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import stats
+
+for data in ([], [1], [1, 2, 3, 4], [0.5, 0.25, 0.125], (10, 20)):
+    print(data, stats.average_score(data), stats.mean_latency(data))
+print(stats.percentile([5, 1, 9, 3, 7], 0.5), stats.percentile([5, 1, 9, 3, 7], 0.99))
+assert stats.average_score([1, 2, 3]) == 2.0
+assert stats.mean_latency([1, 2, 3]) == 2.0
+print("ok")

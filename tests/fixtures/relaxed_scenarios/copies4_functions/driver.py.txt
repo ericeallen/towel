@@ -1,0 +1,18 @@
+import inspect
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import repository
+
+store = {
+    kind: {n: {"id": n, "kind": kind} for n in (5, 3, 1, 4, 2)}
+    for kind in ("users", "orders", "products")
+}
+for func in (repository.list_users, repository.list_orders, repository.list_products, repository.list_invoices):
+    print(func.__name__, str(inspect.signature(func)))
+    print(func(store))
+    print(func(store, page=2, per_page=2))
+    print(func(store, 3, 2))
+    print(func(store, per_page=5)["has_more"], func(store, page=9)["items"])
+print("ok")

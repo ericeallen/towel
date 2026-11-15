@@ -6,12 +6,42 @@ and don't accidentally capture or modify variables incorrectly.
 """
 
 
-def __extracted_func_0(cache, key, metrics, processed):
-    cache[key] = processed
-    metrics['count'] += 1
-    metrics['total'] += processed
-    if processed > 100:
-        metrics['high_value'] += 1
+def __extracted_func_3(__param_0, counter):
+    counter['total'] += __param_0()
+    counter['processed'] += 1
+    result = counter['total'] / counter['processed']
+    print(f'Current average: {result}')
+
+
+def __extracted_func_2(accumulator, multiplier, value):
+    processed = value * multiplier
+    validated = processed > 0
+    if validated:
+        accumulator.append(processed)
+    return processed
+
+
+def __extracted_func_1(data, outer_var, processor):
+    inner_var = 50
+    for item in data:
+        # This block uses both outer_var and inner_var
+        step1 = item + outer_var
+        step2 = step1 - inner_var
+        step3 = step2 * 2  # Correct: uses step2
+        processor.add(step3)
+
+
+def __extracted_func_0(__param_0, cache, data, metrics):
+    for key, value in data.items():
+        # Modifies both cache and metrics
+        # Same pattern, different multiplier
+        processed = value * __param_0
+        cache[key] = processed
+        metrics['count'] += 1
+        metrics['total'] += processed
+        if processed > 100:
+            metrics['high_value'] += 1
+    return (cache, metrics)
 
 
 def update_mutable_state_v1(items, counter):
@@ -20,10 +50,7 @@ def update_mutable_state_v1(items, counter):
 
     for item in items:
         # This block modifies mutable state
-        counter["total"] += item
-        counter["processed"] += 1
-        result = counter["total"] / counter["processed"]
-        print(f"Current average: {result}")
+        __extracted_func_3(lambda: item, counter)
 
     return counter
 
@@ -34,10 +61,7 @@ def update_mutable_state_v2(items, counter):
 
     for item in items:
         # Same pattern of mutation
-        counter["total"] += item * 2
-        counter["processed"] += 1
-        result = counter["total"] / counter["processed"]
-        print(f"Current average: {result}")
+        __extracted_func_3(lambda: item * 2, counter)
 
     return counter
 
@@ -76,11 +100,7 @@ def accumulate_with_closure_v1(items, accumulator):
 
     def add_processed(value, multiplier):
         # Closure captures 'accumulator'
-        processed = value * multiplier
-        validated = processed > 0
-        if validated:
-            accumulator.append(processed)
-        return processed
+        return __extracted_func_2(accumulator, multiplier, value)
 
     results = [add_processed(item, 2) for item in items]
     return accumulator, results
@@ -92,11 +112,7 @@ def accumulate_with_closure_v2(items, accumulator):
 
     def add_processed(value, multiplier):
         # Same closure pattern
-        processed = value * multiplier
-        validated = processed > 0
-        if validated:
-            accumulator.append(processed)
-        return processed
+        return __extracted_func_2(accumulator, multiplier, value)
 
     results = [add_processed(item, 3) for item in items]
     return accumulator, results
@@ -156,13 +172,7 @@ def nested_scope_capture_v1(outer_data, processor):
 
     def inner_process(data):
         # Captures outer_var
-        inner_var = 50
-        for item in data:
-            # This block uses both outer_var and inner_var
-            step1 = item + outer_var
-            step2 = step1 - inner_var
-            step3 = step2 * 2
-            processor.add(step3)
+        __extracted_func_1(data, outer_var, processor)
 
     inner_process(outer_data)
     return processor.get_results()
@@ -205,12 +215,7 @@ def nested_scope_capture_valid_v1(outer_data, processor):
 
     def inner_process(data):
         # Captures outer_var
-        inner_var = 50
-        for item in data:
-            step1 = item + outer_var
-            step2 = step1 - inner_var
-            step3 = step2 * 2  # Correct: uses step2
-            processor.add(step3)
+        __extracted_func_1(data, outer_var, processor)
 
     inner_process(outer_data)
     return processor.get_results()
@@ -227,12 +232,7 @@ def nested_scope_capture_valid_v2(outer_data, processor):
 
     def inner_process(data):
         # Captures different outer_var
-        inner_var = 50
-        for item in data:
-            step1 = item + outer_var
-            step2 = step1 - inner_var
-            step3 = step2 * 2  # Correct: uses step2
-            processor.add(step3)
+        __extracted_func_1(data, outer_var, processor)
 
     inner_process(outer_data)
     return processor.get_results()
@@ -240,19 +240,9 @@ def nested_scope_capture_valid_v2(outer_data, processor):
 
 def modify_external_state_a(data, cache, metrics):
     """Version A: Modifies multiple external objects."""
-    for key, value in data.items():
-        # Modifies both cache and metrics
-        processed = value * 2
-        __extracted_func_0(cache, key, metrics, processed)
-
-    return cache, metrics
+    return __extracted_func_0(2, cache, data, metrics)
 
 
 def modify_external_state_b(data, cache, metrics):
     """Version B: Different multiplier, same modification pattern."""
-    for key, value in data.items():
-        # Same pattern, different multiplier
-        processed = value * 3
-        __extracted_func_0(cache, key, metrics, processed)
-
-    return cache, metrics
+    return __extracted_func_0(3, cache, data, metrics)

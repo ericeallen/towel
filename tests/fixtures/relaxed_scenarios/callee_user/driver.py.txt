@@ -1,0 +1,16 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import invoice
+
+items = [
+    {"unit_price": 9.99, "quantity": 3},
+    {"unit_price": 120.0, "quantity": 1, "cancelled": True},
+    {"unit_price": 0.35, "quantity": 12},
+]
+print(invoice.total_net(items), invoice.total_gross(items))
+print(invoice.total_net([]), invoice.total_gross([]))
+assert invoice.total_net(items) == 34.17
+assert invoice.total_gross(items) == 41.0
+print("ok")

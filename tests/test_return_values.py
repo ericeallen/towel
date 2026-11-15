@@ -25,6 +25,7 @@ All tests read from test_examples in read-only mode.
 import unittest
 import ast
 import tempfile
+import pytest
 from pathlib import Path
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -94,6 +95,7 @@ class TestReturnValuePropagation(unittest.TestCase):
         multi = [p for p in proposals if "multiple_returns" in p.description.lower()]
         self.assertGreater(len(multi), 0, "Should find multiple return duplicates")
 
+    @pytest.mark.strict_mode
     def test_no_explicit_return(self):
         """Test function with no explicit return."""
         proposals = self.engine.analyze_file(str(self.example_path))

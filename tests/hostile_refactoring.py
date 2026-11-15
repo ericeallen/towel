@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import re
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple, TypeVar
 
@@ -42,22 +43,44 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 
 Fixture = TypeVar("Fixture")
 
+OWNERSHIP_BOOKKEEPING = re.compile(rb"_towel_(arguments?|owner|keep_)")
+"""The names strict mode writes to keep lifetimes: the box, its captures, the holder, kept locals.
+
+Relaxed mode writes none of them. (A typed run's ``_towel_typevar`` alias
+is another matter and appears in both modes.)
+"""
+
+
+def _in_mode(
+    engine: UnificationRefactorEngine, strict: Optional[bool]
+) -> UnificationRefactorEngine:
+    """``engine`` in the mode a caller chose; left as constructed when it chose none."""
+    if strict is not None:
+        engine.strict = strict
+    return engine
+
 
 def refactor_script(
     script: Path,
     *,
     file_finisher: Optional[Callable[[str, str], str]] = None,
     skip_trivial_helpers: bool = False,
+    strict: Optional[bool] = None,
 ) -> int:
     """Refactor the single file ``script`` in place, as the file battery does; the count applied.
 
     ``file_finisher`` sees each file Towel would write (``ScopeWatch``).
     ``skip_trivial_helpers`` is normally false for semantic coverage; an
     explicit true retains a fixture that pins the product profitability refusal.
+    ``strict`` chooses the mode; left out, the calling test's default applies
+    (the batteries are marked ``strict_mode``, the differential harness is not).
     """
     # Exercise semantic safety even when these tiny fixtures are not useful extractions.
-    engine = UnificationRefactorEngine(
-        min_lines=3, file_finisher=file_finisher, skip_trivial_helpers=skip_trivial_helpers
+    engine = _in_mode(
+        UnificationRefactorEngine(
+            min_lines=3, file_finisher=file_finisher, skip_trivial_helpers=skip_trivial_helpers
+        ),
+        strict,
     )
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         _, applied, _ = engine.refactor_to_fixed_point(str(script))
@@ -71,6 +94,7 @@ def refactor_package(
     parameterize_builtins: bool = False,
     typed: bool = False,
     file_finisher: Optional[Callable[[str, str], str]] = None,
+    strict: Optional[bool] = None,
 ) -> Dict[str, Tuple[int, List[str]]]:
     """Refactor the directory ``package`` in place, as the package battery does; per-file results.
 
@@ -83,7 +107,8 @@ def refactor_package(
     path is resolved first: the checker reports resolved paths, so under a
     symlinked temporary directory (macOS's ``/var``) a typed run would find
     none of the code reachable and decline every change. ``file_finisher``
-    then sees each file Towel would write (``ScopeWatch``).
+    then sees each file Towel would write (``ScopeWatch``). ``strict`` chooses
+    the mode, as for :func:`refactor_script`.
     """
     package = package.resolve()
     sorter = import_sorter_for_project(package).tool
@@ -101,14 +126,19 @@ def refactor_package(
         if oracle is None:
             pytest.skip("no type checker is installed for this typed fixture")
     try:
-        engine = UnificationRefactorEngine(
-            min_lines=3,
-            # Semantic coverage must still exercise tiny safe transformations.
-            skip_trivial_helpers=False,
-            cross_module_helpers=cross_module,
-            parameterize_builtins=parameterize_builtins,
-            type_oracle=oracle,
-            file_finisher=finished if sorter is not None or file_finisher is not None else None,
+        engine = _in_mode(
+            UnificationRefactorEngine(
+                min_lines=3,
+                # Semantic coverage must still exercise tiny safe transformations.
+                skip_trivial_helpers=False,
+                cross_module_helpers=cross_module,
+                parameterize_builtins=parameterize_builtins,
+                type_oracle=oracle,
+                file_finisher=(
+                    finished if sorter is not None or file_finisher is not None else None
+                ),
+            ),
+            strict,
         )
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             results, _ = engine.refactor_directory_to_fixed_point(

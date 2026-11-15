@@ -1482,6 +1482,7 @@ def test_return_and_assignment_refinements_are_not_erased_by_any(
     assert original.read_text() == fixture.source
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("backend", ["mypy", "pyright"])
 @pytest.mark.parametrize("interface", ["api", "cli"])
 @pytest.mark.parametrize("fixture", OPTIONAL_RETURN_FIXTURES, ids=lambda fixture: fixture.name)

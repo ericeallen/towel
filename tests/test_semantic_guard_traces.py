@@ -125,6 +125,7 @@ def test_coverage_guards_are_skipped_when_the_first_block_returns_variables(
     assert RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK2 not in reasons
 
 
+@pytest.mark.strict_mode
 def test_first_block_coverage_guard_is_shadowed_by_block_enumeration(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -190,6 +191,7 @@ def second(items):
 """
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize(
     "source, reason, other_blocks_extracted",
     [

@@ -238,6 +238,7 @@ def test_a_plugin_that_cannot_import_the_project_refuses_with_its_own_error(
     assert "No module named 'alpha'" in result.reason, result.reason
 
 
+@pytest.mark.strict_mode
 def test_a_refactoring_of_a_plugin_project_passes_the_projects_own_mypy(tmp_path: Path) -> None:
     """The audit's k01: the helper is typed as the plugin types it, so mypy accepts it."""
     root = _project(tmp_path / "project")

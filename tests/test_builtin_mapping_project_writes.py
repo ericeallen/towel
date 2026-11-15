@@ -31,6 +31,7 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.bounded_cache import BoundedCache
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 @pytest.mark.parametrize("excluded", [False, True])
 @pytest.mark.parametrize("parameterized_target", [False, True])
@@ -135,6 +136,7 @@ def test_only_excluded_unparsed_writer_is_treated_as_nonprogram_input(tmp_path: 
     assert not writes.project_may_replace_builtin_mapping(tmp_path, frozenset({"writer.py"}))
 
 
+@pytest.mark.strict_mode
 def test_new_writer_rechecks_unchanged_pairs_and_cached_cluster_membership(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -215,6 +217,7 @@ def test_project_mapping_writer_keeps_lexical_extraction_useful(tmp_path: Path, 
     assert _run(tmp_path, "target.py") == expected
 
 
+@pytest.mark.strict_mode
 def test_new_project_marker_refreshes_the_scanned_scope(tmp_path: Path) -> None:
     _write(
         tmp_path,
@@ -231,6 +234,7 @@ def test_new_project_marker_refreshes_the_scanned_scope(tmp_path: Path) -> None:
     assert "builtin_mapping_replaced" in engine.declined_pairs
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("excluded", [False, True])
 def test_local_subset_keeps_other_project_facts_until_they_are_rechecked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, excluded: bool

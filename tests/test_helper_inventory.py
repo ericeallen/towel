@@ -22,6 +22,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import pytest
 
 from towel.cli import _find_extracted_helpers, helper_inventory
 
@@ -134,6 +135,7 @@ def test_cli_rename_file_reports_structured_result_and_rejection(tmp_path: Path)
     assert payload["applied"] is False and "collide" in payload["error"]
 
 
+@pytest.mark.strict_mode
 def test_inventory_includes_before_after_from_the_dry_sidecar(tmp_path: Path) -> None:
     import contextlib
     import io

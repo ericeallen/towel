@@ -30,10 +30,22 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Generator, List, Sequence, TypedDict, Unpack
 
+import towel.cli
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES_DIR = PROJECT_ROOT / "test_examples"
+
+
+def child_mode_flags() -> List[str]:
+    """The flags that give a command line run in a child process this test's default mode.
+
+    ``conftest`` makes strict mode the default of a test marked
+    ``strict_mode`` for the engines and command lines of this process. A
+    child process has the product's default, relaxed, so a test that runs
+    ``towel`` in one adds these flags to its command line.
+    """
+    return ["--strict"] if towel.cli.DEFAULT_STRICT else []
 
 
 @contextmanager

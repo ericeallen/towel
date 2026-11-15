@@ -26,6 +26,7 @@ import subprocess
 import sys
 
 import pytest
+from tests.test_helpers import child_mode_flags
 import towel
 from towel.unification.structural_memo import load_substitution, store_substitution
 from towel.unification.substitution import Substitution
@@ -227,6 +228,7 @@ def _extract(
             str(budget),
             "--progress",
             "none",
+            *child_mode_flags(),
         ],
         cwd=tmp_path,
         env=_environment(),
@@ -286,6 +288,7 @@ def _observe(
     return ran.returncode, ran.stdout, ran.stderr
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("case", _CASES, ids=lambda case: case.name)
 def test_ordered_cli_arguments_preserve_complete_observations(
     tmp_path: Path, case: OrderingCase
@@ -381,6 +384,7 @@ def test_memoization_does_not_change_ordered_helpers(tmp_path: Path) -> None:
     assert all(not _thunks(helper) for helper in _helpers(cached))
 
 
+@pytest.mark.strict_mode
 def test_argument_budget_includes_the_ownership_handoff(tmp_path: Path) -> None:
     _, _, transformed = _extract(tmp_path, _CASES[0], budget=3)
     helpers = _helpers(transformed)

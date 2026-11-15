@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import io
+import pytest
 from pathlib import Path
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -41,6 +42,7 @@ def g(values):
 """
 
 
+@pytest.mark.strict_mode
 def test_each_site_receives_the_helper_result_under_its_own_name(tmp_path: Path) -> None:
     unsafe = tmp_path / "unsafe.py"
     unsafe.write_text(SOURCE)

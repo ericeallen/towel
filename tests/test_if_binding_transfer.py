@@ -401,6 +401,7 @@ def test_malformed_local_tree_fails_closed_before_whole_module_work(mutation: st
         assert _certify(SIMPLE, module, function, nodes) is None
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("warm_cache", [False, True])
 def test_shared_gate_keeps_lifetime_outputs_and_reproves_cached_sites(
     tmp_path: Path, warm_cache: bool

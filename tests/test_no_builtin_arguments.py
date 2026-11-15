@@ -215,6 +215,7 @@ def test_a_site_reading_the_builtin_does_not_share_with_one_binding_its_name(
     assert "builtin_argument" in declined
 
 
+@pytest.mark.strict_mode
 def test_two_sites_binding_the_name_each_pass_their_own(tmp_path: Path) -> None:
     source = _function(LOCAL_30, "first") + "\n\n\n" + _function(LOCAL_40, "second") + "\n"
     before, after = tmp_path / "before", tmp_path / "after"
@@ -388,6 +389,7 @@ def test_across_modules_a_site_binding_the_name_does_not_share_with_one_reading_
     assert "builtin_argument" in declined
 
 
+@pytest.mark.strict_mode
 def test_across_modules_two_sites_binding_the_name_each_pass_their_own(tmp_path: Path) -> None:
     files = _package(
         "export_size(rows, name, len=lambda value: 40)",

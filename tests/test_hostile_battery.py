@@ -37,6 +37,7 @@ valid syntax, without asserting preservation for reflection or instrumentation.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import shutil
 import tempfile
 from types import CodeType
@@ -46,7 +47,13 @@ import pytest
 
 from tests.hostile_execution import ScopeWatch, fixture_named, fixture_sources, module_faces
 from tests.hostile_execution import observe, parsed_or_skipped
-from tests.hostile_refactoring import refactor_script, with_known_defects
+from tests.hostile_refactoring import OWNERSHIP_BOOKKEEPING, refactor_script
+from tests.hostile_refactoring import with_known_defects
+
+# The battery's pins are 1.949's: which fixtures strict mode transforms, and
+# which its ownership proof refuses. Relaxed mode, the default, has its own
+# pass below (test_relaxed_refactoring_preserves_program_output).
+pytestmark = pytest.mark.strict_mode
 
 CASES = Path(__file__).parent / "hostile_cases"
 
@@ -627,6 +634,81 @@ def test_refactoring_preserves_program_output(case: str) -> None:
                 else case in TRANSFORMED
             )
             assert transformed == expected, "rejected" if not transformed else "transformed"
+
+
+_EARLY = "a __del__ records when a local nothing reads again is released: at the helper's return"
+_ORDER = "a __del__ records the order in which one function exit releases an argument and a local"
+RELAXED_OBSERVES_FINALIZATION: Dict[str, str] = {
+    "r1792_external_exception_partial": _ORDER,
+    "r1792_factory_finalizer_continuation": _EARLY,
+    "r1792_factory_finalizer_order": _EARLY,
+    "r1792_protocol_caught_exception": _EARLY,
+    "r1792_protocol_context_target": _EARLY,
+    "r1792_protocol_explicit_call_control": _EARLY,
+    "r1792_protocol_iteration_target": _EARLY,
+    "r1792_protocol_nested_if": _EARLY,
+    "r1792_protocol_operator": _EARLY,
+    "r1792_protocol_property": _EARLY,
+    "r1792_protocol_subscript": _EARLY,
+    "r1792_value_return_owner": _ORDER,
+}
+"""Fixtures whose output differs in relaxed mode, each because it prints when an object is finalized.
+
+Relaxed mode assumes a program does not depend on when or in what order
+objects are finalized once it has stopped using them (docs/DECISIONS.md,
+"Relaxed mode is the default; strict mode keeps exact lifetimes"). These
+fixtures were written to observe exactly that, so relaxed mode may reorder
+their finalizer lines; each entry says what the fixture watches. Any other
+difference in relaxed mode is a defect to fix, not an entry for this list,
+and an entry whose output stops differing fails until it is removed.
+"""
+
+
+def _events(output: str) -> list[str]:
+    """The events in the complete list a finalizer-watching fixture prints last."""
+    return sorted(re.findall(r"'[^']*'|\d+", output[output.rindex("[") :]))
+
+
+@pytest.mark.parametrize(
+    "case", [path.stem for path in fixture_sources(CASES) if path.stem not in REFLECTION_CASES]
+)
+def test_relaxed_refactoring_preserves_program_output(case: str) -> None:
+    """The same battery in relaxed mode: identical output, but for the listed finalizer watchers."""
+    fixture = fixture_named(CASES, case)
+    parsed_or_skipped(fixture)
+    with tempfile.TemporaryDirectory(prefix="towel-hostile-relaxed-") as directory:
+        root = Path(directory)
+        before = root / "before" / "m.py"
+        after = root / "after" / "m.py"
+        before.parent.mkdir()
+        after.parent.mkdir()
+        shutil.copy(fixture, before)
+        shutil.copy(fixture, after)
+        scopes = ScopeWatch()
+        applied = refactor_script(
+            after,
+            file_finisher=scopes,
+            skip_trivial_helpers=case == "r86_annotated_assignment_live",
+            strict=False,
+        )
+        transformed = before.read_bytes() != after.read_bytes()
+        assert transformed == (applied > 0)
+        assert scopes.found == []
+        # Relaxed mode adds no ownership bookkeeping of its own.
+        assert not OWNERSHIP_BOOKKEEPING.search(after.read_bytes()) or (
+            OWNERSHIP_BOOKKEEPING.search(before.read_bytes())
+        )
+        if case in RELAXED_OBSERVES_FINALIZATION:
+            status, output, error = _run(after)
+            expected_status, expected_output, expected_error = _run(before)
+            assert (status, error) == (expected_status, expected_error)
+            assert output != expected_output, "no longer differs: remove it from the list"
+            # The same events in the end; only where the finalizers fall differs.
+            assert _events(output) == _events(expected_output)
+        else:
+            assert _run(after) == _run(before)
+        if transformed:
+            assert module_faces(after.parent, ["m"]) == module_faces(before.parent, ["m"])
 
 
 @pytest.mark.parametrize("case", sorted(REFLECTION_CASES))

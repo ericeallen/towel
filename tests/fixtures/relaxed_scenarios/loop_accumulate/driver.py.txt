@@ -1,0 +1,20 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import diskusage
+
+entries = [
+    ("src/app.py", 1200),
+    ("src/util.PY", 300),
+    ("README", 80),
+    (".gitignore", 12),
+    ("docs/.hidden.md", 5),
+    ("docs/guide.md", 4096),
+    ("archive.tar.gz", 100000),
+    ("a/b/c/Makefile", 640),
+]
+print(sorted(diskusage.count_by_extension(path for path, _ in entries).items()))
+print(sorted(diskusage.size_by_extension(entries).items()))
+print(diskusage.count_by_extension([]), diskusage.size_by_extension([]))
+print("ok")

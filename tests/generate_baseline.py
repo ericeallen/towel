@@ -39,7 +39,9 @@ from tests.compiler_golden_profiles import require_cell_free_baseline_generation
 import tempfile
 
 
-def generate_single_file_baseline(engine, test_examples_dir: Path, output_dir: Path):
+def generate_single_file_baseline(
+    engine, test_examples_dir: Path, output_dir: Path, *, cell_profiles: bool = True
+):
     """
     Generate baseline for single-file refactorings.
 
@@ -47,8 +49,13 @@ def generate_single_file_baseline(engine, test_examples_dir: Path, output_dir: P
         engine: UnificationRefactorEngine instance
         test_examples_dir: Directory containing test example files
         output_dir: Directory to save refactored output
+        cell_profiles: Whether the goldens depend on the compiler's parameter
+            cells, as strict mode's do through its ownership transfer; then a
+            compiler that makes those cells is refused before anything is
+            written. Relaxed mode's output is the same on every compiler.
     """
-    require_cell_free_baseline_generation(test_examples_dir)
+    if cell_profiles:
+        require_cell_free_baseline_generation(test_examples_dir)
     print(f"\nGenerating single-file baseline from {test_examples_dir}...")
 
     # Get all Python files
@@ -137,6 +144,13 @@ def main():
         action="store_true",
         help="Confirm that you want to regenerate the baseline (required)",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Regenerate the strict-mode single-file goldens "
+        "(test_examples_strict_expected_output/) instead of the default, relaxed-mode "
+        "ones. Strict mode is 1.949's behaviour, so these change only with a decision.",
+    )
     args = parser.parse_args()
 
     # Require --confirm flag
@@ -160,18 +174,25 @@ def main():
     print("GENERATING BASELINE EXPECTED OUTPUT")
     print("=" * 70)
 
-    # Create engine
-    engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+    # Create engine. The mode is explicit: the default goldens are relaxed
+    # mode's, and the strict set pins what releases through 1.949 produced.
+    engine = UnificationRefactorEngine(max_parameters=5, min_lines=3, strict=args.strict)
 
     # Define directories
     test_examples = project_root / "test_examples"
     crossfile_examples = project_root / "test_examples_crossfile"
 
-    output_single = project_root / "test_examples_expected_output"
+    output_single = project_root / (
+        "test_examples_strict_expected_output" if args.strict else "test_examples_expected_output"
+    )
+    # The cross-file projects render the same in both modes, so they have one
+    # set of goldens, which the regression test holds both modes to.
     output_crossfile = project_root / "test_examples_crossfile_expected_output"
 
-    # Check compiler eligibility before creating or writing any output.
-    require_cell_free_baseline_generation(test_examples)
+    # Only strict mode's output depends on the compiler's parameter cells:
+    # check eligibility before creating or writing any output.
+    if args.strict:
+        require_cell_free_baseline_generation(test_examples)
 
     # Create output directories
     output_single.mkdir(exist_ok=True)
@@ -179,14 +200,16 @@ def main():
 
     # Generate baselines
     if test_examples.exists():
-        generate_single_file_baseline(engine, test_examples, output_single)
+        generate_single_file_baseline(
+            engine, test_examples, output_single, cell_profiles=args.strict
+        )
     else:
         print(f"\nWarning: {test_examples} not found")
 
     if crossfile_examples.exists():
         # These projects exist to share helpers across their modules.
         crossfile_engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=3, cross_module_helpers=True
+            max_parameters=5, min_lines=3, cross_module_helpers=True, strict=args.strict
         )
         generate_crossfile_baseline(crossfile_engine, crossfile_examples, output_crossfile)
     else:

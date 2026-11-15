@@ -118,6 +118,7 @@ def _mypy_errors(root: Path) -> List[str]:
     return sorted(line for line in completed.stdout.splitlines() if ": error:" in line)
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize(
     "stubs, hosted",
     [

@@ -244,6 +244,7 @@ def _module(body: str, first_mapping: str, second_mapping: str, prefix: str = ""
     )
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 @pytest.mark.parametrize(
     ("body", "first_custom", "second_custom"),
@@ -286,6 +287,7 @@ def test_custom_keys_and_eager_expressions_refuse_without_changing_source_or_exe
     assert _run(tmp_path, "sample.py") == before
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 def test_plain_function_class_spelling_keeps_its_captured_mapping(
     tmp_path: Path, flag: bool
@@ -306,6 +308,7 @@ def test_plain_function_class_spelling_keeps_its_captured_mapping(
     assert _run(tmp_path, "sample.py") == "306 606\n"
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 def test_comprehension_store_targets_keep_their_captured_mapping(
     tmp_path: Path, flag: bool
@@ -327,6 +330,7 @@ def test_comprehension_store_targets_keep_their_captured_mapping(
     assert _run(tmp_path, "sample.py") == "9 9\n"
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 @pytest.mark.parametrize(
     "body", ["import provider\nx = provider.value", "from provider import value\nx = value"]

@@ -375,6 +375,7 @@ class C:
 """
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("private", [False, True])
 def test_capture_only_receiver_does_not_restore_an_unused_method_parameter(
     tmp_path: Path, private: bool

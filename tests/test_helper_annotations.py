@@ -34,6 +34,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 import textwrap
+import pytest
 from typing import Unpack
 
 from tests.test_helpers import EngineOptions
@@ -132,6 +133,7 @@ def test_a_none_site_makes_the_parameter_optional(tmp_path: Path) -> None:
     assert _signature(result) == "def __extracted_func_0(items: list, limit: 'int | None') -> None:"
 
 
+@pytest.mark.strict_mode
 def test_declared_return_types_need_a_checker_to_meet(tmp_path: Path) -> None:
     # The sites' declared return types bound the helper's value from above;
     # only a type checker can tell that ``int`` is under ``int | None``, so
@@ -156,6 +158,7 @@ def test_declared_return_types_need_a_checker_to_meet(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.strict_mode
 def test_unrelated_declared_return_types_leave_the_return_to_any(
     tmp_path: Path,
 ) -> None:
@@ -241,6 +244,7 @@ def test_literals_take_their_builtin_type_and_bool_is_not_int(tmp_path: Path) ->
     assert all(not call.keywords and len(call.args) == len(parameters) for call in calls)
 
 
+@pytest.mark.strict_mode
 def test_declared_return_type_is_used_when_every_site_returns_the_call(
     tmp_path: Path,
 ) -> None:
@@ -546,6 +550,7 @@ def test_inconsistent_subtype_verdicts_never_empty_a_union() -> None:
     assert [ast.unparse(m) for m in kept] == ["int"]
 
 
+@pytest.mark.strict_mode
 def test_original_owned_annotated_local_partial_stays_refused(tmp_path: Path) -> None:
     # Exact original partial: opaque helper locals would cross a frame while
     # the caller still owns its original parameter. Keep that refusal covered.
