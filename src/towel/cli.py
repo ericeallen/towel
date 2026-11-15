@@ -641,7 +641,7 @@ def _add_report_flags(options: argparse._ActionsContainer) -> None:
         "--explain",
         action="store_true",
         help="Print on stderr each pair of similar blocks that was not extracted, with its files, "
-        "lines and a reason code (docs/KNOWN_LIMITATIONS.md explains the codes).",
+        "lines and a reason code (docs/KNOWN_LIMITATIONS.md explains most codes).",
     )
     options.add_argument(
         "--stats",
@@ -855,10 +855,10 @@ def _add_rename_helpers_parser(
 Rename the helpers Towel generated (__extracted_func_0 and so on) to
 meaningful names, updating every call.
 
-Without --rename-file, rename-helpers prints a prompt that shows each helper's
-code to an AI assistant such as Claude or ChatGPT; paste the assistant's JSON
-answer back and the names are applied. With --rename-file, it applies a JSON
-file that maps old names to new ones, such as
+Without --rename-file, rename-helpers prints a prompt, showing each helper's
+code, for you to give an AI assistant such as Claude or ChatGPT; paste the
+assistant's JSON answer back and the names are applied. With --rename-file,
+it applies a JSON file that maps old names to new ones, such as
   {"__extracted_func_0": "order_total"}
 
 Give the project's root, so that Towel sees every file that uses the helpers:
