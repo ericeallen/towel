@@ -70,7 +70,6 @@ from .progress import (
     ProgressRenderer,
     ProgressBarFactory,
     ProgressMode,
-    load_tqdm,
     normalize_progress,
     wants_bar,
 )
@@ -93,16 +92,6 @@ from ..type_inference import relocate_oracle
 from .annotation_wiring import UNTYPED_REMEDY
 from .materialize import Materialization
 from .rehearing import exact_candidate_key, execution_context
-
-_TQDM_NOTED = False
-
-
-def _note_missing_tqdm() -> None:
-    """Say once per process that the bar the mode asked for is not installed."""
-    global _TQDM_NOTED
-    if not _TQDM_NOTED:
-        _TQDM_NOTED = True
-        LOG.warning("tqdm is not installed; progress is shown as inline bars on stderr instead")
 
 
 def _is_checker_failure(error: BaseException) -> bool:
@@ -265,16 +254,6 @@ class FixedPointDrivers(Materialization):
             return None
         return queue.pop(0)
 
-    def _resolve_progress_backend(
-        self, progress: ProgressMode
-    ) -> Tuple[ProgressMode, Optional[ProgressBarFactory]]:
-        """The normalized progress mode and, when the mode wants tqdm and it loads, its factory."""
-        normalized = normalize_progress(progress)
-        factory = load_tqdm() if normalized in {"auto", "tqdm"} else None
-        if normalized == "tqdm" and factory is None:
-            _note_missing_tqdm()
-        return normalized, factory
-
     def refactor_to_fixed_point(
         self,
         file_path: str,
@@ -298,7 +277,7 @@ class FixedPointDrivers(Materialization):
                 less runs to a fixed point.
             progress: How progress is shown: ``tqdm`` (tqdm bars, or inline
                 bars on stderr and a warning when tqdm is not installed),
-                ``auto`` (the same without the warning), ``detail`` (a log
+                ``auto`` (terminal-only bars without a warning), ``detail`` (a log
                 of each pass), or ``none``.
             output_path: An optional new file to write the result to instead,
                 when the run succeeds; the original is then only read.
@@ -586,7 +565,7 @@ class FixedPointDrivers(Materialization):
                 less runs to a fixed point.
             progress: How progress is shown: ``tqdm`` (tqdm bars, or inline
                 bars on stderr and a warning when tqdm is not installed),
-                ``auto`` (the same without the warning), ``detail`` (a log
+                ``auto`` (terminal-only bars without a warning), ``detail`` (a log
                 of each pass), or ``none``.
 
         Returns:
@@ -595,7 +574,7 @@ class FixedPointDrivers(Materialization):
         """
         self._change_log = []
         self._begin_counting_checker_failures()
-        reporter = _ApplyProgress(*self._resolve_progress_backend(progress))
+        reporter = _ApplyProgress(normalize_progress(progress))
 
         input_path = Path(input_dir)
         output_path = Path(output_dir)

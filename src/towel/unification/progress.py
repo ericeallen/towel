@@ -34,7 +34,7 @@ from typing import Callable, Iterator, List, Literal, Mapping, Optional, Protoco
 ProgressMode = Literal["auto", "tqdm", "none", "detail"]
 """How a run reports progress: tqdm bars, tqdm with an inline fallback, nothing, or per-phase detail."""
 
-DEFAULT_PROGRESS: ProgressMode = "tqdm"
+DEFAULT_PROGRESS: ProgressMode = "auto"
 """The one default every entry point shares; the command line's ``--progress`` uses it too."""
 
 
@@ -246,6 +246,9 @@ def display_threads_stopped(timeout: float) -> Iterator[None]:
                 beat.start()
 
 
+_TQDM_NOTED = False
+
+
 _DRAWING = threading.RLock()
 _ACTIVE: List["ProgressRenderer"] = []
 
@@ -293,7 +296,11 @@ class ProgressRenderer:
         factory: Optional[ProgressBarFactory] = None,
     ) -> None:
         self._enabled = wants_bar(mode) and sys.stderr.isatty() and total != 0
-        self._factory = (factory or load_tqdm()) if self._enabled else None
+        self._factory = factory
+        if wants_bar(mode) and (self._enabled or mode == "tqdm"):
+            self._factory = factory or load_tqdm()
+            if mode == "tqdm" and self._factory is None:
+                _note_missing_tqdm()
         self._total = total
         self._desc = desc
         self._unit = unit
@@ -385,3 +392,13 @@ class ProgressRenderer:
                 _ACTIVE.remove(self)
                 if _ACTIVE:
                     quietly(_ACTIVE[-1]._draw)
+
+
+def _note_missing_tqdm() -> None:
+    """An explicit backend request deserves an explanation when it falls back."""
+    from ..diagnostics import LOG
+
+    global _TQDM_NOTED
+    if not _TQDM_NOTED:
+        _TQDM_NOTED = True
+        LOG.warning("tqdm is not installed; progress is shown as inline bars on stderr instead")

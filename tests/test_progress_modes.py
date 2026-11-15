@@ -197,10 +197,10 @@ def _without_tqdm(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make tqdm look uninstalled, as in a plain ``pip install code-towel``, and the note unsaid."""
     import sys
 
-    from towel.unification import fixed_point
+    from towel.unification import progress
 
     monkeypatch.setitem(sys.modules, "tqdm.auto", None)
-    monkeypatch.setattr(fixed_point, "_TQDM_NOTED", False)
+    monkeypatch.setattr(progress, "_TQDM_NOTED", False)
 
 
 class _TerminalStream(io.StringIO):
@@ -285,3 +285,29 @@ def test_cli_detail_progress_logs_a_single_file_run(tmp_path: Path, command: str
     result = invoke([command, *target, "--no-types", "--min-lines", "3", "--progress", "detail"])
     assert result.status == 0, result.stderr
     assert "[towel] Discovered 2 proposal(s)" in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("installed", [False, True])
+def test_default_auto_is_silent_on_pipes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    installed: bool,
+) -> None:
+    """Audit CLI-02: the plain-install default never warns or draws into a pipe."""
+    from towel.cli import _build_parser
+    from towel.unification.progress import DEFAULT_PROGRESS
+
+    assert DEFAULT_PROGRESS == "auto"
+    assert _build_parser().parse_args(["preview", "."]).progress == "auto"
+    _make_fixture(tmp_path / "proj")
+    if not installed:
+        _without_tqdm(monkeypatch)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err), caplog.at_level(logging.WARNING, logger="towel"):
+        results, _ = UnificationRefactorEngine(min_lines=3).refactor_directory_to_fixed_point(
+            str(tmp_path / "proj"), str(tmp_path / "out")
+        )
+    assert sum(count for count, _ in results.values()) == 2
+    assert err.getvalue() == ""
+    assert not [record for record in caplog.records if "tqdm" in record.getMessage()]

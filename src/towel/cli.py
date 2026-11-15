@@ -553,9 +553,10 @@ def _add_progress_flag(parser: argparse.ArgumentParser, detail: str) -> None:
         "--progress",
         choices=["auto", "tqdm", "none", "detail"],
         default=DEFAULT_PROGRESS,
-        help="Progress display mode: 'tqdm' shows tqdm bars (the default), or inline bars and a "
-        "warning when tqdm is not installed; 'auto' does the same without the warning; 'none' "
-        f"disables output; {detail}.",
+        help="Progress display mode: 'auto' (default) shows a transient bar on a terminal, "
+        "using tqdm when installed or the built-in display otherwise; pipes show no bar. "
+        "'tqdm' also warns when tqdm is not installed; 'none' disables progress; "
+        f"{detail}.",
     )
 
 
