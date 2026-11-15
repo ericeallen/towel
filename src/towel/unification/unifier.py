@@ -301,6 +301,10 @@ class Unifier(Parameterization, LiteralPromotion):
 
         # Names - if they differ, check alpha-renaming first
         if all_instances(nodes, ast.Name):
+            if len({type(node.ctx) for node in nodes}) != 1:
+                return False
+            if all(isinstance(node.ctx, ast.Store) for node in nodes):
+                return self._match_stored_names(nodes, block_indices)
             canonical_names = []
             for node, block_idx in zip(nodes, block_indices):
                 name = node.id
@@ -309,6 +313,14 @@ class Unifier(Parameterization, LiteralPromotion):
 
             if len(set(canonical_names)) == 1:
                 return True  # All same name (possibly after alpha-renaming)
+
+            # A local already has one correspondence. A later read cannot
+            # silently overwrite it or turn its binding into an argument.
+            if any(
+                node.id not in self._block_free_variables(index)
+                for node, index in zip(nodes, block_indices)
+            ):
+                return False
 
             # Different names even after alpha-renaming - track correspondence before parameterizing
             # Use first ORIGINAL name (not canonical) for free variable correspondence
