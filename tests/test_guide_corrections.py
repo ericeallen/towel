@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.test_cli_integration import DUPLICATES, invoke
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -64,3 +66,36 @@ def test_usage_guide_does_not_promise_that_an_interrupted_write_changes_nothing(
     reference = _compact(_section(_guide("CLI_GUIDE.md"), "## Output and in-place changes"))
     assert "they can observe a partially applied batch" in reference
     assert "interrupted batches retain a recovery journal" in reference
+
+
+def test_output_path_rule_covers_a_separate_output_and_the_same_path_in_place(
+    tmp_path: Path,
+) -> None:
+    """Audit finding 12 (documentation report D9, claim 8).
+
+    The README said "The output path must not already exist or overlap the input",
+    which is the rule for a separate output only: the input path given again as the
+    output is how a project is refactored in place.
+    """
+    project = tmp_path / "project"
+    project.mkdir()
+    module = project / "module.py"
+    module.write_text(DUPLICATES)
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    options = ["--no-interactive", "--no-types", "--no-format"]
+    for output in (existing, project / "inside"):
+        refused = invoke(["dry", str(project), str(output), *options])
+        assert refused.status == 1, refused.stdout + refused.stderr
+        assert module.read_text() == DUPLICATES
+    in_place = invoke(["dry", str(project), str(project), *options])
+    assert in_place.status == 0, in_place.stderr
+    assert "__extracted_func_0" in module.read_text()
+
+    for text in ((ROOT / "README.md").read_text(encoding="utf-8"), _guide("CLI_GUIDE.md")):
+        rule = "A separate output path must not already exist or overlap the input."
+        paragraphs = [part for part in map(_compact, text.split("\n\n")) if rule in part]
+        assert len(paragraphs) == 1
+        assert "input path again as the output" in paragraphs[0]
+        assert "in place" in paragraphs[0]
+        assert "The output path must not already exist" not in _compact(text)

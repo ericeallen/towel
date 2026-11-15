@@ -204,9 +204,10 @@ have `--x` and `--no-x` forms.
 
 ## Output and in-place changes
 
-A separate CLI output path must not already exist or overlap the input.
-The Python API also accepts an empty output directory for integration and
-fixture workflows.
+A separate output path must not already exist or overlap the input. Giving the
+input path again as the output is the one exception: it refactors the project
+in place. The Python API also accepts an empty output directory for
+integration and fixture workflows.
 
 Every run refactors a private stage and completes its final type-check
 confirmation before publishing output. An out-of-place run copies the target

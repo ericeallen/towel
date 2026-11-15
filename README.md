@@ -45,8 +45,10 @@ towel dry path/to/project path/to/cleaned --no-interactive
 diff -ru path/to/project path/to/cleaned
 ```
 
-The output path must not already exist or overlap the input. Helpers are shared
-within a module by default; `--cross-module` also shares them between modules.
+A separate output path must not already exist or overlap the input. Giving the
+input path again as the output refactors the project in place, so commit your
+work first. Helpers are shared within a module by default; `--cross-module`
+also shares them between modules.
 A complete preview runs the full transformation pipeline. `--quick` gives a
 partial structural listing, which does not predict the final result.
 
