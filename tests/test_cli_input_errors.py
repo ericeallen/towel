@@ -25,13 +25,14 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import shlex
 from pathlib import Path
 from typing import Callable
 
 import pytest
 
 from towel.cli import _build_parser, _run_dry, _run_preview
-from tests.test_cli_integration import DUPLICATES
+from tests.test_cli_integration import DUPLICATES, invoke
 
 
 def _dry_arguments(source: Path, destination: Path) -> argparse.Namespace:
@@ -96,3 +97,93 @@ def test_preview_of_one_file_is_silent_under_progress_none(
     captured = capsys.readouterr()
     assert "\r" not in captured.out and "\r" not in captured.err
     assert "Would apply 1 refactoring" in captured.out
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["preview", "in", "--summ"],
+        ["dry", "in", "out", "--min-line", "4"],
+        ["rename-helpers", "src", "--comp"],
+        ["recover", "journal", "--he"],
+        ["--vers"],
+    ],
+)
+def test_an_abbreviated_option_is_refused(
+    arguments: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """User audit CLI-10: --summ and --min-line were accepted as abbreviations, so a script
+    could come to mean another option when a new one shares the prefix."""
+    with pytest.raises(SystemExit) as exit_info:
+        _build_parser().parse_args(arguments)
+    assert exit_info.value.code == 2
+    assert "unrecognized arguments" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "option, value, meaning",
+    [
+        ("--min-lines", "-1", "give the fewest lines a duplicate may span"),
+        ("--max-parameters", "-1", "give the most parameters a helper may take"),
+        (
+            "--max-pairs",
+            "-5",
+            "give the most pairs of similar blocks to compare, or 0 for no limit",
+        ),
+        ("--max-refactorings", "-1", "give the most refactorings to apply, or 0 for no limit"),
+    ],
+)
+def test_a_negative_count_is_refused_in_that_options_own_words(
+    option: str, value: str, meaning: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """User audit CLI-09: --min-lines -1, --max-parameters -1 and --max-pairs -5 were refused with
+    --max-refactorings' sentence, "0 runs to a fixed point"."""
+    with pytest.raises(SystemExit) as exit_info:
+        _build_parser().parse_args(["preview", "in", option, value])
+    error = capsys.readouterr().err
+    assert exit_info.value.code == 2
+    assert f"argument {option}: {value} is negative; {meaning}" in error, error
+    assert "fixed point" not in error
+
+
+@pytest.mark.parametrize("seconds", ["99999999999999999999", "1e20", "100000001"])
+def test_a_time_limit_too_long_for_the_timer_is_refused(
+    seconds: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """User audit CLI-09: --time-limit 99999999999999999999 passed the parser and ended in a
+    traceback from signal.setitimer; macOS refuses an interval over 100,000,000 seconds."""
+    source = tmp_path / "m.py"
+    source.write_text(DUPLICATES)
+    result = invoke(["preview", str(source), "--progress", "none", "--time-limit", seconds])
+    assert result.status == 2, result
+    assert "time limit must be at most 100000000 seconds" in result.stderr
+    assert "leave out --time-limit for no limit" in result.stderr
+    assert _build_parser().parse_args(["preview", "in", "--time-limit", "1e8"]).time_limit == 1e8
+
+
+@pytest.mark.parametrize(
+    "given, suggested",
+    [("myproject", "cleaned"), ("src/orders.py", "src/orders_cleaned.py"), ("my code", "cleaned")],
+)
+def test_dry_with_one_path_says_how_to_give_the_output(given: str, suggested: str) -> None:
+    """User audit CLI-09: ``towel dry myproject`` said only "the following arguments are
+    required: output", not that dry writes a new copy or how to refactor in place."""
+    result = invoke(["dry", given])
+    assert result.status == 2
+    kind = "file" if given.endswith(".py") else "directory"
+    quoted = shlex.quote(given)
+    assert "dry needs an output path as well as the input." in result.stderr, result.stderr
+    assert f"It writes the refactored code to a new {kind}" in result.stderr
+    assert f"towel dry {quoted} {shlex.quote(suggested)}\n" in result.stderr
+    assert "give the same path twice" in result.stderr
+    assert f"towel dry {quoted} {quoted}\n" in result.stderr
+
+
+def test_dry_without_paths_and_with_options_between_them_parses_as_before(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(["dry"])
+    assert "the following arguments are required: input, output" in capsys.readouterr().err
+    arguments = _build_parser().parse_args(["dry", "in", "--no-interactive", "out"])
+    assert (arguments.input, arguments.output, arguments.interactive) == ("in", "out", False)

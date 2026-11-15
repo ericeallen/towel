@@ -42,6 +42,7 @@ Click/Rich comparison retains its own 1.792 metadata, samples and limits.
 
 On this page:
 
+- [How long it takes](#how-long-it-takes)
 - [1.947 published release comparison](#1947-published-release-comparison)
 - [1.947 Sphinx memory and parsing investigation](#1947-sphinx-memory-and-parsing-investigation)
 - [1.947 PrettyTable warning classifier repair](#1947-prettytable-warning-classifier-repair)
@@ -51,11 +52,12 @@ On this page:
 - [October 10 Voluptuous regression investigation](#october-10-voluptuous-regression-investigation)
 - [October 10 backslash-parity repair](#october-10-backslash-parity-repair)
 - [October 10 Click and Rich assessment](#october-10-click-and-rich-assessment)
-- [Measurement conditions](#measurement-conditions)
+- [Historical 1.792 development comparisons](#historical-1792-development-comparisons)
 - [October 7 block-fact memo](#october-7-block-fact-memo)
 - [October 6 optimization experiments](#october-6-optimization-experiments)
 - [October 5 repaired candidate comparison](#october-5-repaired-candidate-comparison)
 - [October 2 complete CLI comparison](#october-2-complete-cli-comparison)
+- [Measurement conditions](#measurement-conditions)
 - [Planning and bounding a run](#planning-and-bounding-a-run)
 - [Historical end-to-end timings](#historical-end-to-end-timings)
 - [Why larger projects take longer](#why-larger-projects-take-longer)
