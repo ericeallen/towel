@@ -2,18 +2,16 @@
 
 [Documentation index](README.md)
 
-**1.949** contains the product-experience and maturity improvements in the
-[changelog](../CHANGELOG.md#1949). At the November 8, 2026 preparation checkpoint,
-it was unpublished and local validation was in progress. The
-[preparation checkpoint](PRODUCTION_READINESS.md#1949-preparation-checkpoint-november-8-2026)
-records that scope without claiming a complete release campaign or new
-runtime performance measurements. **1.948 was the latest published release at that checkpoint**;
-its [publication record](PRODUCTION_READINESS.md#1948-published-release-november-7-2026)
-and all earlier checkpoints retain their original source identities and results.
-Consult the [GitHub releases](https://github.com/ericeallen/towel/releases) for
-completed validation and publication records.
+This source describes **1.949**: the product-experience and maturity
+improvements in the [changelog](../CHANGELOG.md#1949). The
+[GitHub releases](https://github.com/ericeallen/towel/releases) record which
+versions have been published and how each was validated. The
+[readiness report](PRODUCTION_READINESS.md) keeps the dated preparation and
+publication records of 1.949 and of earlier releases, under their original
+source identities and results.
 Freeze the final versioned source before the complete gates below, and keep final
-validation and publication outcomes external to the shipped source.
+validation and publication outcomes external to the shipped source:
+[no shipped file says whether its own version has been published](#what-shipped-files-may-say-about-a-release).
 
 **1.947 was published October 26, 2026** on
 [PyPI](https://pypi.org/project/code-towel/1.947/) and
@@ -246,7 +244,7 @@ No Git push is permitted under the standing repository instructions.
 - [Evidence gate](#repository-owned-evidence-gate) · [Schema](#evidence-schema-1) · [Changes after freezing](#changes-after-a-validation-freeze)
 - [Required local evidence](#local-evidence-required) · [Automation](#configured-automation)
 - [Consumer and typing evidence](#consumer-and-typing-evidence) · [Dependency audit](#dependency-audit)
-- [Candidate artifacts](#candidate-artifacts) · [Publication order and links](#publication-order-and-documentation-links)
+- [Candidate artifacts](#candidate-artifacts) · [What shipped files may say](#what-shipped-files-may-say-about-a-release) · [Publication order and links](#publication-order-and-documentation-links)
 - [Release record](#recording-the-release) · [Maintainer decisions](#maintainer-decisions-before-publication)
 
 ## Version number convention
@@ -837,7 +835,7 @@ wheel environment; the audit command requires `pip-audit` in the audit environme
 
 ### Candidate artifacts
 
-**Before building, sweep every human-facing version reference, not just `pyproject.toml`.** `python -m build` embeds the README into the wheel and sdist as the PyPI `long_description`, and PyPI freezes that description at upload time: a published version's project page cannot be edited afterward, so a stale version string ships to PyPI and stays wrong until the next release. `just bump-version` rewrites the version in `pyproject.toml` and then refreshes `uv.lock` and the dev environment (`uv lock`, `uv sync --frozen --extra dev`); it touches no other file. Before freezing, search the tree for the outgoing version and update `README.md`'s `**Release status: X (beta).**` line, its version-pinned documentation links, and `SECURITY.md`'s source-target version. Preserve historical measurements and released-version records under their original identities. The README in the built artifacts must match the reviewed source. (code-towel 1.618 shipped with the README still reading 1.414 for exactly this reason; the PyPI 1.618 page cannot be corrected.)
+**Before building, sweep every human-facing version reference, not just `pyproject.toml`.** `python -m build` embeds the README into the wheel and sdist as the PyPI `long_description`, and PyPI freezes that description at upload time: a published version's project page cannot be edited afterward, so a stale version string ships to PyPI and stays wrong until the next release. `just bump-version` rewrites the version in `pyproject.toml` and then refreshes `uv.lock` and the dev environment (`uv lock`, `uv sync --frozen --extra dev`); it touches no other file. Before freezing, search the tree for the outgoing version and update `README.md`'s `**Release status: X (beta).**` line, its version-pinned documentation links, `SECURITY.md`'s source-target version, and the version sentences of `docs/README.md` and `docs/QUICKSTART.md`. Each names the version the source describes and says nothing about publication; see [what shipped files may say about a release](#what-shipped-files-may-say-about-a-release). Preserve historical measurements and released-version records under their original identities. The README in the built artifacts must match the reviewed source. (code-towel 1.618 shipped with the README still reading 1.414 for exactly this reason; the PyPI 1.618 page cannot be corrected.)
 
 For the exact candidate commit:
 
@@ -855,8 +853,11 @@ For the exact candidate commit:
 `just release VERSION /path/to/release-evidence.json` verifies the completed
 evidence and exact prebuilt artifacts, then checks the live GitHub default branch.
 It refuses if that branch does not contain the validated commit, if package or
-README/security/changelog versions are stale, or if README documentation links
-name another release or missing files. It discovers the configured default branch
+README/security/changelog versions are stale, if README documentation links
+name another release or missing files, or if the README, SECURITY.md,
+CONTRIBUTING.md, the documentation index or the quick start
+[states its own publication status](#what-shipped-files-may-say-about-a-release).
+It discovers the configured default branch
 through GitHub, rather than assuming `main` or trusting local tracking refs.
 API failures and incomplete file responses fail the gate.
 
@@ -868,6 +869,39 @@ publication permission. Retain the credential-scan
 report alongside the bundle: the verifier checks dependency-audit evidence,
 but does not currently require a secret-scan record.
 
+### What shipped files may say about a release
+
+Everything in the wheel and the sdist, and the README that PyPI renders, is
+frozen before upload. A sentence in one of those files that says the version
+is not yet published, names the newest published version or gives a
+publication date is therefore wrong on PyPI from the day of upload, and no
+later commit can correct it. PyPI's page for 1.949 says that 1.949 is
+unpublished and that 1.948 is the latest release, because the README described
+its own November 8 preparation checkpoint.
+
+So no shipped file says whether its own version has been published:
+
+- `README.md` has exactly one status line, `**Release status: X (beta).**`,
+  followed by a sentence that sends the reader to the
+  [GitHub releases page](https://github.com/ericeallen/towel/releases). It has
+  no "latest published" line and no account of individual releases; its
+  `## Releases` section links the changelog and the releases page.
+- `SECURITY.md` says `This source tree targets **X**`, and `docs/README.md`
+  and `docs/QUICKSTART.md` say which version they describe.
+- `CONTRIBUTING.md` states the rule for contributors, with no version.
+
+These five files are the same before and after publication, so publication
+needs no commit to any of them. `tests/test_current_release_documentation.py`
+refuses the wording that went stale in 1.949 in each of them, and
+`just release` refuses it on GitHub's default branch before the upload.
+
+What was published, when, from which commit, with which artifact hashes and
+after which validation is recorded where it can be written after the fact: in
+the GitHub release notes, which the README links. A dated entry added later to
+the [release log](RELEASE_LOG.md) or the [readiness report](PRODUCTION_READINESS.md)
+is history about a completed event and stays true; it is a repository-only
+documentation change and ships with the next release.
+
 ### Publication order and documentation links
 
 PyPI renders the README embedded in the distribution metadata. Pushing a README
@@ -878,7 +912,9 @@ paths while it explicitly identifies itself as a development branch. Before
 freezing a release, remove that development notice, update its release-status
 line to the chosen version, and convert current-guide links to absolute GitHub
 URLs pinned to that release tag. Fragment-only links within the README can stay
-relative. Retain immutable historical evidence under its original release.
+relative. Every repository link in the README names the tag of the version
+being released: the README carries no links to an earlier release's files,
+and the live gate refuses one.
 Do not publish the development wording or its relative guide links: PyPI cannot
 resolve them against the checkout. The documentation-link tests require
 portable links when the development notice is absent and reject mismatched tags.
@@ -911,8 +947,10 @@ Before uploading to PyPI:
 5. Upload the verified distributions to PyPI, then compare the remote hashes
    and description with the local artifacts and smoke-test a fresh installation.
 6. Create the GitHub release from the existing tag with the same artifacts and
-   release notes. Update the default branch's current-status documentation with
-   the completed publication results while preserving dated preparation history.
+   release notes. The notes are the publication record: they give the changes,
+   the validation summary, the release commit and the artifact hashes. No
+   commit to the README, SECURITY.md or the guides follows publication, because
+   [none of them says whether the version is published](#what-shipped-files-may-say-about-a-release).
    Do not rebuild or replace the uploaded artifacts or move the release tag.
    Run `just verify-release-visibility VERSION COMMIT` again and verify the
    repository front page, tag, assets, and links before declaring completion.
@@ -936,7 +974,7 @@ require repeating acceptance work:
 
 1. Move completed changes from `[Unreleased]` into `## [X.Y]` in [CHANGELOG.md](../CHANGELOG.md) and leave an empty `[Unreleased]` above it. Add a date only if it is already known; publication metadata can record the actual date without changing frozen artifacts.
 2. Add a preparation entry to [RELEASE_LOG.md](RELEASE_LOG.md) naming the version, summary, existing evidence and its limits. Record the final commit, artifact hashes, completed outcomes and CI run externally alongside the artifacts; do not edit a shipped file after its validation freeze.
-3. Update the current-version summary in this document and the readiness report. Replace the README development notice with truthful release wording, update its release status, and pin current-guide links to the chosen release tag before building. Preserve historical evidence links. Do not describe a planned check or publication as completed.
+3. Update the current-version summary in this document and the readiness report: say what the version contains and which evidence exists at the freeze, with its date. Replace the README development notice with the `**Release status: X (beta).**` line for the chosen version, and pin every repository link in the README to the chosen release tag before building. Do not describe a planned check or publication as completed, and do not say in the README, SECURITY.md, CONTRIBUTING.md, the documentation index or the quick start [whether the version is published](#what-shipped-files-may-say-about-a-release).
 
 After exact-commit CI and the live PyPI availability check, the maintainer may
 tag `vX.Y` as specified above. Inspect current tags rather than relying on a
