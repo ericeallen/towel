@@ -592,24 +592,6 @@ def test_a_module_name_is_still_passed_so_patching_it_reaches_each_caller(
     assert _run(after, "check.py") == _run(before, "check.py")
 
 
-@pytest.mark.relaxed_mode
-def test_relaxed_mode_passes_an_imported_name_itself_and_each_caller_passes_its_own(
-    tmp_path: Path,
-) -> None:
-    """Relaxed mode hands over ``join`` as each caller's module binds it when it calls.
-
-    A patch applied to one module before its function runs still reaches
-    that function's call and no other (docs/DECISIONS.md, "Relaxed mode
-    passes arguments by value").
-    """
-    before, after = _patched_module_name_project(tmp_path)
-    applied, _ = _refactor(after)
-    assert applied > 0
-    assert _passes_join(after, deferred=False)
-    assert not _passes_join(after, deferred=True)
-    assert _run(after, "check.py") == _run(before, "check.py")
-
-
 SAME_MODULE = """
 def first(rows, name):
     print("first", name)

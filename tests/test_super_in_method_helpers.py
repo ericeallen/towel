@@ -1140,11 +1140,24 @@ def test_a_super_helper_passes_mypy_strict_and_pyright_strict(tmp_path: Path) ->
 
 
 @pytest.mark.strict_mode
-@pytest.mark.parametrize("source", [SINGLE, DIAMOND, CLASSMETHODS, CLUSTER, TYPED])
+@pytest.mark.parametrize(
+    "source, whole_bodies",
+    [(SINGLE, True), (DIAMOND, True), (CLASSMETHODS, False), (CLUSTER, True), (TYPED, True)],
+)
 def test_original_owned_super_partials_remain_refused(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture, source: str
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, source: str, whole_bodies: bool
 ) -> None:
-    """Preserve the exact prior fixtures; no caller-ownership certificate covers their partials."""
+    """Preserve the exact prior fixtures; no caller-ownership certificate covers their partials.
+
+    In four of them the methods end in a different method of a local, such
+    as ``result.upper()`` against ``result.lower()``. Through 1.949 only
+    their partial blocks unified, and nothing was applied. Since 2.0 each
+    method passes that step as a function of the local (``lambda result:
+    result.upper()``), so whole bodies unify and move under a certified
+    transfer; the partial blocks are refused as before. ``CLASSMETHODS``,
+    whose methods differ in a builtin they call (``tuple`` against
+    ``list``), is left alone.
+    """
     driver = (
         "from pkg.lib import Audited, Ledger\n"
         "for ledger in (Ledger(), Audited()):\n"
@@ -1153,6 +1166,11 @@ def test_original_owned_super_partials_remain_refused(
         else DRIVER
     )
     outcome = _refactored(tmp_path, source, caplog, driver=driver)
-    assert outcome.applied == 0
-    assert outcome.source == textwrap.dedent(source).lstrip("\n")
     assert "owned_binding_frame_boundary" in outcome.reasons
+    if not whole_bodies:
+        assert outcome.applied == 0
+        assert outcome.source == textwrap.dedent(source).lstrip("\n")
+        return
+    assert outcome.applied == 1
+    assert "_towel_owner" in outcome.source and "lambda " in outcome.source
+    assert "super()" in outcome.source

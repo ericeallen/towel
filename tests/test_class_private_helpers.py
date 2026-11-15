@@ -50,6 +50,7 @@ from towel.unification.class_private import (
     mangling_classes,
     mangling_prefix,
 )
+from tests.test_helpers import method_helper_calls
 from towel.unification.models import is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -289,22 +290,23 @@ def test_same_class_helpers_keep_private_attributes_super_and_classmethods_worki
     class-private classmethod reached through ``cls``, which ``Savings``
     inherits without being able to replace.
     """
-    # Keep opaque classmethod locals in their original frame. The companion
-    # below tests class-private dispatch without creating new local bindings.
+    # Through 1.949 the classmethods, which differ in ``joined.upper()`` and
+    # ``joined.lower()``, unified only as partial blocks whose locals had to
+    # stay in their frame, and were left alone. Since 2.0 each passes its
+    # method as a function of the local, so their whole bodies share a
+    # class-private classmethod under a certified transfer, like the
+    # instance methods. The companion below tests the dispatch without new
+    # local bindings.
     original_root = _project(tmp_path / "unsafe", {"pkg/__init__.py": "", "pkg/lib.py": SAME_CLASS})
     original_before = _run(original_root, SAME_CLASS_DRIVER, original_root)
-    assert _refactor(original_root / "pkg") == 1  # useful instance prefix only
+    assert _refactor(original_root / "pkg") == 2
     original_after = (original_root / "pkg/lib.py").read_text()
     assert _run(original_root, SAME_CLASS_DRIVER, original_root) == original_before
-
-    def classmethods(text: str) -> list[str]:
-        return [
-            ast.dump(node, include_attributes=False)
-            for node in ast.walk(ast.parse(text))
-            if isinstance(node, ast.FunctionDef) and node.name in {"describe", "summary"}
-        ]
-
-    assert classmethods(original_after) == classmethods(SAME_CLASS)
+    original_helpers = _class_helpers(original_after)
+    assert len(original_helpers["Account"]) == 2
+    assert all(map(is_class_private, original_helpers["Account"]))
+    assert "lambda joined: joined.upper()" in original_after
+    assert "lambda joined: joined.lower()" in original_after
     source = SAME_CLASS.replace(
         'parts = [cls.__name__, name, cls.unit()]\n        joined = "/".join(parts)\n        return joined.',
         'print("class", cls.__name__)\n        print("unit", cls.unit())\n        return "/".join([cls.__name__, name, cls.unit()]).',
@@ -318,7 +320,10 @@ def test_same_class_helpers_keep_private_attributes_super_and_classmethods_worki
     helpers = _class_helpers(source)
     assert len(helpers["Account"]) == 2 and all(map(is_class_private, helpers["Account"]))
     assert not helpers["Base"] and not helpers["Savings"] and not _module_helpers(source)
-    assert "cls.__extracted_func_" in source and "self.__extracted_func_" in source
+    # The instance methods differ in ``total`` against ``-total``, a function
+    # of the block's local since 2.0, so their whole bodies move and the
+    # receiver reaches the helper through the transfer.
+    assert "cls.__extracted_func_" in source and method_helper_calls(source, "self")
 
 
 # -- mangling edge cases ---------------------------------------------------------

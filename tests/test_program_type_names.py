@@ -829,21 +829,6 @@ def test_a_thunk_returning_a_class_shares_its_variable_with_the_list_end_to_end(
     ]
 
 
-@pytest.mark.relaxed_mode
-@requires_mypy
-def test_a_class_passed_by_value_shares_its_variable_with_the_list_end_to_end(
-    tmp_path: Path,
-) -> None:
-    """Relaxed mode passes ``Row`` itself; ``self.rows`` follows a call and stays a thunk.
-
-    One type variable still relates the class to the list it fills.
-    """
-    assert _class_and_list_helper_annotations(tmp_path)[:2] == [
-        "type[_TowelT0]",
-        "_typing.Callable[[], list[_TowelT0]]",
-    ]
-
-
 @pytest.mark.strict_mode
 @requires_mypy
 def test_returned_values_follow_the_arguments_they_are_end_to_end(tmp_path: Path) -> None:

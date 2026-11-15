@@ -66,7 +66,8 @@ from it:
   and its own statement has done nothing before it but read attributes
   and names that are sure to be bound
   (``db.paginate(current_user.posts(), …)``): the call is evaluated ahead
-  of the lookup of the method it is an argument of, and of nothing else.
+  of those reads, such as the lookup of the method it is an argument of,
+  and of nothing else.
   It is not moved past a subscript, an operator or a comparison, whose
   failures programs catch, or past a name that may be unbound, and it
   never leaves a ``try``;

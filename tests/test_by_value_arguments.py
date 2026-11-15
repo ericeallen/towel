@@ -42,12 +42,23 @@ from towel.unification.thunk_inlining import (
     _plain,
     _simple,
 )
+from tests.test_builtins_across_modules import (
+    _passes_join,
+    _patched_module_name_project,
+    _refactor as _refactor_modules,
+    _run as _run_check,
+)
 from tests.test_callback_parameters import (
     helper_calls,
     refactored,
     refactored_scenario,
     run_script,
 )
+from tests.test_class_object_annotations import (
+    _written_annotations_of_the_class_guard,
+    requires_mypy,
+)
+from tests.test_program_type_names import _class_and_list_helper_annotations
 
 # The default mode is what this module pins; strict runs ask for it by name.
 pytestmark = pytest.mark.relaxed_mode
@@ -812,6 +823,47 @@ def test_a_parameter_has_one_kind_for_all_its_sites(tmp_path: Path) -> None:
     generated, same = refactored(tmp_path, ONE_KIND_FOR_ALL_SITES)
     assert "lambda: 'Point'" in generated and "lambda: shape.kind" in generated
     assert same
+
+
+# -- Relaxed companions of tests that pin strict mode's late lookups -------------
+
+
+def test_relaxed_mode_passes_an_imported_name_itself_and_each_caller_passes_its_own(
+    tmp_path: Path,
+) -> None:
+    """Relaxed mode hands over ``join`` as each caller's module binds it when it calls.
+
+    A patch applied to one module before its function runs still reaches
+    that function's call and no other (docs/DECISIONS.md, "Relaxed mode
+    passes arguments by value").
+    """
+    before, after = _patched_module_name_project(tmp_path)
+    applied, _ = _refactor_modules(after)
+    assert applied > 0
+    assert _passes_join(after, deferred=False)
+    assert not _passes_join(after, deferred=True)
+    assert _run_check(after, "check.py") == _run_check(before, "check.py")
+
+
+@requires_mypy
+def test_a_class_passed_by_value_reaches_isinstance_with_its_type(tmp_path: Path) -> None:
+    """Relaxed mode passes the class itself; the parameter is the class object, not a constructor."""
+    written = _written_annotations_of_the_class_guard(tmp_path)
+    assert "type[Alpha] | type[Beta]" in written, written
+
+
+@requires_mypy
+def test_a_class_passed_by_value_shares_its_variable_with_the_list_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """Relaxed mode passes ``Row`` itself; ``self.rows`` follows a call and stays a thunk.
+
+    One type variable still relates the class to the list it fills.
+    """
+    assert _class_and_list_helper_annotations(tmp_path)[:2] == [
+        "type[_TowelT0]",
+        "_typing.Callable[[], list[_TowelT0]]",
+    ]
 
 
 # -- The parts ------------------------------------------------------------------

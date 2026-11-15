@@ -2140,16 +2140,16 @@ itself when one of these holds for it at every call site.
    attribute or a subscript, no augmented assignment, no `del`, no unpacking,
    and no rebinding of a name the expression reads. Formatting a value in an
    f-string, testing its truth and hashing it as a key are taken to be plain
-   in the same way. An `if` that only assigns
-   names does not end such a prefix. Neither does entering a `try` whose every
-   handler names a builtin exception class that cannot catch what a plain
-   expression raises (`except TimeoutError`, not `except Exception`,
-   `except KeyError` or `except RuntimeError`), and that has no `finally`. An
-   expression that calls something is passed by value where no earlier
-   statement of the helper can run code or fail, and its own statement has
-   done nothing before it but read attributes and names that are sure to be
-   bound (`db.paginate(current_user.following_posts(), …)`,
-   `print(render(row))`): the call is evaluated ahead of the lookup of the
+   in the same way. An `if` that only assigns names does not end such a
+   prefix. Neither does entering a `try` whose every handler names a builtin
+   exception class that cannot catch what a plain expression raises
+   (`except TimeoutError`, not `except Exception`, `except KeyError` or
+   `except RuntimeError`), and that has no `finally`. An expression that calls
+   something is passed by value where no earlier statement of the helper can
+   run code or fail, and its own statement has done nothing before it but
+   read attributes and names that are sure to be bound
+   (`db.paginate(current_user.following_posts(), …)`, `print(render(row))`):
+   the call is evaluated ahead of those reads, such as the lookup of the
    method it is an argument of, and of nothing else. It is never moved out of
    a `try`.
 3. *It is a list or dict display of constants and the helper evaluates it at
@@ -2162,8 +2162,8 @@ itself when one of these holds for it at every call site.
    block that never mentions `lang` otherwise neither tests it nor hands it to
    anything. This case is not among the two assumptions; it is the least that
    passes the audit's own example by value, and it is listed below with what
-   it gives up. `not name` is left out: the truth of a list changes as the list is
-   filled.
+   it gives up. `not name` is left out: the truth of a list changes as the
+   list is filled.
 
 **A lambda is kept** where none of those holds, which is where it is
 necessary: the expression contains a call, `await` or `yield` that would

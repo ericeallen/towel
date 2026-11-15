@@ -173,13 +173,15 @@ def test_external_callee_can_change_lookup_between_reads(
     assert _run(after, "check.py", pythonpath=str(vendor)) == expected
 
 
-@pytest.mark.relaxed_mode
 @pytest.mark.parametrize("parameterize", [False, True])
 @pytest.mark.parametrize("operation", ["rebind", "unbound"])
-def test_relaxed_mode_still_reads_a_builtin_where_the_block_did(
+def test_the_default_mode_still_reads_a_builtin_where_the_block_did(
     tmp_path: Path, parameterize: bool, operation: str
 ) -> None:
-    """A builtin is not a module's function: a callee that shadows or removes it is still seen."""
+    """A builtin is not a module's function: a callee that shadows or removes it is still seen.
+
+    Not marked: this runs in relaxed mode by default, which is its point.
+    """
     test_external_callee_can_change_lookup_between_reads(
         tmp_path, parameterize, ("len", "len"), operation
     )

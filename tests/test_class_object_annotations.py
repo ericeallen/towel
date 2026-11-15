@@ -157,11 +157,3 @@ def test_a_class_argument_reaches_isinstance_with_its_type(tmp_path: Path) -> No
     assert (
         "_typing.Callable[[], type[Alpha]] | _typing.Callable[[], type[Beta]]" in written
     ), f"the class lookup kept a constructor type: {written}"
-
-
-@pytest.mark.relaxed_mode
-@requires_mypy
-def test_a_class_passed_by_value_reaches_isinstance_with_its_type(tmp_path: Path) -> None:
-    """Relaxed mode passes the class itself; the parameter is the class object, not a constructor."""
-    written = _written_annotations_of_the_class_guard(tmp_path)
-    assert "type[Alpha] | type[Beta]" in written, written

@@ -283,9 +283,13 @@ def test_annotated_locals_give_the_return_type_of_returned_variables(
             total: int = 2
             label: str = str(total)
             print(label)
-            return label.lower() + str(total)
+            return label.lower() * total
         """,
     )
+    # The last statements differ in an operator, which no parameter stands
+    # for, so the shared block is the three statements above them and the
+    # helper returns their variables. (With ``+`` in both, the whole bodies
+    # unify since 2.0, each passing its method as a function of ``label``.)
     header = _signature(result)
     assert header.startswith("def __extracted_func_0() -> 'tuple["), header
     assert header.endswith("-> 'tuple[int, str]':") or header.endswith("-> 'tuple[str, int]':")
@@ -551,17 +555,34 @@ def test_inconsistent_subtype_verdicts_never_empty_a_union() -> None:
 
 
 @pytest.mark.strict_mode
-def test_original_owned_annotated_local_partial_stays_refused(tmp_path: Path) -> None:
+@pytest.mark.parametrize("last, whole_bodies", [("+ str(total)", True), ("* total", False)])
+def test_original_owned_annotated_local_partial_stays_refused(
+    tmp_path: Path, last: str, whole_bodies: bool
+) -> None:
     # Exact original partial: opaque helper locals would cross a frame while
     # the caller still owns its original parameter. Keep that refusal covered.
+    #
+    # The original pair ends ``label.upper() + str(total)`` against
+    # ``label.lower() + str(total)``. Since 2.0 those whole bodies unify, each
+    # passing its method as a function of ``label``, and a whole body's
+    # transfer is certified; every partial block is refused as before. The
+    # second pair differs in an operator as well, which no parameter stands
+    # for, so only its partial blocks unify and nothing is proposed.
     source = textwrap.dedent(
-        "\n        def first(value: int) -> str:\n            total: int = value * 2\n            label: str = str(total)\n            print(label)\n            return label.upper() + str(total)\n\n        def second(value: int) -> str:\n            total: int = value * 2\n            label: str = str(total)\n            print(label)\n            return label.lower() + str(total)\n        "
-    )
+        "\n        def first(value: int) -> str:\n            total: int = value * 2\n            label: str = str(total)\n            print(label)\n            return label.upper() + str(total)\n\n        def second(value: int) -> str:\n            total: int = value * 2\n            label: str = str(total)\n            print(label)\n            return label.lower() LAST\n        "
+    ).replace("LAST", last)
     path = tmp_path / "owned_partial.py"
     path.write_text(source)
     engine = UnificationRefactorEngine(
         skip_trivial_helpers=False, min_lines=2, annotate_helpers=False
     )
-    assert engine.analyze_file(str(path)) == []
+    proposals = engine.analyze_file(str(path))
     assert "owned_binding_frame_boundary" in engine.declined_pairs
     assert path.read_text() == source
+    if not whole_bodies:
+        assert proposals == []
+        return
+    (proposal,) = proposals
+    changed = engine.apply_refactoring(str(path), proposal)
+    assert "lambda label: label.upper()" in changed and "_towel_owner" in changed
+    assert "return __param_0(label) + str(total)" in changed
