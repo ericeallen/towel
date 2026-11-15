@@ -45,7 +45,7 @@ class SourcePolicy:
 
     def original(self, path: Path) -> Path:
         """One input identity, whether encountered before staging or in a private copy."""
-        path = path.absolute()
+        path = path.resolve()
         for original, copied in reversed(self.copies):
             if path.is_relative_to(copied):
                 path = original / path.relative_to(copied)
@@ -92,7 +92,7 @@ def source_copy(original: Path, copied: Path) -> Iterator[None]:
         yield
         return
     previous = policy.copies
-    policy.copies += ((original.absolute(), copied.absolute()),)
+    policy.copies += ((original.resolve(), copied.resolve()),)
     try:
         yield
     finally:

@@ -143,3 +143,34 @@ def test_strict_unreadable_directory_remedy_works(tmp_path: Path, mode: int) -> 
             refuse_unparsed_program(tmp_path, ["locked"])
     finally:
         locked.chmod(0o755)
+
+
+@pytest.mark.parametrize("command", ["preview", "dry"])
+def test_cli_aliases_do_not_duplicate_unreadable_inputs(tmp_path: Path, command: str) -> None:
+    """R6/R9: original, alias and stage paths identify the same unavailable input."""
+    import json
+    from tests.test_cli_integration import LITERAL_DUPLICATES, invoke
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("")
+    (project / "good.py").write_text(LITERAL_DUPLICATES)
+    (project / "bad.py").write_text("def broken(:\n")
+    locked = project / "locked"
+    locked.mkdir()
+    (locked / "m.py").write_text("x = 1\n")
+    alias = tmp_path / "alias"
+    alias.symlink_to(project, target_is_directory=True)
+    locked.chmod(0o400)
+    try:
+        arguments = [command, str(alias), "--json", "--no-types", "--no-format"]
+        if command == "dry":
+            arguments.extend([str(tmp_path / "out"), "--no-interactive"])
+        result = invoke(arguments)
+        assert result.status == 0, result
+        assert result.stderr.count("Skipping ") == 2, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["applied"] > 0
+        assert len(payload["analysed"]["skipped"]) == 2, payload["analysed"]
+    finally:
+        locked.chmod(0o700)
