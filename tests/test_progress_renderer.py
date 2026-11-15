@@ -141,3 +141,44 @@ def test_logger_warnings_have_a_prefix_and_clear_the_line(
         assert "apply" in output.split("\n")[-1]
         assert record.getMessage() == "Skipping bad.py"
         renderer.close()
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["Skipping bad.py: cannot decode", "Dropped a proposal rendering (f and g): invalid AST"],
+)
+def test_warning_is_said_once_per_run(message: str) -> None:
+    """Audit 7: repeated analysis passes and rehearings must not repeat a warning."""
+    import logging
+    from towel.diagnostics import _CurrentStderrHandler
+
+    handler = _CurrentStderrHandler()
+    output = io.StringIO()
+    record = logging.LogRecord("towel", logging.WARNING, __file__, 1, message, (), None)
+    with contextlib.redirect_stderr(output):
+        for _ in range(2):
+            with progress.progress_run():
+                handler.handle(record)
+                handler.handle(record)
+    assert output.getvalue() == f"Warning: {message}\n" * 2
+
+
+def test_a_run_resolves_its_backend_only_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit 7: analysis phases share one terminal/backend decision for the run."""
+    calls = []
+
+    def load() -> None:
+        calls.append(True)
+
+    monkeypatch.setattr(progress, "load_tqdm", load)
+    with (
+        terminal() as (stream, master),
+        contextlib.redirect_stderr(stream),
+        progress.progress_run(),
+    ):
+        for name in ["analyze", "pair", "apply"]:
+            renderer = ProgressRenderer("auto", total=1, desc=name, unit="item")
+            renderer.update()
+            renderer.close()
+        read_terminal(master)
+    assert len(calls) == 1

@@ -311,3 +311,25 @@ def test_default_auto_is_silent_on_pipes(
     assert sum(count for count, _ in results.values()) == 2
     assert err.getvalue() == ""
     assert not [record for record in caplog.records if "tqdm" in record.getMessage()]
+
+
+def test_cli_skipped_file_warning_is_not_repeated_by_analysis_passes(tmp_path: Path) -> None:
+    """Audit 7: undecodable files warn once despite multiple fixed-point passes."""
+    from tests.test_cli_integration import invoke
+
+    _make_fixture(tmp_path / "proj")
+    (tmp_path / "proj" / "bad.py").write_bytes(b"# \xff\n")
+    result = invoke(
+        [
+            "preview",
+            str(tmp_path / "proj"),
+            "--no-types",
+            "--no-format",
+            "--summary",
+            "--min-lines",
+            "3",
+        ]
+    )
+    assert result.status == 0, result.stderr
+    assert "Would apply 2 refactoring(s)." in result.stdout
+    assert result.stderr.count("Warning: Skipping ") == 1, result.stderr

@@ -29,6 +29,7 @@ import importlib
 import threading
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Callable, Iterator, List, Literal, Mapping, Optional, Protocol, Set, Tuple, cast
 
 ProgressMode = Literal["auto", "tqdm", "none", "detail"]
@@ -246,6 +247,51 @@ def display_threads_stopped(timeout: float) -> Iterator[None]:
                 beat.start()
 
 
+class _RunDisplay:
+    """Presentation choices and diagnostics owned by one command invocation."""
+
+    def __init__(self) -> None:
+        self.terminal = sys.stderr.isatty()
+        self._loaded = False
+        self._factory: Optional[ProgressBarFactory] = None
+        self._warnings: Set[str] = set()
+        self.tqdm_noted = False
+
+    def factory(self) -> Optional[ProgressBarFactory]:
+        if not self._loaded:
+            self._factory = load_tqdm()
+            self._loaded = True
+        return self._factory
+
+    def repeated_warning(self, message: str) -> bool:
+        if message in self._warnings:
+            return True
+        self._warnings.add(message)
+        return False
+
+
+_RUN: ContextVar[Optional[_RunDisplay]] = ContextVar("towel_progress_run", default=None)
+
+
+@contextmanager
+def progress_run() -> Iterator[None]:
+    """Bound backend decisions and repeated warnings to a single invocation."""
+    token = _RUN.set(_RunDisplay())
+    previous = tuple(_ACTIVE)
+    try:
+        yield
+    finally:
+        for renderer in tuple(_ACTIVE):
+            if renderer not in previous:
+                renderer.close()
+        _RUN.reset(token)
+
+
+def repeated_warning(message: str) -> bool:
+    run = _RUN.get()
+    return run.repeated_warning(message) if run is not None else False
+
+
 _TQDM_NOTED = False
 
 
@@ -295,10 +341,12 @@ class ProgressRenderer:
         unit: str,
         factory: Optional[ProgressBarFactory] = None,
     ) -> None:
-        self._enabled = wants_bar(mode) and sys.stderr.isatty() and total != 0
+        run = _RUN.get()
+        terminal = run.terminal if run is not None else sys.stderr.isatty()
+        self._enabled = wants_bar(mode) and terminal and total != 0
         self._factory = factory
         if wants_bar(mode) and (self._enabled or mode == "tqdm"):
-            self._factory = factory or load_tqdm()
+            self._factory = factory or (run.factory() if run is not None else load_tqdm())
             if mode == "tqdm" and self._factory is None:
                 _note_missing_tqdm()
         self._total = total
@@ -403,8 +451,13 @@ def _note_missing_tqdm() -> None:
     from ..diagnostics import LOG
 
     global _TQDM_NOTED
-    if not _TQDM_NOTED:
-        _TQDM_NOTED = True
+    run = _RUN.get()
+    noted = run.tqdm_noted if run is not None else _TQDM_NOTED
+    if not noted:
+        if run is not None:
+            run.tqdm_noted = True
+        else:
+            _TQDM_NOTED = True
         LOG.warning("tqdm is not installed; progress is shown as inline bars on stderr instead")
 
 

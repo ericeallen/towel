@@ -93,6 +93,7 @@ from towel.unification.progress import (
     DEFAULT_PROGRESS,
     ProgressMode,
     normalize_progress,
+    progress_run,
     write_note,
 )
 
@@ -159,6 +160,7 @@ def main() -> None:
         )
     try:
         with (
+            progress_run(),
             _explain_rejections(bool(getattr(args, "explain", False))),
             execution_budget(getattr(args, "time_limit", None)),
         ):

@@ -122,7 +122,7 @@ class _CurrentStderrHandler(logging.StreamHandler[TextIO]):
     """
 
     def emit(self, record: logging.LogRecord) -> None:
-        from .unification.progress import write_message
+        from .unification.progress import repeated_warning, write_message
 
         prefix = (
             "Error"
@@ -130,7 +130,10 @@ class _CurrentStderrHandler(logging.StreamHandler[TextIO]):
             else ("Warning" if record.levelno >= logging.WARNING else "")
         )
         try:
-            write_message(self.format(record), prefix=prefix)
+            message = self.format(record)
+            if record.levelno == logging.WARNING and repeated_warning(message):
+                return
+            write_message(message, prefix=prefix)
         except Exception:
             self.handleError(record)
 
