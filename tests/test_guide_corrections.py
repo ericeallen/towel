@@ -214,3 +214,18 @@ def test_performance_page_lists_every_section_in_page_order() -> None:
         "## First\n\n### Unlisted\n\n```text\n## Not a heading\n```\n\n## Second\n"
     )
     assert _contents_and_headings(stale) == (["Second", "First"], ["First", "Unlisted", "Second"])
+
+
+def test_usage_guide_gives_no_instruction_that_needs_a_source_checkout() -> None:
+    """Audit finding 12 (documentation report D8 and claim 50).
+
+    The guide for people calling an installed Towel told them to run `just test-smoke`,
+    a recipe of this repository's justfile, and to edit `DEFAULT_SIMILARITY_THRESHOLD`
+    in `block_signature.py`, which for them means editing site-packages. The smoke
+    suite stays documented where contributors read: tests/README.md.
+    """
+    guide = _guide("USAGE_GUIDE.md")
+    assert not re.search(r"(?m)^just \S|`just \S", guide), "justfile recipes need a checkout"
+    assert "DEFAULT_SIMILARITY_THRESHOLD" not in guide and "block_signature.py" not in guide
+    assert "#fast-local-testing" not in guide
+    assert "just test-smoke" in (ROOT / "tests" / "README.md").read_text(encoding="utf-8")

@@ -12,7 +12,6 @@ On this page:
 - [Examples](#examples)
 - [Tips](#tips)
 - [Troubleshooting](#troubleshooting)
-- [Fast local testing](#fast-local-testing)
 - [Advanced Usage](#advanced-usage)
 
 ## Getting started with the API
@@ -738,8 +737,6 @@ result stays deferred even when its expression is the helper's first use.
 
 - Increase `min_lines` to focus on larger duplicates
 - Decrease `max_parameters` to avoid over-parameterized functions
-- Raise `DEFAULT_SIMILARITY_THRESHOLD` in `block_signature.py` (0.6; it is not an
-  engine option) so that fewer loosely similar pairs reach unification
 
 ### Import errors after refactoring
 
@@ -767,16 +764,6 @@ adopted into its real location. If you still hit an import error:
   unchanged. If it is a package's `__init__.py` importing a generated
   `_version.py`, install the project (`pip install -e .`) so the module
   exists, and its modules share helpers with the rest of the project again.
-
-## Fast local testing
-
-When developing or iterating on changes, run the fast smoke suite to validate core behavior and output stability without the cost of the full test run:
-
-```
-just test-smoke
-```
-
-Use this during inner-loop development; reserve the full suite for pre-commit or release gating.
 
 ## Advanced Usage
 
