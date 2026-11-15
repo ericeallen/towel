@@ -83,17 +83,15 @@ def test_different_escaping_signatures_are_not_extracted(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     "suffix,accepted",
     [
-        ("return result", True),
+        ("return result", False),
         ("return callback", False),
         ("saved.append(callback)\nreturn result", False),
         ("return callback(value=3)", False),
         ("", False),
     ],
 )
-def test_named_callback_requires_complete_positional_consumption(
-    suffix: str, accepted: bool
-) -> None:
-    """Audit D4: preserve prior safe local calls without assuming a partial block is the whole function."""
+def test_stored_callbacks_keep_parameter_names(suffix: str, accepted: bool) -> None:
+    """Audit D4: a return does not prove that a stored callback is local to this block."""
     blocks = [
         ast.parse(f"callback = lambda {name}: {name} + 1\nresult = callback(3)\n{suffix}").body
         for name in ("value", "other")
@@ -128,3 +126,42 @@ assert [callback(c=Member()) for callback in saved] == ['Ada', 'Ada']
 """
     for program in (source, transformed):
         exec(compile(program + exercise, "<retained-keyword-call>", "exec"), {})
+
+
+@pytest.mark.parametrize("declaration", ["global", "nonlocal"])
+def test_declaration_outside_candidate_cannot_hide_callback_escape(
+    tmp_path: Path, declaration: str
+) -> None:
+    """Audit D4: a declaration outside the candidate does not make stored signatures private."""
+    import textwrap
+
+    functions = """
+def first():
+    DECLARATION saved
+    saved = lambda left: left + 1
+    return saved(2)
+def second():
+    DECLARATION saved
+    saved = lambda right: right + 1
+    return saved(3)
+""".replace("DECLARATION", declaration)
+    exercise = """
+assert first() == 3
+assert saved(left=3) == 4
+assert second() == 4
+assert saved(right=4) == 5
+"""
+    source = (
+        "saved = None\n" + functions + exercise
+        if declaration == "global"
+        else "def outer():\n    saved = None\n"
+        + textwrap.indent(functions + exercise, "    ")
+        + "\nouter()\n"
+    )
+    path = tmp_path / "escaping.py"
+    path.write_text(source)
+    transformed, _, _ = UnificationRefactorEngine(
+        min_lines=1, skip_trivial_helpers=False
+    ).refactor_to_fixed_point(str(path))
+    for program in (source, transformed):
+        exec(compile(program, "<declaration-outside-block>", "exec"), {})

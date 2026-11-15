@@ -240,14 +240,12 @@ class TestScopingEdgeCases(unittest.TestCase):
         self.assertEqual(proposals[0].parameters_count, 0)
         ast.parse(ast.unparse(helper))
 
-    def test_lambda_parameter_spelled_differently_is_alpha_equivalent(self):
-        """A lambda whose parameter is spelled differently unifies whole.
+    def test_stored_lambda_parameter_spelling_is_preserved(self):
+        """Stored closed callbacks retain their keyword interface.
 
-        ``lambda value: value * 2`` and ``lambda other: other * 2`` are the same
-        function: the unifier alpha-renames the parameters and the
-        instantiation check renames them within their lambda, so the whole
-        pair unifies, lambda included; here that makes the two bodies
-        identical, and both functions call one helper.
+        A candidate block cannot prove the absence of global/nonlocal
+        declarations or enclosing finally clauses outside that block.
+        Immediate positional lambda calls have separate alpha-renaming tests.
         """
         proposals = self._analyze_source(
             "def first(items):\n"
@@ -264,11 +262,7 @@ class TestScopingEdgeCases(unittest.TestCase):
             "        out.append(double(item))\n"
             "    return out\n"
         )
-        self.assertEqual(len(proposals), 1, [p.description for p in proposals])
-        # The whole bodies match, so both become calls of the helper.
-        proposal = proposals[0]
-        self.assertIsNone(proposal.reused_function)
-        self.assertEqual(sorted(r.line_range for r in proposal.replacements), [(2, 6), (9, 13)])
+        self.assertEqual(proposals, [])
 
 
 if __name__ == "__main__":

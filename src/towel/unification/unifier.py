@@ -1060,62 +1060,25 @@ class Unifier(Parameterization, LiteralPromotion):
                     self._restore_alpha_mapping(key, old_mappings)
 
     def _lambda_called_positionally(self, node: ast.Lambda, block_index: int) -> bool:
-        """Prove calls cannot expose a lambda's parameter spellings.
+        """A direct, valid positional call makes parameter spellings unobservable.
 
-        A named callback needs a complete returning block: otherwise a
-        later statement outside the block could hand it to a keyword caller.
-        Unknown consumers and nested scopes do not establish this proof.
+        A stored callback may escape through a global/nonlocal declaration
+        or an enclosing finally outside the block. Only its containing
+        function could prove otherwise; this unifier has just the block.
         """
         if self.current_blocks is None or block_index >= len(self.current_blocks):
             return False
-        block = self.current_blocks[block_index]
-        parents = {
-            child: parent
-            for statement in block
+        return any(
+            isinstance(parent, ast.Call)
+            and parent.func is node
+            and not parent.keywords
+            and not any(isinstance(argument, ast.Starred) for argument in parent.args)
+            and len(node.args.args) - len(node.args.defaults)
+            <= len(parent.args)
+            <= len(node.args.args)
+            for statement in self.current_blocks[block_index]
             for parent in ast.walk(statement)
-            for child in ast.iter_child_nodes(parent)
-        }
-
-        def called(value: ast.AST) -> bool:
-            parent = parents.get(value)
-            return (
-                isinstance(parent, ast.Call)
-                and parent.func is value
-                and not parent.keywords
-                and not any(isinstance(argument, ast.Starred) for argument in parent.args)
-                and len(node.args.args) - len(node.args.defaults)
-                <= len(parent.args)
-                <= len(node.args.args)
-            )
-
-        if called(node):
-            return True
-        parent = parents.get(node)
-        if not (
-            block
-            and isinstance(block[-1], ast.Return)
-            and isinstance(parent, ast.Assign)
-            and parent.value is node
-            and len(parent.targets) == 1
-            and isinstance(parent.targets[0], ast.Name)
-        ):
-            return False
-        target = parent.targets[0]
-        for statement in block:
-            for other in ast.walk(statement):
-                if (
-                    isinstance(
-                        other, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
-                    )
-                    and other is not node
-                ):
-                    return False
-                if isinstance(other, (ast.Global, ast.Nonlocal)) and target.id in other.names:
-                    return False
-                if isinstance(other, ast.Name) and other.id == target.id and other is not target:
-                    if not isinstance(other.ctx, ast.Load) or not called(other):
-                        return False
-        return True
+        )
 
     def _unify_thunks(
         self, nodes: List[ast.Lambda], substitution: Substitution, block_indices: List[int]

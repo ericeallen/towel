@@ -273,12 +273,12 @@ point = (3, 4)
         self.assertIsNotNone(result)
 
     def test_unify_lambda_expressions(self):
-        """Test unifying lambda expressions."""
+        """Audit D4: unify closed lambda bodies while preserving their keyword signature."""
         code1 = """
 func = lambda x: x * 2
 """
         code2 = """
-func = lambda y: y * 3
+func = lambda x: x * 3
 """
         tree1 = ast.parse(code1)
         tree2 = ast.parse(code2)
