@@ -179,12 +179,14 @@ def test_unrelated_valid_extraction_remains_useful_under_ci_strict(tmp_path: Pat
 
     module = _project(tmp_path, "mypy --strict pkg")
     source = textwrap.dedent("""
-        def first(value: int) -> int:
+        def first() -> int:
+            value = 4
             scaled = value * 2
             label = str(scaled)
             return len(label) + scaled
 
-        def second(value: int) -> int:
+        def second() -> int:
+            value = 4
             scaled = value * 3
             label = str(scaled)
             return len(label) + scaled
@@ -205,7 +207,7 @@ def test_unrelated_valid_extraction_remains_useful_under_ci_strict(tmp_path: Pat
         namespace: dict[str, object] = {}
         exec(
             compile(
-                changed + "\nassert first(4) == 9\nassert second(4) == 14\n", str(module), "exec"
+                changed + "\nassert first() == 9\nassert second() == 14\n", str(module), "exec"
             ),
             namespace,
         )

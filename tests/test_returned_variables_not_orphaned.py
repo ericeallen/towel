@@ -30,6 +30,7 @@ from pathlib import Path
 import textwrap
 from types import SimpleNamespace
 
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Small fixtures exercise semantic guards independently of the product usefulness policy.
@@ -70,16 +71,21 @@ def test_readme_example_extracts_with_the_returned_variable(tmp_path: Path) -> N
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     with contextlib.redirect_stdout(io.StringIO()):
         final, applied, _ = engine.refactor_to_fixed_point(str(path))
-    assert applied == 1
-    assert final.count("_towel_arguments.pop()") == 2
-    assert "del order" in final and "del quote" in final
-    assert final.count("del label") == 2
-    helper = next(
-        node
-        for node in ast.parse(final).body
-        if isinstance(node, ast.FunctionDef) and node.name == "__extracted_func_0"
-    )
-    assert isinstance(helper.body[-1], ast.Return)
+    if _supported_runtime():
+        assert applied == 1
+        assert final.count("_towel_arguments.pop()") == 2
+        assert "del order" in final and "del quote" in final
+        assert final.count("del label") == 2
+        helper = next(
+            node
+            for node in ast.parse(final).body
+            if isinstance(node, ast.FunctionDef) and node.name == "__extracted_func_0"
+        )
+        assert isinstance(helper.body[-1], ast.Return)
+    else:
+        assert applied == 0
+        assert final == README_EXAMPLE
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
     assert _run(final) == _run(README_EXAMPLE) == ["Order 7: $10.8", "Quote 7: $10.8"]
 
 
@@ -124,5 +130,7 @@ def test_original_partial_example_is_refused_without_changing_behavior(tmp_path:
     path.write_text(OWNED_PARTIAL)
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     assert engine.analyze_file(str(path)) == []
-    assert "owned_binding_frame_boundary" in engine.declined_pairs
+    assert (
+        "owned_binding_frame_boundary" if _supported_runtime() else "lifetime_order_uncertified"
+    ) in engine.declined_pairs
     assert _run(OWNED_PARTIAL) == ["Order 7: $10.8", "Quote 7: $10.8"]

@@ -16,20 +16,22 @@
 
 import json
 import os
-from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
-from typing import TextIO
+from pathlib import Path
 from types import FrameType
+from typing import TextIO
 
 import pytest
 
+from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES
+from tests.test_cli_integration import invoke
 from towel import cli
 from towel.execution_budget import BudgetExpired
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.test_cli_integration import DUPLICATES, invoke
 
 
 def _source(tmp_path: Path) -> Path:
@@ -398,8 +400,12 @@ def test_explain_locates_declined_blocks_and_does_not_leak_into_next_command(
     )
     result = invoke(["preview", str(source), "--explain", *FLAGS])
     assert result.status == 0
-    assert "unprofitable_helper" in result.stderr
+    if argument_ownership._supported_runtime():
+        assert "unprofitable_helper" in result.stderr
+        assert "does not repay" in result.stdout
+    else:
+        assert "lifetime_order_uncertified" in result.stderr
+        assert "order in which objects are released" in result.stdout
     assert "tiny.py::first@" in result.stderr and "tiny.py::second@" in result.stderr
-    assert "does not repay" in result.stdout
     ordinary = invoke(["preview", str(source), *FLAGS])
     assert "REJECT[" not in ordinary.stderr

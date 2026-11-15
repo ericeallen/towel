@@ -21,6 +21,7 @@ from typing import Dict
 
 import pytest
 
+from tests.test_cli_integration import LITERAL_DUPLICATES
 from towel.cli import _rename_function_in_directory
 from towel.unification.pipeline import run_pipeline
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -30,8 +31,7 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 
 def test_analysis_observes_external_edits(tmp_path: Path) -> None:
     path = tmp_path / "example.py"
-    body = "    a = x + 1\n    b = a * 2\n    c = b + 3\n    return c\n"
-    path.write_text("def first(x):\n" + body + "\ndef second(x):\n" + body)
+    path.write_text(LITERAL_DUPLICATES)
     assert run_pipeline(
         [str(path)], engine=UnificationRefactorEngine(skip_trivial_helpers=False), progress="none"
     )
@@ -102,9 +102,8 @@ def test_rename_rejects_keywords_and_collisions_without_writes(tmp_path: Path) -
 
 def test_helper_available_during_module_initialization(tmp_path: Path) -> None:
     path = tmp_path / "example.py"
-    body = "    a = x + 1\n    b = a * 2\n    c = b + 3\n    return c\n"
     source = '"""Module docs."""\nfrom __future__ import annotations\n'
-    source += "def first(x):\n" + body + "\ndef second(x):\n" + body + "\nRESULT = first(1)\n"
+    source += LITERAL_DUPLICATES + "\nRESULT = first()\n"
     path.write_text(source)
     engine = UnificationRefactorEngine(skip_trivial_helpers=False)
     proposals = engine.analyze_file(str(path))

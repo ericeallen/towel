@@ -141,5 +141,49 @@ def test_unreviewed_cleanup_declines_duplicate_bodies_with_a_reason(
         min_lines=2, reuse_existing_functions=False, skip_trivial_helpers=False
     )
     assert engine.analyze_file(str(path)) == []
-    assert "owned_binding_frame_boundary" in engine.declined_pairs
+    assert "lifetime_order_uncertified" in engine.declined_pairs
+    assert path.read_text() == source
+
+
+def test_native_frame_release_order_matches_the_certification_boundary() -> None:
+    """Python lane: observe parameters and locals, not just compiled slot names."""
+    events: list[str] = []
+
+    class Resource:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def __del__(self) -> None:
+            events.append(self.name)
+
+    def frame(a: Resource, b: Resource) -> None:
+        local1 = Resource("local1")
+        local2 = Resource("local2")
+        assert (a.name, b.name, local1.name, local2.name) == ("a", "b", "local1", "local2")
+
+    frame(Resource("a"), Resource("b"))
+    if argument_ownership._supported_runtime():
+        assert events == ["a", "b", "local1", "local2"]
+    else:
+        assert events == ["local2", "local1", "b", "a"]
+
+
+def test_uncertified_retained_local_order_is_declined(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Python lane: the multiple-local return proof uses the same runtime predicate."""
+    from towel.unification.refactor_engine import UnificationRefactorEngine
+
+    monkeypatch.setattr(argument_ownership, "_supported_runtime", lambda: False)
+    source = (
+        "def f():\n    x = resource('x')\n    y = resource('y')\n    emit('f')\n"
+        "def g():\n    x = resource('x')\n    y = resource('y')\n    emit('g')\n"
+    )
+    path = tmp_path / "retained.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, skip_trivial_helpers=False
+    )
+    assert engine.analyze_file(str(path)) == []
+    assert "lifetime_order_uncertified" in engine.declined_pairs
     assert path.read_text() == source

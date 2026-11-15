@@ -32,39 +32,17 @@ from typing import Mapping, Sequence
 import pytest
 
 from towel.type_inference import CheckFailure, CheckResult, MypyInferrer
+from tests.test_cli_integration import LITERAL_DUPLICATES
 from towel.unification.exceptions import CheckerCannotCheckTheProject, RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
 
-TWO_PAIRS = """\
-    def first(values: list[int], extra: int = 0) -> int:
-        total = 0
-        for value in values:
-            total += value * 2
-        return total + extra
-
-
-    def second(values: list[int], extra: int = 1) -> int:
-        total = 0
-        for value in values:
-            total += value * 2
-        return total + extra
-
-
-    def third(names: list[str], suffix: str = "") -> str:
-        joined = ""
-        for name in names:
-            joined += name.upper()
-        return joined + suffix
-
-
-    def fourth(names: list[str], suffix: str = "!") -> str:
-        joined = ""
-        for name in names:
-            joined += name.upper()
-        return joined + suffix
-    """
+# Two independent literal-only pairs reach candidate checking on every runtime.
+_FIRST_PAIR = LITERAL_DUPLICATES.replace("():", "() -> int:")
+TWO_PAIRS = _FIRST_PAIR + _FIRST_PAIR.replace("first", "third").replace("second", "fourth").replace(
+    "+", "^"
+).replace("*", "|").replace("//", "&")
 
 
 class _FailingAfterTheBaseline(MypyInferrer):

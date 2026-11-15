@@ -45,10 +45,11 @@ from towel.type_inference import (
     TypeDiagnostic,
 )
 from towel.diagnostics import REJECTIONS
+from towel.unification import argument_ownership
 from towel.unification.parallel import ParallelEvaluation
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.probe_answers import answer_probes
-from tests.test_cli_integration import DUPLICATES, invoke
+from tests.test_cli_integration import LITERAL_DUPLICATES, invoke
 
 BLOCK = """
 def {name}(items: list[int], scale: int) -> int:
@@ -112,7 +113,12 @@ def test_a_run_whose_imports_allow_no_helper_says_why(tmp_path: Path, progress: 
     assert "No refactorings found!" in result.stdout
     # No module of either package is known to import the other: the
     # program's own imports show no import between them that works.
-    assert re.search(r"candidate pair\(s\) declined: .*unproven_import \d+", result.stdout)
+    reason = (
+        "unproven_import"
+        if argument_ownership._supported_runtime()
+        else "lifetime_order_uncertified"
+    )
+    assert re.search(rf"candidate pair\(s\) declined: .*{reason} \d+", result.stdout)
     if progress == "detail":
         assert re.search(r"\[towel\] Declined \d+ candidate pair\(s\):", result.stderr)
 
@@ -153,7 +159,7 @@ def test_a_refusal_by_the_checker_is_called_that(
     root = tmp_path / "project"
     (root / "pkg").mkdir(parents=True)
     (root / "pkg" / "m.py").write_text(
-        DUPLICATES.replace("(x):", "(x: int) -> int:"),
+        LITERAL_DUPLICATES.replace("():", "() -> int:"),
         encoding="utf-8",
     )
     monkeypatch.setattr("towel.cli._type_oracle", lambda path: _RefusesEveryCandidate())

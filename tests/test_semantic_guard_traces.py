@@ -43,6 +43,8 @@ from typing import List
 
 import pytest
 
+from tests.compiler_golden_profiles import lifetime_refusal_profile
+
 from towel.unification.extractor import has_complete_return_coverage, is_value_producing
 from towel.unification.models import RejectReason
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -93,6 +95,7 @@ def _rejections(
     ):
         proposals = engine.analyze_files([str(path)], progress="none")
     assert bool(proposals) == expect_proposals, [p.description for p in proposals]
+    assert path.read_text() == textwrap.dedent(source)
     return [r.getMessage() for r in caplog.records if r.name == "towel.rejections"]
 
 
@@ -146,7 +149,11 @@ def test_first_block_coverage_guard_is_shadowed_by_block_enumeration(
     # enumerated prefix with no caller owners to remain a useful extraction.
     source = PARTIAL_RETURN + PARTIAL_RETURN.replace("partial", "partial_twin")
     original_reasons = _reasons(_rejections(tmp_path, source, caplog))
-    assert RejectReason.OWNED_BINDING_FRAME_BOUNDARY in original_reasons
+    assert (
+        RejectReason.LIFETIME_ORDER_UNCERTIFIED
+        if lifetime_refusal_profile()
+        else RejectReason.OWNED_BINDING_FRAME_BOUNDARY
+    ) in original_reasons
     source = source.replace("(value):", "():").replace("total = value + 1", "total = 2")
     reasons = _reasons(_rejections(tmp_path, source, caplog, expect_proposals=True))
     assert RejectReason.INCOMPLETE_RETURN_COVERAGE_BLOCK1 not in reasons

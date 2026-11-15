@@ -39,6 +39,7 @@ from towel.diagnostics import Settings
 from towel.type_inference import project_configures_mypy
 from towel.unification.hof_promotion import _is_used_as_callable_or_value_later
 from towel.unification.insertion import InsertionPoints
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.unifier import Unifier
 
@@ -132,7 +133,11 @@ def test_validation_debugging_traces_both_blocks_of_a_pair(
         contextlib.redirect_stdout(io.StringIO()),
     ):
         proposals = engine.analyze_file(str(path))
-    assert [p.description for p in proposals] == ["Extract common code from first and second"]
+    if _supported_runtime():
+        assert [p.description for p in proposals] == ["Extract common code from first and second"]
+    else:
+        assert not proposals
+        assert "lifetime_order_uncertified" in engine.declined_pairs
     messages = [r.getMessage() for r in caplog.records if r.name == "towel.validation"]
     assert "\n=== Block1 Validation Debug ===" in messages
     assert "\n=== Block2 Validation Debug ===" in messages

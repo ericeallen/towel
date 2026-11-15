@@ -24,6 +24,7 @@ import subprocess
 import sys
 
 from towel.cli import _find_extracted_helpers, helper_inventory
+from towel.unification import argument_ownership
 
 
 def _project(tmp_path: Path) -> Path:
@@ -149,6 +150,13 @@ def test_inventory_includes_before_after_from_the_dry_sidecar(tmp_path: Path) ->
         "def g(b):\n    x = b + 1\n    y = x * 2\n    z = y + compute(b)\n    return z\n\n"
         "def compute(v):\n    return v\n"
     )
+    if not argument_ownership._supported_runtime():
+        module = src / "m.py"
+        module.write_text(
+            module.read_text()
+            .replace("def f(a):", "def f():\n    a = 1")
+            .replace("def g(b):", "def g():\n    b = 2")
+        )
     out = tmp_path / "cleaned"
     # A generated helper is what the sidecar names; ``g`` reusing ``f`` logs nothing.
     engine = UnificationRefactorEngine(
@@ -172,8 +180,12 @@ def test_inventory_includes_before_after_from_the_dry_sidecar(tmp_path: Path) ->
         # 'before' is the original block; 'after' is the generated call.
         assert "compute(" in change["before"]
         assert change["after"].splitlines()[-1].startswith("return ")
-        assert change["after"].splitlines()[-1].endswith("_towel_arguments.pop())")
-        assert change["after"].splitlines()[0].startswith("_towel_arguments = [(")
+        if argument_ownership._supported_runtime():
+            assert change["after"].splitlines()[-1].endswith("_towel_arguments.pop())")
+            assert change["after"].splitlines()[0].startswith("_towel_arguments = [(")
+        else:
+            assert change["after"].startswith("return ")
+            assert "_towel_arguments" not in change["after"]
 
 
 def test_inventory_has_empty_changes_without_a_sidecar(tmp_path: Path) -> None:
@@ -224,6 +236,13 @@ def test_the_sidecar_spells_each_file_relative_to_an_output_reached_through_a_li
         "def g(b):\n    x = b + 1\n    y = x * 2\n    z = y + compute(b)\n    return z\n\n"
         "def compute(v):\n    return v\n"
     )
+    if not argument_ownership._supported_runtime():
+        module = real / "src" / "m.py"
+        module.write_text(
+            module.read_text()
+            .replace("def f(a):", "def f():\n    a = 1")
+            .replace("def g(b):", "def g():\n    b = 2")
+        )
     linked = tmp_path / "linked"
     linked.symlink_to(real, target_is_directory=True)
     engine = UnificationRefactorEngine(

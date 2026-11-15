@@ -27,13 +27,15 @@ from __future__ import annotations
 
 import contextlib
 import io
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-import sys
 from unittest.mock import patch
 
 import pytest
 
+from tests.probe_answers import answer_probes
+from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES
 from towel import cli
 from towel.type_inference import (
     CheckFailure,
@@ -45,11 +47,9 @@ from towel.type_inference import (
 )
 from towel.unification.exceptions import CheckerCannotCheckTheProject
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.probe_answers import answer_probes
-from tests.test_cli_integration import DUPLICATES
 
 PAIR = "".join(
-    f"def {name}(value):\n    total = value + 1\n    doubled = total * 2\n"
+    f"def {name}():\n    value = 1\n    total = value + 1\n    doubled = total * 2\n"
     f"    answer = doubled - {offset}\n    return answer\n\n\n"
     for name, offset in (("first", 3), ("second", 4))
 )

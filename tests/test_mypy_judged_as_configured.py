@@ -489,7 +489,7 @@ def test_the_reachability_rule_reads_silence_only_from_a_build_that_completed(
 
 
 PAIR = "".join(
-    f"def {name}(value: int) -> int:\n    total = value + 1\n    doubled = total * 2\n"
+    f"def {name}() -> int:\n    value = 1\n    total = value + 1\n    doubled = total * 2\n"
     f"    answer = doubled - {offset}\n    return answer\n\n\n"
     for name, offset in (("first", 3), ("second", 4))
 )
@@ -522,7 +522,13 @@ def test_verification_probes_do_not_promote_excluded_files_to_mypy_targets(
         engine.refactor_directory_to_fixed_point(
             str(tmp_path / "pkg"), str(tmp_path / "pkg"), progress="none"
         )
-        assert (tmp_path / "pkg/core.py").read_text() != original
+        from towel.unification import argument_ownership
+
+        if argument_ownership._supported_runtime():
+            assert (tmp_path / "pkg/core.py").read_text() != original
+        else:
+            assert (tmp_path / "pkg/core.py").read_text() == original
+            assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
         assert (tmp_path / "pkg/ignored.py").read_text() == ignored
         checked = oracle.check_project(
             {str(tmp_path / "pkg/core.py"): (tmp_path / "pkg/core.py").read_text()}

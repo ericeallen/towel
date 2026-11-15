@@ -16,6 +16,7 @@ import subprocess
 import sys
 
 from tests.test_cli_integration import invoke
+from towel.unification.argument_ownership import _supported_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -55,6 +56,12 @@ def test_quickstart_extracts_names_tests_and_adopts_one_reviewed_file(tmp_path: 
     )
     assert applied.status == 0, applied.stderr
     generated = (output / "charges.py").read_text()
+    if not _supported_runtime():
+        assert "lifetime_order_uncertified" in applied.stdout
+        assert generated == source
+        assert (project / "charges.py").read_text() == source
+        _check_project(output)
+        return
     assert generated != source and "__extracted_func_0" in generated
     assert (project / "charges.py").read_text() == source
 

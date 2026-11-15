@@ -49,12 +49,18 @@ from a pool no other construct uses, are set aside; an ``except ... as``
 name is deleted by the handler's own cleanup, so deletions of handler
 names, which the generator never deletes itself, are set aside; and 3.13
 builds closures with plain ``LOAD_FAST``, so the loads that feed a closure
-tuple are set aside.
+tuple are set aside. Python 3.14 adds borrowed versions of local loads,
+which read the same names; its symbol table also ignores function-local
+variable annotations, so the free-name comparison removes only those
+annotation expressions from a private syntax tree. Deferred annotation bodies
+remain part of the conservative read oracle, excluding their synthetic
+``format`` parameter loads.
 """
 
 from __future__ import annotations
 
 import ast
+import copy
 import dis
 import random
 import re
@@ -100,6 +106,8 @@ _STORES = frozenset({"STORE_FAST", "STORE_DEREF", "STORE_GLOBAL", "STORE_NAME"})
 _LOADS = frozenset(
     {
         "LOAD_FAST",
+        "LOAD_FAST_BORROW",
+        "LOAD_FAST_BORROW_LOAD_FAST_BORROW",
         "LOAD_FAST_CHECK",
         "LOAD_DEREF",
         "LOAD_GLOBAL",
@@ -448,6 +456,8 @@ def _closure_loads(instructions: List[dis.Instruction]) -> Set[int]:
             load = instructions[cursor]
             if load.opname not in (
                 "LOAD_FAST",
+                "LOAD_FAST_BORROW",
+                "LOAD_FAST_BORROW_LOAD_FAST_BORROW",
                 "LOAD_CLOSURE",
                 "LOAD_FAST_LOAD_FAST",
                 "LOAD_DEREF",
@@ -518,6 +528,12 @@ def _loads(code: types.CodeType, *, into: bool) -> Set[str]:
     for instruction in instructions:
         if instruction.offset in closure:
             continue
+        if (
+            code.co_name == "__annotate__"
+            and instruction.opname in {"LOAD_FAST", "LOAD_FAST_BORROW"}
+            and instruction.argval == "format"
+        ):
+            continue  # PEP 649's compiler-generated annotation-format parameter
         if instruction.opname.startswith("DELETE_") and instruction.argval in HANDLER_NAMES:
             continue  # the except clause's own cleanup of its name; no ``del`` of one is written
         if instruction.opname in _LOADS or instruction.opname == "LOAD_FAST_LOAD_FAST":
@@ -533,8 +549,8 @@ def _loads(code: types.CodeType, *, into: bool) -> Set[str]:
 
 
 def _is_function_body(code: types.CodeType) -> bool:
-    """A ``def``'s own code: a new-locals scope that is not a lambda, comprehension or alias value."""
-    if code.co_name == "<lambda>" or code.co_name in _COMPREHENSION_CODE:
+    """A ``def`` body, excluding lambdas, comprehensions, aliases and annotation evaluators."""
+    if code.co_name in {"<lambda>", "__annotate__"} or code.co_name in _COMPREHENSION_CODE:
         return False
     if code.co_name in TYPE_ALIASES or code.co_name.startswith("<"):
         return False
@@ -567,6 +583,30 @@ def _unevaluated_annotation_names(function: ast.AST) -> Set[str]:
 
     walk(function, True)
     return names
+
+
+def _without_local_annotations(
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    """Remove only annotations the 3.14+ symbol table no longer visits.
+
+    Removing syntax instead of subtracting names preserves a name read both
+    in an annotation and in an expression the function really evaluates.
+    """
+    result = copy.deepcopy(function)
+
+    def walk(node: ast.AST, in_function: bool) -> None:
+        if isinstance(node, ast.AnnAssign) and in_function:
+            node.annotation = ast.Constant(value=None)
+        for child in ast.iter_child_nodes(node):
+            nested = isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+            walk(
+                child,
+                True if nested else (False if isinstance(child, ast.ClassDef) else in_function),
+            )
+
+    walk(result, True)
+    return result
 
 
 # -- what Towel says ---------------------------------------------------------------
@@ -792,7 +832,12 @@ def test_free_names_are_the_symbol_tables(index: int) -> None:
     """The names ``f`` takes from ``outer``: what it or its nested scopes read, and ``nonlocal``."""
     for case in _CASES[index : index + 50]:
         free = {symbol.get_name() for symbol in case.table.get_symbols() if symbol.is_free()}
-        reads = set().union(*(loaded_names(statement) for statement in case.function.body))
+        function = (
+            _without_local_annotations(case.function)
+            if sys.version_info >= (3, 14)
+            else case.function
+        )
+        reads = set().union(*(loaded_names(statement) for statement in function.body))
         outer_names = {"o0", DECLARED_NONLOCAL}
         towel = ((reads - _towel_locals(case.function)) & outer_names) | (
             scope_declarations(case.function) & outer_names

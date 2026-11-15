@@ -30,8 +30,8 @@ from typing import Callable
 
 import pytest
 
+from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES
 from towel.cli import _build_parser, _run_dry, _run_preview
-from tests.test_cli_integration import DUPLICATES
 
 
 def _dry_arguments(source: Path, destination: Path) -> argparse.Namespace:

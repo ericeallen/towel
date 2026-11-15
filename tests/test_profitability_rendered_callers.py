@@ -21,6 +21,7 @@ import pytest
 
 from towel.canonical_ast import canonical_dump
 from towel.unification import materialize, pair_evaluation
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.models import (
     MethodKind,
     RefactoringProposal,
@@ -179,6 +180,16 @@ def test_method_dispatch_cost_matches_the_written_callers(
     assert observations[0] == observations[1] == [*range(12), 100, *range(1, 12)]
 
 
+def _assert_lifetime_refusal(tmp_path: Path, source: str) -> str:
+    path = tmp_path / "program.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(annotate_helpers=False)
+    assert engine.analyze_files([str(path)], progress="none") == []
+    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+    assert path.read_text() == source
+    return path.read_text()
+
+
 def test_mixed_ownership_cost_includes_the_unowned_callers_none_argument(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -189,16 +200,19 @@ def test_mixed_ownership_cost_includes_the_unowned_callers_none_argument(
         + "    return k\n"
     )
     source = "def first(unused):\n" + body + "\ndef second():\n" + body
-    engine, proposal, output = _verify_counted_callers(tmp_path, monkeypatch, source)
-    assert [r.argument_handoff is not None for r in proposal.replacements] == [True, False]
-    callers = engine._rendered_call_sites(proposal, reserve_ownership_holder=True)
-    second = next(
-        node
-        for node in ast.parse(output).body
-        if isinstance(node, ast.FunctionDef) and node.name == "second"
-    )
-    assert ast.unparse(second.body[-1]).endswith("(None)")
-    assert _syntax_cost([callers[1]]) == _syntax_cost([proposal.replacements[1].node]) + 1
+    if _supported_runtime():
+        engine, proposal, output = _verify_counted_callers(tmp_path, monkeypatch, source)
+        assert [r.argument_handoff is not None for r in proposal.replacements] == [True, False]
+        callers = engine._rendered_call_sites(proposal, reserve_ownership_holder=True)
+        second = next(
+            node
+            for node in ast.parse(output).body
+            if isinstance(node, ast.FunctionDef) and node.name == "second"
+        )
+        assert ast.unparse(second.body[-1]).endswith("(None)")
+        assert _syntax_cost([callers[1]]) == _syntax_cost([proposal.replacements[1].node]) + 1
+    else:
+        output = _assert_lifetime_refusal(tmp_path, source)
     for program in (source, output):
         namespace: dict[str, object] = {}
         exec(program, namespace)
@@ -224,12 +238,17 @@ def test_owned_method_dispatch_counts_the_reserved_and_appended_holder_identical
         + "        return k\n"
         for name, offset in (("first", 1), ("second", 2))
     )
-    engine, proposal, output = _verify_counted_callers(tmp_path, monkeypatch, source)
-    assert proposal.insert_into_class == "C"
-    assert all(replacement.argument_handoff is not None for replacement in proposal.replacements)
-    assert engine._helper_naming(proposal, reserve_ownership_holder=True).parameter_count == (
-        engine._helper_naming(proposal).parameter_count + 1
-    )
+    if _supported_runtime():
+        engine, proposal, output = _verify_counted_callers(tmp_path, monkeypatch, source)
+        assert proposal.insert_into_class == "C"
+        assert all(
+            replacement.argument_handoff is not None for replacement in proposal.replacements
+        )
+        assert engine._helper_naming(proposal, reserve_ownership_holder=True).parameter_count == (
+            engine._helper_naming(proposal).parameter_count + 1
+        )
+    else:
+        output = _assert_lifetime_refusal(tmp_path, source)
     for program in (source, output):
         namespace: dict[str, object] = {}
         exec(program, namespace)

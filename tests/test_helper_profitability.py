@@ -24,6 +24,7 @@ import pytest
 from towel.diagnostics import Settings
 from towel.unification.models import Replacement
 from towel.unification.profitability import worthwhile_helper
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
@@ -100,8 +101,12 @@ def test_complete_ownership_plumbing_declines_the_old_readme_example(tmp_path: P
         output, count, _ = engine.refactor_to_fixed_point(
             str(path), output_path=str(tmp_path / f"output-{filtering}.py"), progress="none"
         )
-        assert count == expected
-        assert (output == source) == filtering
+        if argument_ownership._supported_runtime():
+            assert count == expected
+            assert (output == source) == filtering
+        else:
+            assert count == 0 and output == source
+            assert engine.run_report.declined_pairs.get("lifetime_order_uncertified", 0) > 0
     assert path.read_text() == source
 
 

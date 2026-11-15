@@ -33,8 +33,8 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Small fixtures exercise extraction mechanics independently of the usefulness policy.
 
-BODY = "    total = 0\n    for item in items:\n        total += item * {factor}\n    return total\n"
-MODULE = "def a1(items):\n" + BODY.format(factor=2) + "\n\ndef a2(items):\n" + BODY.format(factor=3)
+BODY = "    value = 1\n    total = value * {factor}\n    total += 7\n    return total\n"
+MODULE = "def a1():\n" + BODY.format(factor=2) + "\n\ndef a2():\n" + BODY.format(factor=3)
 
 
 @pytest.fixture

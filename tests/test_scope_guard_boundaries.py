@@ -34,6 +34,7 @@ import pytest
 from tests.typed_fixtures import requires_mypy
 from towel.type_inference import MypyInferrer
 from towel.unification.pair_evaluation import _module_namespace_names
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Small fixtures exercise semantic guards independently of the product usefulness policy.
@@ -229,7 +230,13 @@ def test_annotation_only_cross_module_type_is_not_a_runtime_argument(
             )
     finally:
         checker.close()
-    assert sum(count for count, _ in result.values()) > 0, reason
+    if _supported_runtime():
+        assert sum(count for count, _ in result.values()) > 0, reason
+    else:
+        assert result == {}
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        for path in package.glob("*.py"):
+            assert (output / path.name).read_bytes() == path.read_bytes()
     assert {path: path.read_bytes() for path in originals} == originals
     for path in output.glob("*.py"):
         for node in ast.walk(ast.parse(path.read_text())):

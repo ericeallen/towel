@@ -42,6 +42,7 @@ from hypothesis import strategies as st
 
 from towel.type_baseline import NO_SHAPE, ChangeShape, KnownErrors, ReplacedCopy
 from towel.type_inference import CheckSuccess, MypyInferrer, TypeDiagnostic
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 A = "/project/a.py"
@@ -419,7 +420,8 @@ def test_mypy_d6_the_union_that_fills_the_freed_slots_is_refused(tmp_path: Path)
     """The auditor's module: Towel wrote ``p: int | str`` with ``p + p``, and mypy then failed."""
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\n", encoding="utf-8")
     module = tmp_path / "m.py"
-    module.write_text(BEFORE.split("\n\nWRONG")[0] + "\n", encoding="utf-8")
+    original = BEFORE.split("\n\nWRONG")[0] + "\n"
+    module.write_text(original, encoding="utf-8")
     oracle = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(
@@ -437,7 +439,17 @@ def test_mypy_d6_the_union_that_fills_the_freed_slots_is_refused(tmp_path: Path)
         (lines[error.line - 1].strip() if error.line else "", error.message)
         for error in result.errors
     ]
-    assert sorted(errors) == [
-        ("bad1 = n + s", 'Unsupported operand types for + ("int" and "str")'),
-        ("bad2 = s + n", 'Unsupported operand types for + ("str" and "int")'),
-    ], written
+    if argument_ownership._supported_runtime():
+        assert sorted(errors) == [
+            ("bad1 = n + s", 'Unsupported operand types for + ("int" and "str")'),
+            ("bad2 = s + n", 'Unsupported operand types for + ("str" and "int")'),
+        ], written
+    else:
+        assert written == original
+        assert "lifetime_order_uncertified" in engine.declined_pairs
+        assert sorted(errors) == [
+            ("bad1 = n + s", 'Unsupported operand types for + ("int" and "str")'),
+            ("bad1 = n + s", 'Unsupported operand types for + ("int" and "str")'),
+            ("bad2 = s + n", 'Unsupported operand types for + ("str" and "int")'),
+            ("bad2 = s + n", 'Unsupported operand types for + ("str" and "int")'),
+        ], written

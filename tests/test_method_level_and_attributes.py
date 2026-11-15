@@ -23,6 +23,7 @@ from pathlib import Path
 from tests.test_helpers import write_file
 from towel.unification.models import is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification import argument_ownership
 
 
 def test_method_level_analysis_includes_class_methods_and_param_on_attribute():
@@ -178,4 +179,11 @@ def b(xs):
 
         engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
         proposals = engine.analyze_file(str(src))
-        assert proposals, "Expected proposal from comprehension bodies with differing iter names"
+        if argument_ownership._supported_runtime():
+            assert (
+                proposals
+            ), "Expected proposal from comprehension bodies with differing iter names"
+        else:
+            assert proposals == []
+            assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+            assert src.read_text() == code

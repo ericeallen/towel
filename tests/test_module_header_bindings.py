@@ -17,12 +17,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import pytest
 
 from tests.test_definition_time_builtins import _source
 from tests.test_parameterize_builtins import _refactor, _run, _write
 from towel.unification.module_bindings import global_bindings
+from towel.unification import argument_ownership
 
 MAPPING = '(__builtins__ := {"len": lambda data: 100})'
 HEADERS = (
@@ -71,8 +73,14 @@ def test_header_replacements_preserve_captured_builtin_mappings(
     ],
     ids=["positional-only", "positional", "vararg", "keyword-only", "kwarg", "return"],
 )
-def test_eager_annotations_record_module_bindings(tmp_path: Path, header: str) -> None:
+def test_annotation_binding_syntax_matches_the_native_compiler(tmp_path: Path, header: str) -> None:
     source = _source(before=header)
+    if sys.version_info >= (3, 14):
+        with pytest.raises(
+            SyntaxError, match="named expression cannot be used within an annotation"
+        ):
+            compile(source, "m.py", "exec", dont_inherit=True)
+        return
     # The test module postpones its own annotations; these source modules do not.
     compile(source, "m.py", "exec", dont_inherit=True)
     _write(tmp_path, {"m.py": source})
@@ -108,6 +116,11 @@ def test_local_or_unexecuted_bindings_keep_safe_extractions(
     assert "__builtins__" not in bindings.bindings
     assert "__builtins__" not in bindings.rebound_by_global
     applied, declined = _refactor(tmp_path / "m.py", flag)
-    assert applied == 1
+    if argument_ownership._supported_runtime():
+        assert applied == 1
+    else:
+        assert applied == 0
+        assert "lifetime_order_uncertified" in declined
+        assert (tmp_path / "m.py").read_text() == source
     assert "builtin_mapping_replaced" not in declined
     assert _run(tmp_path, "m.py") == "9 9\n"

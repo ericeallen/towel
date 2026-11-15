@@ -55,7 +55,12 @@ BODY = """    total = 0
     total = total // 61
     return total
 """
-MODULE = "def a1(items):\n" + BODY.format(factor=2) + "\n\ndef a2(items):\n" + BODY.format(factor=3)
+MODULE = (
+    "items = [1, 2, 3]\n\ndef a1():\n"
+    + BODY.format(factor=2)
+    + "\n\ndef a2():\n"
+    + BODY.format(factor=3)
+)
 LINKED = "def b1(items):\n" + BODY.format(factor=2)
 
 

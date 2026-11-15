@@ -43,11 +43,13 @@ from .visitors import body_without_docstring
 
 
 def _supported_runtime() -> bool:
-    """Only reviewed reference-count/local-slot cleanup can certify a handoff.
+    """Whether strict frame cleanup and retained-local ordering proofs are certified.
 
     On CPython 3.14.7 and 3.15.2, the two-unused-argument regression observes
     local/b/a cleanup before extraction but local/a/b afterwards. Retain the
-    frame-boundary refusal until a proof covers the new cleanup semantics.
+    frame-boundary and multiple-retained-local refusals until a proof covers
+    the new cleanup semantics. Keep all runtime-dependent lifetime guards
+    keyed to this predicate so a policy layer can consistently select them.
     """
     return sys.implementation.name == "cpython" and sys.version_info[:2] in {
         (3, 11),

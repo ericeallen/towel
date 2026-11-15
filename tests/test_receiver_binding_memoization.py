@@ -29,6 +29,7 @@ import pytest
 from towel.unification import placement
 from towel.unification.bounded_cache import memoization_disabled
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.argument_ownership import _supported_runtime
 
 # Small fixtures exercise semantic guards independently of the product usefulness policy.
 from tests.test_helpers import method_helper_calls
@@ -144,10 +145,21 @@ class Box:
                 stack.enter_context(memoization_disabled())
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
-            assert engine.analyze_files([str(path)], progress="none")
-            assert engine.analyze_files([str(path)], progress="none")
+            for _ in range(2):
+                proposals = engine.analyze_files([str(path)], progress="none")
+                if _supported_runtime():
+                    assert proposals
+                else:
+                    assert proposals == []
+                    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
             result, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
-        assert applied > 0
+        if _supported_runtime():
+            assert applied > 0
+        else:
+            assert applied == 0
+            assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+            assert result == source
         outputs.append(result)
     assert outputs[0] == outputs[1]
-    assert method_helper_calls(outputs[0])
+    if _supported_runtime():
+        assert method_helper_calls(outputs[0])

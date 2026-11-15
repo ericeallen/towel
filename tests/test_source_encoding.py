@@ -35,9 +35,11 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Small fixtures exercise semantic guards independently of the product usefulness policy.
 
+# Encoding tests use no caller-owned arguments; they must still apply real
+# extractions when the runtime cannot certify argument cleanup order.
 DUPLICATES = (
-    "def f(a):\n    x = a + 1\n    y = x * 2\n    z = y + compute(a)\n    return z\n\n\n"
-    "def g(b):\n    x = b + 1\n    y = x * 2\n    z = y + compute(b)\n    return z\n\n\n"
+    "def f():\n    x = 2\n    y = x * 2\n    z = y + compute(1)\n    return z\n\n\n"
+    "def g():\n    x = 2\n    y = x * 2\n    z = y + compute(1)\n    return z\n\n\n"
     "def compute(v):\n    return v\n"
 )
 
@@ -116,11 +118,11 @@ def test_coding_cookie_file_is_written_back_in_its_encoding(tmp_path: Path) -> N
 # rendering spells it as the character: the file itself is plain Latin-1, and
 # only Towel's rendering ever produced the character. The second is ordinary.
 UNENCODABLE = (
-    "# -*- coding: latin-1 -*-\n\n\n"
-    "def alpha(items):\n    total = 0\n    for item in items:\n        if item > 4:\n"
+    "# -*- coding: latin-1 -*-\nitems = [1, 5, 9]\n\n"
+    "def alpha():\n    total = 0\n    for item in items:\n        if item > 4:\n"
     "            total += item * 2\n        else:\n            total -= item\n"
     '    print("price \\u20ac", total)\n    return total + 1\n\n\n'
-    "def beta(items):\n    total = 0\n    for item in items:\n        if item > 5:\n"
+    "def beta():\n    total = 0\n    for item in items:\n        if item > 5:\n"
     "            total += item * 2\n        else:\n            total -= item\n"
     '    print("price \\u20ac", total)\n    return total + 2\n\n\n' + DUPLICATES
 )
@@ -183,11 +185,11 @@ def test_an_escape_the_rendering_spelled_as_a_character_is_written_back_escaped(
             for name in ("alpha", "beta"):
                 function = namespace[name]
                 assert callable(function)
-                print(cast(Callable[[list[int]], int], function)([1, 5, 9]))
+                print(cast(Callable[[], int], function)())
             for name in ("f", "g"):
                 function = namespace[name]
                 assert callable(function)
-                print(cast(Callable[[int], int], function)(3))
+                print(cast(Callable[[], int], function)())
         return buffer.getvalue()
 
     assert observed(text) == observed(UNENCODABLE)

@@ -27,6 +27,7 @@ from typing import Literal, Mapping, Sequence
 
 import pytest
 
+from tests.compiler_golden_profiles import lifetime_refusal_profile
 from tests.typed_fixtures import CountingMypy
 import towel
 from towel.type_inference import CheckResult, CheckSuccess, PyrightOracle
@@ -989,18 +990,22 @@ def test_both_checkers_refuse_required_nullable_refinement_before_any(
             for proposal in engine.analyze_file(str(path))
             if "describe_total and describe_done" in proposal.description
         ]
-        assert len(proposals) == 1
-        with pytest.raises(UntypeableExtraction) as refused:
-            engine.apply_refactoring(str(path), proposals[0])
-        assert refused.value.reason is Untypeable.NARROWING_READ_IN_THUNK
-        assert "task.total" in refused.value.detail
+        if lifetime_refusal_profile():
+            assert proposals == []
+            assert engine.declined_pairs["lifetime_order_uncertified"] > 0
+        else:
+            assert len(proposals) == 1
+            with pytest.raises(UntypeableExtraction) as refused:
+                engine.apply_refactoring(str(path), proposals[0])
+            assert refused.value.reason is Untypeable.NARROWING_READ_IN_THUNK
+            assert "task.total" in refused.value.detail
         helpers = [
             source
             for sources in checker.checked
             for source in sources.values()
             if "def __extracted_func_" in source
         ]
-        assert len(helpers) == (1 if backend == "mypy" else 2)
+        assert len(helpers) == (0 if lifetime_refusal_profile() else 1 if backend == "mypy" else 2)
         assert all("Any" not in source for source in helpers)
     finally:
         checker.close()
@@ -1323,8 +1328,13 @@ def test_optional_aware_keyword_consumer_stays_precise_and_preserves_owned_effec
                 for p in engine.analyze_file(str(original))
                 if "describe_total and describe_done" in p.description
             ]
-            assert len(proposals) == 1
-            written = engine.apply_refactoring(str(original), proposals[0])
+            if lifetime_refusal_profile():
+                assert proposals == []
+                assert engine.declined_pairs["lifetime_order_uncertified"] > 0
+                written = original.read_text()
+            else:
+                assert len(proposals) == 1
+                written = engine.apply_refactoring(str(original), proposals[0])
             transformed = tmp_path / "after.py"
             transformed.write_text(written)
         else:
@@ -1363,7 +1373,7 @@ def test_optional_aware_keyword_consumer_stays_precise_and_preserves_owned_effec
     finally:
         checker.close()
     assert original.read_text() == fixture.source
-    if interface == "cli":
+    if interface == "cli" or lifetime_refusal_profile():
         # Keep the default-policy refusal separate from the semantic API control.
         assert written == fixture.source
     else:
@@ -1415,25 +1425,31 @@ def test_nullable_consumption_refusal_cannot_fall_through_to_an_accepted_any(
             for p in engine.analyze_file(str(path))
             if "describe_total and describe_done" in p.description
         ]
-        assert len(proposals) == 1
-        if backend == "pyright" or fixture.name in ("builtin-abs", "comparison"):
-            with pytest.raises(UntypeableExtraction) as refused:
-                engine.apply_refactoring(str(path), proposals[0])
-            assert refused.value.reason is Untypeable.NARROWING_READ_IN_THUNK
-            helpers = [
-                source
-                for sources in checker.checked
-                for source in sources.values()
-                if "def __extracted_func_" in source
-            ]
-            assert helpers and all("Any" not in source for source in helpers)
+        if lifetime_refusal_profile():
+            assert proposals == []
+            assert engine.declined_pairs["lifetime_order_uncertified"] > 0
         else:
-            # These mypy cases were already refused by the complete signature ladder.
-            # A precise refinement proof may refuse earlier; accepted Any is forbidden.
-            with pytest.raises((TypeRejectedExtraction, UntypeableExtraction)) as existing_refusal:
-                engine.apply_refactoring(str(path), proposals[0])
-            if isinstance(existing_refusal.value, UntypeableExtraction):
-                assert existing_refusal.value.reason is Untypeable.NARROWING_READ_IN_THUNK
+            assert len(proposals) == 1
+            if backend == "pyright" or fixture.name in ("builtin-abs", "comparison"):
+                with pytest.raises(UntypeableExtraction) as refused:
+                    engine.apply_refactoring(str(path), proposals[0])
+                assert refused.value.reason is Untypeable.NARROWING_READ_IN_THUNK
+                helpers = [
+                    source
+                    for sources in checker.checked
+                    for source in sources.values()
+                    if "def __extracted_func_" in source
+                ]
+                assert helpers and all("Any" not in source for source in helpers)
+            else:
+                # These mypy cases were already refused by the complete signature ladder.
+                # A precise refinement proof may refuse earlier; accepted Any is forbidden.
+                with pytest.raises(
+                    (TypeRejectedExtraction, UntypeableExtraction)
+                ) as existing_refusal:
+                    engine.apply_refactoring(str(path), proposals[0])
+                if isinstance(existing_refusal.value, UntypeableExtraction):
+                    assert existing_refusal.value.reason is Untypeable.NARROWING_READ_IN_THUNK
     finally:
         checker.close()
     assert path.read_text() == fixture.source
@@ -1465,18 +1481,28 @@ def test_return_and_assignment_refinements_are_not_erased_by_any(
             for proposal in engine.analyze_file(str(original))
             if "describe_total and describe_done" in proposal.description
         ]
-        assert len(proposals) == 1
-        with pytest.raises(UntypeableExtraction) as refused:
-            engine.apply_refactoring(str(original), proposals[0])
-        assert refused.value.reason is Untypeable.NARROWING_READ_IN_THUNK
-        helpers = [
-            node
-            for sources in checker.checked
-            for source in sources.values()
-            for node in ast.parse(source).body
-            if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
-        ]
-        assert helpers and not any(_uses_any_annotation(helper) for helper in helpers)
+        if lifetime_refusal_profile() and fixture.name in {
+            "direct-return",
+            "annotated-assignment",
+            "two-element-tuple",
+            "nested-assignment",
+            "tuple-assignment",
+        }:
+            assert proposals == []
+            assert engine.declined_pairs["lifetime_order_uncertified"] > 0
+        else:
+            assert len(proposals) == 1
+            with pytest.raises(UntypeableExtraction) as refused:
+                engine.apply_refactoring(str(original), proposals[0])
+            assert refused.value.reason is Untypeable.NARROWING_READ_IN_THUNK
+            helpers = [
+                node
+                for sources in checker.checked
+                for source in sources.values()
+                for node in ast.parse(source).body
+                if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+            ]
+            assert helpers and not any(_uses_any_annotation(helper) for helper in helpers)
     finally:
         checker.close()
     assert original.read_text() == fixture.source
@@ -1491,6 +1517,11 @@ def test_optional_aware_return_keeps_precise_annotations_and_owned_lifetimes(
     interface: Literal["api", "cli"],
     fixture: Fixture,
 ) -> None:
+    lifetime_refused = lifetime_refusal_profile() and fixture.name in {
+        "optional-return",
+        "optional-nested-assignment",
+        "optional-tuple-assignment",
+    }
     if backend == "pyright" and importlib.util.find_spec("pyright") is None:
         pytest.skip("pyright absent")
     original = _write_project(tmp_path / "source", fixture)
@@ -1513,8 +1544,13 @@ def test_optional_aware_return_keeps_precise_annotations_and_owned_lifetimes(
                 for proposal in engine.analyze_file(str(original))
                 if "describe_total and describe_done" in proposal.description
             ]
-            assert len(proposals) == 1
-            written = engine.apply_refactoring(str(original), proposals[0])
+            if lifetime_refused:
+                assert proposals == []
+                assert engine.declined_pairs["lifetime_order_uncertified"] > 0
+                written = original.read_text()
+            else:
+                assert len(proposals) == 1
+                written = engine.apply_refactoring(str(original), proposals[0])
             transformed = tmp_path / "after.py"
             transformed.write_text(written)
         else:
@@ -1552,7 +1588,7 @@ def test_optional_aware_return_keeps_precise_annotations_and_owned_lifetimes(
         assert checker.check_project({str(original): written}) == CheckSuccess()
     finally:
         checker.close()
-    if interface == "cli":
+    if interface == "cli" or lifetime_refused:
         assert written == fixture.source and original.read_text() == fixture.source
     else:
         helper = next(

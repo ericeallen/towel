@@ -43,6 +43,7 @@ from towel.type_inference import (
     TypeOracle,
 )
 from towel.unification.exceptions import RefactoringError
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.type_bindings import TypeKind, TypeTerm
 from towel.unification.type_generalization import (
@@ -136,7 +137,13 @@ def test_checker_disagreement_cannot_accept_a_generic_candidate(tmp_path: Path) 
     )
     oracle = CombinedOracle(primary, [dissenting])
     engine = _engine(oracle)
-    proposal = engine.analyze_file(str(path))[0]
+    proposals = engine.analyze_file(str(path))
+    if not argument_ownership._supported_runtime():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == original and engine.change_log == ()
+        return
+    proposal = proposals[0]
     # Every annotated variant is refused; the unannotated one is not tried in a
     # module whose every function is annotated, and the decline says so.
     with pytest.raises(RefactoringError, match="one unannotated function of its module"):
@@ -161,7 +168,13 @@ def test_generic_checker_timeout_aborts_without_trying_an_unchecked_fallback(
 
     oracle = _Oracle(verdict)
     engine = _engine(oracle)
-    proposal = engine.analyze_file(str(path))[0]
+    proposals = engine.analyze_file(str(path))
+    if not argument_ownership._supported_runtime():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == original and engine.change_log == ()
+        return
+    proposal = proposals[0]
     with pytest.raises(RefactoringError, match="Prospective project type check failed.*timed out"):
         engine.apply_refactoring(str(path), proposal)
     candidates = [sources for sources in oracle.checks if sources[str(path)] != original]
@@ -213,7 +226,13 @@ def test_rejected_generic_declarations_do_not_leak_into_fallbacks(
 
     oracle = _Oracle(verdict)
     engine = _engine(oracle)
-    proposal = engine.analyze_file(str(path))[0]
+    proposals = engine.analyze_file(str(path))
+    if not argument_ownership._supported_runtime():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == original and engine.change_log == ()
+        return
+    proposal = proposals[0]
     result = engine.apply_refactoring(str(path), proposal)
     assert sum(bool(_declarations(sources[str(path)])) for sources in oracle.checks) >= 2
     assert not _declarations(result) and "TypeVar" not in result and "_TowelT" not in result
@@ -231,7 +250,13 @@ def test_real_checkers_validate_even_an_unused_constraint_body(
     assert checker.check(str(path), original) == CheckSuccess()
     oracle = _RecordingOracle(checker)
     engine = _engine(oracle)
-    proposal = engine.analyze_file(str(path))[0]
+    proposals = engine.analyze_file(str(path))
+    if not argument_ownership._supported_runtime():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == original and engine.change_log == ()
+        return
+    proposal = proposals[0]
     dictionary = TypeTerm(
         TypeKind.APPLY,
         children=tuple(
@@ -370,9 +395,14 @@ def test_fixed_point_rerun_does_not_accumulate_type_variables(
     tmp_path: Path, checker: TypeOracle
 ) -> None:
     path = _project(tmp_path, ADDITION)
+    original = path.read_text()
     engine = _engine(checker)
     first, count, _ = engine.refactor_to_fixed_point(str(path), progress="none")
-    assert count == 1 and len(_declarations(first)) == 1
+    if argument_ownership._supported_runtime():
+        assert count == 1 and len(_declarations(first)) == 1
+    else:
+        assert count == 0 and first == original and _declarations(first) == ()
+        assert engine.run_report.declined_pairs.get("lifetime_order_uncertified", 0) > 0
     second, count, _ = engine.refactor_to_fixed_point(str(path), progress="none")
     assert count == 0 and second == first and path.read_text() == first
     assert _declarations(second) == _declarations(first)

@@ -38,6 +38,7 @@ from typing import List, Mapping, Tuple
 import pytest
 
 import towel
+from towel.unification import argument_ownership
 from towel.unification.import_graph import ImportGraphCache, would_create_import_cycle
 
 _BLOCK = """
@@ -145,14 +146,17 @@ def test_the_helper_goes_where_importing_it_closes_no_cycle(tmp_path: Path, safe
         timeout=600,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+    extracts = safe and argument_ownership._supported_runtime()
     assert (
         "def __extracted_func_0(" in (refactored / "src/alpha/b_borrower.py").read_text()
-    ) is safe
+    ) is extracts
     assert (
         "from alpha.b_borrower import __extracted_func_0"
         in (refactored / "src/alpha/a_host.py").read_text()
-    ) is safe
-    if not safe:
+    ) is extracts
+    if safe and not extracts:
+        assert "lifetime_order_uncertified" in result.stdout
+    if not extracts:
         for relative in ("src/alpha/a_host.py", "src/alpha/b_borrower.py"):
             assert (original / relative).read_bytes() == (refactored / relative).read_bytes()
     for first in ("alpha.a_host", "alpha.b_borrower"):

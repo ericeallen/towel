@@ -167,14 +167,16 @@ def test_a_declared_any_or_a_future_import_is_not_a_blind_spot() -> None:
 
 
 TWINS = textwrap.dedent("""
-    def first(value: int) -> int:
+    def first() -> int:
+        value = 1
         total = value + 1
         doubled = total * 2
         answer = doubled - 3
         return answer
 
 
-    def second(value: int) -> int:
+    def second() -> int:
+        value = 1
         total = value + 1
         doubled = total * 2
         answer = doubled - 3

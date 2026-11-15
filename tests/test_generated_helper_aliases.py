@@ -31,6 +31,7 @@ from towel.unification.exceptions import RefactoringError
 from towel.unification.function_index import FunctionIndex
 from towel.unification.models import RefactoringProposal, Replacement
 from towel.unification.pipeline import analyze_scopes, collect_functions, parse_modules
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.type_inference import CheckSuccess, MypyInferrer, TypeOracle
 from tests.test_generated_helper_reuse import BODY
@@ -218,7 +219,12 @@ def test_cross_module_input_functions_keep_independent_bindings(tmp_path: Path, 
     results, reason = engine.refactor_directory_to_fixed_point(
         str(origin), str(output), progress="none"
     )
-    assert results and reason == "fixed_point"
+    assert reason == "fixed_point"
+    if argument_ownership._supported_runtime():
+        assert results
+    else:
+        assert results == {}
+        assert engine.run_report.declined_pairs.get("lifetime_order_uncertified", 0) > 0
     after = subprocess.run(
         [sys.executable, "-B", "-c", program],
         cwd=output,

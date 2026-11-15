@@ -21,7 +21,7 @@ import pytest
 from towel.unification import materialize
 from towel.unification.exceptions import RefactoringError, UnprofitableHelper
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.test_cli_integration import DUPLICATES, invoke
+from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES, invoke
 
 
 def test_materializer_raises_a_specific_usefulness_verdict(

@@ -24,8 +24,26 @@ from typing import Tuple
 
 import pytest
 
-from tests.test_builtins_across_modules import _project, _run, _write
+from tests.compiler_golden_profiles import lifetime_refusal_profile
+from tests.test_builtins_across_modules import _project, _python_files, _run, _write
 from tests.test_parameterize_builtins import _refactor
+
+
+def _lookup_project(*, extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Keep lookup tests independent of cleanup ordering for retained locals."""
+    files = _project(extra=extra or {})
+    for path in ("pkg/exports.py", "pkg/reports.py"):
+        files[path] = files[path].replace(
+            "    width = len(name)\n"
+            "    height = len(rows)\n"
+            "    area = width * height\n"
+            "    return area + 1",
+            "    assert rows is not None\n"
+            "    assert name is not None\n"
+            "    return len(name) * len(rows) + 1",
+        )
+    return files
+
 
 WRITES = {
     "direct": "exports.len = replacement\n",
@@ -58,7 +76,7 @@ def test_builtin_writes_through_ordinary_receivers_preserve_execution(
         + "print(exports.export_size([1, 2], 'ab'), reports.report_size([1, 2], 'ab'))\n"
     )
     before, after = tmp_path / "before", tmp_path / "after"
-    files = _project(extra={"check.py": source})
+    files = _lookup_project(extra={"check.py": source})
     for root in (before, after):
         _write(root, files)
     expected = _run(before, "check.py")
@@ -69,7 +87,7 @@ def test_builtin_writes_through_ordinary_receivers_preserve_execution(
 
 
 def test_setup_module_does_not_hide_a_driver_that_rebinds_a_builtin(tmp_path: Path) -> None:
-    files = _project(
+    files = _lookup_project(
         extra={
             "pkg/setup.py": "def configure():\n    return 1\n",
             "check.py": "from pkg import exports\n"
@@ -86,7 +104,7 @@ def test_setup_module_does_not_hide_a_driver_that_rebinds_a_builtin(tmp_path: Pa
 
 
 def test_normalized_identifiers_use_the_declared_source_encoding(tmp_path: Path) -> None:
-    files = _project()
+    files = _lookup_project()
     before, after = tmp_path / "before", tmp_path / "after"
     for root in (before, after):
         _write(root, files)
@@ -112,11 +130,9 @@ def test_external_callee_can_change_lookup_between_reads(
     """A dependency can import and modify the caller without receiving it as an argument."""
     name, other_name = names
     body = (
-        f"    first = {name}(values)\n"
-        "    callback()\n"
-        f"    second = {name}(values)\n"
-        "    result = first * 1000 + second\n"
-        "    return result * FACTOR\n"
+        "    assert values is not None\n"
+        "    assert callback is not None\n"
+        f"    return ({name}(values) * 1000 + (callback(), {name}(values))[1]) * FACTOR\n"
     )
     definition = f"def {name}(values):\n    return 3\n"
     prelude = definition if name == "measure" or operation == "delete" else ""
@@ -157,10 +173,9 @@ def test_external_callee_can_change_lookup_between_reads(
 
 def test_a_single_leading_builtin_lookup_keeps_its_supplier(tmp_path: Path) -> None:
     body = (
-        "    size = len(values) + 1\n"
-        "    result = size * 2\n"
-        "    total = result + 3\n"
-        "    return total * FACTOR\n"
+        "    assert values is not None\n"
+        "    assert values != ()\n"
+        "    return ((len(values) + 1) * 2 + 3) * FACTOR\n"
     )
     files = {
         "pyproject.toml": '[project]\nname="probe"\nversion="0"\n',
@@ -274,8 +289,14 @@ for module, name in ((a, "first"), (b, "second")):
         return completed.stdout
 
     expected = observed(before)
-    applied, _ = _refactor(after / "pkg", True)
-    assert applied > 0
+    original = _python_files(after)
+    applied, declined = _refactor(after / "pkg", True)
+    if lifetime_refusal_profile():
+        assert applied == 0
+        assert declined.get("lifetime_order_uncertified", 0) > 0
+        assert _python_files(after) == original
+    else:
+        assert applied > 0
     assert observed(after) == expected
     assert "drop-callee" in expected and "drop-number" in expected
     assert ("'error'" in expected) is (mode != "ok")
@@ -288,11 +309,9 @@ def test_mixed_local_and_builtin_sites_keep_late_lookup(
     tmp_path: Path, parameterize: bool, clustered: bool, name: str
 ) -> None:
     body = (
-        "    first = len(values)\n"
-        "    callback()\n"
-        "    second = len(values)\n"
-        "    result = first * 1000 + second\n"
-        "    return result * FACTOR\n"
+        "    assert values is not None\n"
+        "    assert callback is not None\n"
+        "    return (len(values) * 1000 + (callback(), len(values))[1]) * FACTOR\n"
     )
     source = "def first(values, callback, len=lambda value: 3):\n" + body.replace("FACTOR", "5")
     if clustered:
@@ -331,17 +350,15 @@ def test_comprehension_target_does_not_hide_a_clustered_module_lookup(
     tmp_path: Path, parameterize: bool, name: str, comprehension: str
 ) -> None:
     body = (
-        "    first = len(values)\n"
-        "    callback()\n"
-        "    second = len(values)\n"
-        "    result = first * 1000 + second\n"
-        "    return result * FACTOR\n"
+        "    assert values is not None\n"
+        "    assert callback is not None\n"
+        "    return (len(values) * 1000 + (callback(), len(values))[1]) * FACTOR\n"
     )
     # The first pair can share an eager local argument. The third occurrence
     # must still look in its module after callback() changes that binding.
     source = "def first(values, callback, len=lambda value: 3):\n" + body.replace("FACTOR", "5")
     source += "\ndef other(values, callback, len=lambda value: 4):\n" + body.replace("FACTOR", "6")
-    source += "\ndef second(values, callback):\n" f"    unused = {comprehension}\n" + body.replace(
+    source += "\ndef second(values, callback):\n" f"    {comprehension}\n" + body.replace(
         "FACTOR", "7"
     )
     driver = (

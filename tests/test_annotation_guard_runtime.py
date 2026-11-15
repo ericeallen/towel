@@ -22,6 +22,7 @@ import pytest
 from tests.test_type_checking_imports import _package
 from towel.import_model import _scan_tree
 from towel.runtime_guards import module_false_guards
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
@@ -82,6 +83,7 @@ def test_typed_cli_preserves_imports_with_type_checking_true(tmp_path: Path) -> 
     script = "import typing\ntyping.TYPE_CHECKING = True\nfrom pkg.beta import Beta\nprint(Beta().render(6))\n"
     before = _run(tmp_path, "-c", script)
     assert (before.returncode, before.stdout) == (0, ".....B\n"), before.stderr
+    original_sources = {path: path.read_bytes() for path in package.glob("*.py")}
     transformed = _run(
         tmp_path,
         "-m",
@@ -101,8 +103,12 @@ def test_typed_cli_preserves_imports_with_type_checking_true(tmp_path: Path) -> 
     assert transformed.returncode == 0, transformed.stdout + transformed.stderr
     host = (package / "alpha.py").read_text()
     borrower = (package / "beta.py").read_text()
-    assert "extracted_func" in host and "extracted_func" in borrower, transformed.stdout
-    assert "if 0 > 1:" in host, host
+    if argument_ownership._supported_runtime():
+        assert "extracted_func" in host and "extracted_func" in borrower, transformed.stdout
+        assert "if 0 > 1:" in host, host
+    else:
+        assert "lifetime_order_uncertified" in transformed.stdout
+        assert {path: path.read_bytes() for path in package.glob("*.py")} == original_sources
     after = _run(tmp_path, "-c", script)
     assert (after.returncode, after.stdout, after.stderr) == (
         before.returncode,

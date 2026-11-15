@@ -20,6 +20,7 @@ from pathlib import Path
 import tempfile
 
 from tests.automatic_equivalence_tester import AutomaticEquivalenceTester
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
@@ -103,7 +104,12 @@ class TestAdversarialBreakers(unittest.TestCase):
         )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
-        self.assertGreater(passed + failed, 0, "Expected at least one proposal to be tested")
+        if argument_ownership._supported_runtime():
+            self.assertGreater(passed + failed, 0, "Expected at least one proposal to be tested")
+        else:
+            self.assertEqual(passed + failed, 0)
+            self.assertIn("lifetime_order_uncertified", engine.declined_pairs)
+            self.assertEqual(Path(path).read_text(), textwrap.dedent(code).strip() + "\n")
         self.assertEqual(failed, 0, "Expected no failures for staticmethod→staticmethod extraction")
 
     def test_classmethod_vs_classmethod_extraction_breaks(self):
@@ -127,7 +133,12 @@ class TestAdversarialBreakers(unittest.TestCase):
         )
         tester = AutomaticEquivalenceTester(engine)
         passed, failed, errors = tester.test_file(path)
-        self.assertGreater(passed + failed, 0, "Expected at least one proposal to be tested")
+        if argument_ownership._supported_runtime():
+            self.assertGreater(passed + failed, 0, "Expected at least one proposal to be tested")
+        else:
+            self.assertEqual(passed + failed, 0)
+            self.assertIn("lifetime_order_uncertified", engine.declined_pairs)
+            self.assertEqual(Path(path).read_text(), textwrap.dedent(code).strip() + "\n")
         self.assertEqual(failed, 0, "Expected no failures for classmethod→classmethod extraction")
 
 

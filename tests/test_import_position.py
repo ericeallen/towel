@@ -41,6 +41,7 @@ from towel.formatting import file_finisher_for_project
 from towel.source_text import EncodingNotKept, decode_source, encode_like, source_lines
 from towel.unification.insertion import import_line
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification import argument_ownership
 
 _DEF = "def f():\n    return 1\n"
 
@@ -137,13 +138,19 @@ def _duplicates(first_lines: str, literal: str = "v") -> str:
     )
 
 
-def _refactor(directory: Path, **options: object) -> int:
+def _refactor(directory: Path, *, lifetime_refusal: bool = False, **options: object) -> int:
+    before = {path: path.read_bytes() for path in directory.rglob("*.py")}
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3, **options)  # type: ignore[arg-type]
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(directory), str(directory), progress="none"
         )
-    return sum(count for count, _ in results.values())
+    count = sum(count for count, _ in results.values())
+    if lifetime_refusal:
+        assert count == 0
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert {path: path.read_bytes() for path in before} == before
+    return count
 
 
 @pytest.mark.skipif(os.name == "nt", reason="runs the script through its #! line")
@@ -155,9 +162,11 @@ def test_r9xh_a_script_still_runs_through_its_shebang(tmp_path: Path) -> None:
     )
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     before = subprocess.run([str(script)], capture_output=True, text=True, check=True).stdout
-    assert _refactor(tmp_path) == 1
+    certified = argument_ownership._supported_runtime()
+    assert _refactor(tmp_path, lifetime_refusal=not certified) == int(certified)
     text = script.read_text()
-    assert text.startswith(f"#!{sys.executable}\n") and "__extracted_func_0" in text
+    assert text.startswith(f"#!{sys.executable}\n")
+    assert ("__extracted_func_0" in text) is certified
     after = subprocess.run([str(script)], capture_output=True, text=True, check=True).stdout
     assert after == before == "v 2 3\nv 4 3\n"
 
@@ -193,12 +202,19 @@ def test_r9xh_a_latin1_borrower_keeps_its_declaration(tmp_path: Path) -> None:
         ).stdout
 
     before = run_calls()
-    assert _refactor(package, cross_module_helpers=True, parameterize_builtins=True) == 2
+    certified = argument_ownership._supported_runtime()
+    assert _refactor(
+        package,
+        cross_module_helpers=True,
+        parameterize_builtins=True,
+        lifetime_refusal=not certified,
+    ) == (2 if certified else 0)
     assert run_calls() == before
     borrower = (package / "b.py").read_bytes()
-    assert borrower.startswith(
-        b"# -*- coding: latin-1 -*-\nimport pkg.a\nfrom pkg.a import __extracted_func_0\n"
-    )
+    prefix = b"# -*- coding: latin-1 -*-\nimport pkg.a\n"
+    if certified:
+        prefix += b"from pkg.a import __extracted_func_0\n"
+    assert borrower.startswith(prefix)
     probe = "from pkg import b; print(ascii(b.stays()))"
     ran = subprocess.run(
         [sys.executable, "-c", probe],
@@ -316,8 +332,20 @@ def test_latin1_literal_carrier_respects_the_complete_default_holder_budget(
         return ran.stdout
 
     before = run()
-    assert _refactor(package, cross_module_helpers=True, parameterize_builtins=True) == 0
-    assert (6, 5, False) in observed
+    certified = argument_ownership._supported_runtime()
+    assert (
+        _refactor(
+            package,
+            cross_module_helpers=True,
+            parameterize_builtins=True,
+            lifetime_refusal=not certified,
+        )
+        == 0
+    )
+    if certified:
+        assert (6, 5, False) in observed
+    else:
+        assert observed == []
     assert {path: path.read_bytes() for path in package.glob("*.py")} == original
     assert run() == before
 
@@ -335,10 +363,14 @@ def test_typing_import_joins_imports_above_module_initialization(tmp_path: Path)
     )
     finisher = file_finisher_for_project(script).tool
     assert finisher is not None
-    assert _refactor(tmp_path, file_finisher=finisher) == 1
+    certified = argument_ownership._supported_runtime()
+    assert _refactor(tmp_path, file_finisher=finisher, lifetime_refusal=not certified) == int(
+        certified
+    )
     written = script.read_text()
-    assert "import typing as _typing" in written
-    assert written.index("import typing as _typing") < written.index("log =")
+    if certified:
+        assert "import typing as _typing" in written
+        assert written.index("import typing as _typing") < written.index("log =")
     checked = subprocess.run(
         [sys.executable, "-m", "ruff", "check", str(script)],
         capture_output=True,

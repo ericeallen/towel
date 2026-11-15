@@ -23,6 +23,7 @@ from typing import Optional
 
 import pytest
 
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.function_index import FunctionIndex
 from tests.test_cli_integration import invoke
 from towel.unification.models import RefactoringProposal
@@ -88,8 +89,10 @@ def test_actual_proposals_and_fixed_point_preserve_original_finalizer_order(
     # whether a user would choose their generated abstraction.
     engine = UnificationRefactorEngine(annotate_helpers=False, skip_trivial_helpers=False)
     proposals = engine.analyze_file(str(source))
-    if case == "external_exception_partial":
-        assert not proposals  # The asymmetric prefix forces only the unsafe partial shape.
+    if case == "external_exception_partial" or not _supported_runtime():
+        assert not proposals  # Partial or uncertified frame ownership stays in place.
+        if not _supported_runtime():
+            assert "lifetime_order_uncertified" in engine.declined_pairs
     else:
         assert proposals and all(rep.argument_handoff for p in proposals for rep in p.replacements)
     for index, proposal in enumerate(proposals):
@@ -102,7 +105,8 @@ def test_actual_proposals_and_fixed_point_preserve_original_finalizer_order(
     )
     assert _run(output) == before_events
     assert source.read_bytes() == before_bytes
-    assert (applied == 0) if case == "external_exception_partial" else (applied > 0)
+    refused = case == "external_exception_partial" or not _supported_runtime()
+    assert (applied == 0) if refused else (applied > 0)
 
 
 def test_partial_block_without_outside_ownership_stays_useful(tmp_path: Path) -> None:
@@ -140,8 +144,12 @@ def test_handoff_keeps_fresh_helper_and_safe_no_new_owner_still_considers_reuse(
     source = _source(tmp_path, original)
     handoff_engine = _ReuseObservedEngine(annotate_helpers=False)
     handoff = handoff_engine.analyze_file(str(source))
-    assert handoff and handoff_engine.reuse_calls == 0
-    assert all(p.reused_function is None for p in handoff)
+    if _supported_runtime():
+        assert handoff and handoff_engine.reuse_calls == 0
+        assert all(p.reused_function is None for p in handoff)
+    else:
+        assert not handoff
+        assert "lifetime_order_uncertified" in handoff_engine.declined_pairs
     # Keep every bound local a literal: assigning arithmetic results would
     # introduce opaque owners and require a handoff again. Put substantial
     # shared computation directly in the return expression instead.
@@ -182,6 +190,10 @@ def test_default_typed_cli_preserves_whole_body_parameter_cleanup(tmp_path: Path
     output = tmp_path / "typed.py"
     completed = invoke(["dry", str(source), str(output), "--no-interactive", "--progress", "none"])
     assert completed.status == 0, completed.stderr
-    assert "__extracted_func_" in output.read_text()
-    assert "del unused" in output.read_text()
+    if _supported_runtime():
+        assert "__extracted_func_" in output.read_text()
+        assert "del unused" in output.read_text()
+    else:
+        assert output.read_text() == text
+        assert "lifetime_order_uncertified" in completed.stdout
     assert _run(output) == before

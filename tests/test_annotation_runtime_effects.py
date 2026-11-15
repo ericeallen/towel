@@ -14,8 +14,8 @@
 
 """A refactoring never adds, removes or moves the evaluation of an annotation.
 
-An annotation is an expression, and unless the module defers its annotations
-the interpreter evaluates it once, where the ``def`` is executed. Extracting a
+An annotation is an expression. Through Python 3.13, unless the module defers
+its annotations, the interpreter evaluates it once, where the ``def`` is executed. Extracting a
 helper copies the call site's annotation onto the helper's parameter, so the
 copy is a second occurrence of that expression, evaluated a second time at
 import. ``Annotated[int, mark('a')]`` is a valid annotation whose metadata a
@@ -35,7 +35,9 @@ to a checker and inert to the interpreter.
 ``from __future__ import annotations`` defers every annotation in a module,
 which hides this entire class of defect -- it was hidden once already by a
 fixture that carried the import. Only the one test that exists to show the
-deferred case uses it here.
+deferred case uses it here. Python 3.14 and later defer annotations by default;
+the native evaluation test below separately observes import and annotation access.
+Strict ownership refusals on these interpreters must leave these fixtures unchanged.
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import itertools
+import sys
 from pathlib import Path
 import textwrap
 from typing import List, Optional, Sequence, Tuple
@@ -50,6 +53,7 @@ from typing import List, Optional, Sequence, Tuple
 import pytest
 
 from tests.test_cli_integration import invoke
+from towel.unification import argument_ownership
 from towel.unification.annotations import respell_bare
 
 _load_counter = itertools.count()
@@ -153,7 +157,11 @@ def _refactored_in_place(
     )
     assert result.status == 0, result.stdout + result.stderr
     source = module.read_text()
-    _helper(source)  # a run that extracted nothing would witness nothing
+    if argument_ownership._supported_runtime():
+        _helper(source)  # A successful extraction must actually exercise annotation copying.
+    else:
+        assert "lifetime_order_uncertified" in result.stdout
+        assert source == textwrap.dedent(program).lstrip()
     return before, _evaluations(module), source
 
 
@@ -167,11 +175,12 @@ def test_copying_an_annotation_does_not_evaluate_its_metadata_again(tmp_path: Pa
     different regression -- so the signature is checked for it as well.
     """
     before, after, source = _refactored_in_place(tmp_path, METADATA_PROGRAM)
-    assert before == ["first", "second"]
+    assert before == ([] if sys.version_info >= (3, 14) else ["first", "second"])
     assert after == before
-    annotation = _helper(source).args.args[0].annotation
-    assert annotation is not None
-    assert "mark(" in ast.unparse(annotation)
+    if argument_ownership._supported_runtime():
+        annotation = _helper(source).args.args[0].annotation
+        assert annotation is not None
+        assert "mark(" in ast.unparse(annotation)
 
 
 def test_a_quoted_annotation_is_not_unquoted_into_an_evaluated_one(tmp_path: Path) -> None:
@@ -196,9 +205,10 @@ def test_an_unannotated_helper_evaluates_nothing_to_begin_with(tmp_path: Path) -
     annotation rather than the new function.
     """
     before, after, source = _refactored_in_place(tmp_path, METADATA_PROGRAM, "--no-types")
-    assert before == ["first", "second"]
+    assert before == ([] if sys.version_info >= (3, 14) else ["first", "second"])
     assert after == before
-    assert all(argument.annotation is None for argument in _helper(source).args.args)
+    if argument_ownership._supported_runtime():
+        assert all(argument.annotation is None for argument in _helper(source).args.args)
 
 
 def test_a_module_that_defers_annotations_evaluates_none_of_them(tmp_path: Path) -> None:
@@ -254,3 +264,37 @@ def test_respell_bare_unquotes_only_annotations_that_run_nothing() -> None:
 def test_every_fixture_here_runs_before_it_is_refactored(program: str) -> None:
     """A fixture that does not run cannot witness a change in how it runs."""
     compile(textwrap.dedent(program).lstrip(), "<fixture>", "exec")
+
+
+@pytest.mark.parametrize(
+    "program, evaluates_metadata",
+    [(METADATA_PROGRAM, True), (QUOTED_PROGRAM, False), (DEFERRED_PROGRAM, False)],
+    ids=["bare", "quoted", "future"],
+)
+def test_native_annotation_evaluation_at_import_and_first_access(
+    program: str,
+    evaluates_metadata: bool,
+) -> None:
+    """Native deferred annotations run on first access; quoting still stays inert."""
+    from types import FunctionType
+
+    namespace: dict[str, object] = {}
+    exec(
+        compile(textwrap.dedent(program), "<annotation-effects>", "exec", dont_inherit=True),
+        namespace,
+    )
+    evaluated = namespace["evaluated"]
+    assert isinstance(evaluated, list)
+    expected = ["first", "second"] if evaluates_metadata else []
+    assert evaluated == ([] if sys.version_info >= (3, 14) else expected)
+    for name in ("first", "second"):
+        function = namespace[name]
+        assert isinstance(function, FunctionType)
+        assert "value" in function.__annotations__
+    assert evaluated == expected
+    # The normal annotation mapping caches evaluation, so repeated reads add no calls.
+    for name in ("first", "second"):
+        function = namespace[name]
+        assert isinstance(function, FunctionType)
+        assert "value" in function.__annotations__
+    assert evaluated == expected

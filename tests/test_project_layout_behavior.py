@@ -105,19 +105,21 @@ def test_vcs_root_does_not_control_crossfile_imports(tmp_path: Path, packaged: b
     target.mkdir()
     if packaged:
         (target / "__init__.py").write_text("")
-    body = "    y=x+1\n    z=y*2\n    return z\n"
+    from tests.test_cli_integration import BODY
+
+    body = "    x = 2\n" + BODY
     a, b = target / "a.py", target / "b.py"
-    a.write_text("def first(x):\n" + body)
+    a.write_text("def first():\n" + body)
     # An explicit host load establishes availability in either layout.
     b.write_text(
-        ("from .a import first\n" if packaged else "import a\n") + "def second(x):\n" + body
+        ("from .a import first\n" if packaged else "import a\n") + "def second():\n" + body
     )
     imports = (
         "from consumer.a import first; from consumer.b import second"
         if packaged
         else "from a import first; from b import second"
     )
-    command = [sys.executable, "-c", imports + "; print(first(2),second(2))"]
+    command = [sys.executable, "-c", imports + "; print(first(),second())"]
     cwd = tmp_path if packaged else target
     before = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=True)
     engine = UnificationRefactorEngine(
@@ -126,4 +128,4 @@ def test_vcs_root_does_not_control_crossfile_imports(tmp_path: Path, packaged: b
     proposal = engine.analyze_files([str(a), str(b)], progress="none")[0]
     apply_changes(engine.plan_refactoring(proposal))
     after = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=True)
-    assert before.stdout == after.stdout == "6 6\n"
+    assert before.stdout == after.stdout == "9 9\n"

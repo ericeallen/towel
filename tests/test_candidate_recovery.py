@@ -35,6 +35,7 @@ import textwrap
 
 import pytest
 
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.unifier import Unifier
 
@@ -81,7 +82,9 @@ def test_list_field_recovery_does_not_parameterize_bindings_or_control(
     assert Unifier().unify_blocks([ast.parse(left).body, ast.parse(right).body], [{}, {}]) is None
 
 
-def _apply_pair(tmp_path: Path, source: str, *, covering: str) -> str:
+def _apply_pair(
+    tmp_path: Path, source: str, *, covering: str, requires_lifetime_order: bool = False
+) -> str:
     path = tmp_path / "module.py"
     path.write_text(textwrap.dedent(source))
     engine = UnificationRefactorEngine(
@@ -110,6 +113,11 @@ def _apply_pair(tmp_path: Path, source: str, *, covering: str) -> str:
             for line in required_lines
         )
     ]
+    if requires_lifetime_order and not _supported_runtime():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == textwrap.dedent(source)
+        return path.read_text()
     assert proposals, "The recovery must produce an applicable extraction."
     chosen = max(
         proposals,
@@ -160,7 +168,7 @@ def test_different_call_argument_kinds_extract_without_reordering_effects(
     tmp_path: Path,
 ) -> None:
     """The recovered argument difference still passes through ordinary thunk safety."""
-    changed = _apply_pair(tmp_path, EXPRESSIONS, covering="x = load(")
+    changed = _apply_pair(tmp_path, EXPRESSIONS, requires_lifetime_order=True, covering="x = load(")
     invocation = "print(f(Number(1)), g(Number(2)))"
     before = _observe(EXPRESSIONS, invocation)
     assert before == "load 1\nx 33\nmultiply 2 2\nload 4\nx 42\n29 38\n"

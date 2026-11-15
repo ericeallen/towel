@@ -28,6 +28,7 @@ from typing import List, Tuple
 
 import pytest
 
+from tests.test_cli_integration import BODY as LITERAL_BODY
 from towel.unification.exceptions import RefactoringError
 from towel.unification.instantiation import instantiation_mismatch
 from towel.unification.orphan_detector import orphaned_variables
@@ -36,13 +37,9 @@ from towel.unification.models import RefactoringProposal
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.semantic_safety import uses_class_private_names
 
-SIMILAR_FUNCTION = """
-def f{index}(order):
-    items = [i for i in order.items if i.in_stock]
-    subtotal = sum(i.price for i in items)
-    total = round(subtotal * 1.08, 2)
-    return "F{index} " + str(total)
-"""
+# The memo contract must exercise real proposals on runtimes whose caller
+# lifetime-transfer proofs are not yet certified.
+SIMILAR_FUNCTION = "def f{index}():\n    x = {index}\n" + LITERAL_BODY
 
 
 def _similar_module(count: int) -> str:

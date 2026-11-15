@@ -30,6 +30,7 @@ import copy
 import re
 from typing import Any, Callable, Dict, List, Tuple, Optional
 from contextlib import redirect_stdout, redirect_stderr
+from tests.compiler_golden_profiles import lifetime_refusal_profile
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import (
     TemporaryModuleTestCase,
@@ -630,11 +631,14 @@ class TestObservationalEquivalence(TemporaryModuleTestCase):
         # Get refactoring proposals
         proposals = self.engine.analyze_file(str(example_path))
 
-        if not proposals:
-            self.skipTest("No refactoring proposals found for bindings_for_loops.py")
-
-        # Apply refactoring
-        refactored_content = self.engine.apply_refactoring(str(example_path), proposals[0])
+        if lifetime_refusal_profile():
+            self.assertEqual(proposals, [])
+            self.assertGreater(self.engine.declined_pairs["lifetime_order_uncertified"], 0)
+            refactored_content = example_path.read_text()
+            self.assertEqual(refactored_content, original_content)
+        else:
+            self.assertTrue(proposals)
+            refactored_content = self.engine.apply_refactoring(str(example_path), proposals[0])
 
         # Test process_list functions
         test_cases: List[CallCase] = [
@@ -687,12 +691,19 @@ def calculate_b(y):
         proposals = self.engine.analyze_file(temp_file)
         # calculate_b duplicates the whole body of calculate_a, so the one
         # proposal makes both call a new helper.
-        self.assertEqual(
-            [p.description for p in proposals],
-            ["Extract common code from calculate_a and calculate_b"],
-        )
+        if lifetime_refusal_profile():
+            self.assertEqual(proposals, [])
+            self.assertGreater(self.engine.declined_pairs["lifetime_order_uncertified"], 0)
+            with open(temp_file) as stream:
+                refactored_code = stream.read()
+            self.assertEqual(refactored_code, original_code)
+        else:
+            self.assertEqual(
+                [p.description for p in proposals],
+                ["Extract common code from calculate_a and calculate_b"],
+            )
 
-        refactored_code = self.engine.apply_refactoring(temp_file, proposals[0])
+            refactored_code = self.engine.apply_refactoring(temp_file, proposals[0])
 
         # Test both functions with same inputs
         test_cases: List[CallCase] = [

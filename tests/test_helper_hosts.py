@@ -34,6 +34,7 @@ from typing import Optional
 import pytest
 
 from towel.unification.module_bindings import global_bindings
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 CASES = Path(__file__).parent / "hostile_cases"
@@ -129,6 +130,14 @@ def test_classes_the_rule_accepts_keep_their_helpers_as_methods(tmp_path: Path) 
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         _, applied, _ = engine.refactor_to_fixed_point(str(module))
+    if not argument_ownership._supported_runtime():
+        assert applied == 0
+        assert engine.run_report.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert (
+            module.read_bytes()
+            == (CASES / "p18_known_class_decorators_keep_the_helper.py").read_bytes()
+        )
+        return
     assert applied == 3
     tree = ast.parse(module.read_text())
     hosts = {

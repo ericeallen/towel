@@ -39,9 +39,9 @@ class TestRefactorEngineMore(unittest.TestCase):
             write_file(
                 f1,
                 """
-def a(x, y):
-    r = x
-    r += y
+def a():
+    r = 1
+    r += 2
     r += 0
     return r
 """.lstrip(),
@@ -53,9 +53,9 @@ def a(x, y):
 import f1
 
 
-def b(m, n):
-    out = m
-    out += n
+def b():
+    out = 1
+    out += 2
     out += 0
     return out
 """.lstrip(),
@@ -86,14 +86,14 @@ def b(m, n):
                 fn,
                 """
 def outer():
-    def f(x, y):
-        r = x
-        r += y
+    def f():
+        r = 1
+        r += 2
         return r
 
-    def g(a, b):
-        out = a
-        out += b
+    def g():
+        out = 1
+        out += 2
         return out
 """.lstrip(),
             )

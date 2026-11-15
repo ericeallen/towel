@@ -44,6 +44,7 @@ from towel.type_inference import (
     Subtyping,
     TypeDiagnostic,
 )
+from towel.unification import argument_ownership
 from towel.unification.exceptions import RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.probe_answers import answer_probes, only_probes
@@ -51,7 +52,9 @@ from tests.probe_answers import answer_probes, only_probes
 
 def _source(*, typed: bool = True) -> str:
     signature = "value: int) -> int" if typed else "value)"
-    return "\n".join(
+    if not argument_ownership._supported_runtime():
+        signature = ") -> int" if typed else ")"
+    source = "\n".join(
         f"def {name}({signature}:\n"
         "    total = value + 1\n"
         "    doubled = total * 2\n"
@@ -67,6 +70,16 @@ def _source(*, typed: bool = True) -> str:
         "    return answer\n"
         for name in ("first", "second")
     )
+
+    if not argument_ownership._supported_runtime():
+        # Keep checker policy observable while only literal-backed locals move.
+        source = source.replace("total = value + 1", "total = seed + 1")
+        for name, seed in (("first", 11), ("second", 17)):
+            source = source.replace(
+                f"def {name}({signature}:\n",
+                f"def {name}({signature}:\n    seed = {seed}\n",
+            )
+    return source
 
 
 class _Oracle:
@@ -256,7 +269,11 @@ def test_directory_policy_survives_multiple_applied_proposals(tmp_path: Path) ->
     # applications, including the driver's localized reanalysis between them.
     first, second = tmp_path / "first.py", tmp_path / "second.py"
     first.write_text(_source())
-    second.write_text(_source().replace("total = value + 1", "total = abs(value)"))
+    second.write_text(
+        _source()
+        .replace("total = value + 1", "total = abs(value)")
+        .replace("total = seed + 1", "total = abs(seed)")
+    )
     original = {str(path): path.read_text() for path in (first, second)}
     oracle = _Oracle(lambda _: CheckSuccess())
     engine = UnificationRefactorEngine(type_oracle=oracle)
@@ -354,7 +371,9 @@ def test_library_copied_directory_keeps_original_consumers_and_oracle_ownership(
     (project / "consumer.py").write_text(
         'broken: int = "wrong"\n'
         if dirty
-        else "from src.program import first\nvalue: int = first(1)\n"
+        else "from src.program import first\nvalue: int = first("
+        + ("1" if argument_ownership._supported_runtime() else "")
+        + ")\n"
     )
     output = tmp_path / "refactored"
     oracle = MypyInferrer()
@@ -365,10 +384,16 @@ def test_library_copied_directory_keeps_original_consumers_and_oracle_ownership(
                 str(source), str(output), max_iterations=1, progress="none"
             )
             assert sum(count for count, _ in results.values()) == 1
-            assert (
-                "return __extracted_func_0(_towel_arguments[0][0], "
-                "_towel_arguments.pop())" in (output / "program.py").read_text()
-            )
+            written = (output / "program.py").read_text()
+            if argument_ownership._supported_runtime():
+                assert (
+                    "return __extracted_func_0(_towel_arguments[0][0], "
+                    "_towel_arguments.pop())" in written
+                )
+            else:
+                assert "return __extracted_func_0(11)" in written
+                assert "return __extracted_func_0(17)" in written
+                assert "_towel_arguments" not in written
             # The checker reads the run's stage under the original's names,
             # and the stage itself is excluded from the project it checks.
             excluded = check.call_args_list[1].kwargs["excluded_paths"]
@@ -444,6 +469,7 @@ def test_cli_refactors_over_original_errors_with_types_and_no_types_leaves_helpe
     result = (output / "program.py" if directory else output).read_text()
     signature = _helper_signature(result)
     assert ": int" not in signature and " -> " not in signature
-    assert "def first(value: int) -> int:" in result
-    assert "def second(value: int) -> int:" in result
+    arguments = "value: int" if argument_ownership._supported_runtime() else ""
+    assert f"def first({arguments}) -> int:" in result
+    assert f"def second({arguments}) -> int:" in result
     assert source.read_text() == original

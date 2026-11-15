@@ -53,6 +53,7 @@ from .extractor import HygienicExtractor, UnsupportedExtraction
 from .unsupported_syntax import unsupported_syntax
 from .instantiation import instantiation_mismatch
 from .retained_bindings import spell_retained_bindings
+from . import argument_ownership
 from .argument_ownership import argument_handoff_fits
 from .compiler_literals import unsafe_byte_literal_moves, unstable_literal_pool
 from .models import ArgumentHandoff, FunctionArtifact, FunctionNode, RejectReason, Replacement
@@ -245,6 +246,14 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         if not lifetime_order_preserved(
             candidate.nodes, candidate.function, candidate.analyzer, returned
         ):
+            if not argument_ownership._supported_runtime():
+                self._debug_decline_site(
+                    RejectReason.LIFETIME_ORDER_UNCERTIFIED,
+                    pair,
+                    candidate.function,
+                    candidate.nodes,
+                    "this runtime's retained-local cleanup order has not been certified",
+                )
             return None
         # A name the call rebinds is not orphaned by moving the block.
         indices = self._get_block_indices(candidate.function, candidate.nodes)
@@ -354,6 +363,15 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             return None
         safe_call = spell_retained_bindings(candidate.function, candidate.nodes, call_node2)
         ownership = self._frame_ownership(candidate.function, candidate.nodes, site=candidate.site)
+        if ownership.split and not argument_ownership._supported_runtime():
+            self._debug_decline_site(
+                RejectReason.LIFETIME_ORDER_UNCERTIFIED,
+                pair,
+                candidate.function,
+                candidate.nodes,
+                "this runtime's frame cleanup order has not been certified",
+            )
+            return None
         handoff = (
             self._argument_handoff_plan(
                 candidate.function,

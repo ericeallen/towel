@@ -37,6 +37,7 @@ import pytest
 import towel
 from towel.cli import DryOptions, PreviewOptions, _build_parser
 from towel.diagnostics import Settings
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.exceptions import RefactoringError
 from towel.unification.pipeline import analyze_scopes, collect_functions, parse_modules
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -194,10 +195,14 @@ def test_a_duplicate_across_modules_is_shared_only_when_asked(tmp_path: Path) ->
         assert (alone / "zzshared" / name).read_text(encoding="utf-8") == text
 
     shared = tmp_path / "shared"
-    _dry(root / "zzshared", shared / "zzshared", "--cross-module")
+    report = _dry(root / "zzshared", shared / "zzshared", "--cross-module")
     written = {name: (shared / "zzshared" / name).read_text(encoding="utf-8") for name in originals}
-    assert sum("def __extracted_func_0(" in text for text in written.values()) == 1
-    assert sum("import __extracted_func_0" in text for text in written.values()) == 1
+    if _supported_runtime():
+        assert sum("def __extracted_func_0(" in text for text in written.values()) == 1
+        assert sum("import __extracted_func_0" in text for text in written.values()) == 1
+    else:
+        assert "lifetime_order_uncertified" in report
+        assert written == originals
     assert _results(shared) == expected
 
 
@@ -205,9 +210,13 @@ def test_a_cross_module_proposal_built_elsewhere_is_refused_by_default(tmp_path:
     """Pairing never forms one; a caller that brings one gets no import between modules."""
     root = _package(tmp_path / "project")
     paths = [str(root / "zzshared" / name) for name in ("first.py", "second.py")]
-    (proposal,) = UnificationRefactorEngine(
-        min_lines=3, cross_module_helpers=True, settings=SERIAL
-    ).analyze_files(paths, progress="none")
+    engine = UnificationRefactorEngine(min_lines=3, cross_module_helpers=True, settings=SERIAL)
+    proposals = engine.analyze_files(paths, progress="none")
+    if not _supported_runtime():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        return
+    (proposal,) = proposals
     with pytest.raises(RefactoringError, match="--cross-module"):
         UnificationRefactorEngine(min_lines=3, settings=SERIAL).apply_refactoring_multi_file(
             proposal

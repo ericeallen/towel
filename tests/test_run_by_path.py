@@ -40,6 +40,7 @@ from typing import Dict, List, Tuple
 
 import pytest
 
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 TOOL = """
@@ -104,7 +105,8 @@ def _observe(
     return observed
 
 
-def _refactor(root: Path) -> int:
+def _refactor(root: Path, *, expects_transfer: bool = False) -> int:
+    originals = {path: path.read_text() for path in (root / "pkg").rglob("*.py")}
     engine = UnificationRefactorEngine(
         # Small script bodies isolate path/import behavior from readability.
         min_lines=3,
@@ -116,6 +118,10 @@ def _refactor(root: Path) -> int:
         results, _ = engine.refactor_directory_to_fixed_point(
             str(root / "pkg"), str(root / "pkg"), progress="none"
         )
+    if expects_transfer and not _supported_runtime():
+        assert results == {}
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert {path: path.read_text() for path in originals} == originals
     return sum(applied for applied, _ in results.values())
 
 
@@ -168,9 +174,9 @@ def test_a_script_by_path_keeps_running_as_it_did(
     before, after = tmp_path / "before", tmp_path / "after"
     _write(before, files)
     _write(after, files)
-    applied = _refactor(after)
+    applied = _refactor(after, expects_transfer=transformed)
     assert _observe(after) == _observe(before)
-    assert (applied > 0) == transformed
+    assert (applied > 0) == (transformed and _supported_runtime())
 
 
 def test_a_script_that_already_fails_by_path_may_borrow(tmp_path: Path) -> None:
@@ -188,7 +194,12 @@ def test_a_script_that_already_fails_by_path_may_borrow(tmp_path: Path) -> None:
         },
     )
     shutil.copytree(tmp_path, tmp_path.parent / "reference", dirs_exist_ok=True)
-    assert _refactor(tmp_path) > 0
+    applied = _refactor(tmp_path, expects_transfer=True)
+    assert _observe(tmp_path) == _observe(tmp_path.parent / "reference")
+    if not _supported_runtime():
+        assert applied == 0
+        return
+    assert applied > 0
     assert (
         "extracted_func"
         in (tmp_path / "pkg" / "tool_b.py").read_text()

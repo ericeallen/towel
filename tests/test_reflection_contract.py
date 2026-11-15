@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.models import is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -59,6 +60,12 @@ def test_source_reading_calls_move_into_helpers_without_warning(
     stderr = io.StringIO()
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
         output, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
+    if not _supported_runtime():
+        assert applied == 0
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert output == path.read_text()
+        assert not stderr.getvalue(), stderr.getvalue()
+        return
     assert applied > 0
     compile(output, str(path), "exec")
     helpers = [
@@ -95,6 +102,13 @@ def test_asserts_can_be_shared_between_modules_pytest_rewrites_differently(tmp_p
         results, _ = engine.refactor_directory_to_fixed_point(
             str(tmp_path), str(tmp_path), progress="none"
         )
+    if not _supported_runtime():
+        assert results == {}
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert plain.read_text() == "def first(value):\n" + body
+        assert rewritten.read_text() == "import plain\n\ndef second(value):\n" + body
+        assert not stderr.getvalue(), stderr.getvalue()
+        return
     assert sum(applied for applied, _ in results.values()) > 0
     helpers: list[ast.FunctionDef] = []
     for path in (plain, rewritten):

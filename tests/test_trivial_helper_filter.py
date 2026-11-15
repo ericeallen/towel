@@ -21,6 +21,7 @@ duplicate, however small.
 """
 
 from tests.test_helpers import write_module
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
@@ -84,9 +85,15 @@ def test_assign_then_return_of_the_call_is_forwarding_too(tmp_path):
         UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False).analyze_file(path)
         == []
     )
-    assert UnificationRefactorEngine(
+    engine = UnificationRefactorEngine(
         min_lines=3, reuse_existing_functions=False, skip_trivial_helpers=False
-    ).analyze_file(path)
+    )
+    proposals = engine.analyze_file(path)
+    if argument_ownership._supported_runtime():
+        assert proposals
+    else:
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
 
 
 def test_unpacked_call_result_returned_as_a_tuple_is_forwarding(tmp_path):
@@ -127,9 +134,15 @@ def test_a_body_that_only_binds_literals_and_parameters_is_not_extracted(tmp_pat
         UnificationRefactorEngine(min_lines=3, reuse_existing_functions=False).analyze_file(path)
         == []
     )
-    assert UnificationRefactorEngine(
+    engine = UnificationRefactorEngine(
         min_lines=3, reuse_existing_functions=False, skip_trivial_helpers=False
-    ).analyze_file(path)
+    )
+    proposals = engine.analyze_file(path)
+    if argument_ownership._supported_runtime():
+        assert proposals
+    else:
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
 
 
 def test_partial_initialization_does_not_split_original_argument_ownership(tmp_path):

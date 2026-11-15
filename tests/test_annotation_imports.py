@@ -42,6 +42,7 @@ import types
 import pytest
 
 from towel.type_inference import MypyInferrer
+from towel.unification import argument_ownership
 from towel.unification.annotation_imports import words_of
 from towel.unification.exceptions import RefactoringError
 from towel.unification.models import RefactoringProposal
@@ -372,13 +373,18 @@ def _write(root: Path, files: Dict[str, str]) -> None:
 
 
 def _refactored(host: Path) -> str:
-    """The first proposal for ``host`` applied under mypy, written back to it."""
+    """Apply the first proposal under mypy, or verify an uncertified lifetime refusal."""
+    original = host.read_bytes()
     oracle = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(
             skip_trivial_helpers=False, min_lines=3, type_oracle=oracle
         )
         proposals = engine.analyze_file(str(host))
+        if not proposals and not argument_ownership._supported_runtime():
+            assert "lifetime_order_uncertified" in engine.declined_pairs
+            assert host.read_bytes() == original
+            return host.read_text(encoding="utf-8")
         assert proposals
         changed = engine.apply_refactoring(str(host), proposals[0])
     finally:
@@ -441,7 +447,10 @@ def test_a_star_importers_callable_survives_the_thunks_annotation(tmp_path: Path
     changed = _refactored(tmp_path / "pkg" / "a.py")
     assert before.startswith("callable other"), before
     assert _run(tmp_path, script) == before, changed
-    assert "_typing.Callable[[], int]" in changed, changed
+    if argument_ownership._supported_runtime():
+        assert "_typing.Callable[[], int]" in changed, changed
+    else:
+        assert changed == _TOTALS
 
 
 @requires_mypy

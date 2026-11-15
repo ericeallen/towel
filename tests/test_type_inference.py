@@ -32,6 +32,7 @@ import textwrap
 
 import pytest
 
+from tests.compiler_golden_profiles import lifetime_refusal_profile
 from tests.test_cli_integration import invoke
 from tests.test_helpers import original_argument_name
 from towel.type_inference import (
@@ -52,6 +53,12 @@ requires_pyright = pytest.mark.skipif(
 from towel.type_inference import Subtyping  # noqa: E402
 
 YES, NO, UNKNOWN = Subtyping.YES, Subtyping.NO, Subtyping.UNKNOWN
+
+
+def _assert_lifetime_refusal(engine: UnificationRefactorEngine, path: Path, original: str) -> None:
+    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+    assert path.read_text() == original
+    exec(compile(original, "<unchanged>", "exec"), {})
 
 
 def _signature(source: str) -> str:
@@ -143,6 +150,7 @@ def test_engine_fills_expression_arguments_and_the_return_from_mypy(
                 label = box.name.upper()
                 return label + str(scaled)
             """))
+    original = path.read_text()
     engine = UnificationRefactorEngine(
         skip_trivial_helpers=False,
         min_lines=2,
@@ -150,6 +158,10 @@ def test_engine_fills_expression_arguments_and_the_return_from_mypy(
         type_oracle=MypyInferrer(),
     )
     proposals = engine.analyze_file(str(path))
+    if lifetime_refusal_profile():
+        assert proposals == []
+        _assert_lifetime_refusal(engine, path, original)
+        return
     assert proposals
     result = engine.apply_refactoring(str(path), proposals[0])
     assert (
@@ -193,8 +205,16 @@ def test_dry_infers_by_default_and_not_with_no_types(tmp_path: Path) -> None:
     typed = tmp_path / "typed"
     bare = tmp_path / "bare"
     common = ["--no-interactive", "--progress", "none", "--no-format"]
-    assert invoke(["dry", str(source_dir), str(typed), *common]).status == 0
-    assert invoke(["dry", str(source_dir), str(bare), *common, "--no-types"]).status == 0
+    original = (source_dir / "m.py").read_bytes()
+    typed_result = invoke(["dry", str(source_dir), str(typed), *common])
+    bare_result = invoke(["dry", str(source_dir), str(bare), *common, "--no-types"])
+    assert typed_result.status == bare_result.status == 0
+    if lifetime_refusal_profile():
+        for output, result in ((typed, typed_result), (bare, bare_result)):
+            assert (output / "m.py").read_bytes() == original
+            assert "lifetime_order_uncertified" in result.stdout + result.stderr
+        assert (source_dir / "m.py").read_bytes() == original
+        return
     typed_tree = ast.parse((typed / "m.py").read_text())
     typed_helper = next(
         node
@@ -320,10 +340,15 @@ def test_composite_any_is_written_and_typing_any_imported(tmp_path: Path) -> Non
                 print(keys)
                 return len(keys) * 2
             """))
+    original = path.read_text()
     engine = UnificationRefactorEngine(
         min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
+    if lifetime_refusal_profile():
+        assert proposals == []
+        _assert_lifetime_refusal(engine, path, original)
+        return
     assert proposals
     result = engine.apply_refactoring(str(path), proposals[0])
     # ``Any`` is reached through a private alias, so the module gains no public name.
@@ -361,6 +386,7 @@ def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
                 label = str(scaled).upper()
                 return label.strip()
             """))
+    original = path.read_text()
     oracle = MypyInferrer()
     try:
         engine = UnificationRefactorEngine(
@@ -370,27 +396,33 @@ def test_revealed_types_that_differ_join_into_a_union(tmp_path: Path) -> None:
             type_oracle=oracle,
         )
         proposals = engine.analyze_file(str(path))
-        assert proposals
-        result = engine.apply_refactoring(str(path), proposals[0])
+        if lifetime_refusal_profile():
+            assert proposals == []
+            _assert_lifetime_refusal(engine, path, original)
+            result = original
+        else:
+            assert proposals
+            result = engine.apply_refactoring(str(path), proposals[0])
         assert oracle.check(str(path), result) == CheckSuccess()
     finally:
         oracle.close()
-    helper = next(
-        node
-        for node in ast.parse(result).body
-        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
-    )
-    arguments = [*helper.args.posonlyargs, *helper.args.args]
-    assert len(arguments) == 2 and arguments[0].annotation is not None
-    annotation = arguments[0].annotation
-    assert isinstance(annotation, ast.Constant) and isinstance(annotation.value, str)
-    assert ast.dump(ast.parse(annotation.value, mode="eval")) == ast.dump(
-        ast.parse("_typing.Callable[[], int] | _typing.Callable[[], float]", mode="eval")
-    )
-    assert helper.returns is not None and ast.unparse(helper.returns) == "str"
-    assert "Any" not in ast.unparse(helper)
-    assert not any(isinstance(node, ast.Name) and node.id == "box" for node in ast.walk(helper))
-    assert "box" not in {argument.arg for argument in arguments}
+    if not lifetime_refusal_profile():
+        helper = next(
+            node
+            for node in ast.parse(result).body
+            if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+        )
+        arguments = [*helper.args.posonlyargs, *helper.args.args]
+        assert len(arguments) == 2 and arguments[0].annotation is not None
+        annotation = arguments[0].annotation
+        assert isinstance(annotation, ast.Constant) and isinstance(annotation.value, str)
+        assert ast.dump(ast.parse(annotation.value, mode="eval")) == ast.dump(
+            ast.parse("_typing.Callable[[], int] | _typing.Callable[[], float]", mode="eval")
+        )
+        assert helper.returns is not None and ast.unparse(helper.returns) == "str"
+        assert "Any" not in ast.unparse(helper)
+        assert not any(isinstance(node, ast.Name) and node.id == "box" for node in ast.walk(helper))
+        assert "box" not in {argument.arg for argument in arguments}
     for source in (path.read_text(), result):
         namespace: dict[str, object] = {}
         exec(
@@ -478,6 +510,7 @@ def test_revealed_return_is_written_when_it_satisfies_every_declaration(
                 text = str(total)
                 return len(text.strip())
             """))
+    original = path.read_text()
     engine = UnificationRefactorEngine(
         skip_trivial_helpers=False,
         min_lines=2,
@@ -485,6 +518,10 @@ def test_revealed_return_is_written_when_it_satisfies_every_declaration(
         type_oracle=MypyInferrer(),
     )
     proposals = engine.analyze_file(str(path))
+    if lifetime_refusal_profile():
+        assert proposals == []
+        _assert_lifetime_refusal(engine, path, original)
+        return
     assert proposals
     result = engine.apply_refactoring(str(path), proposals[0])
     assert (
@@ -521,9 +558,14 @@ def test_declared_class_types_meet_through_the_oracle(tmp_path: Path) -> None:
     result = engine.apply_refactoring(str(path), proposals[0])
     # ``Box`` the class is passed as a parameter, revealed as its constructor
     # signature; the helper is placed after the class, so the return is bare.
-    assert (
-        _signature(result) == "def __extracted_func_0(flag: bool, _towel_owner: 'object') -> Box:"
-    )
+    if lifetime_refusal_profile():
+        assert engine.declined_pairs["lifetime_order_uncertified"] > 0
+        assert _signature(result) == "def __extracted_func_0(box: Box, flag: bool) -> Box:"
+    else:
+        assert (
+            _signature(result)
+            == "def __extracted_func_0(flag: bool, _towel_owner: 'object') -> Box:"
+        )
 
 
 @requires_mypy
@@ -540,6 +582,7 @@ def test_declared_return_meets_through_the_checker(tmp_path: Path) -> None:
                 text = str(total)
                 return len(text.strip())
             """))
+    original = path.read_text()
     engine = UnificationRefactorEngine(
         skip_trivial_helpers=False,
         min_lines=2,
@@ -547,6 +590,10 @@ def test_declared_return_meets_through_the_checker(tmp_path: Path) -> None:
         type_oracle=MypyInferrer(),
     )
     proposals = engine.analyze_file(str(path))
+    if lifetime_refusal_profile():
+        assert proposals == []
+        _assert_lifetime_refusal(engine, path, original)
+        return
     assert proposals
     result = engine.apply_refactoring(str(path), proposals[0])
     assert (
@@ -600,9 +647,10 @@ class _Oracle:
 
 
 @requires_mypy
-def test_generated_code_that_fails_the_checker_degrades_to_any(tmp_path: Path) -> None:
+@pytest.mark.parametrize("owned", [True, False], ids=["owned", "literal"])
+def test_generated_code_that_fails_the_checker_degrades_to_any(tmp_path: Path, owned: bool) -> None:
     path = tmp_path / "m.py"
-    path.write_text(textwrap.dedent("""
+    source = textwrap.dedent("""
             def first(value: int) -> int:
                 total = value * 2
                 text = str(total)
@@ -612,7 +660,12 @@ def test_generated_code_that_fails_the_checker_degrades_to_any(tmp_path: Path) -
                 total = value * 2
                 text = str(total)
                 return len(text.strip())
-            """))
+            """)
+    if not owned:
+        source = source.replace("(value: int)", "()").replace(
+            "    total = value * 2", "    value = 1\n    total = value * 2"
+        )
+    path.write_text(source)
     engine = UnificationRefactorEngine(
         skip_trivial_helpers=False,
         min_lines=2,
@@ -620,11 +673,17 @@ def test_generated_code_that_fails_the_checker_degrades_to_any(tmp_path: Path) -
         type_oracle=_Oracle(),
     )
     proposals = engine.analyze_file(str(path))
+    if owned and lifetime_refusal_profile():
+        assert proposals == []
+        _assert_lifetime_refusal(engine, path, source)
+        return
     result = engine.apply_refactoring(str(path), proposals[0])
-    assert (
-        _signature(result)
-        == "def __extracted_func_0(value: _typing.Any, _towel_owner: 'object') -> _typing.Any:"
+    expected = (
+        "def __extracted_func_0(value: _typing.Any, _towel_owner: 'object') -> _typing.Any:"
+        if owned
+        else "def __extracted_func_0() -> _typing.Any:"
     )
+    assert _signature(result) == expected
     assert "import typing as _typing\n" in result and "from typing import Any" not in result
 
 
@@ -642,8 +701,10 @@ class _CountingOracle(_Oracle):
 
 
 @requires_mypy
+@pytest.mark.parametrize("owned", [True, False], ids=["owned", "literal"])
 def test_each_original_is_checked_once_across_the_fallback_attempts(
     tmp_path: Path,
+    owned: bool,
 ) -> None:
     """The annotated, all-``Any`` and bare attempts compare against one original."""
     path = tmp_path / "m.py"
@@ -658,12 +719,20 @@ def test_each_original_is_checked_once_across_the_fallback_attempts(
                 text = str(total)
                 return len(text.strip()) + 1
             """)
+    if not owned:
+        source = source.replace("(value: int)", "()").replace(
+            "    total = value * 2", "    value = 1\n    total = value * 2"
+        )
     path.write_text(source)
     oracle = _CountingOracle()
     engine = UnificationRefactorEngine(
         skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=oracle
     )
     proposals = engine.analyze_file(str(path))
+    if owned and lifetime_refusal_profile():
+        assert proposals == []
+        _assert_lifetime_refusal(engine, path, source)
+        return
     result = engine.apply_refactoring(str(path), proposals[0])
     assert "-> _typing.Any" in result, "the annotated attempt failed and the all-Any one was kept"
     assert oracle.checks[source] == 1
@@ -815,6 +884,7 @@ def test_pyright_project_gets_pyright_types_end_to_end(tmp_path: Path) -> None:
                 label = box.name.upper()
                 return label + str(scaled)
             """))
+    original = path.read_text()
     oracle = PyrightOracle()
     try:
         engine = UnificationRefactorEngine(
@@ -824,6 +894,10 @@ def test_pyright_project_gets_pyright_types_end_to_end(tmp_path: Path) -> None:
             type_oracle=oracle,
         )
         proposals = engine.analyze_file(str(path))
+        if lifetime_refusal_profile():
+            assert proposals == []
+            _assert_lifetime_refusal(engine, path, original)
+            return
         assert proposals
         result = engine.apply_refactoring(str(path), proposals[0])
         assert (
@@ -859,14 +933,20 @@ def test_two_returned_variables_get_a_tuple_of_revealed_types(tmp_path: Path) ->
                 print(scaled)
                 return label * scaled
             """))
+    original = path.read_text()
     engine = UnificationRefactorEngine(
         min_lines=2, reuse_existing_functions=False, type_oracle=MypyInferrer()
     )
     proposals = engine.analyze_file(str(path))
-    assert [p.description for p in proposals] == ["Extract common code from first and second"]
-    result = engine.apply_refactoring(str(path), proposals[0])
-    assert _signature(result) == "def __extracted_func_0() -> 'tuple[int, str]':"
-    assert result.count("scaled, label = __extracted_func_0()") == 2
+    if lifetime_refusal_profile():
+        assert proposals == []
+        _assert_lifetime_refusal(engine, path, original)
+        result = original
+    else:
+        assert [p.description for p in proposals] == ["Extract common code from first and second"]
+        result = engine.apply_refactoring(str(path), proposals[0])
+        assert _signature(result) == "def __extracted_func_0() -> 'tuple[int, str]':"
+        assert result.count("scaled, label = __extracted_func_0()") == 2
     for source in (path.read_text(), result):
         namespace: dict[str, object] = {}
         exec(compile(source, "<inferred>", "exec"), namespace)
@@ -910,5 +990,10 @@ def test_original_box_owned_tuple_partial_stays_refused(tmp_path: Path) -> None:
     path.write_text(source)
     engine = UnificationRefactorEngine(min_lines=2, annotate_helpers=False)
     assert engine.analyze_file(str(path)) == []
-    assert "owned_binding_frame_boundary" in engine.declined_pairs
+    reason = (
+        "lifetime_order_uncertified"
+        if lifetime_refusal_profile()
+        else "owned_binding_frame_boundary"
+    )
+    assert reason in engine.declined_pairs
     assert path.read_text() == source

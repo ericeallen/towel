@@ -104,6 +104,7 @@ from .extractor import UnsupportedExtraction, has_complete_return_coverage
 from .function_index import FunctionIndex
 from .instantiation import instantiation_mismatch
 from .retained_bindings import spell_retained_bindings
+from . import argument_ownership
 from .argument_ownership import argument_handoff_fits
 from .narrowing import (
     caller_narrowing_leaves_with_block,
@@ -1071,6 +1072,15 @@ class PairEvaluation(
         if debug_enabled:
             VALIDATION.debug("  ✓ Unification successful")
             VALIDATION.debug(f"  Substitution: {substitution}")
+        if not argument_ownership._supported_runtime() and any(
+            len(lifetime_bound_names(nodes, returned)) > 1
+            for nodes, returned in (
+                (pair.block1_nodes, analysis.return_variables1),
+                (pair.block2_nodes, analysis.return_variables2),
+            )
+        ):
+            self._debug_reject(RejectReason.LIFETIME_ORDER_UNCERTIFIED, pair)
+            return None
         aligned = align_return_variables(
             analysis.return_variables1,
             analysis.return_variables2,
@@ -1669,6 +1679,9 @@ class PairEvaluation(
             return None
         safe_call = spell_retained_bindings(function, nodes, call_node)
         ownership = self._frame_ownership(function, nodes, site=site)
+        if ownership.split and not argument_ownership._supported_runtime():
+            self._debug_reject(RejectReason.LIFETIME_ORDER_UNCERTIFIED, pair)
+            return None
         handoff = (
             self._argument_handoff_plan(function, nodes, analyzer, safe_call, func_def)
             if ownership.split and ownership.whole_body

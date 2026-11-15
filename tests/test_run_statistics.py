@@ -41,7 +41,7 @@ from towel.unification.parallel import ParallelEvaluation
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Small fixtures exercise extraction mechanics independently of the usefulness policy.
-from tests.test_cli_integration import DUPLICATES, invoke
+from tests.test_cli_integration import LITERAL_DUPLICATES, invoke
 from tests.test_declined_run_reports import BLOCK, _RefusesEveryCandidate, _similar_functions
 
 
@@ -137,7 +137,7 @@ def _typed_run(
     """``towel dry --stats`` on two duplicated functions; its stdout, and each attempt's verdict."""
     (root / "pkg").mkdir(parents=True)
     (root / "pkg" / "m.py").write_text(
-        DUPLICATES,
+        LITERAL_DUPLICATES,
         encoding="utf-8",
     )
     monkeypatch.setattr("towel.cli._type_oracle", lambda path: oracle)
@@ -217,6 +217,14 @@ def test_a_quick_preview_says_it_has_no_statistics(tmp_path: Path) -> None:
 def test_overlapping_proposals_are_the_ones_the_filter_drops(tmp_path: Path) -> None:
     """The report's overlap count is exactly what the overlap filter removes from the distinct list."""
     path = _similar_functions(tmp_path / "project", 20)
+    path.write_text(
+        "\n".join(
+            f"def f{index}():\n    print('start {index}')\n    total = {index}\n"
+            "    doubled = total * 2\n    answer = doubled + 3\n"
+            f"    print('end', answer, {index})\n    return answer\n"
+            for index in range(20)
+        )
+    )
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=2)
     distinct: List[int] = []
     original = UnificationRefactorEngine.process_block_pairs

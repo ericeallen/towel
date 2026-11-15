@@ -25,7 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_cli_integration import DUPLICATES, HELPER, invoke
+from tests.test_cli_integration import HELPER, invoke
+from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES
 from tests.test_recovery_journal import _interrupted_transaction
 
 

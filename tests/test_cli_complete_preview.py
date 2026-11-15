@@ -22,27 +22,28 @@ formatting, follow-ups and the final cold confirmation.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
-import json
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
+from tests.test_checker_failure_reporting import _Oracle
+from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES
+from tests.test_cli_integration import invoke
+from tests.test_progress_modes import _make_fixture, _two_round_project
+from tests.typed_fixtures import requires_mypy
 from towel import cli
 from towel.diagnostics import LOG
 from towel.filesystem import StagedProject, staged_project
 from towel.formatting import FormattingChangedCode
 from towel.type_inference import CheckFailure, CheckSuccess, TypeDiagnostic, TypeOracle
-from towel.unification import fixed_point
+from towel.unification import argument_ownership, fixed_point
 from towel.unification.exceptions import RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.test_checker_failure_reporting import _Oracle
-from tests.test_cli_integration import DUPLICATES, invoke
-from tests.test_progress_modes import _make_fixture, _two_round_project
-from tests.typed_fixtures import requires_mypy
 
 
 def _contents(target: Path) -> dict[str, bytes]:
@@ -210,9 +211,14 @@ def test_complete_preview_keeps_cross_module_followups_and_exclusions(
     ]
     preview = invoke(["preview", str(root), *flags])
     assert preview.status == 0, preview
-    assert "Would apply 4 refactoring(s)" in preview.stdout
-    assert "Discovered 2 proposal(s)" in preview.stderr
-    assert "Discovered 1 proposal(s)" in preview.stderr
+    if argument_ownership._supported_runtime():
+        assert "Would apply 4 refactoring(s)" in preview.stdout
+        assert "Discovered 2 proposal(s)" in preview.stderr
+        assert "Discovered 1 proposal(s)" in preview.stderr
+    else:
+        assert "Would apply 0 refactoring(s)" in preview.stdout
+        assert "lifetime_order_uncertified" in preview.stdout
+        assert completed[0][1] == _contents(root)
     assert "Termination: fixed_point" in preview.stdout
     assert "towel-preview-" not in preview.stdout + preview.stderr
     output = tmp_path / "output"
@@ -289,11 +295,11 @@ def test_complete_preview_uses_original_config_and_whole_project_staging(
     package = root / "pkg"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("")
-    source = DUPLICATES.replace("(x):", "(x: int) -> int:")
+    source = DUPLICATES.replace("():", "() -> int:")
     (package / "module.py").write_text(source)
     config = "[tool.mypy]\nstrict = true\n[tool.black]\nline-length = 88\n"
     (root / "pyproject.toml").write_text(config)
-    (root / "consumer.py").write_text("from pkg.module import first\nvalue: int = first(3)\n")
+    (root / "consumer.py").write_text("from pkg.module import first\nvalue: int = first()\n")
     before = _snapshot(root)
     observed: list[Path] = []
 

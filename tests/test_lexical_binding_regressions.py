@@ -33,6 +33,7 @@ import pytest
 from tests.hostile_execution import observe
 from towel.diagnostics import Settings
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification import argument_ownership
 
 SERIAL = Settings.from_environ({"TOWEL_WORKERS": "1"})
 REQUIRES_TYPE_PARAMETERS = pytest.mark.skipif(
@@ -41,7 +42,12 @@ REQUIRES_TYPE_PARAMETERS = pytest.mark.skipif(
 
 
 def _assert_preserved(
-    source: str, expected: str, tmp_path: Path, *, safe_companion: bool = False
+    source: str,
+    expected: str,
+    tmp_path: Path,
+    *,
+    safe_companion: bool = False,
+    lifetime_transfer: bool = False,
 ) -> None:
     before = tmp_path / "before.py"
     before.write_text(textwrap.dedent(source))
@@ -73,7 +79,12 @@ def _assert_preserved(
         before.write_text(source)
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, settings=SERIAL)
     final, applied, _ = engine.refactor_to_fixed_point(str(before), progress="none")
-    assert applied > 0, "The regression must exercise a real transformation"
+    if lifetime_transfer and not argument_ownership._supported_runtime():
+        assert applied == 0
+        assert final == before.read_text()
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+    else:
+        assert applied > 0, "The regression must exercise a real transformation"
     (tmp_path / "after.py").write_text(final)
     original = observe("before.py", tmp_path)
     assert original == (0, expected, [])
@@ -141,7 +152,7 @@ def test_unrelated_generic_classes_pass_their_own_type_parameters(
     source += "\n".join(
         f"print({name}().value(1)[0] is {name}.__type_params__[0])" for name in ("First", "Second")
     )
-    _assert_preserved(source, "True\nTrue\n", tmp_path)
+    _assert_preserved(source, "True\nTrue\n", tmp_path, lifetime_transfer=True)
 
 
 @REQUIRES_TYPE_PARAMETERS
@@ -164,6 +175,7 @@ def test_nested_functions_keep_an_enclosing_generic_parameter(tmp_path: Path) ->
         """,
         "True\n",
         tmp_path,
+        lifetime_transfer=True,
     )
 
 

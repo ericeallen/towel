@@ -44,6 +44,7 @@ import pytest
 import towel
 from towel.cli import _problems_involving
 from towel.import_model import NameStatus, build_import_model
+from towel.unification import argument_ownership
 
 _BLOCK = """
 from builtins import print as emit
@@ -198,7 +199,8 @@ def _towel(
     root: Path, command: str, *flags: str, target: str = "src/zzalpha"
 ) -> subprocess.CompletedProcess[str]:
     arguments = [command, target, target] if command == "dry" else [command, target]
-    return subprocess.run(
+    before = _sources(root)
+    result = subprocess.run(
         [
             sys.executable,
             "-m",
@@ -215,6 +217,24 @@ def _towel(
         env=dict(os.environ, PYTHONPATH=str(Path(towel.__file__).resolve().parents[1])),
         timeout=600,
     )
+
+    if (
+        command == "dry"
+        and not argument_ownership._supported_runtime()
+        and "lifetime_order_uncertified" in result.stdout
+    ):
+        assert _sources(root) == before
+    return result
+
+
+def _assert_helper_or_lifetime_refusal(
+    result: subprocess.CompletedProcess[str], source: str, helper: str
+) -> None:
+    if argument_ownership._supported_runtime():
+        assert helper in source, source
+    else:
+        assert helper not in source, source
+        assert "lifetime_order_uncertified" in result.stdout
 
 
 def _sources(root: Path) -> dict[str, str]:
@@ -284,7 +304,9 @@ def test_a_problem_of_the_package_being_refactored_refuses_the_run(tmp_path: Pat
     ran = _towel(root, "dry", "--cross-module", "--exclude", "build")
     assert ran.returncode == 0, ran.stdout + ran.stderr
     assert "could be any of" not in ran.stderr
-    assert "from .a import __extracted_func" in (root / "src/zzalpha/b.py").read_text()
+    _assert_helper_or_lifetime_refusal(
+        ran, (root / "src/zzalpha/b.py").read_text(), "from .a import __extracted_func"
+    )
 
 
 def test_a_problem_only_in_the_test_data_is_reported_and_the_run_goes_on(tmp_path: Path) -> None:
@@ -293,7 +315,9 @@ def test_a_problem_only_in_the_test_data_is_reported_and_the_run_goes_on(tmp_pat
     assert ran.returncode == 0, ran.stdout + ran.stderr
     assert "tests/data/broken/mod.py:1: from .missing import thing names .missing" in ran.stderr
     assert "--exclude <directory name>" in ran.stderr
-    assert "from .a import __extracted_func" in (root / "src/zzalpha/b.py").read_text()
+    _assert_helper_or_lifetime_refusal(
+        ran, (root / "src/zzalpha/b.py").read_text(), "from .a import __extracted_func"
+    )
 
 
 def test_test_data_importing_what_the_package_lacks_leaves_its_helpers_shared(
@@ -315,8 +339,8 @@ def test_test_data_importing_what_the_package_lacks_leaves_its_helpers_shared(
     assert "--exclude <directory name>" in ran.stderr
     # Each module spells its own package absolutely, and the shared helper is imported so.
     a, b = ((root / "zzsphx" / name).read_text() for name in ("a.py", "b.py"))
-    assert "def __extracted_func" in a, a
-    assert "from zzsphx.a import __extracted_func" in b, b
+    _assert_helper_or_lifetime_refusal(ran, a, "def __extracted_func")
+    _assert_helper_or_lifetime_refusal(ran, b, "from zzsphx.a import __extracted_func")
     assert _behaviour(root, ["."], program) == expected
     written = "".join(text for path, text in _sources(root).items() if "need_mocks" not in path)
     assert "missing_module4" not in written
@@ -342,7 +366,9 @@ def test_a_run_from_the_root_leaves_test_data_importing_what_the_package_lacks_u
     ) in ran.stderr
     # Its block is duplicated in the package and within itself, and neither moved.
     assert fixture.read_bytes() == before
-    assert "from zzsphx.a import __extracted_func" in (root / "zzsphx/b.py").read_text()
+    _assert_helper_or_lifetime_refusal(
+        ran, (root / "zzsphx/b.py").read_text(), "from zzsphx.a import __extracted_func"
+    )
 
 
 def test_an_example_importing_what_the_package_lacks_leaves_its_helpers_shared(
@@ -366,8 +392,10 @@ def test_an_example_importing_what_the_package_lacks_leaves_its_helpers_shared(
     assert "zz_towel_no_such_module" not in ran.stderr
     shortcuts = (root / "src/zzprompt/shortcuts.py").read_text()
     hook = (root / "src/zzprompt/eventloop/inputhook.py").read_text()
-    assert "def __extracted_func" in hook, hook
-    assert "from .eventloop.inputhook import __extracted_func" in shortcuts, shortcuts
+    _assert_helper_or_lifetime_refusal(ran, hook, "def __extracted_func")
+    _assert_helper_or_lifetime_refusal(
+        ran, shortcuts, "from .eventloop.inputhook import __extracted_func"
+    )
     assert _behaviour(root, ["src"], program) == expected
 
 
@@ -387,7 +415,9 @@ def test_an_unresolved_import_inside_the_package_leaves_its_file_unchanged(
     assert "src/zzalpha/c.py:1: from zzalpha.gone import thing needs zzalpha.gone" in ran.stderr
     assert f"Left unchanged: src/zzalpha/c.py. {_INSIDE_REMEDY}" in ran.stderr
     assert (root / "src/zzalpha/c.py").read_bytes() == before
-    assert "from .a import __extracted_func" in (root / "src/zzalpha/b.py").read_text()
+    _assert_helper_or_lifetime_refusal(
+        ran, (root / "src/zzalpha/b.py").read_text(), "from .a import __extracted_func"
+    )
 
 
 def test_a_package_importing_its_generated_version_is_refactored_around_its_initializer(
@@ -415,7 +445,9 @@ def test_a_package_importing_its_generated_version_is_refactored_around_its_init
     assert (root / "src/zzalpha/__init__.py").read_bytes() == before
     # The borrower's direct import already loads its host through this
     # initializer; a shared helper does not introduce that requirement.
-    assert "from .a import __extracted_func" in (root / "src/zzalpha/b.py").read_text()
+    _assert_helper_or_lifetime_refusal(
+        ran, (root / "src/zzalpha/b.py").read_text(), "from .a import __extracted_func"
+    )
 
 
 def test_a_subpackage_below_an_initializer_importing_what_the_tree_lacks_is_refactored(
@@ -448,7 +480,9 @@ def test_a_subpackage_below_an_initializer_importing_what_the_tree_lacks_is_refa
         " one from anywhere else would run src/zzalpha/__init__.py, whose import the tree"
         " lacks, where it has not run."
     ) in ran.stderr
-    assert "from .m import __extracted_func" in (root / "src/zzalpha/sub/n.py").read_text()
+    _assert_helper_or_lifetime_refusal(
+        ran, (root / "src/zzalpha/sub/n.py").read_text(), "from .m import __extracted_func"
+    )
 
 
 @pytest.mark.parametrize(
@@ -495,7 +529,7 @@ def test_without_cross_module_no_problem_is_reported_or_refuses(tmp_path: Path) 
     assert ran.returncode == 0, ran.stdout + ran.stderr
     assert "could be any of" not in ran.stderr and "--exclude <directory name>" not in ran.stderr
     b = (root / "src/zzalpha/b.py").read_text()
-    assert "def __extracted_func_0(" in b, b
+    _assert_helper_or_lifetime_refusal(ran, b, "def __extracted_func_0(")
     after_imports = [
         ast.dump(node)
         for node in ast.parse((root / "src/zzalpha/a.py").read_text()).body
@@ -613,7 +647,9 @@ def test_a_guarded_import_in_a_setup_py_that_changes_sys_path_refuses_nothing(
         root, ["."], _SHOP_PROGRAM, lambda: _towel(root, "dry", "--cross-module", target="zzshop")
     )
     assert "pyutils" not in ran.stderr, ran.stderr
-    assert "from .a import __extracted_func" in (root / "zzshop/b.py").read_text()
+    _assert_helper_or_lifetime_refusal(
+        ran, (root / "zzshop/b.py").read_text(), "from .a import __extracted_func"
+    )
 
 
 @pytest.mark.parametrize(
@@ -702,4 +738,6 @@ def test_an_import_of_a_module_the_tree_lacks_makes_no_stray_init_a_package(
     )
     ran = _refactored_alike(root, ["src"], program, lambda: _towel(root, "dry", "--cross-module"))
     assert "imported as a top-level name" not in ran.stderr, ran.stderr
-    assert "from .a import __extracted_func" in (root / "src/zzalpha/b.py").read_text()
+    _assert_helper_or_lifetime_refusal(
+        ran, (root / "src/zzalpha/b.py").read_text(), "from .a import __extracted_func"
+    )

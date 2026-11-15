@@ -26,6 +26,7 @@ import unittest
 import ast
 import tempfile
 from pathlib import Path
+from towel.unification.argument_ownership import _supported_runtime
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Small fixtures exercise extraction mechanics independently of the usefulness policy.
@@ -53,6 +54,10 @@ class TestReturnValuePropagation(unittest.TestCase):
         proposals = self.engine.analyze_file(str(self.example_path))
 
         early = [p for p in proposals if "early_return" in p.description.lower()]
+        if not _supported_runtime():
+            self.assertEqual(early, [])
+            self.assertGreater(self.engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            return
         self.assertGreater(len(early), 0, "Should find early return duplicates")
 
         # Apply refactoring and check it's valid
@@ -85,6 +90,10 @@ class TestReturnValuePropagation(unittest.TestCase):
         proposals = self.engine.analyze_file(str(self.example_path))
 
         loop_ret = [p for p in proposals if "loop_with_return" in p.description.lower()]
+        if not _supported_runtime():
+            self.assertEqual(loop_ret, [])
+            self.assertGreater(self.engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            return
         self.assertGreater(len(loop_ret), 0, "Should find loop return duplicates")
 
     def test_multiple_returns(self):

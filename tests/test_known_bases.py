@@ -27,6 +27,8 @@ import pytest
 from tests.stdlib_bases import STDLIB_BASES
 from tests.test_helpers import method_helper_calls, refactor_to_fixed_point_silently
 from tests.test_method_host_machinery import _run
+from towel.unification import argument_ownership
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 _METHODS = """
     v = 10
@@ -61,8 +63,15 @@ def _refactor(path: Path, source: str) -> str:
     final, applied = refactor_to_fixed_point_silently(
         str(path), skip_trivial_helpers=False, min_lines=3
     )
-    assert applied > 0
     compile(final, str(path), "exec")
+    if not argument_ownership._supported_runtime():
+        assert applied == 0
+        assert final == source
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
+        assert engine.analyze_file(str(path)) == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        return final
+    assert applied > 0
     klass = next(node for node in ast.parse(final).body if isinstance(node, ast.ClassDef))
     helpers = [
         node

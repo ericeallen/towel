@@ -1523,6 +1523,11 @@ def _print_declined(report: "RunReport", applied: int) -> None:
                 "  These blocks contain syntax whose evaluation Towel cannot yet preserve; "
                 "they were left unchanged."
             )
+        if report.declined_pairs.get("lifetime_order_uncertified", 0):
+            print(
+                "  Strict mode cannot yet preserve the order in which objects are released "
+                "on this Python runtime, so these blocks were left unchanged."
+            )
         if report.declined_pairs.get("unprofitable_helper", 0) or report.declined_proposals.get(
             "unprofitable helper", 0
         ):
@@ -1810,6 +1815,7 @@ def _write_failure_result(
 
 def _run_quick_preview(options: PreviewOptions) -> None:
     """List one analysis without promising that the proposals will pass dry's checks."""
+    from towel.unification.fixed_point import RunReport
     from towel.unification.refactor_engine import UnificationRefactorEngine
     from towel.unification.overlap import filter_overlapping_proposals
 
@@ -1855,6 +1861,7 @@ def _run_quick_preview(options: PreviewOptions) -> None:
 
     if not all_proposals:
         print("No duplicates found!")
+        _print_declined(RunReport(declined_pairs=engine.declined_pairs), 0)
         return
 
     proposals = filter_overlapping_proposals(all_proposals)

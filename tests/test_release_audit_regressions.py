@@ -20,6 +20,7 @@ import sys
 
 import pytest
 
+from towel.unification.argument_ownership import _supported_runtime
 from tests.test_cli_integration import invoke
 
 
@@ -132,7 +133,11 @@ def test_safe_retained_finalizers_keep_their_original_cleanup_order(
         arguments.append("--no-types")
     result = invoke(arguments)
     assert result.status == 0, result.stderr
-    assert "def __extracted_func_" in output.read_text()
+    if _supported_runtime():
+        assert "def __extracted_func_" in output.read_text()
+    else:
+        assert output.read_text() == original_text
+        assert "lifetime_order_uncertified" in result.stdout + result.stderr
     assert (before.stdout, before.stderr) == (reference.stdout, reference.stderr)
     after = subprocess.run([sys.executable, str(output)], capture_output=True, check=True)
     assert (after.stdout, after.stderr) == (before.stdout, before.stderr)

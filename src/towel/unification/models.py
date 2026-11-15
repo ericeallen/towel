@@ -348,6 +348,7 @@ class RejectReason(StrEnum):
     PRIVATE_NAME_LEXICAL_CLASS = "private_name_lexical_class"
     REBOUND_EXTERNAL_BINDING = "rebound_external_binding"
     OWNED_BINDING_FRAME_BOUNDARY = "owned_binding_frame_boundary"
+    LIFETIME_ORDER_UNCERTIFIED = "lifetime_order_uncertified"
     RELATIVE_IMPORT_ACROSS_PACKAGES = "relative_import_across_packages"
     RETURN_VARIABLES_NOT_ALIGNED = "return_variables_not_aligned"
     RETURN_VERSUS_VARIABLES = "return_versus_variables"

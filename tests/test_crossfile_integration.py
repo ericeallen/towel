@@ -39,6 +39,7 @@ from typing import List
 import pytest
 
 from towel.canonical_ast import canonical_dump
+from towel.unification import argument_ownership
 from towel.unification.models import RefactoringProposal
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.pipeline import run_pipeline
@@ -446,20 +447,32 @@ class TestExampleThreeCrossFile:
         engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         proposals = engine.analyze_files([file1, file2])
 
-        assert [p.description for p in proposals] == [EXAMPLE3_HELPER]
-        assert _participating_files(proposals[0]) == {file1, file2}
+        if argument_ownership._supported_runtime():
+            assert [p.description for p in proposals] == [EXAMPLE3_HELPER]
+            assert _participating_files(proposals[0]) == {file1, file2}
+        else:
+            assert not proposals
+            assert "lifetime_order_uncertified" in engine.declined_pairs
 
     def test_example3_directory_run_imports_the_helper(self, tmp_path: Path):
         source = tmp_path / "example3"
         self._premium_imports_regular(source)
         out = tmp_path / "out"
 
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, cross_module_helpers=True)
         with contextlib.redirect_stdout(io.StringIO()):
-            results, termination = UnificationRefactorEngine(
-                skip_trivial_helpers=False, cross_module_helpers=True
-            ).refactor_directory_to_fixed_point(str(source), str(out), progress="none")
+            results, termination = engine.refactor_directory_to_fixed_point(
+                str(source), str(out), progress="none"
+            )
 
         assert termination == "fixed_point"
+        if not argument_ownership._supported_runtime():
+            assert results == {}
+            assert "lifetime_order_uncertified" in engine.declined_pairs
+            assert {p.name: p.read_bytes() for p in source.glob("*.py")} == {
+                p.name: p.read_bytes() for p in out.glob("*.py")
+            }
+            return
         # Both modules take part in the one proposal: the regular module hosts the
         # helper, and neither discount function calls the other.
         assert results == {

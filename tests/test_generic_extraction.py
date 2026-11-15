@@ -28,6 +28,7 @@ import textwrap
 import pytest
 
 from towel.type_inference import CheckSuccess, MypyInferrer, PyrightOracle, TypeOracle
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.exceptions import RefactoringError
 
@@ -54,13 +55,17 @@ def _project(tmp_path: Path, code: str, *, pyright_mode: str = "strict") -> Path
     return path
 
 
-def _extract(path: Path, oracle: TypeOracle) -> tuple[str, ast.FunctionDef]:
+def _extract(path: Path, oracle: TypeOracle) -> tuple[str, ast.FunctionDef | None]:
     original = path.read_text()
     assert oracle.check(str(path), original) == CheckSuccess()
     engine = UnificationRefactorEngine(
         skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=oracle
     )
     proposals = engine.analyze_file(str(path))
+    if not argument_ownership._supported_runtime() and not proposals:
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == original
+        return original, None
     assert proposals, original
     rendered = engine.apply_refactoring(str(path), proposals[0])
     assert path.read_text() == original, "materialization must leave source files untouched"
@@ -114,14 +119,18 @@ def test_addition_gets_a_constrained_parameter_and_rejects_mixed_calls(
 ) -> None:
     path = _project(tmp_path, ADDITION)
     rendered, helper = _extract(path, oracle)
-    assert "TypeVar" in rendered and "Any" not in rendered
-    kinds = [_annotation(arg.annotation) for arg in value_parameters(helper)]
-    assert len(set(kinds)) == 1
-    assert _annotation(helper.returns) == kinds[0]
-    rejected = oracle.check(
-        str(path), rendered + f'\nwrong = {helper.name}(1, "x"{ownership_argument(helper)})\n'
-    )
-    assert isinstance(rejected, CheckSuccess) and rejected.errors
+    if argument_ownership._supported_runtime():
+        assert helper is not None
+        assert "TypeVar" in rendered and "Any" not in rendered
+        kinds = [_annotation(arg.annotation) for arg in value_parameters(helper)]
+        assert len(set(kinds)) == 1
+        assert _annotation(helper.returns) == kinds[0]
+        rejected = oracle.check(
+            str(path), rendered + f'\nwrong = {helper.name}(1, "x"{ownership_argument(helper)})\n'
+        )
+        assert isinstance(rejected, CheckSuccess) and rejected.errors
+    else:
+        assert helper is None
     namespace: dict[str, object] = {}
     exec(compile(rendered, str(path), "exec"), namespace)
     integers, strings = namespace["integers"], namespace["strings"]
@@ -148,18 +157,29 @@ def test_invariant_collections_share_element_and_result_parameters(
     """,
     )
     rendered, helper = _extract(path, oracle)
+    assert helper is not None
     assert "TypeVar" in rendered and "Any" not in rendered
     kinds = {
         argument.arg: _annotation(argument.annotation) for argument in value_parameters(helper)
     }
-    assert kinds["items"] == f'list[{kinds["value"]}]'
-    assert _annotation(helper.returns) == kinds["items"]
-    wrong_arguments = {"items": "[1]", "value": '"x"'}
+    collection = "items" if argument_ownership._supported_runtime() else "result"
+    assert kinds[collection] == f'list[{kinds["value"]}]'
+    assert _annotation(helper.returns) == kinds[collection]
+    wrong_arguments = {collection: "[1]", "value": '"x"'}
     bad_call = ", ".join(wrong_arguments[argument.arg] for argument in value_parameters(helper))
     rejected = oracle.check(
         str(path), rendered + f"\nwrong = {helper.name}({bad_call}{ownership_argument(helper)})\n"
     )
     assert isinstance(rejected, CheckSuccess) and rejected.errors
+    if not argument_ownership._supported_runtime():
+        assert all(argument.arg != "_towel_owner" for argument in helper.args.args)
+        originals = [
+            node
+            for node in ast.parse(rendered).body
+            if isinstance(node, ast.FunctionDef) and node.name in {"integers", "strings"}
+        ]
+        assert len(originals) == 2
+        assert all(ast.unparse(node.body[0]) == "result = items.copy()" for node in originals)
     namespace: dict[str, object] = {}
     exec(compile(rendered, str(path), "exec"), namespace)
     integers = namespace["integers"]
@@ -186,11 +206,15 @@ def test_two_independent_columns_keep_distinct_parameters(
     """,
     )
     rendered, helper = _extract(path, oracle)
-    kinds = [_annotation(argument.annotation) for argument in value_parameters(helper)]
-    assert len(set(kinds)) == 2
-    assert all(kind.startswith("list[") for kind in kinds)
-    assert _annotation(helper.returns) == f"tuple[{kinds[0][5:-1]}, {kinds[1][5:-1]}]"
-    assert "Any" not in rendered
+    if argument_ownership._supported_runtime():
+        assert helper is not None
+        kinds = [_annotation(argument.annotation) for argument in value_parameters(helper)]
+        assert len(set(kinds)) == 2
+        assert all(kind.startswith("list[") for kind in kinds)
+        assert _annotation(helper.returns) == f"tuple[{kinds[0][5:-1]}, {kinds[1][5:-1]}]"
+        assert "Any" not in rendered
+    else:
+        assert helper is None
 
 
 def test_generic_retry_after_a_fully_annotated_union_fails_keeps_calls_bound(
@@ -209,6 +233,7 @@ def test_generic_retry_after_a_fully_annotated_union_fails_keeps_calls_bound(
     """,
     )
     rendered, helper = _extract(path, oracle)
+    assert helper is not None
     assert "TypeVar" in rendered and "Any" not in rendered
     assert _annotation(helper.returns) == "None"
     namespace: dict[str, object] = {}
@@ -236,12 +261,17 @@ def test_function_scoped_free_parameters_are_rebound_in_the_helper(
     """,
     )
     rendered, helper = _extract(path, oracle)
-    result = _annotation(helper.returns)
-    assert (
-        result != "T" and _annotation(value_parameters(helper)[0].annotation) == f"list[{result}]"
-    )
-    assert "TypeVar" in rendered and "Any" not in rendered
-    assert "def first[T]" in rendered and "def second[T]" in rendered
+    if argument_ownership._supported_runtime():
+        assert helper is not None
+        result = _annotation(helper.returns)
+        assert (
+            result != "T"
+            and _annotation(value_parameters(helper)[0].annotation) == f"list[{result}]"
+        )
+        assert "TypeVar" in rendered and "Any" not in rendered
+        assert "def first[T]" in rendered and "def second[T]" in rendered
+    else:
+        assert helper is None
     namespace: dict[str, object] = {}
     exec(compile(rendered, str(path), "exec"), namespace)
 
@@ -265,10 +295,14 @@ def test_class_scoped_parameters_can_flow_to_an_independent_module_helper(
     """,
     )
     rendered, helper = _extract(path, oracle)
-    result = _annotation(helper.returns)
-    assert result not in {"T", "U", "Any"}
-    assert _annotation(value_parameters(helper)[0].annotation) == f"list[{result}]"
-    assert "class First[T]" in rendered and "class Second[U]" in rendered
+    if argument_ownership._supported_runtime():
+        assert helper is not None
+        result = _annotation(helper.returns)
+        assert result not in {"T", "U", "Any"}
+        assert _annotation(value_parameters(helper)[0].annotation) == f"list[{result}]"
+        assert "class First[T]" in rendered and "class Second[U]" in rendered
+    else:
+        assert helper is None
 
 
 def test_free_legacy_parameters_with_different_names_are_freshened(
@@ -291,10 +325,14 @@ def test_free_legacy_parameters_with_different_names_are_freshened(
     """,
     )
     rendered, helper = _extract(path, oracle)
-    result = _annotation(helper.returns)
-    assert result not in {"T", "U", "Any"}
-    assert _annotation(value_parameters(helper)[0].annotation) == f"list[{result}]"
-    assert 'T = TypeVar("T")' in rendered and 'U = TypeVar("U")' in rendered
+    if argument_ownership._supported_runtime():
+        assert helper is not None
+        result = _annotation(helper.returns)
+        assert result not in {"T", "U", "Any"}
+        assert _annotation(value_parameters(helper)[0].annotation) == f"list[{result}]"
+        assert 'T = TypeVar("T")' in rendered and 'U = TypeVar("U")' in rendered
+    else:
+        assert helper is None
 
 
 def test_no_checker_does_not_invent_generic_contracts(tmp_path: Path) -> None:
@@ -302,8 +340,12 @@ def test_no_checker_does_not_invent_generic_contracts(tmp_path: Path) -> None:
     engine = UnificationRefactorEngine(
         skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False
     )
-    proposal = engine.analyze_file(str(path))[0]
-    assert "TypeVar" not in engine.apply_refactoring(str(path), proposal)
+    proposals = engine.analyze_file(str(path))
+    if argument_ownership._supported_runtime():
+        assert "TypeVar" not in engine.apply_refactoring(str(path), proposals[0])
+    else:
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
 
 
 @pytest.mark.parametrize("domain", ["bound=str", "str, bytes"])
@@ -327,24 +369,28 @@ def test_free_parameter_domains_are_preserved(
         """,
     )
     rendered, helper = _extract(path, oracle)
-    binder_name = _annotation(helper.returns)
-    declarations = [
-        node
-        for node in ast.parse(rendered).body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name) and target.id == binder_name for target in node.targets
-        )
-    ]
-    assert len(declarations) == 1
-    call = declarations[0].value
-    assert isinstance(call, ast.Call)
-    if domain.startswith("bound"):
-        assert len(call.args) == 1
-        assert len(call.keywords) == 1 and call.keywords[0].arg == "bound"
-        assert _annotation(call.keywords[0].value) == "str"
+    if argument_ownership._supported_runtime():
+        assert helper is not None
+        binder_name = _annotation(helper.returns)
+        declarations = [
+            node
+            for node in ast.parse(rendered).body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == binder_name for target in node.targets
+            )
+        ]
+        assert len(declarations) == 1
+        call = declarations[0].value
+        assert isinstance(call, ast.Call)
+        if domain.startswith("bound"):
+            assert len(call.args) == 1
+            assert len(call.keywords) == 1 and call.keywords[0].arg == "bound"
+            assert _annotation(call.keywords[0].value) == "str"
+        else:
+            assert [_annotation(argument) for argument in call.args[1:]] == ["str", "bytes"]
     else:
-        assert [_annotation(argument) for argument in call.args[1:]] == ["str", "bytes"]
+        assert helper is None
 
 
 def test_existing_names_do_not_capture_generated_binders_or_the_constructor(
@@ -355,7 +401,11 @@ def test_existing_names_do_not_capture_generated_binders_or_the_constructor(
         "TypeVar = 1\n_TowelT0 = 2\n_towel_typevar = 3\n" + textwrap.dedent(ADDITION),
     )
     rendered, helper = _extract(path, oracle)
-    assert _annotation(helper.returns) != "_TowelT0"
+    if argument_ownership._supported_runtime():
+        assert helper is not None
+        assert _annotation(helper.returns) != "_TowelT0"
+    else:
+        assert helper is None
     namespace: dict[str, object] = {}
     exec(compile(rendered, str(path), "exec"), namespace)
     assert {name: namespace[name] for name in ("TypeVar", "_TowelT0", "_towel_typevar")} == {
@@ -395,6 +445,12 @@ def test_cross_file_generic_helper_respects_project_rules_and_unchanged_consumer
         cross_module_helpers=True,
     )
     proposals = engine.analyze_files([str(first), str(second), str(consumer)])
+    if not argument_ownership._supported_runtime():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert consumer.read_text() == original_consumer
+        assert engine.change_log == ()
+        return
     proposal = next(
         proposal for proposal in proposals if len({r.file_path for r in proposal.replacements}) == 2
     )
@@ -433,15 +489,19 @@ def test_precise_subclass_result_is_not_promoted_to_a_constraint(
     """,
     )
     rendered, helper = _extract(path, oracle)
-    assert "TypeVar" in rendered
-    assert "bound=" not in rendered
-    result = _annotation(helper.returns)
-    assert _annotation(value_parameters(helper)[0].annotation) == f"list[{result}]"
-    assert (
-        oracle.check(
-            str(path),
-            rendered
-            + f"\nprecise: Text = {helper.name}([Text('a')]{ownership_argument(helper)})\n",
+    if argument_ownership._supported_runtime():
+        assert helper is not None
+        assert "TypeVar" in rendered
+        assert "bound=" not in rendered
+        result = _annotation(helper.returns)
+        assert _annotation(value_parameters(helper)[0].annotation) == f"list[{result}]"
+        assert (
+            oracle.check(
+                str(path),
+                rendered
+                + f"\nprecise: Text = {helper.name}([Text('a')]{ownership_argument(helper)})\n",
+            )
+            == CheckSuccess()
         )
-        == CheckSuccess()
-    )
+    else:
+        assert helper is None

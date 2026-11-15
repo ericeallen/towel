@@ -19,8 +19,8 @@ from typing import Optional
 
 import pytest
 
-from tests.test_cli_integration import invoke
-from tests.test_generated_code_formatting import DUPLICATED_STRINGS, _evaluate
+from tests.test_cli_integration import evaluate_functions, invoke
+from tests.test_generated_code_formatting import DUPLICATED_STRINGS as _ARGUMENT_STRINGS
 from towel.formatting import (
     SnippetFormatter,
     formatter_factory_for_project,
@@ -28,6 +28,18 @@ from towel.formatting import (
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.rehearing import renderer_context
+
+# Formatter policy needs an actual extraction on every supported interpreter.
+# Literal bindings avoid depending on the caller-argument lifetime proof.
+DUPLICATED_STRINGS = _ARGUMENT_STRINGS.replace(
+    "(name, a_rather_long_parameter_name, another_long_parameter_name):",
+    "():\n    name = 'x'\n    a_rather_long_parameter_name = '-y'\n"
+    "    another_long_parameter_name = '-z'",
+)
+
+
+def _evaluate(source: str) -> list[object]:
+    return evaluate_functions(source, calls=((),))
 
 
 def _dry(target: Path, output: Path, *, formatting: bool = True) -> None:
@@ -149,6 +161,9 @@ def test_cross_module_rendering_supplies_each_helpers_and_call_sites_destination
 
     root = _package(tmp_path / "project")
     paths = [str(root / "zzshared" / name) for name in ("first.py", "second.py")]
+    # Keep the cross-module formatter callback reachable without transferring inputs.
+    for path in map(Path, paths):
+        path.write_text(path.read_text().replace("(values):", "():\n    values = (1, 2, 3)"))
     seen: set[str] = set()
 
     def factory(file_path: str) -> Optional[SnippetFormatter]:

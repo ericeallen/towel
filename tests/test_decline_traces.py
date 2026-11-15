@@ -245,7 +245,10 @@ def test_an_extraction_the_extractor_cannot_render_is_traced_under_its_reason(
 
     monkeypatch.setattr(HygienicExtractor, method, raising)
     path = tmp_path / "m.py"
-    path.write_text(THREE_ALIKE)
+    # Keep the renderer/cluster fault injection reachable on uncertified runtimes.
+    from tests.test_cli_integration import BODY, LITERAL_DUPLICATES
+
+    path.write_text(LITERAL_DUPLICATES + "\ndef third():\n    x = 3\n" + BODY)
     engine = UnificationRefactorEngine(min_lines=3)
     lines = _traced(caplog, lambda: engine.analyze_files([str(path)], progress="none"))
     traced = [line for line in lines if line.startswith(f"{prefix}[unsupported_extraction]: ")]

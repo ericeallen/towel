@@ -37,6 +37,7 @@ import textwrap
 from typing import Unpack
 
 from tests.test_helpers import EngineOptions
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.type_inference import Subtyping
 
@@ -55,6 +56,10 @@ def _refactor(tmp_path: Path, code: str, **engine_options: Unpack[EngineOptions]
     }
     engine = UnificationRefactorEngine(min_lines=2, **options)
     proposals = engine.analyze_file(str(path))
+    if not argument_ownership._supported_runtime() and not proposals:
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == textwrap.dedent(code)
+        return path.read_text()
     assert proposals, "the fixture must produce a proposal"
     return engine.apply_refactoring(str(path), proposals[0])
 
@@ -150,6 +155,9 @@ def test_declared_return_types_need_a_checker_to_meet(tmp_path: Path) -> None:
             return len(text.strip())
         """,
     )
+    if not argument_ownership._supported_runtime():
+        assert "__extracted_func" not in result
+        return
     assert (
         _signature(result)
         == "def __extracted_func_0(value: int, _towel_owner: 'object') -> _typing.Any:"
@@ -173,6 +181,9 @@ def test_unrelated_declared_return_types_leave_the_return_to_any(
             return len(text.strip())
         """,
     )
+    if not argument_ownership._supported_runtime():
+        assert "__extracted_func" not in result
+        return
     assert (
         _signature(result)
         == "def __extracted_func_0(value: int, _towel_owner: 'object') -> _typing.Any:"
@@ -258,6 +269,9 @@ def test_declared_return_type_is_used_when_every_site_returns_the_call(
             return text.strip()
         """,
     )
+    if not argument_ownership._supported_runtime():
+        assert "__extracted_func" not in result
+        return
     assert (
         _signature(result) == "def __extracted_func_0(value: int, _towel_owner: 'object') -> str:"
     )
@@ -558,5 +572,10 @@ def test_original_owned_annotated_local_partial_stays_refused(tmp_path: Path) ->
         skip_trivial_helpers=False, min_lines=2, annotate_helpers=False
     )
     assert engine.analyze_file(str(path)) == []
-    assert "owned_binding_frame_boundary" in engine.declined_pairs
+    reason = (
+        "owned_binding_frame_boundary"
+        if argument_ownership._supported_runtime()
+        else "lifetime_order_uncertified"
+    )
+    assert reason in engine.declined_pairs
     assert path.read_text() == source

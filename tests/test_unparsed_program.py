@@ -42,6 +42,8 @@ from typing import Dict, List, Mapping, Optional, Tuple
 
 import pytest
 
+from towel.unification import argument_ownership
+
 from tests.test_cli_integration import invoke
 from towel import program_files as program
 from towel.cli import _excluded_name
@@ -60,8 +62,8 @@ from towel.unification.exceptions import UnparsedProgramError
 from towel.unification.namespace_writes import scan_project_writes
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-NEWER = "lazy import json  # PEP 810: Python 3.15\n"
-"""A line no supported Python parses, standing for syntax newer than the running one."""
+NEWER = "def future_syntax(:\n"
+"""Malformed source standing for syntax the running interpreter cannot parse."""
 
 # Keep the loop target bound even for an empty range: these tests exercise
 # unrelated instrumentation policy, independently of opaque iterator lifetimes.
@@ -525,8 +527,15 @@ def test_an_excluded_instrumenter_does_not_veto_extraction(
     expected = _kernel_results(KERNELS)
     assert _kernel_results(SAFE_KERNELS) == expected
     kernels.write_text(SAFE_KERNELS)
-    assert _refactored(hand, ".", ("extras",), cross_module=False) == 1
-    assert kernels.read_text() != SAFE_KERNELS
+    applied = _refactored(hand, ".", ("extras",), cross_module=False)
+    if argument_ownership._supported_runtime():
+        assert applied == 1
+        assert kernels.read_text() != SAFE_KERNELS
+    else:
+        assert applied == 0 and kernels.read_text() == SAFE_KERNELS
+        engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
+        assert engine.analyze_file(str(kernels)) == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
     assert _kernel_results(kernels.read_text()) == expected
     assert (hand / "extras" / "fast.py").read_text() == HAND_APPLIED
 
@@ -584,7 +593,13 @@ def test_same_file_library_analysis_does_not_scan_unrelated_instrumenters(tmp_pa
     assert proposals == []
     kernels = project / "pkg" / "kernels.py"
     kernels.write_text(SAFE_KERNELS)
-    assert engine.analyze_files([str(kernels)], progress="none")
+    proposals = engine.analyze_files([str(kernels)], progress="none")
+    if argument_ownership._supported_runtime():
+        assert proposals
+    else:
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert kernels.read_text() == SAFE_KERNELS
 
 
 def test_the_towel_repository_parses_on_this_python() -> None:

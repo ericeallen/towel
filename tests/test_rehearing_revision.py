@@ -367,7 +367,7 @@ def test_real_discovery_and_render_restore_the_exact_candidate_and_name_seed(
 ) -> None:
     path = tmp_path / "m.py"
     source = "".join(
-        f"def {name}(value: int) -> int:\n    total = value + 1\n    doubled = total * 2\n    answer = doubled - {offset}\n    return answer\n\n"
+        f"def {name}() -> int:\n    value = 1\n    total = value + 1\n    doubled = total * 2\n    answer = doubled - {offset}\n    return answer\n\n"
         for name, offset in (("first", 3), ("second", 4))
     )
     path.write_text(source)

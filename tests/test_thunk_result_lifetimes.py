@@ -25,6 +25,7 @@ import sys
 
 import pytest
 import towel
+from towel.unification.argument_ownership import _supported_runtime
 from tests.test_thunk_ordering_cli import _MARKER
 
 _CASES = (
@@ -192,19 +193,28 @@ def test_opaque_factory_results_keep_their_original_lifetimes(
         timeout=120,
     )
     assert ran.returncode == 0, ran.stdout + ran.stderr
-    assert (
-        sum(int(count) for count in re.findall(r"Applied (\d+) refactoring\(s\)", ran.stdout)) > 0
-    )
+    applied = sum(int(count) for count in re.findall(r"Applied (\d+) refactoring\(s\)", ran.stdout))
+    if _supported_runtime():
+        assert applied > 0
+    else:
+        assert applied == 0
+        assert "lifetime_order_uncertified" in ran.stdout
     assert original.read_text() == source
     assert configuration.read_bytes() == original_configuration
     transformed = (output / "case.py").read_text()
-    assert transformed != source
+    if _supported_runtime():
+        assert transformed != source
+    else:
+        assert transformed == source
     driver = tmp_path / "observe.py"
     driver.write_text(_DRIVER)
     for mode in _MODES:
         before = _observe(driver, project, mode)
         after = _observe(driver, output, mode)
         assert after == before, (name, mode, before, after)
+    if not _supported_runtime():
+        assert not list(tmp_path.rglob("*.pyc"))
+        return
     module = ast.parse(transformed)
     helpers = [
         node
