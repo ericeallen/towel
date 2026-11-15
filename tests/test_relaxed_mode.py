@@ -19,7 +19,7 @@ a first run looks like. Finding 1: the quick start's callers carry
 ``_towel_arguments = [(amount,)]``, ``del amount`` and a ``pop()``. Finding
 2: the same rules decline most blocks short of a whole function body. Relaxed
 mode assumes a program does not depend on when its objects are finalized
-(docs/DECISIONS.md, "Relaxed mode is the default; strict mode keeps exact
+(docs/design/DECISIONS.md, "Relaxed mode is the default; strict mode keeps exact
 lifetimes"), so its callers are plain calls; strict mode is 1.949 exactly.
 
 The scenario fixtures are the audit's designed cases, copied under

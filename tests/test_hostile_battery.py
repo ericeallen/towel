@@ -820,7 +820,7 @@ RELAXED_OBSERVES_FINALIZATION: Dict[str, str] = {
 """Fixtures whose output differs in relaxed mode, each because it prints when an object is finalized.
 
 Relaxed mode assumes a program does not depend on when or in what order
-objects are finalized once it has stopped using them (docs/DECISIONS.md,
+objects are finalized once it has stopped using them (docs/design/DECISIONS.md,
 "Relaxed mode is the default; strict mode keeps exact lifetimes"). These
 fixtures were written to observe exactly that, so relaxed mode may reorder
 their finalizer lines; each entry says what the fixture watches. Any other

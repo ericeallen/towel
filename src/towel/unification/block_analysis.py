@@ -944,7 +944,7 @@ class BlockAnalysis(EngineState):
         later code could observe (see ``lifetime_bound_names``): the original
         kept it until the function returned, and a helper would drop it on
         its own return. Relaxed mode assumes no program observes that
-        (docs/DECISIONS.md, "Relaxed mode is the default; strict mode keeps
+        (docs/design/DECISIONS.md, "Relaxed mode is the default; strict mode keeps
         exact lifetimes"), except for a local bound to a resource whose
         finalizer destroys what the program can still reach (see
         ``resource_guard``); ``module`` is the block's parsed module, whose

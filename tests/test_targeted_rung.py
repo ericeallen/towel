@@ -14,7 +14,7 @@
 
 """Keep caller refinements and checker-reported result alternatives distinct.
 
-The 2026-09-27 decisions in docs/DECISIONS.md supersede this file's former
+The 2026-09-27 decisions in docs/design/DECISIONS.md supersede this file's former
 expectation that a lost Optional refinement could be hidden by an Any input.
 That proposal must now be declined before signature search. By contrast,
 mypy's Any alternative for returned NotImplemented belongs in the first

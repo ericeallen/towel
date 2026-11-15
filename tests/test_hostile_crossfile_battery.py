@@ -34,7 +34,7 @@ prints at import time, which the borrower's own import never ran; the four
 whose borrower rebinds ``len`` (``xf17``, ``xf18``, ``xf19``, ``xf22``); and
 ``xf23_relative_import_in_another_package``, whose subpackages ``pkg.x`` and
 ``pkg.y`` never import each other, so neither may gain an import of the
-other (docs/DECISIONS.md, "Import names come from the program");
+other (docs/design/DECISIONS.md, "Import names come from the program");
 ``xf7n_namesake_of_a_required_library``, whose ``zzlib/`` is a namesake of the
 distribution its ``pyproject.toml`` requires;
 ``xf9xi_namesake_lacking_a_module``, whose ``third_party/zzlib/`` lacks the
@@ -579,7 +579,7 @@ RELAXED_OBSERVES_FINALIZATION: Dict[str, str] = {}
 
 As in ``test_hostile_battery``: relaxed mode assumes a program does not
 depend on when objects are finalized once it has stopped using them
-(docs/DECISIONS.md, "Relaxed mode is the default; strict mode keeps exact
+(docs/design/DECISIONS.md, "Relaxed mode is the default; strict mode keeps exact
 lifetimes"). No cross-file fixture watches a finalizer, so the list is
 empty, and any difference in relaxed mode is a defect to fix.
 """
@@ -752,7 +752,7 @@ def test_cli_refuses_a_top_level_module_inside_the_package(tmp_path: Path) -> No
 
     The name ``helpers_top`` then belongs to the package and to the top level
     at once, so a ``--cross-module`` run refuses before it writes anything, as
-    it refuses a top-level package inside the package (docs/DECISIONS.md,
+    it refuses a top-level package inside the package (docs/design/DECISIONS.md,
     "Import names come from the program").
     """
     root = tmp_path.resolve() / "project"

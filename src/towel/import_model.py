@@ -21,7 +21,7 @@ can import. Towel used to choose one of these from packaging metadata or from
 the ``__init__`` chain, and every wrong choice was an import that broke an
 installed package: ``src.waitress.task``, ``foo.src.foo.a``, ``src.alpha.a``.
 The program's own imports already work wherever the program runs, so this
-module takes names from them and from nothing else (docs/DECISIONS.md, "Import
+module takes names from them and from nothing else (docs/design/DECISIONS.md, "Import
 names come from the program").
 
 The model is built once from a project's Python files:
@@ -1792,7 +1792,7 @@ def _used_packages(
     it fails wherever it runs, so it cannot show that a stray
     ``__init__.py`` makes a package. Test data importing a gone
     ``src.alpha_old`` once put ``alpha`` in doubt that way, and refused the
-    run (docs/DECISIONS.md, "An import problem refuses only when it leaves a
+    run (docs/design/DECISIONS.md, "An import problem refuses only when it leaves a
     name in doubt").
     """
     used: Set[Path] = set()
@@ -2021,7 +2021,7 @@ def _checked(
     AsyncResult`` is a namesake of a library this interpreter lacks, and the
     name is external. Where some import does resolve, the location is the
     name, and each one that does not is a problem, unless it never runs: a
-    type-only import is not an import edge (docs/DECISIONS.md, "A type-only
+    type-only import is not an import edge (docs/design/DECISIONS.md, "A type-only
     import is not an import edge"), so its file loads wherever it did. What
     a type-only import needs still counts in telling a namesake apart
     (:func:`_lacking_elsewhere`), so every unguarded one is returned.
@@ -2092,7 +2092,7 @@ def _lacking_elsewhere(
     ``import click.core`` shows it reaches. Run where the interpreter lacks
     click, Towel took the directory for the name and hosted a helper in
     ``click/utils.py`` that no installation of the program can import
-    (round-4 audit P1-3; docs/DECISIONS.md, "An import problem refuses only
+    (round-4 audit P1-3; docs/design/DECISIONS.md, "An import problem refuses only
     when it leaves a name in doubt": "the fix is to put that name in
     doubt"). An import that lacks is evidence of this only when:
 
@@ -2436,7 +2436,7 @@ def _places(site: ImportSite, modules: Mapping[Path, _Module]) -> bool:
     """Whether ``site`` shows where its top-level name lives: it attests, from a file leaving ``sys.path`` alone.
 
     Only such an import may locate a name, attest it for spelling, or put it
-    in doubt (docs/DECISIONS.md, "How the import model decides, and when a
+    in doubt (docs/design/DECISIONS.md, "How the import model decides, and when a
     problem refuses"). graphene's setup.py appends ``graphene`` to
     ``sys.path`` and then, inside ``try``, imports ``pyutils.version``: that
     says nothing about where ``pyutils`` lives for the program, and it once

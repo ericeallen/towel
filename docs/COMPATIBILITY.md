@@ -149,10 +149,10 @@ period as supported CLI flags.
 ## Upgrades and support
 
 Versions use PEP 440 ordering, not a strict Semantic Versioning promise. Read
-the [changelog](../CHANGELOG.md), upgrade in a branch, and run your project's
+the [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md), upgrade in a branch, and run your project's
 tests against the generated result. Pin Towel and optional tool versions in CI;
 update those pins deliberately.
 
 Security fixes are provided for the latest released version under the
-[security policy](../SECURITY.md). This is a solo-maintained project with
+[security policy](https://github.com/ericeallen/towel/blob/main/SECURITY.md). This is a solo-maintained project with
 best-effort support and no response-time commitment.

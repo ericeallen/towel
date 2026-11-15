@@ -288,7 +288,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
     """The engine: find duplicated blocks, verify an extraction for each, apply to a fixed point.
 
     Assembled from the mixins above, one per responsibility, over an
-    ``EngineState`` that declares what they share; docs/ARCHITECTURE.md maps
+    ``EngineState`` that declares what they share; docs/design/ARCHITECTURE.md maps
     each stage to its module. ``strict=False`` lets bare callers with bare helpers
     bypass the unresolved-import gate; ``strict=True`` gates every proposal.
     Both modes check prospective changes with the supplied oracle.
@@ -343,7 +343,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 absolute or a relative import for a cross-file helper, a name
                 read from packaging metadata; since 1.772 every import Towel
                 writes is spelled as the program's own imports show it works
-                (docs/DECISIONS.md, "Import names come from the program"), so
+                (docs/design/DECISIONS.md, "Import names come from the program"), so
                 there is nothing left to choose. Still accepted so existing
                 callers keep working; it will be removed in a later release.
             pep420_namespace_packages: Deprecated, and has no effect, for the
@@ -366,7 +366,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 callers call helpers directly; strict mode transfers argument
                 ownership, returns names held only for their lifetime, and
                 refuses blocks whose release order it cannot keep
-                (docs/DECISIONS.md, "Relaxed mode is the default; strict mode
+                (docs/design/DECISIONS.md, "Relaxed mode is the default; strict mode
                 keeps exact lifetimes").
             excluded_directories: Names of directories, or of files, to leave
                 unchanged, matched at any depth, such as a package's own test
@@ -385,13 +385,13 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 project's modules depend on each other at run time. A helper
                 whose annotations need a type another module defines still
                 gets a type-only import under ``if 0 > 1:``, which never
-                runs (docs/DECISIONS.md, *Cross-module extraction is opt-in*).
+                runs (docs/design/DECISIONS.md, *Cross-module extraction is opt-in*).
             skip_trivial_helpers: Apply optional forwarding and complete-syntax
                 usefulness filters (default: True). The latter compares the
                 complete helper and rendered callers with the work shared across
                 their sites. False bypasses
                 those output-quality filters, not semantic checks or unconditional
-                no-logic refusals (docs/DECISIONS.md, "Complete extractions must
+                no-logic refusals (docs/design/DECISIONS.md, "Complete extractions must
                 repay their generated syntax").
             reuse_existing_functions: Deprecated, and has no effect. It chose
                 whether a site that is the whole body of a plain module-level

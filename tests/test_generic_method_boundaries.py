@@ -242,7 +242,7 @@ def test_a_block_sibling_classes_share_is_a_module_function_the_checker_accepts(
 
     The base the classes have in common used to take it as a generic method,
     which made it a member of every subclass of ``Base``; no class gains one
-    now (docs/DECISIONS.md). The module function must pass the project's
+    now (docs/design/DECISIONS.md). The module function must pass the project's
     checker, or the extraction is declined and nothing changes.
     """
     path = _project(tmp_path, textwrap.dedent(SIBLINGS[program]))

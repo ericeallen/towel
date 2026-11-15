@@ -17,7 +17,7 @@
 Audit finding 1's remedy drops the names 1.949 returned only to keep their
 objects alive. For nearly every object that changes only when a finalizer
 runs; for a temporary directory it deletes files the caller is about to
-read. docs/DECISIONS.md, "Relaxed mode is the default; strict mode keeps
+read. docs/design/DECISIONS.md, "Relaxed mode is the default; strict mode keeps
 exact lifetimes", keeps a guard for a closed list of standard-library
 constructors (``towel.unification.resource_guard``). These tests pin the
 list's resolution through imports, the returned name, and the guard's
@@ -57,7 +57,7 @@ def _names(source: str) -> set[str]:
 
 
 def test_the_list_is_the_one_the_decision_names() -> None:
-    """An addition is a decision (docs/DECISIONS.md), so the list is pinned whole."""
+    """An addition is a decision (docs/design/DECISIONS.md), so the list is pinned whole."""
     assert RESOURCE_CONSTRUCTORS == {
         "tempfile.TemporaryDirectory",
         "tempfile.NamedTemporaryFile",

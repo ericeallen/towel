@@ -165,7 +165,7 @@ def find_duplicate_helpers(root: Path) -> list[str]:
 # whose extraction stops happening, or that starts to be refactored, moves in
 # or out of this set with an explanation in the commit, never silently.
 #
-# Relaxed mode, the default (docs/DECISIONS.md, "Relaxed mode is the default;
+# Relaxed mode, the default (docs/design/DECISIONS.md, "Relaxed mode is the default;
 # strict mode keeps exact lifetimes"), leaves four inputs alone:
 #
 # - bindings_comprehensions.py: every candidate block is a comprehension whose

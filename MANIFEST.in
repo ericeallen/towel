@@ -5,7 +5,7 @@ recursive-include tests/ecosystem_context_sources *
 recursive-include tests/fixtures *.py.txt
 recursive-include tests/licenses *.LICENSE
 recursive-include tests/release_evidence *.txt *.json *.gz
-include .github/workflows/ci.yml .github/workflows/ecosystem.yml
+include .github/workflows/ci.yml .github/workflows/ecosystem.yml .github/workflows/docs.yml
 recursive-include test_examples *.py *.md
 recursive-include test_examples_expected_output *.py
 recursive-include test_examples_strict_expected_output *.py
@@ -15,6 +15,7 @@ recursive-include scripts *
 exclude scripts/_debug_global_case.py scripts/debug_pair.py
 prune .templates
 recursive-include docs *.md
+include zensical.toml
 prune docs/docs_local
 prune .todo
 prune .claude

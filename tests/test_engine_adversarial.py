@@ -430,7 +430,7 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         The helper used to be hoisted into the nearest base the subclasses have
         in common, a class holding none of the code; it is now a function of
         one participating module, taking the receiver as its first argument,
-        and the other imports it (docs/DECISIONS.md, "A method helper lives in
+        and the other imports it (docs/design/DECISIONS.md, "A method helper lives in
         the class that holds both duplicates").
         """
         with tempfile.TemporaryDirectory() as tmpdir:

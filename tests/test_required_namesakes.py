@@ -20,7 +20,7 @@ where the interpreter lacks click, as ``uvx`` runs it, Towel took ``click/`` for
 the name, hosted a helper in ``click/utils.py`` and made ``app/core.py`` import
 it; installed as it ships, with the real click, ``app.core`` raised
 ImportError. A requirement the project declares, anywhere Towel reads one,
-now puts the name in doubt (docs/DECISIONS.md, "An import problem refuses only
+now puts the name in doubt (docs/design/DECISIONS.md, "An import problem refuses only
 when it leaves a name in doubt"). These tests read small fragments of every
 form, and one end-to-end run checks the auditor's layout against the program
 as it is installed.

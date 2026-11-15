@@ -505,7 +505,7 @@ def _add_strict_flag(options: argparse._ActionsContainer) -> None:
     """Add ``--strict``, shared by the commands that analyze a project.
 
     Off by default: relaxed mode assumes a program does not depend on when its
-    objects are finalized (docs/DECISIONS.md, "Relaxed mode is the default;
+    objects are finalized (docs/design/DECISIONS.md, "Relaxed mode is the default;
     strict mode keeps exact lifetimes").
     """
     options.add_argument(
@@ -1870,7 +1870,7 @@ def _judge_import_problems(target: Path, excluded: Sequence[str]) -> None:
     """Report what keeps the program's imports from naming its modules; refuse when the target's own.
 
     A helper shared across modules is imported by the name the program's own
-    imports give its host (docs/DECISIONS.md, "Import names come from the
+    imports give its host (docs/design/DECISIONS.md, "Import names come from the
     program"). So every problem is named before anything is written. One that
     leaves a name of the package being refactored in doubt refuses the run
     (:func:`_problems_involving`): Towel cannot tell which reading of the

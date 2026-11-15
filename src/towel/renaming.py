@@ -397,7 +397,7 @@ def _module_names(target: Path, paths: Sequence[Path]) -> dict[Path, str]:
 
     A rename follows every import of a helper to the definition it binds, by
     module name, so a module must be known by the name the program's imports
-    use for it (docs/DECISIONS.md, "Import names come from the program"),
+    use for it (docs/design/DECISIONS.md, "Import names come from the program"),
     read from the whole project around ``target``: the tests beside a ``src``
     layout import ``alpha.a``, whatever its packaging metadata says. A module
     they give no name keeps one no absolute import can spell, so that only a

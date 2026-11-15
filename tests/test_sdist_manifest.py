@@ -37,12 +37,15 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 READ_BY_THE_SUITE = (
     ".github/workflows/ci.yml",
     ".github/workflows/ecosystem.yml",
+    ".github/workflows/docs.yml",
+    "justfile",
     "tests",
     "test_examples",
     "test_examples_expected_output",
     "test_examples_strict_expected_output",
     "test_examples_crossfile",
     "test_examples_crossfile_expected_output",
+    "zensical.toml",
 )
 
 
@@ -58,6 +61,10 @@ def _name_matches(pattern: str, path: str) -> bool:
 
 def _under(directory: str, path: str) -> bool:
     return path.startswith(directory.rstrip("/") + "/")
+
+
+def _read(top: str, path: str) -> bool:
+    return path == top or _under(top, path)
 
 
 def _matcher(command: str, arguments: List[str]) -> Callable[[str], bool]:
@@ -107,7 +114,7 @@ def _tracked() -> FrozenSet[str]:
 def test_r9p2_every_tracked_file_the_suite_reads_is_in_the_sdist() -> None:
     tracked = _tracked()
     shipped = _shipped(tracked, (REPOSITORY / "MANIFEST.in").read_text(encoding="utf-8"))
-    read = {path for path in tracked if any(_under(top, path) for top in READ_BY_THE_SUITE)}
+    read = {path for path in tracked if any(_read(top, path) for top in READ_BY_THE_SUITE)}
     assert read, "the suite reads tracked files"
     assert sorted(read - shipped) == []
 

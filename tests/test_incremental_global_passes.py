@@ -14,7 +14,7 @@
 
 """Restricting global re-passes to changed files changes cost, not outcome.
 
-The argument is in docs/ARCHITECTURE.md ("Incremental global passes, and
+The argument is in docs/design/ARCHITECTURE.md ("Incremental global passes, and
 why they are exact"). This test pins the observable claim: the fixed point
 over a multi-file project produces byte-identical files with the
 restriction on and off, and the restriction really skips pairs.

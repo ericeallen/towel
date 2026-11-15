@@ -1920,7 +1920,7 @@ class PairEvaluation(
         if home.insert_into_class is None and home.insert_into_function is None:
             candidates += sorted(participating - {canonical_file})
         # Each other module must import the host by a name the program's own
-        # imports show to work where the program runs (docs/DECISIONS.md,
+        # imports show to work where the program runs (docs/design/DECISIONS.md,
         # "Import names come from the program"); a host no import is known to
         # reach from every borrower is never taken.
         program = self.import_graph.program_for(Path(canonical_file))

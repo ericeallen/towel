@@ -19,7 +19,7 @@ every function of a class body that loads ``super`` or ``__class__``, and the
 calling frame's first argument. A class-private helper compiled in the class
 that holds both duplicates, reached as ``self.__extracted_func_0()``, has the
 same cell and the same receiver first, so the code means there what it meant
-in the method (docs/DECISIONS.md, "A method helper lives in the class that
+in the method (docs/design/DECISIONS.md, "A method helper lives in the class that
 holds both duplicates"). Every other home is declined rather than taken: a
 module function has no cell, and a class that cannot keep a plain member, or
 a method whose receiver the helper would not share, gets nothing.

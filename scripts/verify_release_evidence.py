@@ -10,7 +10,7 @@
 
 """Verify completed, hash-bound local release evidence without running or publishing it.
 
-Schema 1 is documented in docs/RELEASING.md. Records are observations, not signed
+Schema 1 is documented in docs/maintainers/RELEASING.md. Records are observations, not signed
 attestations: this catches incomplete/stale/inconsistent evidence, not fabrication
 by someone who can rewrite all records. No retained command is ever executed.
 """

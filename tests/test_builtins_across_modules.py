@@ -87,7 +87,7 @@ def _refactor(
     project: Path, *, parameterize_builtins: bool = False
 ) -> Tuple[int, Mapping[str, int]]:
     """Refactor ``project/pkg`` in place; how many refactorings applied, and why pairs were declined."""
-    # Every pair here spans modules, which is opt-in (docs/DECISIONS.md).
+    # Every pair here spans modules, which is opt-in (docs/design/DECISIONS.md).
     engine = UnificationRefactorEngine(
         # These minimal binding cases test semantics, independently of the
         # product's default readability filter.

@@ -126,3 +126,6 @@ _towel_probe_*.py
 # Installed on demand by `just check-diagrams`
 node_modules/
 scripts/ecosystem/*.whl
+
+# The documentation site, built by `just docs`
+/site/

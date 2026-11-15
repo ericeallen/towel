@@ -141,7 +141,7 @@ groups tutorials, task guides, technical reference, design decisions and
 release evidence. Contributors can start with
 [development setup and checks](https://github.com/ericeallen/towel/blob/v1.949/CONTRIBUTING.md);
 release maintainers should follow the
-[release procedure](https://github.com/ericeallen/towel/blob/v1.949/docs/RELEASING.md).
+[release procedure](https://github.com/ericeallen/towel/blob/v1.949/docs/maintainers/RELEASING.md).
 Report security issues through the
 [security policy](https://github.com/ericeallen/towel/blob/v1.949/SECURITY.md).
 

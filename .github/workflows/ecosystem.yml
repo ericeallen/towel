@@ -25,7 +25,7 @@ jobs:
       - run: uv sync --frozen --extra dev
       # python-dateutil's post_install hook builds its zoneinfo from the IANA
       # archive its pinned zonefile_metadata.json names, which a fresh clone
-      # lacks (docs/RELEASING.md). Clone it at the manifest's pin where the
+      # lacks (docs/maintainers/RELEASING.md). Clone it at the manifest's pin where the
       # harness clones it, which then reuses the clone, and put the archive
       # there from a pinned URL with a pinned SHA-256. dateutil's own script
       # checks the SHA-512 its metadata records as well. A pin that names

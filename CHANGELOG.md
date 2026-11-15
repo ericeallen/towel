@@ -1,12 +1,12 @@
 # Changelog
 
 All notable changes to Towel are recorded here. This file summarizes releases;
-[docs/RELEASE_LOG.md](docs/RELEASE_LOG.md) keeps the detailed engineering log,
-and [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) records the
+[docs/RELEASE_LOG.md](docs/maintainers/RELEASE_LOG.md) keeps the detailed engineering log,
+and [docs/PRODUCTION_READINESS.md](docs/maintainers/PRODUCTION_READINESS.md) records the
 ecosystem evidence behind each claim. The format follows
 [Keep a Changelog](https://keepachangelog.com/). Versions use mathematical
 mnemonics with PEP 440 ordering; see the
-[version convention](docs/RELEASING.md#version-number-convention).
+[version convention](docs/maintainers/RELEASING.md#version-number-convention).
 
 ## [Unreleased]
 
@@ -22,7 +22,7 @@ mnemonics with PEP 440 ordering; see the
 Product-experience and maturity improvements. See the
 [release history](https://github.com/ericeallen/towel/releases) for completed
 validation and publication records. The dated
-[preparation checkpoint](docs/PRODUCTION_READINESS.md#1949-preparation-checkpoint-november-8-2026)
+[preparation checkpoint](docs/maintainers/PRODUCTION_READINESS.md#1949-preparation-checkpoint-november-8-2026)
 retains the status of its original candidate.
 
 - Select extractions using the complete helper and every rendered caller,
@@ -55,7 +55,7 @@ retains the status of its original candidate.
 Correctness and CLI repairs after 1.947. See the
 [release history](https://github.com/ericeallen/towel/releases) for completed
 validation and publication records. The dated
-[preparation record](docs/PRODUCTION_READINESS.md#1948-preparation-checkpoint-november-5-2026)
+[preparation record](docs/maintainers/PRODUCTION_READINESS.md#1948-preparation-checkpoint-november-5-2026)
 retains the status of its original checkpoint.
 
 - Require the live GitHub default branch to contain the validated release and
@@ -63,7 +63,7 @@ retains the status of its original checkpoint.
   workflow rechecks that public view. Refresh the default-branch documentation
   with the completed 1.947 publication and validation results.
 - Repair four silent miscompilations of 1.947 found from the Gemini review of
-  October 31 ([report](docs/reviews/gemini-2026-10-31/REPORT.md)):
+  October 31 ([report](docs/maintainers/reviews/gemini-2026-10-31/REPORT.md)):
   - A method's bare read and a method's `nonlocal` now resolve past the class
     body to the enclosing function, as Python resolves them, so a variable
     another function rebinds is no longer passed eagerly because a class
@@ -89,7 +89,7 @@ retains the status of its original checkpoint.
 
 ## [1.947]
 
-Audit repairs after published 1.946; see the [1.947 overview](docs/RELEASE_1_947.md).
+Audit repairs after published 1.946; see the [1.947 overview](docs/maintainers/RELEASE_1_947.md).
 Published October 26, 2026 from `8a853126f5499eb11dfa04fbe304dc332dc5ef73`.
 The [GitHub release](https://github.com/ericeallen/towel/releases/tag/v1.947)
 records the completed validation, known corpus limitations, performance
@@ -160,9 +160,9 @@ October 19, 2026. The historical preparation record below retains its original
 sources, measurements and incomplete candidate gates. The maintainer had
 requested scoped source-proof reuse, fresh supported-interpreter suites and
 cache-on/off output comparisons; see the dated
-[publication checkpoint](docs/RELEASING.md#1946-publication-checkpoint-october-18-2026).
+[publication checkpoint](docs/maintainers/RELEASING.md#1946-publication-checkpoint-october-18-2026).
 Changes since released 1.792 are described together in the
-[1.946 overview](docs/RELEASE_1_946.md).
+[1.946 overview](docs/maintainers/RELEASE_1_946.md).
 
 The completed development audit at `9d57b0d` passed 10,583 tests and 45
 subtests, with 32 skips and 93.478% coverage. Six consumer original-command
@@ -180,14 +180,14 @@ on 2026-10-18 (shared native host, interleaved samples) measured Rich at
 +7.6% and attributed it to the fresh source-correspondence proof for `if`
 outputs, which the 2026-10-10 decision keeps uncached. Click's larger
 difference mostly pays for its fifth extraction. The regression ships
-documented; see [where the remaining time goes](docs/RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
+documented; see [where the remaining time goes](docs/maintainers/RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
 
 On the earlier `9d57b0d` eight-sample shared-host comparison, complete cold CLI
 means were 46.53 → 56.69 seconds for Click (+21.85%) and 99.77 → 177.70
 seconds for Rich (+78.10%) versus released 1.792. These are two samples per
 version per workload, not an isolated-host or general speed claim. See the
 [performance evidence](docs/PERFORMANCE.md) and
-[readiness report](docs/PRODUCTION_READINESS.md).
+[readiness report](docs/maintainers/PRODUCTION_READINESS.md).
 
 ### Improvements and repairs
 
@@ -425,7 +425,7 @@ release verification binds the final versioned source to its own evidence.
   Validation-only artifacts remain explicitly nonpublishable.
 - Completed corrected-source validation has immutable evidence and documentary
   regressions for actual platform coverage, resources, elapsed time and scoped
-  exceptions; see [the report](docs/proposals/next-validation-final.md).
+  exceptions; see [the report](docs/design/proposals/next-validation-final.md).
 
 - Extraction discovery now includes match-case bodies and except-star
   handlers/finally. List-valued AST fields can unify differing expression
@@ -553,7 +553,7 @@ published 1.772 wheel found no meaningful Packaging whole-command speedup
 candidate performed one more extraction). Sphinx's first Pyright reveal fell
 from 931.07 to 8.63 seconds, about 108 times faster, with identical requests
 and answers. This measures the reveal phase only; it establishes no full-run
-or whole-corpus speedup. See the [measurements and limitations](docs/proposals/published-1772-comparison.md).
+or whole-corpus speedup. See the [measurements and limitations](docs/design/proposals/published-1772-comparison.md).
 
 The typed timings below compare intermediate commits `35035a7` and `1b97196`;
 later changes are outside these measurements.
@@ -568,7 +568,7 @@ later changes are outside these measurements.
   Sphinx startup workload, 218 exchanges became one, with identical requests
   and reported types; initial reveal time fell from 980.7 to 8.65 seconds.
   This is a phase measurement, not a full-run timing. See the
-  [comparison details](docs/proposals/next-release.md#typed-performance-comparisons).
+  [comparison details](docs/design/proposals/next-release.md#typed-performance-comparisons).
 - An earlier development snapshot indexed immutable module/class definitions
   once per module tree for instrumentation resolution. A packaging scan made
   558 identity queries instead of 36,741, retaining the exact same application
@@ -591,7 +591,7 @@ later changes are outside these measurements.
   fixture needed 226 walks instead of 2,666 with this memo alone; all 23
   proposals rendered byte-identically and compiled. The combined policy
   change and memo also preserved those outputs. See the
-  [measurement and regression checks](docs/proposals/performance-roadmap.md#method-placement-after-1772).
+  [measurement and regression checks](docs/design/proposals/performance-roadmap.md#method-placement-after-1772).
 - Resolving a receiver annotation now shares the module's binding scan for
   that name. An eight-method `Self` fixture makes 336 queries but scans once,
   producing the same proposal. Cached statement tuples preserve order and
@@ -1894,7 +1894,7 @@ the correlation the call sites had.
   another function's binder. Where a constrained generic function makes mypy
   report several specializations for one probe, the evidence is treated as
   ambiguous rather than resolved arbitrarily. Both are recorded in
-  [the type-parameter design](docs/proposals/type-parameters.md).
+  [the type-parameter design](docs/design/proposals/type-parameters.md).
 
 ## [1.732.post1] - 2026-09-19
 
@@ -2019,7 +2019,7 @@ Changes since 1.618.
   existing source annotations and generates unannotated helpers. Checker
   crashes and timeouts remain distinct failures; checking is never silently disabled.
   A clean baseline keeps verification enabled for subsequent proposals.
-- A [proposal for type-parameter inference](docs/proposals/type-parameters.md)
+- A [proposal for type-parameter inference](docs/design/proposals/type-parameters.md)
   records how generic helpers could preserve relationships among arguments
   and return values. This work is deferred beyond 1.732.
 - Property-based tests (hypothesis, in the `dev` extra) check that alpha-variant
@@ -2657,7 +2657,7 @@ affected project's own tests.
 ### Fixed
 - A large set of soundness and scope defects found by adversarial batteries and
   the ecosystem check, each now covered by a fixture and a row in
-  [docs/ADVERSARIAL_REVIEW.md](docs/ADVERSARIAL_REVIEW.md).
+  [docs/ADVERSARIAL_REVIEW.md](docs/maintainers/ADVERSARIAL_REVIEW.md).
 
 ### Notes
 - The PyPI releases `1.0.0`–`1.0.4` are yanked for broken import handling and

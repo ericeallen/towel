@@ -14,7 +14,7 @@
 
 """A method helper is class-private, so nothing outside its class can reach it.
 
-docs/DECISIONS.md ("A method helper lives in the class that holds both
+docs/design/DECISIONS.md ("A method helper lives in the class that holds both
 duplicates") names the helper ``__extracted_func_0``, which its class ``A``
 stores as ``_A__extracted_func_0`` and its methods call as
 ``self.__extracted_func_0()``. A subclass, in the project or outside it, that

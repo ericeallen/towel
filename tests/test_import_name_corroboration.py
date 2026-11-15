@@ -20,7 +20,7 @@ built wheels they named 102 files of seven corpus projects wrongly
 when a project directory is named like its package (``foo.src.foo.a``);
 requiring two derivations to agree then declined exactly those helpers. Towel
 now spells every import as the program's own imports show it works
-(docs/DECISIONS.md, "Import names come from the program"). Each case runs
+(docs/design/DECISIONS.md, "Import names come from the program"). Each case runs
 ``towel dry --cross-module`` over a layout that broke before, checks that the
 cross-module helpers it exists for were written, and then runs the result
 two ways: in the source tree with the ``sys.path`` its runner sets up, and
