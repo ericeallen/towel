@@ -240,9 +240,9 @@ def main() -> None:
     result_stdout = sys.stdout
     configure_stderr_logging()
     _settings().enable_debug_logging()
-    if sys.version_info[:2] > (3, 13):
+    if sys.version_info[:2] > (3, 15):
         print(
-            "Warning: Towel is validated on Python 3.11–3.13; this interpreter is outside "
+            "Warning: Towel is validated on Python 3.11–3.15; this interpreter is outside "
             "that range. Review changes and run your project's tests.",
             file=sys.stderr,
         )

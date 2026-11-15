@@ -49,7 +49,7 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import ecosystem_check as ecosystem  # noqa: E402
 
-VERSIONS = ("3.11", "3.12", "3.13")
+VERSIONS = ("3.11", "3.12", "3.13", "3.14", "3.15")
 REQUIRED_RECORDS = (
     "source.json",
     "run-matrix.sh",

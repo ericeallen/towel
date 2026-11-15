@@ -237,16 +237,17 @@ def test_real_process_timeout_leaves_original_and_destination_intact(
     assert not list(tmp_path.glob(".towel-transaction-*"))
 
 
-def test_newer_python_warning_does_not_contaminate_json(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("minor, warns", [(14, False), (15, False), (16, True)])
+def test_python_support_warning_does_not_contaminate_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, minor: int, warns: bool
 ) -> None:
     source = _source(tmp_path)
     # Change only the CLI's version view, not the interpreter used by AST or tools.
-    monkeypatch.setattr(sys, "version_info", (3, 14, 0))
+    monkeypatch.setattr(sys, "version_info", (3, minor, 0))
     result = invoke(["preview", str(source), "--json", *FLAGS])
     assert result.status == 0, result.stderr
     assert json.loads(result.stdout)["schema_version"] == 1
-    assert "outside that range" in result.stderr
+    assert ("outside that range" in result.stderr) is warns
 
 
 def test_timeout_during_analysis_cleans_the_private_stage(

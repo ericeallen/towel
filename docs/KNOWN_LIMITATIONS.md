@@ -2108,7 +2108,7 @@ without `--run-untrusted-code`; use a disposable machine or container.
 
 ## Resources and platform
 
-Python 3.11 to 3.13 on a POSIX system (macOS or Linux). Applying changes needs
+Python 3.11 to 3.15 on a POSIX system (macOS or Linux). Applying changes needs
 POSIX filesystem semantics. Parallel analysis uses the `fork` start method;
 under other start methods analysis runs on a single core. Windows is not a
 supported or validated release platform.

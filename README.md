@@ -15,7 +15,7 @@ The PyPI package is **[`code-towel`](https://pypi.org/project/code-towel/)**;
 the command is **`towel`**. The PyPI name `towel` belongs to an unrelated project,
 so `pip install towel` and `uvx towel` will not install this tool.
 
-Towel runs on Python 3.11 to 3.13. Install it as a command-line tool in an
+Towel runs on Python 3.11 to 3.15. Install it as a command-line tool in an
 environment of its own, with [uv](https://docs.astral.sh/uv/) or
 [pipx](https://pipx.pypa.io/):
 
@@ -96,7 +96,7 @@ covers exclusions, bounded runs, output formats and recovery.
 
 ## Requirements
 
-Python 3.11 to 3.13 on a POSIX system (macOS or Linux). Applying changes needs
+Python 3.11 to 3.15 on a POSIX system (macOS or Linux). Applying changes needs
 POSIX filesystem semantics. Parallel analysis uses the `fork` start method;
 under other start methods analysis runs on a single core. Windows is not a
 supported or validated release platform.
