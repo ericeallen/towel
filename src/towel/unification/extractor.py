@@ -841,6 +841,24 @@ def _names_tuple(names: List[str]) -> ast.expr:
     return ast.Tuple(elts=[ast.Name(id=name, ctx=ast.Load()) for name in names], ctx=ast.Load())
 
 
+def _parameter_source_order(
+    names: Sequence[str], body: Sequence[ast.stmt], source_parameters: Sequence[str]
+) -> List[str]:
+    """Receiver, enclosing parameters, then remaining inputs at their first textual use."""
+    mentions = sorted(
+        (node for statement in body for node in ast.walk(statement) if isinstance(node, ast.Name)),
+        key=lambda node: (getattr(node, "lineno", float("inf")), getattr(node, "col_offset", 0)),
+    )
+    available = set(names)
+    return list(
+        dict.fromkeys(
+            name
+            for name in ("self", "cls", *source_parameters, *(node.id for node in mentions), *names)
+            if name in available
+        )
+    )
+
+
 class HygienicExtractor:
     """
     Extract code into a function while maintaining hygiene and
@@ -862,6 +880,7 @@ class HygienicExtractor:
         global_decls: Optional[Set[str]] = None,
         nonlocal_decls: Optional[Set[str]] = None,
         function_name: str = "extracted_function",
+        source_parameters: Sequence[str] = (),
     ) -> Tuple[ast.FunctionDef, Dict[str, int]]:
         """
         Extract code into a function.
@@ -881,6 +900,7 @@ class HygienicExtractor:
                 the same reason across an enclosing function scope.
             function_name: Requested name for the helper; made unique against
                 ``enclosing_names``.
+            source_parameters: The first site's enclosing parameters, in declaration order.
 
         Returns:
             Tuple of (function AST node, parameter order dict).
@@ -892,8 +912,8 @@ class HygienicExtractor:
         # shadows an existing binding.
         function_name = self._ensure_unique_name(function_name, enclosing_names)
         # Unified parameters keep their exact names (``__param_N``): the body
-        # substitution and the substitution's lookups depend on them. They come
-        # first, to preserve evaluation order, then the free variables.
+        # substitution and the substitution's lookups depend on them. Order
+        # the retained inputs after substitution, when first uses are known.
         param_names_unified = list(substitution.param_expressions.keys())
         all_param_names = param_names_unified + sorted(free_variables)
         if len(set(all_param_names)) != len(all_param_names):
@@ -928,7 +948,11 @@ class HygienicExtractor:
             | names.declared_global
             | names.declared_nonlocal
         )
-        all_param_names = [name for name in all_param_names if name in needed]
+        all_param_names = _parameter_source_order(
+            [name for name in all_param_names if name in needed],
+            final_body,
+            [name for name in source_parameters if name in free_variables],
+        )
         param_order = {name: idx for idx, name in enumerate(all_param_names)}
         # Synthetic double-underscore names denote positional-only parameters
         # to type checkers. Every generated call passes its arguments by position;

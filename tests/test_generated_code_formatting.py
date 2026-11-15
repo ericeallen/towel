@@ -120,11 +120,14 @@ def test_black_settings_default_without_configuration(tmp_path: Path) -> None:
     assert BlackSettings.for_project(tmp_path / "m.py") == BlackSettings()
 
 
-def test_engine_inserts_unparsed_text_without_a_formatter(tmp_path: Path) -> None:
+def test_engine_preserves_call_text_without_a_formatter(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(DUPLICATED_STRINGS)
     result = _refactor(path)
-    assert "__extracted_func_0('Mr. '" in result
+    assert (
+        "__extracted_func_0(name, a_rather_long_parameter_name, "
+        "another_long_parameter_name, 'Mr. ')"
+    ) in result
     assert _evaluate(result) == _evaluate(DUPLICATED_STRINGS)
 
 
@@ -132,7 +135,10 @@ def test_engine_formats_helper_and_calls_with_black(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(DUPLICATED_STRINGS)
     result = _refactor(path, snippet_formatter=black_formatter(BlackSettings(line_length=60)))
-    assert '__extracted_func_0(\n        "Mr. ",' in result, result
+    assert (
+        "__extracted_func_0(\n        name,\n        a_rather_long_parameter_name,\n"
+        '        another_long_parameter_name,\n        "Mr. ",\n    )'
+    ) in result, result
     # The helper's long line is wrapped to the configured width and its
     # strings are normalized; the surrounding original text is untouched.
     assert "prefix = 'Mr. '" not in result

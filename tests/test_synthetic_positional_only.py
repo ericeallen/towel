@@ -38,7 +38,7 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.substitution import Substitution
 
 
-def test_synthetic_parameters_are_positional_only_and_free_names_follow() -> None:
+def test_synthetic_parameters_and_preceding_free_names_are_positional_only() -> None:
     block = ast.parse("answer = value + 7\nreturn answer\n").body
     substitution = Substitution()
     substitution.add_mapping(0, ast.Constant(value=7), "__param_0")
@@ -49,9 +49,9 @@ def test_synthetic_parameters_are_positional_only_and_free_names_follow() -> Non
         enclosing_names=set(),
         is_value_producing=True,
     )
-    assert [arg.arg for arg in helper.args.posonlyargs] == ["__param_0"]
-    assert [arg.arg for arg in helper.args.args] == ["value"]
-    assert order == {"__param_0": 0, "value": 1}
+    assert [arg.arg for arg in helper.args.posonlyargs] == ["value", "__param_0"]
+    assert not helper.args.args
+    assert order == {"value": 0, "__param_0": 1}
     generated = HygienicExtractor().generate_call(
         function_name=helper.name,
         block_idx=0,

@@ -783,7 +783,10 @@ def test_typed_shared_helper_with_comments_is_applicable_without_mutating_propos
         assert _line_holding(host, "total += value * 2").endswith("# noqa: E501")
         helper = ast.parse(host).body[0]
         assert isinstance(helper, ast.FunctionDef)
-        assert any(isinstance(arg.annotation, ast.Constant) for arg in helper.args.args)
+        assert any(
+            isinstance(arg.annotation, ast.Constant)
+            for arg in (*helper.args.posonlyargs, *helper.args.args)
+        )
         assert oracle.check_project(written) == CheckSuccess()
         assert {str(path): path.read_text() for path in paths} == originals
     finally:

@@ -143,7 +143,7 @@ print(first(Config(), 2), second(Config(), 4))
         # cleanup; it has an ownership effect even without a body read.
         assert parameters[-1].arg == "_towel_owner"
         assert parameters[-1].arg not in referenced
-        assert [parameter.arg for parameter in parameters[:-1]] == ["__param_0", "value"]
+        assert [parameter.arg for parameter in parameters[:-1]] == ["value", "__param_0"]
         assert all(parameter.arg in referenced for parameter in parameters[:-1]), ast.unparse(
             helper
         )
@@ -160,7 +160,7 @@ print(first(Config(), 2), second(Config(), 4))
                 and isinstance(node.func, ast.Name)
                 and node.func.id == helper.name
             ]
-            assert original_argument_name(function, call.args[-2]) == "value"
+            assert original_argument_name(function, call.args[0]) == "value"
             holder = call.args[-1]
             assert isinstance(holder, ast.Call) and isinstance(holder.func, ast.Attribute)
             assert holder.func.attr == "pop" and not holder.args and not holder.keywords

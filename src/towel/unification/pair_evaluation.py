@@ -127,7 +127,7 @@ from .models import (
     Replacement,
 )
 from .orphan_detector import orphaned_variables
-from .parameters import fresh_parameter_name
+from .parameters import fresh_parameter_name, parameter_names
 from .scope_analyzer import Scope, ScopeAnalyzer
 from .semantic_safety import (
     created_object_escapes,
@@ -1429,6 +1429,7 @@ class PairEvaluation(
         try:
             func_def, param_order = self.extractor.extract_function(
                 template_block=pair.block1_nodes,
+                source_parameters=tuple(parameter_names(ctx.func1.args)),
                 substitution=unified.substitution,
                 free_variables=free.free_vars,
                 enclosing_names=scope.enclosing_names | free.module_names,
@@ -1528,6 +1529,7 @@ class PairEvaluation(
             self._add_clustered_replacements(
                 HelperTemplate(
                     pair=pair,
+                    source_parameters=tuple(parameter_names(setup.ctx.func1.args)),
                     func_def=rendered.func_def,
                     func_def_dump=canonical_dump(rendered.func_def),
                     param_order=rendered.param_order,

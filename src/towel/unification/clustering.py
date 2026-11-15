@@ -200,6 +200,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         try:
             candidate_helper, candidate_order = HygienicExtractor().extract_function(
                 template_block=pair.block1_nodes,
+                source_parameters=template.source_parameters,
                 substitution=subst2,
                 free_variables=template.free_vars,
                 enclosing_names=template.enclosing_names,

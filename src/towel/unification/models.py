@@ -432,6 +432,7 @@ class HelperTemplate:
     # What the template block's function declares ``global`` and ``nonlocal``:
     # an occurrence may join only where its function declares alike.
     declared: Tuple[FrozenSet[str], FrozenSet[str]] = (frozenset(), frozenset())
+    source_parameters: Tuple[str, ...] = ()
 
 
 def span_contains(node: ast.stmt, line_range: Tuple[int, int]) -> bool:
