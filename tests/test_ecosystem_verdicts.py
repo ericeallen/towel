@@ -66,6 +66,7 @@ def _phase(path: Path, code: int, output: str, *, timed_out: bool = False) -> ec
         ("PASS", 0),
         ("NO_CHANGE", 0),
         ("BROKEN_KNOWN", 0),
+        ("REFUSED", 0),
         ("SETUP_ERROR", 1),
         ("BASELINE_ERROR", 1),
         ("REFUSAL_MALFORMED", 1),
@@ -146,6 +147,7 @@ def _check(
     refactor: tuple[int, str] = (0, "Applied 1 refactoring\n"),
     refactor_timed_out: bool = False,
     refactor_retry: Optional[tuple[int, str]] = None,
+    expected_refusal: Optional[ecosystem.ExpectedRefusal] = None,
 ) -> ecosystem.Result:
     source = root / "fixture"
     source.mkdir()
@@ -197,6 +199,7 @@ def _check(
         known_failures=("test_case.py::test_frame",) if known else (),
         failure_exit_codes=failure_exit_codes,
         test=test,
+        expected_refusal=expected_refusal,
     )
     return ecosystem.check_project(project, root, CANDIDATE, 10, no_types)
 
@@ -1133,6 +1136,226 @@ def test_a_refusal_that_does_not_say_what_to_do_fails_the_corpus(
     assert missing in result.detail
 
 
+ENVIRONMENT_ROOT = ENVIRONMENT.python.parent.parent
+"""The stubbed project environment, whose site-packages a refusal names."""
+INSTALLED_COPY = (
+    "fixture could be any of: package.py; outside the project "
+    f"({ENVIRONMENT_ROOT}/lib/python3.12/site-packages/fixture/__init__.py)"
+)
+"""A problem as the refusal lists it in this run: the installed copy at its real path."""
+EXPECTED = ecosystem.ExpectedRefusal(
+    "reviewed: the fixture is installed outside its tree",
+    (
+        "fixture could be any of: package.py; outside the project ({site-packages}/fixture/__init__.py)",
+    ),
+)
+SECOND_COPY = "helpers could be any of: helpers; build/lib/helpers"
+
+
+def _refusal_output(*problems: str) -> str:
+    """What Towel prints when it refuses to share helpers across a project's modules."""
+    return (
+        "Error: Refusing to share helpers across the modules of /work/fixture-ready/package.py:"
+        " the program's imports do not name them unambiguously, so no import of one could be"
+        " shown to work:\n"
+        + "".join(f"  {problem}\n" for problem in problems)
+        + "(3 other problem(s) alone would not stop the run.)\n"
+        "For a copy installed outside the project, which --exclude cannot reach: run Towel from"
+        " an environment where that name is this tree.\n"
+    )
+
+
+def test_a_refusal_the_manifest_expects_in_exactly_its_words_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(1, _refusal_output(INSTALLED_COPY)),
+        expected_refusal=EXPECTED,
+    )
+    assert result.verdict == "REFUSED" and result.detail == EXPECTED.reason
+    assert result.after is None and result.changed_files == 0
+    assert (tmp_path / "fixture-ready/package.py").read_text() == "value = 1\n"
+
+
+def test_an_unexpected_refusal_is_still_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refusal no manifest entry reviewed is news, and the run must say so."""
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(1, _refusal_output(INSTALLED_COPY)),
+    )
+    assert result.verdict == "CRASH"
+
+
+@pytest.mark.parametrize(
+    "refactor,difference",
+    [
+        pytest.param(
+            (1, _refusal_output(INSTALLED_COPY, SECOND_COPY)),
+            f"also lists: {SECOND_COPY}",
+            id="a-new-problem",
+        ),
+        pytest.param(
+            (1, _refusal_output(SECOND_COPY)),
+            "no longer lists: fixture could be any of",
+            id="a-different-problem",
+        ),
+        pytest.param(
+            (1, _refusal_output(INSTALLED_COPY.replace(str(ENVIRONMENT_ROOT), "/elsewhere"))),
+            "also lists: fixture could be any of: package.py; outside the project (/elsewhere",
+            id="a-copy-outside-the-project-environment",
+        ),
+        pytest.param(
+            (
+                1,
+                "Traceback (most recent call last):\nKeyError: 'x'\n"
+                + _refusal_output(INSTALLED_COPY),
+            ),
+            "it printed a traceback",
+            id="a-crash-beside-the-refusal",
+        ),
+        pytest.param(
+            (2, _refusal_output(INSTALLED_COPY)),
+            "exit 2, where a refusal exits 1",
+            id="another-exit-status",
+        ),
+        pytest.param((1, "Killed\n"), "it reported no error", id="no-refusal-at-all"),
+        pytest.param(
+            (1, "Error: Refusing to share helpers\n(1 other problem(s))\n"),
+            "no longer lists",
+            id="a-refusal-listing-nothing",
+        ),
+    ],
+)
+def test_an_expected_refusal_passes_only_in_its_reviewed_words(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    refactor: tuple[int, str],
+    difference: str,
+) -> None:
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=refactor,
+        expected_refusal=EXPECTED,
+    )
+    assert result.verdict == "CRASH"
+    assert result.detail.startswith("not the expected refusal: ")
+    assert difference in result.detail
+
+
+def test_a_signalled_refactor_is_a_crash_even_where_a_refusal_is_expected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check(
+        tmp_path,
+        monkeypatch,
+        (0, "3 passed in 0.01s\n"),
+        (0, "3 passed in 0.01s\n"),
+        refactor=(-signal.SIGKILL, _refusal_output(INSTALLED_COPY)),
+        expected_refusal=EXPECTED,
+    )
+    assert result.verdict == "CRASH" and "signal" in result.detail
+
+
+def test_expected_refusals_name_paths_the_same_on_any_runner_and_interpreter(
+    tmp_path: Path,
+) -> None:
+    real = tmp_path / "real"
+    (real / "fixture-env").mkdir(parents=True)
+    work = tmp_path / "link"
+    work.symlink_to(real)
+    environment = work / "fixture-env"
+    text = (
+        f"  a ({real}/fixture-env/lib/python3.13/site-packages/a/__init__.py)\n"
+        f"  b ({work}/fixture-env/lib/python3.12/site-packages/b.py)\n"
+        f"  c ({real}/fixture-ready/c.py; {work}/other-env/lib/python3.12/site-packages/c.py)\n"
+    )
+    assert ecosystem.written_as_expected(text, environment, work) == (
+        "  a ({site-packages}/a/__init__.py)\n"
+        "  b ({site-packages}/b.py)\n"
+        "  c ({work}/fixture-ready/c.py; {work}/other-env/lib/python3.12/site-packages/c.py)\n"
+    )
+
+
+def test_listed_problems_are_the_indented_lines_right_after_the_error() -> None:
+    assert ecosystem.listed_problems(_refusal_output("one", "two")) == ("one", "two")
+    assert ecosystem.listed_problems("warning: earlier\n  not a problem\nError: x\n") == ()
+    assert ecosystem.listed_problems("Applied 1 refactoring\n  indented\n") is None
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        'problems = ["a"]',
+        'reason = "why"',
+        'reason = " "\nproblems = ["a"]',
+        'reason = "why"\nproblems = []',
+        'reason = "why"\nproblems = ["a", "a"]',
+        'reason = "why"\nproblems = "a"',
+        'reason = "why"\nproblems = [""]',
+        'reason = "why"\nproblems = ["a"]\nmatch = "substring"',
+    ],
+)
+def test_an_expected_refusal_must_be_a_complete_reviewed_table(tmp_path: Path, table: str) -> None:
+    manifest = tmp_path / "manifest.toml"
+    manifest.write_text(
+        '[[project]]\nname = "fixture"\nurl = "unused"\npackage = "package.py"\n\n'
+        f"[project.expected_refusal]\n{table}\n"
+    )
+    with pytest.raises(ValueError, match="fixture: expected_refusal"):
+        ecosystem.load_manifest(manifest, [])
+
+
+def test_the_report_names_refusals_seen_and_expectations_not_seen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    refused = ecosystem.Project("refused", "unused", "pinned", "a.py", expected_refusal=EXPECTED)
+    stale = ecosystem.Project("stale", "unused", "pinned", "b.py", expected_refusal=EXPECTED)
+    verdicts = {"refused": ("REFUSED", EXPECTED.reason), "stale": ("PASS", "")}
+    monkeypatch.setattr(ecosystem, "load_manifest", lambda *_: [refused, stale])
+    monkeypatch.setattr(
+        ecosystem,
+        "check_project",
+        lambda project, *_: ecosystem.Result(
+            project.name, verdicts[project.name][0], detail=verdicts[project.name][1]
+        ),
+    )
+    monkeypatch.setattr(ecosystem, "_lock_work_directory", lambda _: 0)
+    monkeypatch.setattr(ecosystem, "prepare_candidate", lambda *_: CANDIDATE)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(
+        concurrent.futures,
+        "ProcessPoolExecutor",
+        lambda max_workers, initializer: ThreadPoolExecutor(max_workers=max_workers),
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["ecosystem_check.py", "--run-untrusted-code", "--work", str(tmp_path)]
+    )
+    # A stale expectation is reported, not failed: the refusal it describes is gone.
+    assert ecosystem.main() == 0
+    summary = (tmp_path / "report/summary.md").read_text()
+    assert f"Refused as expected (reviewed in the manifest): refused ({EXPECTED.reason})" in summary
+    assert "this run gave another verdict): stale (PASS)" in summary
+    report = json.loads((tmp_path / "report/summary.json").read_text())
+    assert report["refused_as_expected"] == {"refused": EXPECTED.reason}
+    assert report["expected_refusals_not_seen"] == {"stale": "PASS"}
+
+
 def _git_fixture(root: Path) -> Path:
     source = root / "repository"
     (source / "package").mkdir(parents=True)
@@ -1616,3 +1839,93 @@ def test_a_phase_killed_before_its_deadline_is_not_a_timeout(tmp_path: Path) -> 
     )
     assert phase.returncode == -signal.SIGKILL
     assert not phase.timed_out
+
+
+_PATH_PARAMETRIZED = (
+    "import pathlib\n\nimport pytest\n\n"
+    "HERE = pathlib.Path(__file__).resolve().parent\n\n\n"
+    "@pytest.mark.parametrize('request_file', [str(HERE / 'requests' / 'valid.http')])\n"
+    "def test_parser(request_file):\n"
+    "    assert not (HERE / 'broken').exists()\n"
+)
+"""A test whose id holds its tree's absolute path, as gunicorn's request-file tests do."""
+
+
+def _path_parametrized_trees(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """An original tree and its refactored copy, named as the harness names them."""
+    work = tmp_path.resolve()
+    source, ready, logs = work / "project", work / "project-ready", work / "logs"
+    for tree in (source, ready):
+        (tree / "requests").mkdir(parents=True)
+        (tree / "test_requests.py").write_text(_PATH_PARAMETRIZED)
+    logs.mkdir()
+    return source, ready, logs
+
+
+_PATH_TEST_ENV = {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTHONDONTWRITEBYTECODE": "1"}
+
+
+def test_the_same_failure_in_two_trees_is_one_failure(tmp_path: Path) -> None:
+    """A path-bearing id names the same test in both trees once the tree is a placeholder."""
+    source, ready, logs = _path_parametrized_trees(tmp_path)
+    for tree in (source, ready):
+        (tree / "broken").touch()
+    command = ecosystem._prepare_test_command([sys.executable, "-m", "pytest", "-q"])
+    before = ecosystem.run(command, source, _PATH_TEST_ENV, 20, logs / "before.log")
+    after = ecosystem.run(command, ready, _PATH_TEST_ENV, 20, logs / "after.log")
+    assert ecosystem.failed_tests(before.log) != ecosystem.failed_tests(after.log)
+    expected = {f"test_requests.py::test_parser[{ecosystem.TREE}/requests/valid.http]"}
+    assert ecosystem.phase_failures(before) == ecosystem.phase_failures(after) == expected
+
+
+def test_a_flipped_path_bearing_failure_is_retested_in_each_tree(tmp_path: Path) -> None:
+    """The retest selects the id with each tree's own path, so pytest finds it in both."""
+    source, ready, logs = _path_parametrized_trees(tmp_path)
+    command = ecosystem._prepare_test_command([sys.executable, "-m", "pytest", "-q"])
+    (source / "broken").touch()
+    initial_before = ecosystem.run(command, source, _PATH_TEST_ENV, 20, logs / "initial-b.log")
+    (source / "broken").unlink()
+    initial_after = ecosystem.run(command, ready, _PATH_TEST_ENV, 20, logs / "initial-a.log")
+    differing = sorted(
+        ecosystem.phase_failures(initial_before) ^ ecosystem.phase_failures(initial_after)
+    )
+    assert differing == [f"test_requests.py::test_parser[{ecosystem.TREE}/requests/valid.http]"]
+    assert ecosystem._retest_agrees(
+        command,
+        differing,
+        source,
+        ready,
+        _PATH_TEST_ENV,
+        20,
+        logs,
+        ecosystem.Project("paths", "unused", "pinned", "test_requests.py"),
+        initial_before,
+        initial_after,
+    )
+    evidence = json.loads((logs / "paths-retest.json").read_text())
+    assert evidence["test_ids"] == differing
+    assert f"test_requests.py::test_parser[{source}/requests/valid.http]" in evidence["command"]
+    assert (
+        f"test_requests.py::test_parser[{ready}/requests/valid.http]" in evidence["after_command"]
+    )
+    assert evidence["before"]["summary"] == evidence["after"]["summary"] == "1 passed"
+
+
+@pytest.mark.parametrize(
+    "identity,expected",
+    [
+        (
+            "t.py::test[fast-/w/gunicorn/requests/009.http]",
+            "t.py::test[fast-{tree}/requests/009.http]",
+        ),
+        ("t.py::test[/w/gunicorn]", "t.py::test[{tree}]"),
+        ("t.py::test[fast-/w/gunicorn-ready/requests/009.http]", None),
+        ("t.py::test[/w/gunicornish/x]", None),
+        ("t.py::test[w/gunicorn/x]", None),
+    ],
+)
+def test_only_the_tree_itself_becomes_the_placeholder(
+    identity: str, expected: Optional[str]
+) -> None:
+    """The original tree is a prefix of its refactored copy's path, which must stay as it is."""
+    assert ecosystem._without_tree(identity, "/w/gunicorn") == (expected or identity)

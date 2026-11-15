@@ -35,7 +35,13 @@
 # extension the suite tests beside its Python counterpart is no reason),
 # cross_module (default true: the refactor extracts across modules, where the
 # corpus finds the most bugs; false only together with cross_module_reason, the
-# reason it is off, which the harness requires and the report lists).
+# reason it is off, which the harness requires and the report lists),
+# expected_refusal (a table of `reason`, why Towel is right to refuse the
+# project, and `problems`, exactly the lines its refusal lists under the
+# `Error:` line, with {site-packages} for the project environment's
+# site-packages and {work} for the work directory; the verdict is then REFUSED,
+# which passes, and stays CRASH when the refusal lists anything else, exits
+# otherwise or prints a traceback; put the table last in its entry).
 
 [[project]]
 name = "tabulate"
@@ -717,7 +723,10 @@ deps = [
     "ephemeral-port-reserve",
     "pytest",
     "pytest-timeout",
-    "watchdog",
+    # Reviewed adjustment, applied since the 1.948 campaign: with watchdog
+    # 7.1.0 the pinned Werkzeug's reloader tests hang in tests/test_serving.py
+    # until the phase times out. 6.0.0 satisfies Werkzeug's own watchdog>=6.
+    "watchdog==6.0.0",
 ]
 
 [[project]]
@@ -1031,6 +1040,11 @@ deps = [
     "xmlschema",
 ]
 test = ["{python}", "-m", "pytest", "-q", "testing"]
+# A flake, not a limitation: in Ecosystem run 43337986255 the untouched original
+# failed this test with the same pexpect timeout in its full-suite rerun, and the
+# refactored tree passed it. It passed alone in both trees.
+expect_broken = "flaky: TestPDB::test_pdb_and_capsys drives pdb through pexpect and can time out under load, in the original as well as the refactored tree"
+known_failures = ["testing/test_debugging.py::TestPDB::test_pdb_and_capsys"]
 
 [[project]]
 name = "sphinx"
@@ -1065,7 +1079,11 @@ deps = [
     "coverage>=5.3",
     "pytest-cov>=4.1.0",
     "pytest-xdist>=3.0.2",
-    "pytest>=7",
+    # Reviewed adjustment, applied since the 1.948 campaign: pytest 9.2.0 warns
+    # on config.inicfg, which the pinned Black's tests/optional.py reads, and
+    # Black's filterwarnings = ["error"] makes that an INTERNALERROR. 9.1.1
+    # satisfies Black's own pytest>=7.
+    "pytest==9.1.1",
     "tokenize-rt",
 ]
 
@@ -1265,6 +1283,16 @@ deps = [
     "uv>=0.8.23",
 ]
 test = ["{python}", "-m", "pytest", "-q", "tests/unit"]
+
+[project.expected_refusal]
+reason = """\
+isort/stdlibs shares its name with the stdlibs distribution isort's dev \
+group requires, which scripts/mkstdlibs.py imports, so the top-level name \
+stdlibs is both the tree's directory and the installed distribution."""
+problems = [
+    "stdlibs could be any of: isort/stdlibs; outside the project ({site-packages}/stdlibs/__init__.py); the distribution the project requires (stdlibs>=2026.2.26 in pyproject.toml [dependency-groups].dev)",
+    "stdlibs is imported as a top-level name, and its only location isort/stdlibs is inside isort, which the program also imports as a package (scripts/mkstdlibs.py:4: from stdlibs import py38, py39, py310, py311, py312, py313, py314, py315)",
+]
 
 [[project]]
 name = "pyjwt"
@@ -1848,6 +1876,16 @@ deps = [
     "types-PyYAML==6.0.12.4",
 ]
 
+[project.expected_refusal]
+reason = """\
+invoke's tests keep four config modules named invoke.py \
+(tests/_support/configs/*/invoke.py), so the tree gives the top-level name \
+invoke five locations and no cross-module import of a helper can be shown to \
+work."""
+problems = [
+    "invoke could be any of: invoke; tests/_support/configs/all-four/invoke.py; tests/_support/configs/json-and-python/invoke.py; tests/_support/configs/python/invoke.py; tests/_support/configs/three-of-em/invoke.py",
+]
+
 [[project]]
 name = "python-fire"
 # Test context: Selected extra:test.
@@ -1905,7 +1943,11 @@ deps = [
     "coverage",
     "gevent",
     "gevent>=24.10.1",
-    "gunicorn_h1c>=0.6.9",
+    # Reviewed adjustment: gunicorn_h1c 0.6.14 (2026-11-09) rejects valid/009.http
+    # ("Transfer-Encoding does not end with chunked"), so the unmodified
+    # baseline fails test_http_parser[fast-...009.http]. 0.6.12, which the
+    # Ecosystem run before it installed, passes the whole suite.
+    "gunicorn_h1c==0.6.12",
     "h2>=4.4.1",
     "httpx[http2]>=0.23.0",
     "inotify>=0.2.10; sys_platform == \"linux\"",
@@ -2552,6 +2594,18 @@ deps = [
 ]
 timeout = 3600
 
+[project.expected_refusal]
+reason = """\
+The project is Towel itself. The candidate that runs the refactor is an \
+installed copy of the name towel outside the tree, wherever it is installed, \
+so towel names two modules and no cross-module import of a helper can be \
+shown to work. The tree also has three directories named src, two of them \
+test fixtures."""
+problems = [
+    "src could be any of: src; test_examples_crossfile/nested_structure/src; test_examples_crossfile_expected_output/nested_structure/src",
+    "towel could be any of: src/towel; outside the project ({site-packages}/towel/__init__.py)",
+]
+
 [[project]]
 name = "towel-v1.618"
 # Test context: Selected extra:dev.
@@ -2577,6 +2631,16 @@ deps = [
     "tqdm>=4.66.0",
 ]
 timeout = 3600
+
+[project.expected_refusal]
+reason = """\
+The project is Towel itself. The candidate that runs the refactor is an \
+installed copy of the name towel outside the tree, wherever it is installed, \
+so towel names two modules and no cross-module import of a helper can be \
+shown to work."""
+problems = [
+    "towel could be any of: src/towel; outside the project ({site-packages}/towel/__init__.py)",
+]
 
 [[project]]
 name = "towel-main"
@@ -2610,3 +2674,13 @@ deps = [
     "tqdm>=4.66.0",
 ]
 timeout = 3600
+
+[project.expected_refusal]
+reason = """\
+The project is Towel itself. The candidate that runs the refactor is an \
+installed copy of the name towel outside the tree, wherever it is installed, \
+so towel names two modules and no cross-module import of a helper can be \
+shown to work."""
+problems = [
+    "towel could be any of: src/towel; outside the project ({site-packages}/towel/__init__.py)",
+]

@@ -285,3 +285,41 @@ def test_anyio_build_artifacts_are_excluded_from_the_source_model() -> None:
     project = _project("anyio")
     assert project.rev == "9e2b5924e54ce5fa6aacc0640846c1a360a45178"
     assert project.exclude == ("build",)
+
+
+@pytest.mark.parametrize(
+    "name,requirement",
+    [
+        # watchdog 7.1.0 hangs Werkzeug's reloader tests until the phase times out.
+        pytest.param("werkzeug", "watchdog==6.0.0", id="werkzeug-reloader-watchdog"),
+        # pytest 9.2.0's config.inicfg warning is an INTERNALERROR under Black's
+        # filterwarnings = ["error"].
+        pytest.param("black", "pytest==9.1.1", id="black-warning-free-pytest"),
+        # gunicorn_h1c 0.6.14 rejects a request file the pinned gunicorn's own
+        # suite treats as valid, so the unmodified baseline fails.
+        pytest.param("gunicorn", "gunicorn_h1c==0.6.12", id="gunicorn-baseline-h1c"),
+    ],
+)
+def test_reviewed_dependency_adjustments_are_pinned(name: str, requirement: str) -> None:
+    """The release campaign's reviewed adjustments hold in every run, not only in the campaign."""
+    pinned = Requirement(requirement)
+    declared = [
+        Requirement(spec)
+        for spec in _project(name).deps
+        if canonicalize_name(Requirement(spec).name) == canonicalize_name(pinned.name)
+    ]
+    assert [str(spec.specifier) for spec in declared] == [str(pinned.specifier)]
+
+
+def test_only_reviewed_refusals_are_expected() -> None:
+    """Each expected refusal is a reviewed decision; adding one is a change to review here."""
+    projects = ecosystem.load_manifest(ecosystem.REPO / "scripts/ecosystem/manifest.toml", [])
+    expecting = {project.name for project in projects if project.expected_refusal is not None}
+    assert expecting == {"invoke", "isort", "towel-main", "towel-v1.414", "towel-v1.618"}
+
+
+def test_pytest_pexpect_flake_is_known_and_nothing_else_is() -> None:
+    """Only the pexpect timing flake seen in the untouched original is excused."""
+    project = _project("pytest")
+    assert project.expect_broken.startswith("flaky: ")
+    assert project.known_failures == ("testing/test_debugging.py::TestPDB::test_pdb_and_capsys",)

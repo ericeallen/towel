@@ -278,9 +278,12 @@ dependencies, not every project's complete typing environment. Omit the flag
 to retain Towel's default typing policy; the harness never disables checking
 automatically. Reports record the requested typing mode and every outcome.
 
-The harness accepts `PASS`, `NO_CHANGE` and specifically documented
-`BROKEN_KNOWN` outcomes. Setup failures, typing failures, timeouts and incomplete
-test runs fail its gate. A no-change result does not validate a transformation.
+The harness accepts `PASS`, `NO_CHANGE`, and the specifically documented
+`BROKEN_KNOWN` and `REFUSED` outcomes. `REFUSED` is a refusal the manifest's
+`expected_refusal` entry reviews, and only while it lists exactly the problems
+that entry names; any other refusal is a `CRASH`. Setup failures, typing
+failures, crashes, timeouts and incomplete test runs fail its gate. A no-change
+or refused result does not validate a transformation.
 A release review must separately account for any refusal or fallback under
 [the evidence gate](docs/RELEASING.md#repository-owned-evidence-gate).
 

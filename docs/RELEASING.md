@@ -397,9 +397,11 @@ Describe a baseline failure as pre-existing **in this run/environment**, not
 as a claim about upstream CI. NO_CHANGE and early refusals do not establish
 a transformed-suite result. Known differences still require pinned manifest
 expectations and explicit review; a new regression is not an accepted refusal.
-Every project needs a completed baseline. Only a completed CRASH or UNSUPPORTED
-refactor refusal with zero changed files and no after-suite can receive
-`accepted-refusal`. Setup errors, timeouts, killed processes and incomplete
+Every project needs a completed baseline. Only a completed CRASH, UNSUPPORTED
+or REFUSED refactor refusal with zero changed files and no after-suite can
+receive `accepted-refusal`, and a REFUSED one must carry the reason of its
+manifest `expected_refusal` entry. REFUSED passes the harness, so the corpus
+exit status is nonzero only for an unexpected CRASH or UNSUPPORTED refusal. Setup errors, timeouts, killed processes and incomplete
 suites refuse the gate regardless of review text. A known limitation must
 preserve baseline failure identities and introduce only manifest-listed failures.
 
@@ -688,6 +690,19 @@ where most projects were declined has said little about the typed one.
 whose mypy configs name a Python version mypy 1.19 has dropped. The checker
 could not start, and that refusal named no way out.
 
+A refusal reviewed as Towel's right answer for a project is recorded in that
+project's manifest entry as `expected_refusal`: the reason, and exactly the
+problems the refusal lists under its `Error:` line, with `{site-packages}` and
+`{work}` standing for the run's paths. That refusal is REFUSED, which passes,
+but only while it exits as a reported error, prints no traceback and lists
+exactly those problems. Any other refusal, one that lists another problem, and
+a crash are CRASH, which fails. The report lists the refusals it saw as
+expected and every expected refusal it did not see. The five such projects
+refuse cross-module extraction because a top-level name is ambiguous: invoke's
+test configs and isort's `stdlibs` copy the name of something else, and the
+three Towel entries are Towel itself, whose running candidate is an installed
+`towel` outside the tree wherever it is installed.
+
 `--no-types` remains available and answers a narrower question: whether the
 transformation preserves behaviour with verification out of the picture. It
 exercises none of the type inference or checking, so a release whose changes
@@ -725,7 +740,10 @@ Prepare its dependencies before starting the corpus:
   `https://data.iana.org/time-zones/releases/` into that clone. Verify its SHA-512
   against `tzdata_file_sha512` before running the corpus. The pinned revision
   names `tzdata2024a.tar.gz`; its unchanged `post_install` hook checks for the
-  archive and builds the zoneinfo data. A fresh clone does not contain it.
+  archive and builds the zoneinfo data. A fresh clone does not contain it. The
+  Ecosystem workflow's "Stage python-dateutil's timezone archive" step does
+  this with the archive's URL and SHA-256 pinned; update those pins together
+  with python-dateutil's revision.
 - **Give the harness a standalone clone detached at the release commit**, not a
   git worktree. A worktree's `.git` is a file pointing outside the mount, so
   the harness cannot read the revision and aborts. With a real clone it records
