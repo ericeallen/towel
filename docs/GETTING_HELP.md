@@ -1,0 +1,47 @@
+# Getting help
+
+[Documentation index](README.md)
+
+## Where to ask
+
+Ask on the [issue tracker](https://github.com/ericeallen/towel/issues). It is the
+only place: Towel has no chat room, mailing list or forum, and GitHub Discussions
+is not enabled. Questions are welcome there as well as bug reports and feature
+requests; search the open and closed issues first, since someone may have asked
+already.
+
+Towel is maintained by one person, so there is no promised response time.
+
+## What to put in a report
+
+A report that lets someone run what you ran gets an answer fastest. Include:
+
+- **The versions:** the output of `towel --version`, `python --version` and your
+  operating system. For a typed run, also the version of mypy or Pyright.
+- **The exact command** you ran, with every option.
+- **What Towel printed,** in full. For a block Towel left alone, add the output of
+  the same command as `towel preview PATH --explain`, which names the reason for
+  each pair.
+- **The smallest code that shows it:** two functions with the duplicated block is
+  usually enough. Remove anything confidential; never paste credentials.
+- **What you expected,** and, if Towel changed your program's behaviour, the test
+  or output that shows the difference. By Towel's own rule, a change in the
+  behaviour of a program that does not use reflection is a defect to fix.
+
+The bug-report form on the [new-issue page](https://github.com/ericeallen/towel/issues/new/choose)
+asks for the same things.
+
+## Security problems
+
+Do not report a security problem in a public issue. Use GitHub's private
+**Report a vulnerability** button on the repository's Security tab, as the
+[security policy](https://github.com/ericeallen/towel/blob/main/SECURITY.md)
+describes; only the maintainer can read what you send there.
+
+## Contributing a fix
+
+If you would like to fix something yourself, the
+[contributing guide](https://github.com/ericeallen/towel/blob/main/CONTRIBUTING.md)
+explains how to set up a development environment and run the checks, and the
+[code of conduct](https://github.com/ericeallen/towel/blob/main/CODE_OF_CONDUCT.md)
+applies to every conversation about the project.

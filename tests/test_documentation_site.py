@@ -102,6 +102,9 @@ def test_users_pages_come_first_and_records_stay_in_their_own_groups() -> None:
     "page",
     [
         "QUICKSTART.md",
+        "GLOSSARY.md",
+        "COMPARISON.md",
+        "GETTING_HELP.md",
         "KNOWN_LIMITATIONS.md",
         "CLI_GUIDE.md",
     ],

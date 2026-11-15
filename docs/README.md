@@ -31,11 +31,14 @@ These pages describe Towel **1.949**.
 | Supported platforms and resource use | [Requirements and resources](REQUIREMENTS.md) |
 | To estimate how long a run takes | [Performance and timing](PERFORMANCE.md) |
 | Everything Towel verifies, declines or does not model | [Known limitations](KNOWN_LIMITATIONS.md) |
+| The meaning of a term | [Glossary](GLOSSARY.md) |
 
 ## About Towel
 
 - [How Towel is validated](VALIDATION.md): the tests and checks each release passes.
+- [How Towel compares](COMPARISON.md): clone detectors, an IDE's extract-method and AI assistants, and what each is good at.
 - [Changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md): user-visible changes by version.
+- [Getting help](GETTING_HELP.md): where to ask, what to put in a report, and how to report a security problem.
 
 ## For contributors and maintainers
 

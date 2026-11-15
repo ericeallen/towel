@@ -48,7 +48,10 @@ nav = [
     { "Performance" = "PERFORMANCE.md" },
   ] },
   { "How Towel is validated" = "VALIDATION.md" },
+  { "How Towel compares" = "COMPARISON.md" },
+  { "Glossary" = "GLOSSARY.md" },
   { "Changelog" = "https://github.com/ericeallen/towel/blob/main/CHANGELOG.md" },
+  { "Getting help" = "GETTING_HELP.md" },
   { "Design (for contributors)" = [
     "design/README.md",
     { "Architecture" = "design/ARCHITECTURE.md" },
