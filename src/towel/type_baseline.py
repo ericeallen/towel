@@ -120,6 +120,7 @@ from .unification.visitors import ScopeVisitor, annotation_expressions, evaluate
 
 __all__ = [
     "TYPE_CHECKING_REMEDIES",
+    "UNTYPED_REMEDY",
     "IMPORT_PROBE_PREFIX",
     "NO_SHAPE",
     "ChangeShape",
@@ -139,6 +140,8 @@ __all__ = [
     "unchanged_lines",
     "unlooked_warning",
 ]
+
+UNTYPED_REMEDY = "To proceed without type verification, use --no-types."
 
 TYPE_CHECKING_REMEDIES = (
     "To proceed without type verification, use --no-types; for a typed run, "
@@ -1536,15 +1539,15 @@ def names_any_warning(
     root: Path,
     changed: Collection[str],
     *,
-    strict: bool = True,
+    strict: bool = False,
 ) -> Optional[str]:
     """Where the original check leaves names it cannot type, and what the run does there.
 
     ``names_any`` is :func:`files_where_names_are_any` of the original's
     errors, with what :func:`imports_typed_as_any` found, and ``changed`` the
-    files (resolved) the run may change: no change
-    to one of those that holds such a name is attempted. The rest are named
-    too, since where they use such a name, a change is checked against
+    files (resolved) the run may change: annotated proposals are declined in
+    relaxed mode (the default), and all proposals are declined in strict mode.
+    The rest are named too, since where they use such a name, a change is checked against
     ``Any``, which accepts it. ``None`` when there is nothing to say.
     """
     if not names_any:
@@ -1593,7 +1596,7 @@ def unlooked_warning(regions: Mapping[str, Sequence[Tuple[int, int]]], root: Pat
         "for (a sys.platform, sys.version_info or TYPE_CHECKING test it makes false, an assert "
         "it knows fails) or because the declared types rule them out (an isinstance test they "
         "always pass), so it reports nothing there and a check says nothing about a change. "
-        f"No change to them is attempted. {TYPE_CHECKING_REMEDIES}"
+        f"No change to them is attempted. {UNTYPED_REMEDY}"
     ]
     lines += [f"  {_shown(path, root)}:{start}-{end}" for path, start, end in listed[:_FILES_SHOWN]]
     if len(listed) > _FILES_SHOWN:

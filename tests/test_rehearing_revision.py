@@ -236,8 +236,7 @@ def test_only_normal_ladder_exhaustion_is_a_completed_refusal(
         "later rung rendering failed"
         if fails_later
         else "Every helper annotation variant introduces project type errors. "
-        "To proceed without type verification, use --no-types; for a typed run, "
-        "install the project's dependencies where Towel runs (including their type stubs)."
+        "To proceed without type verification, use --no-types."
     )
 
 

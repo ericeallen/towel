@@ -190,7 +190,8 @@ def test_relaxed_missing_checker_previews_bare_helpers_with_explicit_warning(
     assert str(tmp_path / "pyproject.toml") in relaxed.stderr
     assert sys.executable in relaxed.stderr
     assert "Install" in relaxed.stderr and "into that environment" in relaxed.stderr
-    assert "--no-types" in relaxed.stderr and "--strict to refuse instead" in relaxed.stderr
+    assert "--no-types" not in relaxed.stderr
+    assert "--strict to refuse instead" in relaxed.stderr
     assert path.read_text() == SOURCE
     strict = invoke(["preview", target, *flags, "--strict"])
     assert strict.status == 1

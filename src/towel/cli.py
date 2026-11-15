@@ -625,7 +625,8 @@ def _add_shared_options(sections: _Sections) -> None:
     sections.advanced.add_argument(
         "--strict",
         action="store_true",
-        help="Keep strict verification and refusal policies (relaxed mode is the default).",
+        help="Refuse when a configured checker is missing, and require resolved imports even for "
+        "unannotated code (relaxed mode is the default).",
     )
     _add_tool_flags(sections.advanced)
     _add_parameterize_builtins_flag(sections.advanced)
@@ -1410,7 +1411,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         # interrupted change left them, which the user should know first.
         LOG.warning("%s", pending_journal_remedy(journal, "this output is refactored from"))
 
-    from towel.type_baseline import TYPE_CHECKING_REMEDIES
+    from towel.type_baseline import UNTYPED_REMEDY
     from towel.type_inference import CheckerNotInstalled, type_checkers_for_project
 
     annotate_helpers = options.types
@@ -1422,8 +1423,8 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
             raise
         annotate_helpers = False
         print(
-            f"Warning: {error} Continuing without type verification; generated helpers stay "
-            "bare, as with --no-types. Use --strict to refuse instead.",
+            f"Warning: {error.explanation}. Continuing without type verification; generated "
+            "helpers stay bare. Use --strict to refuse instead.",
             file=sys.stderr,
         )
     oracle: Optional[TypeOracle] = None
@@ -1533,7 +1534,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
             print(
                 f"\n{engine.checker_failures} proposal(s) were dropped because the type checker"
                 " could not run for them (see the warnings above); they were not judged."
-                f" {TYPE_CHECKING_REMEDIES}"
+                f" {UNTYPED_REMEDY}"
             )
         if not (options.json or options.diff):
             _print_declined(engine.run_report, applied, target=source)
@@ -1775,7 +1776,7 @@ def _print_declined(report: "RunReport", applied: int, *, target: Optional[Path]
     candidate pairs the analysis declined are counted when nothing was
     applied, which is when a reader asks why.
     """
-    from towel.type_baseline import TYPE_CHECKING_REMEDIES
+    from towel.type_baseline import TYPE_CHECKING_REMEDIES, UNTYPED_REMEDY
     from towel.unification.exceptions import Untypeable
     from towel.unification.fixed_point import DeclineReason, counted_reasons
 
@@ -1822,7 +1823,7 @@ def _print_declined(report: "RunReport", applied: int, *, target: Optional[Path]
         or reason.startswith(("not judged:", "not verifiable:"))
         for reason in report.declined_proposals
     ):
-        lines.append(f"  {TYPE_CHECKING_REMEDIES}")
+        lines.append(f"  {TYPE_CHECKING_REMEDIES if unresolved else UNTYPED_REMEDY}")
     if not applied and report.declined_pairs:
         lines.append(
             f"  {sum(report.declined_pairs.values())} candidate pair(s) declined: "

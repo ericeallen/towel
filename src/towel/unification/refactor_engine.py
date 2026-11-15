@@ -320,7 +320,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
 
     Assembled from the mixins above, one per responsibility, over an
     ``EngineState`` that declares what they share; docs/ARCHITECTURE.md maps
-    each stage to its module.
+    each stage to its module. ``strict=False`` lets bare callers with bare helpers
+    bypass the unresolved-import gate; ``strict=True`` gates every proposal.
+    Both modes check prospective changes with the supplied oracle.
     """
 
     def __init__(

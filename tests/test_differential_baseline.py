@@ -310,7 +310,7 @@ def test_the_report_counts_by_file_and_names_what_it_will_not_change(tmp_path: P
     )
     assert "  pkg/a.py: 1" in summary and "... and 3 more file(s)" in summary
     names_any = files_where_names_are_any(errors)
-    warning = names_any_warning(names_any, root, {str(root / "pkg/a.py")})
+    warning = names_any_warning(names_any, root, {str(root / "pkg/a.py")}, strict=True)
     assert warning is not None
     assert warning.startswith(
         "warning: 2 import(s) or error(s) leave a name the checker cannot type"

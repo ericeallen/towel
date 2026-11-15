@@ -99,6 +99,7 @@ from ..declared_python import declared_requirement, python_lower_bound
 from ..project_layout import find_project_root, load_pyproject
 from ..type_baseline import (
     TYPE_CHECKING_REMEDIES,
+    UNTYPED_REMEDY as UNTYPED_REMEDY,
     NO_SHAPE,
     ChangeShape,
     CheckedChange,
@@ -194,7 +195,6 @@ def _relates_result(variant: RefactoringProposal) -> bool:
     )
 
 
-UNTYPED_REMEDY = TYPE_CHECKING_REMEDIES
 """The two concrete remedies offered when type verification prevents a change."""
 
 
@@ -1759,7 +1759,8 @@ class HelperAnnotationWiring(EngineState):
             errors = self._type_names_any.get(self._where_checked(path))
             if errors:
                 raise UnverifiableChangeError(
-                    f"{unverifiable_summary(self._where_checked(path), errors)}\n{UNTYPED_REMEDY}"
+                    f"{unverifiable_summary(self._where_checked(path), errors)}\n"
+                    f"{TYPE_CHECKING_REMEDIES}"
                 )
 
     def _names_the_checker_cannot_type(
