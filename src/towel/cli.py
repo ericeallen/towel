@@ -34,7 +34,7 @@ import signal
 import sys
 import tempfile
 import textwrap
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import (
     Callable,
@@ -103,6 +103,34 @@ class _HelpFormatter(argparse.RawDescriptionHelpFormatter):
         return textwrap.wrap(" ".join(text.split()), width, break_on_hyphens=False)
 
 
+def _towel_version() -> str:
+    """This Towel's version: its distribution's, else its source tree's, else "unknown".
+
+    A source tree that is not installed, run as ``PYTHONPATH=src python -m
+    towel``, has no distribution metadata; asking for it once stopped every
+    command with PackageNotFoundError while the parser was being built.
+    """
+    try:
+        return version("code-towel")
+    except PackageNotFoundError:
+        return _source_tree_version(Path(__file__).resolve().parents[2]) or "unknown"
+
+
+def _source_tree_version(root: Path) -> Optional[str]:
+    """The version ``root/pyproject.toml`` declares, if that file is Towel's own."""
+    import tomllib
+
+    try:
+        project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        return None
+    table = project.get("project")
+    if not isinstance(table, dict) or table.get("name") != "code-towel":
+        return None
+    declared = table.get("version")
+    return declared if isinstance(declared, str) else None
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """The command-line parser, shared by ``main`` and the tests."""
     parser = argparse.ArgumentParser(
@@ -128,9 +156,10 @@ limit reached; 130 interrupted; 143 terminated.""",
     )
 
     parser.add_argument(
+        "-V",
         "--version",
         action="version",
-        version=f"towel {version('code-towel')}",
+        version=f"towel {_towel_version()}",
     )
 
     subparsers = parser.add_subparsers(dest="command", title="commands", metavar="COMMAND")
