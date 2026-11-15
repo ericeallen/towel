@@ -211,7 +211,10 @@ def _options(
     # A plugin is a type rule, not one of these, and stays configured.
     if hasattr(options, "num_workers"):
         options.num_workers = 0  # Own one process; do not leave project-local worker status files.
-    options.python_executable = sys.executable
+    # None is mypy's no_site_packages policy, not a requested executable.
+    # Preserve it so installed dependencies cannot hide unresolved imports.
+    if options.python_executable is not None:
+        options.python_executable = sys.executable
     options.report_dirs = {}
     options.junit_xml = None
     options.timing_stats = None
