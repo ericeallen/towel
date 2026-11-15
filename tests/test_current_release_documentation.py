@@ -148,6 +148,61 @@ def test_the_source_to_be_frozen_satisfies_the_live_gate_document_rules() -> Non
     gate.verify_documents(documents, version, "ericeallen/towel")
 
 
+def test_package_metadata_describes_the_tool_in_the_words_people_search_for() -> None:
+    """User-perspective audit of 1.949, finding 4 (discovery report D4 and D10).
+
+    PyPI showed a summary without "duplicate" or "refactor", no keywords, a library
+    classifier on a command-line tool and no typing marker although the wheel ships
+    `py.typed`. The platform classifiers follow the README's Requirements sentence.
+    """
+    configuration = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    project = configuration["project"]
+    summary = str(project["description"]).casefold()
+    assert "duplicate" in summary and "refactor" in summary
+    assert "\n" not in summary, "The core metadata Summary field is one line"
+    assert {"refactoring", "duplicate code", "code duplication"} <= set(project["keywords"])
+    classifiers = set(project["classifiers"])
+    assert {
+        "Environment :: Console",
+        "Operating System :: MacOS",
+        "Operating System :: POSIX :: Linux",
+        "Typing :: Typed",
+    } <= classifiers
+    assert "Topic :: Software Development :: Libraries :: Python Modules" not in classifiers
+    assert "(macOS or Linux)" in (ROOT / "README.md").read_text()
+    assert configuration["tool"]["setuptools"]["package-data"]["towel"] == ["py.typed"]
+    assert (ROOT / "src/towel/py.typed").is_file(), "Typing :: Typed is a claim about the wheel"
+
+
+def _check_project_urls(urls: Mapping[str, str], version: str) -> None:
+    assert {"Homepage", "Documentation", "Changelog", "Issues", "Repository"} <= set(urls)
+    for label, url in urls.items():
+        parsed = urlsplit(url)
+        assert parsed.scheme == "https" and parsed.netloc, f"{label} is not an absolute link"
+        assert version not in url and not re.search(
+            r"/v?\d+\.\d+", parsed.path
+        ), f"{label} names a release and would go stale on the next one: {url}"
+
+
+def test_project_urls_cannot_go_stale_with_a_release() -> None:
+    """`just bump-version` rewrites one line of pyproject.toml, so no link may need rewriting.
+
+    The README's links are pinned to the release tag, and the release gate checks them.
+    Nothing checks these, so they name no tag: the Documentation and Changelog links
+    follow the default branch.
+    """
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    _check_project_urls(project["urls"], str(project["version"]))
+    for stale in (
+        "https://github.com/ericeallen/towel/blob/v1.949/docs/README.md",
+        "https://github.com/ericeallen/towel/releases/tag/v1.949",
+        "https://pypi.org/project/code-towel/1.949/",
+        "docs/README.md",
+    ):
+        with pytest.raises(AssertionError):
+            _check_project_urls({**project["urls"], "Documentation": stale}, "1.949")
+
+
 def _check_preservation_contract(text: str) -> None:
     compact = " ".join(text.split())
     assert "programs that do not use reflection or self-instrumentation" in compact
