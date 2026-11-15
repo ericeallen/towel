@@ -493,6 +493,54 @@ class PairTally:
 
 
 @dataclass(frozen=True)
+class SkippedFile:
+    """A file an analysis could not read, and why, in words for its user."""
+
+    path: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class AnalysisCensus:
+    """What one analysis looked at: the files it read, their functions, and the files it skipped."""
+
+    files: int = 0
+    functions: int = 0
+    skipped: Tuple[SkippedFile, ...] = ()
+
+
+@dataclass(frozen=True)
+class BlockLocation:
+    """Where one block stands: its file and first and last lines."""
+
+    path: str
+    first_line: int
+    last_line: int
+
+    @property
+    def lines(self) -> int:
+        return self.last_line - self.first_line + 1
+
+
+@dataclass(frozen=True)
+class LeftAlone:
+    """Similar code a run did not extract: where it is, and the reason it is counted under.
+
+    ``reason`` is a ``RejectReason`` value, with what it names in brackets
+    when it names something (``builtin_may_differ_by_module[len]``), or a
+    ``DeclineReason`` for a proposal built and then not applied.
+    """
+
+    blocks: Tuple[BlockLocation, ...]
+    reason: str
+
+    @property
+    def lines(self) -> int:
+        """How much code was left alone: the lines of all its blocks."""
+        return sum(block.lines for block in self.blocks)
+
+
+@dataclass(frozen=True)
 class PairVerdict:
     """One candidate pair judged, with what its judgement would trace and count held back.
 

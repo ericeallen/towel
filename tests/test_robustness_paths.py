@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-import builtins
+import io
 import logging
 import multiprocessing
 import os
@@ -36,14 +36,18 @@ from towel.type_inference import CheckFailure, PyrightOracle
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
-def test_confirm_declines_at_a_closed_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
-    def closed(prompt: str) -> str:
-        raise EOFError
-
-    monkeypatch.setattr(builtins, "input", closed)
-    assert _confirm("Proceed? ") is False
-    monkeypatch.setattr(builtins, "input", lambda prompt: " Y ")
-    assert _confirm("Proceed? ") is True
+def test_confirm_declines_at_a_closed_stdin(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No answer is no; ``y`` and ``yes`` in any case are yes; the question is on stderr."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    assert _confirm("Write these changes? ") is False
+    for answer, expected in ((" Y \n", True), ("Yes\n", True), ("yES\n", True), ("no\n", False)):
+        monkeypatch.setattr(sys, "stdin", io.StringIO(answer))
+        assert _confirm("Write these changes? ") is expected
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Write these changes? " in captured.err
 
 
 def test_helper_inventory_ignores_a_symlinked_module(tmp_path: Path) -> None:

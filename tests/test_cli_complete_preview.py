@@ -26,6 +26,7 @@ import json
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
+import re
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -89,6 +90,11 @@ def _capture_preview(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Path, dict[s
     return completed
 
 
+def _counted(count: int, reason: str, stdout: str) -> bool:
+    """Whether the run's reasons list ``reason`` once, ``count`` times: ``  1  <sentence> [reason]``."""
+    return bool(re.search(rf"^ +{count}  .*\[{re.escape(reason)}\]$", stdout, re.MULTILINE))
+
+
 @pytest.mark.parametrize("directory", [False, True])
 @pytest.mark.parametrize("cap, count", [(0, 2), (1, 1)])
 def test_complete_preview_matches_dry_bytes_and_requested_cap(
@@ -106,7 +112,10 @@ def test_complete_preview_matches_dry_bytes_and_requested_cap(
     preview = invoke(["preview", str(target), *flags])
     assert preview.status == 0, preview
     assert f"Would apply {count} refactoring(s)" in preview.stdout
-    assert f"Termination: {'iteration_cap' if cap else 'fixed_point'}" in preview.stdout
+    # 2.0 says why a run stopped only when it stopped at the cap, in words.
+    stopped = "Stopped at the limit of 1 refactoring (--max-refactorings)."
+    assert (stopped in preview.stdout) == bool(cap)
+    assert "Termination:" not in preview.stdout
     assert "Applied " not in preview.stdout
     assert "towel-preview-" not in preview.stdout + preview.stderr
     assert "--- before/" in preview.stdout and "+++ after/" in preview.stdout
@@ -214,7 +223,7 @@ def test_complete_preview_keeps_cross_module_followups_and_exclusions(
     assert "Would apply 4 refactoring(s)" in preview.stdout
     assert "Discovered 2 proposal(s)" in preview.stderr
     assert "Discovered 1 proposal(s)" in preview.stderr
-    assert "Termination: fixed_point" in preview.stdout
+    assert "Termination:" not in preview.stdout and "Stopped at the limit" not in preview.stdout
     assert "towel-preview-" not in preview.stdout + preview.stderr
     output = tmp_path / "output"
     dry = invoke(["dry", str(root), str(output), "--no-interactive", *flags])
@@ -274,8 +283,8 @@ def test_complete_preview_excludes_a_structural_proposal_the_checker_refuses(
     dry = invoke(["dry", str(target), str(output), "--no-interactive", *flags])
     assert preview.status == dry.status == 0, (preview, dry)
     assert "Would apply 0 refactoring(s)" in preview.stdout
-    assert "refused by the type checker 1" in preview.stdout
-    assert "refused by the type checker 1" in dry.stdout
+    assert _counted(1, "refused by the type checker", preview.stdout)
+    assert _counted(1, "refused by the type checker", dry.stdout)
     assert "Call sites (- before / + after):" not in preview.stdout
     assert all(oracle.checks > 1 for oracle in oracles)
     assert _contents(output) == _contents(target)
@@ -410,8 +419,8 @@ def test_formatter_refusals_are_not_shown_as_applicable_changes(
     dry = invoke(["dry", str(target), str(output), "--no-interactive", *flags])
     assert preview.status == dry.status == 0, (preview, dry)
     assert "Would apply 0 refactoring(s)" in preview.stdout
-    assert "the formatter changed its code or failed 1" in preview.stdout
-    assert "the formatter changed its code or failed 1" in dry.stdout
+    assert _counted(1, "the formatter changed its code or failed", preview.stdout)
+    assert _counted(1, "the formatter changed its code or failed", dry.stdout)
     assert selections == [target, target]
     assert _contents(output) == _contents(target)
 

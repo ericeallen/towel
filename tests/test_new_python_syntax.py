@@ -295,12 +295,11 @@ def test_an_unsupported_syntax_count_has_a_plain_cli_reason(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Python audit: a reason code alone must not be the only user-facing explanation."""
-    from towel.cli import _print_declined
+    from towel.cli_reporting import reason_lines
     from towel.unification.fixed_point import RunReport
 
     report = RunReport(declined_pairs={"unsupported_syntax": 1})
-    _print_declined(report, 0)
-    text = capsys.readouterr().out
+    text = "\n".join(reason_lines(report))
     assert "unsupported_syntax" in text
     assert "syntax whose evaluation Towel cannot yet preserve" in text
 

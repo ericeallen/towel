@@ -32,7 +32,9 @@ import math
 import os
 import re
 import shlex
+import shutil
 import signal
+import subprocess  # nosec B404: runs only git, found on PATH, for a warning
 import sys
 import tempfile
 import textwrap
@@ -57,7 +59,7 @@ from typing import (
 if TYPE_CHECKING:
     from towel.import_model import ImportModel, ImportProblem, MissingModule
     from towel.type_inference import TypeOracle
-    from towel.unification.fixed_point import RunReport
+    from towel.unification.fixed_point import BeforePublication, RunReport
     from towel.unification.models import RefactoringProposal
     from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.changes import apply_changes, journals_covering, pending_journal_remedy, recover
@@ -73,10 +75,20 @@ from towel.cli_reporting import (
     HelperScopeKind as HelperScopeKind,
     ParameterRecord as ParameterRecord,
     TypesStatus,
+    LARGEST_SHOWN,
+    analysed_record,
+    census_line,
+    left_alone_count,
+    left_alone_lines,
+    outcome_line,
+    reason_lines,
     render_preview,
+    shows_pairs,
+    run_outcome,
     source_diff,
+    stopped_at_limit,
 )
-from towel.diagnostics import LOG, REJECTIONS, Settings, configure_stderr_logging
+from towel.diagnostics import LOG, Settings, configure_stderr_logging
 from towel.program_files import is_exclusion_name, refuse_unparsed_program
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source, source_lines
@@ -237,9 +249,11 @@ def main() -> None:
     if (
         args.command == "preview"
         and args.quick
-        and any((args.json, args.summary, args.diff, args.inventory))
+        and any((args.json, args.summary, args.diff, args.inventory, args.stats))
     ):
-        parser.error("--quick cannot be combined with --json, --summary, --diff or --inventory")
+        parser.error(
+            "--quick cannot be combined with --json, --summary, --diff, --inventory or --stats"
+        )
     result_stdout = sys.stdout
     configure_stderr_logging()
     _settings().enable_debug_logging()
@@ -250,10 +264,7 @@ def main() -> None:
             file=sys.stderr,
         )
     try:
-        with (
-            _explain_rejections(bool(getattr(args, "explain", False))),
-            execution_budget(getattr(args, "time_limit", None)),
-        ):
+        with execution_budget(getattr(args, "time_limit", None)):
             _dispatch(parser, args)
     except BudgetExpired:
         # A signal may arrive while redirect_stdout.__enter__ has assigned
@@ -273,18 +284,6 @@ def main() -> None:
 
 
 _SETTINGS: Optional[Settings] = None
-
-
-@contextmanager
-def _explain_rejections(enabled: bool) -> Iterator[None]:
-    """Source-located decline traces for this invocation, without changing later runs."""
-    previous = REJECTIONS.level
-    if enabled:
-        REJECTIONS.setLevel(logging.DEBUG)
-    try:
-        yield
-    finally:
-        REJECTIONS.setLevel(previous)
 
 
 def _settings() -> Settings:
@@ -332,6 +331,8 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
             _run_dry(args)
         except BrokenPipeError:
             raise
+        except RunCancelled as cancelled:
+            parser.exit(1, f"{cancelled}\n")
         except (OSError, ValueError, TowelError) as error:
             _write_failure_result(args, "error", "error", str(error))
             parser.exit(1, f"Error: {error}\n")
@@ -663,8 +664,9 @@ def _add_report_flags(options: argparse._ActionsContainer) -> None:
     options.add_argument(
         "--explain",
         action="store_true",
-        help="Print on stderr each pair of similar blocks that was not extracted, with its files, "
-        "lines and a reason code (docs/KNOWN_LIMITATIONS.md explains most codes).",
+        help="After the run, list every place with similar code that was left alone, largest "
+        "first, with its files, lines and the reason in a sentence (default: off, which lists "
+        f"the {LARGEST_SHOWN} largest).",
     )
     options.add_argument(
         "--stats",
@@ -1242,6 +1244,7 @@ class DryOptions:
     diff: bool = False
     inventory: bool = False
     strict: bool = DEFAULT_STRICT
+    explain: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -1265,6 +1268,7 @@ class DryOptions:
             summary=bool(getattr(args, "summary", False)),
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
+            explain=bool(getattr(args, "explain", False)),
         )
 
 
@@ -1290,6 +1294,7 @@ class PreviewOptions:
     diff: bool = False
     inventory: bool = False
     strict: bool = DEFAULT_STRICT
+    explain: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -1312,6 +1317,7 @@ class PreviewOptions:
             summary=bool(getattr(args, "summary", False)),
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
+            explain=bool(getattr(args, "explain", False)),
         )
 
     def dry_options(self, output: str) -> DryOptions:
@@ -1336,6 +1342,7 @@ class PreviewOptions:
             summary=self.summary,
             diff=self.diff,
             inventory=self.inventory,
+            explain=self.explain,
         )
 
 
@@ -1392,6 +1399,20 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
 
     is_file, is_dir = _existing_target(input_path)
 
+    if is_file and not input_path.endswith(".py"):
+        # The file was named explicitly, so it is analysed; the census says
+        # whether it was read as Python.
+        print(
+            f"Warning: '{input_path}' is not a Python file (.py); analysing it as one.",
+            file=sys.stderr,
+        )
+    if is_file and not preview and output_path.endswith(("/", os.sep)):
+        raise ValueError(
+            f"The input is one file, so the output must name a file, not the directory"
+            f" '{output_path}'; for example: towel dry {shlex.quote(input_path)}"
+            f" {shlex.quote(output_path + Path(input_path).name)}"
+        )
+
     # Resolve aliases before checking containment or creating any output.
     source = _resolve_cli_path(input_path)
     destination = _resolve_cli_path(output_path)
@@ -1413,7 +1434,13 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         print("This will apply refactorings one at a time until no more are found.")
         print("Helpers go before the first definition of their module,")
         print("or inside the class or function the duplicates share.")
+        if options.interactive:
+            print("Nothing is written until you confirm, once the run knows what it would change.")
         print()
+
+    if options.interactive:
+        for line in _verification_cost(Path(input_path), options.types, options.exclude):
+            print(line)
 
     journal = _pending_journal(source, options.exclude)
     if journal is not None and source == destination:
@@ -1431,6 +1458,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
     from towel.type_inference import CheckerNotInstalled, type_checkers_for_project
 
     annotate_helpers = options.types
+    ask = _ask_before_writing(options) if options.interactive and not preview else None
     try:
         if options.types:
             type_checkers_for_project(source)
@@ -1445,20 +1473,6 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         )
     oracle: Optional[TypeOracle] = None
     try:
-        if is_file and not input_path.endswith(".py"):
-            print(f"Warning: '{input_path}' is not a Python file (.py)")
-            # ``--no-interactive`` promises no prompt: an unattended run asked
-            # here would block on an open stdin, or read a closed one as "no"
-            # and exit 0 having written nothing. The file was named explicitly.
-            if options.interactive and not _confirm("Analyze anyway? (y/N): "):
-                raise ValueError("Aborted; no output was published")
-
-        if options.interactive:
-            for line in _verification_cost(Path(input_path), options.types, options.exclude):
-                print(line)
-            if not _confirm("Proceed? (y/N): "):
-                raise ValueError("Aborted; no output was published")
-
         oracle = _type_oracle(source) if annotate_helpers else None
         if oracle is None and annotate_helpers and _target_has_annotations(source, options.exclude):
             print(
@@ -1491,28 +1505,21 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         if not preview:
             print()
 
+        results: Dict[str, Tuple[int, List[str]]]
         if is_file:
             if not preview:
                 print(f"Refactoring file: {output_path}")
-            final_code, num_applied, descriptions = engine.refactor_to_fixed_point(
+            _, applied, descriptions = engine.refactor_to_fixed_point(
                 input_path,
                 max_iterations=options.max_refactorings,
                 progress=options.progress,
                 output_path=output_path,
+                before_publication=ask,
             )
-            applied = num_applied
-
             termination = (
                 "iteration_cap" if 0 < options.max_refactorings <= applied else "fixed_point"
             )
-            if preview:
-                _print_complete_preview(engine, options, applied, descriptions, termination)
-            elif num_applied > 0:
-                print(f"\nApplied {num_applied} refactoring(s):")
-                for i, desc in enumerate(descriptions, 1):
-                    print(f"  {i}. {desc}")
-            else:
-                print("\nNo refactorings found!")
+            results = {output_path: (applied, descriptions)} if applied else {}
         else:
             if not preview:
                 print(f"Refactoring directory: {output_path}")
@@ -1521,30 +1528,17 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                 output_path,
                 max_iterations=options.max_refactorings,
                 progress=options.progress,
+                before_publication=ask,
             )
             applied = sum(count for count, _ in results.values())
             termination = termination_reason
 
-            if preview:
-                descriptions = [
-                    description for _, entries in results.values() for description in entries
-                ]
-                _print_complete_preview(engine, options, applied, descriptions, termination_reason)
-            elif results:
-                total_refactorings = applied
-                print(
-                    f"\nApplied {total_refactorings} refactoring(s) across {len(results)} file(s)"
-                )
-                print(f"  Termination: {termination_reason}")
-                for file_path, (count, descriptions) in sorted(results.items()):
-                    print(f"\n  {file_path}: {count} refactoring(s)")
-                    for desc in descriptions[:3]:
-                        print(f"    - {desc}")
-                    if len(descriptions) > 3:
-                        print(f"    ... and {len(descriptions) - 3} more")
-            else:
-                print(f"\nNo refactorings found! Termination: {termination_reason}")
-
+        report = engine.run_report
+        relative = _relative_to_run(options)
+        if preview:
+            _print_complete_preview(engine, options, applied, results, termination)
+        else:
+            _print_dry_summary(report, options, applied, results, termination, relative)
         if engine.checker_failures:
             # Applied refactorings were verified; these were not judged at all.
             print(
@@ -1552,10 +1546,11 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                 " could not run for them (see the warnings above); they were not judged."
                 f" {UNTYPED_REMEDY}"
             )
-        if not (options.json or options.diff):
-            _print_declined(engine.run_report, applied, target=source)
+        if not preview and not (options.json or options.diff):
+            for line in _left_alone_report(report, options, applied, relative):
+                print(line)
         if options.stats:
-            _print_statistics(engine.run_report)
+            _print_statistics(report)
         if not preview:
             # Publication has succeeded. This optional naming aid cannot
             # retroactively make that source transaction a failed command.
@@ -1574,6 +1569,176 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
     finally:
         if oracle is not None:
             oracle.close()
+
+
+class RunCancelled(TowelError):
+    """The user declined to write what a finished ``dry`` run would change."""
+
+
+def _shown_path(path: str, is_dir: bool) -> str:
+    """``path`` as the user gave it, ending in a separator when it names a directory."""
+    return path if not is_dir or path.endswith(("/", os.sep)) else path + "/"
+
+
+def _ask_before_writing(options: DryOptions) -> "BeforePublication":
+    """The question ``dry`` asks once it knows what it would write, before writing it.
+
+    It is not asked when there is nothing to apply. Answering anything but
+    ``y`` or ``yes`` (any case), or no answer at all, cancels the run:
+    nothing is written.
+    """
+    from towel.unification.fixed_point import Publication
+
+    relative = _relative_to_run(options)
+
+    def ask(publication: Publication) -> None:
+        if not publication.applied:
+            return
+        sys.stdout.flush()
+        files = [relative(path) for path in publication.files]
+        listed = f": {', '.join(files)}" if len(files) <= LARGEST_SHOWN else ""
+        if publication.in_place:
+            where = (
+                f"will change {_shown_path(options.input, Path(options.input).is_dir())} in place"
+            )
+        else:
+            where = f"will write {_shown_path(options.output, Path(options.input).is_dir())}"
+        print(
+            f"\n{publication.applied} refactoring(s) in {len(files)} file(s){listed}; {where}.",
+            file=sys.stderr,
+        )
+        if publication.in_place:
+            dirty = _uncommitted(publication.files)
+            if dirty:
+                print(
+                    "Warning: these files have changes not committed to git, which this run"
+                    f" would change further: {', '.join(relative(path) for path in dirty)}",
+                    file=sys.stderr,
+                )
+        if not sys.stdin.isatty():
+            print(
+                "(Input is not a terminal; to write without this question, pass"
+                " --no-interactive.)",
+                file=sys.stderr,
+            )
+        if not _confirm("Write these changes? [y/N] "):
+            raise RunCancelled("Cancelled; nothing was written.")
+
+    return ask
+
+
+def _uncommitted(files: Sequence[str]) -> List[str]:
+    """Which of ``files`` git reports changed and not committed; none outside a work tree.
+
+    Only a warning rests on this, so a missing git, a directory that is not
+    a work tree, or a git that fails says nothing rather than stopping the run.
+    """
+    git = shutil.which("git")
+    if git is None or not files:
+        return []
+    try:
+        top = subprocess.run(  # nosec B603: git from PATH, fixed arguments
+            [git, "rev-parse", "--show-toplevel"],
+            cwd=Path(files[0]).parent,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if top.returncode != 0:
+            return []
+        root = Path(top.stdout.strip())
+        # Porcelain paths are relative to the work tree's root.
+        status = subprocess.run(  # nosec B603: git from PATH, fixed arguments
+            [git, "status", "--porcelain", "-z", "--", *files],
+            cwd=root,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if status.returncode != 0:
+        return []
+    changed = {
+        (root / entry[3:].decode("utf-8", "surrogateescape")).resolve()
+        for entry in status.stdout.split(b"\0")
+        if len(entry) > 3
+    }
+    return [path for path in files if Path(path).resolve() in changed]
+
+
+def _relative_to_run(options: DryOptions) -> Callable[[str], str]:
+    """How a run's report names a file: relative to the target, or to a file target's directory.
+
+    The engine names files by the output it writes (the target itself in
+    place, a private copy for preview); either way the part below the target
+    is the user's own path. A file outside both is named as it was given.
+    """
+    target_is_dir = Path(options.input).is_dir()
+    bases = []
+    for given in (options.output, options.input):
+        resolved = _resolve_cli_path(given)
+        bases.append(resolved if target_is_dir else resolved.parent)
+
+    def relative(path: str) -> str:
+        for candidate in (Path(os.path.abspath(path)), _resolve_cli_path(path)):
+            for base in bases:
+                if candidate.is_relative_to(base) and candidate != base:
+                    return str(candidate.relative_to(base))
+        return path
+
+    return relative
+
+
+def _print_dry_summary(
+    report: "RunReport",
+    options: DryOptions,
+    applied: int,
+    results: Mapping[str, Tuple[int, List[str]]],
+    termination: str,
+    relative: Callable[[str], str],
+) -> None:
+    """What a finished ``dry`` read and did, in the words every command uses."""
+    print()
+    print(census_line(report))
+    outcome = outcome_line(report, applied, options.input)
+    if outcome is not None:
+        print(outcome)
+    else:
+        print(f"Applied {applied} refactoring(s) across {len(results)} file(s).")
+        _print_changed_files(results, relative)
+    stopped = stopped_at_limit(termination, options.max_refactorings)
+    if stopped:
+        print(stopped)
+
+
+def _print_changed_files(
+    results: Mapping[str, Tuple[int, List[str]]], relative: Callable[[str], str]
+) -> None:
+    """Each changed file, with the first few of its refactorings."""
+    for file_path, (count, descriptions) in sorted(results.items()):
+        print(f"\n  {relative(file_path)}: {count} refactoring(s)")
+        for desc in descriptions[:3]:
+            print(f"    - {desc}")
+        if len(descriptions) > 3:
+            print(f"    ... and {len(descriptions) - 3} more")
+
+
+def _left_alone_report(
+    report: "RunReport", options: DryOptions, applied: int, relative: Callable[[str], str]
+) -> List[str]:
+    """Why code was left alone, then where: the largest places, or with --explain all of them."""
+    pairs = shows_pairs(applied, options.explain)
+    problem = report.first_unverifiable_reason
+    if problem:
+        # The typed lane's detail: the first unresolved name, in the user's own path.
+        target = Path(options.input).resolve()
+        root = target if target.is_dir() else target.parent
+        problem = problem.removeprefix(str(root) + os.sep)
+    return reason_lines(report, pairs=pairs, first_unverifiable=problem) + left_alone_lines(
+        report, relative, every=options.explain, pairs=pairs
+    )
 
 
 STRAY_COPY_REMEDY = (
@@ -1785,84 +1950,6 @@ def _problems_involving(model: "ImportModel", target: Path) -> List["ImportProbl
     ]
 
 
-def _print_declined(report: "RunReport", applied: int, *, target: Optional[Path] = None) -> None:
-    """Say what the run declined, and why, so "No refactorings found!" is never the whole story.
-
-    Proposals that were built and then not applied are always counted. The
-    candidate pairs the analysis declined are counted when nothing was
-    applied, which is when a reader asks why.
-    """
-    from towel.type_baseline import TYPE_CHECKING_REMEDIES, UNTYPED_REMEDY
-    from towel.unification.exceptions import Untypeable
-    from towel.unification.fixed_point import DeclineReason, counted_reasons
-
-    lines: List[str] = []
-    profitability = (
-        "  The shared work does not repay the helper and caller complexity; "
-        "these blocks were left unchanged."
-    )
-    if unprofitable := report.declined_proposals.get("unprofitable helper", 0):
-        lines.append(
-            f"  {unprofitable} proposal(s) not applied: unprofitable helper {unprofitable}"
-        )
-        lines.append(profitability)
-    unresolved_reason: DeclineReason = (
-        "not verifiable: its file holds a name the type checker cannot type"
-    )
-    other_proposals = {
-        reason: count
-        for reason, count in report.declined_proposals.items()
-        if reason not in {unresolved_reason, "unprofitable helper"}
-    }
-    if other_proposals:
-        lines.append(
-            f"  {sum(other_proposals.values())} proposal(s) not applied: "
-            f"{counted_reasons(other_proposals)}"
-        )
-    if unresolved := report.declined_proposals.get(unresolved_reason, 0):
-        problem = report.first_unverifiable_reason
-        if problem and target is not None:
-            root = target if target.is_dir() else target.parent
-            problem = problem.removeprefix(str(root.resolve()) + os.sep)
-        detail = (
-            f" First problem: {problem}"
-            if problem
-            else " A name used by the code has no type the checker can establish."
-        )
-        lines.append(
-            f"  The type checker could not verify {unresolved} proposed refactoring(s), "
-            f"so those blocks were left unchanged.{detail}"
-        )
-    if any(
-        isinstance(reason, Untypeable)
-        or reason == "refused by the type checker"
-        or reason.startswith(("not judged:", "not verifiable:"))
-        for reason in report.declined_proposals
-    ):
-        lines.append(f"  {TYPE_CHECKING_REMEDIES if unresolved else UNTYPED_REMEDY}")
-    if not applied and report.declined_pairs:
-        lines.append(
-            f"  {sum(report.declined_pairs.values())} candidate pair(s) declined: "
-            f"{counted_reasons(report.declined_pairs)}"
-        )
-        if report.declined_pairs.get("unsupported_syntax", 0):
-            lines.append(
-                "  These blocks contain syntax whose evaluation Towel cannot yet preserve; "
-                "they were left unchanged."
-            )
-        if report.declined_pairs.get("lifetime_order_uncertified", 0):
-            lines.append(
-                "  Strict mode cannot yet preserve the order in which objects are released "
-                "on this Python runtime, so these blocks were left unchanged."
-            )
-        if report.declined_pairs.get("unprofitable_helper", 0):
-            lines.append(profitability)
-    if lines:
-        print("\nDeclined (use --explain for source locations and reasons):")
-        for line in lines:
-            print(line)
-
-
 def _print_statistics(report: "RunReport") -> None:
     """Account for every candidate pair of the last whole analysis, and the run's signatures.
 
@@ -1978,12 +2065,10 @@ def _run_preview(args: argparse.Namespace) -> None:
     options = PreviewOptions.from_namespace(args)
     _warn_about_retired_flags(args)
     if options.quick:
-        if options.json or options.summary or options.diff or options.inventory:
+        if options.json or options.summary or options.diff or options.inventory or options.stats:
             raise ValueError(
-                "--quick cannot be combined with --json, --summary, --diff or --inventory"
+                "--quick cannot be combined with --json, --summary, --diff, --inventory or --stats"
             )
-        if options.stats:
-            print("--stats accounts for a complete run; a --quick list has no statistics.")
         _run_quick_preview(options)
         return
     _existing_target(options.target)
@@ -2038,23 +2123,42 @@ def _print_complete_preview(
     engine: "UnificationRefactorEngine",
     options: DryOptions,
     applied: int,
-    descriptions: Sequence[str],
+    results: Mapping[str, Tuple[int, List[str]]],
     termination: str,
 ) -> None:
-    """Report only the completed pipeline's accepted changes, in their execution order."""
+    """Report only the completed pipeline's accepted changes, in their execution order.
+
+    The census and the outcome follow the count; what would change, file by
+    file, follows them, as ``dry`` lists it; why code was left alone comes
+    last, before the closing line.
+    """
     if options.json or options.diff:
         return
+    report = engine.run_report
+    relative = _relative_to_run(options)
+    headline = [census_line(report)]
+    outcome = outcome_line(report, applied, options.input)
+    if outcome is not None:
+        headline.append(outcome)
+    stopped = stopped_at_limit(termination, options.max_refactorings)
+    if stopped:
+        headline.append(stopped)
+    if results:
+        headline.append(f"Would change {len(results)} file(s):")
+        for file_path, (count, descriptions) in sorted(results.items()):
+            headline.append(f"  {relative(file_path)}: {count} refactoring(s)")
+            headline.extend(f"    - {description}" for description in descriptions)
     print(
         render_preview(
             applied,
-            termination,
-            bool(engine.run_report.declined_pairs or engine.run_report.declined_proposals),
+            headline,
             (
                 ""
                 if options.summary
                 else source_diff(Path(options.input), Path(options.output), options.exclude)
             ),
             _preview_inventory(engine, options) if options.inventory else None,
+            _left_alone_report(report, options, applied, relative),
         ),
         end="",
     )
@@ -2108,6 +2212,9 @@ def _command_result(
         ),
         "helpers": inventory,
         "error": None,
+        "outcome": run_outcome(engine.run_report, applied),
+        "analysed": analysed_record(engine.run_report, _relative_to_run(options)),
+        "left_alone": left_alone_count(engine.run_report, applied),
     }
     if types_status != "verified" or engine.type_check_ran:
         result["types"] = types_status
@@ -2137,6 +2244,9 @@ def _write_failure_result(
         "diff": "",
         "helpers": None,
         "error": error,
+        "outcome": None,
+        "analysed": None,
+        "left_alone": 0,
     }
     try:
         print(json.dumps(result, indent=2))
@@ -2145,9 +2255,23 @@ def _write_failure_result(
         _close_stdout_quietly()
 
 
+def _quick_report(engine: "UnificationRefactorEngine") -> "RunReport":
+    """What one analysis read and declined, as a fixed-point run's report gives it."""
+    from towel.unification.fixed_point import RunReport
+
+    census = engine.last_census
+    return RunReport(
+        declined_pairs=engine.declined_pairs,
+        candidate_pairs=engine.last_pair_tally.candidate_pairs,
+        files_analysed=census.files,
+        functions_analysed=census.functions,
+        skipped_files=census.skipped,
+        left_alone=engine.last_left_alone,
+    )
+
+
 def _run_quick_preview(options: PreviewOptions) -> None:
     """List one analysis without promising that the proposals will pass dry's checks."""
-    from towel.unification.fixed_point import RunReport
     from towel.unification.refactor_engine import UnificationRefactorEngine
     from towel.unification.overlap import filter_overlapping_proposals
 
@@ -2181,8 +2305,10 @@ def _run_quick_preview(options: PreviewOptions) -> None:
     # Analyze
     if is_file:
         if not target.endswith(".py"):
-            print(f"Note: '{target}' is not a Python file (.py)")
-            print()
+            print(
+                f"Warning: '{target}' is not a Python file (.py); analysing it as one.",
+                file=sys.stderr,
+            )
 
         print(f"Analyzing file: {target}")
         all_proposals = engine.analyze_files([target], progress=options.progress)
@@ -2190,12 +2316,19 @@ def _run_quick_preview(options: PreviewOptions) -> None:
         print(f"Analyzing directory: {target}")
         all_proposals = engine.analyze_directory(target, recursive=True, progress=options.progress)
 
-    print(f"\nFound {len(all_proposals)} refactoring opportunities")
-
-    if not all_proposals:
-        print("No duplicates found!")
-        _print_declined(RunReport(declined_pairs=engine.declined_pairs), 0)
+    report = _quick_report(engine)
+    relative = _relative_to_run(options.dry_options(target))
+    print()
+    print(census_line(report))
+    outcome = outcome_line(report, 0, target) if not all_proposals else None
+    if outcome is not None:
+        print(outcome)
+        for line in reason_lines(report) + left_alone_lines(
+            report, relative, every=options.explain
+        ):
+            print(line)
         return
+    print(f"Found {len(all_proposals)} refactoring opportunities")
 
     proposals = filter_overlapping_proposals(all_proposals)
 
@@ -2348,14 +2481,22 @@ def _load_modules(target: Path) -> Dict[Path, Tuple[str, ast.Module]]:
 
 
 def _confirm(prompt: str) -> bool:
-    """Ask a yes/no question; unavailable stdin declines, an interrupt propagates."""
+    """Ask a yes/no question on stderr: ``y`` or ``yes``, in any case, is yes.
+
+    Stdout carries the run's report, which a reader may be piping
+    elsewhere, so the question goes where messages go. Unavailable stdin
+    declines; an interrupt propagates.
+    """
+    print(prompt, end="", file=sys.stderr, flush=True)
     try:
-        return input(prompt).strip().lower() == "y"
-    except (EOFError, OSError, RuntimeError):
-        # A closed or lost stdin answers no; ``input`` raises RuntimeError for
-        # a closed descriptor and OSError for one that cannot be read.
-        print()
-        return False
+        answer = sys.stdin.readline()
+    except (OSError, RuntimeError, ValueError):
+        # A closed or lost stdin answers no.
+        answer = ""
+    if not answer or not sys.stdin.isatty():
+        # No terminal echoed the answer and its newline.
+        print(file=sys.stderr)
+    return answer.strip().lower() in {"y", "yes"}
 
 
 def _change_record(value: object) -> Optional[ChangeRecord]:

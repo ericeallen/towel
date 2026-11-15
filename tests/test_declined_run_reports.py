@@ -110,11 +110,22 @@ def test_a_run_whose_imports_allow_no_helper_says_why(tmp_path: Path, progress: 
         ]
     )
     assert result.status == 0, result
-    assert "No refactorings found!" in result.stdout
+    assert re.search(r"Found \d+ places? with similar code and extracted none\.", result.stdout)
     # No module of either package is known to import the other: the
-    # program's own imports show no import between them that works.
-    reason = "unproven_import" if lifetime_order_certified() else "lifetime_order_uncertified"
-    assert re.search(rf"candidate pair\(s\) declined: .*{reason} \d+", result.stdout)
+    # program's own imports show no import between them that works. Since
+    # 2.0 the reason is a sentence, its code in brackets (audit finding 7).
+    if lifetime_order_certified():
+        assert re.search(
+            r"^ +\d+  Only with --cross-module: no existing import .*\[unproven_import\]$",
+            result.stdout,
+            re.MULTILINE,
+        )
+    else:
+        assert re.search(
+            r"^ +\d+  Strict mode cannot yet preserve .*\[lifetime_order_uncertified\]$",
+            result.stdout,
+            re.MULTILINE,
+        )
     if progress == "detail":
         assert re.search(r"\[towel\] Declined \d+ candidate pair\(s\):", result.stderr)
 
@@ -164,7 +175,11 @@ def test_a_refusal_by_the_checker_is_called_that(
         ["dry", target, target, "--no-interactive", "--no-format", "--progress", "none"]
     )
     assert result.status == 0, result
-    assert "refused by the type checker 1" in result.stdout
+    assert re.search(
+        r"^ +1  The project's type checker reported a new error .*\[refused by the type checker\]$",
+        result.stdout,
+        re.MULTILINE,
+    )
     assert "could not be rendered" not in result.stderr
     assert "the type checker refused" in result.stderr
 

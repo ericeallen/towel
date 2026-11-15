@@ -17,6 +17,7 @@
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tomllib
@@ -197,7 +198,8 @@ def test_quick_preview_reports_uncertified_argument_lifetimes(tmp_path: Path) ->
         assert "Found 1 refactoring opportunit" in result.stdout
         assert "Call sites (- before / + after):" in result.stdout
     else:
-        assert "Found 0 refactoring opportunities" in result.stdout
+        # 2.0 (the results lane): the outcome in words, its reason in brackets.
+        assert re.search(r"Found \d+ places? with similar code and extracted none", result.stdout)
         assert "lifetime_order_uncertified" in result.stdout
         assert "order in which objects are released" in result.stdout
         assert "Call sites (- before / + after):" not in result.stdout
@@ -209,7 +211,9 @@ def test_preview_no_duplicates_is_a_successful_read_only_result(tmp_path: Path) 
     source.write_text("def lone():\n    return 3\n")
     result = invoke(["preview", str(source)])
     assert result.status == 0
-    assert "No duplicates found" in result.stdout
+    # 2.0 (audit finding 3): one wording per outcome, with what was read.
+    assert "Analysed 1 Python file (1 function)." in result.stdout
+    assert "No repeated code found in 1 file." in result.stdout
     assert source.read_text() == "def lone():\n    return 3\n"
 
 
@@ -243,7 +247,7 @@ def test_dry_creates_refactored_output_with_same_runtime_results(
         assert changed != DUPLICATES
     else:
         assert "lifetime_order_uncertified" in result.stdout
-        assert "No refactorings found" in result.stdout
+        assert "extracted none" in result.stdout
         assert changed == DUPLICATES
     assert evaluate_functions(changed) == evaluate_functions(DUPLICATES) == [-1, 5, 19, -1, 5, 19]
     assert source.read_text() == DUPLICATES
