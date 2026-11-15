@@ -80,9 +80,10 @@ direct host loads so the original binding and typing defects still exercise
 extraction while historical inputs remain unchanged.
 
 A package in ``REFUSED`` holds a file using lazy imports, stored as
-``.pynew`` (``tests.hostile_execution``). Before Python 3.15, Towel must
-refuse the run before writing anything, naming the unparseable file
-(``towel.program_files``). On 3.15 the whole package is visible; the current
+``.pynew`` (``tests.hostile_execution``). Before Python 3.15, strict mode must
+refuse before writing, naming the unparseable file. Relaxed mode warns once,
+leaves that file unchanged, and preserves the program's observable output on
+the running interpreter (runtime item 6). On 3.15 the whole package is visible; the current
 lifetime profile refuses these candidates and the program still runs unchanged. The two ``xf9up_`` packages are the
 round-4 audit's P1-2 and P1-3, where such a file hid a decorator applied by
 hand and a test's patch of ``len``.
@@ -567,7 +568,8 @@ RELAXED_REFLECTION_WHERE_PARSED: Dict[str, str] = {
 }
 """REFUSED packages that are reflection cases once this interpreter parses their newer syntax.
 
-On 3.11 to 3.13 the run is refused because pkg/fast.py does not parse. On
+On 3.11 to 3.13 strict mode refuses because pkg/fast.py does not parse;
+relaxed mode skips that file. On
 3.15 it parses; strict mode then declines for release order (above), and
 relaxed mode, which makes no such refusal, extracts from a function another
 module recompiles from its source, which the contract excludes like the
@@ -591,7 +593,9 @@ empty, and any difference in relaxed mode is a defect to fix.
         path.name for path in CASES.iterdir() if path.is_dir() and path.name not in REFLECTION_CASES
     ),
 )
-def test_relaxed_directory_refactoring_preserves_program_output(case: str) -> None:
+def test_relaxed_directory_refactoring_preserves_program_output(
+    case: str, caplog: pytest.LogCaptureFixture
+) -> None:
     """The same battery in relaxed mode: identical output, and no ownership bookkeeping."""
     with tempfile.TemporaryDirectory(prefix="towel-hostile-xf-relaxed-") as directory:
         before = Path(directory) / "before"
@@ -599,15 +603,7 @@ def test_relaxed_directory_refactoring_preserves_program_output(case: str) -> No
         copy_fixture_tree(CASES / case, before)
         copy_fixture_tree(CASES / case, after)
         cross_module = case not in WITHOUT_CROSS_MODULE
-        if case in REFUSED and not _parses(before / REFUSED[case]):
-            # A program that will not parse is refused in every mode. Where this
-            # interpreter parses the newer syntax, relaxed mode has no lifetime
-            # refusal to make (strict's is checked above), and the package is
-            # held to the ordinary relaxed checks below.
-            with pytest.raises(UnparsedProgramError, match=re.escape(f"  {REFUSED[case]}: line ")):
-                refactor_package(after / "pkg", cross_module=cross_module, strict=False)
-            assert _python_files(after) == _python_files(before)
-            return
+        unparsed = case in REFUSED and not _parses(before / REFUSED[case])
         scopes = ScopeWatch()
         results = refactor_package(
             after / "pkg",
@@ -617,6 +613,16 @@ def test_relaxed_directory_refactoring_preserves_program_output(case: str) -> No
             strict=False,
         )
         written, original = _python_files(after), _python_files(before)
+        if unparsed:
+            # Runtime item 6: strict's refusal remains tested above. Relaxed
+            # mode must warn once, preserve the skipped bytes, and still pass
+            # every output, scope and public-name check below.
+            assert written[REFUSED[case]] == original[REFUSED[case]]
+            warnings = [
+                record.message for record in caplog.records if "Skipping " in record.message
+            ]
+            assert len(warnings) == 1, warnings
+            assert REFUSED[case] in warnings[0]
         transformed = written != original
         assert transformed == (sum(applied for applied, _ in results.values()) > 0)
         assert scopes.found == []
@@ -626,7 +632,7 @@ def test_relaxed_directory_refactoring_preserves_program_output(case: str) -> No
             ), name
         if case in RELAXED_OBSERVES_FINALIZATION:
             assert _run(after) != _run(before), "no longer differs: remove it from the list"
-        elif case in RELAXED_REFLECTION_WHERE_PARSED:
+        elif case in RELAXED_REFLECTION_WHERE_PARSED and not unparsed:
             # Outside the preservation contract, as REFLECTION_CASES are: the
             # extraction only has to be valid Python.
             assert transformed, RELAXED_REFLECTION_WHERE_PARSED[case]
