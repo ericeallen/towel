@@ -6,8 +6,8 @@ names, and run your project's tests before adopting the result.
 
 **Release status: 1.949 (beta).** This page describes that version. The
 [GitHub releases page](https://github.com/ericeallen/towel/releases) lists the
-published versions; the release notes there say what changed and how each
-release was validated.
+published versions. The release notes there say what changed and, from 1.732
+on, how the release was validated.
 
 ## Install
 

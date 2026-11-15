@@ -5,7 +5,7 @@
 This source describes **1.949**: the product-experience and maturity
 improvements in the [changelog](../CHANGELOG.md#1949). The
 [GitHub releases](https://github.com/ericeallen/towel/releases) record which
-versions have been published and how each was validated. The
+versions have been published and, from 1.732 on, how each was validated. The
 [readiness report](PRODUCTION_READINESS.md) keeps the dated preparation and
 publication records of 1.949 and of earlier releases, under their original
 source identities and results.
