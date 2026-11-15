@@ -326,16 +326,25 @@ See [the evidence schema and release procedure](docs/RELEASING.md#repository-own
   detailed tasks and explanations in the appropriate guide linked from
   [the documentation index](docs/README.md), and add user-visible changes
   under `[Unreleased]` in CHANGELOG.md
-- This source documents 1.948. Its [changelog](CHANGELOG.md#1948) describes
-  the four silent `dry` miscompilation repairs and CLI corrections after 1.947;
-  the [1.947 overview](docs/RELEASE_1_947.md) describes the post-1.946 audit
-  repairs. [Readiness](docs/PRODUCTION_READINESS.md) and the
-  [release procedure](docs/RELEASING.md) record dated checkpoints and the
-  gates for each release. Do not report missing results as passed. Published
-  1.946/1.792 artifacts and older development measurements retain their
+- Never say in a file that ships whether a version has been published, when
+  it was, or which version is the newest. The distributions and the PyPI page
+  are frozen before publication, so such a sentence is wrong from the day of
+  upload and cannot be corrected: PyPI's page for 1.949 says that 1.949 has
+  not been published. The README's `**Release status: X (beta).**` line,
+  SECURITY.md's `This source tree targets **X**`, and the version sentences of
+  the documentation index and quick start name the version the source
+  describes. They change only when
+  [a release is prepared](docs/RELEASING.md#recording-the-release). What has
+  been published, and how it was validated, is recorded in the
+  [GitHub release notes](https://github.com/ericeallen/towel/releases).
+  `tests/test_current_release_documentation.py` enforces this
+- [Readiness](docs/PRODUCTION_READINESS.md) and the
+  [release log](docs/RELEASE_LOG.md) keep dated records of each release's
+  gates, and those records stay as written. Do not report missing results as
+  passed. Published artifacts and older development measurements retain their
   original source and artifact identities. Follow the
   [version convention](docs/RELEASING.md#version-number-convention) when choosing
-  the next identifier; mathematical mnemonics do not define compatibility policy.
+  the next identifier; mathematical mnemonics do not define compatibility policy
 - Give each new guide an index entry and a backlink. Longer references should
   have a compact contents list using their existing headings. Prefer relative
   links inside `docs/`; the root README needs release-pinned absolute links

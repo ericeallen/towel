@@ -93,7 +93,7 @@ def _refuse_unusable_output(
     if destination.exists() and not (
         allow_empty and destination.is_dir() and not any(destination.iterdir())
     ):
-        raise ValueError("Output already exists")
+        raise ValueError("Output already exists (to refactor in place, give the same path twice)")
     return source, destination
 
 

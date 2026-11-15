@@ -4,19 +4,7 @@ Towel finds repeated Python code and extracts it into shared helpers. Start
 with the [Quick start](QUICKSTART.md) for a first refactoring; use the guides
 below when you need a particular task or a precise rule.
 
-This documentation describes **1.949**, published November 10, 2026 (see the
-[publication record](PRODUCTION_READINESS.md#1949-published-release-november-10-2026)). Check the
-[GitHub releases](https://github.com/ericeallen/towel/releases) for completed
-validation and publication records. Dated
-benchmarks, validation reports and proposals retain their original source and
-artifact identities; they do not establish results for a later release.
-
-At the November 8, 2026 preparation checkpoint, **1.949** was unpublished
-and required a source checkout. The latest published release at that checkpoint
-was **1.948**, published November 7, 2026; its completed checks are in the
-[publication record](PRODUCTION_READINESS.md#1948-published-release-november-7-2026).
-[Historical release evidence](RELEASE_HISTORY.md) retains earlier
-source-specific results.
+These pages describe Towel **1.949**.
 
 ## Start and use Towel
 
@@ -57,6 +45,7 @@ source-specific results.
 - [1.946 overview](RELEASE_1_946.md): historical improvements since 1.792 and their limits.
 - [Production readiness](PRODUCTION_READINESS.md): validation scope, results and qualifications.
 - [Release log](RELEASE_LOG.md): dated engineering and validation checkpoints.
+- [Historical release evidence](RELEASE_HISTORY.md): earlier releases' records, under their original sources.
 - [Adversarial review](ADVERSARIAL_REVIEW.md): discovered defects and their regression coverage.
 - [Open-source audit](OPEN_SOURCE_AUDIT.md): the historical distribution and maintenance audit.
 - [Design proposals and experiments](proposals/README.md): implementation status, deferred designs and dated measurements.

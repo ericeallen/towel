@@ -5,7 +5,20 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "code-towel"
 version = "1.949"
-description = "A Python tool that DRYs your code - finds and refactors repeated code using anti-unification"
+description = "Refactor duplicated Python code into shared helper functions, declining extractions that fail binding, control-flow and evaluation-order checks"
+keywords = [
+    "refactoring",
+    "duplicate code",
+    "code duplication",
+    "DRY",
+    "clone detection",
+    "code clones",
+    "anti-unification",
+    "extract function",
+    "static analysis",
+    "code quality",
+    "ast",
+]
 authors = [
     {name = "Eric Allen"}
 ]
@@ -15,14 +28,17 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 classifiers = [
     "Development Status :: 4 - Beta",
+    "Environment :: Console",
     "Intended Audience :: Developers",
+    "Operating System :: MacOS",
     "Operating System :: POSIX",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Quality Assurance",
-    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 
 dependencies = []
@@ -48,9 +64,15 @@ dev = [
     "tqdm>=4.66.0",
 ]
 
+# No URL names a release tag: `just bump-version` rewrites only the version line,
+# so a tagged link here would describe the previous release on every new PyPI page.
 [project.urls]
-Repository = "https://github.com/ericeallen/towel"
+Homepage = "https://github.com/ericeallen/towel"
+Documentation = "https://github.com/ericeallen/towel/blob/HEAD/docs/README.md"
+Changelog = "https://github.com/ericeallen/towel/blob/HEAD/CHANGELOG.md"
+"Release notes" = "https://github.com/ericeallen/towel/releases"
 Issues = "https://github.com/ericeallen/towel/issues"
+Repository = "https://github.com/ericeallen/towel"
 
 [project.scripts]
 towel = "towel.cli:main"

@@ -25,16 +25,18 @@ import argparse
 import ast
 from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass
+from gettext import gettext
 import json
 import logging
 import math
 import os
 import re
+import shlex
 import signal
 import sys
 import tempfile
 import textwrap
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import (
     Callable,
@@ -44,6 +46,7 @@ from typing import (
     List,
     Literal,
     Mapping,
+    NoReturn,
     Optional,
     Sequence,
     Set,
@@ -92,42 +95,133 @@ from towel.unification.defaults import (
 )
 from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode, normalize_progress
 
+_MISSING_OUTPUT = gettext("the following arguments are required: %s") % "output"
+"""argparse's message, in its own translation, for a dry command line that names no output."""
+
+
+class _TowelParser(argparse.ArgumentParser):
+    """Towel's parsers: a dry command line without an output is told what to add.
+
+    argparse alone said only "the following arguments are required: output"
+    (user audit CLI-09). The input, which that message lacks, is recorded as
+    it is parsed (:class:`_DryInput`); every command's parser is of this class.
+    """
+
+    dry_input: Optional[str] = None
+
+    def error(self, message: str) -> NoReturn:
+        if self.dry_input is not None and message == _MISSING_OUTPUT:
+            message = _one_path_dry(self.dry_input)
+        super().error(message)
+
+
+class _DryInput(argparse.Action):
+    """Store dry's input path, and record it on the parser for a missing-output message."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: Optional[str] = None,
+    ) -> None:
+        setattr(namespace, self.dest, values)
+        if isinstance(parser, _TowelParser) and isinstance(values, str):
+            parser.dry_input = values
+
+
+def _one_path_dry(given: str) -> str:
+    """What to tell ``towel dry <given>``: a new output path, or the same path twice."""
+    path = Path(given)
+    if path.suffix == ".py":
+        kind, output = "file", str(path.with_name(f"{path.stem}_cleaned{path.suffix}"))
+    else:
+        kind, output = "directory", "cleaned"
+    return (
+        "dry needs an output path as well as the input.\n"
+        f"It writes the refactored code to a new {kind} and leaves {given} unchanged:\n"
+        f"  towel dry {shlex.quote(given)} {shlex.quote(output)}\n"
+        "To refactor in place instead, give the same path twice:\n"
+        f"  towel dry {shlex.quote(given)} {shlex.quote(given)}"
+    )
+
+
+class _HelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Descriptions and examples as written; option text wrapped, never inside an option's name.
+
+    textwrap breaks a line after any hyphen, which split ``--no-interactive``
+    into ``--no-`` and ``interactive`` (user audit CLI-03).
+    """
+
+    def _split_lines(self, text: str, width: int) -> List[str]:
+        return textwrap.wrap(" ".join(text.split()), width, break_on_hyphens=False)
+
+
+def _towel_version() -> str:
+    """This Towel's version: its distribution's, else its source tree's, else "unknown".
+
+    A source tree that is not installed, run as ``PYTHONPATH=src python -m
+    towel``, has no distribution metadata; asking for it once stopped every
+    command with PackageNotFoundError while the parser was being built.
+    """
+    try:
+        return version("code-towel")
+    except PackageNotFoundError:
+        return _source_tree_version(Path(__file__).resolve().parents[2]) or "unknown"
+
+
+def _source_tree_version(root: Path) -> Optional[str]:
+    """The version ``root/pyproject.toml`` declares, if that file is Towel's own."""
+    import tomllib
+
+    try:
+        project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        return None
+    table = project.get("project")
+    if not isinstance(table, dict) or table.get("name") != "code-towel":
+        return None
+    declared = table.get("version")
+    return declared if isinstance(declared, str) else None
+
 
 def _build_parser() -> argparse.ArgumentParser:
     """The command-line parser, shared by ``main`` and the tests."""
-    parser = argparse.ArgumentParser(
+    parser = _TowelParser(
         prog="towel",
-        description="A Python tool that DRYs your code - finds and refactors repeated code",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  towel preview src/                    # Preview duplicates (read-only)
-  towel dry src/ cleaned/               # Apply refactorings to new directory
-  towel dry src/ src/                   # Apply refactorings in-place
-  towel rename-helpers src/             # Prepare and apply helper-name changes
+        allow_abbrev=False,
+        description="""\
+Towel finds repeated code in Python files, including copies that differ in a
+few names or values, and replaces it with calls to new helper functions.""",
+        formatter_class=_HelpFormatter,
+        epilog="""\
+Examples, in a directory holding src/:
+  towel preview src/          # Show what would change, changing nothing
+  towel dry src/ cleaned/     # Write a refactored copy of src/ to cleaned/
+  towel dry src/ src/         # Refactor in place (commit your work first)
+  towel rename-helpers src/ --complete-scope    # Name the new helpers
 
-For more help on a specific command:
-  towel <command> --help
-        """,
+Run towel COMMAND --help for a command's options and examples, and see
+docs/QUICKSTART.md for a first run.
+
+Exit status: 0 done, including when there was nothing to change; 1 failed,
+refused, or answered "no"; 2 invalid arguments, or a rename refused; 124 time
+limit reached; 130 interrupted; 143 terminated.""",
     )
 
     parser.add_argument(
+        "-V",
         "--version",
         action="version",
-        version=f"towel {version('code-towel')}",
+        version=f"towel {_towel_version()}",
     )
 
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    subparsers = parser.add_subparsers(dest="command", title="commands", metavar="COMMAND")
 
-    _add_dry_parser(subparsers)
     _add_preview_parser(subparsers)
+    _add_dry_parser(subparsers)
     _add_rename_helpers_parser(subparsers)
-    recovery = subparsers.add_parser("recover", help="Roll back an interrupted local transaction")
-    recovery.add_argument(
-        "journal",
-        type=Path,
-        help="the .towel-transaction-<id> directory an interrupted run left behind",
-    )
+    _add_recover_parser(subparsers)
     return parser
 
 
@@ -263,15 +357,28 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
             parser.exit(1, f"Error: {error}\n")
 
 
-def _count(text: str) -> int:
-    """An argparse type for a count: a whole number that is not negative."""
-    try:
-        value = int(text)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"expected a whole number, got {text!r}") from None
-    if value < 0:
-        raise argparse.ArgumentTypeError(f"{value} is negative; 0 runs to a fixed point")
-    return value
+@dataclass(frozen=True)
+class _Count:
+    """An argparse type for a count: a whole number that is not negative.
+
+    ``wanted`` follows "is negative;" and says what the option counts, in
+    its own words: one sentence for every count once told ``--min-lines -1``
+    that "0 runs to a fixed point" (user audit CLI-09).
+    """
+
+    wanted: str
+
+    def __call__(self, text: str) -> int:
+        try:
+            value = int(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"expected a whole number, got {text!r}") from None
+        if value < 0:
+            raise argparse.ArgumentTypeError(f"{value} is negative; {self.wanted}")
+        return value
+
+
+_REFACTORING_COUNT = _Count("give the most refactorings to apply, or 0 for no limit")
 
 
 def _add_import_layout_flags(parser: argparse.ArgumentParser) -> None:
@@ -333,219 +440,303 @@ def _excluded_name(value: str) -> str:
     )
 
 
-def _add_exclude_flag(parser: argparse.ArgumentParser) -> None:
+def _add_exclude_flag(options: argparse._ActionsContainer) -> None:
     """Add ``--exclude``, shared by the commands that analyze a directory."""
-    parser.add_argument(
+    options.add_argument(
         "--exclude",
         action="append",
         default=[],
         type=_excluded_name,
         metavar="NAME",
-        help="Name of a directory or file to leave unchanged (repeatable), at any depth, e.g."
-        " tests or benchmark.py; checks that read the whole program still read it, and one"
-        " there that does not parse is taken for no part of the program",
+        help="Leave out every file or directory named NAME, at any depth (repeatable), e.g."
+        " --exclude tests: Towel changes nothing in it. Give a name, not a path or a pattern;"
+        " by default only hidden directories, __pycache__, node_modules and virtual"
+        " environments are left out.",
     )
 
 
-def _add_cross_module_flag(parser: argparse.ArgumentParser) -> None:
+def _add_cross_module_flag(options: argparse._ActionsContainer) -> None:
     """Add ``--cross-module``, shared by the commands that analyze a project.
 
     Off by default: a helper shared across modules adds an import between
     them, a change to how the project's modules depend on each other that a
     user should ask for rather than find in the diff.
     """
-    parser.add_argument(
+    options.add_argument(
         "--cross-module",
         dest="cross_module",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Also share a helper between duplicates in different modules, importing it from "
-        "the module that hosts it into the others, spelled as the program's own imports "
-        "show that import works; a run refuses when those imports leave the names of the "
-        "package it refactors in doubt. --no-cross-module, the default, extracts only within "
-        "a module and adds no import between the project's modules that runs.",
+        help="Also extract duplicates that span modules: the helper goes in one module and the "
+        "others import it (docs/CROSS_MODULE.md explains when this is refused). Default: off: "
+        "only duplicates within one module are extracted, so no module starts importing "
+        "another.",
     )
 
 
-def _add_parameterize_builtins_flag(parser: argparse.ArgumentParser) -> None:
+def _add_parameterize_builtins_flag(options: argparse._ActionsContainer) -> None:
     """Add ``--parameterize-builtins``, shared by the commands that analyze a project.
 
     Off by default: no helper takes a builtin as a parameter, since a call
     such as ``helper(rows, len)`` would surprise its reader.
     """
-    parser.add_argument(
+    options.add_argument(
         "--parameterize-builtins",
         dest="parameterize_builtins",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Preserve each caller's builtin binding through a lookup thunk when sharing "
-        "code across modules or between different bindings. By default, cross-module "
-        "bare builtin reads are declined (except __debug__). Safe same-module reads stay bare. "
-        "If ordinary bindings, wildcard imports or __builtins__ attribute writes elsewhere in "
-        "the analyzed program may replace a module's mapping, its captured global-fallback "
-        "reads (including custom names) and implicit import/class operations decline even "
-        "with this flag. "
-        "Eager evaluation requires a proved single use "
-        "at the first effect and an immutable lookup result.",
+        help="Also extract duplicates that use a builtin such as len where the copies may not "
+        "mean the same len: copies in different modules (with --cross-module), or copies of "
+        "which only one has its own variable named len; each call then hands the helper its "
+        "own len. Default: off, and such duplicates are left alone; docs/GENERATED_CODE.md "
+        "lists the cases left alone even with this option.",
     )
 
 
-def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+@dataclass(frozen=True)
+class _Sections:
+    """Where dry and preview list an option in their help, in the order a newcomer reads.
+
+    Add an option to the section that says what it is for: ``output``, what
+    the command prints, writes or asks; ``scope``, which code it examines;
+    ``limits``, how much it does; ``advanced``, what most runs leave at its
+    default. ``output`` is the parser's own options section, retitled, so
+    ``--help`` and an option added to the parser itself are listed there.
+    Within a section, options are listed in the order they are added.
+    """
+
+    output: argparse.ArgumentParser
+    scope: argparse._ArgumentGroup
+    limits: argparse._ArgumentGroup
+    advanced: argparse._ArgumentGroup
+
+
+def _sections(parser: argparse.ArgumentParser) -> _Sections:
+    """Give ``parser`` the four sections of its help, after its positional arguments."""
+    parser._optionals.title = "what you get"
+    return _Sections(
+        output=parser,
+        scope=parser.add_argument_group("what is examined"),
+        limits=parser.add_argument_group("limits"),
+        advanced=parser.add_argument_group("advanced"),
+    )
+
+
+def _add_dry_parser(subparsers: "argparse._SubParsersAction[_TowelParser]") -> None:
     """Add 'dry' subcommand parser."""
     parser = subparsers.add_parser(
         "dry",
-        help="Apply refactorings to remove duplicate code",
-        formatter_class=argparse.RawTextHelpFormatter,
-        description="Analyze and apply refactorings using anti-unification to files or directories.",
-        epilog="""
-Examples:
-  towel dry src/ cleaned/                         # Refactor directory until fixed point
-  towel dry file.py file_out.py --no-interactive  # Skip the confirmation prompt
-  towel dry src/ out/ --max-refactorings 50       # Stop after 50 applied refactorings
-  towel dry src/ out/ --progress detail           # Verbose per-phase output
-        """,
+        allow_abbrev=False,
+        help="Refactor repeated code, into a new directory or in place",
+        formatter_class=_HelpFormatter,
+        description="""\
+Extract each piece of repeated code into a helper function and replace the
+copies with calls to it. dry writes the result to output, a new path, and
+leaves input unchanged; give the same path twice to refactor in place. It asks
+before writing anything, then keeps going until nothing more can be
+extracted. Run towel preview first to see what would change.""",
+        epilog="""\
+Examples, in a directory holding src/:
+  # Write a refactored copy of src/ to cleaned/
+  towel dry src/ cleaned/
+
+  # Refactor src/ in place (commit your work first, to review the change)
+  towel dry src/ src/
+
+  # Unattended: no question, and give up after ten minutes
+  towel dry src/ out/ --no-interactive --time-limit 600
+
+When it changes anything, dry also writes .towel-helpers.json into output (or
+output.towel-helpers.json beside an output file): each new helper's call
+sites, for naming the helpers with rename-helpers. Delete it once you no
+longer need it. TOWEL_WORKERS=N limits the analysis to N worker processes.""",
     )
 
-    parser.add_argument("input", help="Input file or directory")
-    parser.add_argument("output", help="Output file or directory (can be same as input)")
     parser.add_argument(
+        "input",
+        action=_DryInput,
+        help="The file or directory to refactor; dry leaves it unchanged unless output "
+        "is the same path.",
+    )
+    parser.add_argument(
+        "output",
+        help="Where to write the refactored code: a path that does not exist yet, or the same "
+        "path as input to refactor in place.",
+    )
+    sections = _sections(parser)
+    sections.output.add_argument(
         "--interactive",
         dest="interactive",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Ask for confirmation before writing (the default); --no-interactive skips the prompt",
+        help="Ask for confirmation before writing anything (default: on); --no-interactive "
+        "writes without asking, as scripts need.",
     )
-    parser.add_argument(  # earlier spelling, kept for scripts
+    sections.output.add_argument(  # earlier spelling, kept for scripts
         "--non-interactive", dest="interactive", action="store_false", help=argparse.SUPPRESS
     )
-    _add_exclude_flag(parser)
-    _add_cross_module_flag(parser)
-    _add_parameterize_builtins_flag(parser)
+    _add_json_flag(sections.output)
+    _add_shared_options(sections)
 
     _add_import_layout_flags(parser)
-    _add_tuning_flags(parser)
-    _add_execution_flags(parser)
     _add_progress_flag(
         parser,
         detail="'detail' logs each pass's discovered proposals and follow-ups instead of a bar",
     )
 
 
+_LONGEST_TIME_LIMIT = 100_000_000
+"""The longest interval, in seconds, every supported platform's interval timer accepts.
+
+macOS refuses a longer ``setitimer`` interval with EINVAL, and a value past
+the platform's ``time_t`` overflows; either once ended a run in a traceback
+(user audit CLI-09). It is about three years.
+"""
+
+
 def _seconds(text: str) -> float:
-    """A finite positive wall-clock budget."""
+    """A finite positive wall-clock budget the interval timer can hold."""
     try:
         seconds = float(text)
     except ValueError:
         raise argparse.ArgumentTypeError("time limit must be a positive finite number") from None
     if not math.isfinite(seconds) or seconds <= 0:
         raise argparse.ArgumentTypeError("time limit must be a positive finite number")
+    if seconds > _LONGEST_TIME_LIMIT:
+        raise argparse.ArgumentTypeError(
+            f"time limit must be at most {_LONGEST_TIME_LIMIT} seconds (about three years);"
+            " leave out --time-limit for no limit"
+        )
     return seconds
 
 
-def _add_execution_flags(
-    parser: argparse.ArgumentParser,
-    *,
-    presentation: Optional[argparse._MutuallyExclusiveGroup] = None,
-) -> None:
-    """Options shared by dry and the complete preview of that same run."""
-    parser.add_argument(
-        "--explain",
-        action="store_true",
-        help="Explain declined candidate pairs on stderr, including source files and line ranges",
-    )
-    parser.add_argument(
-        "--time-limit",
-        type=_seconds,
-        metavar="SECONDS",
-        help="Limit setup, analysis and verification to this many seconds; expiry exits 124 "
-        "without publishing output. Final publication and cleanup finish safely and may "
-        "extend past the limit.",
-    )
-    (parser if presentation is None else presentation).add_argument(
-        "--json",
-        action="store_true",
-        help="Write one versioned JSON result to stdout; diagnostics go to stderr. "
-        "dry also requires --no-interactive.",
-    )
-    parser.add_argument(
-        "--max-refactorings",
-        dest="max_refactorings",
-        type=_count,
-        default=DEFAULT_MAX_ITERATIONS,
-        metavar="N",
-        help="Stop after N applied refactorings (0, the default, runs to a fixed point)",
-    )
-    parser.add_argument(  # earlier spelling, kept for scripts
-        "--max-iterations",
-        dest="max_refactorings",
-        type=_count,
-        metavar="N",
-        help=argparse.SUPPRESS,
-    )
+def _add_shared_options(sections: _Sections) -> None:
+    """Add the options dry and preview share, each to its section of the help.
 
-    parser.add_argument(
+    preview runs dry's pipeline with every one of them
+    (:meth:`PreviewOptions.dry_options`), so an option added here is added
+    to both dataclasses too. Within a section they follow the options the
+    command added first.
+    """
+    _add_report_flags(sections.output)
+    _add_exclude_flag(sections.scope)
+    _add_cross_module_flag(sections.scope)
+    _add_limit_flags(sections.limits)
+    sections.advanced.add_argument(
         "--strict",
         action="store_true",
         help="Keep strict verification and refusal policies (relaxed mode is the default).",
     )
-    parser.add_argument(
-        "--types",
-        dest="types",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Annotate generated helpers (the default), in code that already uses annotations: "
-        "the annotations the call sites declare, and the types the project's checker (mypy or "
-        "pyright, the 'types' extra) infers and verifies for the rest. --no-types leaves "
-        "helpers bare.",
+    _add_tool_flags(sections.advanced)
+    _add_parameterize_builtins_flag(sections.advanced)
+
+
+def _add_json_flag(options: argparse._ActionsContainer) -> None:
+    """Add ``--json``: to dry's output section, or to preview's choice of presentation."""
+    options.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the result as one JSON object on stdout, for scripts (docs/COMPATIBILITY.md "
+        "lists its fields); messages go to stderr. dry also needs --no-interactive.",
     )
-    parser.add_argument(
-        "--format",
-        dest="format",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Format generated code (the default) with the project's formatter (ruff when "
-        "configured, else Black; the 'format' extra) at the line length the project declares, "
-        "and sort inserted imports the way the project does (ruff's I rules or isort). "
-        "--no-format inserts code as rendered. Configured Ruff lint checks remain active.",
+
+
+def _add_report_flags(options: argparse._ActionsContainer) -> None:
+    """Add the options that print more about a run without changing what it does."""
+    options.add_argument(
+        "--explain",
+        action="store_true",
+        help="Print on stderr each pair of similar blocks that was not extracted, with its files, "
+        "lines and a reason code (docs/KNOWN_LIMITATIONS.md explains most codes).",
     )
-    parser.add_argument(
+    options.add_argument(
         "--stats",
         dest="stats",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="After the run, account for every candidate pair of its last whole analysis "
-        "(declined, duplicated, overlapped or emitted) and count the helper signatures the "
-        "type checker verified and refused. Output files are the same with or without it.",
+        help="After the run, count the pairs of similar blocks its last analysis compared and "
+        "what became of each, and the helper signatures the type checker accepted and refused "
+        "(default: off). The result is the same with or without it.",
     )
 
 
-def _add_tuning_flags(parser: argparse.ArgumentParser) -> None:
-    """The engine knobs the dry and preview commands share."""
-    parser.add_argument(
+def _add_limit_flags(options: argparse._ActionsContainer) -> None:
+    """Add the options that bound what a run considers and how long it works."""
+    options.add_argument(
         "--min-lines",
-        type=_count,
+        type=_Count(f"give the fewest lines a duplicate may span (default: {DEFAULT_MIN_LINES})"),
         default=DEFAULT_MIN_LINES,
         metavar="N",
-        help=f"Fewest source lines a duplicated block may span (default: {DEFAULT_MIN_LINES})",
+        help=f"Consider only duplicated code at least N lines long (default: {DEFAULT_MIN_LINES}).",
     )
-    parser.add_argument(
+    options.add_argument(
         "--max-parameters",
-        type=_count,
+        type=_Count(
+            "give the most parameters a helper may take for the differences (default: "
+            f"{DEFAULT_MAX_PARAMETERS})"
+        ),
         default=DEFAULT_MAX_PARAMETERS,
         metavar="N",
-        help=f"Most newly parameterized differing expressions (default: {DEFAULT_MAX_PARAMETERS}); "
-        "ordinary free inputs may add arguments. Whole-body ownership transfer must fit its "
-        "complete positional signature, including the final lifetime holder, within this limit.",
+        help="Extract only duplicates whose differences need at most N parameters (default: "
+        f"{DEFAULT_MAX_PARAMETERS}); each distinct difference becomes a parameter of the helper. "
+        "Variables the copies read are passed as further arguments and usually do not count "
+        "(docs/GENERATED_CODE.md says when they do).",
     )
-    parser.add_argument(
+    options.add_argument(
+        "--max-refactorings",
+        dest="max_refactorings",
+        type=_REFACTORING_COUNT,
+        default=DEFAULT_MAX_ITERATIONS,
+        metavar="N",
+        help="Stop after applying N refactorings; 0 means no limit, so the run goes on until "
+        f"nothing more can be extracted (default: {DEFAULT_MAX_ITERATIONS}).",
+    )
+    options.add_argument(  # earlier spelling, kept for scripts; after the default it shares
+        "--max-iterations",
+        dest="max_refactorings",
+        type=_REFACTORING_COUNT,
+        metavar="N",
+        help=argparse.SUPPRESS,
+    )
+    options.add_argument(
+        "--time-limit",
+        type=_seconds,
+        metavar="SECONDS",
+        help="Give up if setup, analysis and checking take more than SECONDS: nothing is "
+        "written and the exit status is 124 (default: no limit). Writing, once started, "
+        "always finishes.",
+    )
+    options.add_argument(
         "--max-pairs",
-        type=_count,
+        type=_Count("give the most pairs of similar blocks to compare, or 0 for no limit"),
         default=DEFAULT_MAX_CANDIDATE_PAIRS,
         metavar="N",
-        help=(
-            "Most candidate block pairs one analysis evaluates; past it the largest groups of "
-            f"similar blocks are left out with a warning (default: {DEFAULT_MAX_CANDIDATE_PAIRS})"
-        ),
+        help="Compare at most N pairs of similar blocks in one analysis; beyond that, the "
+        "largest groups of similar blocks are skipped with a warning (default: "
+        f"{DEFAULT_MAX_CANDIDATE_PAIRS:,}; 0 means no limit).",
+    )
+
+
+def _add_tool_flags(options: argparse._ActionsContainer) -> None:
+    """Add the options that choose whether the project's type checker and formatter run."""
+    options.add_argument(
+        "--types",
+        dest="types",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Annotate the helpers Towel writes in code that already uses type annotations, "
+        "and keep only changes that add no type error, checked with the project's mypy or "
+        "pyright (the 'types' extra) when installed. Default: on; --no-types writes "
+        "unannotated helpers and runs no checker, which is faster.",
+    )
+    options.add_argument(
+        "--format",
+        dest="format",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Format the code Towel writes with the project's formatter (Ruff if the project "
+        "configures it, else Black; the 'format' extra) and sort the imports it adds the way "
+        "the project does. Default: on; --no-format inserts the code without a formatter.",
     )
 
 
@@ -565,45 +756,61 @@ def _add_progress_flag(parser: argparse.ArgumentParser, detail: str) -> None:
     )
 
 
-def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+def _add_preview_parser(subparsers: "argparse._SubParsersAction[_TowelParser]") -> None:
     """Add 'preview' subcommand parser."""
     parser = subparsers.add_parser(
         "preview",
-        help="Preview the complete dry run without modifying input files",
-        description="Run dry's complete pipeline in temporary output, including type checks, "
-        "formatting and follow-up extractions, without modifying input files.",
+        allow_abbrev=False,
+        help="Show what dry would change, changing nothing",
+        formatter_class=_HelpFormatter,
+        description="""\
+Show what towel dry would change, without changing any file: preview runs the
+same complete refactoring as dry, with its type checks and formatting, on a
+temporary copy, then prints a summary and a unified diff.""",
+        epilog="""\
+Examples, in a directory holding src/:
+  # The summary and diff of everything dry would change
+  towel preview src/
+
+  # Only the summary: how many refactorings, and any that were declined
+  towel preview src/ --summary
+
+  # A faster, rougher list, without type checks or formatting
+  towel preview src/ --quick""",
     )
 
-    parser.add_argument("target", help="File or directory to analyze")
     parser.add_argument(
+        "target", help="The file or directory to examine; preview changes nothing in it."
+    )
+    sections = _sections(parser)
+    presentation = sections.output.add_mutually_exclusive_group()
+    presentation.add_argument(
+        "--summary", action="store_true", help="Print the summary only, without the diff."
+    )
+    presentation.add_argument(
+        "--diff", action="store_true", help="Print the unified diff only, e.g. to save it."
+    )
+    _add_json_flag(presentation)
+    sections.output.add_argument(
+        "--quick",
+        action="store_true",
+        help="Faster and rougher: list what a single analysis finds, without the type checks, "
+        "formatting and further passes of a full run, so a full run may extract more or less.",
+    )
+    sections.output.add_argument(
+        "--inventory",
+        action="store_true",
+        help="Also print, as JSON, each helper the run would create, with its parameters and "
+        "call sites, for choosing their names (see towel rename-helpers).",
+    )
+    sections.output.add_argument(
         "--interactive",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Accepted for dry compatibility; preview never prompts or changes the input",
+        help=argparse.SUPPRESS,  # accepted so a dry command line previews; nothing to ask
     )
-    parser.add_argument("--non-interactive", action="store_true", help=argparse.SUPPRESS)
-    _add_exclude_flag(parser)
-    _add_cross_module_flag(parser)
-    _add_parameterize_builtins_flag(parser)
-    _add_tuning_flags(parser)
-    presentation = parser.add_mutually_exclusive_group()
-    _add_execution_flags(parser, presentation=presentation)
-    presentation.add_argument(
-        "--summary", action="store_true", help="Show the result summary without the diff"
-    )
-    presentation.add_argument(
-        "--diff", action="store_true", help="Write only the unified diff to stdout"
-    )
-    parser.add_argument(
-        "--inventory", action="store_true", help="Include the helper inventory for naming"
-    )
-    parser.add_argument(
-        "--quick",
-        action="store_true",
-        help="List one structural analysis only, skipping type checks, formatting and follow-ups. "
-        "This partial list is not an upper bound on eventual extractions; --max-refactorings "
-        "applies only to the complete preview.",
-    )
+    sections.output.add_argument("--non-interactive", action="store_true", help=argparse.SUPPRESS)
+    _add_shared_options(sections)
     _add_progress_flag(
         parser,
         detail="'detail' logs each complete-preview pass; --quick performs only one analysis",
@@ -612,90 +819,100 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     _add_import_layout_flags(parser)
 
 
+def _add_recover_parser(subparsers: "argparse._SubParsersAction[_TowelParser]") -> None:
+    """Add 'recover' subcommand parser."""
+    parser = subparsers.add_parser(
+        "recover",
+        allow_abbrev=False,
+        help="Undo an interrupted in-place run, from the journal it left",
+        formatter_class=_HelpFormatter,
+        description="""\
+Undo an in-place run that was interrupted while it wrote files, by a crash or
+a killed process. Such a run leaves a journal, a .towel-transaction-<id>
+directory holding the original files, in the closest directory that holds
+every file it was changing; the next in-place run that would change those
+files is refused and names the journal. recover puts every original back and
+removes the journal.
+
+If you have edited one of those files since the interruption, recover changes
+nothing: it keeps your edit and the journal, and names the file to resolve
+first.""",
+        epilog="""\
+Example, after an in-place run on src/ was interrupted:
+  towel recover src/.towel-transaction-<id>""",
+    )
+    parser.add_argument(
+        "journal",
+        type=Path,
+        help="The .towel-transaction-<id> directory the interrupted run left.",
+    )
+
+
 def _add_rename_helpers_parser(
-    subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]",
+    subparsers: "argparse._SubParsersAction[_TowelParser]",
 ) -> None:
     """Add 'rename-helpers' subcommand parser."""
     parser = subparsers.add_parser(
         "rename-helpers",
-        help="Rename helpers from a JSON mapping or a pasted assistant response",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="""
-Rename auto-generated _extracted_func_* and __extracted_func_* helpers into meaningful names.
+        allow_abbrev=False,
+        help="Give the generated helpers meaningful names, updating every call",
+        formatter_class=_HelpFormatter,
+        description="""\
+Rename the helpers Towel generated (__extracted_func_0 and so on) to
+meaningful names, updating every call.
 
-This tool prepares source excerpts for a coding assistant to suggest better names
-based on the code's purpose and context. You can use Claude Code, ChatGPT, or any
-other AI coding assistant to generate the names.
+Without --rename-file, rename-helpers prints a prompt, showing each helper's
+code, for you to give an AI assistant such as Claude or ChatGPT; paste the
+assistant's JSON answer back and the names are applied. With --rename-file,
+it applies a JSON file that maps old names to new ones, such as
+  {"__extracted_func_0": "order_total"}
 
-The tool works in two modes:
+Give the project's root, so that Towel sees every file that uses the helpers:
+the directory with pyproject.toml, setup.cfg or setup.py, or a package (a
+directory with __init__.py). If it has none of these, add --complete-scope to
+declare that the directory you give holds every such file. A file outside it
+is never changed: a rename it would need is refused. --list needs neither.""",
+        epilog="""\
+Examples, in a directory holding src/:
+  # List the helpers Towel generated
+  towel rename-helpers src/ --list
 
-1. INTERACTIVE MODE (default):
-   Generates a prompt for an LLM to review your code and suggest new names.
-   You paste the LLM's response back, and the tool applies the renamings.
-
-2. FILE MODE (--rename-file):
-   Provide a JSON file with old_name -> new_name mappings.
-   Select the project root so ordinary consumers are included. Use path-qualified
-   keys or --file to select definitions. A narrow target is refused if a consumer
-   outside it needs an edit; files outside the target are never changed.
-   For a project without metadata or regular-package ancestry, --complete-scope
-   explicitly declares that the target contains every ordinary consumer.
-        """,
-        epilog="""
-Examples:
-  # Interactive mode: generate LLM prompt and apply suggestions
-  towel rename-helpers path/to/project
-
-  # List all extracted helpers
-  towel rename-helpers path/to/project --list
-
-  # Apply renamings from a JSON file
-  towel rename-helpers path/to/project --rename-file renames.json
-
-  # Show the renames without writing files
-  towel rename-helpers path/to/project --rename-file renames.json --preview
-
-  # Specify specific files or functions
-  towel rename-helpers path/to/project --file src/mymodule.py
-  towel rename-helpers path/to/project --function __extracted_func_7
-
-  # An unmarked project: explicitly declare its complete consumer scope
-  towel rename-helpers path/to/project --complete-scope --rename-file renames.json
-        """,
+  # Name them with an AI assistant (src/ holds every file that uses them)
+  towel rename-helpers src/ --complete-scope""",
     )
 
     parser.add_argument(
         "target",
-        help="Project directory containing selected definitions and their ordinary consumers",
+        help="The project directory: it must hold the helpers and every file that uses them.",
     )
 
     parser.add_argument(
         "--complete-scope",
         action="store_true",
-        help="Declare target is the complete consumer root when project metadata is absent",
+        help="Declare that the target directory holds every file that uses the helpers. Needed "
+        "only when Towel cannot find the project's root: no pyproject.toml, setup.cfg or "
+        "setup.py, and the target is not a package (default: off).",
     )
 
     parser.add_argument(
         "--list",
         action="store_true",
-        help="List all extracted helper functions found",
+        help="List the helpers Towel generated (named like __extracted_func_0), renaming "
+        "nothing.",
     )
 
     parser.add_argument(
         "--json",
         action="store_true",
-        help=(
-            "With --list, print a JSON inventory of every helper: scope, parameters with "
-            "their evaluation kind, source, call sites, and the mapping keys that rename them. "
-            "With --rename-file, print a JSON result; a rejected mapping exits with status 2 "
-            "and the reason"
-        ),
+        help="Print JSON for scripts: with --list, every helper with its parameters, call "
+        "sites and the keys that rename them; with --rename-file, the result (a rejected "
+        "mapping exits with status 2).",
     )
     parser.add_argument(
         "--preview",
         dest="preview",
         action="store_true",
-        help="Show the renames without writing files",
+        help="Show what would be renamed without changing any file.",
     )
     parser.add_argument(  # earlier spelling, kept for scripts
         "--dry-run", dest="preview", action="store_true", help=argparse.SUPPRESS
@@ -704,21 +921,27 @@ Examples:
     parser.add_argument(
         "--rename-file",
         type=Path,
-        help="JSON file with old_name -> new_name mappings to apply",
+        metavar="FILE",
+        help="Apply the renames in this JSON file, an object from old names to new, such as "
+        '{"__extracted_func_0": "order_total"}. Default: none; rename-helpers prepares a '
+        "prompt for an AI assistant instead.",
     )
 
     parser.add_argument(
         "--file",
         action="append",
         dest="files",
-        help="Limit processing to specific file(s) (relative path)",
+        metavar="FILE",
+        help="Only consider helpers defined in FILE, a path relative to the target (repeatable; "
+        "default: every file).",
     )
 
     parser.add_argument(
         "--function",
         action="append",
         dest="functions",
-        help="Limit processing to specific function(s) by name",
+        metavar="NAME",
+        help="Only consider the helper named NAME (repeatable; default: every helper).",
     )
 
     parser.add_argument(
@@ -1168,7 +1391,8 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
             raise ValueError("Input and output must not contain one another")
         if destination.exists() or Path(output_path).is_symlink():
             raise ValueError(
-                "Output already exists; choose a new path or explicitly refactor in place"
+                "Output already exists; choose a new path"
+                " (to refactor in place, give the same path twice)"
             )
     refuse_unparsed_program(source, options.exclude)
     if options.cross_module and is_dir:
