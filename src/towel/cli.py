@@ -107,7 +107,13 @@ from towel.unification.defaults import (
     DEFAULT_MIN_LINES,
     DEFAULT_STRICT as DEFAULT_STRICT,
 )
-from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode, normalize_progress
+from towel.unification.progress import (
+    DEFAULT_PROGRESS,
+    ProgressMode,
+    normalize_progress,
+    progress_run,
+    write_note,
+)
 
 _MISSING_OUTPUT = gettext("the following arguments are required: %s") % "output"
 """argparse's message, in its own translation, for a dry command line that names no output."""
@@ -264,7 +270,12 @@ def main() -> None:
             file=sys.stderr,
         )
     try:
-        with execution_budget(getattr(args, "time_limit", None)):
+        with (
+            progress_run(quiet=bool(getattr(args, "quiet", False))),
+            execution_budget(getattr(args, "time_limit", None)),
+        ):
+            if getattr(args, "quiet", False):
+                args.progress = "none"
             _dispatch(parser, args)
     except BudgetExpired:
         # A signal may arrive while redirect_stdout.__enter__ has assigned
@@ -769,9 +780,17 @@ def _add_progress_flag(parser: argparse.ArgumentParser, detail: str) -> None:
         "--progress",
         choices=["auto", "tqdm", "none", "detail"],
         default=DEFAULT_PROGRESS,
-        help="Progress display mode: 'tqdm' shows tqdm bars (the default), or inline bars and a "
-        "warning when tqdm is not installed; 'auto' does the same without the warning; 'none' "
-        f"disables output; {detail}.",
+        help="Progress display mode: 'auto' (default) shows a transient bar on a terminal, "
+        "using tqdm when installed or the built-in display otherwise; pipes show no bar. "
+        "'tqdm' also warns when tqdm is not installed; 'none' disables progress; "
+        f"{detail}.",
+    )
+
+    parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Suppress progress and notes; keep warnings, errors and results. Default: off.",
     )
 
 
@@ -899,6 +918,8 @@ Examples, in a directory holding src/:
   # Name them with an AI assistant (src/ holds every file that uses them)
   towel rename-helpers src/ --complete-scope""",
     )
+
+    _add_progress_flag(parser, "'detail' shows diagnostic detail where available")
 
     parser.add_argument(
         "target",
@@ -1167,15 +1188,13 @@ def _generated_code_formatter(
             return
         reported.add(choice.note)
         if choice.tool is None:
-            print(
+            write_note(
                 f"Note: {choice.note}, so generated code is inserted unformatted. "
                 'Install the format extra (pip install "code-towel[format]") to format it.',
-                file=sys.stderr,
             )
         elif "not installed" in choice.note:
-            print(
+            write_note(
                 f"Note: {choice.note}; formatting generated code with {choice.note.split(';')[0]}.",
-                file=sys.stderr,
             )
 
     return formatter_factory_for_project(project_path, report)
@@ -1189,7 +1208,7 @@ def _file_finisher(
 
     choice = file_finisher_for_project(project_path, sort_imports=sort_imports)
     if "not installed" in choice.note:
-        print(f"Note: {choice.note}.", file=sys.stderr)
+        write_note(f"Note: {choice.note}.")
     return choice.tool
 
 
@@ -1245,6 +1264,7 @@ class DryOptions:
     inventory: bool = False
     strict: bool = DEFAULT_STRICT
     explain: bool = False
+    quiet: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -1269,6 +1289,7 @@ class DryOptions:
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
             explain=bool(getattr(args, "explain", False)),
+            quiet=bool(getattr(args, "quiet", False)),
         )
 
 
@@ -1295,6 +1316,7 @@ class PreviewOptions:
     inventory: bool = False
     strict: bool = DEFAULT_STRICT
     explain: bool = False
+    quiet: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -1318,6 +1340,7 @@ class PreviewOptions:
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
             explain=bool(getattr(args, "explain", False)),
+            quiet=bool(getattr(args, "quiet", False)),
         )
 
     def dry_options(self, output: str) -> DryOptions:
@@ -1343,6 +1366,7 @@ class PreviewOptions:
             diff=self.diff,
             inventory=self.inventory,
             explain=self.explain,
+            quiet=self.quiet,
         )
 
 
@@ -1475,11 +1499,11 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
     try:
         oracle = _type_oracle(source) if annotate_helpers else None
         if oracle is None and annotate_helpers and _target_has_annotations(source, options.exclude):
-            print(
+            # Through the progress lane's display, which --quiet silences.
+            write_note(
                 "Note: neither mypy nor pyright is installed, so helper annotations are copied "
                 "from the call sites but not inferred or verified. Install the types extra "
-                '(pip install "code-towel[types]").',
-                file=sys.stderr,
+                '(pip install "code-towel[types]").'
             )
         types_status: TypesStatus = (
             "off" if not options.types else "verified" if oracle is not None else "unverified"

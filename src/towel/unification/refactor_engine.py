@@ -28,7 +28,6 @@ buckets out when the projected pair count exceeds ``max_candidate_pairs``.
 
 import ast
 import dataclasses
-import sys
 from dataclasses import dataclass
 import os
 import re
@@ -57,15 +56,8 @@ from .structural_memo import (
     StoredSubstitution,
     structural_id,
 )
-from .progress import (
-    ProgressBar,
-    DEFAULT_PROGRESS,
-    ProgressMode,
-    load_tqdm,
-    quietly,
-    wants_bar,
-    render_inline_bar,
-)
+from .progress import DEFAULT_PROGRESS, ProgressMode, ProgressRenderer
+
 from .parallel import ParallelEvaluation
 from .pair_evaluation import deferring_pair_if_proofs
 from .bounded_cache import BoundedCache
@@ -259,58 +251,19 @@ def _buckets_over_budget(
 
 
 class _PairingProgress:
-    """Progress of the pairing loop: a tqdm bar when wanted and available, else an inline bar."""
+    """Translate pairing events into the shared transient display."""
 
     def __init__(self, progress: ProgressMode, total_function_pairs: int) -> None:
-        self._total = total_function_pairs
-        self._done = 0
-        self._last_pct = -1
-        self._bar: Optional[ProgressBar] = None
-        wants = wants_bar(progress) and total_function_pairs > 0
-        if wants:
-            factory = load_tqdm()
-            if factory is not None:
-                self._bar = factory(
-                    total=total_function_pairs,
-                    desc="pairs",
-                    unit="fp",
-                    dynamic_ncols=True,
-                    leave=False,
-                )
-        self._inline = wants and self._bar is None
-        if self._inline:
-            print("Pairing blocks:", end=" ", flush=True, file=sys.stderr)
+        self._bar = ProgressRenderer(
+            progress, total=total_function_pairs, desc="Pairing blocks", unit="fp"
+        )
 
     def function_pair_done(self, pairs_so_far: int) -> None:
-        """One more function pair has been examined; ``pairs_so_far`` block pairs exist."""
-        self._done += 1
-        bar = self._bar
-        if bar is not None:
-            done = self._done
-
-            def advance() -> None:
-                bar.update(1)
-                if done % 20 == 0 or done == self._total:
-                    bar.set_postfix({"pairs": pairs_so_far}, refresh=True)
-
-            quietly(advance)
-        elif self._inline:
-            pct = int(100 * self._done / max(self._total, 1))
-            if pct != self._last_pct:
-                self._last_pct = pct
-                print(
-                    f"\rPairing blocks: [{render_inline_bar(pct, bar_len=24)}] {pct:3d}%"
-                    f" | pairs={pairs_so_far}",
-                    end="",
-                    flush=True,
-                    file=sys.stderr,
-                )
+        self._bar.set_postfix({"pairs": pairs_so_far}, refresh=False)
+        self._bar.update()
 
     def finish(self) -> None:
-        if self._bar is not None:
-            quietly(self._bar.close)
-        elif self._inline:
-            print(file=sys.stderr)
+        self._bar.close()
 
 
 def _traced_block(file_path: str, function: str, block_range: Optional[Tuple[int, int]]) -> str:
@@ -1238,53 +1191,55 @@ class UnificationRefactorEngine(ParallelEvaluation):
         changed = (
             None if changed_files is None else {os.path.abspath(path) for path in changed_files}
         )
-        for i, first in enumerate(all_functions):
-            file1_changed = changed is None or os.path.abspath(first.file_path) in changed
-            for j in partners.after(i):
-                second = all_functions[j]
-                if (
-                    changed is not None
-                    and not file1_changed
-                    and os.path.abspath(second.file_path) not in changed
-                ):
-                    continue  # both files unchanged since the last global pass: verdict stands
-                # Only blocks in a bucket the other function also has can pair;
-                # the tolerance check is still the unchanged quick_filter.
-                if not buckets[i].keys.isdisjoint(buckets[j].keys):
-                    for (block1_range, block1_nodes, sig1), key1 in zip(
-                        blocks[i], buckets[i].block_keys
+        try:
+            for i, first in enumerate(all_functions):
+                file1_changed = changed is None or os.path.abspath(first.file_path) in changed
+                for j in partners.after(i):
+                    second = all_functions[j]
+                    if (
+                        changed is not None
+                        and not file1_changed
+                        and os.path.abspath(second.file_path) not in changed
                     ):
-                        for block2_range, block2_nodes, sig2 in buckets[j].by_key.get(key1, []):
-                            if not quick_filter(sig1, sig2):
-                                continue
-                            pairs.append(
-                                CodeBlockPair(
-                                    file_path=first.file_path,
-                                    function1_name=first.node.name,
-                                    function2_name=second.node.name,
-                                    block1_range=block1_range,
-                                    block2_range=block2_range,
-                                    block1_nodes=block1_nodes,
-                                    block2_nodes=block2_nodes,
-                                    file_path2=second.file_path,
-                                    class1_name=first.class_name,
-                                    class2_name=second.class_name,
-                                    enclosing_function1_name=first.enclosing_function,
-                                    enclosing_function2_name=second.enclosing_function,
-                                    function1_ancestry=first.ancestry,
-                                    function2_ancestry=second.ancestry,
-                                    scope_analyzer1=first.scope_analyzer,
-                                    scope_analyzer2=second.scope_analyzer,
-                                    root_scope1=first.root_scope,
-                                    root_scope2=second.root_scope,
-                                    source1=first.source,
-                                    source2=second.source,
-                                    function1_node=first.node,
-                                    function2_node=second.node,
+                        continue  # both files unchanged since the last global pass: verdict stands
+                    # Only blocks in a bucket the other function also has can pair;
+                    # the tolerance check is still the unchanged quick_filter.
+                    if not buckets[i].keys.isdisjoint(buckets[j].keys):
+                        for (block1_range, block1_nodes, sig1), key1 in zip(
+                            blocks[i], buckets[i].block_keys
+                        ):
+                            for block2_range, block2_nodes, sig2 in buckets[j].by_key.get(key1, []):
+                                if not quick_filter(sig1, sig2):
+                                    continue
+                                pairs.append(
+                                    CodeBlockPair(
+                                        file_path=first.file_path,
+                                        function1_name=first.node.name,
+                                        function2_name=second.node.name,
+                                        block1_range=block1_range,
+                                        block2_range=block2_range,
+                                        block1_nodes=block1_nodes,
+                                        block2_nodes=block2_nodes,
+                                        file_path2=second.file_path,
+                                        class1_name=first.class_name,
+                                        class2_name=second.class_name,
+                                        enclosing_function1_name=first.enclosing_function,
+                                        enclosing_function2_name=second.enclosing_function,
+                                        function1_ancestry=first.ancestry,
+                                        function2_ancestry=second.ancestry,
+                                        scope_analyzer1=first.scope_analyzer,
+                                        scope_analyzer2=second.scope_analyzer,
+                                        root_scope1=first.root_scope,
+                                        root_scope2=second.root_scope,
+                                        source1=first.source,
+                                        source2=second.source,
+                                        function1_node=first.node,
+                                        function2_node=second.node,
+                                    )
                                 )
-                            )
-                reporter.function_pair_done(len(pairs))
-        reporter.finish()
+                    reporter.function_pair_done(len(pairs))
+        finally:
+            reporter.finish()
         return pairs
 
     # ------------------------------------------------------------------

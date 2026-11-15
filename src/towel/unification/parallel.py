@@ -67,14 +67,8 @@ from .models import (
 from concurrent.futures import ProcessPoolExecutor
 from ..diagnostics import LOG
 from ..pyright_session import readers_stopped
-from .progress import (
-    ProgressMode,
-    display_threads_stopped,
-    finish_inline_status,
-    start_inline_status,
-    update_inline_status,
-    wants_bar,
-)
+from .progress import ProgressMode, ProgressRenderer, display_threads_stopped
+
 from concurrent.futures.process import BrokenProcessPool
 
 from .fixed_point import FixedPointDrivers
@@ -290,39 +284,17 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
     ) -> List[RefactoringProposal]:
         proposals = _DistinctProposals()
 
-        progress_mode, tqdm_cls = self._resolve_progress_backend(progress)
-        use_tqdm = tqdm_cls is not None
-        # Pair evaluation shows progress whenever progress is enabled.
-        if tqdm_cls is not None:
-            bar = tqdm_cls(
-                total=len(block_pairs), desc="unify", unit="pair", dynamic_ncols=True, leave=False
-            )
-            try:
-                for index, pair in enumerate(block_pairs):
-                    proposal = self._judge_pair(pair, all_functions, class_infos)
-                    if proposal:
-                        proposals.add(index, proposal)
-                    bar.update()
-            finally:
-                bar.close()
-            return proposals.in_order()
-
-        use_inline_bar = wants_bar(progress_mode) and len(block_pairs) > 0 and not use_tqdm
-        last_pct = -1
-        start_inline_status("Analyzing pairs (unify):", use_inline_bar)
-
-        for idx, pair in enumerate(block_pairs, 1):
-            proposal = self._judge_pair(pair, all_functions, class_infos)
-            if proposal:
-                proposals.add(idx - 1, proposal)
-            if use_inline_bar:
-                pct = int(100 * idx / len(block_pairs))
-                if pct != last_pct:
-                    last_pct = pct
-                    update_inline_status("Analyzing pairs (unify):", pct)
-
-        finish_inline_status(use_inline_bar)
-
+        bar = ProgressRenderer(
+            progress, total=len(block_pairs), desc="Analyzing pairs (unify)", unit="pair"
+        )
+        try:
+            for index, pair in enumerate(block_pairs):
+                proposal = self._judge_pair(pair, all_functions, class_infos)
+                if proposal:
+                    proposals.add(index, proposal)
+                bar.update()
+        finally:
+            bar.close()
         return proposals.in_order()
 
     def _evaluate_pairs_parallel(
