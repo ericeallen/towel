@@ -297,3 +297,57 @@ def test_applying_mapping_a_second_time_succeeds_and_reports_already_applied(
     payload = json.loads(second_json.stdout)
     assert set(payload) == {"applied", "dry_run", "changes", "renames"}
     assert payload["applied"] is True and payload["changes"] == 0
+
+
+def test_rename_preview_prints_unified_diff_before_change_count(tmp_path: Path) -> None:
+    """Audit Finding 8, item 3: --preview prints the unified diff, then the count."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    original = (
+        "def __extracted_func_0(__param_0):\n"
+        "    return __param_0 * 2\n\n"
+        "def caller(x):\n"
+        "    return __extracted_func_0(x)\n"
+    )
+    source = tmp_path / "orders.py"
+    source.write_text(original, encoding="utf-8")
+    mapping = tmp_path / "renames.json"
+    mapping.write_text(
+        json.dumps(
+            {
+                "orders.py:__extracted_func_0": "double_amount",
+                "orders.py:__extracted_func_0.__param_0": "amount",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    preview = invoke(["rename-helpers", str(tmp_path), "--rename-file", str(mapping), "--preview"])
+    assert preview.status == 0, preview.stderr
+    assert "--- before/orders.py" in preview.stdout
+    assert "+++ after/orders.py" in preview.stdout
+    assert "-def __extracted_func_0(__param_0):" in preview.stdout
+    assert "+def double_amount(amount):" in preview.stdout
+    assert "[PREVIEW] Would make 4 change(s)" in preview.stdout
+    assert preview.stdout.index("+++ after/orders.py") < preview.stdout.index(
+        "[PREVIEW] Would make 4 change(s)"
+    )
+    assert source.read_text(encoding="utf-8") == original
+
+    # Interactive --preview must also print the unified diff before the count.
+    interactive = invoke(
+        ["rename-helpers", str(tmp_path), "--preview"],
+        stdin=mapping.read_text(encoding="utf-8"),
+    )
+    assert interactive.status == 0, interactive.stderr
+    assert "--- before/orders.py" in interactive.stdout
+    assert "+def double_amount(amount):" in interactive.stdout
+    assert interactive.stdout.index("+++ after/orders.py") < interactive.stdout.index(
+        "[PREVIEW] Would make 4 change(s)"
+    )
+
+    # --preview --json keeps stdout pure JSON.
+    preview_json = invoke(
+        ["rename-helpers", str(tmp_path), "--rename-file", str(mapping), "--preview", "--json"]
+    )
+    assert preview_json.status == 0
+    assert json.loads(preview_json.stdout)["changes"] == 4

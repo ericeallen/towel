@@ -2407,7 +2407,37 @@ def _apply_rename_mappings(
         for spec, new_name in renames.items():
             suffix = " (already applied)" if spec in already_set else ""
             print(f"  {spec} -> {new_name}{suffix}")
+        if dry_run:
+            diff = _format_plan_diff(
+                target, [(c.path, c.before, c.after) for c in planned.plan.changes]
+            )
+            if diff:
+                print("\n" + diff.rstrip("\n"))
     return planned.count
+
+
+def _format_plan_diff(target: Path, changes: List[Tuple[Path, bytes, bytes]]) -> str:
+    """Unified diff across staged file changes for human ``--preview`` review."""
+    from difflib import unified_diff
+    from towel.source_text import decode_source
+
+    resolved_target = target.resolve()
+    lines: List[str] = []
+    for path, before_bytes, after_bytes in changes:
+        try:
+            relative = path.resolve().relative_to(resolved_target).as_posix()
+        except ValueError:
+            relative = path.name
+        old = decode_source(before_bytes)
+        new = decode_source(after_bytes)
+        for line in unified_diff(
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
+            fromfile=f"before/{relative}",
+            tofile=f"after/{relative}",
+        ):
+            lines.append(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n")
+    return "".join(lines)
 
 
 def _rename_function_in_directory(
