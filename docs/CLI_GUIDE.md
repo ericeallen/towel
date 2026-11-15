@@ -199,14 +199,19 @@ does not promote equal higher-order factory literals by default. Repeated class
 lookup suppliers and unread ownership holders are explained in
 [the argument guide](GENERATED_CODE.md#equal-looking-and-unused-arguments).
 
-Run `towel dry --help` for all current options and defaults. Boolean options
-have `--x` and `--no-x` forms.
+Run `towel dry --help` for all current options and defaults. Options that
+switch a behavior on or off come in pairs, `--x` and `--no-x`: `--interactive`,
+`--cross-module`, `--parameterize-builtins`, `--types`, `--format` and
+`--stats`. Options that only ask for something have no `--no-x` form:
+`--explain` and `--json`, and for `preview` also `--summary`, `--diff`,
+`--inventory` and `--quick`.
 
 ## Output and in-place changes
 
-A separate CLI output path must not already exist or overlap the input.
-The Python API also accepts an empty output directory for integration and
-fixture workflows.
+A separate output path must not already exist or overlap the input. Giving the
+input path again as the output is the one exception: it refactors the project
+in place. The Python API also accepts an empty output directory for
+integration and fixture workflows.
 
 Every run refactors a private stage and completes its final type-check
 confirmation before publishing output. An out-of-place run copies the target

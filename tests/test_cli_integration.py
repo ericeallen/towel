@@ -16,10 +16,13 @@
 
 import io
 import json
+import os
+import subprocess
 import sys
+import tomllib
 from collections.abc import Callable, Sequence
 from contextlib import redirect_stderr, redirect_stdout
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import NamedTuple
 from unittest.mock import patch
@@ -94,6 +97,64 @@ def test_version_matches_installed_distribution() -> None:
     result = invoke(["--version"])
     assert result.status == 0
     assert result.stdout.strip() == f"towel {version('code-towel')}"
+
+
+def test_dash_capital_v_shows_the_version() -> None:
+    """User audit CLI-10: ``-V`` was refused; only ``--version`` worked."""
+    result = invoke(["-V"])
+    assert (result.status, result.stdout.strip()) == (0, f"towel {version('code-towel')}")
+
+
+SOURCE_ROOT = Path(cli.__file__).resolve().parents[1]
+"""The ``src`` directory this ``towel`` package is imported from."""
+
+
+def test_python_dash_m_towel_is_the_towel_command(tmp_path: Path) -> None:
+    """User audit CLI-10: ``python -m towel`` failed with "No module named towel.__main__"."""
+    completed = subprocess.run(
+        [sys.executable, "-m", "towel", "--version"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == f"towel {version('code-towel')}"
+
+
+def test_a_source_tree_that_is_not_installed_still_starts(tmp_path: Path) -> None:
+    """Building the parser asked for the installed distribution's version, so a source tree run
+    as ``PYTHONPATH=src python -m towel`` failed with PackageNotFoundError before parsing.
+    Without site-packages there is no distribution; the version comes from the tree itself."""
+    project = SOURCE_ROOT.parent / "pyproject.toml"
+    declared = tomllib.loads(project.read_text(encoding="utf-8"))["project"]["version"]
+    completed = subprocess.run(
+        [sys.executable, "-S", "-m", "towel", "--version"],
+        cwd=tmp_path,
+        env={"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(SOURCE_ROOT)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == f"towel {declared}"
+
+
+def test_the_version_is_unknown_without_a_distribution_or_its_project_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def not_installed(name: str) -> str:
+        raise PackageNotFoundError(name)
+
+    monkeypatch.setattr(cli, "version", not_installed)
+    monkeypatch.setattr(cli, "__file__", str(tmp_path / "src" / "towel" / "cli.py"))
+    assert invoke(["--version"]).stdout.strip() == "towel unknown"
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "other"\nversion = "9"\n')
+    assert invoke(["--version"]).stdout.strip() == "towel unknown"
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "code-towel"\nversion = "9"\n')
+    assert invoke(["--version"]).stdout.strip() == "towel 9"
 
 
 @pytest.mark.parametrize("directory", [False, True])

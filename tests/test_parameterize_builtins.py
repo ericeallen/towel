@@ -452,11 +452,12 @@ def test_the_flag_reaches_the_engine_from_the_command_line(
             parser.parse_args([command, "--help"])
         assert exit_info.value.code == 0
         help_text = " ".join(capsys.readouterr().out.split())
-        assert "ordinary bindings, wildcard imports or __builtins__ attribute writes" in help_text
-        assert "elsewhere in the analyzed program may replace a module's mapping" in help_text
-        assert "captured global-fallback reads (including custom names)" in help_text
-        assert "implicit import/class operations decline even with this flag" in help_text
-        assert "an immutable lookup result" in help_text
+        # The help says what the flag permits, by default refuses, and leaves to the guide.
+        assert "copies in different modules (with --cross-module)" in help_text
+        assert "only one has its own variable named len" in help_text
+        assert "each call then hands the helper its own len" in help_text
+        assert "Default: off, and such duplicates are left alone" in help_text
+        assert "docs/GENERATED_CODE.md lists the cases left alone even with this" in help_text
     assert not DryOptions.from_namespace(parser.parse_args(["dry", "a", "b"])).parameterize_builtins
     dry = DryOptions.from_namespace(parser.parse_args(["dry", "a", "b", "--parameterize-builtins"]))
     assert dry.parameterize_builtins
