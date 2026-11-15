@@ -137,12 +137,7 @@ limit reached; 130 interrupted; 143 terminated.""",
     _add_preview_parser(subparsers)
     _add_dry_parser(subparsers)
     _add_rename_helpers_parser(subparsers)
-    recovery = subparsers.add_parser("recover", help="Roll back an interrupted local transaction")
-    recovery.add_argument(
-        "journal",
-        type=Path,
-        help="the .towel-transaction-<id> directory an interrupted run left behind",
-    )
+    _add_recover_parser(subparsers)
     return parser
 
 
@@ -700,6 +695,34 @@ Examples, in a directory holding src/:
     )
 
     _add_import_layout_flags(parser)
+
+
+def _add_recover_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
+    """Add 'recover' subcommand parser."""
+    parser = subparsers.add_parser(
+        "recover",
+        help="Undo an interrupted in-place run, from the journal it left",
+        formatter_class=_HelpFormatter,
+        description="""\
+Undo an in-place run that was interrupted while it wrote files, by a crash or
+a killed process. Such a run leaves a journal, a .towel-transaction-<id>
+directory holding the original files, in the closest directory that holds
+every file it was changing; the next in-place run that would change those
+files is refused and names the journal. recover puts every original back and
+removes the journal.
+
+If you have edited one of those files since the interruption, recover changes
+nothing: it keeps your edit and the journal, and names the file to resolve
+first.""",
+        epilog="""\
+Example, after an in-place run on src/ was interrupted:
+  towel recover src/.towel-transaction-<id>""",
+    )
+    parser.add_argument(
+        "journal",
+        type=Path,
+        help="The .towel-transaction-<id> directory the interrupted run left.",
+    )
 
 
 def _add_rename_helpers_parser(

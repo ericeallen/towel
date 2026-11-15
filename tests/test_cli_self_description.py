@@ -27,6 +27,7 @@ import pytest
 
 from towel import cli, type_inference
 from tests.test_cli_integration import DUPLICATES, HELPER, invoke
+from tests.test_recovery_journal import _interrupted_transaction
 
 _EXAMPLE = re.compile(r"^\s*towel (?P<arguments>[^#]*?)\s*(#.*)?$")
 
@@ -342,3 +343,25 @@ def test_checker_selection_matches_the_oracle_the_run_starts(tmp_path: Path) -> 
     finally:
         assert choice.tool is not None
         choice.tool.close()
+
+
+def test_recover_says_what_it_does_and_keeps_an_edit_as_it_says(tmp_path: Path) -> None:
+    """User audit CLI-04 and Kimi docs review 7: ``recover --help`` had no description, said
+    nothing of what it does with a file edited since the interruption, and gave no example."""
+    parser = _command("recover")
+    description = " ".join((parser.description or "").split())
+    assert "puts every original back and removes the journal" in description
+    assert "it keeps your edit and the journal, and names the file" in description
+    example = re.search(
+        r"^\s*towel recover src/(\.towel-transaction-)<id>$", parser.epilog or "", re.M
+    )
+    assert example, parser.epilog
+    # The journal sits where the example says, and an edit is kept as the description says.
+    source = tmp_path / "src"
+    source.mkdir()
+    files, journal = _interrupted_transaction(source)
+    assert journal.parent == source and journal.name.startswith(example[1])
+    files[0].write_bytes(b"value = 3\n")
+    result = invoke(["recover", str(journal)])
+    assert result.status == 1 and str(files[0]) in result.stderr, result
+    assert files[0].read_bytes() == b"value = 3\n" and journal.is_dir()
