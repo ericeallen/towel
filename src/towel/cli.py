@@ -720,8 +720,8 @@ Examples:
     parser.add_argument(
         "--llm",
         choices=["claude", "gpt", "copilot", "generic"],
-        default="generic",
-        help="Format the LLM prompt for a specific AI assistant (default: generic)",
+        default=None,
+        help=argparse.SUPPRESS,
     )
 
 
@@ -1093,11 +1093,12 @@ class RenameOptions:
     list: bool
     json: bool
     preview: bool
-    llm: str
+    llm: Optional[str]
     complete_scope: bool
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "RenameOptions":
+        raw_llm = getattr(args, "llm", None)
         return cls(
             target=Path(args.target),
             files=list(args.files) if args.files else None,
@@ -1106,7 +1107,7 @@ class RenameOptions:
             list=bool(args.list),
             json=bool(args.json),
             preview=bool(args.preview),
-            llm=str(args.llm),
+            llm=str(raw_llm) if raw_llm is not None else None,
             complete_scope=bool(args.complete_scope),
         )
 
@@ -1879,6 +1880,11 @@ def _run_quick_preview(options: PreviewOptions) -> None:
 def _run_rename_helpers(args: argparse.Namespace) -> None:
     """Run the rename-helpers command."""
     options = RenameOptions.from_namespace(args)
+    if options.llm is not None:
+        LOG.warning(
+            "--llm is deprecated since Towel 2.0 and will be removed in a future release; "
+            "the prompt is the same for every assistant."
+        )
     target = options.target
 
     if not target.exists():
@@ -1951,7 +1957,7 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
     _run_interactive_llm_mode(
         target,
         helpers,
-        options.llm,
+        options.llm or "generic",
         options.preview,
         restrict_selection=bool(options.files or options.functions),
     )

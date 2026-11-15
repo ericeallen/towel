@@ -427,3 +427,27 @@ def test_scope_refusal_uses_plain_wording(tmp_path: Path) -> None:
         payload["error"]
     )
     assert "--complete-scope" in payload["error"]
+
+
+def test_llm_flag_is_hidden_from_help_accepted_and_emits_one_deprecation_line(
+    tmp_path: Path,
+) -> None:
+    """Audit Finding 8, item 6: --llm is suppressed in --help and prints one deprecation line."""
+    help_result = invoke(["rename-helpers", "--help"])
+    assert help_result.status == 0
+    assert "--llm" not in help_result.stdout
+
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    (tmp_path / "m.py").write_text(
+        "def __extracted_func_0(x):\n    return x * 2\n", encoding="utf-8"
+    )
+
+    without_llm = invoke(["rename-helpers", str(tmp_path), "--list"])
+    assert without_llm.status == 0
+    assert "--llm" not in without_llm.stderr
+
+    with_llm = invoke(["rename-helpers", str(tmp_path), "--list", "--llm", "claude"])
+    assert with_llm.status == 0
+    stderr_lines = [line for line in with_llm.stderr.splitlines() if line.strip()]
+    assert len(stderr_lines) == 1
+    assert "--llm" in stderr_lines[0] and "deprecated" in stderr_lines[0].lower()
