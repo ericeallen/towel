@@ -101,6 +101,9 @@ def test_each_pair_takes_every_other_site_from_the_shared_scan(tmp_path: Path) -
     analysis = engine.analysis_session.analyze_module(str(path))
     functions = list(analysis.functions)
     classes = list(analysis.module.class_infos)
+    engine._record_function_paths(functions)
+    uncached_engine = UnificationRefactorEngine(annotate_helpers=False)
+    uncached_engine._record_function_paths(functions)
     pairs = engine.find_block_pairs(functions, progress="none")
     proposals = []
     for pair in pairs:
@@ -108,13 +111,30 @@ def test_each_pair_takes_every_other_site_from_the_shared_scan(tmp_path: Path) -
         # retaining the shared site-scan memo this test exercises.
         engine._seen_proposals.clear()
         proposal = engine._try_refactor_pair_multi_file(pair, functions, classes)
+        uncached_engine._seen_proposals.clear()
+        uncached_engine._cluster_scan_cache.clear()
+        uncached = uncached_engine._try_refactor_pair_multi_file(pair, functions, classes)
+        assert _sites([proposal] if proposal is not None else []) == _sites(
+            [uncached] if uncached is not None else []
+        ), "sharing the scan must preserve the exact sites and calls for each pair"
         if proposal is not None:
             proposals.append(proposal)
+    assert engine._cluster_scan_cache, "the test must exercise a shared scan"
     assert len(proposals) > 1, "every pair of similar functions proposes"
     for proposal in proposals:
         starts = sorted(r.line_range[0] for r in proposal.replacements)
         assert len(set(starts)) == len(starts), "a site appears once per proposal"
-        assert len(starts) == 4, "every similar block joins each proposal"
+        # The arithmetic fixture repeats patterns within each function too.
+        # Every function must join; one may contribute several disjoint sites.
+        represented = {
+            function.node.lineno
+            for function in functions
+            if any(
+                function.node.lineno <= start <= (function.node.end_lineno or start)
+                for start in starts
+            )
+        }
+        assert represented == {function.node.lineno for function in functions}
 
 
 def test_shared_call_nodes_survive_being_applied(tmp_path: Path) -> None:
