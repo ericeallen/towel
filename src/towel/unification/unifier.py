@@ -403,7 +403,30 @@ class Unifier(Parameterization, LiteralPromotion):
             return all(isinstance(node.ctx, ast.Load) for node in nodes) and self._try_parameterize(
                 nodes, substitution, block_indices
             )
+        if self._calls_differing_methods_of_bound_receivers(nodes, block_indices):
+            # ``value.strip()`` against ``value.lower()`` on a receiver the
+            # block binds: the whole call is one function of the receiver,
+            # ``lambda value: value.strip()``, called where the block called
+            # the method. Parameterizing the lookup alone would leave
+            # ``__param_0(value)()`` in the helper.
+            if self._try_parameterize(nodes, substitution, block_indices):
+                return True
         return self._unify_fields(nodes, substitution, block_indices)
+
+    def _calls_differing_methods_of_bound_receivers(
+        self, nodes: Sequence[ast.AST], block_indices: Sequence[int]
+    ) -> bool:
+        """Whether ``nodes`` are argument-less calls of different attributes of block-bound receivers."""
+        if not all_instances(nodes, ast.Call):
+            return False
+        callees: List[ast.Attribute] = []
+        for node in nodes:
+            if node.args or node.keywords or not isinstance(node.func, ast.Attribute):
+                return False
+            callees.append(node.func)
+        if len({callee.attr for callee in callees}) == 1:
+            return False
+        return self._common_bound_variables(callees, block_indices) is not None
 
     def _unify_pattern(
         self, nodes: Sequence[ast.AST], substitution: Substitution, block_indices: Sequence[int]

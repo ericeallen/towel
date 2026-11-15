@@ -83,7 +83,7 @@ from .semantic_safety import (
 from .splicing import BlockColumns
 from .thunk_inlining import inline_leading_thunks, reorder_eligible_thunk_parameters
 from .typing_forms import ModuleText
-from .visitors import body_without_docstring
+from .visitors import FreeNameCollector, body_without_docstring
 
 from .builtins import CALL_ARGUMENT_BUILTINS
 from .engine_state import BlockSite, ClusteredSite, ClusterScanKey, TemplateKey
@@ -322,7 +322,10 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         ):
             return None
         # Validate candidate call-site does not reference undefined names
-        used2 = self._used_names(call_node2)
+        # A lambda the call passes reads its own parameters, not the site's names.
+        reader = FreeNameCollector()
+        reader.visit(call_node2)
+        used2 = reader.used
         if any(n.startswith("__param_") for n in used2):
             # Skip brittle candidate that leaked placeholders
             return None

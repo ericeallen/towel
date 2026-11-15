@@ -1,0 +1,36 @@
+"""Load planning for the delivery vans."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Item:
+    name: str
+    weight_kg: float
+    volume_l: float
+    quantity: int
+
+
+def total_weight(items: Sequence[Item]) -> float:
+    total = 0.0
+    for item in items:
+        if item.quantity <= 0:
+            continue
+        total += item.weight_kg * item.quantity
+    return round(total, 3)
+
+
+def total_volume(items: Sequence[Item]) -> float:
+    total = 0.0
+    for item in items:
+        if item.quantity <= 0:
+            continue
+        total += item.volume_l * item.quantity
+    return round(total, 3)
+
+
+def fits(items: Sequence[Item], max_weight_kg: float, max_volume_l: float) -> bool:
+    return total_weight(items) <= max_weight_kg and total_volume(items) <= max_volume_l
