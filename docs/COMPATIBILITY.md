@@ -40,6 +40,7 @@ or a declined confirmation is cancellation, not completed work.
 | `0` | The requested operation completed; no applicable extraction is also a completed result. |
 | `1` | The operation failed, was refused, or was cancelled at confirmation. |
 | `2` | Invalid command-line arguments. For `rename-helpers`, also a rename mapping that was rejected or a consumer scope that could not be established; nothing is renamed. |
+| `3` | `preview --check` completed and would change code. |
 | `124` | The elapsed-time budget expired before publication. |
 | `130` | Interrupted with SIGINT. |
 | `143` | Terminated with SIGTERM. |

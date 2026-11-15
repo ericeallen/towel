@@ -205,8 +205,9 @@ Run towel COMMAND --help for a command's options and examples, and see
 docs/QUICKSTART.md for a first run.
 
 Exit status: 0 done, including when there was nothing to change; 1 failed,
-refused, or answered "no"; 2 invalid arguments, or a rename refused; 124 time
-limit reached; 130 interrupted; 143 terminated.""",
+refused, or answered "no"; 2 invalid arguments, or a rename refused; 3 preview
+--check would change code; 124 time limit reached; 130 interrupted;
+143 terminated.""",
     )
 
     parser.add_argument(
@@ -244,9 +245,11 @@ def main() -> None:
     if (
         args.command == "preview"
         and args.quick
-        and any((args.json, args.summary, args.diff, args.inventory))
+        and any((args.json, args.summary, args.diff, args.inventory, args.check))
     ):
-        parser.error("--quick cannot be combined with --json, --summary, --diff or --inventory")
+        parser.error(
+            "--quick cannot be combined with --json, --summary, --diff, --inventory or --check"
+        )
     result_stdout = sys.stdout
     configure_stderr_logging()
     _settings().enable_debug_logging()
@@ -793,6 +796,12 @@ Examples, in a directory holding src/:
         "target", help="The file or directory to examine; preview changes nothing in it."
     )
     sections = _sections(parser)
+    sections.output.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit with status 3 if the complete preview would change code, or 0 if it would "
+        "not (default: off). Failures keep their own status; cannot be used with --quick.",
+    )
     presentation = sections.output.add_mutually_exclusive_group()
     presentation.add_argument(
         "--summary", action="store_true", help="Print the summary only, without the diff."
@@ -1267,6 +1276,7 @@ class PreviewOptions:
     types: bool
     format: bool
     quick: bool
+    check: bool = False
     exclude: Tuple[str, ...] = ()
     cross_module: bool = False
     stats: bool = False
@@ -1289,6 +1299,7 @@ class PreviewOptions:
             types=bool(args.types),
             format=bool(args.format),
             quick=bool(args.quick),
+            check=bool(getattr(args, "check", False)),
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
             stats=bool(args.stats),
@@ -1887,9 +1898,9 @@ def _run_preview(args: argparse.Namespace) -> None:
     options = PreviewOptions.from_namespace(args)
     _warn_about_retired_flags(args)
     if options.quick:
-        if options.json or options.summary or options.diff or options.inventory:
+        if options.json or options.summary or options.diff or options.inventory or options.check:
             raise ValueError(
-                "--quick cannot be combined with --json, --summary, --diff or --inventory"
+                "--quick cannot be combined with --json, --summary, --diff, --inventory or --check"
             )
         if options.stats:
             print("--stats accounts for a complete run; a --quick list has no statistics.")
@@ -1908,7 +1919,9 @@ def _run_preview(args: argparse.Namespace) -> None:
                 else:
                     print(result["diff"], end="")
             else:
-                _execute_dry(dry_options, preview=True)
+                result = _execute_dry(dry_options, preview=True)
+    if options.check and result["status"] == "complete" and result["applied"] > 0:
+        sys.exit(3)
 
 
 def _preview_text(text: str, options: DryOptions) -> str:
