@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import io
+import pytest
 
 from tests.test_helpers import PROJECT_ROOT, example_paths
 from towel.unification.pipeline import (
@@ -294,6 +295,7 @@ class TestPairBlocks:
 class TestUnifyBlocks:
     """Test unify_blocks phase in isolation."""
 
+    @pytest.mark.strict_mode
     def test_unify_blocks_produces_proposals(self):
         """unify_blocks should produce refactoring proposals."""
         files = example_paths(["example1_simple.py"])
@@ -328,6 +330,7 @@ class TestUnifyBlocks:
 class TestFilterOverlaps:
     """Test filter_overlaps phase in isolation."""
 
+    @pytest.mark.strict_mode
     def test_filter_overlaps_maintains_list_type(self):
         """filter_overlaps should return a list."""
         files = example_paths(["example1_simple.py"])

@@ -89,7 +89,7 @@ from towel.unification.defaults import (
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_MAX_PARAMETERS,
     DEFAULT_MIN_LINES,
-    DEFAULT_STRICT,
+    DEFAULT_STRICT as DEFAULT_STRICT,
 )
 from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode, normalize_progress
 

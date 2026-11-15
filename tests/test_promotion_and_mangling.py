@@ -220,6 +220,7 @@ def test_promotion_failure_is_a_bug_not_a_warning():
             unifier.unify_blocks([b[:] for b in blocks], [{}, {}])
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("promote", [False, True])
 def test_original_nested_factory_with_owned_arguments_is_refused(tmp_path, promote):
     source = "\n    def c(data):\n        def make_validator(limit):\n            return lambda x: x > limit\n        validator = make_validator(5)\n        return list(filter(validator, data))\n\n    def d(data):\n        def make_validator(limit):\n            return lambda x: x > limit\n        validator = make_validator(5)\n        return list(filter(validator, data))\n    "

@@ -197,6 +197,7 @@ def test_a_file_pyright_ignores_is_verified_by_mypy(tmp_path: Path) -> None:
     assert "__extracted_func_0" in (tmp_path / "pkg" / "version.py").read_text(encoding="utf-8")
 
 
+@pytest.mark.strict_mode
 @requires_pyright
 def test_a_directory_pyright_excludes_costs_no_wait(tmp_path: Path) -> None:
     """D12: the server used to wait a minute for a marker in the excluded directory."""

@@ -114,6 +114,7 @@ def test_helper_available_during_module_initialization(tmp_path: Path) -> None:
     assert namespace["RESULT"] == 7
 
 
+@pytest.mark.strict_mode
 def test_module_data_is_read_where_the_block_read_it_across_callbacks(tmp_path: Path) -> None:
     """A same-module helper reads ``value`` bare, so the callback's rebinding is seen."""
     path = tmp_path / "example.py"

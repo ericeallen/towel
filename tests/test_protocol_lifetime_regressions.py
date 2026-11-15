@@ -30,6 +30,7 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 # Small fixtures exercise semantic guards independently of the product usefulness policy.
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize(
     "case",
     [
@@ -68,6 +69,7 @@ def test_protocol_results_preserve_finalizer_order(tmp_path: Path, case: str) ->
         assert "def __extracted_func_" not in output.read_text()
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("case", ["property", "nested_if"])
 def test_default_typed_cli_preserves_protocol_lifetime(tmp_path: Path, case: str) -> None:
     source, output = tmp_path / "input.py", tmp_path / "output.py"

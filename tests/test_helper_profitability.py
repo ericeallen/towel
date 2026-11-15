@@ -80,6 +80,7 @@ def test_syntax_cost_does_not_depend_on_identifier_length_or_line_wrapping() -> 
     assert worthwhile_helper(helper, long_sites)
 
 
+@pytest.mark.strict_mode
 def test_complete_ownership_plumbing_declines_the_old_readme_example(tmp_path: Path) -> None:
     body = (
         "    items = [i for i in order.items if i.in_stock]\n"

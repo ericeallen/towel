@@ -25,6 +25,7 @@ import subprocess
 import sys
 
 import pytest
+from tests.test_helpers import child_mode_flags
 import towel
 
 
@@ -419,6 +420,7 @@ def _extract(tmp_path: Path, case: BranchCase, uncached: bool = False) -> tuple[
             "3",
             "--progress",
             "none",
+            *child_mode_flags(),
         ],
         cwd=tmp_path,
         env=_environment(),
@@ -495,6 +497,7 @@ def _helper_calls_inside_if(module: ast.Module, case: BranchCase) -> None:
             ), "normal continuation must receive fresh local outputs"
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("case", _CASES, ids=lambda case: case.name)
 def test_if_bindings_keep_lexical_errors_and_full_observations(
     tmp_path: Path, case: BranchCase

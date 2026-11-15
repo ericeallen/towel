@@ -139,6 +139,7 @@ def test_a_statement_after_a_semicolon_on_the_blocks_last_line_reads_after_it() 
         assert engine._find_return_variables(function, (2, 3), {"b", "c"}, block) == {"c"}
 
 
+@pytest.mark.strict_mode
 def test_lifetime_requirement_is_computed_for_each_call() -> None:
     engine = UnificationRefactorEngine()
     function = _function()

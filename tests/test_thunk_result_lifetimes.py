@@ -24,6 +24,7 @@ import subprocess
 import sys
 
 import pytest
+from tests.test_helpers import child_mode_flags
 import towel
 from tests.test_thunk_ordering_cli import _MARKER
 
@@ -146,6 +147,7 @@ def _observe(driver: Path, project: Path, mode: str) -> tuple[int, str, str]:
     return ran.returncode, ran.stdout, ran.stderr
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("name,left,right,tail", _CASES, ids=[case[0] for case in _CASES])
 def test_opaque_factory_results_keep_their_original_lifetimes(
     tmp_path: Path, name: str, left: str, right: str, tail: str
@@ -184,6 +186,7 @@ def test_opaque_factory_results_keep_their_original_lifetimes(
             "3",
             "--progress",
             "none",
+            *child_mode_flags(),
         ],
         cwd=tmp_path,
         env=_environment(),

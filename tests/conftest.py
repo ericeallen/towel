@@ -37,7 +37,10 @@ LOOKS_NOWHERE = "looks_nowhere"
 STRICT_MODE = "strict_mode"
 """The marker of a test that pins exact object lifetimes, which only strict mode keeps."""
 
-ALL_STRICT = "--strict-mode"
+RELAXED_MODE = "relaxed_mode"
+"""The marker of a module that pins the default itself, which ``--towel-strict`` leaves alone."""
+
+ALL_STRICT = "--towel-strict"
 """The option that runs every test's engines strict, as every release through 1.949 did."""
 
 
@@ -46,8 +49,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         ALL_STRICT,
         action="store_true",
         default=False,
-        help="Run every test as if marked strict_mode: engines and in-process command lines "
-        "that do not choose a mode are strict. Tests of relaxed mode choose it explicitly.",
+        help="Run every module as if marked strict_mode: engines and in-process command lines "
+        "that do not choose a mode are strict. Modules marked relaxed_mode, which pin the "
+        "default itself, are left alone.",
     )
 
 
@@ -60,13 +64,34 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
         f"{STRICT_MODE}: the test pins exact object lifetimes, so the engines and in-process "
-        "command lines it runs are strict unless they choose a mode (see _strict_where_marked)",
+        "command lines it runs are strict unless they choose a mode "
+        "(see _strict_where_the_module_is_marked)",
+    )
+    config.addinivalue_line(
+        "markers",
+        f"{RELAXED_MODE}: the module pins relaxed mode as the default, so --towel-strict "
+        "does not change its defaults",
     )
 
 
-@pytest.fixture(autouse=True)
-def _strict_where_marked(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make strict mode the default of a test that pins what only strict mode preserves.
+def _strict_by_default(patch: pytest.MonkeyPatch) -> None:
+    """Engines and in-process command lines that do not choose a mode are strict."""
+    constructed = UnificationRefactorEngine.__init__
+    if getattr(constructed, "strict_unless_chosen", False):
+        return
+
+    def strict_unless_chosen(self: UnificationRefactorEngine, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("strict", True)
+        constructed(self, *args, **kwargs)
+
+    setattr(strict_unless_chosen, "strict_unless_chosen", True)
+    patch.setattr(UnificationRefactorEngine, "__init__", strict_unless_chosen)
+    patch.setattr(towel.cli, "DEFAULT_STRICT", True)
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _strict_where_the_module_is_marked(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Make strict mode the default of a module that pins what only strict mode preserves.
 
     Relaxed mode is the default (docs/DECISIONS.md, "Relaxed mode is the
     default; strict mode keeps exact lifetimes"), and strict mode is 1.949's
@@ -75,21 +100,31 @@ def _strict_where_marked(request: pytest.FixtureRequest, monkeypatch: pytest.Mon
     exact lifetimes says ``pytestmark = pytest.mark.strict_mode`` and keeps
     its expectations unchanged: an engine constructed without ``strict``, and
     a command line parsed in this process without ``--strict`` or
-    ``--no-strict``, is then strict. A command run in a child process is out
-    of this fixture's reach and passes ``--strict`` itself.
+    ``--no-strict``, is then strict, in the module's tests and in its
+    class- and module-level setup alike. A command run in a child process is
+    out of this fixture's reach and passes ``--strict`` itself.
+    ``pytest --towel-strict`` treats every module as marked, except one
+    marked ``relaxed_mode`` because the default is what it pins.
     """
-    if request.node.get_closest_marker(STRICT_MODE) is None and not request.config.getoption(
-        ALL_STRICT
-    ):
+    everywhere = (
+        request.config.getoption(ALL_STRICT)
+        and request.node.get_closest_marker(RELAXED_MODE) is None
+    )
+    if request.node.get_closest_marker(STRICT_MODE) is None and not everywhere:
+        yield
         return
-    constructed = UnificationRefactorEngine.__init__
+    with pytest.MonkeyPatch.context() as patch:
+        _strict_by_default(patch)
+        yield
 
-    def strict_unless_chosen(self: UnificationRefactorEngine, *args: Any, **kwargs: Any) -> None:
-        kwargs.setdefault("strict", True)
-        constructed(self, *args, **kwargs)
 
-    monkeypatch.setattr(UnificationRefactorEngine, "__init__", strict_unless_chosen)
-    monkeypatch.setattr(towel.cli, "DEFAULT_STRICT", True)
+@pytest.fixture(autouse=True)
+def _strict_where_the_test_is_marked(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same for a single test or class marked ``strict_mode`` in an unmarked module."""
+    if request.node.get_closest_marker(STRICT_MODE) is not None:
+        _strict_by_default(monkeypatch)
 
 
 _TEST_ONLY_PLACES = (Path(__file__).resolve().parents[1], Path(tempfile.gettempdir()).resolve())

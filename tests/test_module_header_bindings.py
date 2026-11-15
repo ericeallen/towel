@@ -34,6 +34,7 @@ HEADERS = (
 )
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 @pytest.mark.parametrize(
     ("position", "expected"),

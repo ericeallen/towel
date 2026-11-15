@@ -338,6 +338,7 @@ def test_later_project_errors_cannot_become_original_errors(
         oracle.close()
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("dirty", [False, True])
 def test_library_copied_directory_keeps_original_consumers_and_oracle_ownership(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, dirty: bool

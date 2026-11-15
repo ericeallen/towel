@@ -31,6 +31,7 @@ from pathlib import Path
 import subprocess
 import sys
 import textwrap
+import pytest
 from typing import Unpack
 
 from tests.test_functions_keep_their_own_bodies import _assert_owned_helper_call
@@ -109,6 +110,7 @@ def _observed(source: str, driver: str) -> str:
     ).stdout
 
 
+@pytest.mark.strict_mode
 def test_identical_functions_both_call_one_new_helper(tmp_path: Path) -> None:
     final = _fixed_point(write_module(tmp_path, IDENTICAL_PAIR))
     helper = _extracted_helper(final, ("alpha", "beta"))
@@ -129,6 +131,7 @@ def test_the_proposal_extracts_a_helper_and_reuses_no_function(tmp_path: Path) -
     ]
 
 
+@pytest.mark.strict_mode
 def test_a_partial_owned_body_declines_but_complete_bodies_share(tmp_path: Path) -> None:
     original = """
     def norm(items):
@@ -203,6 +206,7 @@ def test_three_copies_all_call_one_helper(tmp_path: Path) -> None:
     _extracted_helper(final, ("a", "b", "c"))
 
 
+@pytest.mark.strict_mode
 def test_a_method_and_a_function_share_a_helper(tmp_path: Path) -> None:
     final = _fixed_point(
         write_module(
@@ -240,6 +244,7 @@ def test_a_method_and_a_function_share_a_helper(tmp_path: Path) -> None:
     assert _observed(final, "print(alpha(3), K().m(5))") == "8 12\n"
 
 
+@pytest.mark.strict_mode
 def test_non_returning_owned_loop_declines_and_binding_free_statements_share(
     tmp_path: Path,
 ) -> None:
@@ -268,6 +273,7 @@ def test_non_returning_owned_loop_declines_and_binding_free_statements_share(
     assert _observed(final, driver) == _observed(body, driver) == "None None [2, 6, 2, 4, 8, 2]\n"
 
 
+@pytest.mark.strict_mode
 def test_async_owned_bodies_decline_but_binding_free_work_shares(tmp_path: Path) -> None:
     original = """
     async def alpha(value):
@@ -342,6 +348,7 @@ def test_trivial_forwarding_bodies_are_still_skipped(tmp_path: Path) -> None:
     assert UnificationRefactorEngine(min_lines=1).analyze_file(path) == []
 
 
+@pytest.mark.strict_mode
 def test_a_cross_file_site_imports_the_new_helper(tmp_path: Path) -> None:
     package = tmp_path / "pkg"
     package.mkdir()

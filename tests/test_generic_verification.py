@@ -174,6 +174,7 @@ def test_generic_checker_timeout_aborts_without_trying_an_unchecked_fallback(
     assert proposal.helper_type_declarations == ()
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("fallback", ["any", "bare"])
 def test_rejected_generic_declarations_do_not_leak_into_fallbacks(
     tmp_path: Path, fallback: str

@@ -99,6 +99,7 @@ def test_forked_evaluation_tallies_what_serial_evaluation_tallies(
     assert parallel == serial
 
 
+@pytest.mark.strict_mode
 def test_the_run_report_accounts_for_the_last_whole_analysis(tmp_path: Path) -> None:
     """At the fixed point, the report's pair counts add up and match a fresh analysis."""
     root = tmp_path / "project"

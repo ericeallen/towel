@@ -519,6 +519,7 @@ def test_the_layout_fmt_off_keeps_is_written_into_the_helper_as_it_was(
     assert result.count("1,   0,   0,") == 1
 
 
+@pytest.mark.strict_mode
 def test_a_line_fmt_skip_keeps_is_written_as_it_was(tmp_path: Path) -> None:
     source = """
     def g1(rows):
@@ -569,6 +570,7 @@ def test_a_line_fmt_skip_keeps_is_written_as_it_was(tmp_path: Path) -> None:
     _assert_behavior_preserved(complete, result, ("g1", "g2"))
 
 
+@pytest.mark.strict_mode
 def test_a_region_around_both_blocks_that_reaches_the_helper_keeps_it_all(tmp_path: Path) -> None:
     """A module whose Black is off from its top keeps the helper as the sites wrote it."""
     source = """
@@ -663,6 +665,7 @@ def test_a_formatter_that_does_not_read_the_directive_is_not_used(tmp_path: Path
     assert "        1,   0,   0," in _helper_text(result).split("\n")
 
 
+@pytest.mark.strict_mode
 @requires_ruff
 def test_the_matrix_fixture_keeps_its_layout_through_a_fixed_point_run(tmp_path: Path) -> None:
     """The hostile fixture of the matrix shape, refactored as the battery does."""

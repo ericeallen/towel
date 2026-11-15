@@ -253,6 +253,7 @@ def test_a_prior_refusal_is_checked_again_before_and_after_dependency_changes(
         oracle.close()
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_the_type_the_block_saw_replaces_a_wider_declared_one(tmp_path: Path) -> None:
     """rich's ``append``/``append_text``: ``text: Text | str``, but the block runs on a ``Text``."""

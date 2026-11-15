@@ -260,6 +260,7 @@ def g(subject):
     assert before == "capture 13\ncapture 16\n13 16 None None\n"
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("control", ["break", "continue"])
 def test_match_body_loop_control_stays_with_the_callers_loop(tmp_path: Path, control: str) -> None:
     """Recover the body prefix without emitting a helper containing a free break/continue."""
@@ -360,6 +361,7 @@ def g(n, mixed=False):
 """
 
 
+@pytest.mark.strict_mode
 def test_except_star_body_extraction_keeps_subgroups_cleanup_and_finally(
     tmp_path: Path,
 ) -> None:

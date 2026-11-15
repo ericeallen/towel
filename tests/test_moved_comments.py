@@ -206,6 +206,7 @@ _EXPLAINED = """
     """
 
 
+@pytest.mark.strict_mode
 def test_explanatory_comments_keep_their_statements_and_order(tmp_path: Path) -> None:
     path = _write(tmp_path, _EXPLAINED)
     result = _refactor(path)
@@ -1466,6 +1467,7 @@ def test_the_run_reports_an_unreadable_configuration(tmp_path: Path) -> None:
     assert "Applied 1 refactoring" in output, output
 
 
+@pytest.mark.strict_mode
 def test_original_opaque_message_partial_remains_refused(tmp_path: Path) -> None:
     source = _INSIDE.format(
         prelude="",

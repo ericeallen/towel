@@ -241,6 +241,7 @@ def test_fork_inherits_owner_and_child_scope_exit_cannot_change_parent() -> None
     assert not parent.answers
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("disabled", [False, True])
 def test_accepted_pair_retains_both_fresh_proofs_for_each_caller(
     tmp_path: Path, disabled: bool

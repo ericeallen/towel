@@ -102,6 +102,7 @@ def test_free_name_captured_only_in_substituted_expression_is_not_passed(body: s
         assert len(call.args) == len(helper.args.posonlyargs + helper.args.args)
 
 
+@pytest.mark.strict_mode
 def test_unused_thunk_inputs_disappear_without_changing_effects(tmp_path: Path) -> None:
     source = """
 class Config:

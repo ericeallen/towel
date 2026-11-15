@@ -107,6 +107,7 @@ def _proposal(
     return engine, proposals[0]
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("count", [1, 2, 3])
 @pytest.mark.parametrize("fail", [False, True])
 def test_unused_arguments_release_in_original_order_before_helper_locals(
@@ -137,6 +138,7 @@ def test_unused_arguments_release_in_original_order_before_helper_locals(
     assert holder.args.args[-1].annotation is None
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("count", [1, 2, 3])
 @pytest.mark.parametrize("fail", [False, True])
 def test_starred_arguments_preserve_the_original_caller_owned_tuple_cleanup(
@@ -177,6 +179,7 @@ def test_rebound_deleted_nonlocal_and_parameter_cell_ownership_is_not_guessed(bo
     assert argument_handoff_plan(function, function.body, analyzer, call, helper) is None
 
 
+@pytest.mark.strict_mode
 def test_forged_metadata_and_stale_source_are_reproved(tmp_path: Path) -> None:
     engine, proposal = _proposal(tmp_path, SOURCE)
     replacement = proposal.replacements[0]
@@ -200,6 +203,7 @@ def test_forged_metadata_and_stale_source_are_reproved(tmp_path: Path) -> None:
         engine.apply_refactoring(str(tmp_path / "p.py"), proposal)
 
 
+@pytest.mark.strict_mode
 def test_other_runtime_does_not_claim_cpython_cleanup_proof(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -212,6 +216,7 @@ def test_other_runtime_does_not_claim_cpython_cleanup_proof(
     assert not engine.analyze_file(str(path))
 
 
+@pytest.mark.strict_mode
 def test_rendered_parameter_budget_includes_ownership_holder(tmp_path: Path) -> None:
     engine, proposal = _proposal(tmp_path, SOURCE, budget=5)
     engine.unifier.max_parameters = len(proposal.extracted_function.args.args) + len(
@@ -221,6 +226,7 @@ def test_rendered_parameter_budget_includes_ownership_holder(tmp_path: Path) -> 
         engine.apply_refactoring(str(tmp_path / "p.py"), proposal)
 
 
+@pytest.mark.strict_mode
 def test_observing_custom_finisher_preserves_the_transfer_proof(tmp_path: Path) -> None:
     engine, proposal = _proposal(tmp_path, SOURCE)
     observed: List[str] = []
@@ -235,6 +241,7 @@ def test_observing_custom_finisher_preserves_the_transfer_proof(tmp_path: Path) 
     assert _effects(output, "f") == _effects(SOURCE, "f")
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("snippet", [False, True])
 def test_mutating_custom_callback_is_called_then_refused(tmp_path: Path, snippet: bool) -> None:
     engine, proposal = _proposal(tmp_path, SOURCE)
@@ -272,6 +279,7 @@ def test_user_lambda_signature_and_escaping_generated_thunk_are_not_rewritten() 
     assert argument_handoff_plan(function, function.body, analyzer, call, helper) is None
 
 
+@pytest.mark.strict_mode
 def test_method_receiver_and_mixed_argument_kinds_keep_original_cleanup(tmp_path: Path) -> None:
     source = SOURCE[: SOURCE.index("def f(a):")] + """class C(R):
     def f(self,a,/,*rest,b,**kwargs):
@@ -365,6 +373,7 @@ def test_compiler_facts_are_immutable_weak_and_reused(monkeypatch: pytest.Monkey
     assert reference() is None
 
 
+@pytest.mark.strict_mode
 def test_unannotated_holder_keeps_mypy_unchecked_body_semantics(tmp_path: Path) -> None:
     from towel.type_inference import CheckSuccess, MypyInferrer
 
@@ -400,6 +409,7 @@ def test_unannotated_holder_keeps_mypy_unchecked_body_semantics(tmp_path: Path) 
         oracle.close()
 
 
+@pytest.mark.strict_mode
 def test_import_alias_cannot_overwrite_the_argument_owner(tmp_path: Path) -> None:
     source = (
         SOURCE[: SOURCE.index("def f(a):")].replace(
@@ -454,6 +464,7 @@ def test_ownership_generated_names_reserve_every_lexical_binder(binder: str) -> 
         assert argument_ownership._fresh(stem, taken) == stem + "_1"
 
 
+@pytest.mark.strict_mode
 def test_certificate_box_and_capture_names_avoid_unused_module_binders(tmp_path: Path) -> None:
     source = "import math as _towel_arguments\ndef _towel_argument(): pass\n" + SOURCE
     engine, proposal = _proposal(tmp_path, source)
@@ -466,6 +477,7 @@ def test_certificate_box_and_capture_names_avoid_unused_module_binders(tmp_path:
     assert _effects(source, "f") == _effects(output, "f")
 
 
+@pytest.mark.strict_mode
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="native generic syntax")
 @pytest.mark.parametrize("fail", [False, True])
 def test_native_generic_header_keeps_resource_parameter_cleanup(tmp_path: Path, fail: bool) -> None:
@@ -518,6 +530,7 @@ def test_runtime_native_type_parameter_reads_are_not_transferred(body: str) -> N
     assert argument_handoff_plan(function, function.body, analyzer, call, helper) is None
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize(
     "parameters",
     [("a",), ("name", "a_rather_long_parameter_name", "another_long_parameter_name")],
@@ -566,6 +579,7 @@ def test_black_keeps_independent_parameter_deletes_and_cleanup_order(
         ]
 
 
+@pytest.mark.strict_mode
 def test_analysis_reserves_the_final_holder_in_the_parameter_budget(tmp_path: Path) -> None:
     _, proposal = _proposal(tmp_path, SOURCE)
     path = tmp_path / "p.py"
@@ -616,6 +630,7 @@ class C(Base):
 """
 
 
+@pytest.mark.strict_mode
 def test_method_budget_includes_implicit_super_receiver_and_holder(tmp_path: Path) -> None:
     """Receiver-free syntax still requires the original frame's first argument for super()."""
     path = tmp_path / "p.py"

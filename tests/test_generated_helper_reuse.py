@@ -209,6 +209,7 @@ def test_names_already_in_input_keep_independent_monkeypatch_behavior(
     assert other(2) == -7
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("name", ["existing", "__extracted_func_0"])
 @pytest.mark.parametrize("binding_free", [False, True])
 def test_input_name_does_not_hide_a_whole_body_matching_another_prefix(
@@ -414,6 +415,7 @@ def test_reuse_itself_checks_a_new_borrowers_bindings(tmp_path: Path) -> None:
     assert engine._reusing_generated_helper(proposal, functions) is None
 
 
+@pytest.mark.strict_mode
 def test_owned_cross_module_bodies_keep_fresh_holder_abi(tmp_path: Path) -> None:
     """An existing provider cannot adopt the extra owner parameter for new sites."""
     root, output = tmp_path / "input", tmp_path / "output"

@@ -140,6 +140,7 @@ def _engine() -> UnificationRefactorEngine:
     return UnificationRefactorEngine(min_lines=3, parameterize_constants=True)
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize(
     "source, shared",
     [

@@ -66,6 +66,7 @@ def _assert_original_blocks_have_no_mapping_reads(source: str) -> None:
         assert builtin_mapping_reads(function, function.body, analyzer, source) == frozenset()
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 def test_replacement_after_an_earlier_definition_preserves_caller_mapping(
     tmp_path: Path, flag: bool
@@ -96,6 +97,7 @@ def test_replacement_between_definitions_preserves_distinct_mappings(
     assert _run(tmp_path, "m.py") == expected
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 @pytest.mark.parametrize(
     ("before", "between", "after", "prefix", "expected"),
@@ -135,6 +137,7 @@ def test_ordinary_mapping_replacements_are_conservatively_declined(
     assert (tmp_path / "m.py").read_bytes() == final
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 @pytest.mark.parametrize(
     ("position", "expected"),
@@ -175,6 +178,7 @@ def test_wildcard_mapping_replacement_keeps_nonbuiltin_extraction_useful(
     assert _run(tmp_path, "m.py") == expected
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 @pytest.mark.parametrize(
     ("position", "expected"),
@@ -199,6 +203,7 @@ def test_custom_builtin_names_preserve_each_functions_captured_mapping(
     assert (tmp_path / "m.py").read_bytes() == final
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 def test_deleted_module_global_falls_back_to_each_captured_custom_builtin(
     tmp_path: Path, flag: bool
@@ -281,6 +286,7 @@ def test_no_builtin_reads_and_local_shadowing_keep_useful_extraction(
     assert _run(tmp_path, "m.py") == expected
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 def test_methods_created_under_different_mappings_preserve_results(
     tmp_path: Path, flag: bool
@@ -301,6 +307,7 @@ def test_methods_created_under_different_mappings_preserve_results(
     assert _run(tmp_path, "m.py") == expected
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("flag", [False, True])
 def test_cross_module_mapping_replacement_is_not_fixed_by_a_lookup_thunk(
     tmp_path: Path, flag: bool

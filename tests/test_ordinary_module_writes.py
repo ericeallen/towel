@@ -155,6 +155,7 @@ def test_external_callee_can_change_lookup_between_reads(
     assert _run(after, "check.py", pythonpath=str(vendor)) == expected
 
 
+@pytest.mark.strict_mode
 def test_a_single_leading_builtin_lookup_keeps_its_supplier(tmp_path: Path) -> None:
     body = (
         "    size = len(values) + 1\n"
@@ -187,6 +188,7 @@ def test_a_single_leading_builtin_lookup_keeps_its_supplier(tmp_path: Path) -> N
     assert all(not supplier.args.args and not supplier.args.defaults for supplier in suppliers)
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("mode", ["ok", "add-error", "mul-error"])
 def test_builtin_supplier_preserves_displaced_callable_and_result_lifetimes(
     tmp_path: Path, mode: str

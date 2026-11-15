@@ -22,9 +22,8 @@ mode assumes a program does not depend on when its objects are finalized
 (docs/DECISIONS.md, "Relaxed mode is the default; strict mode keeps exact
 lifetimes"), so its callers are plain calls; strict mode is 1.949 exactly.
 
-Every test here names its mode, so the file means the same under
-``--strict-mode``. The scenario fixtures are the audit's designed cases,
-copied under ``tests/fixtures/relaxed_scenarios`` with their drivers.
+The scenario fixtures are the audit's designed cases, copied under
+``tests/fixtures/relaxed_scenarios`` with their drivers.
 """
 
 from __future__ import annotations
@@ -44,6 +43,9 @@ import pytest
 from towel.api import UnificationRefactorEngine
 from towel.unification.block_analysis import first_assignment_order
 from tests.test_cli_integration import invoke
+
+# The default mode is what this module pins.
+pytestmark = pytest.mark.relaxed_mode
 
 ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = ROOT / "tests" / "fixtures" / "relaxed_scenarios"

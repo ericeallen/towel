@@ -27,6 +27,7 @@ import subprocess
 import sys
 
 import pytest
+from tests.test_helpers import child_mode_flags
 import towel
 
 from tests.differential.grammar import generate_case
@@ -115,6 +116,7 @@ def test_actual_engine_preserves_captured_comprehension_observations(
         assert outcome.applied > 0
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("kind,target,configured", _CLI_VARIANTS)
 def test_default_cli_keeps_native_errors_state_and_argument_effects(
     tmp_path: Path, kind: str, target: str, configured: bool
@@ -148,6 +150,7 @@ def test_default_cli_keeps_native_errors_state_and_argument_effects(
             "--no-interactive",
             "--progress",
             "none",
+            *child_mode_flags(),
         ],
         cwd=tmp_path,
         env=_environment(),

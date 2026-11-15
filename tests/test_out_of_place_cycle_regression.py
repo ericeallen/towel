@@ -35,6 +35,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import pytest
 from pathlib import Path
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -126,6 +127,7 @@ class TestOutOfPlaceCycleRegression(unittest.TestCase):
             )
             self.assertNotIn("circular import", result.stderr)
 
+    @pytest.mark.strict_mode
     def test_owned_duplicates_use_fresh_module_local_helpers(self) -> None:
         self._refactor_and_adopt()
         for filename in ("a.py", "b.py"):

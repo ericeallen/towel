@@ -124,6 +124,7 @@ def test_the_cross_module_pair_is_shared_when_asked(tmp_path: Path) -> None:
     assert _behavior(tmp_path / "out") == expected
 
 
+@pytest.mark.strict_mode
 def test_the_command_line_completes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _hatch_project(tmp_path / "proj")
     expected = _behavior(tmp_path / "proj")

@@ -32,6 +32,9 @@ from towel.type_inference import PyrightOracle
 from towel.unification.rehearing import execution_context
 from tests.test_cli_integration import DUPLICATES, invoke
 
+# The default mode is what this module pins.
+pytestmark = pytest.mark.relaxed_mode
+
 FLAGS = ["--no-types", "--no-format", "--progress", "none"]
 
 

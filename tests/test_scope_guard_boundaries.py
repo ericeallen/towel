@@ -69,6 +69,7 @@ def _extract(tmp_path: Path, source: str, *, safe_arithmetic: bool = False) -> t
     return result, count
 
 
+@pytest.mark.strict_mode
 def test_nonlocal_declaration_does_not_block_an_unrelated_suffix(tmp_path: Path) -> None:
     result, count = _extract(
         tmp_path,
@@ -106,6 +107,7 @@ def test_nonlocal_declaration_does_not_block_an_unrelated_suffix(tmp_path: Path)
     )
 
 
+@pytest.mark.strict_mode
 def test_private_attribute_elsewhere_does_not_block_a_public_suffix(tmp_path: Path) -> None:
     result, count = _extract(
         tmp_path,

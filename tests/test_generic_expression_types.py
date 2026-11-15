@@ -109,6 +109,7 @@ def annotation(node: ast.expr | None) -> str:
     )
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("bound", ["", ", bound=float"])
 def test_unannotated_indexed_locals_preserve_free_or_bounded_parameters(
     tmp_path: Path,
@@ -162,6 +163,7 @@ def test_unannotated_indexed_locals_preserve_free_or_bounded_parameters(
     assert first([value]) is value and second([value]) is value
 
 
+@pytest.mark.strict_mode
 def test_inferred_local_callable_keeps_argument_and_result_correlation(
     tmp_path: Path,
     measured_oracle: tuple[TypeOracle, dict[RevealKey, str]],
@@ -278,6 +280,7 @@ def test_mypy_repeated_reveals_require_one_unambiguous_type(
     assert result == ({(str(path), 2, 0): expected} if expected is not None else {})
 
 
+@pytest.mark.strict_mode
 def test_constrained_local_specializations_are_not_silently_narrowed(
     tmp_path: Path,
     measured_oracle: tuple[TypeOracle, dict[RevealKey, str]],

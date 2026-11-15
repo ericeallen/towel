@@ -823,6 +823,7 @@ def test_a_thunk_returning_a_class_shares_its_variable_with_the_list_end_to_end(
     assert "Any" not in changed, changed
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_returned_values_follow_the_arguments_they_are_end_to_end(tmp_path: Path) -> None:
     """rich R3, in miniature: the helper returns what it was passed, crossed between the sites.

@@ -513,6 +513,7 @@ def test_cross_module_builtins_decline_with_or_without_excluded_writes(
     assert "len(items)" in (control / "pkg" / "b.py").read_text(), "the control keeps its lookup"
 
 
+@pytest.mark.strict_mode
 def test_an_excluded_instrumenter_does_not_veto_extraction(
     tmp_path: Path,
 ) -> None:
@@ -576,6 +577,7 @@ def test_a_3_12_file_refuses_a_3_11_run(tmp_path: Path) -> None:
     assert not (tmp_path / "out").exists()
 
 
+@pytest.mark.strict_mode
 def test_same_file_library_analysis_does_not_scan_unrelated_instrumenters(tmp_path: Path) -> None:
     """Ordinary same-file extraction no longer needs the project instrumentation index."""
     project = _project(tmp_path, {"pkg/fast.py": NEWER + HAND_APPLIED})

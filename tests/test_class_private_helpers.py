@@ -278,6 +278,7 @@ print(Account.describe("a"), Savings.summary("b"), Savings().describe("c"))
 """
 
 
+@pytest.mark.strict_mode
 def test_same_class_helpers_keep_private_attributes_super_and_classmethods_working(
     tmp_path: Path,
 ) -> None:

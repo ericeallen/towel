@@ -182,6 +182,7 @@ def test_r9bd_the_audit_s_pair_is_declined_under_its_reason(
     assert any(line.endswith("['total']") for line in traced), traced
 
 
+@pytest.mark.strict_mode
 def test_r9bd_a_call_that_assigns_the_name_back_keeps_it_local(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     # Each function now reads total after the block too, so the call assigns it.

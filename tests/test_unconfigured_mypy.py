@@ -40,6 +40,7 @@ from typing import FrozenSet, Mapping, Optional, Tuple
 
 import pytest
 
+from tests.test_helpers import child_mode_flags
 from towel._mypy_worker import _PROBE_CACHE, _SUPPLIED_TEXT_RECORD
 from towel.type_inference import (
     CheckFailure,
@@ -333,7 +334,7 @@ def _dry(project: Path) -> subprocess.CompletedProcess[str]:
     """The audit's reproducer: ``towel dry pkg pkg``, typed, in the project."""
     return subprocess.run(
         [sys.executable, "-c", "from towel.cli import main; main()", "dry", "pkg", "pkg"]
-        + ["--no-format", "--no-interactive", "--progress", "none"],
+        + ["--no-format", "--no-interactive", "--progress", "none", *child_mode_flags()],
         cwd=project,
         env={**os.environ, "TOWEL_WORKERS": "1"},
         capture_output=True,
@@ -343,6 +344,7 @@ def _dry(project: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+@pytest.mark.strict_mode
 def test_an_unannotated_test_the_projects_mypy_never_checks_does_not_refuse_the_run(
     tmp_path: Path,
 ) -> None:
@@ -364,6 +366,7 @@ def test_an_unannotated_test_the_projects_mypy_never_checks_does_not_refuse_the_
     ).lstrip()
 
 
+@pytest.mark.strict_mode
 def test_an_error_the_projects_mypy_reports_in_the_package_is_left_as_it_was(
     tmp_path: Path,
 ) -> None:
@@ -566,6 +569,7 @@ def test_probes_that_check_more_than_the_project_build_in_a_cache_of_their_own(
         assert not (cache / _SUPPLIED_TEXT_RECORD).exists()
 
 
+@pytest.mark.strict_mode
 def test_original_unannotated_owning_partial_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "owning.py"
     path.write_text(textwrap.dedent(OWNED_BESIDE_AN_UNANNOTATED_FUNCTION).lstrip())

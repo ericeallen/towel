@@ -22,6 +22,7 @@ of block extraction, pair finding, and proposal generation.
 
 import unittest
 import ast
+import pytest
 from pathlib import Path
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.models import FunctionArtifact
@@ -363,6 +364,7 @@ class TestFullBodyWithNestedFunctions(TemporaryModuleTestCase):
         super().setUp()
         self.engine = UnificationRefactorEngine(max_parameters=5, min_lines=4)
 
+    @pytest.mark.strict_mode
     def test_identical_functions_with_two_nested_functions(self):
         """Test that identical functions with two nested functions produce correct proposal."""
         temp_path = self._write_temp("""

@@ -598,6 +598,7 @@ print(m.first([1, 2], "ab"), m.second([1, 2], "ab"))
 """
 
 
+@pytest.mark.strict_mode
 def test_a_same_module_helper_is_unchanged_by_a_patch_of_its_module(tmp_path: Path) -> None:
     before, after = tmp_path / "before", tmp_path / "after"
     for root in (before, after):

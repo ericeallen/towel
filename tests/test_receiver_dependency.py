@@ -43,6 +43,7 @@ receiver takes it as an ordinary argument.
 from __future__ import annotations
 
 import ast
+import pytest
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -162,6 +163,7 @@ def test_the_helper_is_a_module_function_that_asks_for_no_receiver(tmp_path: Pat
     )
 
 
+@pytest.mark.strict_mode
 def test_a_method_that_uses_its_receiver_still_gets_an_instance_helper(tmp_path: Path) -> None:
     """The other side: a fix that made every helper static would pass the tests above."""
     assert _outcome(USES_RECEIVER) == (23, 26)

@@ -43,6 +43,9 @@ from towel.unification.resource_guard import (
     resource_bound_names,
 )
 
+# The default mode is what this module pins.
+pytestmark = pytest.mark.relaxed_mode
+
 
 def _names(source: str) -> set[str]:
     """What the guard finds in the body of ``work`` in ``source``."""

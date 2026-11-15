@@ -71,6 +71,7 @@ def _module_function(source: str) -> ast.FunctionDef:
     )
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("syntax", ["legacy", "pep695"])
 @pytest.mark.parametrize("method_kind", ["instance", "staticmethod"])
 def test_class_bound_result_keeps_the_public_contract(

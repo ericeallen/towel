@@ -75,6 +75,19 @@ such a checker answered nowhere and the test verified nothing. A project
 path through a symbolic link (every temporary directory on macOS) once had
 every mypy answer dropped in exactly that way.
 
+Relaxed mode is the default, so a test runs relaxed unless it says otherwise.
+A test whose expectations are strict mode's (an ownership transfer or a kept
+binding in the generated text, a refusal that exists to keep release order,
+output that records when a `__del__` runs) is marked
+`@pytest.mark.strict_mode`, or its module sets `pytestmark` to it: engines
+it constructs and command lines it runs in this process are then strict
+unless they choose a mode. A command it runs in a child process passes
+`--strict` itself. The tests written before 2.0 that pin such behaviour carry
+the mark with their expectations unchanged. `pytest --towel-strict` runs
+every module that way, except the ones marked `relaxed_mode` because the
+default is what they pin; it is how to check that strict mode still passes
+the whole suite.
+
 A test that writes a module the engine will refactor puts it in a directory
 of its own: pytest's `tmp_path`, or `TemporaryModuleTestCase._write_temp` in
 a `unittest` class. Never `NamedTemporaryFile` or `mkstemp` at the temp root:

@@ -194,6 +194,7 @@ def test_the_shipped_package_never_imports_one_that_stays_behind(
     )
 
 
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("safe", [False, True])
 def test_a_test_module_that_imports_the_package_may_borrow_from_it(
     tmp_path: Path, safe: bool
