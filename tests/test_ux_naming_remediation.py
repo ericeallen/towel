@@ -199,3 +199,101 @@ def test_prompt_on_extracted_order_service_shows_bodies_call_sites_and_param_key
         for param in entry["parameters"]:
             if param["name"].startswith("__param_"):
                 assert param["rename_key"] in prompt
+
+
+def test_unknown_mapping_keys_exit_2_and_list_existing_keys(tmp_path: Path) -> None:
+    """Audit Finding 8, item 2: unknown helper, parameter, or file key exits 2 with existing keys."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    (tmp_path / "orders.py").write_text(
+        "def __extracted_func_0(__param_0, items):\n"
+        "    return [item for item in items if item == __param_0]\n\n"
+        "def paid(rows):\n"
+        "    return __extracted_func_0('paid', rows)\n",
+        encoding="utf-8",
+    )
+    mapping = tmp_path / "renames.json"
+
+    for bad_key, new_value in (
+        ("orders.py:__extracted_func_99", "filter_paid"),
+        ("__extracted_func_99", "filter_paid"),
+        ("orders.py:__extracted_func_0.__param_9", "status"),
+        ("missing.py:__extracted_func_0", "filter_paid"),
+    ):
+        mapping.write_text(json.dumps({bad_key: new_value}), encoding="utf-8")
+        human = invoke(["rename-helpers", str(tmp_path), "--rename-file", str(mapping)])
+        assert human.status == 2, f"expected exit 2 for {bad_key}, got {human}"
+        assert bad_key in human.stderr
+        assert "orders.py:__extracted_func_0" in human.stderr
+        assert "orders.py:__extracted_func_0.__param_0" in human.stderr
+
+        as_json = invoke(["rename-helpers", str(tmp_path), "--rename-file", str(mapping), "--json"])
+        assert as_json.status == 2
+        payload = json.loads(as_json.stdout)
+        assert set(payload) == {"applied", "dry_run", "error"}
+        assert payload["applied"] is False
+        assert bad_key in payload["error"]
+        assert "orders.py:__extracted_func_0" in payload["error"]
+
+    # An unapplied helper paired with a nonexistent __param_0 mapped to an existing parameter
+    # name ("items") must also fail with exit 2 rather than pretending it was already applied.
+    mapping.write_text(
+        json.dumps(
+            {
+                "orders.py:__extracted_func_0": "filter_by_status",
+                "orders.py:__extracted_func_0.__param_9": "items",
+            }
+        ),
+        encoding="utf-8",
+    )
+    bogus = invoke(["rename-helpers", str(tmp_path), "--rename-file", str(mapping)])
+    assert bogus.status == 2
+    assert "orders.py:__extracted_func_0.__param_9" in bogus.stderr
+
+
+def test_applying_mapping_a_second_time_succeeds_and_reports_already_applied(
+    tmp_path: Path,
+) -> None:
+    """Audit Finding 8, item 2: repeating an already-applied mapping exits 0 with 'already applied'."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    source_file = tmp_path / "orders.py"
+    source_file.write_text(
+        "def __extracted_func_0(__param_0, items):\n"
+        "    return [item for item in items if item == __param_0]\n\n"
+        "class Box:\n"
+        "    def __extracted_func_1(self, __param_0):\n"
+        "        return self.width * __param_0\n\n"
+        "    def area(self):\n"
+        "        return self.__extracted_func_1(2)\n\n"
+        "def paid(rows):\n"
+        "    return __extracted_func_0('paid', rows)\n",
+        encoding="utf-8",
+    )
+    mapping = tmp_path / "renames.json"
+    mapping.write_text(
+        json.dumps(
+            {
+                "orders.py:__extracted_func_0": "filter_by_status",
+                "orders.py:__extracted_func_0.__param_0": "target_status",
+                "orders.py:Box.__extracted_func_1": "__scaled_width",
+                "orders.py:Box.__extracted_func_1.__param_0": "factor",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    first = invoke(["rename-helpers", str(tmp_path), "--rename-file", str(mapping)])
+    assert first.status == 0, first.stderr
+    renamed_source = source_file.read_text(encoding="utf-8")
+    assert "def filter_by_status(target_status, items):" in renamed_source
+    assert "def __scaled_width(self, factor):" in renamed_source
+
+    second = invoke(["rename-helpers", str(tmp_path), "--rename-file", str(mapping)])
+    assert second.status == 0, second.stderr
+    assert "already applied" in second.stdout
+    assert source_file.read_text(encoding="utf-8") == renamed_source
+
+    second_json = invoke(["rename-helpers", str(tmp_path), "--rename-file", str(mapping), "--json"])
+    assert second_json.status == 0, second_json.stderr
+    payload = json.loads(second_json.stdout)
+    assert set(payload) == {"applied", "dry_run", "changes", "renames"}
+    assert payload["applied"] is True and payload["changes"] == 0
