@@ -297,7 +297,7 @@ if TYPE_CHECKING:
 FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 """A function definition of either kind."""
 
-TerminationReason = Literal["fixed_point", "iteration_cap"]
+TerminationReason = Literal["fixed_point", "iteration_cap", "time_limit"]
 """Why a fixed-point driver stopped: nothing left to apply, or the cap was reached."""
 
 ParameterKind = Literal["value", "thunk", "lifted", "receiver"]

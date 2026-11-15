@@ -23,7 +23,7 @@ formatting, follow-ups and the final cold confirmation.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
 import re
@@ -76,17 +76,17 @@ def _snapshot(root: Path) -> dict[str, tuple[int, int, int, bytes | str]]:
 
 
 def _capture_preview(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Path, dict[str, bytes]]]:
-    """Observe only the destination, after the real complete pipeline has succeeded."""
+    """Observe confirmed staged bytes before preview removes its private stage."""
     completed: list[tuple[Path, dict[str, bytes]]] = []
-    execute = cli._execute_dry
+    content = cli._preview_content
 
-    def capture(options: cli.DryOptions, *, preview: bool = False) -> None:
-        execute(options, preview=preview)
-        if preview:
-            target = Path(options.output)
-            completed.append((target, _contents(target)))
+    def capture(
+        engine: UnificationRefactorEngine, options: cli.DryOptions, stage: StagedProject
+    ) -> cli._PreviewContent:
+        completed.append((stage.target, _contents(stage.target)))
+        return content(engine, options, stage)
 
-    monkeypatch.setattr(cli, "_execute_dry", capture)
+    monkeypatch.setattr(cli, "_preview_content", capture)
     return completed
 
 
@@ -127,7 +127,11 @@ def test_complete_preview_matches_dry_bytes_and_requested_cap(
     dry = invoke(["dry", str(target), str(output), "--no-interactive", *flags])
     assert dry.status == 0, dry
     assert f"Applied {count} refactoring(s)" in dry.stdout
-    assert _contents(output) == predicted
+    written = _contents(output)
+    if directory:
+        assert written.pop("data.txt") == b"keep this too\n"
+        assert "data.txt" not in predicted
+    assert written == predicted
     assert _snapshot(root) == before
 
 
@@ -231,7 +235,9 @@ def test_complete_preview_keeps_cross_module_followups_and_exclusions(
     output = tmp_path / "output"
     dry = invoke(["dry", str(root), str(output), "--no-interactive", *flags])
     assert dry.status == 0, dry
-    assert _contents(output) == completed[0][1]
+    written = _contents(output)
+    assert written.pop("vendor/ignored.py") == b"this is intentionally invalid Python!!!\n"
+    assert written == completed[0][1]
 
 
 def test_quick_is_explicitly_partial_and_does_not_run_checkers_or_formatters(
@@ -312,10 +318,18 @@ def test_complete_preview_uses_original_config_and_whole_project_staging(
 
     @contextmanager
     def stage(
-        origin_root: Path, origin_target: Path, output: Path, *, limit: int
+        origin_root: Path,
+        origin_target: Path,
+        output: Path,
+        *,
+        limit: int,
+        preview: bool = False,
+        notice: Callable[[str], None] | None = None,
     ) -> Iterator[StagedProject]:
         assert origin_root == root and origin_target == package
-        with staged_project(origin_root, origin_target, output, limit=limit) as staged:
+        with staged_project(
+            origin_root, origin_target, output, limit=limit, preview=preview, notice=notice
+        ) as staged:
             assert (staged.root / "pyproject.toml").read_text() == config
             assert (staged.root / "consumer.py").read_bytes() == (root / "consumer.py").read_bytes()
             observed.append(staged.root)
@@ -350,13 +364,23 @@ def test_complete_preview_and_dry_both_fail_closed_when_checking_fails(
     before = _snapshot(root)
     closed: list[Mock] = []
     finals: list[tuple[str, ...]] = []
-    private_outputs: list[Path] = []
-    execute = cli._execute_dry
+    private_stages: list[Path] = []
 
-    def capture(options: cli.DryOptions, *, preview: bool = False) -> None:
-        if preview:
-            private_outputs.append(Path(options.output))
-        execute(options, preview=preview)
+    @contextmanager
+    def capture(
+        origin_root: Path,
+        origin_target: Path,
+        output: Path,
+        *,
+        limit: int,
+        preview: bool = False,
+        notice: Callable[[str], None] | None = None,
+    ) -> Iterator[StagedProject]:
+        with staged_project(
+            origin_root, origin_target, output, limit=limit, preview=preview, notice=notice
+        ) as stage:
+            private_stages.append(stage.root)
+            yield stage
 
     def select(_path: Path) -> TypeOracle:
         oracle = Mock(spec=TypeOracle)
@@ -368,7 +392,7 @@ def test_complete_preview_and_dry_both_fail_closed_when_checking_fails(
         finals.append(tuple(paths))
         raise RefactoringError(f"test final check refused {paths[0]}")
 
-    monkeypatch.setattr(cli, "_execute_dry", capture)
+    monkeypatch.setattr(fixed_point, "staged_project", capture)
     if failure == "baseline":
         monkeypatch.setattr(cli, "_type_oracle", select)
     else:
@@ -385,7 +409,9 @@ def test_complete_preview_and_dry_both_fail_closed_when_checking_fails(
     assert "Would apply" not in preview.stdout
     assert "towel-preview-" not in preview.stderr
     assert str(root) in preview.stderr if failure == "final" else True
-    assert private_outputs and all(not path.parent.exists() for path in private_outputs)
+    assert all(not path.parent.exists() for path in private_stages)
+    if failure == "final":
+        assert len(private_stages) == 2
     assert not output.exists()
     assert _snapshot(root) == before
     for oracle in closed:
@@ -447,3 +473,38 @@ def test_preview_path_translation_keeps_error_and_warning_paths_useful(
     assert str(source) in result.stderr
     assert "towel-preview-" not in result.stderr
     assert source.read_text() == DUPLICATES
+
+
+def test_preview_omits_bulk_payloads_and_still_matches_dry_for_hard_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Runtime item 4: filtering the preview copy must not turn it into in-place semantics."""
+    root = tmp_path / "project"
+    root.mkdir()
+    original = tmp_path / "outside.py"
+    original.write_text(DUPLICATES)
+    (root / "module.py").hardlink_to(original)
+    (root / "pyproject.toml").write_text("")
+    (root / "data.bin").write_bytes(b"payload")
+    for name in (".git", ".venv", "node_modules"):
+        directory = root / name
+        directory.mkdir()
+        (directory / "bulk.bin").write_bytes(b"unanalysed")
+    (root / ".venv" / "pyvenv.cfg").write_text("")
+    before = _snapshot(root)
+    completed = _capture_preview(monkeypatch)
+    flags = ["--no-types", "--no-format", "--progress", "none"]
+    preview = invoke(["preview", str(root), *flags])
+    assert preview.status == 0, preview
+    assert "Would apply 1 refactoring(s)" in preview.stdout
+    assert len(completed) == 1
+    predicted = completed[0][1]
+    assert sorted(predicted) == ["module.py", "pyproject.toml"]
+    output = tmp_path / "out"
+    dry = invoke(["dry", str(root), str(output), "--no-interactive", *flags])
+    assert dry.status == 0, dry
+    assert (output / "module.py").read_bytes() == predicted["module.py"]
+    assert (output / "data.bin").read_bytes() == b"payload"
+    assert (output / ".git" / "bulk.bin").read_bytes() == b"unanalysed"
+    assert original.read_text() == DUPLICATES
+    assert _snapshot(root) == before

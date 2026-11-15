@@ -27,12 +27,24 @@ progress mode: ``auto`` (terminal-only bars, with a built-in fallback),
 
 from __future__ import annotations
 
+from towel.execution_budget import (
+    BudgetExpired,
+    abandon_budget,
+    check_budget,
+    recording_application,
+)
+
 from contextlib import contextmanager
 import dataclasses
 import logging
 import os
 from dataclasses import dataclass, field
 import textwrap
+import time
+from functools import wraps
+from typing import Concatenate, ParamSpec
+from towel.source_files import current_source_policy, source_policy
+from towel.program_files import skip_nonprogram_file
 
 from pathlib import Path
 import ast
@@ -74,6 +86,7 @@ from .models import (
 )
 from .overlap import filter_overlapping_proposals
 from .progress import (
+    write_note,
     DEFAULT_PROGRESS,
     ProgressRenderer,
     ProgressBarFactory,
@@ -94,7 +107,7 @@ from ..filesystem import (
 )
 from ..program_files import refuse_unparsed_program
 from ..project_layout import find_project_root
-from ..source_text import UnencodableText, decode_source, encode_like
+from ..source_text import UnencodableText, decode_source, encode_like, read_source
 from ..type_inference import relocate_oracle
 
 from .annotation_wiring import UNTYPED_REMEDY
@@ -182,6 +195,8 @@ class Publication:
     in_place: bool
 
 
+BeforePreview = Callable[[StagedProject], None]
+
 BeforePublication = Callable[[Publication], None]
 """Called once a run has finished and been confirmed, just before it writes anything.
 
@@ -202,11 +217,28 @@ def counted_reasons(counts: Mapping[_Reason, int]) -> str:
     )
 
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _with_source_policy(
+    method: Callable[Concatenate[FixedPointDrivers, _P], _R],
+) -> Callable[Concatenate[FixedPointDrivers, _P], _R]:
+    @wraps(method)
+    def run(self: FixedPointDrivers, /, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with source_policy(strict=self.strict, include_ignored=self.include_ignored):
+            return method(self, *args, **kwargs)
+
+    return run
+
+
 class FixedPointDrivers(Materialization):
     """FixedPointDrivers methods of the engine; see the module docstring."""
 
     # Proposals the last run dropped because the checker could not run, by
     # identity, and the last reason it gave.
+    preview_incomplete: bool = False
+    _run_applied: Tuple[RefactoringProposal, ...] = ()
     _unchecked: FrozenSet[str] = frozenset()
     _unchecked_reason: str = ""
     # Every proposal the last run built and did not apply, by identity, with
@@ -311,6 +343,7 @@ class FixedPointDrivers(Materialization):
 
     def _applied(self, proposal: RefactoringProposal) -> None:
         """A proposal declined earlier and applied since, at a rehearing, was not declined."""
+        self._run_applied += (proposal,)
         identity = _RejectedProposals.identity(proposal)
         if identity in self._declined:
             self._declined = {key: why for key, why in self._declined.items() if key != identity}
@@ -326,6 +359,8 @@ class FixedPointDrivers(Materialization):
         return len(self._unchecked)
 
     def _begin_counting_checker_failures(self) -> None:
+        self.preview_incomplete = False
+        self._run_applied = ()
         self._unchecked, self._unchecked_reason = frozenset(), ""
         self._declined, self._last_declined_pairs = {}, {}
         self._unverifiable_details = {}
@@ -357,6 +392,7 @@ class FixedPointDrivers(Materialization):
             return None
         return queue.pop(0)
 
+    @_with_source_policy
     def refactor_to_fixed_point(
         self,
         file_path: str,
@@ -365,6 +401,7 @@ class FixedPointDrivers(Materialization):
         *,
         output_path: Optional[str] = None,
         before_publication: Optional[BeforePublication] = None,
+        before_preview: Optional[BeforePreview] = None,
     ) -> Tuple[str, int, List[str]]:
         """Apply refactorings to one file, one at a time, until none remain.
 
@@ -397,6 +434,32 @@ class FixedPointDrivers(Materialization):
         self._refuse_an_unreadable_program(Path(file_path))
         analysis_progress: ProgressMode = progress if wants_bar(progress) else "none"
         reporter = _ApplyProgress.detail_only(progress)
+        if skip_nonprogram_file(Path(file_path)):
+            policy = current_source_policy()
+            if policy is not None:
+                self._run_census = AnalysisCensus(
+                    skipped=tuple(
+                        SkippedFile(str(path), reason) for path, reason in policy.skipped.items()
+                    )
+                )
+            if (
+                output_path is not None
+                and Path(output_path).resolve() != Path(file_path).resolve()
+                and before_preview is None
+            ):
+                from towel.execution_budget import finish_before_publication
+
+                finish_before_publication()
+                try:
+                    with Path(file_path).open("rb"):
+                        pass
+                except OSError as error:
+                    from towel.source_files import skip_unreadable
+
+                    skip_unreadable(error)
+                else:
+                    copy_project(Path(file_path), Path(output_path))
+            return "", 0, []
         current_bytes = Path(file_path).read_bytes()
         try:
             current_code = decode_source(current_bytes)
@@ -418,22 +481,35 @@ class FixedPointDrivers(Materialization):
             )
         self.begin_refactoring_run([file_path])
         destination = Path(file_path) if in_place else Path(str(output_path))
-        with self._staged_output(Path(file_path), destination) as stage:
-            refactored = self._refactor_file_in_place(
-                str(stage.target),
-                current_bytes,
-                current_code,
-                max_iterations,
-                analysis_progress,
-                reporter,
-            )
-            applied = refactored[1]
-            files = (stage.public(str(stage.target)),) if applied else ()
-            self._publish(
-                stage,
-                before=before_publication,
-                publication=Publication(applied, files, destination, in_place),
-            )
+        with self._staged_output(
+            Path(file_path), destination, preview=before_preview is not None
+        ) as stage:
+            try:
+                refactored = self._refactor_file_in_place(
+                    str(stage.target),
+                    current_bytes,
+                    current_code,
+                    max_iterations,
+                    analysis_progress,
+                    reporter,
+                )
+                applied = refactored[1]
+                files = (stage.public(str(stage.target)),) if applied else ()
+                self._publish(
+                    stage,
+                    before=before_publication,
+                    preview=before_preview,
+                    publication=Publication(applied, files, destination, in_place),
+                )
+            except BudgetExpired:
+                self._capture_incomplete_preview(stage, before_preview)
+                refactored = (
+                    read_source(stage.target),
+                    len(self._run_applied),
+                    [proposal.description for proposal in self._run_applied],
+                )
+            finally:
+                reporter.close()
             return refactored
 
     def _refuse_an_unreadable_program(self, target: Path) -> None:
@@ -454,6 +530,7 @@ class FixedPointDrivers(Materialization):
         allow_empty: bool = False,
         before: Optional[BeforePublication] = None,
         publication: Optional[Publication] = None,
+        preview: Optional[BeforePreview] = None,
     ) -> None:
         """Hand a finished, confirmed run to the user: the output, or the project itself.
 
@@ -466,6 +543,9 @@ class FixedPointDrivers(Materialization):
         from towel.execution_budget import finish_before_publication
 
         finish_before_publication()
+        if preview is not None:
+            preview(stage)
+            return
         if before is not None and publication is not None:
             before(publication)
         if stage.in_place:
@@ -494,6 +574,7 @@ class FixedPointDrivers(Materialization):
 
         iteration = 0
         while True:
+            check_budget()
             # Analyze for refactoring opportunities
             # Important: invalidate cached analysis for this path so we see latest edits
             proposals = self.analyze_files(
@@ -522,13 +603,16 @@ class FixedPointDrivers(Materialization):
                     continue
                 new_code = rendered
                 try:
-                    apply_changes(
-                        ChangePlan.from_sources({file_path: current_bytes}, {file_path: new_code})
-                    )
+                    with recording_application():
+                        apply_changes(
+                            ChangePlan.from_sources(
+                                {file_path: current_bytes}, {file_path: new_code}
+                            )
+                        )
+                        self._applied(proposal)
                 except BaseException:
                     self._forget_records_since(recorded)
                     raise
-                self._applied(proposal)
                 self._follow_the_written_change()
                 applied_one = True
                 break
@@ -661,6 +745,7 @@ class FixedPointDrivers(Materialization):
         if debugging(REJECTIONS):
             REJECTIONS.debug("RENDER FAILED: %s :: %r", proposal.description, error)
 
+    @_with_source_policy
     def refactor_directory_to_fixed_point(
         self,
         input_dir: str,
@@ -669,6 +754,7 @@ class FixedPointDrivers(Materialization):
         progress: ProgressMode = DEFAULT_PROGRESS,
         *,
         before_publication: Optional[BeforePublication] = None,
+        before_preview: Optional[BeforePreview] = None,
     ) -> Tuple[Dict[str, Tuple[int, List[str]]], TerminationReason]:
         """
         Apply refactorings across a directory (recursively) until a fixed point.
@@ -726,24 +812,50 @@ class FixedPointDrivers(Materialization):
             refuse_unusable_output(input_path, output_path, allow_empty=True)
         self.begin_refactoring_run(self._find_python_files(input_dir))
         destination = input_path if resolved_input == resolved_output else output_path
-        with self._staged_output(input_path, destination) as stage:
-            self._analysis_paths = tuple(self._find_python_files(str(stage.target)))
-            results, termination_reason = self._refactor_directory_in_place(
-                stage.target, reporter, max_iterations
-            )
-            public = {stage.public(path): result for path, result in results.items()}
-            self._publish(
-                stage,
-                allow_empty=True,
-                before=before_publication,
-                publication=Publication(
-                    sum(count for count, _ in public.values()),
-                    tuple(sorted(public)),
-                    destination,
-                    stage.in_place,
-                ),
-            )
+        with self._staged_output(
+            input_path, destination, preview=before_preview is not None
+        ) as stage:
+            try:
+                self._analysis_paths = tuple(self._find_python_files(str(stage.target)))
+                results, termination_reason = self._refactor_directory_in_place(
+                    stage.target, reporter, max_iterations
+                )
+                public = {stage.public(path): result for path, result in results.items()}
+                self._publish(
+                    stage,
+                    allow_empty=True,
+                    before=before_publication,
+                    preview=before_preview,
+                    publication=Publication(
+                        sum(count for count, _ in public.values()),
+                        tuple(sorted(public)),
+                        destination,
+                        stage.in_place,
+                    ),
+                )
+            except BudgetExpired:
+                self._capture_incomplete_preview(stage, before_preview)
+                public = {}
+                for proposal in self._run_applied:
+                    paths = {
+                        proposal.file_path,
+                        *(r.file_path or proposal.file_path for r in proposal.replacements),
+                    }
+                    for path in paths:
+                        name = stage.public(path)
+                        count, descriptions = public.get(name, (0, []))
+                        public[name] = (count + 1, descriptions + [proposal.description])
+                termination_reason = "time_limit"
             return public, termination_reason
+
+    def _capture_incomplete_preview(
+        self, stage: StagedProject, preview: Optional[BeforePreview]
+    ) -> None:
+        if preview is None:
+            raise BudgetExpired()
+        abandon_budget()
+        self.preview_incomplete = True
+        preview(stage)
 
     def _refactor_directory_in_place(
         self, directory: Path, reporter: "_ApplyProgress", max_iterations: int
@@ -768,7 +880,9 @@ class FixedPointDrivers(Materialization):
         return outcome
 
     @contextmanager
-    def _staged_output(self, origin: Path, output: Path) -> Iterator[StagedProject]:
+    def _staged_output(
+        self, origin: Path, output: Path, *, preview: bool = False
+    ) -> Iterator[StagedProject]:
         """Refactor ``origin``'s counterpart in a private copy of its whole project.
 
         A run reads the rest of the project as it refactors: the import graph
@@ -789,7 +903,9 @@ class FixedPointDrivers(Materialization):
         inner_oracle = self._type_run_oracle
         root = find_project_root(origin)
         self._forget_run_lookups()
-        with staged_project(root, origin, output, limit=MAXIMUM_FILES) as stage:
+        with staged_project(
+            root, origin, output, limit=MAXIMUM_FILES, preview=preview, notice=write_note
+        ) as stage:
             # Names are the program's, read from the project itself rather
             # than from its copy (``ProgramImports``). A run that may share a
             # helper across modules reads them now, before any pair is judged
@@ -871,6 +987,7 @@ class FixedPointDrivers(Materialization):
         iterations = 0
         # Main loop -------------------------------------------------------
         while True:
+            check_budget()
             if not proposal_queue:
                 found = self._global_pass(output_path, run, global_passes, reporter)
                 global_passes += 1
@@ -1061,11 +1178,12 @@ class FixedPointDrivers(Materialization):
                 run.rejected.add(proposal)
                 reporter.detail(f"Proposal changed nothing: {proposal.description}")
                 return None
-            apply_changes(plan)
+            with recording_application():
+                apply_changes(plan)
+                self._applied(proposal)
         except BaseException:
             self._forget_records_since(recorded)
             raise
-        self._applied(proposal)
         self._follow_the_written_change()
         # Every file the proposal rendered is re-analysed and recorded, not
         # only those whose bytes moved: a file rendered identically is still
@@ -1263,6 +1381,7 @@ class _ApplyProgress:
 
     def __init__(self, mode: ProgressMode, factory: Optional[ProgressBarFactory] = None) -> None:
         self._mode = mode
+        self._started = time.monotonic()
         self._renderer = ProgressRenderer(
             mode, total=None, desc="apply", unit="it", factory=factory
         )
@@ -1281,7 +1400,17 @@ class _ApplyProgress:
             LOG.info("[towel] %s", message)
 
     def inline(self, applied: int, queued: int, phase: ProgressPhase, desc: str) -> None:
-        self._renderer.set_postfix({"A": applied, "Q": queued, "on": f"{phase}: {desc}"})
+        elapsed = max(time.monotonic() - self._started, 0.001)
+        self._renderer.heartbeat(
+            applied,
+            None,
+            details={
+                "applied": applied,
+                "queued": queued,
+                "rate": f"{applied / elapsed:.2f}/s",
+                "on": f"{phase}: {desc}",
+            },
+        )
 
     def announce_analysis(
         self, output_path: Path, discover: Callable[[str], Sequence[str]]
