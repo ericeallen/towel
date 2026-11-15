@@ -2333,7 +2333,7 @@ def _print_complete_preview(
         headline.append(
             "Partial preview: these changes are not finally confirmed (time limit exceeded)."
         )
-    outcome = outcome_line(report, applied, options.input)
+    outcome = None if engine.preview_incomplete else outcome_line(report, applied, options.input)
     if outcome is not None:
         headline.append(outcome)
     stopped = stopped_at_limit(termination, options.max_refactorings)
@@ -2411,7 +2411,7 @@ def _command_result(
         ),
         "helpers": inventory,
         "error": None,
-        "outcome": run_outcome(engine.run_report, applied),
+        "outcome": None if engine.preview_incomplete else run_outcome(engine.run_report, applied),
         "analysed": analysed_record(engine.run_report, _relative_to_run(options)),
         "left_alone": left_alone_count(engine.run_report, applied),
         "relaxed_findings": [finding.to_json() for finding in findings],

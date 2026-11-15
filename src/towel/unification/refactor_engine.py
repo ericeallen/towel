@@ -874,6 +874,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 )
                 + tuple(SkippedFile(path, IMPORTS_A_MISSING_MODULE) for path in left_out),
             )
+            # Reading has finished even if the deadline interrupts pair evaluation.
+            if self._run_census is None:
+                self._run_census = self._census
 
         return run_pipeline(
             file_paths,

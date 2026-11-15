@@ -15,7 +15,9 @@
 """Runtime R4/R5: bounded preview retains a private snapshot, never publishes it."""
 
 import json
+import ast
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -53,3 +55,42 @@ def test_timeout_preview_shows_unconfirmed_applied_changes(
     dry = invoke(["dry", str(target), str(output), "--no-interactive", *flags])
     assert dry.status == 124
     assert not output.exists()
+
+
+@pytest.mark.parametrize("directory", [False, True])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_timeout_during_pairs_retains_census_without_claiming_no_duplicates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory: bool, as_json: bool
+) -> None:
+    """R4: expiry before the first completed pair pass cannot report an empty project."""
+    project = tmp_path / "project"
+    _make_fixture(project)
+    source = project / "sample.py"
+    before = source.read_bytes()
+    functions = sum(isinstance(node, ast.FunctionDef) for node in ast.walk(ast.parse(before)))
+
+    def expire(*args: object, **kwargs: object) -> NoReturn:
+        raise BudgetExpired()
+
+    monkeypatch.setattr(UnificationRefactorEngine, "process_block_pairs", expire)
+    flags = ["--no-types", "--no-format", "--progress", "none"]
+    preview = invoke(
+        [
+            "preview",
+            str(project if directory else source),
+            *flags,
+            "--json" if as_json else "--summary",
+        ]
+    )
+    assert preview.status == 124, preview
+    if as_json:
+        result = json.loads(preview.stdout)
+        assert result["analysed"] == {"files": 1, "functions": functions, "skipped": []}
+        assert result["outcome"] is None
+        assert result["status"] == "incomplete"
+        assert result["diff"] == result["partial_diff"] == ""
+    else:
+        assert f"Analysed 1 Python file ({functions} functions)." in preview.stdout
+        assert "No Python" not in preview.stdout
+        assert "No repeated code" not in preview.stdout
+    assert source.read_bytes() == before
