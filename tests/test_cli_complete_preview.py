@@ -141,14 +141,17 @@ def test_preview_passes_every_shared_option_to_dry() -> None:
         "--no-format",
         "--progress",
         "detail",
+        "--quiet",
     ]
     preview = cli.PreviewOptions.from_namespace(parser.parse_args(["preview", "src", *flags]))
     dry = cli.DryOptions.from_namespace(
         parser.parse_args(["dry", "src", "out", "--no-interactive", *flags])
     )
     assert preview.dry_options("out") == dry
+    assert preview.quiet and dry.quiet
     defaults = cli.PreviewOptions.from_namespace(parser.parse_args(["preview", "src"]))
     assert defaults.types and defaults.format and not defaults.quick
+    assert not defaults.quiet
     assert defaults.max_refactorings == 0
 
 

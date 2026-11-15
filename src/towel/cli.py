@@ -763,7 +763,7 @@ def _add_progress_flag(parser: argparse.ArgumentParser, detail: str) -> None:
         "--quiet",
         "-q",
         action="store_true",
-        help="Suppress progress and notes; keep warnings, errors and results",
+        help="Suppress progress and notes; keep warnings, errors and results. Default: off.",
     )
 
 
@@ -1226,6 +1226,7 @@ class DryOptions:
     summary: bool = False
     diff: bool = False
     inventory: bool = False
+    quiet: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -1248,6 +1249,7 @@ class DryOptions:
             summary=bool(getattr(args, "summary", False)),
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
+            quiet=bool(getattr(args, "quiet", False)),
         )
 
 
@@ -1272,6 +1274,7 @@ class PreviewOptions:
     summary: bool = False
     diff: bool = False
     inventory: bool = False
+    quiet: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -1293,6 +1296,7 @@ class PreviewOptions:
             summary=bool(getattr(args, "summary", False)),
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
+            quiet=bool(getattr(args, "quiet", False)),
         )
 
     def dry_options(self, output: str) -> DryOptions:
@@ -1316,6 +1320,7 @@ class PreviewOptions:
             summary=self.summary,
             diff=self.diff,
             inventory=self.inventory,
+            quiet=self.quiet,
         )
 
 
