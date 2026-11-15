@@ -89,6 +89,7 @@ from towel.unification.defaults import (
     DEFAULT_MAX_ITERATIONS,
     DEFAULT_MAX_PARAMETERS,
     DEFAULT_MIN_LINES,
+    DEFAULT_STRICT,
 )
 from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode, normalize_progress
 
@@ -378,7 +379,7 @@ def _add_strict_flag(parser: argparse.ArgumentParser) -> None:
         "--strict",
         dest="strict",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=DEFAULT_STRICT,
         help="Preserve exactly when objects are released and when names are looked up, as "
         "releases before this one did. Expect more blocks left alone and bookkeeping in "
         "callers.",
@@ -548,8 +549,9 @@ def _add_tuning_flags(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_MAX_PARAMETERS,
         metavar="N",
         help=f"Most newly parameterized differing expressions (default: {DEFAULT_MAX_PARAMETERS}); "
-        "ordinary free inputs may add arguments. Whole-body ownership transfer must fit its "
-        "complete positional signature, including the final lifetime holder, within this limit.",
+        "ordinary free inputs may add arguments. With --strict, whole-body ownership transfer "
+        "must fit its complete positional signature, including the final lifetime holder, "
+        "within this limit.",
     )
     parser.add_argument(
         "--max-pairs",
@@ -1008,7 +1010,7 @@ class DryOptions:
     summary: bool = False
     diff: bool = False
     inventory: bool = False
-    strict: bool = False
+    strict: bool = DEFAULT_STRICT
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -1031,7 +1033,7 @@ class DryOptions:
             summary=bool(getattr(args, "summary", False)),
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
-            strict=bool(getattr(args, "strict", False)),
+            strict=bool(getattr(args, "strict", DEFAULT_STRICT)),
         )
 
 
@@ -1056,7 +1058,7 @@ class PreviewOptions:
     summary: bool = False
     diff: bool = False
     inventory: bool = False
-    strict: bool = False
+    strict: bool = DEFAULT_STRICT
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -1078,7 +1080,7 @@ class PreviewOptions:
             summary=bool(getattr(args, "summary", False)),
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
-            strict=bool(getattr(args, "strict", False)),
+            strict=bool(getattr(args, "strict", DEFAULT_STRICT)),
         )
 
     def dry_options(self, output: str) -> DryOptions:
@@ -1812,7 +1814,7 @@ def _write_failure_result(
     result: CommandResult = {
         "schema_version": 1,
         "command": args.command,
-        "mode": mode_name(bool(getattr(args, "strict", False))),
+        "mode": mode_name(bool(getattr(args, "strict", DEFAULT_STRICT))),
         "status": status,
         # Failure reporting must not repeat the filesystem operation that
         # failed: lexical absolute paths work even for inaccessible/looped paths.

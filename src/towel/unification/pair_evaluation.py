@@ -67,6 +67,7 @@ from .assignment_analyzer import (
 from .block_analysis import (
     owned_binding_crosses_exception_boundary,
     align_return_variables,
+    first_assignment_order,
     lifetime_bound_names,
     lifetime_order_preserved,
     local_cleanup_order,
@@ -776,7 +777,7 @@ class PairEvaluation(
             ):
                 self._debug_reject(RejectReason.LITERAL_POOL_BOUNDARY, pair)
                 return None
-            if self._block_rejected(
+            if self.strict and self._block_rejected(
                 owned_binding_crosses_exception_boundary, nodes, function, site=site
             ):
                 self._debug_reject(RejectReason.OWNED_BINDING_EXCEPTION_BOUNDARY, pair)
@@ -968,6 +969,22 @@ class PairEvaluation(
 
     # -- 3 ---------------------------------------------------------------------
 
+    def _return_order(
+        self, pair: CodeBlockPair, ctx: "_PairContext", analysis: _BindingAnalysis
+    ) -> Sequence[str]:
+        """The template block's preferred order for the names its helper returns.
+
+        Strict mode follows the original frame's release order where two
+        returned names may own objects, and otherwise leaves the alphabet to
+        decide. Relaxed mode returns names in the order the block first
+        assigns them.
+        """
+        if not self.strict:
+            return first_assignment_order(pair.block1_nodes)
+        if len(lifetime_bound_names(pair.block1_nodes, analysis.return_variables1)) > 1:
+            return local_cleanup_order(ctx.func1, ctx.scope_analyzer)
+        return ()
+
     def _check_shape(self, pair: CodeBlockPair, analysis: _BindingAnalysis) -> Optional[bool]:
         """Whether the blocks produce a value, or None when their shapes disagree.
 
@@ -1071,17 +1088,19 @@ class PairEvaluation(
             analysis.snapshot1.bound_in_block,
             analysis.snapshot2.bound_in_block,
             hygienic_renames,
-            template_order=(
-                local_cleanup_order(ctx.func1, ctx.scope_analyzer)
-                if len(lifetime_bound_names(pair.block1_nodes, analysis.return_variables1)) > 1
-                else ()
-            ),
+            template_order=self._return_order(pair, ctx, analysis),
         )
-        if aligned is None or not all(
-            lifetime_order_preserved(nodes, function, analyzer, returned)
-            for nodes, function, analyzer, returned in (
-                (pair.block1_nodes, ctx.func1, ctx.scope_analyzer, aligned[0]),
-                (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, aligned[1]),
+        if aligned is None or (
+            # Relaxed mode assumes no program observes the order in which a
+            # frame releases its locals, so any order of the returned names
+            # serves; strict mode keeps each site's own.
+            self.strict
+            and not all(
+                lifetime_order_preserved(nodes, function, analyzer, returned)
+                for nodes, function, analyzer, returned in (
+                    (pair.block1_nodes, ctx.func1, ctx.scope_analyzer, aligned[0]),
+                    (pair.block2_nodes, ctx.func2, ctx.scope_analyzer2, aligned[1]),
+                )
             )
         ):
             self._debug_reject(RejectReason.RETURN_VARIABLES_NOT_ALIGNED, pair)
@@ -1411,8 +1430,12 @@ class PairEvaluation(
         except UnsupportedExtraction as error:
             self._debug_reject(RejectReason.UNSUPPORTED_EXTRACTION, pair, detail=str(error))
             return None
-        param_order = reorder_eligible_thunk_parameters(func_def, unified.substitution, param_order)
-        inline_leading_thunks(func_def, unified.substitution, param_order)
+        param_order = reorder_eligible_thunk_parameters(
+            func_def, unified.substitution, param_order, any_result=not self.strict
+        )
+        inline_leading_thunks(
+            func_def, unified.substitution, param_order, any_result=not self.strict
+        )
         if has_impure_eager_parameters(unified.substitution, free.available_names):
             self._debug_reject(RejectReason.IMPURE_EAGER_PARAMETER, pair)
             return None
@@ -1661,23 +1684,29 @@ class PairEvaluation(
                 RejectReason.BUILTIN_ARGUMENT, pair, detail=f"block{block_idx+1}: {sorted(handed)}"
             )
             return None
-        safe_call = spell_retained_bindings(function, nodes, call_node)
-        ownership = self._frame_ownership(function, nodes, site=site)
-        handoff = (
-            self._argument_handoff_plan(function, nodes, analyzer, safe_call, func_def)
-            if ownership.split and ownership.whole_body
-            else None
-        )
-        if handoff is not None and not argument_handoff_fits(func_def, self.unifier.max_parameters):
-            self._debug_reject(RejectReason.OWNERSHIP_PARAMETER_BUDGET, pair)
-            return None
-        if ownership.split and handoff is None:
-            self._debug_reject(
-                RejectReason.OWNED_BINDING_FRAME_BOUNDARY,
-                pair,
-                detail=f"block{block_idx+1}: inside={sorted(ownership.inside)}, outside={sorted(ownership.outside)}",
-            )
-            return None
+        safe_call, handoff = call_node, None
+        if self.strict:
+            # Exact lifetimes: values held on both sides of the helper's frame
+            # are released in the original order, or the block is left alone.
+            # Relaxed mode calls the helper directly.
+            safe_call = spell_retained_bindings(function, nodes, call_node)
+            ownership = self._frame_ownership(function, nodes, site=site)
+            if ownership.split and ownership.whole_body:
+                handoff = self._argument_handoff_plan(
+                    function, nodes, analyzer, safe_call, func_def
+                )
+            if handoff is not None and not argument_handoff_fits(
+                func_def, self.unifier.max_parameters
+            ):
+                self._debug_reject(RejectReason.OWNERSHIP_PARAMETER_BUDGET, pair)
+                return None
+            if ownership.split and handoff is None:
+                self._debug_reject(
+                    RejectReason.OWNED_BINDING_FRAME_BOUNDARY,
+                    pair,
+                    detail=f"block{block_idx+1}: inside={sorted(ownership.inside)}, outside={sorted(ownership.outside)}",
+                )
+                return None
         return Replacement(
             line_range=block_range,
             columns=BlockColumns.of(nodes),

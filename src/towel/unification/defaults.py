@@ -17,8 +17,16 @@
 DEFAULT_MAX_PARAMETERS = 5
 """Most differing expressions replaced by new parameters.
 
-Ordinary free inputs can add arguments. Certified whole-body ownership transfer
-must also fit its complete positional signature, including the final holder.
+Ordinary free inputs can add arguments. In strict mode a certified whole-body
+ownership transfer must also fit its complete positional signature, including
+the final holder.
+"""
+
+DEFAULT_STRICT = False
+"""Whether exact object lifetimes are preserved; relaxed mode is the default.
+
+docs/DECISIONS.md, "Relaxed mode is the default; strict mode keeps exact
+lifetimes".
 """
 
 DEFAULT_MIN_LINES = 3

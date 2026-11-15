@@ -218,9 +218,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             )
             return None
         candidate_order = reorder_eligible_thunk_parameters(
-            candidate_helper, subst2, candidate_order
+            candidate_helper, subst2, candidate_order, any_result=not self.strict
         )
-        inline_leading_thunks(candidate_helper, subst2, candidate_order)
+        inline_leading_thunks(candidate_helper, subst2, candidate_order, any_result=not self.strict)
         if (
             candidate_order != template.param_order
             or canonical_dump(candidate_helper) != template.func_def_dump
@@ -241,7 +241,7 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         if aligned is None or aligned[0] != list(template.return_variables):
             return None
         returned = aligned[1]
-        if not lifetime_order_preserved(
+        if self.strict and not lifetime_order_preserved(
             candidate.nodes, candidate.function, candidate.analyzer, returned
         ):
             return None
@@ -351,6 +351,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             for name in used2
         ):
             return None
+        if not self.strict:
+            # Relaxed mode calls the helper directly: no transfer, no holder.
+            return call_node2, call_argument_lines(subst2, 1), None
         safe_call = spell_retained_bindings(candidate.function, candidate.nodes, call_node2)
         ownership = self._frame_ownership(candidate.function, candidate.nodes, site=candidate.site)
         handoff = (
@@ -573,8 +576,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         ):
             if self._block_rejected(frame_guard, cand_nodes, fn, analyzer, site=site):
                 return None
+        lifetime_guards = (owned_binding_crosses_exception_boundary,) if self.strict else ()
         for guard in (
-            owned_binding_crosses_exception_boundary,
+            *lifetime_guards,
             nested_scopes_cross_block_boundary,
             moves_scope_declaration,
         ):

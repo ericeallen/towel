@@ -78,7 +78,12 @@ from .engine_state import (
     PerBlockKey,
     UnifyKey,
 )
-from .defaults import DEFAULT_MAX_CANDIDATE_PAIRS, DEFAULT_MAX_PARAMETERS, DEFAULT_MIN_LINES
+from .defaults import (
+    DEFAULT_MAX_CANDIDATE_PAIRS,
+    DEFAULT_MAX_PARAMETERS,
+    DEFAULT_MIN_LINES,
+    DEFAULT_STRICT,
+)
 from .extraction_policy import protected_definitions
 from .function_index import FunctionIndex
 from ..diagnostics import LOG, REJECTIONS, Settings, debugging
@@ -333,7 +338,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         pep420_namespace_packages: Optional[bool] = None,
         promote_equal_hof_literals: bool = False,
         parameterize_builtins: bool = False,
-        strict: bool = False,
+        strict: bool = DEFAULT_STRICT,
         excluded_directories: Sequence[str] = (),
         cross_module_helpers: bool = False,
         skip_trivial_helpers: bool = True,
@@ -354,9 +359,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
 
         Args:
             max_parameters: Maximum newly parameterized differing expressions
-                (default: 5); ordinary free inputs may add arguments. A certified
-                whole-body ownership transfer must fit its complete positional
-                signature, including the final lifetime holder, within this limit.
+                (default: 5); ordinary free inputs may add arguments. In strict
+                mode a certified whole-body ownership transfer must fit its
+                complete positional signature, including the final lifetime
+                holder, within this limit.
             min_lines: Minimum number of source lines a duplicated block must span
                 to be considered (default: 3).
             max_candidate_pairs: Most block pairs one analysis evaluates. Blocks

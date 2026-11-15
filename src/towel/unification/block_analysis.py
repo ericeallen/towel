@@ -238,6 +238,16 @@ def lifetime_bound_names(block: Sequence[ast.stmt], initially_bound: Set[str]) -
     return owned & initially_bound
 
 
+def first_assignment_order(block: Sequence[ast.stmt]) -> Tuple[str, ...]:
+    """The names ``block`` binds in its own scope, in the order it first binds them.
+
+    Relaxed mode returns a helper's variables in this order: what a reader
+    of the block would write, where strict mode follows the frame's release
+    order and otherwise the alphabet.
+    """
+    return tuple(dict.fromkeys(binding.name for binding in own_scope_bindings(block)))
+
+
 _POSITIONED_BINDINGS: "WeakKeyDictionary[ast.AST, Tuple[Tuple[Binding, Tuple[int, int]], ...]]" = (
     WeakKeyDictionary()
 )
@@ -904,10 +914,13 @@ class BlockAnalysis(EngineState):
     ) -> Set[str]:
         """The newly bound variables the helper must return.
 
-        A name later code reads, and, when the function goes on after the
-        block, a name bound to an object whose lifetime that later code could
-        observe (see ``lifetime_bound_names``): the original kept it until the
-        function returned, and a helper would drop it on its own return.
+        A name later code reads, and in strict mode, when the function goes
+        on after the block, a name bound to an object whose lifetime that
+        later code could observe (see ``lifetime_bound_names``): the original
+        kept it until the function returned, and a helper would drop it on
+        its own return. Relaxed mode assumes no program observes that
+        (docs/DECISIONS.md, "Relaxed mode is the default; strict mode keeps
+        exact lifetimes").
         """
 
         if not initially_bound:
@@ -915,7 +928,7 @@ class BlockAnalysis(EngineState):
 
         result: Set[str] = set()
         debug_enabled = debugging(VALIDATION)
-        if block and not self._is_value_producing(block):
+        if self.strict and block and not self._is_value_producing(block):
             # Keeping caller ownership also matters at the end of a nested
             # suite, before its enclosing manager/finally cleanup executes.
             result |= lifetime_bound_names(block, initially_bound)
