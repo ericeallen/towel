@@ -43,7 +43,7 @@ import textwrap
 import time
 from functools import wraps
 from typing import Concatenate, ParamSpec
-from towel.source_files import current_source_policy, source_policy
+from towel.source_files import current_source_policy, source_copy, source_policy
 from towel.program_files import skip_nonprogram_file
 
 from pathlib import Path
@@ -903,9 +903,12 @@ class FixedPointDrivers(Materialization):
         inner_oracle = self._type_run_oracle
         root = find_project_root(origin)
         self._forget_run_lookups()
-        with staged_project(
-            root, origin, output, limit=MAXIMUM_FILES, preview=preview, notice=write_note
-        ) as stage:
+        with (
+            staged_project(
+                root, origin, output, limit=MAXIMUM_FILES, preview=preview, notice=write_note
+            ) as stage,
+            source_copy(stage.origin_root, stage.root),
+        ):
             # Names are the program's, read from the project itself rather
             # than from its copy (``ProgramImports``). A run that may share a
             # helper across modules reads them now, before any pair is judged

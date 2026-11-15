@@ -111,7 +111,13 @@ from .models import (
 )
 from ..type_baseline import KnownErrors
 from ..type_inference import TypeOracle
-from ..source_files import current_source_policy, ignored_by_git, python_sources, source_policy
+from ..source_files import (
+    current_source_policy,
+    ignored_by_git,
+    python_sources,
+    source_policy,
+    warn_skipped,
+)
 from ..source_text import read_source
 from ..analysis_sources import (
     ParserConfiguration,
@@ -745,7 +751,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
         policy = current_source_policy()
         reasons = {item.path: item.reason for item in self._discovery_skipped}
         if policy is not None:
-            reasons.update((str(path), reason) for path, reason in policy.skipped.items())
+            for path, reason in policy.skipped.items():
+                if self._output_origin is not None:
+                    origin, stage = self._output_origin
+                    if path.is_relative_to(origin):
+                        path = stage / path.relative_to(origin)
+                reasons[str(path)] = reason
         return tuple(SkippedFile(path, reason) for path, reason in sorted(reasons.items()))
 
     def analyze_files(
@@ -843,11 +854,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
             # Each pass of a run reads the files again; a file it cannot read
             # is reported once a run, not once a pass.
             policy = current_source_policy()
-            reported = set(str(path) for path in policy.skipped) if policy is not None else set()
             for skipped in census.skipped:
-                if skipped.path not in self._skips_reported and skipped.path not in reported:
-                    self._skips_reported.add(skipped.path)
-                    LOG.warning("Skipping %s: %s", skipped.path, skipped.reason)
+                path = Path(skipped.path)
+                identity = str(policy.original(path)) if policy is not None else skipped.path
+                if identity not in self._skips_reported:
+                    self._skips_reported.add(identity)
+                    warn_skipped(path, skipped.reason)
             self._census = dataclasses.replace(
                 census,
                 skipped=tuple(

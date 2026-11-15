@@ -91,9 +91,9 @@ def test_relaxed_nonprogram_files_warn_once_and_strict_refuses(
     )
 
 
-@pytest.mark.parametrize("directory", [False, True])
+@pytest.mark.parametrize("directory,mode", [(False, 0), (True, 0), (True, 0o400)])
 def test_unreadable_input_warns_with_its_own_name(
-    tmp_path: Path, directory: bool, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, directory: bool, mode: int, caplog: pytest.LogCaptureFixture
 ) -> None:
     """R9: the unreadable directory itself is named, never its pyvenv.cfg marker."""
     import os
@@ -104,11 +104,12 @@ def test_unreadable_input_warns_with_its_own_name(
     inaccessible = tmp_path / ("locked" if directory else "secret.py")
     if directory:
         inaccessible.mkdir()
+        (inaccessible / "m.py").write_text("x = 1\n")
     else:
         inaccessible.write_text("x = 1\n")
-    inaccessible.chmod(0)
+    inaccessible.chmod(mode)
     try:
-        if os.access(inaccessible, os.R_OK):
+        if os.access(inaccessible, os.R_OK | (os.X_OK if directory else 0)):
             pytest.skip("Current user bypasses file permissions")
         with source_policy(strict=False):
             refuse_unparsed_program(tmp_path)
@@ -121,7 +122,8 @@ def test_unreadable_input_warns_with_its_own_name(
         inaccessible.chmod(0o755 if directory else 0o644)
 
 
-def test_strict_unreadable_directory_remedy_works(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode", [0, 0o400])
+def test_strict_unreadable_directory_remedy_works(tmp_path: Path, mode: int) -> None:
     """R9: excluding an unreadable directory clears the refusal that names it."""
     import os
     from towel.program_files import refuse_unparsed_program
@@ -130,9 +132,10 @@ def test_strict_unreadable_directory_remedy_works(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("")
     locked = tmp_path / "locked"
     locked.mkdir()
-    locked.chmod(0)
+    (locked / "m.py").write_text("x = 1\n")
+    locked.chmod(mode)
     try:
-        if os.access(locked, os.R_OK):
+        if os.access(locked, os.R_OK | os.X_OK):
             pytest.skip("Current user bypasses directory permissions")
         with source_policy(strict=True), pytest.raises(PermissionError, match="--exclude locked"):
             refuse_unparsed_program(tmp_path)

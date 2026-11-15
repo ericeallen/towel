@@ -153,7 +153,8 @@ def test_the_census_counts_what_was_read_and_skips_an_undecodable_file_once(
         result.stdout
     )
     assert result.stderr.count("wide.py") == 1
-    assert re.search(r"Skipping \S*wide\.py: it is not UTF-8 text", result.stderr)
+    # Preflight now diagnoses the original, before its private copy is analysed.
+    assert re.search(r"Skipping \S*wide\.py: it cannot be decoded:", result.stderr)
     document = json.loads(invoke(["preview", str(project), "--json", *FLAGS]).stdout)
     assert document["analysed"]["files"] == 1
     assert document["analysed"]["functions"] == 2

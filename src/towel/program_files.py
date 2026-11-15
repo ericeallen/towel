@@ -51,6 +51,7 @@ from .source_files import (
     current_source_policy,
     is_environment,
     python_sources,
+    readable_directory,
     skip_unreadable,
     warn_skipped,
 )
@@ -84,6 +85,9 @@ def program_directories(
             on_error(error)
 
     for parent, directories, files in os.walk(root, onerror=walk_error):
+        if policy is not None and not readable_directory(Path(parent)):
+            directories.clear()
+            continue
         directories[:] = sorted(
             name
             for name in directories

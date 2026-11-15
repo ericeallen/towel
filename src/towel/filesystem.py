@@ -39,7 +39,13 @@ from typing import Callable, Iterable, Iterator, List, Mapping, Tuple
 
 from .changes import JOURNAL_PREFIX, SET_ASIDE_PREFIX, ChangePlan, FileChange, StaleSource
 from .program_files import skip_nonprogram_file
-from .source_files import TOOL_DIRECTORIES, is_environment, is_probe_file, skip_unreadable
+from .source_files import (
+    TOOL_DIRECTORIES,
+    is_environment,
+    is_probe_file,
+    readable_directory,
+    skip_unreadable,
+)
 
 
 def _case_collisions(relatives: Iterable[PurePath]) -> List[Tuple[PurePath, PurePath]]:
@@ -286,6 +292,9 @@ def _stage_plan(
     python_files = 0
     for parent, directories, files in os.walk(root, followlinks=False, onerror=skip_unreadable):
         directory = Path(parent)
+        if not readable_directory(directory):
+            directories.clear()
+            continue
         # A target copied whole is walked here only to be counted, under the
         # same rules as the rest.
         inside_target = whole_target and (directory == target or directory.is_relative_to(target))
@@ -352,8 +361,7 @@ def _readable_entry(source: Path) -> bool:
         return True
     try:
         if source.is_dir():
-            with os.scandir(source):
-                pass
+            return readable_directory(source)
         elif source.is_file():
             with source.open("rb"):
                 pass
@@ -457,6 +465,9 @@ def _announce_copy(source: Path, output: Path, notice: Callable[[str], None]) ->
         for parent, directories, names in os.walk(
             source, followlinks=False, onerror=skip_unreadable
         ):
+            if not readable_directory(Path(parent)):
+                directories.clear()
+                continue
             directories[:] = [
                 name for name in directories if not name.startswith(_TRANSIENT_PREFIXES)
             ]

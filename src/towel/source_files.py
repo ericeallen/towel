@@ -41,6 +41,15 @@ class SourcePolicy:
     include_ignored: bool
     skipped: dict[Path, str] = field(default_factory=dict)
     excluded_names: frozenset[str] = frozenset()
+    copies: tuple[tuple[Path, Path], ...] = ()
+
+    def original(self, path: Path) -> Path:
+        """One input identity, whether encountered before staging or in a private copy."""
+        path = path.absolute()
+        for original, copied in reversed(self.copies):
+            if path.is_relative_to(copied):
+                path = original / path.relative_to(copied)
+        return path
 
 
 _SOURCE_POLICY: ContextVar[Optional[SourcePolicy]] = ContextVar("towel_source_policy", default=None)
@@ -68,10 +77,26 @@ def source_policy(*, strict: bool, include_ignored: bool = False) -> Iterator[So
 def warn_skipped(path: Path, reason: str) -> None:
     """Name an unavailable input once during a relaxed run."""
     policy = _SOURCE_POLICY.get()
+    path = policy.original(path) if policy is not None else path
     if policy is None or path not in policy.skipped:
         LOG.warning("Skipping %s: %s", path, reason)
     if policy is not None:
         policy.skipped[path] = reason
+
+
+@contextmanager
+def source_copy(original: Path, copied: Path) -> Iterator[None]:
+    """Share input identities across the lifetime of a run's private stage."""
+    policy = _SOURCE_POLICY.get()
+    if policy is None:
+        yield
+        return
+    previous = policy.copies
+    policy.copies += ((original.absolute(), copied.absolute()),)
+    try:
+        yield
+    finally:
+        policy.copies = previous
 
 
 def skip_unreadable(error: OSError) -> None:
@@ -88,6 +113,23 @@ def skip_unreadable(error: OSError) -> None:
             f"{error.strerror or error}"
         ) from error
     warn_skipped(path, f"it cannot be read: {error.strerror or error}")
+
+
+def readable_directory(directory: Path) -> bool:
+    """Require both listing and search access before inspecting a directory's children.
+
+    scandir alone succeeds on mode 0400 directories. Resolving the literal
+    dot component asks the filesystem to check search permission too, without
+    changing the working directory or guessing from mode bits instead of ACLs.
+    """
+    try:
+        os.stat(os.path.join(directory, "."))
+        with os.scandir(directory):
+            pass
+    except OSError as error:
+        skip_unreadable(OSError(error.errno, error.strerror, str(directory)))
+        return False
+    return True
 
 
 def ignored_by_git(directory: Path, paths: Iterable[Path]) -> frozenset[Path]:
@@ -190,6 +232,9 @@ def python_sources(
         directory, followlinks=False, onerror=skip_unreadable
     ):
         root = Path(parent)
+        if not readable_directory(root):
+            directories.clear()
+            continue
         if skipped is not None:
             for name in directories:
                 if name in ignored or (analysis and name.endswith(".egg-info")):
