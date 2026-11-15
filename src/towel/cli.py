@@ -1073,7 +1073,7 @@ def _verification_cost(
     It names the checkers the run will start, chosen as the run chooses them
     but without starting one, since the user has not yet agreed to the run.
     When none will run (none is installed, or a configured one is missing and
-    the run is about to be refused for it) there is no verification to cost.
+    the run will refuse or proceed unverified) there is no verification to cost.
     The files counted are those the run analyzes, less ``excluded``.
     """
     from towel.type_inference import CheckerNotInstalled, type_checkers_for_project
@@ -1090,7 +1090,7 @@ def _verification_cost(
     try:
         checkers = type_checkers_for_project(project_path)
     except CheckerNotInstalled:
-        return []  # The selection after the prompt refuses the run, saying why.
+        return []  # Selection reports refusal or unverified fallback before any prompt.
     if not checkers:
         return []
     packages = _import_breadth(files, project_path)
@@ -1375,14 +1375,6 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
 
     is_file, is_dir = _existing_target(input_path)
 
-    if is_file and not input_path.endswith(".py"):
-        print(f"Warning: '{input_path}' is not a Python file (.py)")
-        # ``--no-interactive`` promises no prompt: an unattended run asked
-        # here would block on an open stdin, or read a closed one as "no"
-        # and exit 0 having written nothing. The file was named explicitly.
-        if options.interactive and not _confirm("Analyze anyway? (y/N): "):
-            raise ValueError("Aborted; no output was published")
-
     # Resolve aliases before checking containment or creating any output.
     source = _resolve_cli_path(input_path)
     destination = _resolve_cli_path(output_path)
@@ -1406,12 +1398,6 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         print("or inside the class or function the duplicates share.")
         print()
 
-    if options.interactive:
-        for line in _verification_cost(Path(input_path), options.types, options.exclude):
-            print(line)
-        if not _confirm("Proceed? (y/N): "):
-            raise ValueError("Aborted; no output was published")
-
     journal = _pending_journal(source, options.exclude)
     if journal is not None and source == destination:
         raise ValueError(
@@ -1425,32 +1411,48 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         LOG.warning("%s", pending_journal_remedy(journal, "this output is refactored from"))
 
     from towel.type_baseline import TYPE_CHECKING_REMEDIES
-    from towel.type_inference import CheckerNotInstalled
+    from towel.type_inference import CheckerNotInstalled, type_checkers_for_project
 
     annotate_helpers = options.types
     try:
-        oracle = _type_oracle(Path(input_path)) if options.types else None
+        if options.types:
+            type_checkers_for_project(source)
     except CheckerNotInstalled as error:
         if options.strict:
             raise
-        oracle = None
         annotate_helpers = False
         print(
             f"Warning: {error} Continuing without type verification; generated helpers stay "
             "bare, as with --no-types. Use --strict to refuse instead.",
             file=sys.stderr,
         )
-    if oracle is None and annotate_helpers and _target_has_annotations(source, options.exclude):
-        print(
-            "Note: neither mypy nor pyright is installed, so helper annotations are copied "
-            "from the call sites but not inferred or verified. Install the types extra "
-            '(pip install "code-towel[types]").',
-            file=sys.stderr,
-        )
-    types_status: TypesStatus = (
-        "off" if not options.types else "enabled" if oracle is not None else "unverified"
-    )
+    oracle: Optional[TypeOracle] = None
     try:
+        if is_file and not input_path.endswith(".py"):
+            print(f"Warning: '{input_path}' is not a Python file (.py)")
+            # ``--no-interactive`` promises no prompt: an unattended run asked
+            # here would block on an open stdin, or read a closed one as "no"
+            # and exit 0 having written nothing. The file was named explicitly.
+            if options.interactive and not _confirm("Analyze anyway? (y/N): "):
+                raise ValueError("Aborted; no output was published")
+
+        if options.interactive:
+            for line in _verification_cost(Path(input_path), options.types, options.exclude):
+                print(line)
+            if not _confirm("Proceed? (y/N): "):
+                raise ValueError("Aborted; no output was published")
+
+        oracle = _type_oracle(source) if annotate_helpers else None
+        if oracle is None and annotate_helpers and _target_has_annotations(source, options.exclude):
+            print(
+                "Note: neither mypy nor pyright is installed, so helper annotations are copied "
+                "from the call sites but not inferred or verified. Install the types extra "
+                '(pip install "code-towel[types]").',
+                file=sys.stderr,
+            )
+        types_status: TypesStatus = (
+            "off" if not options.types else "enabled" if oracle is not None else "unverified"
+        )
         engine = UnificationRefactorEngine(
             max_parameters=options.max_parameters,
             min_lines=options.min_lines,

@@ -210,3 +210,58 @@ def test_available_configured_checker_is_named_as_enabled_in_json(tmp_path: Path
     result = invoke(["preview", str(path), "--json", "--no-format", "--progress", "none"])
     assert result.status == 0, result.stderr
     assert json.loads(result.stdout)["types"] == "enabled"
+
+
+@pytest.mark.parametrize("in_place", [False, True])
+@pytest.mark.parametrize("consent", ["yes", "no", "unattended"])
+def test_dry_discloses_unverified_fallback_before_consent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in_place: bool, consent: str
+) -> None:
+    """Typed round 2 finding 3: dry discloses fallback before consent or publication."""
+    import io
+    from towel import cli
+
+    project = tmp_path / "project"
+    path = _project(project, "[tool.mypy]\n")
+    destination = project if in_place else tmp_path / "output"
+    _without_mypy(monkeypatch)
+    _without_pyright(monkeypatch)
+    confirm = cli._confirm
+    prompts: list[str] = []
+
+    def informed_confirmation(prompt: str) -> bool:
+        assert isinstance(sys.stderr, io.StringIO)
+        assert "Continuing without type verification" in sys.stderr.getvalue()
+        assert path.read_text() == SOURCE
+        assert in_place or not destination.exists()
+        prompts.append(prompt)
+        return confirm(prompt)
+
+    monkeypatch.setattr(cli, "_confirm", informed_confirmation)
+    flags = ["--no-interactive", "--json"] if consent == "unattended" else []
+    result = invoke(
+        ["dry", str(project), str(destination), "--no-format", "--progress", "none", *flags],
+        stdin="y\n" if consent == "yes" else "n\n",
+    )
+    assert result.status == (1 if consent == "no" else 0), result.stderr
+    assert len(prompts) == (0 if consent == "unattended" else 1)
+    assert result.stderr.count("Continuing without type verification") == 1
+    if consent == "no":
+        assert path.read_text() == SOURCE
+        assert in_place or not destination.exists()
+    else:
+        tree = ast.parse((destination / "m.py").read_text())
+        helpers = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+        ]
+        assert helpers
+        assert all(
+            node.returns is None and all(arg.annotation is None for arg in node.args.args)
+            for node in helpers
+        )
+        if consent == "unattended":
+            document = json.loads(result.stdout)
+            assert document["published"] is True
+            assert document["types"] == "unverified"
