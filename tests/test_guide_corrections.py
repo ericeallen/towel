@@ -26,6 +26,7 @@ from pathlib import Path
 import re
 
 from tests.test_cli_integration import DUPLICATES, HELPER, invoke
+from tests.test_documentation_navigation import _prose
 from towel import cli
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -187,3 +188,29 @@ def test_exit_status_two_is_documented_for_a_rejected_rename_mapping(tmp_path: P
     assert "Invalid command-line arguments." in rows[0]
     assert "`rename-helpers`" in rows[0] and "rename mapping that was rejected" in rows[0]
     assert "nothing is renamed" in rows[0]
+
+
+def _contents_and_headings(page: str) -> tuple[list[str], list[str]]:
+    """The titles an "On this page" list names, and the page's sections below that list."""
+    _, separator, rest = page.partition("\nOn this page:\n\n")
+    assert separator, "Expected an 'On this page:' list"
+    entries, _, body = rest.partition("\n\n")
+    listed = re.findall(r"^- \[([^\]]+)\]\(#[^)]+\)$", entries, re.MULTILINE)
+    assert len(listed) == len(entries.splitlines()), "Every entry is one linked title"
+    return listed, re.findall(r"^#{2,3} (.+)$", _prose(body), re.MULTILINE)
+
+
+def test_performance_page_lists_every_section_in_page_order() -> None:
+    """Audit finding 12 (documentation report D9, claim 60).
+
+    The "On this page" list omitted "How long it takes" and "Historical 1.792
+    development comparisons" and gave "Measurement conditions" five places early.
+    tests/test_documentation_navigation.py checks that each entry's anchor exists.
+    """
+    listed, headings = _contents_and_headings(_guide("PERFORMANCE.md"))
+    assert listed == headings
+    stale = (
+        "# Page\n\nOn this page:\n\n- [Second](#second)\n- [First](#first)\n\n"
+        "## First\n\n### Unlisted\n\n```text\n## Not a heading\n```\n\n## Second\n"
+    )
+    assert _contents_and_headings(stale) == (["Second", "First"], ["First", "Unlisted", "Second"])
