@@ -155,7 +155,8 @@ def test_relaxed_missing_checker_previews_bare_helpers_with_explicit_warning(
     _without_pyright(monkeypatch)
     target = str(tmp_path if directory else path)
     flags = ["--no-format", "--progress", "none", "--json"]
-    relaxed = invoke(["preview", target, *flags])
+    # Relaxed mode's policy (the typed lane), whatever the suite's default.
+    relaxed = invoke(["preview", target, *flags, "--no-strict"])
     assert relaxed.status == 0, relaxed.stderr
     document = json.loads(relaxed.stdout)
     assert document["types"] == "unverified"
@@ -226,6 +227,8 @@ def test_dry_discloses_unverified_fallback_before_consent(
 
     monkeypatch.setattr(cli, "_confirm", informed_confirmation)
     flags = ["--no-interactive", "--json"] if consent == "unattended" else []
+    # Relaxed mode's fallback (the typed lane); strict mode refuses instead.
+    flags.append("--no-strict")
     result = invoke(
         ["dry", str(project), str(destination), "--no-format", "--progress", "none", *flags],
         stdin="y\n" if consent == "yes" else "n\n",
@@ -262,7 +265,10 @@ def test_unverified_json_means_no_checker_was_available(
     path = _project(tmp_path, "[tool.mypy]\n" if configured else "[project]\nname = 'example'\n")
     _without_mypy(monkeypatch)
     _without_pyright(monkeypatch)
-    result = invoke(["preview", str(path), "--json", "--no-format", "--progress", "none"])
+    # Relaxed mode's fallback for a configured checker; strict mode refuses it.
+    result = invoke(
+        ["preview", str(path), "--json", "--no-format", "--progress", "none", "--no-strict"]
+    )
     document = json.loads(result.stdout)
     assert result.status == 0, result.stderr
     assert document["status"] == "complete"
