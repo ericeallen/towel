@@ -145,7 +145,7 @@ def test_strict_unreadable_directory_remedy_works(tmp_path: Path, mode: int) -> 
         locked.chmod(0o755)
 
 
-@pytest.mark.parametrize("command", ["preview", "dry"])
+@pytest.mark.parametrize("command", ["preview", "dry", "quick"])
 def test_cli_aliases_do_not_duplicate_unreadable_inputs(tmp_path: Path, command: str) -> None:
     """R6/R9: original, alias and stage paths identify the same unavailable input."""
     import json
@@ -163,14 +163,19 @@ def test_cli_aliases_do_not_duplicate_unreadable_inputs(tmp_path: Path, command:
     alias.symlink_to(project, target_is_directory=True)
     locked.chmod(0o400)
     try:
-        arguments = [command, str(alias), "--json", "--no-types", "--no-format"]
+        arguments = ["preview" if command == "quick" else command, str(alias)]
+        arguments.extend(["--quick"] if command == "quick" else ["--json"])
+        arguments.extend(["--no-types", "--no-format"])
         if command == "dry":
             arguments.extend([str(tmp_path / "out"), "--no-interactive"])
         result = invoke(arguments)
         assert result.status == 0, result
         assert result.stderr.count("Skipping ") == 2, result.stderr
-        payload = json.loads(result.stdout)
-        assert payload["applied"] > 0
-        assert len(payload["analysed"]["skipped"]) == 2, payload["analysed"]
+        if command == "quick":
+            assert "Skipped 2 files it could not read." in result.stdout
+        else:
+            payload = json.loads(result.stdout)
+            assert payload["applied"] > 0
+            assert len(payload["analysed"]["skipped"]) == 2, payload["analysed"]
     finally:
         locked.chmod(0o700)

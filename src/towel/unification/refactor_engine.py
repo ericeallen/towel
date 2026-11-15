@@ -854,16 +854,23 @@ class UnificationRefactorEngine(ParallelEvaluation):
             # Each pass of a run reads the files again; a file it cannot read
             # is reported once a run, not once a pass.
             policy = current_source_policy()
+
+            def input_identity(path: str) -> str:
+                return str(policy.original(Path(path))) if policy is not None else path
+
             for skipped in census.skipped:
                 path = Path(skipped.path)
-                identity = str(policy.original(path)) if policy is not None else skipped.path
+                identity = input_identity(skipped.path)
                 if identity not in self._skips_reported:
                     self._skips_reported.add(identity)
                     warn_skipped(path, skipped.reason)
             self._census = dataclasses.replace(
                 census,
                 skipped=tuple(
-                    {item.path: item for item in (*self._input_skips(), *census.skipped)}.values()
+                    {
+                        input_identity(item.path): item
+                        for item in (*self._input_skips(), *census.skipped)
+                    }.values()
                 )
                 + tuple(SkippedFile(path, IMPORTS_A_MISSING_MODULE) for path in left_out),
             )
