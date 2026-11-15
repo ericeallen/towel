@@ -143,7 +143,13 @@ in place or not, so every decision sees the modules around the target (an import
 cycle through a module outside the target is seen), and writes nothing until the
 run has succeeded, its final type-check confirmation included: the target to the
 output directory all at once, or, in place, every file it changed as one
-journaled batch. A failed or interrupted run leaves the project as it was.
+journaled batch. A run that fails, or is stopped, before that write leaves the
+project as it was, and a failure caught during the write is rolled back. An
+in-place write that is killed part-way can leave some files changed and others
+not; it also leaves a `.towel-transaction-<id>` journal, and
+`towel recover` restores the original files from it, as
+[recovery and interrupted writes](CLI_GUIDE.md#recovery-and-interrupted-writes)
+describes.
 See the [command-line guide](CLI_GUIDE.md) for CLI options and the [Quick start](QUICKSTART.md) for a first run.
 
 ## Configuration
