@@ -312,25 +312,38 @@ def test_the_refusal_names_the_file_the_complaint_and_both_remedies(tmp_path: Pa
     ("pyproject", "remedy"),
     [
         (
-            'classifiers = ["Programming Language :: Python :: 3.14",'
-            ' "Programming Language :: Python :: 3.15"]\n',
-            "Python 3.15, the newest the project declares it supports.",
+            'classifiers = ["Programming Language :: Python :: {running}",'
+            ' "Programming Language :: Python :: {newer}"]\n',
+            "Python {newer}, the newest the project declares it supports.",
         ),
-        ('requires-python = ">=3.11,<3.16"\n', "Python 3.15, the newest the project declares"),
         (
-            'requires-python = ">=3.15,<3.16"\n',
-            "Python 3.15, the newest the project declares it supports; it requires Python 3.15",
+            'requires-python = ">=3.11,<{upper}"\n',
+            "Python {newer}, the newest the project declares",
         ),
-        ('requires-python = ">=3.15"\n', "the newest Python, since the project declares no newest"),
-        ('requires-python = "<3.11"\n', "if there is one: the newest the project declares"),
+        (
+            'requires-python = ">={newer},<{upper}"\n',
+            "Python {newer}, the newest the project declares it supports; it requires Python {newer}",
+        ),
+        (
+            'requires-python = ">={newer}"\n',
+            "the newest Python, since the project declares no newest version it supports; "
+            "it requires Python {newer} or newer",
+        ),
+        ('requires-python = "<{running}"\n', "if there is one: the newest the project declares"),
     ],
     ids=["classifiers", "upper bound", "both bounds", "requires newer", "nothing newer"],
 )
 def test_the_refusal_names_the_newest_python_the_project_declares(
     tmp_path: Path, pyproject: str, remedy: str
 ) -> None:
-    _project(tmp_path, {"pkg/fast.py": NEWER}, pyproject)
-    assert remedy in _refusal(tmp_path)
+    # Keep all remedy branches reachable as the supported interpreter range grows.
+    versions = {
+        "running": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "newer": f"{sys.version_info.major}.{sys.version_info.minor + 1}",
+        "upper": f"{sys.version_info.major}.{sys.version_info.minor + 2}",
+    }
+    _project(tmp_path, {"pkg/fast.py": NEWER}, pyproject.format_map(versions))
+    assert remedy.format_map(versions) in _refusal(tmp_path)
 
 
 def test_a_file_at_the_project_root_is_excluded_by_its_name(tmp_path: Path) -> None:
