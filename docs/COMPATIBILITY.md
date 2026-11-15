@@ -72,6 +72,7 @@ The preview/dry result schema is version 1:
 | --- | --- |
 | `schema_version` | Integer `1`. |
 | `command` | `"preview"` or `"dry"`. |
+| `mode` | `"relaxed"`, the default, or `"strict"` when the run was given `--strict`. Added in 2.0; a result without it came from an earlier release, which had only strict behaviour. |
 | `status` | `"complete"`, `"incomplete"` or `"error"`. |
 | `input` | Absolute input path. |
 | `output` | Absolute destination path for `dry`; `null` for preview. |

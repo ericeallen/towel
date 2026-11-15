@@ -64,6 +64,7 @@ from towel.cli_reporting import (
     CallRecord as CallRecord,
     ChangeRecord as ChangeRecord,
     CommandResult as CommandResult,
+    mode_name,
     HelperInventory as HelperInventory,
     HelperRecord as HelperRecord,
     HelperScopeKind as HelperScopeKind,
@@ -366,6 +367,24 @@ def _add_cross_module_flag(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_strict_flag(parser: argparse.ArgumentParser) -> None:
+    """Add ``--strict``, shared by the commands that analyze a project.
+
+    Off by default: relaxed mode assumes a program does not depend on when its
+    objects are finalized (docs/DECISIONS.md, "Relaxed mode is the default;
+    strict mode keeps exact lifetimes").
+    """
+    parser.add_argument(
+        "--strict",
+        dest="strict",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Preserve exactly when objects are released and when names are looked up, as "
+        "releases before this one did. Expect more blocks left alone and bookkeeping in "
+        "callers.",
+    )
+
+
 def _add_parameterize_builtins_flag(parser: argparse.ArgumentParser) -> None:
     """Add ``--parameterize-builtins``, shared by the commands that analyze a project.
 
@@ -419,6 +438,7 @@ Examples:
     )
     _add_exclude_flag(parser)
     _add_cross_module_flag(parser)
+    _add_strict_flag(parser)
     _add_parameterize_builtins_flag(parser)
 
     _add_import_layout_flags(parser)
@@ -578,6 +598,7 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     parser.add_argument("--non-interactive", action="store_true", help=argparse.SUPPRESS)
     _add_exclude_flag(parser)
     _add_cross_module_flag(parser)
+    _add_strict_flag(parser)
     _add_parameterize_builtins_flag(parser)
     _add_tuning_flags(parser)
     presentation = parser.add_mutually_exclusive_group()
@@ -987,6 +1008,7 @@ class DryOptions:
     summary: bool = False
     diff: bool = False
     inventory: bool = False
+    strict: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -1009,6 +1031,7 @@ class DryOptions:
             summary=bool(getattr(args, "summary", False)),
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
+            strict=bool(getattr(args, "strict", False)),
         )
 
 
@@ -1033,6 +1056,7 @@ class PreviewOptions:
     summary: bool = False
     diff: bool = False
     inventory: bool = False
+    strict: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -1054,6 +1078,7 @@ class PreviewOptions:
             summary=bool(getattr(args, "summary", False)),
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
+            strict=bool(getattr(args, "strict", False)),
         )
 
     def dry_options(self, output: str) -> DryOptions:
@@ -1077,6 +1102,7 @@ class PreviewOptions:
             summary=self.summary,
             diff=self.diff,
             inventory=self.inventory,
+            strict=self.strict,
         )
 
 
@@ -1187,6 +1213,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
             max_parameters=options.max_parameters,
             min_lines=options.min_lines,
             parameterize_builtins=options.parameterize_builtins,
+            strict=options.strict,
             max_candidate_pairs=options.max_pairs,
             settings=_settings(),
             parameterize_constants=True,
@@ -1757,6 +1784,7 @@ def _command_result(
     return {
         "schema_version": 1,
         "command": "preview" if preview else "dry",
+        "mode": mode_name(options.strict),
         "status": "complete",
         "input": str(Path(options.input).resolve()),
         "output": None if preview else str(Path(options.output).resolve()),
@@ -1784,6 +1812,7 @@ def _write_failure_result(
     result: CommandResult = {
         "schema_version": 1,
         "command": args.command,
+        "mode": mode_name(bool(getattr(args, "strict", False))),
         "status": status,
         # Failure reporting must not repeat the filesystem operation that
         # failed: lexical absolute paths work even for inaccessible/looped paths.
@@ -1827,6 +1856,7 @@ def _run_quick_preview(options: PreviewOptions) -> None:
         max_parameters=options.max_parameters,
         min_lines=options.min_lines,
         parameterize_builtins=options.parameterize_builtins,
+        strict=options.strict,
         max_candidate_pairs=options.max_pairs,
         settings=_settings(),
         parameterize_constants=True,

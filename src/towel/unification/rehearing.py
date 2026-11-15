@@ -300,6 +300,7 @@ _EXECUTION_OPTIONS = (
     "min_lines",
     "parameterize_constants",
     "parameterize_builtins",
+    "strict",
     "skip_trivial_helpers",
     "max_candidate_pairs",
     "incremental_global_passes",

@@ -252,6 +252,9 @@ class EngineState:
     parameterize_builtins: bool
     """Whether a builtin that may differ between sites is passed as a parameter instead of declined."""
 
+    strict: bool
+    """Whether exact object lifetimes are preserved; relaxed mode, the default, assumes none is observed."""
+
     max_candidate_pairs: int
     """Candidate pairs an analysis evaluates before it leaves the largest buckets out."""
 
