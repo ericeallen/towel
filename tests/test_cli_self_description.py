@@ -54,6 +54,25 @@ def test_help_shows_examples_from_every_command() -> None:
     assert {"dry", "preview", "rename-helpers"} <= commands
 
 
+def _help(arguments: List[str], monkeypatch: pytest.MonkeyPatch, columns: int = 80) -> str:
+    """What ``towel <arguments> --help`` prints in a terminal ``columns`` wide."""
+    monkeypatch.setenv("COLUMNS", str(columns))
+    result = invoke([*arguments, "--help"])
+    assert result.status == 0 and not result.stderr, result
+    return result.stdout
+
+
+COMMANDS = [[], ["dry"], ["preview"], ["rename-helpers"], ["recover"]]
+
+
+@pytest.mark.parametrize("command", COMMANDS, ids=lambda command: " ".join(command) or "towel")
+def test_help_fits_the_terminal(command: List[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    """User audit CLI-03: ``towel dry --help`` printed each option as one line of up to 622
+    characters, which an 80-column terminal broke mid-word; ``preview --help`` was wrapped."""
+    long_lines = [line for line in _help(command, monkeypatch).splitlines() if len(line) > 80]
+    assert not long_lines, long_lines
+
+
 @pytest.mark.parametrize("example", _examples())
 def test_every_help_example_is_a_valid_command_line(example: str) -> None:
     """``towel --help`` once showed ``towel rename-helpers`` without the target it requires."""

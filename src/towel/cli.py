@@ -394,14 +394,14 @@ def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentPar
     parser = subparsers.add_parser(
         "dry",
         help="Apply refactorings to remove duplicate code",
-        formatter_class=argparse.RawTextHelpFormatter,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description="Analyze and apply refactorings using anti-unification to files or directories.",
         epilog="""
 Examples:
-  towel dry src/ cleaned/                         # Refactor directory until fixed point
-  towel dry file.py file_out.py --no-interactive  # Skip the confirmation prompt
-  towel dry src/ out/ --max-refactorings 50       # Stop after 50 applied refactorings
-  towel dry src/ out/ --progress detail           # Verbose per-phase output
+  towel dry src/ cleaned/                    # Refactor until nothing changes
+  towel dry file.py out.py --no-interactive  # Skip the confirmation prompt
+  towel dry src/ out/ --max-refactorings 50  # Stop after 50 refactorings
+  towel dry src/ out/ --progress detail      # Verbose per-phase output
         """,
     )
 
@@ -615,11 +615,12 @@ def _add_rename_helpers_parser(
         help="Rename helpers from a JSON mapping or a pasted assistant response",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description="""
-Rename auto-generated _extracted_func_* and __extracted_func_* helpers into meaningful names.
+Rename auto-generated _extracted_func_* and __extracted_func_* helpers into
+meaningful names.
 
-This tool prepares source excerpts for a coding assistant to suggest better names
-based on the code's purpose and context. You can use Claude Code, ChatGPT, or any
-other AI coding assistant to generate the names.
+This tool prepares source excerpts for a coding assistant to suggest better
+names based on the code's purpose and context. You can use Claude Code,
+ChatGPT, or any other AI coding assistant to generate the names.
 
 The tool works in two modes:
 
@@ -629,9 +630,10 @@ The tool works in two modes:
 
 2. FILE MODE (--rename-file):
    Provide a JSON file with old_name -> new_name mappings.
-   Select the project root so ordinary consumers are included. Use path-qualified
-   keys or --file to select definitions. A narrow target is refused if a consumer
-   outside it needs an edit; files outside the target are never changed.
+   Select the project root so ordinary consumers are included. Use
+   path-qualified keys or --file to select definitions. A narrow target is
+   refused if a consumer outside it needs an edit; files outside the target
+   are never changed.
    For a project without metadata or regular-package ancestry, --complete-scope
    explicitly declares that the target contains every ordinary consumer.
         """,
@@ -654,7 +656,7 @@ Examples:
   towel rename-helpers path/to/project --function __extracted_func_7
 
   # An unmarked project: explicitly declare its complete consumer scope
-  towel rename-helpers path/to/project --complete-scope --rename-file renames.json
+  towel rename-helpers project/ --complete-scope --rename-file renames.json
         """,
     )
 
