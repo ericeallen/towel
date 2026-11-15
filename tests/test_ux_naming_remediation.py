@@ -533,3 +533,19 @@ def test_rename_formatting_hint_and_format_flag_respect_project_configuration(
         "def calculate_combined_item_total_with_tag_length(first_item, second_item, third_item):"
         in plain_text
     )
+
+
+def test_interactive_rename_text_omits_unsupported_windows_instruction(tmp_path: Path) -> None:
+    """Audit Finding 8, item 8: interactive prompt omits 'Ctrl+Z on Windows'."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+    (tmp_path / "m.py").write_text(
+        "def __extracted_func_0(x):\n    return x + 1\n", encoding="utf-8"
+    )
+    result = invoke(
+        ["rename-helpers", str(tmp_path), "--preview"],
+        stdin='{"m.py:__extracted_func_0": "increment"}\n',
+    )
+    assert result.status == 0, result.stderr
+    assert "Ctrl+D" in result.stdout
+    assert "Ctrl+Z" not in result.stdout
+    assert "Windows" not in result.stdout

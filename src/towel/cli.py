@@ -2665,9 +2665,7 @@ def _run_interactive_llm_mode(
     print('  {"src/utils.py:__extracted_func_2.__param_0": "raw_value"}')
     print('  {"src/box.py:Box.__extracted_func_3": "__scaled_width"}')
     print()
-    print(
-        "Paste the JSON response below, then press ENTER followed by Ctrl+D (or Ctrl+Z on Windows):"
-    )
+    print("Paste the JSON response below, then press ENTER followed by Ctrl+D:")
     print()
 
     llm_response = sys.stdin.read().strip()
