@@ -560,8 +560,10 @@ Examples, in a directory holding src/:
 
 When it changes anything, dry also writes .towel-helpers.json into output (or
 output.towel-helpers.json beside an output file): each new helper's call
-sites, for naming the helpers with rename-helpers. Delete it once you no
-longer need it. TOWEL_WORKERS=N limits the analysis to N worker processes.""",
+sites, for naming the helpers with rename-helpers. Use --no-helper-metadata
+to leave it out; rename-helpers then shows no call-site changes. Delete it
+once you no longer need it. TOWEL_WORKERS=N limits the analysis to N worker
+processes.""",
     )
 
     parser.add_argument(
@@ -586,6 +588,13 @@ longer need it. TOWEL_WORKERS=N limits the analysis to N worker processes.""",
     )
     sections.output.add_argument(  # earlier spelling, kept for scripts
         "--non-interactive", dest="interactive", action="store_false", help=argparse.SUPPRESS
+    )
+    sections.output.add_argument(
+        "--helper-metadata",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Write .towel-helpers.json with call-site changes for rename-helpers (default: on). "
+        "--no-helper-metadata leaves it out; rename-helpers then shows no call-site changes.",
     )
     _add_json_flag(sections.output)
     _add_shared_options(sections)
@@ -1236,6 +1245,7 @@ class DryOptions:
     diff: bool = False
     inventory: bool = False
     config_path: Optional[str] = None
+    helper_metadata: bool = True
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -1259,6 +1269,7 @@ class DryOptions:
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
             config_path=getattr(args, "config_path", None),
+            helper_metadata=bool(getattr(args, "helper_metadata", True)),
         )
 
 
@@ -1523,7 +1534,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
             _print_declined(engine.run_report, applied)
         if options.stats:
             _print_statistics(engine.run_report)
-        if not preview:
+        if not preview and options.helper_metadata:
             # Publication has succeeded. This optional naming aid cannot
             # retroactively make that source transaction a failed command.
             try:
