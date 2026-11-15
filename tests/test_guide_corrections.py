@@ -21,9 +21,12 @@ behaviour is already pinned elsewhere, the test names that regression.
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
+import re
 
 from tests.test_cli_integration import DUPLICATES, invoke
+from towel import cli
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -99,3 +102,58 @@ def test_output_path_rule_covers_a_separate_output_and_the_same_path_in_place(
         assert "input path again as the output" in paragraphs[0]
         assert "in place" in paragraphs[0]
         assert "The output path must not already exist" not in _compact(text)
+
+
+def _visible_flags(command: str) -> tuple[set[str], set[str]]:
+    """The options of one command that take no value: those with a `--no-` form, and the rest."""
+    commands = next(
+        action
+        for action in cli._build_parser()._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    paired: set[str] = set()
+    single: set[str] = set()
+    for action in commands.choices[command]._actions:
+        names = {name for name in action.option_strings if name.startswith("--")}
+        if action.help is argparse.SUPPRESS or not names or action.nargs != 0:
+            continue
+        if isinstance(action, argparse.BooleanOptionalAction):
+            paired |= {name for name in names if not name.startswith("--no-")}
+        elif not isinstance(action, argparse._HelpAction):
+            single |= names
+    return paired, single
+
+
+def test_command_line_guide_names_which_options_have_a_negative_form() -> None:
+    """Audit finding 12 (documentation report D9, claim 17; Kimi's review, finding 9).
+
+    The guide said "Boolean options have `--x` and `--no-x` forms". `--explain`,
+    `--json`, `--summary`, `--diff`, `--inventory` and `--quick` have none, and
+    `--no-explain` is an argument error. The guide now lists both kinds, and the
+    parser is asked about each option it lists.
+    """
+    guide = _compact(_guide("CLI_GUIDE.md"))
+    assert "Boolean options have `--x` and `--no-x` forms" not in guide
+    sentence = re.search(
+        r"come in pairs, `--x` and `--no-x`: (?P<paired>[^.]+)\. "
+        r"Options that only ask for something have no `--no-x` form: (?P<single>[^.]+)\.",
+        guide,
+    )
+    assert sentence is not None
+    listed_paired = set(re.findall(r"`(--[a-z-]+)`", sentence["paired"]))
+    listed_single = set(re.findall(r"`(--[a-z-]+)`", sentence["single"]))
+    assert listed_single >= {
+        "--explain",
+        "--json",
+        "--summary",
+        "--diff",
+        "--inventory",
+        "--quick",
+    }
+    dry_paired, dry_single = _visible_flags("dry")
+    preview_paired, preview_single = _visible_flags("preview")
+    assert listed_paired and listed_paired <= dry_paired & preview_paired
+    assert listed_single <= dry_single | preview_single
+    assert {"--explain", "--json"} <= dry_single & preview_single
+    rejected = invoke(["dry", "--no-explain", "project", "output"])
+    assert rejected.status == 2 and "--no-explain" in rejected.stderr

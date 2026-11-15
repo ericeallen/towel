@@ -199,8 +199,12 @@ does not promote equal higher-order factory literals by default. Repeated class
 lookup suppliers and unread ownership holders are explained in
 [the argument guide](GENERATED_CODE.md#equal-looking-and-unused-arguments).
 
-Run `towel dry --help` for all current options and defaults. Boolean options
-have `--x` and `--no-x` forms.
+Run `towel dry --help` for all current options and defaults. Options that
+switch a behavior on or off come in pairs, `--x` and `--no-x`: `--interactive`,
+`--cross-module`, `--parameterize-builtins`, `--types`, `--format` and
+`--stats`. Options that only ask for something have no `--no-x` form:
+`--explain` and `--json`, and for `preview` also `--summary`, `--diff`,
+`--inventory` and `--quick`.
 
 ## Output and in-place changes
 
