@@ -10,12 +10,22 @@ ensuring the refactoring system handles all edge cases correctly.
 # =============================================================================
 
 
-def __extracted_func_2(__param_0, _towel_owner):
+def __extracted_func_3(__param_0, _towel_owner):
     data = [__param_0, __param_0 + 1, __param_0 + 2]  # list
     data = data + list((__param_0, __param_0 + 1))  # tuple
     data = data + list({__param_0, __param_0 + 1})  # set
     data = data + list({'a': __param_0, 'b': __param_0 + 1}.values())  # dict
     return sum(data)
+
+
+def __extracted_func_2(__param_0, _towel_owner):
+    x, y = __param_0[:2]
+    result = x + y
+    a, b, c = __param_0[:3]
+    result += a + b + c
+    first, *rest = __param_0
+    result += first + sum(rest)
+    return result
 
 
 def __extracted_func_1(__param_0, _towel_owner):
@@ -62,16 +72,16 @@ def literals_b(y):
 
 def collections_a(x):
     """Test collection literal construction."""
-    _towel_arguments_2 = [(x,)]
+    _towel_arguments_3 = [(x,)]
     del x
-    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
+    return __extracted_func_3(_towel_arguments_3[0][0], _towel_arguments_3.pop())
 
 
 def collections_b(y):
     """Test collection literal construction."""
-    _towel_arguments_2 = [(y,)]
+    _towel_arguments_3 = [(y,)]
     del y
-    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
+    return __extracted_func_3(_towel_arguments_3[0][0], _towel_arguments_3.pop())
 
 
 # =============================================================================
@@ -210,24 +220,16 @@ def augmented_b(y):
 
 def unpacking_a(data):
     """Test various unpacking patterns."""
-    x, y = data[:2]
-    result = x + y
-    a, b, c = data[:3]
-    result += a + b + c
-    first, *rest = data
-    result += first + sum(rest)
-    return result
+    _towel_arguments_2 = [(data,)]
+    del data
+    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
 
 
 def unpacking_b(items):
     """Test various unpacking patterns."""
-    p, q = items[:2]
-    output = p + q
-    m, n, o = items[:3]
-    output += m + n + o
-    head, *tail = items
-    output += head + sum(tail)
-    return output
+    _towel_arguments_2 = [(items,)]
+    del items
+    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
 
 
 # =============================================================================

@@ -1,0 +1,29 @@
+"""Thin client for the billing service."""
+
+
+class NotAuthorized(Exception):
+    pass
+
+
+def get_user(session, user_id):
+    response = session.get(f"/api/v1/users/{user_id}", timeout=5)
+    if response.status_code == 404:
+        return None
+    if response.status_code == 401:
+        raise NotAuthorized("users")
+    if response.status_code != 200:
+        raise RuntimeError(f"users request failed: {response.status_code}")
+    payload = response.json()
+    return payload["data"]
+
+
+def get_invoice(session, invoice_id):
+    response = session.get(f"/api/v1/invoices/{invoice_id}", timeout=30)
+    if response.status_code == 404:
+        return None
+    if response.status_code == 401:
+        raise NotAuthorized("invoices")
+    if response.status_code != 200:
+        raise RuntimeError(f"invoices request failed: {response.status_code}")
+    payload = response.json()
+    return payload["data"]

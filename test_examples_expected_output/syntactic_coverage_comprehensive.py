@@ -17,122 +17,107 @@ def __extracted_func_28(__param_0, __param_1):
 
 
 def __extracted_func_27(__param_0, __param_1):
-    result = len(f'{__param_0 + __param_1}')
-    result += len(f'{__param_0 * 2:04d}')
-    result += len(f'{__param_0:.2f}')
-    return result
-
-
-def __extracted_func_26(__param_0, __param_1):
     result = __param_0 * 2 if __param_0 > __param_1 else __param_0
     result = result + 10 if result < 100 else result - 10
     return result
 
 
-def __extracted_func_25(__param_0):
+def __extracted_func_26(__param_0):
     result = sum((x * 2 for x in __param_0))
     result += sum((x for x in __param_0 if x > 0))
     return result
 
 
-def __extracted_func_24(__param_0):
+def __extracted_func_25(__param_0):
     result = sum({i: x * 2 for i, x in enumerate(__param_0)}.values())
     result += sum({i: x for i, x in enumerate(__param_0) if x > 0}.values())
     return result
 
 
-def __extracted_func_23(__param_0):
+def __extracted_func_24(__param_0):
     result = sum({x * 2 for x in __param_0})
     result += sum({x for x in __param_0 if x > 0})
     return result
 
 
-def __extracted_func_22(__param_0, __param_1, __param_2):
+def __extracted_func_23(__param_0, __param_1, __param_2):
     result = (__param_0 + __param_1) * 2 + sum([i * 2 for i in __param_2 if i > __param_0])
     result += len([i for i in __param_2 if __param_0 < i < __param_1])
     result += sum(map(lambda i: i ** 2, filter(lambda i: i > 0, __param_2)))
     return result
 
 
-def __extracted_func_21(__param_0, __param_1):
+def __extracted_func_22(__param_0, __param_1):
     result = 1 if __param_0 is None else 0
     result += 1 if __param_0 is not None else 0
     result += 1 if __param_0 is __param_1 else 0
     return result
 
 
-def __extracted_func_20(__param_0, __param_1):
+def __extracted_func_21(__param_0, __param_1):
     result = 1 if __param_0 in __param_1 else 0
     result += 1 if __param_0 not in __param_1 else 0
     result += 1 if 'key' in {'key': __param_0} else 0
     return result
 
 
-def __extracted_func_19(__param_0):
+def __extracted_func_20(__param_0):
     result = __param_0[0][0]
     result += __param_0[1]['key']
     result += __param_0[2][0][1]
     return result
 
 
-def __extracted_func_18(__param_0, __param_1, __param_2):
+def __extracted_func_19(__param_0, __param_1, __param_2):
     result = 1 if __param_0 < __param_1 < __param_2 else 0
     result += 1 if __param_0 <= __param_1 <= __param_2 else 0
     result += 1 if __param_0 == __param_1 == __param_2 else 0
     return result
 
 
-def __extracted_func_17(__param_0):
+def __extracted_func_18(__param_0):
     result = __param_0
     with DummyContext(10) as value:
         result += value
     return result
 
 
-def __extracted_func_16(__param_0, __param_1, __param_2, __param_3, s1):
+def __extracted_func_17(__param_0, __param_1, __param_2, __param_3, s1):
     s2 = __param_0 % (__param_1, __param_2)
     s3 = __param_3.format(__param_1, __param_2)
     result = len(s1) + len(s2) + len(s3)
     return result
 
 
-def __extracted_func_15(__param_0):
+def __extracted_func_16(__param_0):
     mapper = lambda x: x * 2
     result = sum(map(mapper, __param_0))
     result += sum(map(lambda x: x + 1, __param_0))
     return result
 
 
-def __extracted_func_14(__param_0):
+def __extracted_func_15(__param_0):
     result = sum([x * 2 for x in __param_0])
     result += sum([x for x in __param_0 if x > 0])
     result += sum([x + y for x in __param_0 for y in __param_0])
     return result
 
 
-def __extracted_func_13(__param_0):
+def __extracted_func_14(__param_0):
     result = __param_0.value
     result += __param_0.data[0]
     result += __param_0.get_value()
     return result
 
 
-def __extracted_func_12(__param_0):
-    x, y = __param_0[:2]
-    result = x + y
-    a, b, c = __param_0[:3]
-    result += a + b + c
-    return result
-
-
-def __extracted_func_11(__param_0, __param_1):
+def __extracted_func_13(__param_0, __param_1):
     result = __param_0 and __param_1
     result = result or __param_1
     result = not result
     return result
 
 
-def __extracted_func_10(__param_0, __param_1):
+def __extracted_func_12(__param_0, __param_1):
     result = total = __param_0 + __param_1
     result += total
     a = b = c = __param_0
@@ -140,7 +125,15 @@ def __extracted_func_10(__param_0, __param_1):
     return result
 
 
-def __extracted_func_9(__param_0):
+def __extracted_func_11(__param_0, __param_1, __param_2):
+    result = len(f'{__param_0 + __param_1}')
+    result += len(f'{__param_0 * 2:04d}')
+    result += len(f'{__param_0:.2f}')
+    result += len(f'{__param_2}={__param_0!r}')
+    return result
+
+
+def __extracted_func_10(__param_0):
     data = [__param_0, __param_0 + 1, __param_0 + 2]  # list
     data = data + list((__param_0, __param_0 + 1))  # tuple
     data = data + list({__param_0, __param_0 + 1})  # set
@@ -148,7 +141,7 @@ def __extracted_func_9(__param_0):
     return sum(data)
 
 
-def __extracted_func_8(__param_0):
+def __extracted_func_9(__param_0):
     result = 0
     if (n := len(__param_0)) > 5:
         result += n
@@ -157,7 +150,7 @@ def __extracted_func_8(__param_0):
     return result
 
 
-def __extracted_func_7(__param_0, __param_1):
+def __extracted_func_8(__param_0, __param_1):
     result = helper(__param_0, __param_1)  # positional
     result += helper(__param_0, __param_1, 20)  # with optional
     result += helper(__param_0, __param_1, c=30)  # keyword
@@ -166,12 +159,22 @@ def __extracted_func_7(__param_0, __param_1):
     return result
 
 
-def __extracted_func_6(__param_0):
+def __extracted_func_7(__param_0):
     result = __param_0[0]  # simple subscript
     result += __param_0[-1]  # negative index
     result += sum(__param_0[1:3])  # slice
     result += sum(__param_0[::2])  # step slice
     result += sum(__param_0[::-1])  # reverse
+    return result
+
+
+def __extracted_func_6(__param_0):
+    x, y = __param_0[:2]
+    result = x + y
+    a, b, c = __param_0[:3]
+    result += a + b + c
+    first, *rest = __param_0
+    result += first + sum(rest)
     return result
 
 
@@ -263,12 +266,12 @@ def literals_b(y):
 
 def collections_a(x):
     """Test collection literal construction."""
-    return __extracted_func_9(x)
+    return __extracted_func_10(x)
 
 
 def collections_b(y):
     """Test collection literal construction."""
-    return __extracted_func_9(y)
+    return __extracted_func_10(y)
 
 
 # =============================================================================
@@ -308,12 +311,12 @@ def comparisons_b(a, b):
 
 def logical_a(x, y):
     """Test logical operators."""
-    return __extracted_func_11(x, y)
+    return __extracted_func_13(x, y)
 
 
 def logical_b(a, b):
     """Test logical operators."""
-    return __extracted_func_11(a, b)
+    return __extracted_func_13(a, b)
 
 
 # =============================================================================
@@ -353,18 +356,12 @@ def augmented_b(y):
 
 def unpacking_a(data):
     """Test various unpacking patterns."""
-    result = __extracted_func_12(data)
-    first, *rest = data
-    result += first + sum(rest)
-    return result
+    return __extracted_func_6(data)
 
 
 def unpacking_b(items):
     """Test various unpacking patterns."""
-    output = __extracted_func_12(items)
-    head, *tail = items
-    output += head + sum(tail)
-    return output
+    return __extracted_func_6(items)
 
 
 # =============================================================================
@@ -374,12 +371,12 @@ def unpacking_b(items):
 
 def subscript_a(data):
     """Test subscript and slice operations."""
-    return __extracted_func_6(data)
+    return __extracted_func_7(data)
 
 
 def subscript_b(items):
     """Test subscript and slice operations."""
-    return __extracted_func_6(items)
+    return __extracted_func_7(items)
 
 
 # =============================================================================
@@ -398,12 +395,12 @@ class TestClass:
 
 def attributes_a(obj):
     """Test attribute access."""
-    return __extracted_func_13(obj)
+    return __extracted_func_14(obj)
 
 
 def attributes_b(thing):
     """Test attribute access."""
-    return __extracted_func_13(thing)
+    return __extracted_func_14(thing)
 
 
 # =============================================================================
@@ -417,12 +414,12 @@ def helper(a, b, c=10, *args, **kwargs):
 
 def calls_a(x, y):
     """Test various function call patterns."""
-    return __extracted_func_7(x, y)
+    return __extracted_func_8(x, y)
 
 
 def calls_b(a, b):
     """Test various function call patterns."""
-    return __extracted_func_7(a, b)
+    return __extracted_func_8(a, b)
 
 
 # =============================================================================
@@ -432,12 +429,12 @@ def calls_b(a, b):
 
 def list_comp_a(data):
     """Test list comprehensions."""
-    return __extracted_func_14(data)
+    return __extracted_func_15(data)
 
 
 def list_comp_b(items):
     """Test list comprehensions."""
-    return __extracted_func_14(items)
+    return __extracted_func_15(items)
 
 
 # =============================================================================
@@ -447,12 +444,12 @@ def list_comp_b(items):
 
 def set_comp_a(data):
     """Test set comprehensions."""
-    return __extracted_func_23(data)
+    return __extracted_func_24(data)
 
 
 def set_comp_b(items):
     """Test set comprehensions."""
-    return __extracted_func_23(items)
+    return __extracted_func_24(items)
 
 
 # =============================================================================
@@ -462,12 +459,12 @@ def set_comp_b(items):
 
 def dict_comp_a(data):
     """Test dict comprehensions."""
-    return __extracted_func_24(data)
+    return __extracted_func_25(data)
 
 
 def dict_comp_b(items):
     """Test dict comprehensions."""
-    return __extracted_func_24(items)
+    return __extracted_func_25(items)
 
 
 # =============================================================================
@@ -477,12 +474,12 @@ def dict_comp_b(items):
 
 def generator_a(data):
     """Test generator expressions."""
-    return __extracted_func_25(data)
+    return __extracted_func_26(data)
 
 
 def generator_b(items):
     """Test generator expressions."""
-    return __extracted_func_25(items)
+    return __extracted_func_26(items)
 
 
 # =============================================================================
@@ -492,12 +489,12 @@ def generator_b(items):
 
 def lambda_a(data):
     """Test lambda expressions."""
-    return __extracted_func_15(data)
+    return __extracted_func_16(data)
 
 
 def lambda_b(items):
     """Test lambda expressions."""
-    return __extracted_func_15(items)
+    return __extracted_func_16(items)
 
 
 # =============================================================================
@@ -507,12 +504,12 @@ def lambda_b(items):
 
 def ternary_a(x, threshold):
     """Test conditional expressions."""
-    return __extracted_func_26(x, threshold)
+    return __extracted_func_27(x, threshold)
 
 
 def ternary_b(y, limit):
     """Test conditional expressions."""
-    return __extracted_func_26(y, limit)
+    return __extracted_func_27(y, limit)
 
 
 # =============================================================================
@@ -523,13 +520,13 @@ def ternary_b(y, limit):
 def string_fmt_a(x, y):
     """Test string formatting."""
     s1 = f"x={x}, y={y}"
-    return __extracted_func_16('x=%d, y=%d', x, y, 'x={}, y={}', s1)
+    return __extracted_func_17('x=%d, y=%d', x, y, 'x={}, y={}', s1)
 
 
 def string_fmt_b(a, b):
     """Test string formatting."""
     s1 = f"a={a}, b={b}"
-    return __extracted_func_16('a=%d, b=%d', a, b, 'a={}, b={}', s1)
+    return __extracted_func_17('a=%d, b=%d', a, b, 'a={}, b={}', s1)
 
 
 # =============================================================================
@@ -539,16 +536,12 @@ def string_fmt_b(a, b):
 
 def fstring_a(x, y):
     """Test f-string with expressions."""
-    result = __extracted_func_27(x, y)
-    result += len(f"{x=}")
-    return result
+    return __extracted_func_11(x, y, 'x')
 
 
 def fstring_b(a, b):
     """Test f-string with expressions."""
-    output = __extracted_func_27(a, b)
-    output += len(f"{a=}")
-    return output
+    return __extracted_func_11(a, b, 'a')
 
 
 # =============================================================================
@@ -584,12 +577,12 @@ class DummyContext:
 
 def context_mgr_a(x):
     """Test context managers."""
-    return __extracted_func_17(x)
+    return __extracted_func_18(x)
 
 
 def context_mgr_b(y):
     """Test context managers."""
-    return __extracted_func_17(y)
+    return __extracted_func_18(y)
 
 
 # =============================================================================
@@ -599,12 +592,12 @@ def context_mgr_b(y):
 
 def walrus_a(data):
     """Test walrus operator."""
-    return __extracted_func_8(data)
+    return __extracted_func_9(data)
 
 
 def walrus_b(items):
     """Test walrus operator."""
-    return __extracted_func_8(items)
+    return __extracted_func_9(items)
 
 
 # =============================================================================
@@ -614,12 +607,12 @@ def walrus_b(items):
 
 def chained_comp_a(x, y, z):
     """Test chained comparisons."""
-    return __extracted_func_18(x, y, z)
+    return __extracted_func_19(x, y, z)
 
 
 def chained_comp_b(a, b, c):
     """Test chained comparisons."""
-    return __extracted_func_18(a, b, c)
+    return __extracted_func_19(a, b, c)
 
 
 # =============================================================================
@@ -644,12 +637,12 @@ def short_circuit_b(a, b):
 
 def nested_a(data):
     """Test nested data structure access."""
-    return __extracted_func_19(data)
+    return __extracted_func_20(data)
 
 
 def nested_b(items):
     """Test nested data structure access."""
-    return __extracted_func_19(items)
+    return __extracted_func_20(items)
 
 
 # =============================================================================
@@ -659,12 +652,12 @@ def nested_b(items):
 
 def multi_assign_a(x, y):
     """Test multi-target assignment."""
-    return __extracted_func_10(x, y)
+    return __extracted_func_12(x, y)
 
 
 def multi_assign_b(m, n):
     """Test multi-target assignment."""
-    return __extracted_func_10(m, n)
+    return __extracted_func_12(m, n)
 
 
 # =============================================================================
@@ -697,12 +690,12 @@ def starred_b(items):
 
 def membership_a(x, data):
     """Test membership operators."""
-    return __extracted_func_20(x, data)
+    return __extracted_func_21(x, data)
 
 
 def membership_b(y, items):
     """Test membership operators."""
-    return __extracted_func_20(y, items)
+    return __extracted_func_21(y, items)
 
 
 # =============================================================================
@@ -712,12 +705,12 @@ def membership_b(y, items):
 
 def identity_a(x, y):
     """Test identity operators."""
-    return __extracted_func_21(x, y)
+    return __extracted_func_22(x, y)
 
 
 def identity_b(a, b):
     """Test identity operators."""
-    return __extracted_func_21(a, b)
+    return __extracted_func_22(a, b)
 
 
 # =============================================================================
@@ -727,9 +720,9 @@ def identity_b(a, b):
 
 def complex_expr_a(x, y, data):
     """Test complex nested expressions."""
-    return __extracted_func_22(x, y, data)
+    return __extracted_func_23(x, y, data)
 
 
 def complex_expr_b(a, b, items):
     """Test complex nested expressions."""
-    return __extracted_func_22(a, b, items)
+    return __extracted_func_23(a, b, items)

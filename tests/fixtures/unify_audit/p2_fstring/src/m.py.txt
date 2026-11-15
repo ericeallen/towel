@@ -1,0 +1,28 @@
+def summarize_errors(records):
+    matching = [r for r in records if r["level"] == "E"]
+    by_service = {}
+    for record in matching:
+        by_service.setdefault(record["service"], []).append(record)
+    lines = [f"{len(matching)} ERROR records"]
+    for service in sorted(by_service):
+        entries = by_service[service]
+        latest = max(entry["ts"] for entry in entries)
+        lines.append(f"  {service}: {len(entries)} (latest {latest})")
+        if len(entries) > 3:
+            lines.append(f"    first message: {entries[0]['message']}")
+    return "\n".join(lines)
+
+
+def summarize_warnings(records):
+    matching = [r for r in records if r["level"] == "E"]
+    by_service = {}
+    for record in matching:
+        by_service.setdefault(record["service"], []).append(record)
+    lines = [f"{len(matching)} WARNING records"]
+    for service in sorted(by_service):
+        entries = by_service[service]
+        latest = max(entry["ts"] for entry in entries)
+        lines.append(f"  {service}: {len(entries)} (latest {latest})")
+        if len(entries) > 3:
+            lines.append(f"    first message: {entries[0]['message']}")
+    return "\n".join(lines)

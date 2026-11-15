@@ -5,13 +5,15 @@ Tests: Same-file duplicate detection in class methods.
 """
 
 
-def _extracted_func_0(__param_0):
+def _extracted_func_0(__param_0, __param_1):
     if not __param_0():
         raise ValueError('Email is required')
     if '@' not in __param_0():
         raise ValueError('Invalid email format')
     if len(__param_0()) < 5:
         raise ValueError('Email too short')
+    print(f'Processing {__param_1}: {__param_0()}')
+    return True
 
 
 class EmailProcessor:
@@ -23,10 +25,7 @@ class EmailProcessor:
     def process(self):
         """Process email."""
         # Validation logic
-        _extracted_func_0(lambda: self.email)
-
-        print(f"Processing email: {self.email}")
-        return True
+        return _extracted_func_0(lambda: self.email, 'email')
 
 
 class SMSProcessor:
@@ -38,10 +37,7 @@ class SMSProcessor:
     def process(self):
         """Process SMS."""
         # Validation logic (DUPLICATE!)
-        _extracted_func_0(lambda: self.phone)
-
-        print(f"Processing SMS: {self.phone}")
-        return True
+        return _extracted_func_0(lambda: self.phone, 'SMS')
 
 
 class PushNotificationProcessor:
@@ -53,7 +49,4 @@ class PushNotificationProcessor:
     def process(self):
         """Process push notification."""
         # Validation logic (DUPLICATE!)
-        _extracted_func_0(lambda: self.device_id)
-
-        print(f"Processing push: {self.device_id}")
-        return True
+        return _extracted_func_0(lambda: self.device_id, 'push')

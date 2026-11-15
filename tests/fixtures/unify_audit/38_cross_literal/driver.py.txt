@@ -1,0 +1,24 @@
+import sys
+from datetime import date
+
+sys.path.insert(0, sys.argv[1])
+
+import daily
+import weekly
+
+events = [
+    {"user": "ada", "day": date(2026, 11, 14)},
+    {"user": "ada", "day": date(2026, 11, 14)},
+    {"user": "bob", "day": date(2026, 11, 13)},
+    {"user": "cy", "day": date(2026, 11, 10)},
+    {"user": "cy", "day": date(2026, 11, 9)},
+    {"user": "cy", "day": date(2026, 11, 8)},
+    {"user": "dee", "day": date(2026, 11, 7)},
+    {"user": "eve", "day": date(2026, 11, 12)},
+    {"user": "fay", "day": date(2026, 11, 15)},
+]
+daily.main(events)
+weekly.main(events)
+print(daily.build_report([], date(2026, 1, 1)))
+print(weekly.build_report([], date(2026, 1, 1)))
+print("ok")

@@ -1,0 +1,44 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import client
+
+
+class Response:
+    def __init__(self, status_code, data=None):
+        self.status_code = status_code
+        self._data = data
+
+    def json(self):
+        return {"data": self._data}
+
+
+class Session:
+    def __init__(self, table):
+        self.table = table
+        self.calls = []
+
+    def get(self, path, timeout):
+        self.calls.append((path, timeout))
+        return self.table.get(path, Response(404))
+
+
+session = Session(
+    {
+        "/api/v1/users/7": Response(200, {"id": 7, "name": "Ada"}),
+        "/api/v1/users/8": Response(401),
+        "/api/v1/users/9": Response(503),
+        "/api/v1/invoices/7": Response(200, {"id": 7, "total": 12.5}),
+        "/api/v1/invoices/8": Response(401),
+        "/api/v1/invoices/9": Response(500),
+    }
+)
+for func in (client.get_user, client.get_invoice):
+    for ident in (7, 8, 9, 10):
+        try:
+            print(func.__name__, ident, func(session, ident))
+        except Exception as exc:
+            print(func.__name__, ident, type(exc).__name__, exc)
+print(session.calls)
+print("ok")

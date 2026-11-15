@@ -64,7 +64,7 @@ def test_unify_tuple_literals():
 
 def test_unify_lambda_expressions():
     code1 = "func = lambda x: x * 2"
-    code2 = "func = lambda y: y * 3"
+    code2 = "func = lambda x: x * 3"
     blocks = [parse_block(code1), parse_block(code2)]
     u = Unifier(max_parameters=5, parameterize_constants=True)
     subst = u.unify_blocks(blocks, [{}, {}])

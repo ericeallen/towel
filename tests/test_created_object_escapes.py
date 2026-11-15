@@ -19,7 +19,8 @@ helper, and carries the helper's name in its ``__qualname__`` (a lambda made
 from a unified template also has the template's parameter names). The guard
 lets a block move only when every such object is called in the block with
 arguments it accepts, handed to a builtin that calls it and keeps nothing,
-or consumed where it stands.
+or consumed where it stands. Closed lambdas may escape when unification
+retains their keyword interface.
 """
 
 from __future__ import annotations
@@ -89,21 +90,13 @@ def test_an_object_nothing_can_look_at_may_move(body: str) -> None:
         ("g = lambda v: v * k\ny = g(value=3)", ""),
         ("g = lambda v: v * k\ny = g(1, 2)", ""),
         ("g = lambda v: v * k\ny = g(*xs)", ""),
-        ("kept = [lambda j=j: j for j in xs]", ""),
         ("kept = {}\nkept['f'] = lambda: k", ""),
-        ("d = dict(default=lambda: 0)", ""),
         ("y = apply(lambda: k)", ""),
-        ("y = sorted(xs, key=lambda a, b: a)", ""),
-        ("xs.sort(key=lambda x: x)", ""),
-        ("y = min(xs, lambda: 0)", ""),
         ("gen = (x for x in xs)\nprint(gen)", ""),
         ("gen = (x for x in xs)\ny = list(gen)", "print(gen)"),
         ("gen = (x for x in gen)\ny = list(gen)", ""),
         ("y = max(0, (x for x in xs))", ""),
         ("y = sep.join(x for x in xs)", ""),
-        ("y = map(lambda x: x, xs)", "return y"),
-        ("twice = lambda x: x * 2\ny = list(map(twice, xs, xs))", ""),
-        ("twice = lambda x: x * 2\ny = [twice]", ""),
         ("if flag:\n    def step(v):\n        return v + k\n    y = step", ""),
         ("if flag:\n    @wraps\n    def step(v):\n        return v\n    y = step(1)", ""),
         ("if flag:\n    def step():\n        yield k\n    y = list(step())", ""),
@@ -116,8 +109,26 @@ def test_an_object_that_could_be_looked_at_declines(body: str, after: str) -> No
     assert _escapes(body, after=after)
 
 
+@pytest.mark.parametrize(
+    "body,after",
+    [
+        ("kept = [lambda j=j: j for j in xs]", ""),
+        ("d = dict(default=lambda: 0)", ""),
+        ("y = sorted(xs, key=lambda a, b: a)", ""),
+        ("xs.sort(key=lambda x: x)", ""),
+        ("y = min(xs, lambda: 0)", ""),
+        ("y = map(lambda x: x, xs)", "return y"),
+        ("twice = lambda x: x * 2\ny = list(map(twice, xs, xs))", ""),
+        ("twice = lambda x: x * 2\ny = [twice]", ""),
+    ],
+)
+def test_closed_callbacks_do_not_need_known_consumers(body: str, after: str) -> None:
+    """Audit D4: preserved signatures make closed callbacks safe even for unknown consumers."""
+    assert not _escapes(body, after=after)
+
+
 def test_a_builtin_the_module_can_shadow_is_not_trusted() -> None:
-    body = "y = sorted(xs, key=lambda x: x)"
+    body = "y = sorted(xs, key=lambda x: x * k)"
     assert _escapes(body, module="def sorted(xs, key):\n    return [key]")
     assert _escapes(body, module="from helpers import *")
     assert not _escapes(body, module="import os")

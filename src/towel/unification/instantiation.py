@@ -303,9 +303,10 @@ def _binding_form(
 class _ConstantStringFormats(ast.NodeTransformer):
     """No-spec formatting of an exact literal string keeps that same object.
 
-    Normalize only copied proof syntax, preserving individual JoinedStr
-    chunks and their order. Conversions, format specs and dynamic values
-    remain intact; no user-defined formatting operation is erased.
+    Normalize only copied proof syntax, coalescing adjacent literal chunks
+    only when a dynamic field still requires string assembly. Conversions,
+    format specs and dynamic values remain intact; no user-defined
+    formatting operation is erased.
     """
 
     def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
@@ -322,6 +323,26 @@ class _ConstantStringFormats(ast.NodeTransformer):
             )
             for value in node.values
         ]
+        # A dynamic field still separates chunks, so BUILD_STRING must
+        # construct a result in both forms. Adjacent literal text can be
+        # coalesced without changing an observable pooled string identity.
+        # In particular, leave a single-chunk format spec's identity intact.
+        if any(isinstance(value, ast.FormattedValue) for value in node.values):
+            coalesced: List[ast.expr] = []
+            for value in node.values:
+                if (
+                    coalesced
+                    and isinstance(value, ast.Constant)
+                    and type(value.value) is str
+                    and isinstance(coalesced[-1], ast.Constant)
+                    and type(coalesced[-1].value) is str
+                ):
+                    previous = coalesced.pop()
+                    assert isinstance(previous, ast.Constant) and type(previous.value) is str
+                    coalesced.append(ast.Constant(previous.value + value.value))
+                else:
+                    coalesced.append(value)
+            node.values = coalesced
         return node
 
 

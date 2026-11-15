@@ -5,7 +5,7 @@ Tests: Same-file duplicate detection in simple functions.
 """
 
 
-def __extracted_func_0(__param_0, __param_1, __param_2):
+def __extracted_func_0(__param_0, __param_1, __param_2, __param_3):
     user = {'id': __param_0, 'name': __param_1, 'email': __param_2}
     # Validate user data (DUPLICATE!)
     # Validate admin data (DUPLICATE!)
@@ -16,31 +16,23 @@ def __extracted_func_0(__param_0, __param_1, __param_2):
         raise ValueError('User name is required')
     if len(user.get('name', '')) < 2:
         raise ValueError('User name too short')
+    print(f"Processing {__param_3}: {user['name']}")
     return user
 
 
 def process_user_data(user_id):
     """Process user data."""
     # Fetch user
-    user = __extracted_func_0(user_id, 'John', 'john@example.com')
-
-    print(f"Processing user: {user['name']}")
-    return user
+    return __extracted_func_0(user_id, 'John', 'john@example.com', 'user')
 
 
 def process_admin_data(admin_id):
     """Process admin data."""
     # Fetch admin
-    admin = __extracted_func_0(admin_id, 'Admin', 'admin@example.com')
-
-    print(f"Processing admin: {admin['name']}")
-    return admin
+    return __extracted_func_0(admin_id, 'Admin', 'admin@example.com', 'admin')
 
 
 def process_guest_data(guest_id):
     """Process guest data."""
     # Fetch guest
-    guest = __extracted_func_0(guest_id, 'Guest', 'guest@example.com')
-
-    print(f"Processing guest: {guest['name']}")
-    return guest
+    return __extracted_func_0(guest_id, 'Guest', 'guest@example.com', 'guest')

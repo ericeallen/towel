@@ -1,0 +1,40 @@
+"""Summaries of structured log records for the nightly digest."""
+
+
+def parse_record(line):
+    ts, level, service, message = line.split(" ", 3)
+    return {"ts": ts, "level": level, "service": service, "message": message}
+
+
+def summarize_errors(records):
+    matching = [r for r in records if r["level"] == "ERROR"]
+    if not matching:
+        return "no ERROR records"
+    by_service = {}
+    for record in matching:
+        by_service.setdefault(record["service"], []).append(record)
+    lines = [f"{len(matching)} ERROR records"]
+    for service in sorted(by_service):
+        entries = by_service[service]
+        latest = max(entry["ts"] for entry in entries)
+        lines.append(f"  {service}: {len(entries)} (latest {latest})")
+        if len(entries) > 3:
+            lines.append(f"    first message: {entries[0]['message']}")
+    return "\n".join(lines)
+
+
+def summarize_warnings(records):
+    matching = [r for r in records if r["level"] == "WARNING"]
+    if not matching:
+        return "no WARNING records"
+    by_service = {}
+    for record in matching:
+        by_service.setdefault(record["service"], []).append(record)
+    lines = [f"{len(matching)} WARNING records"]
+    for service in sorted(by_service):
+        entries = by_service[service]
+        latest = max(entry["ts"] for entry in entries)
+        lines.append(f"  {service}: {len(entries)} (latest {latest})")
+        if len(entries) > 3:
+            lines.append(f"    first message: {entries[0]['message']}")
+    return "\n".join(lines)

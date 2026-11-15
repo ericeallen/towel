@@ -1,0 +1,24 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import logsummary
+
+LINES = [
+    "2026-11-01T00:00:01 ERROR billing charge failed for 17",
+    "2026-11-01T00:00:02 WARNING billing slow response",
+    "2026-11-01T00:00:03 ERROR auth token expired",
+    "2026-11-01T00:00:04 INFO auth login ok",
+    "2026-11-01T00:00:05 ERROR billing charge failed for 18",
+    "2026-11-01T00:00:06 ERROR billing charge failed for 19",
+    "2026-11-01T00:00:07 ERROR billing charge failed for 20",
+    "2026-11-01T00:00:08 WARNING search index stale",
+]
+records = [logsummary.parse_record(line) for line in LINES]
+print(logsummary.summarize_errors(records))
+print(logsummary.summarize_warnings(records))
+print(logsummary.summarize_errors([]))
+print(logsummary.summarize_warnings([r for r in records if r["level"] == "INFO"]))
+assert logsummary.summarize_errors(records).startswith("5 ERROR records")
+assert logsummary.summarize_warnings(records).startswith("2 WARNING records")
+print("ok")

@@ -26,12 +26,14 @@ for a substitution making two terms equal.
 """
 
 import ast
+from os.path import commonprefix
 from typing import Callable, Dict, Optional, List, Tuple, Any, Sequence, Type, Union, Iterator
 
 from .constant_consistency import constant_identity
 from .ast_paths import Path, has_shared_expressions, path_map, resolve_path
 from .compiler_literals import (
     common_literal_candidates,
+    literal_fragment_transfer_supported,
     immutable_literal_value,
     is_pooled_expression,
     pooled_expression_positions,
@@ -39,6 +41,7 @@ from .compiler_literals import (
     unstable_literal_pool,
 )
 from .parameterization import Parameterization
+from .semantic_safety import lambda_body_is_closed
 from .hof_promotion import LiteralPromotion
 from .statement_facts import mentioned_names
 from .static_positions import (
@@ -299,6 +302,10 @@ class Unifier(Parameterization, LiteralPromotion):
 
         # Names - if they differ, check alpha-renaming first
         if all_instances(nodes, ast.Name):
+            if len({type(node.ctx) for node in nodes}) != 1:
+                return False
+            if all(isinstance(node.ctx, ast.Store) for node in nodes):
+                return self._match_stored_names(nodes, block_indices)
             canonical_names = []
             for node, block_idx in zip(nodes, block_indices):
                 name = node.id
@@ -307,6 +314,14 @@ class Unifier(Parameterization, LiteralPromotion):
 
             if len(set(canonical_names)) == 1:
                 return True  # All same name (possibly after alpha-renaming)
+
+            # A local already has one correspondence. A later read cannot
+            # silently overwrite it or turn its binding into an argument.
+            if any(
+                node.id not in self._block_free_variables(index)
+                for node, index in zip(nodes, block_indices)
+            ):
+                return False
 
             # Different names even after alpha-renaming - track correspondence before parameterizing
             # Use first ORIGINAL name (not canonical) for free variable correspondence
@@ -372,8 +387,8 @@ class Unifier(Parameterization, LiteralPromotion):
         # A construct that binds names (loop targets, lambda parameters,
         # comprehension targets, with-items, handler names, walrus targets)
         # is unified by a method of its own: the bound names are
-        # alpha-equivalent, never parameterized, and f-string literal parts
-        # and annotations are compared, never parameterized, likewise.
+        # alpha-equivalent, never parameterized. F-string text needs fields
+        # of its own; annotations retain their static syntax.
         handler = self._BINDING_CONSTRUCT_UNIFIERS.get(type(first_node))
         if handler is not None:
             return handler(self, nodes, substitution, list(block_indices))
@@ -996,6 +1011,15 @@ class Unifier(Parameterization, LiteralPromotion):
                 # See docs/KNOWN_LIMITATIONS.md for details
                 return False
 
+        signatures = [tuple(argument.arg for argument in node.args.args) for node in nodes]
+        if len(set(signatures)) > 1 and any(
+            lambda_body_is_closed(node) and not self._lambda_called_positionally(node, index)
+            for node, index in zip(nodes, block_indices)
+        ):
+            # The escape guard admits closed callbacks even to unknown
+            # consumers. Their keyword interface must remain unchanged.
+            return False
+
         # Defaults are evaluated where the lambda stands, before its parameters
         # exist, so they unify outside the parameters' renaming. Left out, a
         # block's own default was replaced by the template's, and only the
@@ -1034,6 +1058,27 @@ class Unifier(Parameterization, LiteralPromotion):
                     actual_param = node.args.args[param_idx].arg
                     key = (block_idx, actual_param)
                     self._restore_alpha_mapping(key, old_mappings)
+
+    def _lambda_called_positionally(self, node: ast.Lambda, block_index: int) -> bool:
+        """A direct, valid positional call makes parameter spellings unobservable.
+
+        A stored callback may escape through a global/nonlocal declaration
+        or an enclosing finally outside the block. Only its containing
+        function could prove otherwise; this unifier has just the block.
+        """
+        if self.current_blocks is None or block_index >= len(self.current_blocks):
+            return False
+        return any(
+            isinstance(parent, ast.Call)
+            and parent.func is node
+            and not parent.keywords
+            and not any(isinstance(argument, ast.Starred) for argument in parent.args)
+            and len(node.args.args) - len(node.args.defaults)
+            <= len(parent.args)
+            <= len(node.args.args)
+            for statement in self.current_blocks[block_index]
+            for parent in ast.walk(statement)
+        )
 
     def _unify_thunks(
         self, nodes: List[ast.Lambda], substitution: Substitution, block_indices: List[int]
@@ -1124,22 +1169,7 @@ class Unifier(Parameterization, LiteralPromotion):
     def _unify_joined_str(
         self, nodes: List[ast.JoinedStr], substitution: Substitution, block_indices: List[int]
     ) -> bool:
-        """
-        Unify f-strings (JoinedStr), never parameterizing Constant children.
-
-        F-strings have strict structure requirements:
-        - values list can only contain Constant or FormattedValue nodes
-        - Constant nodes are string literals and must NEVER be parameterized
-        - FormattedValue nodes contain expressions that CAN be unified/parameterized
-
-        Args:
-            nodes: List of JoinedStr nodes
-            substitution: Current substitution
-            block_indices: Block indices
-
-        Returns:
-            True if unification succeeded
-        """
+        """Unify text fragments through exact-string formatting, retaining shared affixes."""
         values_lists = [n.values for n in nodes]
         if not all(len(v) == len(values_lists[0]) for v in values_lists):
             # Different number of components - can't unify
@@ -1155,11 +1185,33 @@ class Unifier(Parameterization, LiteralPromotion):
                 return False
 
             if all_instances(components, ast.Constant):
-                # String literal parts are compared, never parameterized
                 values = [c.value for c in components]
                 if not all(v == values[0] for v in values):
-                    # Different string literals - can't unify f-strings with different text
-                    return False
+                    if (
+                        not self.parameterize_constants
+                        or not literal_fragment_transfer_supported()
+                        or not all(type(value) is str for value in values)
+                        or self._read_where_it_stands(components, block_indices, occurrences=True)
+                        or len(substitution.param_expressions) >= self.max_parameters
+                    ):
+                        return False
+                    texts = [str(value) for value in values]
+                    # A single chunk is returned by identity, including when
+                    # used as a format spec. Never split that pooled object.
+                    prefix = commonprefix(texts) if len(values_lists[0]) > 1 else ""
+                    tails = [text[len(prefix) :] for text in texts]
+                    suffix = (
+                        commonprefix([tail[::-1] for tail in tails])[::-1]
+                        if len(values_lists[0]) > 1
+                        else ""
+                    )
+                    parameter = self._fresh_parameter_name()
+                    substitution.fstring_affixes[parameter] = (prefix, suffix)
+                    for index, component in zip(block_indices, components):
+                        path = substitution.source_path(index, component)
+                        if path is None:
+                            return False
+                        substitution.add_occurrence_mapping(index, path, component, parameter)
 
             elif all_instances(components, ast.FormattedValue):
                 value_exprs = [c.value for c in components]
@@ -1173,7 +1225,7 @@ class Unifier(Parameterization, LiteralPromotion):
 
                 # format_spec can be None or another JoinedStr
                 format_specs = [c.format_spec for c in components]
-                if format_specs[0] is not None:
+                if any(spec is not None for spec in format_specs):
                     if not all_instances(format_specs, ast.JoinedStr):
                         return False
                     if not self._unify_joined_str(format_specs, substitution, block_indices):

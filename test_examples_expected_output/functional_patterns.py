@@ -6,12 +6,7 @@ map/filter/reduce patterns, and functional composition.
 """
 
 
-def __extracted_func_7(result, values):
-    normalized = list(map(lambda x: x / result if result != 0 else 0, values))
-    return {'reduced': result, 'normalized': normalized}
-
-
-def __extracted_func_6(__param_0, base_func, modifier, values):
+def __extracted_func_7(__param_0, base_func, modifier, values):
     apply_modifier = lambda x: base_func(x, modifier, __param_0)
     # Use partially applied function
     processed = list(map(apply_modifier, values))
@@ -19,7 +14,7 @@ def __extracted_func_6(__param_0, base_func, modifier, values):
     return {'processed': processed, 'filtered': filtered, 'count': len(filtered)}
 
 
-def __extracted_func_5(__param_0, data, multiplier):
+def __extracted_func_6(__param_0, data, multiplier):
     transform = lambda x: x * multiplier + __param_0
     filtered = filter(lambda x: x > 0, data)
     result = list(map(transform, filtered))
@@ -28,7 +23,7 @@ def __extracted_func_5(__param_0, data, multiplier):
     return []
 
 
-def __extracted_func_4(__param_0, data, predicate):
+def __extracted_func_5(__param_0, data, predicate):
     transformed = (item * __param_0 for item in data if predicate(item))
     filtered = (x for x in transformed if x > 10)
     squared = (x ** 2 for x in filtered)
@@ -37,6 +32,16 @@ def __extracted_func_4(__param_0, data, predicate):
     if result:
         return sorted(result, key=lambda x: -x)[:100]
     return []
+
+
+def __extracted_func_4(__param_0, initial, values):
+    from functools import reduce
+    # Complex reduce operation
+    # Same pattern, different threshold
+    result = reduce(lambda acc, x: acc + (x ** 2 if x > __param_0 else x), values, initial)
+    # Post-process with lambda
+    normalized = list(map(lambda x: x / result if result != 0 else 0, values))
+    return {'reduced': result, 'normalized': normalized}
 
 
 def __extracted_func_3(__param_0, curried, data, param1, param2):
@@ -86,35 +91,23 @@ def __extracted_func_0(__param_0, data, make_transformer, make_validator):
 def apply_transformation_v1(data, multiplier):
     """Version 1: Lambda with captured variable."""
     # Lambda that captures multiplier
-    return __extracted_func_5(10, data, multiplier)
+    return __extracted_func_6(10, data, multiplier)
 
 
 def apply_transformation_v2(data, multiplier):
     """Version 2: Different offset, same lambda pattern."""
     # Same pattern, different offset
-    return __extracted_func_5(20, data, multiplier)
+    return __extracted_func_6(20, data, multiplier)
 
 
 def reduce_with_lambda_a(values, initial, combiner):
     """Version A: Reduce with lambda."""
-    from functools import reduce
-
-    # Complex reduce operation
-    result = reduce(lambda acc, x: acc + (x**2 if x > 10 else x), values, initial)
-
-    # Post-process with lambda
-    return __extracted_func_7(result, values)
+    return __extracted_func_4(10, initial, values)
 
 
 def reduce_with_lambda_b(values, initial, combiner):
     """Version B: Different threshold, same reduce pattern."""
-    from functools import reduce
-
-    # Same pattern, different threshold
-    result = reduce(lambda acc, x: acc + (x**2 if x > 20 else x), values, initial)
-
-    # Post-process with lambda
-    return __extracted_func_7(result, values)
+    return __extracted_func_4(20, initial, values)
 
 
 def chain_functional_ops_v1(data, filter_func, map_func):
@@ -200,13 +193,13 @@ def compose_functions_v2(data, f, g, h):
 def partial_application_a(values, base_func, modifier):
     """Version A: Partial function application."""
     # Partial application
-    return __extracted_func_6('config1', base_func, modifier, values)
+    return __extracted_func_7('config1', base_func, modifier, values)
 
 
 def partial_application_b(values, base_func, modifier):
     """Version B: Different config, same partial application."""
     # Same partial application pattern
-    return __extracted_func_6('config2', base_func, modifier, values)
+    return __extracted_func_7('config2', base_func, modifier, values)
 
 
 def curry_functions_v1(data, operation, param1, param2):
@@ -230,10 +223,10 @@ def curry_functions_v2(data, operation, param1, param2):
 def generator_with_lambda_a(data, predicate):
     """Version A: Generator with lambda."""
     # Generator expression with lambda
-    return __extracted_func_4(2, data, predicate)
+    return __extracted_func_5(2, data, predicate)
 
 
 def generator_with_lambda_b(data, predicate):
     """Version B: Different multiplier, same generator pattern."""
     # Same generator pattern
-    return __extracted_func_4(3, data, predicate)
+    return __extracted_func_5(3, data, predicate)

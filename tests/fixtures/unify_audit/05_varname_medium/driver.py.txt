@@ -1,0 +1,12 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import dedupe
+
+emails = [" Ada@Example.com", "bob@example.com", "ada@example.com ", "", "  ", "Zed@example.com"]
+print(dedupe.unique_emails(emails))
+print(dedupe.unique_tags(dedupe.split_tags("Python; python ,Refactoring,, tools;TOOLS")))
+print(dedupe.unique_emails([]), dedupe.unique_tags(iter(["b", "a", "B"])))
+assert dedupe.unique_tags(["x", "X ", "y"]) == ["x", "y"]
+print("ok")

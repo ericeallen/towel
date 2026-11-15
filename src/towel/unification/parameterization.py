@@ -331,6 +331,23 @@ class Parameterization(UnifierState):
                 key = (block_idx, var_name)
                 self.alpha_renamings[key] = canonical_name
 
+    def _match_stored_names(self, nodes: Sequence[ast.Name], block_indices: Sequence[int]) -> bool:
+        """Match nested stores bijectively, without changing an earlier correspondence."""
+        keys = [(index, node.id) for index, node in zip(block_indices, nodes)]
+        canonical = [self.alpha_renamings.get(key, key[1]) for key in keys]
+        if len(set(canonical)) != 1 and any(key in self.alpha_renamings for key in keys):
+            return False
+        target = canonical[0]
+        if any(
+            index == other_index and name != other_name and mapped == target
+            for index, name in keys
+            for (other_index, other_name), mapped in self.alpha_renamings.items()
+        ):
+            return False
+        for key in keys:
+            self.alpha_renamings[key] = target
+        return True
+
     def _get_assignment_targets(self, stmt: ast.AST) -> List[ast.AST]:
         """
         Extract assignment targets from a statement.

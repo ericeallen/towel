@@ -122,10 +122,25 @@ def test_a_name_bound_before_and_rebound_in_the_block_is_still_an_orphan(tmp_pat
 
 
 @pytest.mark.strict_mode
-def test_original_partial_example_is_refused_without_changing_behavior(tmp_path: Path) -> None:
+def test_original_partial_example_now_extracts_whole_without_changing_behavior(
+    tmp_path: Path,
+) -> None:
+    """Audit D1: differing f-string text no longer forces a partial extraction."""
     path = tmp_path / "partial.py"
     path.write_text(OWNED_PARTIAL)
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
+    final, applied, _ = engine.refactor_to_fixed_point(str(path))
+    assert applied == 1
+    assert _run(final) == _run(OWNED_PARTIAL) == ["Order 7: $10.8", "Quote 7: $10.8"]
+
+
+@pytest.mark.strict_mode
+def test_partial_example_with_different_conversions_still_refuses(tmp_path: Path) -> None:
+    """Audit D1: genuine formatting differences leave the partial lifetime guard intact."""
+    source = OWNED_PARTIAL.replace("Quote {quote.id}: ${total}", "Quote {quote.id}: ${total!r}")
+    path = tmp_path / "partial.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     assert engine.analyze_file(str(path)) == []
     assert "owned_binding_frame_boundary" in engine.declined_pairs
-    assert _run(OWNED_PARTIAL) == ["Order 7: $10.8", "Quote 7: $10.8"]
+    assert _run(source) == ["Order 7: $10.8", "Quote 7: $10.8"]

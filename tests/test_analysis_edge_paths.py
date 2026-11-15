@@ -74,11 +74,14 @@ def test_nonlocal_scan_without_a_scope_analyzer_reads_only_the_function_itself(
     assert engine._declares_nonlocal(None, None) is False
 
 
-def test_format_specs_with_different_literal_text_do_not_unify() -> None:
+def test_format_specs_with_different_literal_text_unify() -> None:
+    """Audit D1: raw spec text becomes an exact string field, preserving formatting."""
     unifier = Unifier(max_parameters=5, parameterize_constants=True)
     right_aligned = parse_block("x = f'{v:>{w}}'\ny = x + 'a'\n")
     left_aligned = parse_block("x = f'{v:<{w}}'\ny = x + 'a'\n")
-    assert unifier.unify_blocks([right_aligned, left_aligned], [{}, {}]) is None
+    result = unifier.unify_blocks([right_aligned, left_aligned], [{}, {}])
+    assert result is not None
+    assert result.fstring_affixes == {"__param_0": ("", "")}
     also_right = parse_block("x = f'{v:>{w}}'\ny = x + 'a'\n")
     assert unifier.unify_blocks([right_aligned, also_right], [{}, {}]) is not None
 

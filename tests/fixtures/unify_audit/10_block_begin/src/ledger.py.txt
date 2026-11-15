@@ -1,0 +1,33 @@
+"""Reports over the household ledger export."""
+
+
+def monthly_report(transactions, month):
+    cleaned = []
+    for tx in transactions:
+        if tx.get("void"):
+            continue
+        amount = round(float(tx["amount"]), 2)
+        category = (tx.get("category") or "other").lower()
+        cleaned.append({"date": tx["date"], "amount": amount, "category": category})
+    cleaned.sort(key=lambda tx: tx["date"])
+    in_month = [tx for tx in cleaned if tx["date"].startswith(month)]
+    spent = sum(tx["amount"] for tx in in_month if tx["amount"] < 0)
+    earned = sum(tx["amount"] for tx in in_month if tx["amount"] > 0)
+    return {"month": month, "count": len(in_month), "spent": round(-spent, 2), "earned": round(earned, 2)}
+
+
+def category_breakdown(transactions):
+    cleaned = []
+    for tx in transactions:
+        if tx.get("void"):
+            continue
+        amount = round(float(tx["amount"]), 2)
+        category = (tx.get("category") or "other").lower()
+        cleaned.append({"date": tx["date"], "amount": amount, "category": category})
+    cleaned.sort(key=lambda tx: tx["date"])
+    totals = {}
+    first_seen = {}
+    for tx in cleaned:
+        totals[tx["category"]] = round(totals.get(tx["category"], 0) + tx["amount"], 2)
+        first_seen.setdefault(tx["category"], tx["date"])
+    return [(name, totals[name], first_seen[name]) for name in sorted(totals)]

@@ -1,0 +1,20 @@
+import sys
+import typing
+
+sys.path.insert(0, sys.argv[1])
+
+from lookup import Group, User, find_group, find_user, members_of
+
+users = [User(1, "Ada", "ada@example.com"), User(2, "Bob", "bob@example.com"), User(3, "ADA", "ada2@example.com"), User(4, "Cy", "cy@example.com")]
+groups = [Group(10, "Admins", [1, 4]), Group(11, "Ops", [2]), Group(12, "ops ", [3]), Group(13, "OPS")]
+print(find_user(users, " bob "), find_user(users, "nobody"), find_user([], "x"))
+print(find_group(groups, "ADMINS"), find_group(groups[:2], "ops "), find_group(iter(groups), "none"))
+for call in (lambda: find_user(users, "ada"), lambda: find_group(groups, "Ops")):
+    try:
+        print(call())
+    except LookupError as exc:
+        print("LookupError", exc)
+print(members_of(groups, users, "admins"), members_of(groups, users, "missing"))
+for func in (find_user, find_group):
+    print(func.__name__, typing.get_type_hints(func))
+print("ok")

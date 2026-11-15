@@ -30,6 +30,8 @@ All tests read from test_examples in read-only mode.
 
 import unittest
 import ast
+
+import pytest
 import tempfile
 from pathlib import Path
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -240,14 +242,13 @@ class TestScopingEdgeCases(unittest.TestCase):
         self.assertEqual(proposals[0].parameters_count, 0)
         ast.parse(ast.unparse(helper))
 
-    def test_lambda_parameter_spelled_differently_is_alpha_equivalent(self):
-        """A lambda whose parameter is spelled differently unifies whole.
+    @pytest.mark.strict_mode
+    def test_stored_lambda_parameter_spelling_is_preserved(self):
+        """Stored closed callbacks retain their keyword interface.
 
-        ``lambda value: value * 2`` and ``lambda other: other * 2`` are the same
-        function: the unifier alpha-renames the parameters and the
-        instantiation check renames them within their lambda, so the whole
-        pair unifies, lambda included; here that makes the two bodies
-        identical, and both functions call one helper.
+        A candidate block cannot prove the absence of global/nonlocal
+        declarations or enclosing finally clauses outside that block.
+        Immediate positional lambda calls have separate alpha-renaming tests.
         """
         proposals = self._analyze_source(
             "def first(items):\n"
@@ -264,11 +265,35 @@ class TestScopingEdgeCases(unittest.TestCase):
             "        out.append(double(item))\n"
             "    return out\n"
         )
-        self.assertEqual(len(proposals), 1, [p.description for p in proposals])
-        # The whole bodies match, so both become calls of the helper.
-        proposal = proposals[0]
-        self.assertIsNone(proposal.reused_function)
-        self.assertEqual(sorted(r.line_range for r in proposal.replacements), [(2, 6), (9, 13)])
+        self.assertEqual(proposals, [])
+
+    def test_stored_lambda_parameter_spelling_is_preserved_when_the_rest_is_shared(self):
+        """In relaxed mode the loop after the lambda is shared and each lambda stays where it is.
+
+        Strict mode declines that partial block for object-lifetime reasons, which is why
+        the test above sees no proposal there. Relaxed mode extracts it, and the property
+        the test above protects still holds: the helper receives each caller's callback as
+        an argument, so neither ``lambda value`` nor ``lambda other`` is moved or respelled.
+        """
+        proposals = self._analyze_source(
+            "def first(items):\n"
+            "    double = lambda value: value * 2\n"
+            "    out = []\n"
+            "    for item in items:\n"
+            "        out.append(double(item))\n"
+            "    return out\n"
+            "\n"
+            "def second(items):\n"
+            "    double = lambda other: other * 2\n"
+            "    out = []\n"
+            "    for item in items:\n"
+            "        out.append(double(item))\n"
+            "    return out\n"
+        )
+        for proposal in proposals:
+            helper = proposal.extracted_function
+            self.assertEqual([n for n in ast.walk(helper) if isinstance(n, ast.Lambda)], [])
+            self.assertEqual({r.line_range for r in proposal.replacements}, {(3, 6), (10, 13)})
 
 
 if __name__ == "__main__":

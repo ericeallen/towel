@@ -16,7 +16,7 @@
 Tests for f-string and constant handling.
 
 Tests that:
-1. F-string literal parts are never parameterized
+1. Differing f-string text becomes an exact-string parameter
 2. F-string expressions can be parameterized
 3. Constants can be parameterized when enabled
 4. Generated code doesn't cause AST unparsing errors
@@ -70,34 +70,22 @@ class TestFStringHandling(unittest.TestCase):
             'f"' in func_code or "f'" in func_code, f"Expected f-string in: {func_code}"
         )
 
-    def test_fstring_with_different_literals_no_unify(self):
-        """F-strings whose literal text differs are never folded into one helper.
-
-        ``log_user`` and ``log_admin`` differ only in the literal text of an
-        f-string. The engine may still share the statements around it, but
-        the f-string line itself stays at each site and no helper contains it.
-        """
+    def test_fstring_with_different_literals_unifies(self):
+        """Audit D1: log_user/log_admin share the differing text through a string argument."""
         proposals = self.engine.analyze_file(str(self.example_path))
-
         log_props = [
             p
             for p in proposals
             if "log_user" in p.description.lower() and "log_admin" in p.description.lower()
         ]
-        self.assertGreater(len(log_props), 0, "the shared tail of log_user/log_admin")
-
-        fstring_lines = {
-            node.lineno
-            for node in ast.walk(ast.parse(self.original_content))
-            if isinstance(node, ast.JoinedStr)
-        }
-        for prop in log_props:
-            joined = [n for n in ast.walk(prop.extracted_function) if isinstance(n, ast.JoinedStr)]
-            self.assertEqual(joined, [], ast.unparse(prop.extracted_function))
-            for replacement in prop.replacements:
-                start, end = replacement.line_range
-                covered = {line for line in fstring_lines if start <= line <= end}
-                self.assertEqual(covered, set(), "f-string line must stay at the site")
+        self.assertTrue(
+            any(
+                isinstance(node, ast.JoinedStr)
+                for prop in log_props
+                for node in ast.walk(prop.extracted_function)
+            ),
+            "The shared helper must include the f-string, not only its tail",
+        )
 
     def test_fstring_no_ast_errors(self):
         """Test that f-strings don't cause AST unparsing errors."""
