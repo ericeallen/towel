@@ -304,17 +304,26 @@ class TestUnifyBlocks:
         pairs = pair_blocks(eng, funcs, progress="none")
 
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
-        # Occurrence-specific constants also admit four mixed guard windows.
-        assert descriptions(proposals) == [USER_ADMIN] * 5 + [ADMIN_GUEST] * 2
+        # Audit D1: text parameters also admit windows containing the final
+        # f-string, including the complete bodies. Mixed guard windows remain.
+        assert descriptions(proposals) == [USER_ADMIN] * 12 + [ADMIN_GUEST] * 3
         assert [
             tuple(replacement.line_range for replacement in proposal.replacements)
             for proposal in proposals
         ] == [
+            ((11, 22), (28, 39), (45, 56)),
+            ((14, 22), (31, 39), (48, 56)),
+            ((14, 21), (31, 38), (48, 55)),
+            ((16, 22), (33, 39), (50, 56)),
             ((14, 19), (31, 36), (48, 53)),
+            ((16, 21), (33, 38), (50, 55)),
+            ((18, 22), (35, 39), (52, 56)),
             ((14, 17), (31, 34), (48, 51)),
             ((14, 17), (33, 36), (50, 53)),
             ((16, 19), (31, 34), (48, 51)),
             ((16, 19), (33, 36), (50, 53)),
+            ((18, 21), (35, 38), (52, 55)),
+            ((28, 39), (45, 56), (11, 22)),
             ((31, 34), (50, 53), (16, 19)),
             ((33, 36), (48, 51), (14, 17)),
         ]
@@ -339,8 +348,8 @@ class TestFilterOverlaps:
         proposals = unify_blocks(eng, pairs, funcs, classes, progress="none")
 
         filtered = filter_overlaps(proposals)
-        # All seven valid overlapping windows still collapse to one.
-        assert descriptions(proposals) == [USER_ADMIN] * 5 + [ADMIN_GUEST] * 2
+        # Audit D1: the fifteen valid overlapping windows still collapse to one.
+        assert descriptions(proposals) == [USER_ADMIN] * 12 + [ADMIN_GUEST] * 3
         assert isinstance(filtered, list)
         assert descriptions(filtered) == [USER_ADMIN]
 
