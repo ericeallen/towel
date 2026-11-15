@@ -107,6 +107,7 @@ def _build_parser() -> argparse.ArgumentParser:
     """The command-line parser, shared by ``main`` and the tests."""
     parser = argparse.ArgumentParser(
         prog="towel",
+        allow_abbrev=False,
         description="""\
 Towel finds repeated code in Python files, including copies that differ in a
 few names or values, and replaces it with calls to new helper functions.""",
@@ -429,6 +430,7 @@ def _add_dry_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentPar
     """Add 'dry' subcommand parser."""
     parser = subparsers.add_parser(
         "dry",
+        allow_abbrev=False,
         help="Refactor repeated code, into a new directory or in place",
         formatter_class=_HelpFormatter,
         description="""\
@@ -639,6 +641,7 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     """Add 'preview' subcommand parser."""
     parser = subparsers.add_parser(
         "preview",
+        allow_abbrev=False,
         help="Show what dry would change, changing nothing",
         formatter_class=_HelpFormatter,
         description="""\
@@ -701,6 +704,7 @@ def _add_recover_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     """Add 'recover' subcommand parser."""
     parser = subparsers.add_parser(
         "recover",
+        allow_abbrev=False,
         help="Undo an interrupted in-place run, from the journal it left",
         formatter_class=_HelpFormatter,
         description="""\
@@ -731,6 +735,7 @@ def _add_rename_helpers_parser(
     """Add 'rename-helpers' subcommand parser."""
     parser = subparsers.add_parser(
         "rename-helpers",
+        allow_abbrev=False,
         help="Give the generated helpers meaningful names, updating every call",
         formatter_class=_HelpFormatter,
         description="""\

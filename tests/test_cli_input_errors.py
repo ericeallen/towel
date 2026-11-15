@@ -96,3 +96,24 @@ def test_preview_of_one_file_is_silent_under_progress_none(
     captured = capsys.readouterr()
     assert "\r" not in captured.out and "\r" not in captured.err
     assert "Would apply 1 refactoring" in captured.out
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["preview", "in", "--summ"],
+        ["dry", "in", "out", "--min-line", "4"],
+        ["rename-helpers", "src", "--comp"],
+        ["recover", "journal", "--he"],
+        ["--vers"],
+    ],
+)
+def test_an_abbreviated_option_is_refused(
+    arguments: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """User audit CLI-10: --summ and --min-line were accepted as abbreviations, so a script
+    could come to mean another option when a new one shares the prefix."""
+    with pytest.raises(SystemExit) as exit_info:
+        _build_parser().parse_args(arguments)
+    assert exit_info.value.code == 2
+    assert "unrecognized arguments" in capsys.readouterr().err
