@@ -117,11 +117,13 @@ def test_a_run_the_checker_never_answered_raises_and_publishes_nothing(
     oracle = _Oracle(_timed_out)
     with pytest.raises(
         CheckerCannotCheckTheProject, match=r"(?s)checker could not run.*timed out.*--no-types"
-    ):
+    ) as refused:
         with contextlib.redirect_stdout(io.StringIO()):
             _engine(_timed_out, oracle).refactor_directory_to_fixed_point(
                 str(project), str(output), progress="none"
             )
+    # Typed round 2 finding 7: dependencies cannot repair a Towel verification defect.
+    assert "install" not in str(refused.value)
     assert oracle.checks == 3, "the original, one candidate, and its files as they stand"
     assert "could not be rendered" not in caplog.text
     assert (project / "a.py").read_text() == PAIR

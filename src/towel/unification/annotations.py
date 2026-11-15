@@ -129,7 +129,7 @@ def annotate_helper(
 ) -> ast.FunctionDef:
     """A copy of ``helper`` carrying every annotation the sites agree on."""
     annotated = copy.deepcopy(helper)
-    if not sites or not any(_uses_annotations(site.function) for site in sites):
+    if not sites or not any(function_uses_annotations(site.function) for site in sites):
         return annotated
     host = next((site.module for site in sites if site.file_path == host_file), None)
     same_module = all(site.file_path == host_file for site in sites)
@@ -145,14 +145,19 @@ def annotate_helper(
     return annotated
 
 
-def _uses_annotations(function: FunctionNode) -> bool:
+def function_uses_annotations(function: FunctionNode) -> bool:
+    """Whether the function declares a parameter or return type."""
     arguments = function.args
     every = arguments.posonlyargs + arguments.args + arguments.kwonlyargs
     if arguments.vararg:
         every.append(arguments.vararg)
     if arguments.kwarg:
         every.append(arguments.kwarg)
-    return function.returns is not None or any(arg.annotation is not None for arg in every)
+    return (
+        function.type_comment is not None
+        or function.returns is not None
+        or any(arg.annotation is not None or arg.type_comment is not None for arg in every)
+    )
 
 
 def _parameter_annotations(function: FunctionNode) -> Dict[str, ast.expr]:
@@ -720,7 +725,7 @@ def _import_bound_names(module: ast.Module) -> Set[str]:
 
 def sites_use_annotations(sites: Sequence[CallSite]) -> bool:
     """Whether any site's function declares a type, the style gate for annotating."""
-    return any(_uses_annotations(site.function) for site in sites)
+    return any(function_uses_annotations(site.function) for site in sites)
 
 
 _TYPING_NAMES = frozenset({"Any", "Callable", "Literal", "Optional", "Union"})

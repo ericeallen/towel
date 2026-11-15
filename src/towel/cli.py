@@ -71,6 +71,7 @@ from towel.cli_reporting import (
     HelperRecord as HelperRecord,
     HelperScopeKind as HelperScopeKind,
     ParameterRecord as ParameterRecord,
+    TypesStatus,
     render_preview,
     source_diff,
 )
@@ -621,6 +622,12 @@ def _add_shared_options(sections: _Sections) -> None:
     _add_exclude_flag(sections.scope)
     _add_cross_module_flag(sections.scope)
     _add_limit_flags(sections.limits)
+    sections.advanced.add_argument(
+        "--strict",
+        action="store_true",
+        help="Refuse when a configured checker is missing, and require resolved imports even for "
+        "unannotated code (relaxed mode is the default).",
+    )
     _add_tool_flags(sections.advanced)
     _add_parameterize_builtins_flag(sections.advanced)
 
@@ -1067,7 +1074,7 @@ def _verification_cost(
     It names the checkers the run will start, chosen as the run chooses them
     but without starting one, since the user has not yet agreed to the run.
     When none will run (none is installed, or a configured one is missing and
-    the run is about to be refused for it) there is no verification to cost.
+    the run will refuse or proceed unverified) there is no verification to cost.
     The files counted are those the run analyzes, less ``excluded``.
     """
     from towel.type_inference import CheckerNotInstalled, type_checkers_for_project
@@ -1084,7 +1091,7 @@ def _verification_cost(
     try:
         checkers = type_checkers_for_project(project_path)
     except CheckerNotInstalled:
-        return []  # The selection after the prompt refuses the run, saying why.
+        return []  # Selection reports refusal or unverified fallback before any prompt.
     if not checkers:
         return []
     packages = _import_breadth(files, project_path)
@@ -1103,21 +1110,29 @@ def _verification_cost(
 
 
 def _type_oracle(project_path: "Path") -> Optional["TypeOracle"]:
-    """The checker the project configures (mypy, pyright, or both), or None with a note.
-
-    A configured checker that is not installed is refused by the selection
-    itself (``CheckerNotInstalled``), before anything is written.
-    """
+    """Select the project's checker, raising when a configured checker is missing."""
     from towel.type_inference import type_oracle_for_project
 
-    choice = type_oracle_for_project(project_path)
-    if choice.tool is None:
-        print(
-            f"Note: {choice.note}, so helper annotations are copied from the call sites but not "
-            'inferred or verified. Install the types extra (pip install "code-towel[types]").',
-            file=sys.stderr,
-        )
-    return choice.tool
+    return type_oracle_for_project(project_path).tool
+
+
+def _target_has_annotations(project_path: Path, excluded: Sequence[str]) -> bool:
+    """Whether any selected source has annotations an optional checker could verify."""
+    for path in python_sources(project_path, excluded=excluded):
+        try:
+            tree = ast.parse(read_source(path), type_comments=True)
+        except (OSError, UnicodeError, SyntaxError, ValueError):
+            continue  # This census only chooses a note; analysis handles unreadable source.
+        if any(
+            isinstance(node, ast.AnnAssign)
+            or isinstance(node, ast.arg)
+            and (node.annotation is not None or node.type_comment is not None)
+            or isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and (node.returns is not None or node.type_comment is not None)
+            for node in ast.walk(tree)
+        ):
+            return True
+    return False
 
 
 def _generated_code_formatter(
@@ -1210,6 +1225,7 @@ class DryOptions:
     summary: bool = False
     diff: bool = False
     inventory: bool = False
+    strict: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -1224,6 +1240,7 @@ class DryOptions:
             max_pairs=int(args.max_pairs),
             progress=normalize_progress(args.progress),
             types=bool(args.types),
+            strict=bool(args.strict),
             format=bool(args.format),
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
@@ -1256,6 +1273,7 @@ class PreviewOptions:
     summary: bool = False
     diff: bool = False
     inventory: bool = False
+    strict: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -1268,6 +1286,7 @@ class PreviewOptions:
             progress=normalize_progress(args.progress),
             max_refactorings=int(args.max_refactorings),
             types=bool(args.types),
+            strict=bool(args.strict),
             format=bool(args.format),
             quick=bool(args.quick),
             exclude=tuple(args.exclude or ()),
@@ -1292,6 +1311,7 @@ class PreviewOptions:
             max_pairs=self.max_pairs,
             progress=self.progress,
             types=self.types,
+            strict=self.strict,
             format=self.format,
             exclude=self.exclude,
             cross_module=self.cross_module,
@@ -1356,14 +1376,6 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
 
     is_file, is_dir = _existing_target(input_path)
 
-    if is_file and not input_path.endswith(".py"):
-        print(f"Warning: '{input_path}' is not a Python file (.py)")
-        # ``--no-interactive`` promises no prompt: an unattended run asked
-        # here would block on an open stdin, or read a closed one as "no"
-        # and exit 0 having written nothing. The file was named explicitly.
-        if options.interactive and not _confirm("Analyze anyway? (y/N): "):
-            raise ValueError("Aborted; no output was published")
-
     # Resolve aliases before checking containment or creating any output.
     source = _resolve_cli_path(input_path)
     destination = _resolve_cli_path(output_path)
@@ -1387,12 +1399,6 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         print("or inside the class or function the duplicates share.")
         print()
 
-    if options.interactive:
-        for line in _verification_cost(Path(input_path), options.types, options.exclude):
-            print(line)
-        if not _confirm("Proceed? (y/N): "):
-            raise ValueError("Aborted; no output was published")
-
     journal = _pending_journal(source, options.exclude)
     if journal is not None and source == destination:
         raise ValueError(
@@ -1405,8 +1411,49 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         # interrupted change left them, which the user should know first.
         LOG.warning("%s", pending_journal_remedy(journal, "this output is refactored from"))
 
-    oracle = _type_oracle(Path(input_path)) if options.types else None
+    from towel.type_baseline import UNTYPED_REMEDY
+    from towel.type_inference import CheckerNotInstalled, type_checkers_for_project
+
+    annotate_helpers = options.types
     try:
+        if options.types:
+            type_checkers_for_project(source)
+    except CheckerNotInstalled as error:
+        if options.strict:
+            raise
+        annotate_helpers = False
+        print(
+            f"Warning: {error.explanation}. Continuing without type verification; generated "
+            "helpers stay bare. Use --strict to refuse instead.",
+            file=sys.stderr,
+        )
+    oracle: Optional[TypeOracle] = None
+    try:
+        if is_file and not input_path.endswith(".py"):
+            print(f"Warning: '{input_path}' is not a Python file (.py)")
+            # ``--no-interactive`` promises no prompt: an unattended run asked
+            # here would block on an open stdin, or read a closed one as "no"
+            # and exit 0 having written nothing. The file was named explicitly.
+            if options.interactive and not _confirm("Analyze anyway? (y/N): "):
+                raise ValueError("Aborted; no output was published")
+
+        if options.interactive:
+            for line in _verification_cost(Path(input_path), options.types, options.exclude):
+                print(line)
+            if not _confirm("Proceed? (y/N): "):
+                raise ValueError("Aborted; no output was published")
+
+        oracle = _type_oracle(source) if annotate_helpers else None
+        if oracle is None and annotate_helpers and _target_has_annotations(source, options.exclude):
+            print(
+                "Note: neither mypy nor pyright is installed, so helper annotations are copied "
+                "from the call sites but not inferred or verified. Install the types extra "
+                '(pip install "code-towel[types]").',
+                file=sys.stderr,
+            )
+        types_status: TypesStatus = (
+            "off" if not options.types else "verified" if oracle is not None else "unverified"
+        )
         engine = UnificationRefactorEngine(
             max_parameters=options.max_parameters,
             min_lines=options.min_lines,
@@ -1420,7 +1467,8 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                 _generated_code_formatter(Path(input_path)) if options.format else None
             ),
             file_finisher=_file_finisher(Path(input_path), sort_imports=options.format),
-            annotate_helpers=options.types,
+            annotate_helpers=annotate_helpers,
+            strict=options.strict,
             type_oracle=oracle,
         )
 
@@ -1486,9 +1534,10 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
             print(
                 f"\n{engine.checker_failures} proposal(s) were dropped because the type checker"
                 " could not run for them (see the warnings above); they were not judged."
+                f" {UNTYPED_REMEDY}"
             )
         if not (options.json or options.diff):
-            _print_declined(engine.run_report, applied)
+            _print_declined(engine.run_report, applied, target=source)
         if options.stats:
             _print_statistics(engine.run_report)
         if not preview:
@@ -1503,7 +1552,9 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                     " available without call-site before/after metadata.",
                     error,
                 )
-        return _command_result(engine, options, applied, termination, preview=preview)
+        return _command_result(
+            engine, options, applied, termination, preview=preview, types_status=types_status
+        )
     finally:
         if oracle is not None:
             oracle.close()
@@ -1718,37 +1769,72 @@ def _problems_involving(model: "ImportModel", target: Path) -> List["ImportProbl
     ]
 
 
-def _print_declined(report: "RunReport", applied: int) -> None:
+def _print_declined(report: "RunReport", applied: int, *, target: Optional[Path] = None) -> None:
     """Say what the run declined, and why, so "No refactorings found!" is never the whole story.
 
     Proposals that were built and then not applied are always counted. The
     candidate pairs the analysis declined are counted when nothing was
     applied, which is when a reader asks why.
     """
-    from towel.unification.fixed_point import counted_reasons
+    from towel.type_baseline import TYPE_CHECKING_REMEDIES, UNTYPED_REMEDY
+    from towel.unification.exceptions import Untypeable
+    from towel.unification.fixed_point import DeclineReason, counted_reasons
 
     lines: List[str] = []
-    if report.declined_proposals:
+    profitability = (
+        "  The shared work does not repay the helper and caller complexity; "
+        "these blocks were left unchanged."
+    )
+    if unprofitable := report.declined_proposals.get("unprofitable helper", 0):
         lines.append(
-            f"  {sum(report.declined_proposals.values())} proposal(s) not applied: "
-            f"{counted_reasons(report.declined_proposals)}"
+            f"  {unprofitable} proposal(s) not applied: unprofitable helper {unprofitable}"
         )
+        lines.append(profitability)
+    unresolved_reason: DeclineReason = (
+        "not verifiable: its file holds a name the type checker cannot type"
+    )
+    other_proposals = {
+        reason: count
+        for reason, count in report.declined_proposals.items()
+        if reason not in {unresolved_reason, "unprofitable helper"}
+    }
+    if other_proposals:
+        lines.append(
+            f"  {sum(other_proposals.values())} proposal(s) not applied: "
+            f"{counted_reasons(other_proposals)}"
+        )
+    if unresolved := report.declined_proposals.get(unresolved_reason, 0):
+        problem = report.first_unverifiable_reason
+        if problem and target is not None:
+            root = target if target.is_dir() else target.parent
+            problem = problem.removeprefix(str(root.resolve()) + os.sep)
+        detail = (
+            f" First problem: {problem}"
+            if problem
+            else " A name used by the code has no type the checker can establish."
+        )
+        lines.append(
+            f"  The type checker could not verify {unresolved} proposed refactoring(s), "
+            f"so those blocks were left unchanged.{detail}"
+        )
+    if any(
+        isinstance(reason, Untypeable)
+        or reason == "refused by the type checker"
+        or reason.startswith(("not judged:", "not verifiable:"))
+        for reason in report.declined_proposals
+    ):
+        lines.append(f"  {TYPE_CHECKING_REMEDIES if unresolved else UNTYPED_REMEDY}")
     if not applied and report.declined_pairs:
         lines.append(
             f"  {sum(report.declined_pairs.values())} candidate pair(s) declined: "
             f"{counted_reasons(report.declined_pairs)}"
         )
+        if report.declined_pairs.get("unprofitable_helper", 0):
+            lines.append(profitability)
     if lines:
         print("\nDeclined (use --explain for source locations and reasons):")
         for line in lines:
             print(line)
-        if report.declined_pairs.get("unprofitable_helper", 0) or report.declined_proposals.get(
-            "unprofitable helper", 0
-        ):
-            print(
-                "  The shared work does not repay the helper and caller complexity; "
-                "these blocks were left unchanged."
-            )
 
 
 def _print_statistics(report: "RunReport") -> None:
@@ -1966,6 +2052,7 @@ def _command_result(
     termination: str,
     *,
     preview: bool,
+    types_status: TypesStatus,
 ) -> CommandResult:
     inventory = None
     if options.json:
@@ -1978,7 +2065,7 @@ def _command_result(
             # A naming aid is optional; a failed read after dry has committed
             # must not turn published output into a reported failed operation.
             LOG.warning("Helper inventory unavailable: %s", error)
-    return {
+    result: CommandResult = {
         "schema_version": 1,
         "command": "preview" if preview else "dry",
         "status": "complete",
@@ -1995,6 +2082,9 @@ def _command_result(
         "helpers": inventory,
         "error": None,
     }
+    if types_status != "verified" or engine.type_check_ran:
+        result["types"] = types_status
+    return result
 
 
 def _write_failure_result(
@@ -2056,6 +2146,7 @@ def _run_quick_preview(options: PreviewOptions) -> None:
         parameterize_constants=True,
         excluded_directories=options.exclude,
         cross_module_helpers=options.cross_module,
+        strict=options.strict,
     )
 
     # Analyze

@@ -235,7 +235,8 @@ def test_only_normal_ladder_exhaustion_is_a_completed_refusal(
     assert str(caught.value) == (
         "later rung rendering failed"
         if fails_later
-        else "Every helper annotation variant introduces project type errors"
+        else "Every helper annotation variant introduces project type errors. "
+        "To proceed without type verification, use --no-types."
     )
 
 

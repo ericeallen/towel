@@ -211,7 +211,10 @@ def _options(
     # A plugin is a type rule, not one of these, and stays configured.
     if hasattr(options, "num_workers"):
         options.num_workers = 0  # Own one process; do not leave project-local worker status files.
-    options.python_executable = sys.executable
+    # None is mypy's no_site_packages policy, not a requested executable.
+    # Preserve it so installed dependencies cannot hide unresolved imports.
+    if options.python_executable is not None:
+        options.python_executable = sys.executable
     options.report_dirs = {}
     options.junit_xml = None
     options.timing_stats = None
@@ -806,38 +809,69 @@ def _base_for(path: str, module: str) -> Optional[str]:
     return str(Path(*spelled[: -len(parts)]))
 
 
+def _sources_naming(path: str, module: str, sources: Sequence[BuildSource]) -> list[BuildSource]:
+    """Sources naming ``path`` as ``module``, directly or as their enclosing package."""
+    package = Path(path).stem == "__init__"
+    return [
+        source
+        for source in sources
+        if source.path is not None
+        and (
+            (os.path.realpath(source.path) == path and source.module == module)
+            or (
+                package
+                and Path(os.path.realpath(source.path)).is_relative_to(Path(path).parent)
+                and source.module.startswith(module + ".")
+                and _base_for(source.path, source.module) == _base_for(path, module)
+            )
+        )
+    ]
+
+
 def _named_by_its_importer(
     messages: Sequence[str],
     sources: Sequence[BuildSource],
     judged: Callable[[str], bool],
     renamed: set[str],
 ) -> Optional[list[BuildSource]]:
-    """``sources`` with one file renamed as the import mypy reached it by names it, if that answers.
+    """Give synthetic sources the names by which the project's imports reach them.
 
-    Only a file the project's own run is not given, which exists in that run
-    only as the module some import reaches, and only once: every other
-    "found twice" is the project's own, or no single rename resolves it.
+    An initializer can be loaded implicitly by a supplied child module. All
+    children supplying its short name must change together, or they load the
+    initializer again under that name. Mypy reports the two names in discovery
+    order, so identify the synthetic name from the supplied sources, not from
+    its position in the diagnostic. If both names are supplied, or a source
+    belongs to the project's own targets, preserve the project's refusal.
     """
     for message in messages:
         match = _FOUND_TWICE.match(message)
         if match is None:
             continue
         path = os.path.realpath(match.group("path"))
-        for index, source in enumerate(sources):
-            if (
-                source.path is None
-                or os.path.realpath(source.path) != path
-                or source.module != match.group("given")
-                or path in renamed
-                or judged(source.path)
-            ):
-                continue
-            base = _base_for(path, match.group("imported"))
+        given, imported = match.group("given"), match.group("imported")
+        candidates = [
+            (old, new, group)
+            for old, new in ((given, imported), (imported, given))
+            if (group := _sources_naming(path, old, sources))
+        ]
+        if len(candidates) != 1:
+            continue
+        old, new, group = candidates[0]
+        if judged(path) or any(
+            source.path is None or os.path.realpath(source.path) in renamed or judged(source.path)
+            for source in group
+        ):
+            continue
+        replacements: dict[str, BuildSource] = {}
+        for source in group:
+            assert source.path is not None
+            module = new + source.module[len(old) :]
+            base = _base_for(source.path, module)
             if base is None:
                 return None
-            renamed.add(path)
-            as_imported = BuildSource(source.path, match.group("imported"), source.text, base)
-            return [*sources[:index], as_imported, *sources[index + 1 :]]
+            replacements[source.path] = BuildSource(source.path, module, source.text, base)
+        renamed.update(os.path.realpath(source_path) for source_path in replacements)
+        return [replacements.get(source.path or "", source) for source in sources]
     return None
 
 

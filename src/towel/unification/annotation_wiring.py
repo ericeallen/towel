@@ -70,6 +70,7 @@ from .annotations import (
     infer_missing_annotations,
     respell_bare,
     sites_use_annotations,
+    function_uses_annotations,
     typing_imports_needed,
     unwritten_as_any,
     qualified_names_in_annotations,
@@ -97,6 +98,8 @@ from ..checker_project import _read_json_config
 from ..declared_python import declared_requirement, python_lower_bound
 from ..project_layout import find_project_root, load_pyproject
 from ..type_baseline import (
+    TYPE_CHECKING_REMEDIES,
+    UNTYPED_REMEDY as UNTYPED_REMEDY,
     NO_SHAPE,
     ChangeShape,
     CheckedChange,
@@ -110,6 +113,7 @@ from ..type_baseline import (
     resolved_path,
     unchanged_lines,
     unlooked_warning,
+    unverifiable_summary,
 )
 from ..reachability import PROBE, Place, probe_plan
 from ..type_inference import (
@@ -191,8 +195,7 @@ def _relates_result(variant: RefactoringProposal) -> bool:
     )
 
 
-UNTYPED_REMEDY = "rerun with --no-types (library: type_oracle=None, annotate_helpers=False)."
-"""The way out when the checker cannot run at all: the one thing such a user can act on."""
+"""The two concrete remedies offered when type verification prevents a change."""
 
 
 def _table(document: Mapping[str, object], *keys: str) -> Mapping[str, object]:
@@ -480,6 +483,11 @@ class HelperAnnotationWiring(EngineState):
     # What the project's mypy settles about the fallback rungs, per module, once per run.
     _ladder_policies: Mapping[str, _LadderPolicy] = {}
 
+    @property
+    def type_check_ran(self) -> bool:
+        """Whether the run checked source, rather than only selecting an available checker."""
+        return self._type_check_ran
+
     def begin_refactoring_run(self, file_paths: Sequence[str]) -> None:
         """Establish a new run's original project before inference or changes.
 
@@ -491,12 +499,14 @@ class HelperAnnotationWiring(EngineState):
         """
         self._type_run_oracle = self.type_oracle
         self._type_run_baseline = None
+        self._type_check_ran = False
         self._declared_pythons = {}
         self._forget_run_lookups()
         self._ladder_policies = {}
         self._type_known = KnownErrors()
         self._type_checked = None
         self._type_names_any = {}
+        self._unannotated_imports_noted = False
         self._type_unlooked = {}
         self._type_unreadable = frozenset()
         self._analysis_paths = tuple(file_paths)
@@ -540,6 +550,7 @@ class HelperAnnotationWiring(EngineState):
             else:
                 begin_checked_run(self._type_run_oracle, list(originals))
                 baseline = self._type_run_oracle.check_project(originals)
+                self._type_check_ran = True
                 self._type_run_baseline = baseline
                 if not isinstance(baseline, CheckFailure):
                     for diagnostic in baseline.errors:
@@ -1344,12 +1355,16 @@ class HelperAnnotationWiring(EngineState):
                 innermost = node
         return innermost.returns if innermost is not None else None
 
-    def _parsed_host(self, file_path: str) -> Optional[ast.Module]:
+    def _parsed_host(self, file_path: str, *, type_comments: bool = False) -> Optional[ast.Module]:
         source = try_read_source(file_path)
         if source is None:
             return None
         try:
-            return self._parse_source(source)
+            return (
+                ast.parse(source, type_comments=True)
+                if type_comments
+                else self._parse_source(source)
+            )
         except SyntaxError:
             return None
 
@@ -1456,7 +1471,7 @@ class HelperAnnotationWiring(EngineState):
                 f"The finished project reports {len(unseen)} type error(s) that the "
                 f"checker did not report while the run was in progress:\n{details}\n"
                 "This is a defect in Towel's verification, not in the project; please "
-                "report it. Nothing was written."
+                f"report it. Nothing was written. {UNTYPED_REMEDY}"
             )
 
     @staticmethod
@@ -1470,7 +1485,7 @@ class HelperAnnotationWiring(EngineState):
                 # quietly would be the same silence it was built to remove.
                 raise RefactoringError(
                     "The finished project could not be confirmed by a checker started from "
-                    f"nothing: {result.reason}\nNothing was written."
+                    f"nothing: {result.reason}\nNothing was written. {UNTYPED_REMEDY}"
                 )
             reported.extend(result.errors)
         return reported
@@ -1569,7 +1584,7 @@ class HelperAnnotationWiring(EngineState):
             if isinstance(result, CheckFailure):
                 self._refuse_a_check_the_project_fails_unchanged(oracle, modified_files)
                 raise CheckerUnavailableError(
-                    f"Prospective project type check failed: {result.reason}"
+                    f"Prospective project type check failed: {result.reason}\n{UNTYPED_REMEDY}"
                 )
             reported.extend(result.errors)
             introduced = self._type_known.introduced(
@@ -1629,7 +1644,7 @@ class HelperAnnotationWiring(EngineState):
                     f"change applied, so no change could be judged: {result.reason}\n"
                     "Its check of the original project passed. If nothing has changed the "
                     "project since, this is a defect in Towel's verification; please report "
-                    "it. Nothing was written. Fix what stops the checker, or "
+                    "it. Nothing was written. "
                     f"{UNTYPED_REMEDY}"
                 )
 
@@ -1696,7 +1711,30 @@ class HelperAnnotationWiring(EngineState):
             return str(destination / absolute.relative_to(source))
         return original
 
-    def _decline_what_the_checker_cannot_see(self, paths: Sequence[str]) -> None:
+    def _proposal_stays_unannotated(self, proposal: RefactoringProposal) -> bool:
+        """Every caller and the helper are bare, even when helper annotation is disabled."""
+        if proposal.wants_type_inference or function_uses_annotations(proposal.extracted_function):
+            return False
+        for replacement in proposal.replacements:
+            path = replacement.file_path or proposal.file_path
+            tree = self._parsed_host(path, type_comments=True)
+            if tree is None:
+                return False
+            enclosing = [
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and span_contains(node, replacement.line_range)
+            ]
+            if not enclosing or function_uses_annotations(
+                max(enclosing, key=lambda node: node.lineno)
+            ):
+                return False
+        return bool(proposal.replacements)
+
+    def _decline_what_the_checker_cannot_see(
+        self, paths: Sequence[str], proposal: RefactoringProposal
+    ) -> None:
         """Refuse a change to a file where the original check names what it cannot type.
 
         An import the checker cannot resolve or finds no types for, or a
@@ -1714,12 +1752,22 @@ class HelperAnnotationWiring(EngineState):
         """
         if self._type_run_oracle is None or not self._type_names_any:
             return
+        affected = any(self._where_checked(path) in self._type_names_any for path in paths)
+        if affected and not self.strict and self._proposal_stays_unannotated(proposal):
+            if not self._unannotated_imports_noted:
+                LOG.warning(
+                    "Unresolved imports do not block this unannotated extraction in relaxed "
+                    "mode: its callers and helper have no type annotations. "
+                    "Use --strict to require import resolution for every extraction."
+                )
+                self._unannotated_imports_noted = True
+            return
         for path in dict.fromkeys(paths):
             errors = self._type_names_any.get(self._where_checked(path))
             if errors:
                 raise UnverifiableChangeError(
-                    f"{path} holds {len(errors)} name(s) the type checker cannot type, "
-                    f"so a change there cannot be verified: {errors[0].message}"
+                    f"{unverifiable_summary(self._where_checked(path), errors)}\n"
+                    f"{TYPE_CHECKING_REMEDIES}"
                 )
 
     def _names_the_checker_cannot_type(
@@ -1771,7 +1819,7 @@ class HelperAnnotationWiring(EngineState):
         if errors:
             LOG.warning(pre_existing_summary(errors, root))
         changed = frozenset(self._where_checked(path) for path in analyzed)
-        warning = names_any_warning(self._type_names_any, root, changed)
+        warning = names_any_warning(self._type_names_any, root, changed, strict=self.strict)
         if warning:
             LOG.warning(warning)
 
@@ -1843,7 +1891,7 @@ class HelperAnnotationWiring(EngineState):
                 if path in failed:
                     raise CheckerUnavailableError(
                         f"The type checker could not build the probes that find the code it "
-                        f"looks at in {path}: {failed[path]}"
+                        f"looks at in {path}: {failed[path]}\n{UNTYPED_REMEDY}"
                     )
         for path, plan in planned.items():
             unseen[path] = set()
@@ -1935,7 +1983,8 @@ class HelperAnnotationWiring(EngineState):
                     raise UncheckedCodeError(
                         f"{path}:{start}-{end} is code the type checker does not look at "
                         "(it takes it to be unreachable, for the platform and Python it checks "
-                        "for or by the declared types), so a change there cannot be verified"
+                        "for or by the declared types), so a change there cannot be verified. "
+                        f"{UNTYPED_REMEDY}"
                     )
 
     def _refuse_what_the_checker_does_not_look_at(
@@ -1958,7 +2007,8 @@ class HelperAnnotationWiring(EngineState):
             if plan is None:
                 raise UncheckedCodeError(
                     f"{path}: no probe can be placed in the changed module, so what the type "
-                    "checker looks at in it is not known and the change cannot be verified"
+                    "checker looks at in it is not known and the change cannot be verified. "
+                    f"{UNTYPED_REMEDY}"
                 )
             before = self._read_source(path)
             kept = unchanged_lines(before, text).unchanged_after if before is not None else set()
@@ -1970,5 +2020,6 @@ class HelperAnnotationWiring(EngineState):
                 raise UncheckedCodeError(
                     f"{path}:{line}: the type checker does not look at the code this change "
                     "writes there (it takes it to be unreachable, for the platform and Python it "
-                    "checks for or by the declared types), so the change cannot be verified"
+                    "checks for or by the declared types), so the change cannot be verified. "
+                    f"{UNTYPED_REMEDY}"
                 )

@@ -272,6 +272,12 @@ class EngineState:
     annotate_helpers: bool
     """Whether helpers carry the annotations their call sites declare."""
 
+    strict: bool
+    """Whether even bare proposals require every imported name to have a known type."""
+
+    _unannotated_imports_noted: bool
+    """Whether this run has explained its relaxed import-resolution policy."""
+
     _change_log: List[AppliedChange]
     """Every call site rewritten so far in the current run."""
 
@@ -293,6 +299,9 @@ class EngineState:
     type_oracle: Optional[TypeOracle]
     _type_run_oracle: Optional[TypeOracle]
     """Per-run view of the caller's oracle, relocated when the driver copies its input."""
+    _type_check_ran: bool
+    """Whether this run actually submitted source to its checker."""
+
     _type_run_baseline: Optional[CheckResult]
     """Original complete-project result; None means the run has not checked its baseline."""
     _type_known: KnownErrors

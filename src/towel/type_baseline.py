@@ -119,6 +119,8 @@ from .unification.statement_facts import bindings_of
 from .unification.visitors import ScopeVisitor, annotation_expressions, evaluated_before_definition
 
 __all__ = [
+    "TYPE_CHECKING_REMEDIES",
+    "UNTYPED_REMEDY",
     "IMPORT_PROBE_PREFIX",
     "NO_SHAPE",
     "ChangeShape",
@@ -138,6 +140,13 @@ __all__ = [
     "unchanged_lines",
     "unlooked_warning",
 ]
+
+UNTYPED_REMEDY = "To proceed without type verification, use --no-types."
+
+TYPE_CHECKING_REMEDIES = (
+    "To proceed without type verification, use --no-types; for a typed run, "
+    "install the project's dependencies where Towel runs (including their type stubs)."
+)
 
 
 def resolved_path(path: str) -> str:
@@ -660,6 +669,25 @@ _NAMES_ANY = re.compile(
     # pyright, whose messages Towel prefixes with the rule.
     r"|^pyright: (?:reportMissingImports|reportMissingTypeStubs|reportUntypedBaseClass): "
 )
+
+
+_UNRESOLVED_MODULE = re.compile(
+    r"(?:module(?: named)?|Library stubs not installed for|Skipping analyzing|"
+    r'Import|imported from|Stub file not found for) "([^"\n]+)"'
+)
+
+
+def unverifiable_summary(path: str, errors: Sequence[TypeDiagnostic]) -> str:
+    """Name the user's file and count modules once across checker and probe diagnostics."""
+    modules = {
+        match.group(1) for error in errors for match in _UNRESOLVED_MODULE.finditer(error.message)
+    }
+    cause = (
+        f"has {len(modules)} unresolved module(s)"
+        if modules
+        else "contains names the type checker cannot type"
+    )
+    return f"{path} {cause}, so a change there cannot be verified: {errors[0].message}"
 
 
 def makes_names_any(error: TypeDiagnostic) -> bool:
@@ -1510,14 +1538,16 @@ def names_any_warning(
     names_any: Mapping[str, Tuple[TypeDiagnostic, ...]],
     root: Path,
     changed: Collection[str],
+    *,
+    strict: bool = False,
 ) -> Optional[str]:
     """Where the original check leaves names it cannot type, and what the run does there.
 
     ``names_any`` is :func:`files_where_names_are_any` of the original's
     errors, with what :func:`imports_typed_as_any` found, and ``changed`` the
-    files (resolved) the run may change: no change
-    to one of those that holds such a name is attempted. The rest are named
-    too, since where they use such a name, a change is checked against
+    files (resolved) the run may change: annotated proposals are declined in
+    relaxed mode (the default), and all proposals are declined in strict mode.
+    The rest are named too, since where they use such a name, a change is checked against
     ``Any``, which accepts it. ``None`` when there is nothing to say.
     """
     if not names_any:
@@ -1533,10 +1563,12 @@ def names_any_warning(
         "of it, so a new error there would go unseen."
     ]
     if declined:
-        lines.append(
-            f"No change to these {len(declined)} file(s) is attempted; install what they "
-            "import, and its stubs, where Towel runs to have them refactored with types:"
+        policy = (
+            f"No change to these {len(declined)} file(s) is attempted"
+            if strict
+            else f"Changes involving annotations in these {len(declined)} file(s) are declined"
         )
+        lines.append(f"{policy}. {TYPE_CHECKING_REMEDIES}")
         listed = [(path, error) for path in declined for error in names_any[path]]
         lines += [
             f"  {_shown(path, root)}:{error.line or '?'}: {error.message}"
@@ -1564,7 +1596,7 @@ def unlooked_warning(regions: Mapping[str, Sequence[Tuple[int, int]]], root: Pat
         "for (a sys.platform, sys.version_info or TYPE_CHECKING test it makes false, an assert "
         "it knows fails) or because the declared types rule them out (an isinstance test they "
         "always pass), so it reports nothing there and a check says nothing about a change. "
-        "No change to them is attempted:"
+        f"No change to them is attempted. {UNTYPED_REMEDY}"
     ]
     lines += [f"  {_shown(path, root)}:{start}-{end}" for path, start, end in listed[:_FILES_SHOWN]]
     if len(listed) > _FILES_SHOWN:

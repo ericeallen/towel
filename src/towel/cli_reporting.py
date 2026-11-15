@@ -19,7 +19,7 @@ from __future__ import annotations
 from difflib import unified_diff
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Literal, Sequence, TypedDict
+from typing import TYPE_CHECKING, List, Literal, NotRequired, Sequence, TypedDict
 
 from towel.source_files import python_sources
 from towel.source_text import read_source
@@ -102,15 +102,27 @@ class HelperInventory(TypedDict):
     helpers: List[HelperRecord]
 
 
+TypesStatus = Literal["verified", "unverified", "off"]
+
+
 class CommandResult(TypedDict):
     """Version 1 of the complete-preview and dry result contract.
 
     A null publication state means the operation failed without confirming
     whether its final transaction committed. A time-limit refusal is always
     before publication and therefore reports false, as a preview always does.
+
+    On completed runs, ``types`` is ``verified`` when a checker ran and
+    verified the accepted changes, ``unverified`` when no checker was
+    available, and ``off`` for explicit ``--no-types``. Failed or interrupted
+    runs omit it: ``status`` and ``error`` describe their outcome. It is also
+    omitted when a checker was available but no readable source needed checking.
+    A missing configured checker in relaxed mode gives ``unverified`` and bare
+    helpers; with no configured checker, existing annotations may be copied.
     """
 
     schema_version: Literal[1]
+    types: NotRequired[TypesStatus]
     command: Literal["preview", "dry"]
     status: Literal["complete", "incomplete", "error"]
     input: str

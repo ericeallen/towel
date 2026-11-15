@@ -2245,6 +2245,12 @@ class CheckerNotInstalled(TowelError):
     or ask for an unverified run explicitly.
     """
 
+    def __init__(self, explanation: str) -> None:
+        self.explanation = explanation
+        super().__init__(
+            explanation + ", or rerun with --no-types to refactor without type verification."
+        )
+
 
 def _configuration_file(root: Path, checker: str) -> Path:
     """The file at ``root`` that configures ``checker``, for naming it to the user."""
@@ -2262,8 +2268,7 @@ def _refuse_missing_checkers(missing: Sequence[Tuple[str, Path]]) -> CheckerNotI
         f"installed where Towel runs ({sys.executable}), so the project's own type check "
         "cannot run and nothing Towel writes could be verified by it. Install "
         f"{'it' if len(missing) == 1 else 'them'} into that environment "
-        '(pip install "code-towel[types]" installs mypy and pyright), or rerun with '
-        "--no-types to refactor without type verification."
+        '(pip install "code-towel[types]" installs mypy and pyright)'
     )
 
 

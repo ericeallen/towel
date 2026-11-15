@@ -91,6 +91,9 @@ def test_a_module_that_asserts_another_platform_is_left_alone_and_named(
     assert engine.run_report.declined_proposals == {UNCHECKED: 1}
     assert "the type checker does not look at 1 region(s)" in caplog.text
     assert "m.py:7-18" in caplog.text
+    # Typed round 2 finding 7: dependencies cannot make unreachable code checked.
+    assert "--no-types" in caplog.text
+    assert "install" not in caplog.text
 
 
 @pytest.mark.looks_nowhere

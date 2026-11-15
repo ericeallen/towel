@@ -101,7 +101,7 @@ SHARED_SECTIONS = {
         "--time-limit",
         "--max-pairs",
     },
-    "advanced": {"--types", "--format", "--parameterize-builtins"},
+    "advanced": {"--strict", "--types", "--format", "--parameterize-builtins"},
 }
 OWN_OUTPUT_OPTIONS = {
     "dry": {"--interactive"},

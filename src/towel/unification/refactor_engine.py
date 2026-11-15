@@ -320,7 +320,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
 
     Assembled from the mixins above, one per responsibility, over an
     ``EngineState`` that declares what they share; docs/ARCHITECTURE.md maps
-    each stage to its module.
+    each stage to its module. ``strict=False`` lets bare callers with bare helpers
+    bypass the unresolved-import gate; ``strict=True`` gates every proposal.
+    Both modes check prospective changes with the supplied oracle.
     """
 
     def __init__(
@@ -338,6 +340,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         skip_trivial_helpers: bool = True,
         reuse_existing_functions: bool = True,
         annotate_helpers: bool = True,
+        strict: bool = False,
         type_oracle: Optional[TypeOracle] = None,
         snippet_formatter: Optional[Callable[[str], str]] = None,
         snippet_formatter_for_file: Optional[
@@ -473,9 +476,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.skip_trivial_helpers = skip_trivial_helpers
         # reuse_existing_functions is accepted and ignored; see the docstring.
         self.annotate_helpers = annotate_helpers
+        self.strict = strict
+        self._unannotated_imports_noted = False
         self.type_oracle = type_oracle
         self._type_run_oracle = type_oracle
         self._type_run_baseline = None
+        self._type_check_ran = False
         self._type_known = KnownErrors()
         self._type_checked = None
         self._type_names_any = {}

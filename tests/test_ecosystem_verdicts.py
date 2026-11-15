@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stdout
+from io import StringIO
 import json
 import os
 import time
@@ -32,6 +34,13 @@ from typing import Callable, Optional, Sequence
 import pytest
 
 from scripts import ecosystem_check as ecosystem
+from towel.cli import _print_declined
+from towel.type_baseline import names_any_warning, pre_existing_summary, unlooked_warning
+from towel.type_inference import CheckFailure, TypeDiagnostic
+from towel.unification.exceptions import RefactoringError
+from towel.unification.fixed_point import RunReport
+from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.test_type_run_policy import _Oracle
 
 CANDIDATE = ecosystem.Candidate(
     Path("code_towel-0-py3-none-any.whl"),
@@ -920,11 +929,11 @@ OLD_PRE_EXISTING_REFUSAL = (
     "(library: type_oracle=None, annotate_helpers=False).\n"
 )
 """What a Towel from before the differential baseline said of a project whose check had errors."""
-CHECKER_FAILED = (
+LEGACY_CHECKER_FAILED = (
     "Error: Original project type check failed: timed out\n"
     "rerun with --no-types (library: type_oracle=None, annotate_helpers=False).\n"
 )
-PRE_EXISTING_REPORT = (
+LEGACY_PRE_EXISTING_REPORT = (
     "The original project's type check reports 12 error(s) in 3 file(s). The run leaves them "
     "as they are and rejects a change only for an error they do not account for "
     "(TOWEL_DEBUG_TYPES=1 lists them):\n"
@@ -950,7 +959,63 @@ PRE_EXISTING_REPORT = (
     "type 2, not verifiable: the type checker does not look at the code it changes 1, refused "
     "by the type checker 1\n"
 )
-"""What Towel says, before it begins, of a project whose check already reports errors."""
+"""Archived wording from before 2.0; current logs below come from their producers."""
+
+
+def _current_pre_existing_report(root: Path, *, strict: bool) -> str:
+    """Round 2 finding 1: parse the actual producers, so wording cannot drift silently."""
+    blind = str(root / "package/blind.py")
+    conftest = str(root / "tests/conftest.py")
+    missing = 'Cannot find implementation or library stub for module named "gone"'
+    names_any = {
+        blind: (TypeDiagnostic(blind, missing, 1),),
+        conftest: (TypeDiagnostic(conftest, missing, 1),),
+    }
+    errors = (
+        tuple(
+            TypeDiagnostic(str(root / "tests/test_module.py"), "incompatible type", line)
+            for line in range(1, 11)
+        )
+        + names_any[blind]
+        + names_any[conftest]
+    )
+    warning = names_any_warning(names_any, root, {blind}, strict=strict)
+    assert warning is not None
+    output = StringIO()
+    with redirect_stdout(output):
+        print(pre_existing_summary(errors, root))
+        print(warning)
+        print(
+            unlooked_warning(
+                {
+                    str(root / "package/windows.py"): ((9, 40),),
+                    str(root / "package/compat.py"): ((3, 5),),
+                },
+                root,
+            )
+        )
+        print("Applied 1 refactoring(s) across 1 file(s)")
+        _print_declined(
+            RunReport(
+                declined_proposals={
+                    "not verifiable: its file holds a name the type checker cannot type": 2,
+                    "not verifiable: the type checker does not look at the code it changes": 1,
+                    "refused by the type checker": 1,
+                }
+            ),
+            applied=1,
+        )
+    return output.getvalue()
+
+
+def _current_checker_failure(root: Path) -> str:
+    """Use the engine's baseline refusal, including its current remedy."""
+    path = root / "original.py"
+    path.write_text("value = 1\n")
+    engine = UnificationRefactorEngine(type_oracle=_Oracle(lambda _: CheckFailure("timed out")))
+    with pytest.raises(RefactoringError) as error:
+        engine.begin_refactoring_run([str(path)])
+    return f"Error: {error.value}\n"
 
 
 @pytest.mark.parametrize(
@@ -977,7 +1042,7 @@ def test_a_failed_transformation_is_never_retried_without_types(
 
 
 @pytest.mark.parametrize("termination_signal", [signal.SIGKILL, signal.SIGTERM])
-@pytest.mark.parametrize("diagnostic", ["TIMEOUT\n", CHECKER_FAILED])
+@pytest.mark.parametrize("diagnostic", ["TIMEOUT\n", LEGACY_CHECKER_FAILED])
 def test_a_signalled_refactor_cannot_claim_a_timeout_or_refusal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1006,7 +1071,7 @@ def test_a_refactor_deadline_is_recorded_as_a_timeout(
         monkeypatch,
         (0, "3 passed in 0.01s\n"),
         (0, "3 passed in 0.01s\n"),
-        refactor=(-signal.SIGKILL, CHECKER_FAILED),
+        refactor=(-signal.SIGKILL, LEGACY_CHECKER_FAILED),
         refactor_timed_out=True,
     )
     assert result.verdict == "TIMEOUT" and result.detail == "refactor exceeded 10s"
@@ -1015,16 +1080,18 @@ def test_a_refactor_deadline_is_recorded_as_a_timeout(
     assert (tmp_path / "fixture-ready/package.py").read_text() == "value = 1\n"
 
 
+@pytest.mark.parametrize("historical", [False, True], ids=["current", "historical"])
 def test_a_project_whose_checker_cannot_run_is_rerun_without_types(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, historical: bool
 ) -> None:
-    """The verdict then comes from the untyped path, and the row says so."""
+    """Round 2 finding 1: a genuine refusal still retries, with both message generations."""
+    diagnostic = LEGACY_CHECKER_FAILED if historical else _current_checker_failure(tmp_path)
     result = _check(
         tmp_path,
         monkeypatch,
         (0, "3 passed in 0.01s\n"),
         (0, "3 passed in 0.01s\n"),
-        refactor=(1, CHECKER_FAILED),
+        refactor=(1, diagnostic),
         refactor_retry=(0, "Applied 1 refactoring\n"),
     )
     assert result.verdict == "PASS"
@@ -1032,16 +1099,22 @@ def test_a_project_whose_checker_cannot_run_is_rerun_without_types(
     assert result.after is not None and result.pre_existing is None
 
 
+@pytest.mark.parametrize("wording", ["relaxed", "strict", "historical"])
 def test_a_project_whose_check_has_errors_is_refactored_with_types_and_recorded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wording: str
 ) -> None:
-    """No retry: Towel refactors it typed, against its errors, and the row gives the count."""
+    """Round 2 finding 1: current relaxed/strict messages retain every recorded count."""
+    report = (
+        LEGACY_PRE_EXISTING_REPORT
+        if wording == "historical"
+        else _current_pre_existing_report(tmp_path, strict=wording == "strict")
+    )
     result = _check(
         tmp_path,
         monkeypatch,
         (0, "3 passed in 0.01s\n"),
         (0, "3 passed in 0.01s\n"),
-        refactor=(0, PRE_EXISTING_REPORT),
+        refactor=(0, report),
     )
     assert result.verdict == "PASS" and result.typing_mode == "default"
     assert result.fallback == ""
@@ -1107,7 +1180,7 @@ def test_a_rerun_without_types_that_still_fails_keeps_its_own_verdict(
         monkeypatch,
         (0, "3 passed in 0.01s\n"),
         (0, "3 passed in 0.01s\n"),
-        refactor=(1, CHECKER_FAILED),
+        refactor=(1, LEGACY_CHECKER_FAILED),
         refactor_retry=(1, "Traceback (most recent call last):\nRuntimeError: fixture\n"),
     )
     assert result.verdict == "CRASH" and result.fallback == "checker-failed"

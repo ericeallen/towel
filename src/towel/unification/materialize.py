@@ -96,7 +96,7 @@ from .extraction_policy import (
 )
 from .reuse import ExistingFunctionReuse
 from .annotation_ladder import Hearing, Rejection, Verified
-from .annotation_wiring import HelperAnnotationWiring
+from .annotation_wiring import HelperAnnotationWiring, UNTYPED_REMEDY
 from .insertion import InsertionPoints
 from .placement import HelperPlacement, _HelperNaming, method_helper_position
 from .statement_facts import bindings_of, loaded_names
@@ -166,7 +166,7 @@ class Materialization(
             *(rep.file_path or proposal.file_path for rep in proposal.replacements),
         ]
         self._ensure_type_checking([*self._analysis_paths, *touched])
-        self._decline_what_the_checker_cannot_see(touched)
+        self._decline_what_the_checker_cannot_see(touched, proposal)
         self._decline_what_the_checker_does_not_look_at(proposal)
         counters = self._helper_name_counters.copy()
         try:
@@ -246,11 +246,15 @@ class Materialization(
             hearing.refused(variant, outcome)
         settled = hearing.settled_by()
         if settled is not None:
-            raise UntypeableExtraction(settled.reason, settled.detail)
+            raise UntypeableExtraction(settled.reason, f"{settled.detail}\n{UNTYPED_REMEDY}")
         refusal = TypeRejectedExtraction if offered and fully_judged else RefactoringError
         if proposal.reused_function is not None:
-            raise refusal("Reusing the existing function introduces project type errors")
-        raise refusal("Every helper annotation variant introduces project type errors")
+            raise refusal(
+                f"Reusing the existing function introduces project type errors. {UNTYPED_REMEDY}"
+            )
+        raise refusal(
+            f"Every helper annotation variant introduces project type errors. {UNTYPED_REMEDY}"
+        )
 
     def _count_signature(self, outcome: "Verified | Rejection") -> None:
         """Count one helper signature the type checker judged, for the run's report."""

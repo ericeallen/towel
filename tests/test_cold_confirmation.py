@@ -151,8 +151,13 @@ def test_a_run_the_warm_checker_waved_through_fails_loudly_at_the_end(tmp_path: 
             reuse_existing_functions=False,
             type_oracle=oracle,
         )
-        with pytest.raises(RefactoringError, match="did not report while the run was in progress"):
+        with pytest.raises(
+            RefactoringError, match="did not report while the run was in progress"
+        ) as refused:
             engine.refactor_to_fixed_point(str(path), progress="none")
+        # Typed round 2 finding 7: dependencies do not repair inconsistent verification.
+        assert "--no-types" in str(refused.value)
+        assert "install" not in str(refused.value)
     finally:
         oracle.close()
 
@@ -262,8 +267,13 @@ def test_a_mypy_run_its_warm_state_waved_through_fails_loudly_at_the_end(tmp_pat
             reuse_existing_functions=False,
             type_oracle=oracle,
         )
-        with pytest.raises(RefactoringError, match="did not report while the run was in progress"):
+        with pytest.raises(
+            RefactoringError, match="did not report while the run was in progress"
+        ) as refused:
             engine.refactor_to_fixed_point(str(path), progress="none")
+        # Typed round 2 finding 7: dependencies do not repair inconsistent verification.
+        assert "--no-types" in str(refused.value)
+        assert "install" not in str(refused.value)
     finally:
         oracle.close()
 
@@ -312,8 +322,11 @@ def test_a_confirmation_that_could_not_run_is_not_silence(tmp_path: Path) -> Non
             reuse_existing_functions=False,
             type_oracle=oracle,
         )
-        with pytest.raises(RefactoringError, match="could not be confirmed"):
+        with pytest.raises(RefactoringError, match="could not be confirmed") as refused:
             engine.refactor_to_fixed_point(str(path), progress="none")
+        # Typed round 2 finding 7: dependencies do not repair inconsistent verification.
+        assert "--no-types" in str(refused.value)
+        assert "install" not in str(refused.value)
     finally:
         oracle.close()
 
