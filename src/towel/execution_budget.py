@@ -22,8 +22,9 @@ from dataclasses import dataclass
 import os
 import signal
 import time
+import threading
 from types import FrameType
-from typing import Iterator
+from typing import Callable, Iterator
 
 
 class BudgetExpired(BaseException):
@@ -88,3 +89,77 @@ def finish_before_publication() -> None:
     signal.setitimer(signal.ITIMER_REAL, 0)
     if time.monotonic() >= budget.deadline:
         raise BudgetExpired()
+
+
+def check_budget() -> None:
+    """Poll the owner's deadline between units of work, even with its alarm deferred."""
+    budget = _active.get()
+    if budget is not None and os.getpid() == budget.owner and time.monotonic() >= budget.deadline:
+        raise BudgetExpired()
+
+
+@contextmanager
+def polling_interrupts() -> Iterator[Callable[[], None]]:
+    """Record signals during pool ownership; the result loop raises at its next poll.
+
+    Cleanup stays inside this scope so a second Ctrl-C cannot abandon live
+    workers halfway through their bounded shutdown. Library calls outside the
+    main thread cannot install signal handlers, but still poll their budget.
+    """
+    pending: list[int] = []
+
+    def record(signum: int, frame: FrameType | None) -> None:
+        pending.append(signum)
+
+    def check() -> None:
+        if pending:
+            if pending[0] == signal.SIGINT:
+                raise KeyboardInterrupt()
+            if pending[0] == signal.SIGALRM:
+                raise BudgetExpired()
+            raise SystemExit(128 + pending[0])
+        check_budget()
+
+    if threading.current_thread() is not threading.main_thread():
+        yield check
+        return
+    signals = [signal.SIGINT, signal.SIGTERM]
+    budget = _active.get()
+    if budget is not None and os.getpid() == budget.owner:
+        signals.append(signal.SIGALRM)
+    previous = {signum: signal.getsignal(signum) for signum in signals}
+    try:
+        for signum in previous:
+            signal.signal(signum, record)
+        yield check
+        check()
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+def abandon_budget() -> None:
+    """End an incomplete preview's deadline so it can report its private snapshot."""
+    budget = _active.get()
+    if budget is not None and os.getpid() == budget.owner:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        _active.set(None)
+
+
+@contextmanager
+def recording_application() -> Iterator[None]:
+    """Keep a committed stage edit and its applied count together at the deadline.
+
+    Only the short write-and-record section defers the alarm; rendering and
+    external verification remain interruptible. A failed write still rolls
+    back through the ordinary transaction machinery.
+    """
+    budget = _active.get()
+    owner = budget is not None and os.getpid() == budget.owner
+    if owner:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    try:
+        yield
+    finally:
+        if owner and budget is not None:
+            signal.setitimer(signal.ITIMER_REAL, max(0.000001, budget.deadline - time.monotonic()))

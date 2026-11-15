@@ -39,11 +39,12 @@ from __future__ import annotations
 import multiprocessing
 import os
 import resource
+import signal
 import sys
 import threading
 import time
 
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from typing import (
     Dict,
     FrozenSet,
@@ -55,6 +56,8 @@ from typing import (
     Sequence,
     Set,
     Tuple,
+    Mapping,
+    cast,
 )
 from .models import (
     ClassInfo,
@@ -64,7 +67,9 @@ from .models import (
     RefactoringProposal,
     proposal_identity,
 )
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from multiprocessing.process import BaseProcess
+from ..execution_budget import check_budget, polling_interrupts
 from ..diagnostics import LOG
 from ..pyright_session import readers_stopped
 from .progress import ProgressMode, ProgressRenderer, display_threads_stopped
@@ -153,6 +158,8 @@ def _start_parent_watchdog() -> None:
     polls the parent pid ends the worker within one interval wherever the
     main thread happens to be, mid-pair or idle.
     """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
     threading.Thread(
         target=_exit_when_parent_dies,
         args=(os.getppid(), PARENT_WATCH_INTERVAL_SECONDS),
@@ -189,6 +196,35 @@ def _evaluate_pair_chunk(bounds: Tuple[int, int]) -> List[Tuple[int, PairVerdict
         for index in range(start, end)
         if index not in _worker_probed
     ]
+
+
+def _stop_pool(executor: ProcessPoolExecutor) -> None:
+    """Cancel queued work, reap owned workers, and bound every join.
+
+    Python 3.11–3.13 have no public terminate_workers API. Snapshot the
+    executor's owned processes before shutdown clears that mapping; never
+    discover or signal processes by name. Successful runs reach this after
+    all futures finish, so terminating idle workers cannot lose a result.
+    """
+    processes = tuple(
+        cast(Mapping[int, BaseProcess], getattr(executor, "_processes", {}) or {}).values()
+    )
+    manager = cast(Optional[threading.Thread], getattr(executor, "_executor_manager_thread", None))
+    executor.shutdown(wait=False, cancel_futures=True)
+    for process in processes:
+        if process.is_alive():
+            process.terminate()
+    deadline = time.monotonic() + 0.4
+    for process in processes:
+        process.join(max(0.0, deadline - time.monotonic()))
+    for process in processes:
+        if process.is_alive():
+            process.kill()
+    deadline = time.monotonic() + 0.4
+    for process in processes:
+        process.join(max(0.0, deadline - time.monotonic()))
+    if manager is not None:
+        manager.join(timeout=0.4)
 
 
 class _DistinctProposals:
@@ -244,7 +280,7 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
             return 1
         if self._settings.workers is not None:
             return self._settings.workers
-        workers = max(1, os.cpu_count() or 1)
+        workers = min(8, max(1, os.cpu_count() or 1))
         return max(1, min(workers, self._workers_that_fit_in_memory()))
 
     @staticmethod
@@ -284,11 +320,11 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
     ) -> List[RefactoringProposal]:
         proposals = _DistinctProposals()
 
-        bar = ProgressRenderer(
-            progress, total=len(block_pairs), desc="Analyzing pairs (unify)", unit="pair"
-        )
+        bar = ProgressRenderer(progress, total=len(block_pairs), desc="pairs judged", unit="pair")
+        bar.start_heartbeat()
         try:
             for index, pair in enumerate(block_pairs):
+                check_budget()
                 proposal = self._judge_pair(pair, all_functions, class_infos)
                 if proposal:
                     proposals.add(index, proposal)
@@ -311,6 +347,23 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         the rest is split into contiguous chunks so pairs sharing a template
         block land in one worker and hit that worker's own caches.
         """
+        bar = ProgressRenderer(progress, total=len(block_pairs), desc="pairs judged", unit="pair")
+        bar.start_heartbeat()
+        try:
+            return self._evaluate_pairs_with_progress(
+                block_pairs, all_functions, class_infos, progress, bar
+            )
+        finally:
+            bar.close()
+
+    def _evaluate_pairs_with_progress(
+        self,
+        block_pairs: List[CodeBlockPair],
+        all_functions: Sequence[FunctionArtifact],
+        class_infos: List[ClassInfo],
+        progress: ProgressMode,
+        bar: ProgressRenderer,
+    ) -> List[RefactoringProposal]:
         global _worker_engine, _worker_functions, _worker_class_infos, _worker_pairs
         global _worker_probed
 
@@ -335,7 +388,9 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         probe = cold[::stride][: self.PARALLEL_PROBE_PAIRS]
         started = time.monotonic()
         for index in probe:
+            check_budget()
             verdicts[index] = self._pair_verdict(block_pairs[index], all_functions, class_infos)
+            bar.heartbeat(len(verdicts), len(block_pairs))
         per_pair = (time.monotonic() - started) / max(1, len(probe))
         evaluated = set(probe)
         cold = [index for index in cold if index not in evaluated]
@@ -352,7 +407,9 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
             # Pairs judged here may precede the probe's; settling decides.
             self._seen_proposals.clear()
             for index in indices:
+                check_budget()
                 verdicts[index] = self._pair_verdict(block_pairs[index], all_functions, class_infos)
+                bar.heartbeat(len(verdicts), len(block_pairs))
             return settled()
 
         if per_pair * len(cold) < self.PARALLEL_MIN_PROJECTED_SECONDS:
@@ -375,25 +432,34 @@ class ParallelEvaluation(FixedPointDrivers, PairEvaluation):
         _worker_probed = frozenset(probe)
         running: Tuple[str, ...] = ()
         try:
-            with ExitStack() as pool:
-                outcomes: Iterable[List[Tuple[int, PairVerdict]]]
-                outcomes = ()
-                with _alone_at_fork() as running:
-                    if not running:
-                        executor = pool.enter_context(
-                            ProcessPoolExecutor(
+            with polling_interrupts() as check:
+                executor: Optional[ProcessPoolExecutor] = None
+                try:
+                    with _alone_at_fork() as running:
+                        if not running:
+                            executor = ProcessPoolExecutor(
                                 max_workers=workers,
                                 mp_context=multiprocessing.get_context("fork"),
                                 initializer=_start_parent_watchdog,
                             )
-                        )
-                        # ``map`` submits every chunk now, and under the fork
-                        # context the first submission forks every worker,
-                        # before the pool starts threads of its own.
-                        outcomes = executor.map(_evaluate_pair_chunk, chunks)
-                for bounds, judged in zip(chunks, outcomes):
-                    verdicts.update(judged)
-                    evaluated.update(range(*bounds))
+                            # Submit while display/read threads are stopped:
+                            # the first submission forks all workers.
+                            pending = {
+                                executor.submit(_evaluate_pair_chunk, chunk) for chunk in chunks
+                            }
+                    if executor is not None:
+                        while pending:
+                            check()
+                            done, pending = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
+                            for future in done:
+                                judged = future.result()
+                                verdicts.update(judged)
+                                evaluated.update(index for index, _ in judged)
+                            bar.heartbeat(len(verdicts), len(block_pairs))
+                        check()
+                finally:
+                    if executor is not None:
+                        _stop_pool(executor)
         except (BrokenProcessPool, OSError) as error:
             # A pool that cannot be started or that lost a worker; anything a
             # worker raised itself propagates, since it is a bug to fix.

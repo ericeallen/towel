@@ -70,3 +70,45 @@ def test_an_unrelated_alarm_handler_survives_an_unexpected_exception() -> None:
         assert received == [signal.SIGALRM]
     finally:
         signal.signal(signal.SIGALRM, previous)
+
+
+def test_alarm_during_pool_cleanup_does_not_abandon_workers() -> None:
+    """Runtime 1: a deadline during interrupt cleanup cannot interrupt its joins."""
+    from towel.execution_budget import polling_interrupts
+
+    cleaned = False
+    with pytest.raises(KeyboardInterrupt):
+        with execution_budget(10), polling_interrupts() as check:
+            try:
+                signal.raise_signal(signal.SIGINT)
+                check()
+            finally:
+                signal.raise_signal(signal.SIGALRM)
+                cleaned = True
+    assert cleaned
+
+
+def test_interrupt_during_normal_pool_cleanup_is_not_lost() -> None:
+    """Runtime 1: an interrupt after the final result poll still ends the run."""
+    from towel.execution_budget import polling_interrupts
+
+    cleaned = False
+    with pytest.raises(KeyboardInterrupt):
+        with polling_interrupts() as check:
+            check()
+            signal.raise_signal(signal.SIGINT)
+            cleaned = True
+    assert cleaned
+
+
+def test_deadline_during_normal_pool_cleanup_is_delivered_after_cleanup() -> None:
+    """Runtime 1: the recorded deadline is raised only after worker cleanup ends."""
+    from towel.execution_budget import polling_interrupts
+
+    cleaned = False
+    with pytest.raises(BudgetExpired):
+        with execution_budget(10), polling_interrupts() as check:
+            check()
+            signal.raise_signal(signal.SIGALRM)
+            cleaned = True
+    assert cleaned
