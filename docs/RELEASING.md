@@ -530,7 +530,7 @@ run on an ancestor or a different pull-request merge is insufficient.
 
 | Job | Runner | Python | Scope |
 | --- | --- | --- | --- |
-| Full tests and coverage | `ubuntu-latest` | 3.11, 3.12, 3.13 | 85% coverage gate |
+| Full tests and coverage | `ubuntu-latest` | 3.11, 3.12, 3.13, 3.14, 3.15 | 85% coverage gate |
 | Quality and distributions | `ubuntu-latest` | 3.13 | Black, Flake8, mypy, Bandit, dependency audit, build |
 | Installed-wheel integration | `macos-latest` | 3.13 | CLI, file publication/recovery, checker and formatter worker lifecycle |
 | Scheduled/manual corpus | `ubuntu-latest` | 3.13 | untyped (`--no-types`); 2 concurrent projects; 180-minute job limit |

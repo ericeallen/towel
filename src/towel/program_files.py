@@ -158,7 +158,10 @@ def parse_failure(path: Path) -> Optional[UnparsedFile]:
 def _complaint(data: bytes, path: Path) -> Optional[str]:
     try:
         text = decode_source(data)
-    except (UnicodeError, SyntaxError, LookupError):
+    except SyntaxError as error:
+        # Newer decode_source rejects null bytes before ast.parse sees them.
+        return _described(error) if b"\0" in data else None
+    except (UnicodeError, LookupError):
         return None  # Not text in its declared encoding, or the cookie names no codec.
     try:
         ast.parse(text, filename=str(path))

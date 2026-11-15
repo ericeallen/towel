@@ -16,20 +16,22 @@
 
 import json
 import os
-from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
-from typing import TextIO
+from pathlib import Path
 from types import FrameType
+from typing import TextIO
 
 import pytest
 
+from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES
+from tests.test_cli_integration import invoke
 from towel import cli
 from towel.execution_budget import BudgetExpired
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.test_cli_integration import DUPLICATES, invoke
 
 
 def _source(tmp_path: Path) -> Path:
@@ -235,16 +237,17 @@ def test_real_process_timeout_leaves_original_and_destination_intact(
     assert not list(tmp_path.glob(".towel-transaction-*"))
 
 
-def test_newer_python_warning_does_not_contaminate_json(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("minor, warns", [(14, False), (15, False), (16, True)])
+def test_python_support_warning_does_not_contaminate_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, minor: int, warns: bool
 ) -> None:
     source = _source(tmp_path)
     # Change only the CLI's version view, not the interpreter used by AST or tools.
-    monkeypatch.setattr(sys, "version_info", (3, 14, 0))
+    monkeypatch.setattr(sys, "version_info", (3, minor, 0))
     result = invoke(["preview", str(source), "--json", *FLAGS])
     assert result.status == 0, result.stderr
     assert json.loads(result.stdout)["schema_version"] == 1
-    assert "outside that range" in result.stderr
+    assert ("outside that range" in result.stderr) is warns
 
 
 def test_timeout_during_analysis_cleans_the_private_stage(
@@ -399,8 +402,12 @@ def test_explain_locates_declined_blocks_and_does_not_leak_into_next_command(
     )
     result = invoke(["preview", str(source), "--explain", *FLAGS])
     assert result.status == 0
-    assert "unprofitable_helper" in result.stderr
+    if argument_ownership._supported_runtime():
+        assert "unprofitable_helper" in result.stderr
+        assert "does not repay" in result.stdout
+    else:
+        assert "lifetime_order_uncertified" in result.stderr
+        assert "order in which objects are released" in result.stdout
     assert "tiny.py::first@" in result.stderr and "tiny.py::second@" in result.stderr
-    assert "does not repay" in result.stdout
     ordinary = invoke(["preview", str(source), *FLAGS])
     assert "REJECT[" not in ordinary.stderr

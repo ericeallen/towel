@@ -49,6 +49,8 @@ from typing import List, Mapping, Tuple
 
 import pytest
 
+from tests.test_helpers import strict_lifetime_refusal
+from tests.pyright_runtime_profiles import assert_native_workspace_profile
 from towel.pyright_session import server_settings
 from towel.type_inference import (
     CheckResult,
@@ -138,7 +140,10 @@ def _baseline_and_candidate(
     try:
         baseline = oracle.check_project({str(init): init.read_text(encoding="utf-8")})
         candidate = oracle.check_project({str(init): _without_the_edit_export(init)})
-        assert served_by_a_language_server(oracle) is language_server
+        if language_server:
+            assert_native_workspace_profile(oracle)
+        else:
+            assert not served_by_a_language_server(oracle)
     finally:
         oracle.close()
     return _errors(baseline, project), _errors(candidate, project)
@@ -345,8 +350,14 @@ def test_a_src_layout_project_is_refactored_and_confirmed(tmp_path: Path) -> Non
             type_oracle=oracle,
         )
         _, applied, _ = engine.refactor_to_fixed_point(str(module), progress="none")
-        assert served_by_a_language_server(oracle), "the run was not checked by a server"
+        if strict_lifetime_refusal():
+            assert applied == 0
+            assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+            assert module.read_text(encoding="utf-8") == SOURCE
+        else:
+            assert served_by_a_language_server(oracle), "the run was not checked by a server"
     finally:
         oracle.close()
-    assert applied >= 1
-    assert "_extracted_func" in module.read_text(encoding="utf-8")
+    if not strict_lifetime_refusal():
+        assert applied >= 1
+        assert "_extracted_func" in module.read_text(encoding="utf-8")

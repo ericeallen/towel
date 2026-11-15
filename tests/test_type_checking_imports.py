@@ -34,6 +34,8 @@ from typing import List
 
 import pytest
 
+from tests.test_helpers import child_mode_flags, lifetime_order_certified
+
 from towel.unification.annotations import (
     qualified_names_in_annotations,
     shorten_qualified_names,
@@ -120,6 +122,7 @@ def test_a_cross_module_helper_names_the_other_class_and_still_type_checks(
         borrower.read_text(encoding="utf-8").replace("import pkg\n", "import pkg.alpha\n"),
         encoding="utf-8",
     )
+    original = {path: path.read_bytes() for path in package.glob("*.py")}
     result = subprocess.run(
         [
             sys.executable,
@@ -133,6 +136,7 @@ def test_a_cross_module_helper_names_the_other_class_and_still_type_checks(
             "--parameterize-builtins",
             "--progress",
             "none",
+            *child_mode_flags(),
             "--min-lines",
             "3",
         ],
@@ -145,17 +149,23 @@ def test_a_cross_module_helper_names_the_other_class_and_still_type_checks(
     assert "Dropped a proposal" not in result.stdout + result.stderr
 
     host = (package / "alpha.py").read_text(encoding="utf-8")
-    # Both names the guard needs are private, so no star-importer of alpha sees either.
-    assert "if 0 > 1:" in host
-    assert "from pkg.beta import Beta as _Beta" in host
-    helper = next(
-        node
-        for node in ast.walk(ast.parse(host))
-        if isinstance(node, ast.FunctionDef) and "extracted" in node.name
-    )
-    receiver = next(argument.annotation for argument in helper.args.args if argument.arg == "self")
-    assert receiver is not None and "Beta" in ast.unparse(receiver)
+    if lifetime_order_certified():
+        # Both names the guard needs are private, so no star-importer of alpha sees either.
+        assert "if 0 > 1:" in host
+        assert "from pkg.beta import Beta as _Beta" in host
+        helper = next(
+            node
+            for node in ast.walk(ast.parse(host))
+            if isinstance(node, ast.FunctionDef) and "extracted" in node.name
+        )
+        receiver = next(
+            argument.annotation for argument in helper.args.args if argument.arg == "self"
+        )
+        assert receiver is not None and "Beta" in ast.unparse(receiver)
 
+    else:
+        assert "lifetime_order_uncertified" in result.stdout
+        assert {path: path.read_bytes() for path in original} == original
     checked = subprocess.run(
         [sys.executable, "-m", "mypy", "--strict", str(package)],
         capture_output=True,
@@ -181,6 +191,7 @@ def test_the_guarded_import_does_not_run(tmp_path: Path) -> None:
             "--no-interactive",
             "--progress",
             "none",
+            *child_mode_flags(),
             "--min-lines",
             "3",
         ],
@@ -294,6 +305,7 @@ def test_a_guarded_name_is_quoted_where_the_module_evaluates_its_annotations(
             "--no-interactive",
             "--progress",
             "none",
+            *child_mode_flags(),
             "--min-lines",
             "3",
         ],

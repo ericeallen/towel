@@ -23,6 +23,7 @@ import sys
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from tests.test_cli_integration import invoke
 from towel.unification.assignment_analyzer import analyze_assignments
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -110,7 +111,12 @@ def test_safe_protocol_companion_stays_useful(tmp_path: Path, case: str) -> None
     before = subprocess.run([sys.executable, "-B", str(source)], capture_output=True, check=True)
     after = subprocess.run([sys.executable, "-B", str(output)], capture_output=True, check=True)
     assert (after.stdout, after.stderr) == (before.stdout, before.stderr)
-    assert applied > 0 and "def __extracted_func_" in output.read_text()
+    if lifetime_order_certified():
+        assert applied > 0 and "def __extracted_func_" in output.read_text()
+    else:
+        assert applied == 0
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert output.read_text() == text
     assert source.read_text() == text
 
 
@@ -138,7 +144,11 @@ def test_default_typed_safe_companion_stays_useful(tmp_path: Path, case: str) ->
     assert result.status == 0, result.stderr
     after = subprocess.run([sys.executable, "-B", str(output)], capture_output=True, check=True)
     assert (after.stdout, after.stderr) == (before.stdout, before.stderr)
-    assert "def __extracted_func_" in output.read_text()
+    if lifetime_order_certified():
+        assert "def __extracted_func_" in output.read_text()
+    else:
+        assert "lifetime_order_uncertified" in result.stdout
+        assert output.read_text() == text
     assert source.read_text() == text
 
 

@@ -44,6 +44,7 @@ from typing import List, Optional, Sequence, Tuple
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from tests.hostile_refactoring import refactor_script
 from tests.test_observational_equivalence import CallCase, compare_function_behavior
 from towel.diagnostics import Settings
@@ -486,6 +487,13 @@ def _refactored(
     return engine.apply_refactoring(str(path), proposals[0]), engine
 
 
+def _assert_lifetime_layout_refusal(
+    source: str, result: str, engine: UnificationRefactorEngine
+) -> None:
+    assert result == textwrap.dedent(source).lstrip()
+    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+
+
 def _helper_text(result: str) -> str:
     lines = result.split("\n")
     (helper,) = [
@@ -511,7 +519,11 @@ def test_the_layout_fmt_off_keeps_is_written_into_the_helper_as_it_was(
     if formatter is not None and importlib.util.find_spec(formatter) is None:
         pytest.skip(f"{formatter} absent")
     source = textwrap.dedent(_MATRIX).lstrip()
-    result, _ = _refactored(tmp_path, source, formatter)
+    result, engine = _refactored(tmp_path, source, formatter)
+    if not lifetime_order_certified():
+        _assert_lifetime_layout_refusal(source, result, engine)
+        _assert_behavior_preserved(source, result, ("g1", "g2"))
+        return
     helper = _helper_text(result)
     for region in _regions(source):
         assert _kept(region, helper), helper
@@ -540,8 +552,11 @@ def test_a_line_fmt_skip_keeps_is_written_as_it_was(tmp_path: Path) -> None:
     result, engine = _refactored(
         tmp_path, source, "black" if importlib.util.find_spec("black") else None
     )
-    assert result != textwrap.dedent(source).lstrip()
-    assert "        total += row  *  2  # fmt: skip" in _helper_text(result).split("\n")
+    if lifetime_order_certified():
+        assert result != textwrap.dedent(source).lstrip()
+        assert "        total += row  *  2  # fmt: skip" in _helper_text(result).split("\n")
+    else:
+        _assert_lifetime_layout_refusal(source, result, engine)
     _assert_behavior_preserved(textwrap.dedent(source).lstrip(), result, ("g1", "g2"))
     assert "conditionally_bound_return" in engine.declined_pairs
     differing = (
@@ -554,19 +569,24 @@ def test_a_line_fmt_skip_keeps_is_written_as_it_was(tmp_path: Path) -> None:
         name="differing.py",
     )
     assert unchanged == differing
-    assert "layout_not_kept" in refused.declined_pairs
+    assert (
+        "layout_not_kept" if lifetime_order_certified() else "lifetime_order_uncertified"
+    ) in refused.declined_pairs
     _assert_behavior_preserved(differing, unchanged, ("g1", "g2"))
     # Retaining the partial loop's row would return an unbound local for an
     # empty iterable. Keep that refusal; the identical complete body needs no
     # returned row and transfers arguments while exercising the same kept line.
     complete = textwrap.dedent(source).lstrip().replace("return total + 2", "return total + 1")
-    result, _ = _refactored(
+    result, complete_engine = _refactored(
         tmp_path,
         complete,
         "black" if importlib.util.find_spec("black") else None,
         name="complete.py",
     )
-    assert "        total += row  *  2  # fmt: skip" in _helper_text(result).split("\n")
+    if lifetime_order_certified():
+        assert "        total += row  *  2  # fmt: skip" in _helper_text(result).split("\n")
+    else:
+        _assert_lifetime_layout_refusal(complete, result, complete_engine)
     _assert_behavior_preserved(complete, result, ("g1", "g2"))
 
 
@@ -590,13 +610,20 @@ def test_a_region_around_both_blocks_that_reaches_the_helper_keeps_it_all(tmp_pa
     """
     unchanged, engine = _refactored(tmp_path, source)
     assert unchanged == textwrap.dedent(source).lstrip()
-    assert "owned_binding_frame_boundary" in engine.declined_pairs
+    assert (
+        "owned_binding_frame_boundary"
+        if lifetime_order_certified()
+        else "lifetime_order_uncertified"
+    ) in engine.declined_pairs
     # The divergent head slicing formerly left an owned head in the caller.
     # A shared full body retains the module-wide directive and exact layout.
     complete = textwrap.dedent(source).lstrip().replace("head = rows[1:]", "head = rows[:1]")
-    result, _ = _refactored(tmp_path, complete, name="complete.py")
-    helper = _helper_text(result).split("\n")
-    assert "    total = sum(rows)   *   2" in helper and '    print("m",   total)' in helper
+    result, complete_engine = _refactored(tmp_path, complete, name="complete.py")
+    if lifetime_order_certified():
+        helper = _helper_text(result).split("\n")
+        assert "    total = sum(rows)   *   2" in helper and '    print("m",   total)' in helper
+    else:
+        _assert_lifetime_layout_refusal(complete, result, complete_engine)
     _assert_behavior_preserved(complete, result, ("g1", "g2"))
 
 
@@ -617,7 +644,9 @@ def test_a_kept_layout_the_sites_do_not_share_declines_the_pair(
     source = source[:second] + source[second:].replace(*difference, 1)
     result, engine = _refactored(tmp_path, source)
     assert result == source
-    assert reason in engine.declined_pairs
+    assert (
+        reason if lifetime_order_certified() else "lifetime_order_uncertified"
+    ) in engine.declined_pairs
 
 
 def test_a_method_helper_keeps_the_layout_only_at_whole_levels(tmp_path: Path) -> None:
@@ -646,9 +675,14 @@ def test_a_method_helper_keeps_the_layout_only_at_whole_levels(tmp_path: Path) -
     """
     result, engine = _refactored(tmp_path, method)
     assert result == textwrap.dedent(method).lstrip()
-    assert "layout_not_kept" in engine.declined_pairs
+    assert (
+        "layout_not_kept" if lifetime_order_certified() else "lifetime_order_uncertified"
+    ) in engine.declined_pairs
     aligned = method.replace("                      0, 1]", "                0, 1]")
-    result, _ = _refactored(tmp_path, aligned, name="aligned.py")
+    result, aligned_engine = _refactored(tmp_path, aligned, name="aligned.py")
+    if not lifetime_order_certified():
+        _assert_lifetime_layout_refusal(aligned, result, aligned_engine)
+        return
     # The method body is at the sites' own indentation, so the lines are as written.
     helper = _helper_text(result).split("\n")
     assert "        matrix = [1, 0," in helper and "            0, 1]" in helper
@@ -660,7 +694,10 @@ def test_a_formatter_that_does_not_read_the_directive_is_not_used(tmp_path: Path
         pytest.skip("black absent")
     source = textwrap.dedent(_MATRIX).lstrip().replace("fmt: off", "autopep8: off")
     source = source.replace("fmt: on", "autopep8: on")
-    result, _ = _refactored(tmp_path, source, "black")
+    result, engine = _refactored(tmp_path, source, "black")
+    if not lifetime_order_certified():
+        _assert_lifetime_layout_refusal(source, result, engine)
+        return
     assert result.count("1,   0,   0,") == 1
     assert "        1,   0,   0," in _helper_text(result).split("\n")
 
@@ -672,7 +709,14 @@ def test_the_matrix_fixture_keeps_its_layout_through_a_fixed_point_run(tmp_path:
     source = HOSTILE / "r9dr_fmt_off_layout_moves_verbatim.py"
     after = tmp_path / "m.py"
     shutil.copy(source, after)
-    assert refactor_script(after) > 0
+    applied = refactor_script(after)
+    if lifetime_order_certified():
+        assert applied > 0
+    else:
+        assert applied == 0
+        assert after.read_text() == source.read_text()
+        unchanged, engine = _refactored(tmp_path, source.read_text(), name="proof.py")
+        _assert_lifetime_layout_refusal(source.read_text(), unchanged, engine)
     # The formatter still keeps off the lines the helper now holds.
     assert _ruff("format", "--isolated", "--quiet", str(after))[0] == 0
     text = after.read_text(encoding="utf-8")

@@ -34,6 +34,7 @@ import ast
 import pytest
 import tempfile
 from pathlib import Path
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_helpers import get_test_example_path, assert_file_not_modified
 
@@ -56,6 +57,10 @@ class TestForLoopBindings(unittest.TestCase):
     def test_simple_for_loop_alpha_renaming(self):
         """Test that loop variables i and j are treated as alpha-equivalent."""
         proposals = self.engine.analyze_file(str(self.example_path))
+        if not lifetime_order_certified():
+            self.assertFalse(proposals)
+            self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
+            return
         self.assertGreater(
             len(proposals), 0, "Should find duplicates with different loop variables"
         )
@@ -79,6 +84,10 @@ class TestForLoopBindings(unittest.TestCase):
 
         # Find nested loop proposals
         nested = [p for p in proposals if "nested_loops" in p.description.lower()]
+        if not lifetime_order_certified():
+            self.assertFalse(nested)
+            self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
+            return
         self.assertGreater(len(nested), 0, "Should find nested loop duplicates")
 
     def test_tuple_unpacking_in_for_loop(self):
@@ -87,6 +96,10 @@ class TestForLoopBindings(unittest.TestCase):
 
         # Find tuple unpacking proposals
         tuple_props = [p for p in proposals if "tuple_unpacking" in p.description.lower()]
+        if not lifetime_order_certified():
+            self.assertFalse(tuple_props)
+            self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
+            return
         self.assertGreater(len(tuple_props), 0, "Should find tuple unpacking duplicates")
 
 
@@ -117,6 +130,10 @@ class TestComprehensionBindings(unittest.TestCase):
 
         # Find list comprehension proposals
         list_comp = [p for p in proposals if "list_comp" in p.description.lower()]
+        if not lifetime_order_certified():
+            self.assertFalse(list_comp)
+            self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
+            return
         self.assertGreater(len(list_comp), 0, "Should find list comprehension duplicates")
 
     def test_dict_comprehension_variables(self):
@@ -124,6 +141,10 @@ class TestComprehensionBindings(unittest.TestCase):
         proposals = self.engine.analyze_file(str(self.example_path))
 
         dict_comp = [p for p in proposals if "dict_comp" in p.description.lower()]
+        if not lifetime_order_certified():
+            self.assertFalse(dict_comp)
+            self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
+            return
         self.assertGreater(len(dict_comp), 0, "Should find dict comprehension duplicates")
 
     def test_nested_comprehensions(self):
@@ -131,6 +152,10 @@ class TestComprehensionBindings(unittest.TestCase):
         proposals = self.engine.analyze_file(str(self.example_path))
 
         nested = [p for p in proposals if "nested_comp" in p.description.lower()]
+        if not lifetime_order_certified():
+            self.assertFalse(nested)
+            self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
+            return
         self.assertGreater(len(nested), 0, "Should find nested comprehension duplicates")
 
     def test_generator_expressions(self):
@@ -168,6 +193,10 @@ class TestScopingEdgeCases(unittest.TestCase):
         proposals = self.engine.analyze_file(str(self.example_path))
 
         builtin_props = [p for p in proposals if "builtin_override" in p.description.lower()]
+        if not lifetime_order_certified():
+            self.assertFalse(builtin_props)
+            self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
+            return
         self.assertGreater(len(builtin_props), 0, "Should find builtin test duplicates")
 
         # Check that len and str are not parameters
@@ -234,6 +263,10 @@ class TestScopingEdgeCases(unittest.TestCase):
             "        out.append(double(item))\n"
             "    return out\n"
         )
+        if not lifetime_order_certified():
+            self.assertFalse(proposals)
+            self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
+            return
         self.assertEqual(len(proposals), 1, [p.description for p in proposals])
         helper = proposals[0].extracted_function
         lambdas = [node for node in ast.walk(helper) if isinstance(node, ast.Lambda)]

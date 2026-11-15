@@ -44,9 +44,10 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 # Small fixtures exercise semantic guards independently of the product usefulness policy.
 
 # Two block shapes, one per file, so each file holds exactly one same-file
-# duplicate and nothing pairs across the files.
+# duplicate and nothing pairs across the files. Module-owned inputs keep
+# these recovery/progress tests independent of argument transfer proofs.
 ARITHMETIC = """
-def {name}(value):
+def {name}():
     total = value + 1
     scaled = total * 2
     label = str(scaled)
@@ -54,7 +55,7 @@ def {name}(value):
 """
 
 LOOP = """
-def {name}(value):
+def {name}():
     parts = []
     for index in range(value):
         parts.append(str(index * 2))
@@ -85,7 +86,12 @@ def _behaviour(path: Path) -> List[str]:
     namespace: Dict[str, Any] = {}
     exec(compile(path.read_text(), str(path), "exec"), namespace)
     functions = sorted(name for name in namespace if len(name) == 2 and name[1].isdigit())
-    return [namespace[name](value) for name in functions for value in (0, 3, 7)]
+    observed = []
+    for name in functions:
+        for value in (0, 3, 7):
+            namespace["value"] = value
+            observed.append(namespace[name]())
+    return observed
 
 
 def test_stale_proposal_is_dropped_and_the_run_still_reaches_the_fixed_point(

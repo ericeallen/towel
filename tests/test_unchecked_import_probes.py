@@ -26,6 +26,7 @@ import pytest
 
 from towel.type_baseline import ImportProbes, import_probes, imports_typed_as_any
 from towel.type_inference import MypyInferrer, PyrightOracle
+from towel.unification import argument_ownership
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
@@ -243,6 +244,8 @@ def second(value: int) -> int:
     three = two - 3
     return three
 """
+    if not argument_ownership._supported_runtime():
+        source = source.replace("(value: int)", "()").replace("one = value + 1", "one = 2")
     path = package / "example.py"
     path.write_text(source)
     oracle = MypyInferrer()
@@ -264,4 +267,7 @@ def second(value: int) -> int:
         original = before[name]
         changed = after[name]
         assert callable(original) and callable(changed)
-        assert [original(n) for n in range(-3, 4)] == [changed(n) for n in range(-3, 4)]
+        if argument_ownership._supported_runtime():
+            assert [original(n) for n in range(-3, 4)] == [changed(n) for n in range(-3, 4)]
+        else:
+            assert original() == changed() == 1

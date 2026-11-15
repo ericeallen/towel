@@ -26,6 +26,7 @@ import pytest
 from pathlib import Path
 from typing import Any
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.models import is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.unifier import Unifier
@@ -141,6 +142,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         # than having ``f2`` call ``f1``.
         engine = self._engine(min_lines=2, reuse_existing_functions=False)
         props = engine.analyze_file(str(m.path))
+        if not lifetime_order_certified():
+            self.assertEqual(props, [])
+            self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            return
         self.assertTrue(props, "Expected at least one proposal for augassign case")
         # Apply the first proposal and ensure the call does not parameterize the target as __param_*
         new_files = engine.apply_refactoring_multi_file(props[0])
@@ -190,8 +195,13 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
         engine = self._engine(min_lines=2)
         props = engine.analyze_file(str(m.path))
-        self.assertTrue(props, "Expected proposals for identical blocks")
-        new_src = engine.apply_refactoring(str(m.path), props[0])
+        if lifetime_order_certified():
+            self.assertTrue(props, "Expected proposals for identical blocks")
+            new_src = engine.apply_refactoring(str(m.path), props[0])
+        else:
+            self.assertEqual(props, [])
+            self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            new_src = m.path.read_text()
 
         # Execute refactored and compare outputs
         ns2: dict[str, Any] = {}
@@ -218,6 +228,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self.addCleanup(m.cleanup)
         engine = self._engine(min_lines=2)
         proposals = engine.analyze_file(str(m.path))
+        if not lifetime_order_certified():
+            self.assertEqual(proposals, [])
+            self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            return
         self.assertTrue(proposals, "Expected a proposal for same-class methods")
         out = engine.apply_refactoring(str(m.path), proposals[0])
         # The extracted method is inserted inside the class, class-private
@@ -247,6 +261,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self.addCleanup(m.cleanup)
         engine = self._engine(min_lines=2)
         proposals = engine.analyze_file(str(m.path))
+        if not lifetime_order_certified():
+            self.assertEqual(proposals, [])
+            self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            return
         self.assertTrue(proposals, "Expected a proposal for methods with decorators")
         out = engine.apply_refactoring(str(m.path), proposals[0])
         # Ensure decorators still present on original methods
@@ -289,6 +307,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self.addCleanup(m.cleanup)
         engine = self._engine(min_lines=2)
         proposals = engine.analyze_file(str(m.path))
+        if not lifetime_order_certified():
+            self.assertEqual(proposals, [])
+            self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            return
         self.assertFalse([p for p in proposals if p.insert_into_class == "C"])
         target = next((p for p in proposals if p.insert_into_class is None), None)
         self.assertIsNotNone(target, "Expected a module-level extraction proposal")
@@ -344,6 +366,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
         self.addCleanup(m.cleanup)
         engine = self._engine(min_lines=2)
         proposals = engine.analyze_file(str(m.path))
+        if not lifetime_order_certified():
+            self.assertEqual(proposals, [])
+            self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            return
         target = next((p for p in proposals if p.insert_into_class == "C"), None)
         self.assertIsNotNone(target, "Expected a class-level extraction proposal")
         assert target is not None
@@ -418,6 +444,11 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
             before = _run_driver(root.parent, driver)
             engine = self._engine(min_lines=2)
             proposals = engine.analyze_files([str(root / name) for name in files])
+            if not lifetime_order_certified():
+                self.assertEqual(proposals, [])
+                self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+                self.assertEqual(_run_driver(root.parent, driver), before)
+                return
             self.assertTrue(proposals)
             self.assertTrue(all(proposal.insert_into_class is None for proposal in proposals))
             proposal = proposals[0]
@@ -584,6 +615,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
         engine = self._engine(min_lines=2)
         proposals = engine.analyze_file(str(m.path))
+        if not lifetime_order_certified():
+            self.assertEqual(proposals, [])
+            self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            return
         # Expect at least one proposal pairing the inner functions' bodies
         self.assertTrue(proposals, "Expected a proposal for duplicate inner function bodies")
 
@@ -644,6 +679,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
         engine = self._engine(min_lines=2)
         props = engine.analyze_file(str(m.path))
+        if not lifetime_order_certified():
+            self.assertEqual(props, [])
+            self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            return
         self.assertTrue(props, "Expected a proposal in mixed-depth nesting case")
 
         picked = None
@@ -786,6 +825,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
         engine = self._engine(min_lines=2)
         proposals = engine.analyze_file(str(m.path))
+        if not lifetime_order_certified():
+            self.assertEqual(proposals, [])
+            self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            return
         self.assertTrue(
             proposals,
             "Expected a proposal for duplicate inner function bodies in a method",
@@ -866,6 +909,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
         engine = self._engine(min_lines=2)
         props = engine.analyze_file(str(m.path))
+        if not lifetime_order_certified():
+            self.assertEqual(props, [])
+            self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            return
         self.assertTrue(props, "Expected a proposal in inner-common ancestor case")
 
         found_common_insertion = False
@@ -1029,6 +1076,10 @@ class TestRefactorEngineAdversarial(unittest.TestCase):
 
         engine = self._engine(min_lines=2)
         props = engine.analyze_file(str(m.path))
+        if not lifetime_order_certified():
+            self.assertEqual(props, [])
+            self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+            return
         self.assertTrue(props, "Expected proposals for interleaved nested duplicate blocks")
 
         # Look for a proposal that inserts into 'outer' (DCE for g1 vs g2)
@@ -1288,6 +1339,10 @@ class TestCrossFileImports(unittest.TestCase):
                 cross_module_helpers=True,
             )
             props = engine.analyze_directory(str(pkg), recursive=False)
+            if not lifetime_order_certified():
+                self.assertEqual(props, [])
+                self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+                return
             self.assertTrue(props, "Expected a cross-file proposal between a.py and b.py")
             modified = engine.apply_refactoring_multi_file(props[0])
             # At least one file should gain an import of the extracted function
@@ -1341,11 +1396,18 @@ class TestCrossFileImports(unittest.TestCase):
                     cross_module_helpers=True,
                 )
                 props = engine.analyze_directory(str(base), recursive=False)
-                self.assertTrue(
-                    props,
-                    "Expected a cross-file proposal between a.py and b.py in same directory",
-                )
-                modified = engine.apply_refactoring_multi_file(props[0])
+                if lifetime_order_certified():
+                    self.assertTrue(
+                        props,
+                        "Expected a cross-file proposal between a.py and b.py in same directory",
+                    )
+                    modified = engine.apply_refactoring_multi_file(props[0])
+                else:
+                    self.assertEqual(props, [])
+                    self.assertGreater(
+                        engine.declined_pairs.get("lifetime_order_uncertified", 0), 0
+                    )
+                    modified = {}
                 # Write modifications to disk
                 for fpath, content in modified.items():
                     Path(fpath).write_text(content, encoding="utf-8")
@@ -1468,15 +1530,21 @@ class TestCrossFileImports(unittest.TestCase):
                 skip_trivial_helpers=False, max_parameters=5, min_lines=2
             )
             proposals = engine.analyze_file(str(path))
-            self.assertEqual(len(proposals), 1)
-            functions = [
-                node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
-            ]
-            self.assertEqual(
-                {replacement.line_range for replacement in proposals[0].replacements},
-                {(node.body[0].lineno, node.body[-1].end_lineno) for node in functions},
-            )
-            transformed = engine.apply_refactoring_multi_file(proposals[0])[str(path)]
+            if lifetime_order_certified():
+                self.assertEqual(len(proposals), 1)
+                functions = [
+                    node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+                ]
+                self.assertEqual(
+                    {replacement.line_range for replacement in proposals[0].replacements},
+                    {(node.body[0].lineno, node.body[-1].end_lineno) for node in functions},
+                )
+                transformed = engine.apply_refactoring_multi_file(proposals[0])[str(path)]
+            else:
+                self.assertEqual(proposals, [])
+                self.assertGreater(engine.declined_pairs.get("lifetime_order_uncertified", 0), 0)
+                transformed = path.read_text()
+                self.assertEqual(transformed, source)
             observations = []
             for program in (source, transformed):
                 completed = subprocess.run(

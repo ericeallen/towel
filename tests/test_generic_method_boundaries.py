@@ -26,6 +26,7 @@ import textwrap
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from tests.test_generic_methods import _annotation, _project
 from tests.test_generic_verification import _RecordingOracle, _declarations
 from towel.type_inference import CheckSuccess, MypyInferrer, PyrightOracle, TypeOracle
@@ -105,9 +106,15 @@ def test_class_bound_result_keeps_the_public_contract(
     # A helper that dispatches on nothing is a module function (see
     # `test_receiver_dependency.py`); the class's contract must survive either way.
     static = method_kind == "staticmethod"
+    proposals = engine.analyze_file(str(path))
+    if not lifetime_order_certified():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == source
+        return
     proposal = next(
         proposal
-        for proposal in engine.analyze_file(str(path))
+        for proposal in proposals
         if proposal.insert_into_class == (None if static else "Box")
     )
     assert proposal.method_kind == (None if static else method_kind)
@@ -169,11 +176,14 @@ def test_explicit_source_receiver_contract_is_not_silently_erased(
     assert checker.check(str(path), source) == CheckSuccess()
     oracle = _RecordingOracle(checker)
     engine = _engine(oracle)
-    proposal = next(
-        proposal
-        for proposal in engine.analyze_file(str(path))
-        if proposal.insert_into_class == "Box"
-    )
+    proposals = engine.analyze_file(str(path))
+    if not lifetime_order_certified():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == source
+        assert oracle.checks == []
+        return
+    proposal = next(proposal for proposal in proposals if proposal.insert_into_class == "Box")
     try:
         rendered = engine.apply_refactoring(str(path), proposal)
     except RefactoringError as error:
@@ -240,6 +250,11 @@ def test_a_block_sibling_classes_share_is_a_module_function_the_checker_accepts(
     assert checker.check(str(path), source) == CheckSuccess()
     engine = _engine(checker)
     proposals = engine.analyze_file(str(path))
+    if not lifetime_order_certified() and program == "inherited-member":
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == source
+        return
     assert proposals and all(proposal.insert_into_class is None for proposal in proposals)
     try:
         rendered = engine.apply_refactoring(str(path), proposals[0])
@@ -248,7 +263,12 @@ def test_a_block_sibling_classes_share_is_a_module_function_the_checker_accepts(
         assert engine.change_log == ()
     else:
         helper = _module_function(rendered)
-        assert helper.args.args[0].arg == "self"
+        if lifetime_order_certified():
+            assert helper.args.args[0].arg == "self"
+        else:
+            assert helper.args.args[0].arg == "result"
+            assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+            assert all(argument.arg != "_towel_owner" for argument in helper.args.args)
         assert checker.check(str(path), rendered) == CheckSuccess()
         arguments = ("[1]", '["x"]') if program == "inherited-member" else ("2", '"b"')
         driver = (
@@ -290,11 +310,17 @@ def test_class_attribute_names_do_not_capture_generated_type_variables(
     source = path.read_text()
     assert checker.check(str(path), source) == CheckSuccess()
     engine = _engine(checker)
-    proposal = engine.analyze_file(str(path))[0]
-    rendered = engine.apply_refactoring(str(path), proposal)
-    helper = _method(rendered, "Calculator")
-    assert _annotation(helper.returns) != "_TowelT0"
-    assert "Any" not in rendered and _declarations(rendered)
+    proposals = engine.analyze_file(str(path))
+    if lifetime_order_certified():
+        rendered = engine.apply_refactoring(str(path), proposals[0])
+        helper = _method(rendered, "Calculator")
+        assert _annotation(helper.returns) != "_TowelT0"
+        assert "Any" not in rendered and _declarations(rendered)
+    else:
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        rendered = path.read_text()
+        assert rendered == source
     assert checker.check(str(path), rendered) == CheckSuccess()
     exec(
         compile(

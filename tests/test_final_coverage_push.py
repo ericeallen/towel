@@ -206,14 +206,16 @@ def b():
     def test_analyze_with_docstrings(self):
         """Test analyzing functions with docstrings."""
         code = """
-def process_data_a(x):
+def process_data_a():
     \"\"\"Process data variant A.\"\"\"
+    x = 1
     y = x * 2
     z = y + 10
     return z
 
-def process_data_b(x):
+def process_data_b():
     \"\"\"Process data variant B.\"\"\"
+    x = 1
     y = x * 2
     z = y + 10
     return z

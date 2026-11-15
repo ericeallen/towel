@@ -28,7 +28,7 @@ import tomllib
 
 import pytest
 
-from tests.test_cli_integration import DUPLICATES, HELPER, invoke
+from tests.test_cli_integration import HELPER, LITERAL_DUPLICATES as DUPLICATES, invoke
 from tests.test_documentation_navigation import _prose
 from towel import cli
 from towel.api import UnificationRefactorEngine

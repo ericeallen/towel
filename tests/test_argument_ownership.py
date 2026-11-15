@@ -89,7 +89,7 @@ def _effects(
 
 def _proposal(
     tmp_path: Path, source: str, *, budget: int = 5
-) -> tuple[UnificationRefactorEngine, RefactoringProposal]:
+) -> tuple[UnificationRefactorEngine, RefactoringProposal | None]:
     path = tmp_path / "p.py"
     path.write_text(source)
     engine = UnificationRefactorEngine(
@@ -98,9 +98,15 @@ def _proposal(
         reuse_existing_functions=False,
         max_parameters=budget,
     )
+    analyzed = engine.analyze_file(str(path))
+    if not argument_ownership._supported_runtime():
+        assert analyzed == []
+        assert "lifetime_order_uncertified" in engine.declined_pairs
+        assert path.read_text() == source
+        return engine, None
     proposals = [
         proposal
-        for proposal in engine.analyze_file(str(path))
+        for proposal in analyzed
         if all(replacement.argument_handoff is not None for replacement in proposal.replacements)
     ]
     assert proposals
@@ -115,6 +121,8 @@ def test_unused_arguments_release_in_original_order_before_helper_locals(
 ) -> None:
     source = _argument_source(count, fail)
     engine, proposal = _proposal(tmp_path, source)
+    if proposal is None:
+        return
     before = canonical_dump(proposal.extracted_function)
     calls = tuple(canonical_dump(replacement.node) for replacement in proposal.replacements)
     certificates = tuple(replacement.argument_handoff for replacement in proposal.replacements)
@@ -146,6 +154,8 @@ def test_starred_arguments_preserve_the_original_caller_owned_tuple_cleanup(
 ) -> None:
     source = _argument_source(count, fail)
     engine, proposal = _proposal(tmp_path, source)
+    if proposal is None:
+        return
     output = engine.apply_refactoring(str(tmp_path / "p.py"), proposal)
     for name in ("f", "g"):
         # Preserve the real invocation's effects, including any references
@@ -182,6 +192,8 @@ def test_rebound_deleted_nonlocal_and_parameter_cell_ownership_is_not_guessed(bo
 @pytest.mark.strict_mode
 def test_forged_metadata_and_stale_source_are_reproved(tmp_path: Path) -> None:
     engine, proposal = _proposal(tmp_path, SOURCE)
+    if proposal is None:
+        return
     replacement = proposal.replacements[0]
     plan = replacement.argument_handoff
     assert isinstance(plan, ArgumentHandoff)
@@ -214,11 +226,14 @@ def test_other_runtime_does_not_claim_cpython_cleanup_proof(
         min_lines=2, reuse_existing_functions=False, skip_trivial_helpers=False
     )
     assert not engine.analyze_file(str(path))
+    assert "lifetime_order_uncertified" in engine.declined_pairs
 
 
 @pytest.mark.strict_mode
 def test_rendered_parameter_budget_includes_ownership_holder(tmp_path: Path) -> None:
     engine, proposal = _proposal(tmp_path, SOURCE, budget=5)
+    if proposal is None:
+        return
     engine.unifier.max_parameters = len(proposal.extracted_function.args.args) + len(
         proposal.extracted_function.args.posonlyargs
     )
@@ -229,6 +244,8 @@ def test_rendered_parameter_budget_includes_ownership_holder(tmp_path: Path) -> 
 @pytest.mark.strict_mode
 def test_observing_custom_finisher_preserves_the_transfer_proof(tmp_path: Path) -> None:
     engine, proposal = _proposal(tmp_path, SOURCE)
+    if proposal is None:
+        return
     observed: List[str] = []
 
     def observe(path: str, text: str) -> str:
@@ -245,6 +262,8 @@ def test_observing_custom_finisher_preserves_the_transfer_proof(tmp_path: Path) 
 @pytest.mark.parametrize("snippet", [False, True])
 def test_mutating_custom_callback_is_called_then_refused(tmp_path: Path, snippet: bool) -> None:
     engine, proposal = _proposal(tmp_path, SOURCE)
+    if proposal is None:
+        return
     observed: List[str] = []
 
     def change(text: str) -> str:
@@ -290,6 +309,8 @@ def test_method_receiver_and_mixed_argument_kinds_keep_original_cleanup(tmp_path
         return 12
 """
     engine, proposal = _proposal(tmp_path, source, budget=8)
+    if proposal is None:
+        return
     output = engine.apply_refactoring(str(tmp_path / "p.py"), proposal)
 
     def effects(text: str, name: str) -> List[str]:
@@ -321,6 +342,9 @@ def test_generated_thunk_captures_only_used_parameter_and_respects_nested_shadow
     assert isinstance(helper, ast.FunctionDef)
     call = ast.parse("return helper(lambda: a.name + str([a for a in (1,2)]))").body[0]
     plan = argument_handoff_plan(function, function.body, analyzer, call, helper)
+    if not argument_ownership._supported_runtime():
+        assert plan is None
+        return
     assert plan is not None
     original = canonical_dump(call)
     replacement = argument_ownership.render_argument_handoff(call, plan, "helper")
@@ -384,6 +408,8 @@ def test_unannotated_holder_keeps_mypy_unchecked_body_semantics(tmp_path: Path) 
         .replace("return 12", "return opaque.missing(12)")
     )
     engine, proposal = _proposal(tmp_path, source)
+    if proposal is None:
+        return
     output = engine.apply_refactoring(str(tmp_path / "p.py"), proposal)
     module = ast.parse(output)
     helper = next(
@@ -430,6 +456,8 @@ def g(a):
 """
     )
     engine, proposal = _proposal(tmp_path, source)
+    if proposal is None:
+        return
     output = engine.apply_refactoring(str(tmp_path / "p.py"), proposal)
     expected = ["born-a", "born-inside", "born-local", "a", "inside", "local"]
     assert _effects(source, "f") == _effects(output, "f") == expected
@@ -468,6 +496,8 @@ def test_ownership_generated_names_reserve_every_lexical_binder(binder: str) -> 
 def test_certificate_box_and_capture_names_avoid_unused_module_binders(tmp_path: Path) -> None:
     source = "import math as _towel_arguments\ndef _towel_argument(): pass\n" + SOURCE
     engine, proposal = _proposal(tmp_path, source)
+    if proposal is None:
+        return
     for replacement in proposal.replacements:
         plan = replacement.argument_handoff
         assert plan is not None
@@ -492,6 +522,8 @@ def g[U](a: U):
     if fail:
         source = source.replace("return 11", 'raise ValueError("stop")')
     engine, proposal = _proposal(tmp_path, source)
+    if proposal is None:
+        return
     output = engine.apply_refactoring(str(tmp_path / "p.py"), proposal)
     for name in ("f", "g"):
         assert (
@@ -543,6 +575,8 @@ def test_black_keeps_independent_parameter_deletes_and_cleanup_order(
     signature = ", ".join(parameters)
     source = SOURCE.replace("f(a)", f"f({signature})").replace("g(a)", f"g({signature})")
     engine, proposal = _proposal(tmp_path, source)
+    if proposal is None:
+        return
     formatter = black_formatter(BlackSettings(line_length=60))
     engine.snippet_formatter = formatter
     for replacement in proposal.replacements:
@@ -582,6 +616,8 @@ def test_black_keeps_independent_parameter_deletes_and_cleanup_order(
 @pytest.mark.strict_mode
 def test_analysis_reserves_the_final_holder_in_the_parameter_budget(tmp_path: Path) -> None:
     _, proposal = _proposal(tmp_path, SOURCE)
+    if proposal is None:
+        return
     path = tmp_path / "p.py"
     semantic_count = len(proposal.extracted_function.args.posonlyargs) + len(
         proposal.extracted_function.args.args
@@ -633,14 +669,49 @@ class C(Base):
 @pytest.mark.strict_mode
 def test_method_budget_includes_implicit_super_receiver_and_holder(tmp_path: Path) -> None:
     """Receiver-free syntax still requires the original frame's first argument for super()."""
+
+    def observe(text: str) -> tuple[object, object, object]:
+        namespace: dict[str, object] = {}
+        exec(text, namespace)
+        klass = cast(Callable[[], object], namespace["C"])
+        first = getattr(klass(), "first")
+        second = getattr(klass(), "second")
+        return first(1), second(2), namespace["events"]
+
     path = tmp_path / "p.py"
     path.write_text(SUPER_CAPTURED_RECEIVER)
     refused = UnificationRefactorEngine(
         skip_trivial_helpers=False, min_lines=3, max_parameters=4, reuse_existing_functions=False
     )
     assert refused.analyze_file(str(path)) == []
-    assert "ownership_parameter_budget" in refused.declined_pairs
+    if not argument_ownership._supported_runtime():
+        assert "lifetime_order_uncertified" in refused.declined_pairs
+    else:
+        assert "ownership_parameter_budget" in refused.declined_pairs
+    if not argument_ownership._supported_runtime():
+        engine = UnificationRefactorEngine(
+            skip_trivial_helpers=False,
+            min_lines=2,
+            max_parameters=5,
+            reuse_existing_functions=False,
+        )
+        survivors = engine.analyze_file(str(path))
+        assert "lifetime_order_uncertified" in engine.declined_pairs
+        assert len(survivors) == 1
+        assert [replacement.line_range for replacement in survivors[0].replacements] == [
+            (12, 13),
+            (17, 18),
+        ]
+        assert all(
+            replacement.argument_handoff is None for replacement in survivors[0].replacements
+        )
+        output = engine.apply_refactoring(str(path), survivors[0])
+        assert observe(output) == observe(SUPER_CAPTURED_RECEIVER)
+        assert path.read_text() == SUPER_CAPTURED_RECEIVER
+        return
     engine, proposal = _proposal(tmp_path, SUPER_CAPTURED_RECEIVER, budget=5)
+    if proposal is None:
+        return
     assert proposal.insert_into_class == "C"
     output = engine.apply_refactoring(str(path), proposal)
     helper = next(
@@ -651,14 +722,6 @@ def test_method_budget_includes_implicit_super_receiver_and_holder(tmp_path: Pat
     parameters = [argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)]
     assert parameters[0] == "self" and len(parameters) == 5
     assert any(name.startswith("_towel_owner") for name in parameters)
-
-    def observe(text: str) -> tuple[object, object, object]:
-        namespace: dict[str, object] = {}
-        exec(text, namespace)
-        klass = cast(Callable[[], object], namespace["C"])
-        first = getattr(klass(), "first")
-        second = getattr(klass(), "second")
-        return first(1), second(2), namespace["events"]
 
     assert observe(output) == observe(SUPER_CAPTURED_RECEIVER)
     # A proposal prepared under a larger budget cannot bypass the final guard.

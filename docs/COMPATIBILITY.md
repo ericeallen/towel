@@ -9,7 +9,7 @@ names, formatting, timing, diagnostic wording or human-readable console output.
 
 ## Supported environments
 
-The validated range is Python 3.11–3.13 on macOS and Linux. Package metadata
+The validated range is Python 3.11–3.15 on macOS and Linux. Package metadata
 allows newer Python versions for evaluation, but the CLI warns when its
 interpreter is outside that range. A successful installation on a newer
 interpreter does not establish support. Windows is not supported.

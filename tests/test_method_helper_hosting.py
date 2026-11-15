@@ -45,6 +45,7 @@ from typing import Dict, List, Mapping, Tuple
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.models import is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
@@ -112,14 +113,20 @@ def _run(directory: Path, driver: str, *path: Path) -> str:
     return completed.stdout + "|" + "".join(completed.stderr.strip().splitlines()[-1:])
 
 
-def _refactor(package: Path) -> int:
+def _refactor(package: Path, *, lifetime_refusal: bool = False) -> int:
     """Refactor ``package`` in place to a fixed point, as ``towel dry PKG PKG --no-types`` does."""
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
+    before = {path: path.read_bytes() for path in package.rglob("*.py")}
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         results, _ = engine.refactor_directory_to_fixed_point(
             str(package), str(package), progress="none"
         )
-    return sum(applied for applied, _ in results.values())
+    applied = sum(applied for applied, _ in results.values())
+    if lifetime_refusal:
+        assert applied == 0
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert {path: path.read_bytes() for path in before} == before
+    return applied
 
 
 def _helpers(source: str) -> Tuple[List[str], Dict[str, List[str]]]:
@@ -254,10 +261,11 @@ def test_programs_that_rebind_a_base_between_its_subclasses_keep_their_output(
     driver = "from pkg.lib import Alpha, Beta\nprint(Alpha().compute(3), Beta().compute(4))\n"
     before = _run(root, driver, root)
     assert before == "14 17\n|"
-    assert _refactor(root / "pkg") == 1
+    certified = lifetime_order_certified()
+    assert _refactor(root / "pkg", lifetime_refusal=not certified) == int(certified)
     assert _run(root, driver, root) == before
     module, classes = _helpers((root / "pkg" / "lib.py").read_text())
-    assert len(module) == 1 and not any(classes.values()), (module, classes)
+    assert len(module) == int(certified) and not any(classes.values()), (module, classes)
 
 
 def test_the_class_holding_both_duplicates_still_takes_the_helper(tmp_path: Path) -> None:
@@ -342,14 +350,20 @@ def test_the_module_function_siblings_share_passes_mypy_strict_and_pyright_stric
             _, applied, _ = engine.refactor_to_fixed_point(str(path))
     finally:
         oracle.close()
-    assert applied == 1
     source = path.read_text()
     module, classes = _helpers(source)
-    assert len(module) == 1 and not any(classes.values()), source
-    helper = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef))
-    receiver = helper.args.args[0]
-    assert receiver.arg == "self" and receiver.annotation is not None
-    assert ast.unparse(receiver.annotation) == "Square | Circle", source
+    if lifetime_order_certified():
+        assert applied == 1
+        assert len(module) == 1 and not any(classes.values()), source
+        helper = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef))
+        receiver = helper.args.args[0]
+        assert receiver.arg == "self" and receiver.annotation is not None
+        assert ast.unparse(receiver.annotation) == "Square | Circle", source
+    else:
+        assert applied == 0
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert source == SHAPES.lstrip()
+        assert not module and not any(classes.values())
     assert _run(tmp_path, driver, tmp_path) == before
     for tool in ("mypy", "pyright"):
         assert _strict_errors(tool, path) == [], (tool, source)
@@ -390,19 +404,27 @@ def test_capture_only_receiver_does_not_restore_an_unused_method_parameter(
         skip_trivial_helpers=False, min_lines=3, max_parameters=4, reuse_existing_functions=False
     )
     proposals = engine.analyze_file(str(path))
-    assert proposals
-    proposal = proposals[0]
-    assert proposal.insert_into_class is None
-    assert all(replacement.argument_handoff is not None for replacement in proposal.replacements)
-    output = engine.apply_refactoring(str(path), proposal)
-    helper = next(
-        node
-        for node in ast.parse(output).body
-        if isinstance(node, ast.FunctionDef) and is_generated_helper_name(node.name)
-    )
-    parameters = [argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)]
-    assert len(parameters) == 4 and "self" not in parameters
-    assert any(name.startswith("_towel_owner") for name in parameters)
+    if lifetime_order_certified():
+        assert proposals
+        proposal = proposals[0]
+        assert proposal.insert_into_class is None
+        assert all(
+            replacement.argument_handoff is not None for replacement in proposal.replacements
+        )
+        output = engine.apply_refactoring(str(path), proposal)
+        helper = next(
+            node
+            for node in ast.parse(output).body
+            if isinstance(node, ast.FunctionDef) and is_generated_helper_name(node.name)
+        )
+        parameters = [argument.arg for argument in (*helper.args.posonlyargs, *helper.args.args)]
+        assert len(parameters) == 4 and "self" not in parameters
+        assert any(name.startswith("_towel_owner") for name in parameters)
+    else:
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == source
+        output = source
     driver = "import subject as s; print(s.C().first(1,2),s.C().second(1,2),s.events)"
     before = _run(tmp_path, driver)
     path.write_text(output)
@@ -431,8 +453,14 @@ class C:
         skip_trivial_helpers=False, min_lines=3, max_parameters=5, reuse_existing_functions=False
     )
     proposals = engine.analyze_file(str(path))
-    assert proposals and proposals[0].insert_into_class == "C"
-    output = engine.apply_refactoring(str(path), proposals[0])
+    if lifetime_order_certified():
+        assert proposals and proposals[0].insert_into_class == "C"
+        output = engine.apply_refactoring(str(path), proposals[0])
+    else:
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == source
+        output = source
     driver = "import subject as s; print(s.C().first(2),s.C().second(4),s.events)"
     before = _run(tmp_path, driver)
     path.write_text(output)

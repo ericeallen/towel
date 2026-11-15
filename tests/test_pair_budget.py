@@ -43,8 +43,9 @@ SERIAL = Settings.from_environ({"TOWEL_WORKERS": "1"})
 
 
 def _uniform_module() -> str:
-    body = "\n".join(f"    v{i} = data[{i}] + {i}" for i in range(8))
-    return "\n\n".join(f"def f{n}(data):\n{body}\n    return v7\n" for n in range(4))
+    # Literal operands keep pair budgeting independent of caller lifetime proofs.
+    body = "\n".join(f"    v{i} = {i} + {i}" for i in range(8))
+    return "\n\n".join(f"def f{n}():\n{body}\n    return v7\n" for n in range(4))
 
 
 def test_under_the_budget_nothing_is_left_out(
@@ -110,15 +111,15 @@ def test_a_negative_tuning_value_is_refused(capsys: pytest.CaptureFixture[str]) 
 def test_min_lines_from_the_command_line_changes_what_is_found(tmp_path: Path) -> None:
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
-            def a(x, delta=0):
-                y = x + 1
+            def a():
+                y = 2 + 1
                 z = y * 2
-                return z + delta
+                return z + 0
 
-            def b(x, delta=1):
-                y = x + 1
+            def b():
+                y = 2 + 1
                 z = y * 2
-                return z + delta
+                return z + 1
             """))
     loose = UnificationRefactorEngine(
         min_lines=2, settings=SERIAL, skip_trivial_helpers=False

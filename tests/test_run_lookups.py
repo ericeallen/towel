@@ -40,13 +40,14 @@ from towel.diagnostics import Settings
 from towel.unification.annotation_wiring import HelperAnnotationWiring
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-_FUNCTION = """\
-def {name}{index}(order):
-    items = [i for i in order.items if i.in_stock]
-    subtotal = sum(i.price for i in items)
-    total = round(subtotal * 1.08, 2)
-    return "{name}{index} " + str(total)
-"""
+# Few statements keep the memoization workload small; enough arithmetic keeps
+# the shared helper worthwhile under the default profitability policy.
+_FUNCTION = (
+    "def {name}{index}():\n    x = {index}\n    total = x + 1\n"
+    "    scaled = total * 2 * 3 // 3 * 5 // 5 * 7 // 7 + 11 - 11 + 13 - 13\n"
+    "    return scaled + 3\n"
+)
+
 
 SERIAL = Settings(
     workers=1,

@@ -38,6 +38,7 @@ from typing import Dict, List, Mapping, Optional, Tuple, TypedDict
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from tests.test_helpers import child_mode_flags
 from towel.cli import DryOptions, PreviewOptions, _build_parser
 from towel.type_inference import type_oracle_for_project
@@ -219,7 +220,11 @@ def test_a_site_reading_the_builtin_shares_with_one_binding_its_name_only_with_t
     for root in (before, after):
         _write(root, {"m.py": MIXED + "\n", "drive.py": SAME_MODULE_DRIVER})
     applied, declined = _refactor(after / "m.py", parameterize_builtins=flag)
-    if flag:
+    if flag and not lifetime_order_certified():
+        assert applied == 0
+        assert "lifetime_order_uncertified" in declined
+        assert _python_files(after) == _python_files(before)
+    elif flag:
         assert applied == 1
         assert _parameters(after) == [["__param_0", "__param_1", "name", "rows", "_towel_owner"]]
     else:
@@ -236,12 +241,17 @@ def test_local_owned_sites_do_not_reuse_their_eager_helper_for_a_builtin_site(
     before, after = tmp_path / "before", tmp_path / "after"
     for root in (before, after):
         _write(root, {"m.py": CLUSTERED + "\n", "drive.py": SAME_MODULE_DRIVER})
-    applied, _ = _refactor(after / "m.py", parameterize_builtins=flag)
-    assert applied == 1
-    calls = _calls((after / "m.py").read_text())
-    # The first two local sites establish an eager ABI. A builtin site cannot
-    # reuse that ABI: it requires caller lookups and a fresh ownership helper.
-    assert (calls["first"], calls["second"], calls["third"]) == (1, 1, 0)
+    applied, declined = _refactor(after / "m.py", parameterize_builtins=flag)
+    if lifetime_order_certified():
+        assert applied == 1
+        calls = _calls((after / "m.py").read_text())
+        # The first two local sites establish an eager ABI. A builtin site cannot
+        # reuse that ABI: it requires caller lookups and a fresh ownership helper.
+        assert (calls["first"], calls["second"], calls["third"]) == (1, 1, 0)
+    else:
+        assert applied == 0
+        assert "lifetime_order_uncertified" in declined
+        assert _python_files(after) == _python_files(before)
     assert _run(after, "drive.py") == _run(before, "drive.py")
 
 
@@ -366,6 +376,10 @@ def test_across_modules_evidence_declines_or_passes_the_builtin(
         assert applied == 0
         assert "builtin_mapping_replaced" in declined
         assert _python_files(after / "proj") == _python_files(before / "proj")
+    elif not lifetime_order_certified() and (case != "one_site_binds_it_locally" or flag):
+        assert applied == 0
+        assert "lifetime_order_uncertified" in declined
+        assert _python_files(after / "proj") == _python_files(before / "proj")
     elif flag:
         assert applied > 0
         assert any(
@@ -391,7 +405,13 @@ def test_reflection_does_not_request_builtin_parameterization(
 ) -> None:
     _write(tmp_path, _package(**REFLECTIVE_OPERATIONS[case]))
     project = tmp_path / "proj"
+    original = _python_files(project)
     applied, declined = _refactor(project / "pkg", parameterize_builtins=flag)
+    if not lifetime_order_certified():
+        assert applied == 0
+        assert "lifetime_order_uncertified" in declined
+        assert _python_files(project) == original
+        return
     assert bool(applied) is flag
     assert all("len" not in parameters for parameters in _parameters(project))
     if flag:
@@ -404,18 +424,31 @@ def test_reflection_does_not_request_builtin_parameterization(
 def test_the_flag_preserves_cross_module_lookups_and_same_module_bare_reads(tmp_path: Path) -> None:
     files = _package()
     _write(tmp_path, files)
-    applied, _ = _refactor(tmp_path / "proj" / "pkg", parameterize_builtins=True)
-    assert applied > 0
-    assert _parameters(tmp_path / "proj") == [
-        ["__param_0", "__param_1", "__param_2", "name", "rows", "_towel_owner"]
-    ]
+    original = _python_files(tmp_path / "proj")
+    applied, declined = _refactor(tmp_path / "proj" / "pkg", parameterize_builtins=True)
+    if lifetime_order_certified():
+        assert applied > 0
+        assert _parameters(tmp_path / "proj") == [
+            ["__param_0", "__param_1", "__param_2", "name", "rows", "_towel_owner"]
+        ]
+    else:
+        assert applied == 0
+        assert "lifetime_order_uncertified" in declined
+        assert _python_files(tmp_path / "proj") == original
     same_module = tmp_path / "same" / "m.py"
     _write(
         tmp_path / "same",
         {"m.py": _function("first(rows, name)", "a") + "\n\n\n" + _function("s(rows, name)", "b")},
     )
-    assert _refactor(same_module, parameterize_builtins=True)[0] == 1
-    assert _parameters(tmp_path / "same") == [["__param_0", "name", "rows", "_towel_owner"]]
+    original_text = same_module.read_text()
+    applied, declined = _refactor(same_module, parameterize_builtins=True)
+    if lifetime_order_certified():
+        assert applied == 1
+        assert _parameters(tmp_path / "same") == [["__param_0", "name", "rows", "_towel_owner"]]
+    else:
+        assert applied == 0
+        assert "lifetime_order_uncertified" in declined
+        assert same_module.read_text() == original_text
 
 
 DIFFERING_IN_A_BUILTIN = """
@@ -499,12 +532,18 @@ def test_the_flag_reaches_the_engine_from_the_command_line(
     # The CLI reaches the enabled lookup analysis, then declines this tiny
     # five-input helper on usefulness. Keep the semantic signature exercised
     # through the API's explicit opt-out rather than silently testing a no-op.
-    assert "unprofitable_helper" in completed.stdout + completed.stderr
+    reason = "unprofitable_helper" if lifetime_order_certified() else "lifetime_order_uncertified"
+    assert reason in completed.stdout + completed.stderr
     assert (tmp_path / "m.py").read_text() == MIXED + "\n"
     assert not _helpers(tmp_path)
-    applied, _ = _refactor(tmp_path / "m.py", parameterize_builtins=True)
-    assert applied == 1
-    assert _parameters(tmp_path) == [["__param_0", "__param_1", "name", "rows", "_towel_owner"]]
+    applied, declined = _refactor(tmp_path / "m.py", parameterize_builtins=True)
+    if lifetime_order_certified():
+        assert applied == 1
+        assert _parameters(tmp_path) == [["__param_0", "__param_1", "name", "rows", "_towel_owner"]]
+    else:
+        assert applied == 0
+        assert "lifetime_order_uncertified" in declined
+        assert (tmp_path / "m.py").read_text() == MIXED + "\n"
 
 
 # What the checker reveals for a builtin, and the annotation Towel writes.
@@ -665,11 +704,13 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(
     )
     assert completed.returncode == 0, completed.stderr
     assert _run(tmp_path, "check.py") == expected
-    assert "unprofitable_helper" in completed.stdout + completed.stderr
+    reason = "unprofitable_helper" if lifetime_order_certified() else "lifetime_order_uncertified"
+    assert reason in completed.stdout + completed.stderr
     assert not _helpers(tmp_path / "pkg")
     # Retain the real configured checker and every callable/signature/runtime
     # assertion while exercising this small semantic fixture through the API.
     package = (tmp_path / "pkg").resolve()
+    original = _python_files(package)
     checker = type_oracle_for_project(package).tool
     assert checker is not None
     try:
@@ -685,10 +726,18 @@ def test_under_a_strict_checker_the_builtin_parameter_is_callable(
             results, _ = engine.refactor_directory_to_fixed_point(
                 str(package), str(package), progress="none"
             )
-        assert sum(count for count, _ in results.values()) > 0
+        if lifetime_order_certified():
+            assert sum(count for count, _ in results.values()) > 0
+        else:
+            assert sum(count for count, _ in results.values()) == 0
+            assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+            assert _python_files(package) == original
     finally:
         checker.close()
     assert _run(tmp_path, "check.py") == expected
+    if not lifetime_order_certified():
+        assert not _helpers(package)
+        return
     (helper,) = _helpers(tmp_path / "pkg")
     parameters = helper.args.posonlyargs + helper.args.args
     assert helper.args.posonlyargs

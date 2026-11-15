@@ -25,6 +25,7 @@ from types import FunctionType
 import weakref
 
 import pytest
+from tests.test_helpers import child_mode_flags, lifetime_order_certified
 import towel
 
 from towel.canonical_ast import canonical_dump
@@ -34,8 +35,8 @@ from towel.unification.compiler_literals import unsafe_byte_literal_moves
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 pytestmark = pytest.mark.skipif(
-    sys.implementation.name != "cpython" or not (3, 9) <= sys.version_info[:2] <= (3, 13),
-    reason="Lexical cache controls target the reviewed CPython 3.9--3.13 constructors",
+    sys.implementation.name != "cpython" or not (3, 9) <= sys.version_info[:2] <= (3, 15),
+    reason="Lexical cache controls target the reviewed CPython 3.9--3.15 constructors",
 )
 
 
@@ -118,6 +119,7 @@ def _dry(original: Path, output: Path, *, cross: bool = False) -> str:
         "--no-interactive",
         "--progress",
         "none",
+        *child_mode_flags(),
     ]
     if cross:
         command.append("--cross-module")
@@ -152,10 +154,17 @@ def test_cli_considers_unsafe_outside_token_before_otherwise_short_body(tmp_path
 
 
 def test_short_byte_source_still_has_useful_cli_extraction(tmp_path: Path) -> None:
+
     source = _source(different=True, escaped=False)
     original, output = tmp_path / "original.py", tmp_path / "output.py"
     original.write_text(source)
     report = _dry(original, output)
+    if not lifetime_order_certified():
+        assert "lifetime_order_uncertified" in report
+        assert "Applied 1 refactoring" not in report
+        assert output.read_text() == source
+        assert _observe(output.read_text()) == _observe(source)
+        return
     assert "Applied 1 refactoring" in report
     assert output.read_text() != source
     assert _observe(output.read_text()) == _observe(source)
@@ -225,6 +234,7 @@ def test_cross_module_cli_keeps_differing_long_token_bytes_at_original_pools(
 def test_structural_memo_warmed_on_short_source_cannot_certify_long_token_source(
     tmp_path: Path,
 ) -> None:
+
     safe = _source(different=True, escaped=False)
     unsafe = _source(different=True, escaped=True)
     assert canonical_dump(ast.parse(safe)) == canonical_dump(ast.parse(unsafe))
@@ -233,7 +243,13 @@ def test_structural_memo_warmed_on_short_source_cannot_certify_long_token_source
     engine = UnificationRefactorEngine(
         skip_trivial_helpers=False, settings=Settings.from_environ({"TOWEL_WORKERS": "1"})
     )
-    assert engine.analyze_files([str(original)], progress="none")
+    warm = engine.analyze_files([str(original)], progress="none")
+    if lifetime_order_certified():
+        assert warm
+    else:
+        assert warm == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert original.read_text() == safe
     assert engine._unify_cache
     original.write_text(unsafe)
     before = _observe(unsafe)

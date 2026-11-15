@@ -30,7 +30,13 @@ All tests read from test_examples in read-only mode.
 
 import unittest
 import ast
+from pathlib import Path
+
+import pytest
+
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.automatic_equivalence_tester import check_affected_functions
 from tests.test_helpers import get_test_example_path, assert_file_not_modified
 
 
@@ -56,6 +62,10 @@ class TestFStringHandling(unittest.TestCase):
 
         # format_number_a and format_number_b have same f-string structure
         format_props = [p for p in proposals if "format_number" in p.description.lower()]
+        if not lifetime_order_certified():
+            self.assertEqual(format_props, [])
+            self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
+            return
         self.assertGreater(len(format_props), 0, "Should find format_number duplicates")
 
         # Check that extracted function can be unparsed without errors
@@ -78,6 +88,19 @@ class TestFStringHandling(unittest.TestCase):
             for p in proposals
             if "log_user" in p.description.lower() and "log_admin" in p.description.lower()
         ]
+        if not lifetime_order_certified():
+            # Strict mode on an uncertified interpreter: the whole block hands its
+            # owned arguments over, which the Python ownership ruling declines;
+            # only the tail that needs no transfer remains.
+            self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
+            self.assertFalse(
+                any(
+                    isinstance(node, ast.JoinedStr)
+                    for prop in log_props
+                    for node in ast.walk(prop.extracted_function)
+                )
+            )
+            return
         self.assertTrue(
             any(
                 isinstance(node, ast.JoinedStr)
@@ -103,7 +126,44 @@ class TestFStringHandling(unittest.TestCase):
         proposals = self.engine.analyze_file(str(self.example_path))
 
         mixed = [p for p in proposals if "mixed_fstring" in p.description.lower()]
+        if not lifetime_order_certified():
+            self.assertEqual(mixed, [])
+            self.assertIn("lifetime_order_uncertified", self.engine.declined_pairs)
+            return
         self.assertGreater(len(mixed), 0, "Should find mixed f-string duplicates")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    value = 1.25\n    precision = 2\n"
+        '    result = f"Value: {value:.{precision}f}"\n    return result\n',
+        "    x = 1\n    y = 2\n"
+        '    result = f"Processing {x}" + " and " + f"also {y}"\n    return result\n',
+    ],
+    ids=["format-specification", "mixed-strings"],
+)
+def test_literal_input_fstrings_still_extract_and_execute(tmp_path: Path, body: str) -> None:
+    """F-string handling stays exercised without a caller-argument ownership proof."""
+    source = "def first():\n" + body + "\ndef second():\n" + body
+    path = tmp_path / "fstrings.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(
+        skip_trivial_helpers=False,
+        reuse_existing_functions=False,
+        max_parameters=5,
+        min_lines=1,
+        parameterize_constants=True,
+    )
+    proposals = engine.analyze_file(str(path))
+    assert len(proposals) == 1
+    proposal = proposals[0]
+    assert len(proposal.replacements) == 2
+    assert any(isinstance(node, ast.JoinedStr) for node in ast.walk(proposal.extracted_function))
+    ast.parse(ast.unparse(proposal.extracted_function))
+    rendered = engine.apply_refactoring(str(path), proposal)
+    assert check_affected_functions(source, rendered, ("first", "second")) == (True, [])
+    assert path.read_text() == source
 
 
 class TestConstantParameterization(unittest.TestCase):

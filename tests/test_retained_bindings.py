@@ -21,6 +21,9 @@ from typing import Callable, cast
 
 import pytest
 
+from towel.unification.argument_ownership import _supported_runtime
+from towel.unification.block_analysis import lifetime_order_preserved
+from towel.unification.scope_analyzer import ScopeAnalyzer
 from towel.unification.retained_bindings import spell_retained_bindings
 
 
@@ -117,7 +120,15 @@ def test_retained_values_finalize_in_the_same_sequence() -> None:
     events.clear()
     exec(helper + ast.unparse(ast.fix_missing_locations(replacement)), namespace)
     cast(Callable[[], None], namespace["f"])()
-    assert events == before == ["after", "x", "y"]
+    if _supported_runtime():
+        assert events == before == ["after", "x", "y"]
+    else:
+        # Respelling itself preserves order, but the engine must not certify
+        # this multi-owner transfer using the old forward-slot proof.
+        assert events == before == ["after", "y", "x"]
+        analyzer = ScopeAnalyzer()
+        analyzer.analyze(ast.Module(body=[function], type_ignores=[]))
+        assert not lifetime_order_preserved(function.body[:3], function, analyzer, ("x", "y", "z"))
 
 
 def test_a_value_return_without_assignment_is_unchanged() -> None:

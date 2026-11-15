@@ -49,6 +49,9 @@ def test_relative_future_annotations_execute_and_remain_free(
         "def target(value: effect()):\n"
         "    return value\n"
         "print(events)\n"
+        "from inspect import get_annotations\n"
+        "get_annotations(target)\n"
+        "print(events)\n"
     )
     package = tmp_path / "pkg"
     package.mkdir()
@@ -69,8 +72,14 @@ def test_relative_future_annotations_execute_and_remain_free(
         timeout=30,
     )
     assert run.returncode == 0, run.stderr
-    executes_annotation = relative and sys.version_info >= (3, 13)
-    assert run.stdout == ("['effect']\n" if executes_annotation else "[]\n")
+    # 3.13 evaluates ordinary annotations eagerly; 3.14/3.15 defer them
+    # until access. The older relative-future compiler behavior stringifies.
+    eager = relative and sys.version_info[:2] == (3, 13)
+    evaluates_on_access = relative and sys.version_info[:2] in {(3, 13), (3, 14), (3, 15)}
+    assert run.stdout.splitlines() == [
+        "['effect']" if eager else "[]",
+        "['effect']" if evaluates_on_access else "[]",
+    ]
     tree = ast.parse(source)
     analyzer = ScopeAnalyzer()
     analyzer.analyze(tree)

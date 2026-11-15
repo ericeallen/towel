@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from tests.test_cli_integration import BODY as LITERAL_BODY
 
 
 def _make_fixture(dir_path: Path) -> None:
@@ -104,37 +105,16 @@ def b():
 def _two_round_project(root: Path) -> None:
     """Two useful extractions; rewriting their shared host triggers local re-analysis."""
     root.mkdir()
-    prices = (
-        "    total = 0\n    for item in items:\n"
-        "        base = item * 3\n        tax = base * 0.1\n"
-        "        taxed = base + tax\n        discounted = taxed - 2\n"
-        "        fee = discounted * 0.02\n        charged = discounted + fee\n"
-        "        rounded = (charged * 100) // 1 / 100\n        total += rounded\n"
-    )
-    names = (
-        "    names = []\n    for record in records:\n"
-        "        stripped = record.name.strip()\n        lower = stripped.lower()\n"
-        "        words = lower.replace('-', ' ')\n        punctuated = words.replace('.', ' ')\n"
-        "        spaces = punctuated.replace('  ', ' ')\n        tabs = spaces.replace('\\t', ' ')\n"
-        "        cleaned = tabs.strip()\n        names.append(cleaned)\n"
-    )
+    # Two distinct literal-only pipelines still require two rounds and four
+    # caller rewrites, without depending on caller-lifetime transfer proofs.
+    arithmetic = LITERAL_BODY
+    bitwise = LITERAL_BODY.replace("+", "^").replace("*", "|").replace("//", "&")
     (root / "a.py").write_text(
-        "def alpha(items):\n"
-        + prices
-        + '    print(total, "alpha")\n    return total\n\n'
-        + "def alpha_two(records):\n"
-        + names
-        + '    print(names, "alpha_two")\n    return names\n'
+        "def alpha():\n    x = 1\n" + arithmetic + "\ndef alpha_two():\n    x = 2\n" + bitwise
     )
-    # Two top-level modules share a helper only when the borrower imports the host.
-    (root / "b.py").write_text(
-        "import a\n\ndef beta(items):\n" + prices + '    print(total, "beta")\n    return total\n'
-    )
-    (root / "c.py").write_text(
-        "import a\n\ndef gamma(records):\n"
-        + names
-        + '    print(names, "gamma")\n    return names\n'
-    )
+    # Each borrower explicitly loads the shared host, as in the original fixture.
+    (root / "b.py").write_text("import a\n\ndef beta():\n    x = 3\n" + arithmetic)
+    (root / "c.py").write_text("import a\n\ndef gamma():\n    x = 4\n" + bitwise)
 
 
 def test_none_is_silent_through_every_re_analysis(tmp_path: Path) -> None:

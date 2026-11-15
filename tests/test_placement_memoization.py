@@ -26,6 +26,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.bounded_cache import memoization_disabled
 from towel.unification.placement import _dispatches_on
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -94,10 +95,21 @@ def test_placement_memos_preserve_exact_fixed_point_output(
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
             # A repeated analysis invokes the AST immutability check on reuse.
-            assert engine.analyze_files([str(source)], progress="none")
-            assert engine.analyze_files([str(source)], progress="none")
+            for _ in range(2):
+                proposals = engine.analyze_files([str(source)], progress="none")
+                if lifetime_order_certified():
+                    assert proposals
+                else:
+                    assert proposals == []
+                    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
             result, applied, _ = engine.refactor_to_fixed_point(str(source), progress="none")
-        assert applied > 0
+        if lifetime_order_certified():
+            assert applied > 0
+        else:
+            assert applied == 0
+            assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+            assert result == METHODS
         outputs.append(result)
     assert outputs[0] == outputs[1]
-    assert method_helper_calls(outputs[0])
+    if lifetime_order_certified():
+        assert method_helper_calls(outputs[0])

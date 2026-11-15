@@ -1,0 +1,300 @@
+"""
+Test example: Real-world patterns from common use cases.
+
+Tests patterns commonly found in real applications: API handling,
+data validation, ETL pipelines, error handling, and logging.
+"""
+
+
+def __extracted_func_7(bucket_key, buckets, value):
+    buckets[bucket_key]['count'] += 1
+    buckets[bucket_key]['sum'] += value
+    buckets[bucket_key]['values'].append(value)
+
+
+def __extracted_func_6(__param_0, e, error_handler, failed, i, item, metrics):
+    error_handler.log(e, context={'index': i, 'item': item})
+    failed.append({'index': i, 'error': str(e), 'item': item})
+    metrics.increment(__param_0)
+
+
+def __extracted_func_5(audit_log, data, errors, field):
+    if field not in data or not data[field]:
+        errors.append(f'Missing required field: {field}')
+        audit_log.record('validation_error', field=field)
+
+
+def __extracted_func_4(e, logger, max_retries, retry_count):
+    logger.warn(f'Extract failed (attempt {retry_count}): {e}')
+    if retry_count >= max_retries:
+        logger.error('Extract phase failed')
+        raise
+
+
+def __extracted_func_3(logger):
+    logger.info('Starting extract phase')
+    # Extract with retry logic
+    # Same retry logic, different timeout
+    max_retries = 3
+    retry_count = 0
+    data = None
+    return (data, max_retries, retry_count)
+
+
+def __extracted_func_2(logger, request, validated):
+    if not validated:
+        logger.error('Invalid payload')
+        return ({'error': 'Bad request'}, 400)
+    logger.info(f'Processing request for user {request.user_id}')
+    return ({'status': 'success'}, 200)
+
+
+def __extracted_func_1(buckets):
+    return {k: {'count': v['count'], 'sum': v['sum'], 'avg': v['sum'] / v['count'] if v['count'] > 0 else 0} for k, v in buckets.items()}
+
+
+def __extracted_func_0(__param_0, audit_log, data, errors, rules_engine, warnings):
+    if data.get('amount', 0) > __param_0:
+        if not rules_engine.check_approval(data):
+            errors.append('Amount requires approval')
+            audit_log.record('approval_required', amount=data['amount'])
+    # Warnings
+    if data.get('currency') not in ['USD', 'EUR', 'GBP']:
+        warnings.append(f"Unusual currency: {data.get('currency')}")
+    return {'valid': len(errors) == 0, 'errors': errors, 'warnings': warnings}
+
+
+def handle_api_request_v1(request, auth, rate_limiter, logger):
+    """Version 1: Complete API request handling."""
+    # Authentication and rate limiting
+    if not auth.verify_token(request.headers.get("Authorization")):
+        logger.warn("Invalid token")
+        return {"error": "Unauthorized"}, 401
+
+    if not rate_limiter.check(request.user_id, limit=100):
+        logger.warn(f"Rate limit exceeded for user {request.user_id}")
+        return {"error": "Too many requests"}, 429
+
+    # Validate and process
+    data = request.json()
+    validated = auth.validate_payload(data)
+
+    return __extracted_func_2(logger, request, validated)
+
+
+def handle_api_request_v2(request, auth, rate_limiter, logger):
+    """Version 2: Different rate limit, same handling pattern."""
+    # Same pattern, different limit
+    if not auth.verify_token(request.headers.get("Authorization")):
+        logger.warn("Invalid token")
+        return {"error": "Unauthorized"}, 401
+
+    if not rate_limiter.check(request.user_id, limit=200):
+        logger.warn(f"Rate limit exceeded for user {request.user_id}")
+        return {"error": "Too many requests"}, 429
+
+    # Validate and process
+    data = request.json()
+    validated = auth.validate_payload(data)
+
+    return __extracted_func_2(logger, request, validated)
+
+
+def etl_pipeline_extract_a(source, config, logger):
+    """Version A: ETL extract phase."""
+    data, max_retries, retry_count = __extracted_func_3(logger)
+
+    while retry_count < max_retries:
+        try:
+            data = source.fetch(endpoint=config["endpoint"], params=config["params"], timeout=30)
+            logger.info(f"Extracted {len(data)} records")
+            break
+        except Exception as e:
+            retry_count += 1
+            __extracted_func_4(e, logger, max_retries, retry_count)
+
+    return data
+
+
+def etl_pipeline_extract_b(source, config, logger):
+    """Version B: Different timeout, same extraction pattern."""
+    data, max_retries, retry_count = __extracted_func_3(logger)
+
+    while retry_count < max_retries:
+        try:
+            data = source.fetch(endpoint=config["endpoint"], params=config["params"], timeout=60)
+            logger.info(f"Extracted {len(data)} records")
+            break
+        except Exception as e:
+            retry_count += 1
+            __extracted_func_4(e, logger, max_retries, retry_count)
+
+    return data
+
+
+def validate_business_rules_v1(data, rules_engine, audit_log):
+    """Version 1: Business rule validation."""
+    errors = []
+    warnings = []
+
+    # Validate required fields
+    required = ["customer_id", "amount", "currency"]
+    for field in required:
+        __extracted_func_5(audit_log, data, errors, field)
+
+    # Business rules
+    return __extracted_func_0(10000, audit_log, data, errors, rules_engine, warnings)
+
+
+def validate_business_rules_v2(data, rules_engine, audit_log):
+    """Version 2: Different amount threshold, same validation."""
+    errors = []
+    warnings = []
+
+    # Validate required fields
+    required = ["customer_id", "amount", "currency"]
+    for field in required:
+        __extracted_func_5(audit_log, data, errors, field)
+
+    # Business rules (different threshold)
+    return __extracted_func_0(5000, audit_log, data, errors, rules_engine, warnings)
+
+
+def process_batch_with_errors_a(items, processor, error_handler, metrics):
+    """Version A: Batch processing with error handling."""
+    processed = []
+    failed = []
+
+    for i, item in enumerate(items):
+        try:
+            # Process item
+            validated = processor.validate(item)
+            if not validated:
+                failed.append({"index": i, "error": "Validation failed", "item": item})
+                metrics.increment("validation_failures")
+                continue
+
+            result = processor.transform(item)
+            processor.enrich(result)
+            processed.append(result)
+            metrics.increment("processed")
+
+        except Exception as e:
+            __extracted_func_6('processing_errors', e, error_handler, failed, i, item, metrics)
+
+    return {"processed": processed, "failed": failed, "total": len(items)}
+
+
+def process_batch_with_errors_b(items, processor, error_handler, metrics):
+    """Version B: Different metric names, same pattern."""
+    processed = []
+    failed = []
+
+    for i, item in enumerate(items):
+        try:
+            # Same pattern
+            validated = processor.validate(item)
+            if not validated:
+                failed.append({"index": i, "error": "Validation failed", "item": item})
+                metrics.increment("invalid_items")
+                continue
+
+            result = processor.transform(item)
+            processor.enrich(result)
+            processed.append(result)
+            metrics.increment("success_count")
+
+        except Exception as e:
+            __extracted_func_6('error_count', e, error_handler, failed, i, item, metrics)
+
+    return {"processed": processed, "failed": failed, "total": len(items)}
+
+
+def cache_with_fallback_v1(key, cache, database, ttl):
+    """Version 1: Cache with database fallback."""
+    # Try cache first
+    cached = cache.get(key)
+    if cached is not None:
+        cache.increment_hits()
+        return cached
+
+    cache.increment_misses()
+
+    # Fallback to database
+    try:
+        data = database.query(key)
+        if data:
+            # Cache for 3600 seconds
+            cache.set(key, data, ttl=3600)
+            cache.record_fill(key)
+            return data
+    except Exception as e:
+        cache.record_error(e)
+        raise
+
+    return None
+
+
+def cache_with_fallback_v2(key, cache, database, ttl):
+    """Version 2: Different TTL, same caching pattern."""
+    # Same pattern, different TTL
+    cached = cache.get(key)
+    if cached is not None:
+        cache.increment_hits()
+        return cached
+
+    cache.increment_misses()
+
+    # Fallback to database
+    try:
+        data = database.query(key)
+        if data:
+            # Cache for 7200 seconds
+            cache.set(key, data, ttl=7200)
+            cache.record_fill(key)
+            return data
+    except Exception as e:
+        cache.record_error(e)
+        raise
+
+    return None
+
+
+def aggregate_metrics_a(events, time_window, aggregator):
+    """Version A: Time-series aggregation."""
+    buckets = {}
+
+    for event in events:
+        # Bucket by time window
+        timestamp = event["timestamp"]
+        bucket_key = (timestamp // time_window) * time_window
+
+        if bucket_key not in buckets:
+            buckets[bucket_key] = {"count": 0, "sum": 0, "values": []}
+
+        # Aggregate
+        value = event["value"] * 2
+        __extracted_func_7(bucket_key, buckets, value)
+
+    # Calculate statistics per bucket
+    return __extracted_func_1(buckets)
+
+
+def aggregate_metrics_b(events, time_window, aggregator):
+    """Version B: Different multiplier, same aggregation."""
+    buckets = {}
+
+    for event in events:
+        # Same bucketing
+        timestamp = event["timestamp"]
+        bucket_key = (timestamp // time_window) * time_window
+
+        if bucket_key not in buckets:
+            buckets[bucket_key] = {"count": 0, "sum": 0, "values": []}
+
+        # Different multiplier
+        value = event["value"] * 3
+        __extracted_func_7(bucket_key, buckets, value)
+
+    # Calculate statistics per bucket
+    return __extracted_func_1(buckets)

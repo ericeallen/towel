@@ -53,19 +53,18 @@ def _project(root: Path) -> Path:
                         self.tag = "{tag}"
 
                     def render(self, width: int) -> str:
-                        body = str(self.tag).strip()
-                        body = body.replace('\\t', ' ')
-                        body = body.replace('\\r', ' ')
-                        body = body.replace('\\n', ' ')
-                        body = body.replace('  ', ' ')
-                        body = body.replace(' -', '-')
-                        body = body.replace('- ', '-')
-                        body = body.replace(' .', '.')
-                        body = body.replace(' ,', ',')
-                        body = body.removeprefix(' ')
-                        body = body.removesuffix(' ')
-                        padded = body.rjust(width, ".")
-                        return padded.upper()
+                        str(self.tag).strip()
+                        self.tag.replace('\\t', ' ')
+                        self.tag.replace('\\r', ' ')
+                        self.tag.replace('\\n', ' ')
+                        self.tag.replace('  ', ' ')
+                        self.tag.replace(' -', '-')
+                        self.tag.replace('- ', '-')
+                        self.tag.replace(' .', '.')
+                        self.tag.replace(' ,', ',')
+                        self.tag.removeprefix(' ')
+                        self.tag.removesuffix(' ')
+                        return self.tag.rjust(width, ".").upper()
                 """).lstrip(),
             encoding="utf-8",
         )

@@ -43,6 +43,7 @@ from typing import Mapping, Sequence, Tuple
 
 import pytest
 
+from tests.test_helpers import child_mode_flags, lifetime_order_certified
 import towel
 from tests.test_import_model import _installed, requires_uv
 
@@ -365,6 +366,7 @@ def _dry(project: Path, target: str) -> str:
             "--cross-module",
             "--progress",
             "none",
+            *child_mode_flags(),
             "--min-lines",
             "3",
         ],
@@ -412,9 +414,16 @@ def test_the_helpers_import_where_the_project_runs(tmp_path: Path, layout: str) 
     expected = _run(
         sys.executable, [original / case.tests, original / case.package], case.calls, tmp_path
     )
-    _dry(refactored, case.target)
-    for text, path in case.imports:
-        assert text in (refactored / path).read_text(encoding="utf-8"), path
+    report = _dry(refactored, case.target)
+    if lifetime_order_certified():
+        for text, path in case.imports:
+            assert text in (refactored / path).read_text(encoding="utf-8"), path
+    else:
+        assert "lifetime_order_uncertified" in report
+        for original_path in original.rglob("*.py"):
+            assert (
+                refactored / original_path.relative_to(original)
+            ).read_bytes() == original_path.read_bytes()
     assert _lent_by_tests(refactored) == []
     ran = _run(
         sys.executable, [refactored / case.tests, refactored / case.package], case.calls, tmp_path
@@ -477,8 +486,13 @@ def test_sibling_top_level_packages_are_not_reached_by_climbing_above_them(
         "print(checkout([0, 2, 3]), validate([1, 5]))\n"
     )
     expected = _run(sys.executable, [project], calls, tmp_path)
-    _dry(project, ".")
+    before = {path: path.read_bytes() for path in project.rglob("*.py")}
+    report = _dry(project, ".")
     written = (project / "utils" / "validators.py").read_text(encoding="utf-8")
-    assert "from api.checkout import __extracted_func" in written, written
+    if lifetime_order_certified():
+        assert "from api.checkout import __extracted_func" in written, written
+    else:
+        assert "lifetime_order_uncertified" in report
+        assert {path: path.read_bytes() for path in before} == before
     assert "from .." not in written
     assert _run(sys.executable, [project], calls, tmp_path) == expected

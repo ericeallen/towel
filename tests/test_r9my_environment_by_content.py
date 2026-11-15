@@ -33,6 +33,8 @@ from typing import Dict, List, Mapping, Sequence
 
 import pytest
 
+from tests.test_cli_integration import LITERAL_DUPLICATES
+
 from towel import consumers
 from towel.consumers import scanned_directories
 from towel.type_inference import CheckResult, MypyInferrer
@@ -72,42 +74,15 @@ def test_r9my_scans_enter_a_package_named_venv_and_skip_an_environment_by_its_ma
     assert found == ["env/x.py", "venv/__init__.py", "venv/mod.py"]
 
 
-KEEPERS = """\
-    def keep_int(x: int, n: int):
-        pair = (x, n)
-        note = repr(pair)
-        kept = x
-        print(note)
-        return kept
-
-
-    def keep_str(x: str, n: int):
-        pair = (x, n)
-        note = repr(pair)
-        kept = x
-        print(note)
-        return kept
-    """
-
-USER = """\
-    from env.x import keep_int
-
-
-    def one(n: int, m: int):
-        print("one")
-        got = keep_int(n, m)
-        shown = repr(got)
-        print(shown)
-        return got
-
-
-    def two(n: int, m: int):
-        print("two")
-        got = keep_int(n, m)
-        shown = repr(got)
-        print(shown)
-        return got
-    """
+# Keep both modules changing so every candidate must restate the env package.
+KEEPERS = (
+    LITERAL_DUPLICATES.replace("():", "() -> int:")
+    .replace("first", "keep_int")
+    .replace("second", "keep_str")
+)
+USER = "from env.x import keep_int\n\n" + LITERAL_DUPLICATES.replace(
+    "():", "() -> int:\n    keep_int()"
+).replace("first", "one").replace("second", "two")
 
 
 class _RecordingMypy(MypyInferrer):

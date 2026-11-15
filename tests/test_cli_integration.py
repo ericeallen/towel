@@ -29,6 +29,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel import cli
 
 # A complete integer pipeline repays the generated helper's call interface.
@@ -39,6 +40,9 @@ BODY = (
     "    j = i - 18\n    k = j // 2\n    return k\n"
 )
 DUPLICATES = "def first(x):\n" + BODY + "\ndef second(x):\n" + BODY
+# CLI feature tests use literal inputs so they exercise publication and validation
+# independently of the runtime certification for transferring caller arguments.
+LITERAL_DUPLICATES = "def first():\n    x = 1\n" + BODY + "\ndef second():\n    x = 2\n" + BODY
 HELPER = "def __extracted_func_0(x):\n    return x * 2\n\nRESULT = __extracted_func_0(7)\n"
 
 
@@ -71,14 +75,16 @@ def invoke(
     return CliResult(status, stdout.getvalue(), stderr.getvalue())
 
 
-def evaluate_functions(source: str) -> list[object]:
+def evaluate_functions(
+    source: str, *, calls: tuple[tuple[int, ...], ...] = ((-3,), (0,), (7,))
+) -> list[object]:
     namespace: dict[str, object] = {}
     exec(compile(source, "<cli-integration>", "exec"), namespace)
     results: list[object] = []
     for name in ("first", "second"):
         function = namespace[name]
         assert callable(function)
-        results.extend(function(value) for value in (-3, 0, 7))
+        results.extend(function(*arguments) for arguments in calls)
     return results
 
 
@@ -164,14 +170,38 @@ def test_preview_finds_duplicates_without_changing_files(tmp_path: Path, directo
     before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
     result = invoke(["preview", str(tmp_path if directory else source)])
     assert result.status == 0
-    assert "Would apply 1 refactoring(s)." in result.stdout
-    assert "first" in result.stdout and "second" in result.stdout
+    if lifetime_order_certified():
+        assert "Would apply 1 refactoring(s)." in result.stdout
+        assert "first" in result.stdout and "second" in result.stdout
+    else:
+        assert "Would apply 0 refactoring(s)." in result.stdout
+        assert "lifetime_order_uncertified" in result.stdout
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
     # One unified diff includes the source and generated helper, without duplicate inventories.
-    assert "--- before/module.py" in result.stdout and "+++ after/module.py" in result.stdout
-    assert "+def __extracted_func" in result.stdout
+    if lifetime_order_certified():
+        assert "--- before/module.py" in result.stdout and "+++ after/module.py" in result.stdout
+        assert "+def __extracted_func" in result.stdout
+    else:
+        assert "--- before/" not in result.stdout
+        assert "+def __extracted_func" not in result.stdout
     assert "Call sites (- before / + after):" not in result.stdout
     assert "Helper inventory:" not in result.stdout
+
+
+def test_quick_preview_reports_uncertified_argument_lifetimes(tmp_path: Path) -> None:
+    source = tmp_path / "module.py"
+    source.write_text(DUPLICATES)
+    result = invoke(["preview", str(source), "--quick", "--progress", "none"])
+    assert result.status == 0, result
+    if lifetime_order_certified():
+        assert "Found 1 refactoring opportunit" in result.stdout
+        assert "Call sites (- before / + after):" in result.stdout
+    else:
+        assert "Found 0 refactoring opportunities" in result.stdout
+        assert "lifetime_order_uncertified" in result.stdout
+        assert "order in which objects are released" in result.stdout
+        assert "Call sites (- before / + after):" not in result.stdout
+    assert source.read_text() == DUPLICATES
 
 
 def test_preview_no_duplicates_is_a_successful_read_only_result(tmp_path: Path) -> None:
@@ -208,8 +238,13 @@ def test_dry_creates_refactored_output_with_same_runtime_results(
     assert result.status == 0, result
     output = destination / "module.py" if directory else destination
     changed = output.read_text()
-    assert "Applied 1 refactoring" in result.stdout
-    assert changed != DUPLICATES
+    if lifetime_order_certified():
+        assert "Applied 1 refactoring" in result.stdout
+        assert changed != DUPLICATES
+    else:
+        assert "lifetime_order_uncertified" in result.stdout
+        assert "No refactorings found" in result.stdout
+        assert changed == DUPLICATES
     assert evaluate_functions(changed) == evaluate_functions(DUPLICATES) == [-1, 5, 19, -1, 5, 19]
     assert source.read_text() == DUPLICATES
     if directory:

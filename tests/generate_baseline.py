@@ -35,7 +35,10 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.compiler_golden_profiles import require_cell_free_baseline_generation
+from tests.compiler_golden_profiles import (
+    require_cell_free_baseline_generation,
+    require_certified_baseline_generation,
+)
 import tempfile
 
 
@@ -102,6 +105,9 @@ def generate_crossfile_baseline(engine, crossfile_dir: Path, output_dir: Path):
         crossfile_dir: Directory containing cross-file test projects
         output_dir: Directory to save refactored output
     """
+    if engine.strict:
+        # Relaxed mode does not consult the lifetime certification.
+        require_certified_baseline_generation()
     print(f"\nGenerating cross-file baseline from {crossfile_dir}...")
 
     # Get all project directories

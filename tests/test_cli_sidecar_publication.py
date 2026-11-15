@@ -18,7 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_cli_integration import DUPLICATES, evaluate_functions, invoke
+from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES
+from tests.test_cli_integration import evaluate_functions, invoke
 
 
 @pytest.mark.parametrize("in_place", [False, True])
@@ -58,7 +59,7 @@ def test_optional_sidecar_failure_reports_successful_source_publication(
     assert "optional naming sidecar" in caplog.text
     generated = output.read_text()
     assert "__extracted_func_" in generated
-    assert evaluate_functions(generated) == evaluate_functions(DUPLICATES)
+    assert evaluate_functions(generated, calls=((),)) == evaluate_functions(DUPLICATES, calls=((),))
     assert sentinel.read_text() == "keep\n"
     if collision == "directory":
         assert (sidecar / "keep").read_text() == "keep\n"

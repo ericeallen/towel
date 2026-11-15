@@ -26,7 +26,7 @@ from typing import Iterator, List, Optional, Tuple
 import pytest
 
 from towel import cli, type_inference
-from tests.test_cli_integration import DUPLICATES, HELPER, invoke
+from tests.test_cli_integration import HELPER, LITERAL_DUPLICATES as DUPLICATES, invoke
 from tests.test_recovery_journal import _interrupted_transaction
 
 _EXAMPLE = re.compile(r"^\s*towel (?P<arguments>[^#]*?)\s*(#.*)?$")

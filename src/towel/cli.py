@@ -243,9 +243,9 @@ def main() -> None:
     result_stdout = sys.stdout
     configure_stderr_logging()
     _settings().enable_debug_logging()
-    if sys.version_info[:2] > (3, 13):
+    if sys.version_info[:2] > (3, 15):
         print(
-            "Warning: Towel is validated on Python 3.11–3.13; this interpreter is outside "
+            "Warning: Towel is validated on Python 3.11–3.15; this interpreter is outside "
             "that range. Review changes and run your project's tests.",
             file=sys.stderr,
         )
@@ -1845,6 +1845,16 @@ def _print_declined(report: "RunReport", applied: int, *, target: Optional[Path]
             f"  {sum(report.declined_pairs.values())} candidate pair(s) declined: "
             f"{counted_reasons(report.declined_pairs)}"
         )
+        if report.declined_pairs.get("unsupported_syntax", 0):
+            lines.append(
+                "  These blocks contain syntax whose evaluation Towel cannot yet preserve; "
+                "they were left unchanged."
+            )
+        if report.declined_pairs.get("lifetime_order_uncertified", 0):
+            lines.append(
+                "  Strict mode cannot yet preserve the order in which objects are released "
+                "on this Python runtime, so these blocks were left unchanged."
+            )
         if report.declined_pairs.get("unprofitable_helper", 0):
             lines.append(profitability)
     if lines:
@@ -2137,6 +2147,7 @@ def _write_failure_result(
 
 def _run_quick_preview(options: PreviewOptions) -> None:
     """List one analysis without promising that the proposals will pass dry's checks."""
+    from towel.unification.fixed_point import RunReport
     from towel.unification.refactor_engine import UnificationRefactorEngine
     from towel.unification.overlap import filter_overlapping_proposals
 
@@ -2183,6 +2194,7 @@ def _run_quick_preview(options: PreviewOptions) -> None:
 
     if not all_proposals:
         print("No duplicates found!")
+        _print_declined(RunReport(declined_pairs=engine.declined_pairs), 0)
         return
 
     proposals = filter_overlapping_proposals(all_proposals)

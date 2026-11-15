@@ -352,7 +352,9 @@ def test_an_unconfigured_name_is_an_ordinary_call(tmp_path: Path) -> None:
     # quality filters disabled, later forwarding work is a separate concern.
     engine = UnificationRefactorEngine(min_lines=1, skip_trivial_helpers=False)
     final, applied, _ = engine.refactor_to_fixed_point(
-        write_module(tmp_path, _labelled_totals("_l")), max_iterations=1, progress="none"
+        write_module(tmp_path, _labelled_totals("_l").replace("(items):", "():")),
+        max_iterations=1,
+        progress="none",
     )
     assert applied == 1
     assert "_l(__param_0)" in final

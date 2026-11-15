@@ -22,15 +22,20 @@ formatting, follow-ups and the final cold confirmation.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
-import json
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
+from tests.test_checker_failure_reporting import _Oracle
+from tests.test_cli_integration import LITERAL_DUPLICATES as DUPLICATES
+from tests.test_cli_integration import invoke
+from tests.test_progress_modes import _make_fixture, _two_round_project
+from tests.typed_fixtures import requires_mypy
 from towel import cli
 from towel.diagnostics import LOG
 from towel.filesystem import StagedProject, staged_project
@@ -39,10 +44,6 @@ from towel.type_inference import CheckFailure, CheckSuccess, TypeDiagnostic, Typ
 from towel.unification import fixed_point
 from towel.unification.exceptions import RefactoringError
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.test_checker_failure_reporting import _Oracle
-from tests.test_cli_integration import DUPLICATES, invoke
-from tests.test_progress_modes import _make_fixture, _two_round_project
-from tests.typed_fixtures import requires_mypy
 
 
 def _contents(target: Path) -> dict[str, bytes]:
@@ -289,11 +290,11 @@ def test_complete_preview_uses_original_config_and_whole_project_staging(
     package = root / "pkg"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("")
-    source = DUPLICATES.replace("(x):", "(x: int) -> int:")
+    source = DUPLICATES.replace("():", "() -> int:")
     (package / "module.py").write_text(source)
     config = "[tool.mypy]\nstrict = true\n[tool.black]\nline-length = 88\n"
     (root / "pyproject.toml").write_text(config)
-    (root / "consumer.py").write_text("from pkg.module import first\nvalue: int = first(3)\n")
+    (root / "consumer.py").write_text("from pkg.module import first\nvalue: int = first()\n")
     before = _snapshot(root)
     observed: list[Path] = []
 

@@ -390,8 +390,8 @@ def test_documented_measurements_keep_their_platform_resources_and_conditions(
         ),
         (
             ".github/workflows/ci.yml",
-            "['3.11', '3.12', '3.13']",
-            "['3.12', '3.13']",
+            "['3.11', '3.12', '3.13', '3.14', '3.15']",
+            "['3.12', '3.13', '3.14', '3.15']",
             _check_automation,
         ),
         (".github/workflows/ecosystem.yml", "--workers 2", "--workers 4", _check_automation),

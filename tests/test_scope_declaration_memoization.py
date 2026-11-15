@@ -27,6 +27,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.assignment_analyzer import scope_declarations
 from towel.unification.bounded_cache import memoization_disabled
 from towel.unification.models import FunctionNode
@@ -100,7 +101,9 @@ def test_declarations_match_cpython_without_entering_nested_scopes(prefix: str) 
     assert isinstance(outer, ast.FunctionDef)
     function = outer.body[1]
     assert isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
-    table = symtable.symtable(source, "declarations.py", "exec").get_children()[0].get_children()[0]
+    module = symtable.symtable(source, "declarations.py", "exec")
+    outer_table = next(child for child in module.get_children() if child.get_name() == "outer")
+    table = next(child for child in outer_table.get_children() if child.get_name() == "target")
     expected = frozenset(
         symbol.get_name()
         for symbol in table.get_symbols()
@@ -166,10 +169,20 @@ def test_declaration_memo_preserves_fixed_point_output(
                 stack.enter_context(memoization_disabled())
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
-            assert engine.analyze_files([str(path)], progress="none")
-            assert engine.analyze_files([str(path)], progress="none")
+            for _ in range(2):
+                proposals = engine.analyze_files([str(path)], progress="none")
+                if lifetime_order_certified():
+                    assert proposals
+                else:
+                    assert proposals == []
+                    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
             result, applied, _ = engine.refactor_to_fixed_point(str(path), progress="none")
-        assert applied > 0
+        if lifetime_order_certified():
+            assert applied > 0
+        else:
+            assert applied == 0
+            assert result == DECLARED_GLOBAL
+            assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
         outputs.append(result)
     assert outputs[0] == outputs[1]
-    assert "__extracted_func_" in outputs[0]
+    assert ("__extracted_func_" in outputs[0]) is lifetime_order_certified()

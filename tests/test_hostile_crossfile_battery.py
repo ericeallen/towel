@@ -26,7 +26,9 @@ with the explicit parameterization mode to verify caller lookup thunks.
 
 As in ``test_hostile_battery``, ``TRANSFORMED`` pins which packages the
 current engine rewrites, so a lost cross-file extraction fails as loudly as
-a wrong one. Every package is in exactly one state. Rejected today:
+a wrong one. The lifetime-refusal profile preserves the semantic assertions
+and pins each additional refusal's reason on uncertified interpreters.
+Every package is in exactly one state. Rejected today:
 ``xf13_import_time_effects``, whose helper import would run a module that
 prints at import time, which the borrower's own import never ran; the four
 whose borrower rebinds ``len`` (``xf17``, ``xf18``, ``xf19``, ``xf22``); and
@@ -77,10 +79,11 @@ the member is a module. ``EXPLICIT_HOST_IMPORTS`` runs copied variants with
 direct host loads so the original binding and typing defects still exercise
 extraction while historical inputs remain unchanged.
 
-A package in ``REFUSED`` holds a file written for a newer Python than any
-Towel supports, stored as ``.pynew`` (``tests.hostile_execution``): Towel
-must refuse the run before writing anything, naming that file, since what it
-does is unseen (``towel.program_files``). The two ``xf9up_`` packages are the
+A package in ``REFUSED`` holds a file using lazy imports, stored as
+``.pynew`` (``tests.hostile_execution``). Before Python 3.15, Towel must
+refuse the run before writing anything, naming the unparseable file
+(``towel.program_files``). On 3.15 the whole package is visible; the current
+lifetime profile refuses these candidates and the program still runs unchanged. The two ``xf9up_`` packages are the
 round-4 audit's P1-2 and P1-3, where such a file hid a decorator applied by
 hand and a test's patch of ``len``.
 
@@ -96,19 +99,21 @@ yet fixed: a strict expected failure whose transformed state is not pinned.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 import re
 import shutil
 import tempfile
+from pathlib import Path
 from typing import Dict
 
 import pytest
 
+from tests.compiler_golden_profiles import lifetime_refusal_profile
 from tests.hostile_execution import ScopeWatch, copy_fixture_tree, module_faces, observe
 from tests.hostile_refactoring import OWNERSHIP_BOOKKEEPING, refactor_package
 from tests.hostile_refactoring import with_known_defects
-from towel.unification.exceptions import UnparsedProgramError
 from tests.test_cli_integration import invoke
+from towel.unification.exceptions import UnparsedProgramError
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # The battery's pins are 1.949's: which packages strict mode transforms, and
 # which its ownership proof refuses. Relaxed mode, the default, has its own
@@ -259,7 +264,7 @@ REFLECTION_CASES: Dict[str, str] = {
 
 REFUSED: Dict[str, str] = {
     # Round-4 audit P1-2: pkg/fast.py applies a recompiling decorator to
-    # kernels.first by hand, in syntax no supported Python parses.
+    # kernels.first by hand, in syntax introduced by Python 3.15.
     "xf9up_newer_syntax_hides_hand_decoration": "pkg/fast.py",
     # Round-4 audit P1-3: tests/test_b.py patches len into pkg.b, likewise.
     "xf9up_newer_syntax_test_hides_builtin_patch": "tests/test_b.py",
@@ -310,6 +315,46 @@ REFLECTION_OWNERSHIP_REFUSALS: Dict[str, str] = {
     "r9dc_star_import_of_a_module_part_way_through_a_cycle": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite": "owned bindings straddle a partial or uncertified whole-body frame boundary",
 }
+
+# These extractions need the original frame-release order. On uncertified
+# interpreters their fixtures still assert output, scopes and the refusal code.
+UNCERTIFIED_OWNERSHIP_REFUSALS = frozenset(
+    {
+        "xf16_consumer_outside_target_owns_helper_name",
+        "xf1792_excluded_probe_import",
+        "xf30_star_importer_takes_a_typing_name",
+        "xf31_package_init_star_imports_a_matcher_named_any",
+        "xf32_star_importer_outside_the_target",
+        "xf7fz_extra_typed_thunk_lambda_default_mypy",
+        "xf7fz_extra_typed_thunk_lambda_default_pyright",
+        "xf7fz_misc_typed_for_prebound_mypy",
+        "xf7t_import_order_is_registration_order",
+    }
+)
+UNCERTIFIED_EXPLICIT_OWNERSHIP_REFUSALS = frozenset(
+    {
+        "r9sb_lambda_capture_across_modules",
+        "xf28_registration_decorator_in_reused_module",
+        "xf3_same_named_local_function",
+        "xf4_same_named_class",
+        "xf5_dunder_file",
+        "xf6_same_alias_different_import",
+        "xf7_docstring_import",
+        "xf8_helper_name_collision",
+    }
+)
+UNCERTIFIED_REFLECTION_OWNERSHIP_REFUSALS = frozenset({"r9dc_decorator_rebound_by_another_module"})
+if lifetime_refusal_profile():
+    OWNERSHIP_REFUSALS |= dict.fromkeys(
+        UNCERTIFIED_OWNERSHIP_REFUSALS, "lifetime_order_uncertified"
+    )
+    EXPLICIT_OWNERSHIP_REFUSALS |= dict.fromkeys(
+        UNCERTIFIED_EXPLICIT_OWNERSHIP_REFUSALS, "lifetime_order_uncertified"
+    )
+    REFLECTION_OWNERSHIP_REFUSALS |= dict.fromkeys(
+        UNCERTIFIED_REFLECTION_OWNERSHIP_REFUSALS, "lifetime_order_uncertified"
+    )
+
 TRANSFORMED = HISTORICAL_EXTRACTIONS - OWNERSHIP_REFUSALS.keys()
 REJECTED |= OWNERSHIP_REFUSALS.keys()
 
@@ -353,6 +398,19 @@ KNOWN_DEFECTS: Dict[str, str] = {}
 
 def _python_files(root: Path) -> dict[str, bytes]:
     return {str(path.relative_to(root)): path.read_bytes() for path in sorted(root.rglob("*.py"))}
+
+
+def _assert_lifetime_order_refusal(
+    package: Path, *, cross_module: bool, parameterize_builtins: bool
+) -> None:
+    engine = UnificationRefactorEngine(
+        min_lines=3,
+        skip_trivial_helpers=False,
+        cross_module_helpers=cross_module,
+        parameterize_builtins=parameterize_builtins,
+    )
+    engine.analyze_directory(str(package.resolve()), progress="none")
+    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0, engine.declined_pairs
 
 
 def _run(root: Path) -> tuple[int, str, list[str]]:
@@ -414,8 +472,27 @@ def _check_directory_program_output(
                         )
                     )
         if case in REFUSED:
-            with pytest.raises(UnparsedProgramError, match=re.escape(f"  {REFUSED[case]}: line ")):
-                refactor_package(after / "pkg", cross_module=case not in WITHOUT_CROSS_MODULE)
+            try:
+                ast.parse((before / REFUSED[case]).read_text())
+            except SyntaxError:
+                with pytest.raises(
+                    UnparsedProgramError, match=re.escape(f"  {REFUSED[case]}: line ")
+                ):
+                    refactor_package(after / "pkg", cross_module=case not in WITHOUT_CROSS_MODULE)
+            else:
+                # The lazy import is now visible. It is outside the candidate
+                # blocks; their owned locals, not parsing, prevent extraction.
+                assert lifetime_refusal_profile()
+                results = refactor_package(
+                    after / "pkg", cross_module=case not in WITHOUT_CROSS_MODULE
+                )
+                assert sum(applied for applied, _ in results.values()) == 0
+                _assert_lifetime_order_refusal(
+                    after / "pkg",
+                    cross_module=case not in WITHOUT_CROSS_MODULE,
+                    parameterize_builtins=False,
+                )
+                assert _run(before)[0] == 0
             assert _python_files(after) == _python_files(before)
             assert _run(after) == _run(before)
             return
@@ -432,6 +509,17 @@ def _check_directory_program_output(
         # No change moves a name a kept function reads to another scope.
         assert scopes.found == []
         assert _run(after) == _run(before)
+        uncertified_refusals = (
+            UNCERTIFIED_EXPLICIT_OWNERSHIP_REFUSALS
+            if explicit_imports
+            else UNCERTIFIED_OWNERSHIP_REFUSALS
+        )
+        if lifetime_refusal_profile() and case in uncertified_refusals:
+            _assert_lifetime_order_refusal(
+                after / "pkg",
+                cross_module=case not in WITHOUT_CROSS_MODULE,
+                parameterize_builtins=parameterize_builtins,
+            )
         if transformed:
             # No module's public names appear, disappear, or change meaning.
             modules = _modules(before)
@@ -465,6 +553,27 @@ def _check_directory_program_output(
             ), ("rejected" if not transformed else "transformed")
 
 
+def _parses(path: Path) -> bool:
+    """Whether this interpreter parses ``path``: the REFUSED fixtures use syntax newer than 3.13."""
+    try:
+        ast.parse(path.read_text())
+    except SyntaxError:
+        return False
+    return True
+
+
+RELAXED_REFLECTION_WHERE_PARSED: Dict[str, str] = {
+    "xf9up_newer_syntax_hides_hand_decoration": "pkg/fast.py recompiles kernels.first by hand",
+}
+"""REFUSED packages that are reflection cases once this interpreter parses their newer syntax.
+
+On 3.11 to 3.13 the run is refused because pkg/fast.py does not parse. On
+3.15 it parses; strict mode then declines for release order (above), and
+relaxed mode, which makes no such refusal, extracts from a function another
+module recompiles from its source, which the contract excludes like the
+REFLECTION_CASES' hand-applied instrumentation (r7d_instrumenting_call_applied_by_hand).
+"""
+
 RELAXED_OBSERVES_FINALIZATION: Dict[str, str] = {}
 """Packages whose output differs in relaxed mode because they print when an object is finalized.
 
@@ -490,8 +599,11 @@ def test_relaxed_directory_refactoring_preserves_program_output(case: str) -> No
         copy_fixture_tree(CASES / case, before)
         copy_fixture_tree(CASES / case, after)
         cross_module = case not in WITHOUT_CROSS_MODULE
-        if case in REFUSED:
-            # A program that will not parse is refused in every mode.
+        if case in REFUSED and not _parses(before / REFUSED[case]):
+            # A program that will not parse is refused in every mode. Where this
+            # interpreter parses the newer syntax, relaxed mode has no lifetime
+            # refusal to make (strict's is checked above), and the package is
+            # held to the ordinary relaxed checks below.
             with pytest.raises(UnparsedProgramError, match=re.escape(f"  {REFUSED[case]}: line ")):
                 refactor_package(after / "pkg", cross_module=cross_module, strict=False)
             assert _python_files(after) == _python_files(before)
@@ -514,6 +626,12 @@ def test_relaxed_directory_refactoring_preserves_program_output(case: str) -> No
             ), name
         if case in RELAXED_OBSERVES_FINALIZATION:
             assert _run(after) != _run(before), "no longer differs: remove it from the list"
+        elif case in RELAXED_REFLECTION_WHERE_PARSED:
+            # Outside the preservation contract, as REFLECTION_CASES are: the
+            # extraction only has to be valid Python.
+            assert transformed, RELAXED_REFLECTION_WHERE_PARSED[case]
+            for path in (after / "pkg").rglob("*.py"):
+                compile(path.read_bytes(), str(path), "exec")
         else:
             assert _run(after) == _run(before)
         if transformed:
@@ -614,6 +732,12 @@ def test_instrumentation_does_not_veto_directory_extraction(tmp_path: Path, case
         parameterize_builtins=True,
     )
     applied = sum(applied for applied, _ in results.values())
+    if lifetime_refusal_profile() and case in UNCERTIFIED_REFLECTION_OWNERSHIP_REFUSALS:
+        _assert_lifetime_order_refusal(
+            root / "pkg",
+            cross_module=case not in WITHOUT_CROSS_MODULE,
+            parameterize_builtins=True,
+        )
     if case in REFLECTION_OWNERSHIP_REFUSALS:
         assert applied == 0, REFLECTION_OWNERSHIP_REFUSALS[case]
     else:
