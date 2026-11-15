@@ -375,7 +375,9 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
             parser.exit(1, f"Error: {error}\n")
     elif args.command == "recover":
         try:
-            recover(args.journal)
+            restored = recover(args.journal)
+            noun = "file" if len(restored) == 1 else "files"
+            print(f"Restored {len(restored)} {noun}; journal removed.")
         except BrokenPipeError:
             raise
         except (OSError, ValueError) as error:
@@ -1019,8 +1021,15 @@ Examples, in a directory holding src/:
     parser.add_argument(
         "--llm",
         choices=["claude", "gpt", "copilot", "generic"],
-        default="generic",
-        help="Format the LLM prompt for a specific AI assistant (default: generic)",
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+
+    parser.add_argument(
+        "--format",
+        action="store_true",
+        help="Format touched files with the project's configured formatter (Ruff or Black; "
+        "default: off).",
     )
 
 
@@ -1422,11 +1431,13 @@ class RenameOptions:
     list: bool
     json: bool
     preview: bool
-    llm: str
+    llm: Optional[str]
     complete_scope: bool
+    format: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "RenameOptions":
+        raw_llm = getattr(args, "llm", None)
         return cls(
             target=Path(args.target),
             files=list(args.files) if args.files else None,
@@ -1435,8 +1446,9 @@ class RenameOptions:
             list=bool(args.list),
             json=bool(args.json),
             preview=bool(args.preview),
-            llm=str(args.llm),
+            llm=str(raw_llm) if raw_llm is not None else None,
             complete_scope=bool(args.complete_scope),
+            format=bool(getattr(args, "format", False)),
         )
 
 
@@ -2431,6 +2443,11 @@ def _run_quick_preview(options: PreviewOptions) -> None:
 def _run_rename_helpers(args: argparse.Namespace) -> None:
     """Run the rename-helpers command."""
     options = RenameOptions.from_namespace(args)
+    if options.llm is not None:
+        LOG.warning(
+            "--llm is deprecated since Towel 2.0 and will be removed in a future release; "
+            "the prompt is the same for every assistant."
+        )
     target = options.target
 
     if not target.exists():
@@ -2478,9 +2495,9 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
 
     if not options.complete_scope and inferred_rename_root(target) is None:
         reason = (
-            f"Cannot establish the consumer scope around {target}. Select the whole project "
-            "and pass --complete-scope to declare that target contains every ordinary consumer. "
-            "Use a file-qualified mapping key or --file to select definitions within that root."
+            f"No pyproject.toml, setup.cfg, setup.py or package __init__.py was found above "
+            f"{target}, so Towel cannot tell whether code outside it calls these helpers; "
+            "if nothing outside does, add --complete-scope."
         )
         if options.json:
             print(json.dumps({"applied": False, "dry_run": options.preview, "error": reason}))
@@ -2496,11 +2513,19 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
             options.preview,
             options.json,
             restrict_selection=bool(options.files or options.functions),
+            format_files=options.format,
         )
         return
 
     # Interactive LLM mode
-    _run_interactive_llm_mode(target, helpers, options.llm, options.preview)
+    _run_interactive_llm_mode(
+        target,
+        helpers,
+        options.llm or "generic",
+        options.preview,
+        restrict_selection=bool(options.files or options.functions),
+        format_files=options.format,
+    )
 
 
 def _find_extracted_helpers(
@@ -2533,8 +2558,10 @@ def _find_extracted_helpers(
                 continue
             lines = source.split("\n")
             start = node.lineno - 1
-            preview = "\n".join(lines[start : start + 5])
-            helpers.append((py_file, node.name, node.lineno, preview))
+            full_source = ast.get_source_segment(source, node) or "\n".join(
+                lines[start : node.end_lineno or start + 5]
+            )
+            helpers.append((py_file, node.name, node.lineno, full_source))
 
     return sorted(helpers, key=lambda x: (str(x[0]), x[2]))
 
@@ -2717,7 +2744,11 @@ def helper_inventory(
         }
         qualnames = class_qualnames(tree)
         for node in ast.walk(tree):
-            if not isinstance(node, ast.FunctionDef) or node.name != name or node.lineno != lineno:
+            if (
+                not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                or node.name != name
+                or node.lineno != lineno
+            ):
                 continue
             enclosing = parents.get(node)
             scope_kind: HelperScopeKind
@@ -2835,6 +2866,7 @@ def _apply_rename_file(
     as_json: bool = False,
     *,
     restrict_selection: bool = False,
+    format_files: bool = False,
 ) -> None:
     """Apply renamings from a JSON file, reporting a structured result when asked.
 
@@ -2851,12 +2883,13 @@ def _apply_rename_file(
         raise ValueError("Rename file must contain a JSON object (dict)")
 
     try:
-        total_changes = _apply_rename_mappings(
+        total_changes, touched_paths = _stage_and_apply_rename_mappings(
             target,
             renames,
             dry_run,
             quiet=as_json,
             selected_helpers=helpers if restrict_selection else None,
+            format_files=format_files,
         )
     except ValueError as error:
         if as_json:
@@ -2877,6 +2910,10 @@ def _apply_rename_file(
         )
         return
     print(f"\n{'[PREVIEW] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
+    if not dry_run and not format_files and touched_paths:
+        hint = _format_restore_hint(target, touched_paths)
+        if hint is not None:
+            print(hint)
 
 
 def _apply_rename_mappings(
@@ -2886,9 +2923,35 @@ def _apply_rename_mappings(
     quiet: bool = False,
     *,
     selected_helpers: Optional[List[Tuple[Path, str, int, str]]] = None,
+    format_files: bool = False,
 ) -> int:
     """Validate every mapping and stage the entire rename batch before any write."""
+    count, _ = _stage_and_apply_rename_mappings(
+        target,
+        renames,
+        dry_run,
+        quiet=quiet,
+        selected_helpers=selected_helpers,
+        format_files=format_files,
+    )
+    return count
+
+
+def _stage_and_apply_rename_mappings(
+    target: Path,
+    renames: Mapping[str, object],
+    dry_run: bool,
+    quiet: bool = False,
+    *,
+    selected_helpers: Optional[List[Tuple[Path, str, int, str]]] = None,
+    format_files: bool = False,
+) -> Tuple[int, List[Path]]:
+    """Validate, optionally format with the project's formatter, and apply a rename batch."""
+    from towel.changes import ChangePlan
+    from towel.renaming import plan_rename_batch
+
     specifications: List[Tuple[str, str, Optional[Path]]] = []
+    labels: List[str] = []
     for spec, new_name in renames.items():
         if not isinstance(new_name, str):
             raise ValueError(f"Invalid rename value for {spec}")
@@ -2897,16 +2960,17 @@ def _apply_rename_mappings(
         if ":" in spec:
             relative, name = spec.rsplit(":", 1)
             file_filter = (target / relative).resolve()
-            if target.resolve() not in file_filter.parents or not file_filter.is_file():
+            if target.resolve() not in file_filter.parents:
                 raise ValueError(
                     f"File-qualified rename must name a file within target: {relative}"
                 )
         if selected_helpers is None:
             specifications.append((name, new_name, file_filter))
+            labels.append(spec)
         else:
             # ``helper``, ``helper.parameter``, or a class-private
             # ``Class.helper[.parameter]``: the helper is the first part that
-            # names a selected one.
+            # names a selected one (or its already-applied new name).
             selected_names = {helper for _, helper, _, _ in selected_helpers}
             helper_name = next(
                 (part for part in name.split(".") if part in selected_names),
@@ -2918,13 +2982,193 @@ def _apply_rename_mappings(
                 if helper == helper_name and (file_filter is None or path.resolve() == file_filter)
             }
             if not matched:
-                raise ValueError(f"Rename is outside the selected helpers: {spec}")
-            specifications.extend((name, new_name, path) for path in sorted(matched))
-    count = _rename_batch(target, specifications, dry_run)
+                candidate_names = {new_name}
+                if "." in spec:
+                    parent_spec = spec.rsplit(".", 1)[0]
+                    parent_target = renames.get(parent_spec)
+                    if isinstance(parent_target, str):
+                        candidate_names.add(parent_target)
+                matched = {
+                    path.resolve()
+                    for path, helper, _, _ in selected_helpers
+                    if helper in candidate_names
+                    and (file_filter is None or path.resolve() == file_filter)
+                }
+            if not matched:
+                selected_keys: List[str] = []
+                for entry in helper_inventory(target, selected_helpers)["helpers"]:
+                    selected_keys.append(entry["rename_key"])
+                    for param in entry["parameters"]:
+                        if param["name"].startswith("__param_"):
+                            selected_keys.append(param["rename_key"])
+                available = ", ".join(dict.fromkeys(selected_keys)) or "none"
+                raise ValueError(
+                    f"Unknown rename key {spec!r} (outside the selected helpers); "
+                    f"available keys: {available}"
+                )
+            for path in sorted(matched):
+                specifications.append((name, new_name, path))
+                labels.append(spec)
+    planned = plan_rename_batch(target, specifications, labels=labels)
+    plan = planned.plan
+    if format_files and plan.changes:
+        before_map, after_map = _format_touched_sources(
+            [(c.path, c.before, c.after) for c in plan.changes]
+        )
+        plan = ChangePlan.from_sources(before_map, after_map)
+    if not dry_run:
+        apply_changes(plan)
     if not quiet:
+        already_set = set(planned.already_applied)
         for spec, new_name in renames.items():
-            print(f"  {spec} -> {new_name}")
-    return count
+            suffix = " (already applied)" if spec in already_set else ""
+            print(f"  {spec} -> {new_name}{suffix}")
+        if dry_run:
+            diff = _format_plan_diff(target, [(c.path, c.before, c.after) for c in plan.changes])
+            if diff:
+                print("\n" + diff.rstrip("\n"))
+    return planned.count, [c.path for c in plan.changes]
+
+
+def _configured_project_formatter(path: Path) -> Optional[str]:
+    """Return ``'ruff'`` or ``'black'`` when configured for ``path``, else ``None``."""
+    from towel.formatting import _ruff_configuration
+    from towel.project_layout import find_project_root, load_pyproject
+
+    ruff_config = _ruff_configuration(path)
+    absolute = path.resolve()
+    folder = absolute if absolute.is_dir() else absolute.parent
+    project_root = find_project_root(path).resolve()
+    black_config: Optional[Path] = None
+    for directory in (folder, *folder.parents):
+        pyproject = load_pyproject(directory)
+        tool = pyproject.get("tool", {}) if isinstance(pyproject, Mapping) else {}
+        if isinstance(tool, Mapping) and isinstance(tool.get("black"), Mapping):
+            black_config = directory / "pyproject.toml"
+            break
+        if directory == project_root:
+            break
+    if ruff_config is None and black_config is None:
+        return None
+    if ruff_config is not None and black_config is None:
+        return "ruff"
+    if black_config is not None and ruff_config is None:
+        return "black"
+    assert ruff_config is not None and black_config is not None
+    if ruff_config.parent in black_config.parent.parents:
+        return "black"
+    if black_config.parent in ruff_config.parent.parents or ruff_config.name != "pyproject.toml":
+        return "ruff"
+    tool = load_pyproject(ruff_config.parent).get("tool", {})
+    ruff_table = tool.get("ruff", {}) if isinstance(tool, Mapping) else {}
+    if isinstance(ruff_table, Mapping) and isinstance(ruff_table.get("format"), Mapping):
+        return "ruff"
+    return "black"
+
+
+def _format_touched_sources(
+    changes: List[Tuple[Path, bytes, bytes]],
+) -> Tuple[Dict[str, bytes], Dict[str, str]]:
+    """Format touched files only when the project configures Ruff or Black."""
+    from towel.formatting import (
+        FormatterUnavailable,
+        _RunFormatTools,
+        _black_for_project,
+        ruff_formatter,
+    )
+    from towel.source_text import decode_source
+
+    before_map: Dict[str, bytes] = {}
+    after_map: Dict[str, str] = {}
+    tools = _RunFormatTools()
+    try:
+        for path, before_bytes, after_bytes in changes:
+            before_map[str(path)] = before_bytes
+            text = decode_source(after_bytes)
+            kind = _configured_project_formatter(path)
+            if kind == "ruff":
+                try:
+                    formatter = ruff_formatter(path)
+                except FormatterUnavailable as error:
+                    raise ValueError(
+                        "Project configures Ruff, but 'ruff' is not installed; "
+                        "install ruff or omit --format"
+                    ) from error
+                rendered = formatter(text)
+                after_map[str(path)] = rendered + "\n" if rendered else text
+            elif kind == "black":
+                try:
+                    choice = _black_for_project(path, "Black", tools)
+                except ImportError as error:
+                    raise ValueError(
+                        "Project configures Black, but 'black' is not installed; "
+                        "install black or omit --format"
+                    ) from error
+                if choice.tool is not None:
+                    rendered = choice.tool(text)
+                    after_map[str(path)] = rendered + "\n" if rendered else text
+                else:
+                    after_map[str(path)] = text
+            else:
+                after_map[str(path)] = text
+    finally:
+        for worker in list(tools._tools.values()):
+            worker.close()
+    return before_map, after_map
+
+
+def _display_touched_path(target: Path, file_path: Path) -> str:
+    resolved = file_path.resolve()
+    cwd = Path.cwd().resolve()
+    if resolved.is_relative_to(cwd):
+        return resolved.relative_to(cwd).as_posix()
+    resolved_target = target.resolve()
+    if resolved.is_relative_to(resolved_target):
+        return str(target / resolved.relative_to(resolved_target))
+    return str(file_path)
+
+
+def _format_restore_hint(target: Path, touched_paths: List[Path]) -> Optional[str]:
+    """One-line command naming the project's configured formatter on touched files, if any."""
+    import shlex
+
+    by_tool: Dict[str, List[str]] = {}
+    for path in touched_paths:
+        kind = _configured_project_formatter(path)
+        if kind is not None:
+            by_tool.setdefault(kind, []).append(_display_touched_path(target, path))
+    if not by_tool:
+        return None
+    commands: List[str] = []
+    if "ruff" in by_tool:
+        commands.append(shlex.join(("ruff", "format", *by_tool["ruff"])))
+    if "black" in by_tool:
+        commands.append(shlex.join(("black", *by_tool["black"])))
+    return f"To restore formatting, run: {' && '.join(commands)}"
+
+
+def _format_plan_diff(target: Path, changes: List[Tuple[Path, bytes, bytes]]) -> str:
+    """Unified diff across staged file changes for human ``--preview`` review."""
+    from difflib import unified_diff
+    from towel.source_text import decode_source
+
+    resolved_target = target.resolve()
+    lines: List[str] = []
+    for path, before_bytes, after_bytes in changes:
+        try:
+            relative = path.resolve().relative_to(resolved_target).as_posix()
+        except ValueError:
+            relative = path.name
+        old = decode_source(before_bytes)
+        new = decode_source(after_bytes)
+        for line in unified_diff(
+            old.splitlines(keepends=True),
+            new.splitlines(keepends=True),
+            fromfile=f"before/{relative}",
+            tofile=f"after/{relative}",
+        ):
+            lines.append(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n")
+    return "".join(lines)
 
 
 def _rename_function_in_directory(
@@ -2954,6 +3198,9 @@ def _run_interactive_llm_mode(
     helpers: List[Tuple[Path, str, int, str]],
     llm_type: str,
     dry_run: bool,
+    *,
+    restrict_selection: bool = False,
+    format_files: bool = False,
 ) -> None:
     """Run interactive mode: generate LLM prompt and apply suggestions."""
     print(f"\nFound {len(helpers)} extracted helper function(s) to rename.\n")
@@ -2971,17 +3218,17 @@ def _run_interactive_llm_mode(
     print("The response should be a JSON object mapping old names to new names.")
     print("You can use file-qualified names (e.g., 'path/to/file.py:func_name') to")
     print("rename functions only in specific files, or just the function name to rename")
-    print("across all files. A class-private helper, '__...' in a class, is named by its")
-    print("class ('path/to/file.py:Class.__func_name') and keeps a name starting with '__'.")
+    print("across all files. Generated parameters use 'path/to/file.py:func_name.__param_0'.")
+    print("A class-private helper, '__...' in a class, is named by its class")
+    print("('path/to/file.py:Class.__func_name') and keeps a name starting with '__'.")
     print()
     print("Example:")
     print('  {"__extracted_func_1": "calculate_total"}')
     print('  {"src/utils.py:__extracted_func_2": "validate_input"}')
+    print('  {"src/utils.py:__extracted_func_2.__param_0": "raw_value"}')
     print('  {"src/box.py:Box.__extracted_func_3": "__scaled_width"}')
     print()
-    print(
-        "Paste the JSON response below, then press ENTER followed by Ctrl+D (or Ctrl+Z on Windows):"
-    )
+    print("Paste the JSON response below, then press ENTER followed by Ctrl+D:")
     print()
 
     llm_response = sys.stdin.read().strip()
@@ -3009,8 +3256,22 @@ def _run_interactive_llm_mode(
     print("\n" + "=" * 70)
     _banner("STEP 2: APPLYING RENAMINGS")
 
-    total_changes = _apply_rename_mappings(target, renames, dry_run, selected_helpers=helpers)
+    try:
+        total_changes, touched_paths = _stage_and_apply_rename_mappings(
+            target,
+            renames,
+            dry_run,
+            selected_helpers=helpers if restrict_selection else None,
+            format_files=format_files,
+        )
+    except ValueError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        sys.exit(2)
     print(f"\n{'[PREVIEW] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
+    if not dry_run and not format_files and touched_paths:
+        hint = _format_restore_hint(target, touched_paths)
+        if hint is not None:
+            print(hint)
 
 
 def _generate_llm_prompt(
@@ -3018,56 +3279,83 @@ def _generate_llm_prompt(
     helpers: List[Tuple[Path, str, int, str]],
     llm_type: str,
 ) -> str:
-    """Generate a prompt for an LLM to suggest better function names."""
+    """Generate a prompt for an LLM to suggest better function and parameter names."""
+    intro = (
+        "I have extracted duplicate code into helper functions, and both the functions and their\n"
+        "generated parameters still have placeholder names (__extracted_func_0, __param_0, etc.).\n"
+        "\n"
+        "Please review each helper, its generated parameter keys, and its call site, and suggest\n"
+        "descriptive names for both the helper functions and their __param_N parameters.\n"
+        "The new names should:\n"
+        "- Be descriptive and indicate each function's purpose and each parameter's role\n"
+        "- Follow Python naming conventions (lowercase with underscores)\n"
+        "- Be concise and meaningful, avoiding generic names like 'helper', 'utility', or 'arg'\n"
+        "- Name thunk parameters (called as name() inside the helper) for the value they yield\n"
+        "\n"
+        "Here are the extracted helpers:\n\n"
+    )
 
-    intro = """I have extracted duplicate code into helper functions, but they have generic names like __extracted_func_1, __extracted_func_2, etc.
-
-Please review each function and suggest a better, more descriptive name based on what the function does. The new names should:
-- Be descriptive and indicate the function's purpose
-- Follow Python naming conventions (lowercase with underscores)
-- Be concise but meaningful
-- Avoid generic names like "helper" or "utility"
-
-Here are the extracted functions:
-
-"""
-
-    keys = {
-        (entry["file"], entry["name"], entry["line"]): entry["rename_key"]
+    inventory_entries = {
+        (entry["file"], entry["name"], entry["line"]): entry
         for entry in helper_inventory(target, helpers)["helpers"]
     }
     functions_section = ""
     for i, (file_path, func_name, lineno, source_preview) in enumerate(helpers, 1):
         rel_path = file_path.relative_to(target)
-        key = keys.get((str(rel_path), func_name, lineno), func_name)
+        entry = inventory_entries.get((str(rel_path), func_name, lineno))
+        key = entry["rename_key"] if entry is not None else func_name
+        helper_source = entry["source"] if entry is not None and entry["source"] else source_preview
         functions_section += f"\n{i}. {func_name} ({rel_path}:{lineno}), rename key {key!r}\n"
-        if source_preview:
-            functions_section += "```python\n"
-            functions_section += source_preview + "\n"
-            functions_section += "```\n"
+        if helper_source:
+            functions_section += f"```python\n{helper_source}\n```\n"
+        if entry is not None:
+            generated_params = [
+                param for param in entry["parameters"] if param["name"].startswith("__param_")
+            ]
+            if generated_params:
+                functions_section += "Generated parameter rename keys:\n"
+                for param in generated_params:
+                    detail = ""
+                    if param["kind"] == "thunk":
+                        detail = f" (thunk, called as {param['name']}())"
+                    elif param["kind"] == "lifted":
+                        detail = " (callable)"
+                    samples = [b["expression"] for b in param["bindings"] if b["expression"]][:2]
+                    if samples:
+                        detail += f"; passed {', '.join(samples)}"
+                    functions_section += f"- {param['rename_key']!r}{detail}\n"
+            if entry["calls"] and entry["calls"][0]["statement"]:
+                call = entry["calls"][0]
+                functions_section += (
+                    f"Call site ({call['file']}:{call['line']}):\n"
+                    f"```python\n{call['statement']}\n```\n"
+                )
 
-    output_format = """
-
-Please provide your suggestions as a JSON object mapping old names to new names.
-
-If the same function name appears in multiple files, use file-qualified names (path:function_name)
-to rename them individually. Otherwise, you can use just the function name to rename across all files.
-A helper whose rename key names a class ("path.py:Class.__name") is class-private: use that key, and
-give it a new name that also starts with two underscores (and does not end with two), such as
-"__scaled_width", because the privacy is what keeps subclasses from overriding it.
-
-For example:
-
-```json
-{
-  "src/utils.py:__extracted_func_1": "calculate_total_price",
-  "src/validators.py:__extracted_func_1": "validate_email_format",
-  "__extracted_func_2": "format_date_string"
-}
-```
-
-Only include the JSON object in your response.
-"""
+    output_format = (
+        "\n"
+        "Please provide your suggestions as a JSON object mapping each rename key to its new\n"
+        "name, including both helper keys and generated __param_N parameter keys.\n"
+        "\n"
+        "Use the exact rename keys shown above (such as 'path.py:__extracted_func_0' for a\n"
+        "helper and 'path.py:__extracted_func_0.__param_0' for one of its parameters).\n"
+        "A helper whose rename key names a class ('path.py:Class.__name') is class-private:\n"
+        "use that key, and give it a new name that also starts with two underscores (and does\n"
+        "not end with two), such as '__scaled_width', because privacy keeps subclasses from\n"
+        "overriding it.\n"
+        "\n"
+        "For example:\n"
+        "\n"
+        "```json\n"
+        "{\n"
+        '  "src/utils.py:__extracted_func_1": "calculate_total_price",\n'
+        '  "src/utils.py:__extracted_func_1.__param_0": "tax_rate",\n'
+        '  "src/validators.py:__extracted_func_1": "validate_email_format",\n'
+        '  "__extracted_func_2": "format_date_string"\n'
+        "}\n"
+        "```\n"
+        "\n"
+        "Only include the JSON object in your response.\n"
+    )
 
     return intro + functions_section + output_format
 

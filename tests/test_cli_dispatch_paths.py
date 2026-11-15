@@ -34,6 +34,7 @@ def test_recover_restores_the_journal_targets_and_exits_cleanly(tmp_path: Path) 
     files, journal = _interrupted_transaction(tmp_path)
     result = invoke(["recover", str(journal)])
     assert result.status == 0
+    assert result.stdout == "Restored 1 file; journal removed.\n"
     assert all(path.read_bytes() == b"value = 1\n" for path in files)
     assert not journal.exists()
 
