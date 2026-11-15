@@ -333,3 +333,49 @@ def test_cli_skipped_file_warning_is_not_repeated_by_analysis_passes(tmp_path: P
     assert result.status == 0, result.stderr
     assert "Would apply 2 refactoring(s)." in result.stdout
     assert result.stderr.count("Warning: Skipping ") == 1, result.stderr
+
+
+@pytest.mark.parametrize(
+    "command, positionals",
+    [("dry", ["in", "out"]), ("preview", ["in"]), ("rename-helpers", ["in"])],
+)
+@pytest.mark.parametrize("flag", ["--quiet", "-q"])
+def test_quiet_and_progress_are_shared_cli_flags(
+    command: str, positionals: list[str], flag: str
+) -> None:
+    """Audit 7: all three commands accept quiet and the same progress choices."""
+    from towel.cli import _build_parser
+
+    args = _build_parser().parse_args([command, *positionals, "--progress", "detail", flag])
+    assert args.quiet and args.progress == "detail"
+
+
+@pytest.mark.parametrize("command", ["dry", "preview", "rename-helpers"])
+def test_quiet_cli_keeps_results_and_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+) -> None:
+    """Audit 7: quiet takes precedence over explicit detail without hiding results."""
+    import argparse
+    import sys
+    from towel import cli
+    from towel.diagnostics import LOG
+    from towel.unification.progress import write_note
+
+    def dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+        assert args.progress == "none"
+        write_note("unavailable formatter")
+        LOG.info("detail should be quiet")
+        LOG.warning("unreadable source")
+        print("Result: unchanged")
+
+    monkeypatch.setattr(cli, "_dispatch", dispatch)
+    positionals = ["in", "out", "--no-interactive"] if command == "dry" else ["in"]
+    monkeypatch.setattr(
+        sys, "argv", ["towel", command, *positionals, "--progress", "detail", "--quiet"]
+    )
+    cli.main()
+    captured = capsys.readouterr()
+    assert captured.out == "Result: unchanged\n"
+    assert captured.err == "Warning: unreadable source\n"

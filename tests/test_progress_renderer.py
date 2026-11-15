@@ -182,3 +182,29 @@ def test_a_run_resolves_its_backend_only_once(monkeypatch: pytest.MonkeyPatch) -
             renderer.close()
         read_terminal(master)
     assert len(calls) == 1
+
+
+def test_quiet_suppresses_progress_and_notes_but_keeps_diagnostics() -> None:
+    """Audit 7: quiet keeps warnings/errors, and does not silence the next invocation."""
+    import logging
+    from towel.diagnostics import _CurrentStderrHandler
+
+    output = io.StringIO()
+    handler = _CurrentStderrHandler()
+    with contextlib.redirect_stderr(output):
+        with progress.progress_run(quiet=True):
+            renderer = ProgressRenderer("tqdm", total=3, desc="apply", unit="it")
+            renderer.update()
+            renderer.note("quiet note")
+            for level, message in [
+                (logging.INFO, "quiet detail"),
+                (logging.WARNING, "visible warning"),
+                (logging.ERROR, "visible error"),
+            ]:
+                handler.handle(logging.LogRecord("towel", level, __file__, 1, message, (), None))
+            renderer.close()
+        with progress.progress_run():
+            progress.write_note("normal note")
+    assert (
+        output.getvalue() == "Warning: visible warning\nError: visible error\nNote: normal note\n"
+    )

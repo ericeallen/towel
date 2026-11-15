@@ -122,7 +122,10 @@ class _CurrentStderrHandler(logging.StreamHandler[TextIO]):
     """
 
     def emit(self, record: logging.LogRecord) -> None:
-        from .unification.progress import repeated_warning, write_message
+        from .unification.progress import is_quiet, repeated_warning, write_message
+
+        if is_quiet() and record.levelno < logging.WARNING:
+            return
 
         prefix = (
             "Error"

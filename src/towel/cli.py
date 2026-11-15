@@ -160,10 +160,12 @@ def main() -> None:
         )
     try:
         with (
-            progress_run(),
+            progress_run(quiet=bool(getattr(args, "quiet", False))),
             _explain_rejections(bool(getattr(args, "explain", False))),
             execution_budget(getattr(args, "time_limit", None)),
         ):
+            if getattr(args, "quiet", False):
+                args.progress = "none"
             _dispatch(parser, args)
     except BudgetExpired:
         # A signal may arrive while redirect_stdout.__enter__ has assigned
@@ -566,6 +568,13 @@ def _add_progress_flag(parser: argparse.ArgumentParser, detail: str) -> None:
         f"{detail}.",
     )
 
+    parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Suppress progress and notes; keep warnings, errors and results",
+    )
+
 
 def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     """Add 'preview' subcommand parser."""
@@ -665,6 +674,8 @@ Examples:
   towel rename-helpers path/to/project --complete-scope --rename-file renames.json
         """,
     )
+
+    _add_progress_flag(parser, "'detail' shows diagnostic detail where available")
 
     parser.add_argument(
         "target",
@@ -1842,7 +1853,7 @@ def _run_quick_preview(options: PreviewOptions) -> None:
     # Analyze
     if is_file:
         if not target.endswith(".py"):
-            print(f"Note: '{target}' is not a Python file (.py)")
+            write_note(f"Note: '{target}' is not a Python file (.py)")
             print()
 
         print(f"Analyzing file: {target}")

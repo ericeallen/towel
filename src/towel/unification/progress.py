@@ -250,7 +250,8 @@ def display_threads_stopped(timeout: float) -> Iterator[None]:
 class _RunDisplay:
     """Presentation choices and diagnostics owned by one command invocation."""
 
-    def __init__(self) -> None:
+    def __init__(self, quiet: bool) -> None:
+        self.quiet = quiet
         self.terminal = sys.stderr.isatty()
         self._loaded = False
         self._factory: Optional[ProgressBarFactory] = None
@@ -274,9 +275,9 @@ _RUN: ContextVar[Optional[_RunDisplay]] = ContextVar("towel_progress_run", defau
 
 
 @contextmanager
-def progress_run() -> Iterator[None]:
+def progress_run(*, quiet: bool = False) -> Iterator[None]:
     """Bound backend decisions and repeated warnings to a single invocation."""
-    token = _RUN.set(_RunDisplay())
+    token = _RUN.set(_RunDisplay(quiet))
     previous = tuple(_ACTIVE)
     try:
         yield
@@ -285,6 +286,11 @@ def progress_run() -> Iterator[None]:
             if renderer not in previous:
                 renderer.close()
         _RUN.reset(token)
+
+
+def is_quiet() -> bool:
+    run = _RUN.get()
+    return run.quiet if run is not None else False
 
 
 def repeated_warning(message: str) -> bool:
@@ -342,6 +348,8 @@ class ProgressRenderer:
         factory: Optional[ProgressBarFactory] = None,
     ) -> None:
         run = _RUN.get()
+        if run is not None and run.quiet:
+            mode = "none"
         terminal = run.terminal if run is not None else sys.stderr.isatty()
         self._enabled = wants_bar(mode) and terminal and total != 0
         self._factory = factory
@@ -478,4 +486,5 @@ def write_message(message: str, *, prefix: str = "") -> None:
 
 def write_note(message: str) -> None:
     """Route a tool note through the display; accepts existing ``Note:`` prefixes."""
-    write_message(message, prefix="Note")
+    if not is_quiet():
+        write_message(message, prefix="Note")
