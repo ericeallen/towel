@@ -102,15 +102,25 @@ class HelperInventory(TypedDict):
     helpers: List[HelperRecord]
 
 
+TypesStatus = Literal["enabled", "unverified", "off"]
+
+
 class CommandResult(TypedDict):
     """Version 1 of the complete-preview and dry result contract.
 
     A null publication state means the operation failed without confirming
     whether its final transaction committed. A time-limit refusal is always
     before publication and therefore reports false, as a preview always does.
+
+    ``types`` is ``enabled`` when a checker was selected (individual bare
+    proposals may need no verification), ``unverified`` when no checker was
+    available or the operation failed, and ``off`` for explicit ``--no-types``.
+    A missing configured checker in relaxed mode gives ``unverified`` and bare
+    helpers; with no configured checker, existing annotations may be copied.
     """
 
     schema_version: Literal[1]
+    types: TypesStatus
     command: Literal["preview", "dry"]
     status: Literal["complete", "incomplete", "error"]
     input: str

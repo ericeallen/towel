@@ -68,6 +68,7 @@ from towel.cli_reporting import (
     HelperRecord as HelperRecord,
     HelperScopeKind as HelperScopeKind,
     ParameterRecord as ParameterRecord,
+    TypesStatus,
     render_preview,
     source_diff,
 )
@@ -482,6 +483,11 @@ def _add_execution_flags(
         help=argparse.SUPPRESS,
     )
 
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Keep strict verification and refusal policies (relaxed mode is the default).",
+    )
     parser.add_argument(
         "--types",
         dest="types",
@@ -987,6 +993,7 @@ class DryOptions:
     summary: bool = False
     diff: bool = False
     inventory: bool = False
+    strict: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -1001,6 +1008,7 @@ class DryOptions:
             max_pairs=int(args.max_pairs),
             progress=normalize_progress(args.progress),
             types=bool(args.types),
+            strict=bool(args.strict),
             format=bool(args.format),
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
@@ -1033,6 +1041,7 @@ class PreviewOptions:
     summary: bool = False
     diff: bool = False
     inventory: bool = False
+    strict: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -1045,6 +1054,7 @@ class PreviewOptions:
             progress=normalize_progress(args.progress),
             max_refactorings=int(args.max_refactorings),
             types=bool(args.types),
+            strict=bool(args.strict),
             format=bool(args.format),
             quick=bool(args.quick),
             exclude=tuple(args.exclude or ()),
@@ -1069,6 +1079,7 @@ class PreviewOptions:
             max_pairs=self.max_pairs,
             progress=self.progress,
             types=self.types,
+            strict=self.strict,
             format=self.format,
             exclude=self.exclude,
             cross_module=self.cross_module,
@@ -1181,7 +1192,24 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         # interrupted change left them, which the user should know first.
         LOG.warning("%s", pending_journal_remedy(journal, "this output is refactored from"))
 
-    oracle = _type_oracle(Path(input_path)) if options.types else None
+    from towel.type_inference import CheckerNotInstalled
+
+    annotate_helpers = options.types
+    try:
+        oracle = _type_oracle(Path(input_path)) if options.types else None
+    except CheckerNotInstalled as error:
+        if options.strict:
+            raise
+        oracle = None
+        annotate_helpers = False
+        print(
+            f"Warning: {error} Continuing without type verification; generated helpers stay "
+            "bare, as with --no-types. Use --strict to refuse instead.",
+            file=sys.stderr,
+        )
+    types_status: TypesStatus = (
+        "off" if not options.types else "enabled" if oracle is not None else "unverified"
+    )
     try:
         engine = UnificationRefactorEngine(
             max_parameters=options.max_parameters,
@@ -1196,7 +1224,8 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                 _generated_code_formatter(Path(input_path)) if options.format else None
             ),
             file_finisher=_file_finisher(Path(input_path), sort_imports=options.format),
-            annotate_helpers=options.types,
+            annotate_helpers=annotate_helpers,
+            strict=options.strict,
             type_oracle=oracle,
         )
 
@@ -1279,7 +1308,9 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                     " available without call-site before/after metadata.",
                     error,
                 )
-        return _command_result(engine, options, applied, termination, preview=preview)
+        return _command_result(
+            engine, options, applied, termination, preview=preview, types_status=types_status
+        )
     finally:
         if oracle is not None:
             oracle.close()
@@ -1742,6 +1773,7 @@ def _command_result(
     termination: str,
     *,
     preview: bool,
+    types_status: TypesStatus,
 ) -> CommandResult:
     inventory = None
     if options.json:
@@ -1756,6 +1788,7 @@ def _command_result(
             LOG.warning("Helper inventory unavailable: %s", error)
     return {
         "schema_version": 1,
+        "types": types_status,
         "command": "preview" if preview else "dry",
         "status": "complete",
         "input": str(Path(options.input).resolve()),
@@ -1783,6 +1816,7 @@ def _write_failure_result(
         return
     result: CommandResult = {
         "schema_version": 1,
+        "types": "unverified" if args.types else "off",
         "command": args.command,
         "status": status,
         # Failure reporting must not repeat the filesystem operation that
@@ -1832,6 +1866,7 @@ def _run_quick_preview(options: PreviewOptions) -> None:
         parameterize_constants=True,
         excluded_directories=options.exclude,
         cross_module_helpers=options.cross_module,
+        strict=options.strict,
     )
 
     # Analyze

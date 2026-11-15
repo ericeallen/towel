@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A checker the project configures but Towel cannot run refuses the typed run.
+"""Strict selection refuses unavailable configured checkers; relaxed CLI runs stay useful.
 
 The project's own check is the promise a typed run keeps. Choosing another
 checker in its place gives a verdict the project never asked for, and checking
@@ -24,7 +24,10 @@ mypy when installed, else pyright, else copying only.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
+import json
+import sys
 from pathlib import Path
 from typing import List
 
@@ -144,7 +147,7 @@ def test_the_command_line_refuses_before_writing_and_no_types_proceeds(
     _without_pyright(monkeypatch)
     target = str(project if directory else path)
     common = ["--no-interactive", "--no-format", "--progress", "none"]
-    refused = invoke(["dry", target, target, *common])
+    refused = invoke(["dry", target, target, *common, "--strict"])
     assert refused.status == 1, refused
     assert "Error: pyright is configured" in refused.stderr
     assert "--no-types" in refused.stderr
@@ -154,3 +157,56 @@ def test_the_command_line_refuses_before_writing_and_no_types_proceeds(
     unverified = invoke(["dry", target, target, *common, "--no-types"])
     assert unverified.status == 0, unverified
     assert "__extracted_func_0" in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("checker", ["mypy", "pyright"])
+@pytest.mark.parametrize("directory", [False, True])
+def test_relaxed_missing_checker_previews_bare_helpers_with_explicit_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checker: str, directory: bool
+) -> None:
+    """Typed audit item 2: unavailable configured checkers must not hide results."""
+    path = _project(tmp_path, f"[tool.{checker}]\n")
+    _without_mypy(monkeypatch)
+    _without_pyright(monkeypatch)
+    target = str(tmp_path if directory else path)
+    flags = ["--no-format", "--progress", "none", "--json"]
+    relaxed = invoke(["preview", target, *flags])
+    assert relaxed.status == 0, relaxed.stderr
+    document = json.loads(relaxed.stdout)
+    assert document["types"] == "unverified"
+    assert document["applied"] > 0
+    helpers = document["helpers"]["helpers"]
+    assert helpers
+    for helper in helpers:
+        function = ast.parse(helper["source"]).body[0]
+        assert isinstance(function, ast.FunctionDef)
+        assert function.returns is None
+        assert all(
+            argument.annotation is None
+            for argument in ast.walk(function.args)
+            if isinstance(argument, ast.arg)
+        )
+    assert f"Warning: {checker} is configured" in relaxed.stderr
+    assert str(tmp_path / "pyproject.toml") in relaxed.stderr
+    assert sys.executable in relaxed.stderr
+    assert "Install" in relaxed.stderr and "into that environment" in relaxed.stderr
+    assert "--no-types" in relaxed.stderr and "--strict to refuse instead" in relaxed.stderr
+    assert path.read_text() == SOURCE
+    strict = invoke(["preview", target, *flags, "--strict"])
+    assert strict.status == 1
+    assert json.loads(strict.stdout)["types"] == "unverified"
+    assert path.read_text() == SOURCE
+    off = invoke(["preview", target, *flags, "--no-types"])
+    assert off.status == 0
+    assert json.loads(off.stdout)["types"] == "off"
+    assert "Warning:" not in off.stderr
+
+
+@requires_mypy
+def test_available_configured_checker_is_named_as_enabled_in_json(tmp_path: Path) -> None:
+    """Typed audit item 2: the JSON distinguishes a checker run from fallback."""
+    path = _project(tmp_path, "[tool.mypy]\n")
+    path.write_text("value: int = 3\n")
+    result = invoke(["preview", str(path), "--json", "--no-format", "--progress", "none"])
+    assert result.status == 0, result.stderr
+    assert json.loads(result.stdout)["types"] == "enabled"
