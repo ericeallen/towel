@@ -543,10 +543,9 @@ print("reports", pkg.exports.export_size("r", "n"), pkg.reports.report_size("r",
 """
 
 
-def test_a_module_name_is_still_passed_so_patching_it_reaches_each_caller(
-    tmp_path: Path,
-) -> None:
-    # This test targets an imported module binding, not the separate builtin
+def _patched_module_name_project(tmp_path: Path) -> Tuple[Path, Path]:
+    """Two modules that each import ``join``, which the check patches in one of them."""
+    # This targets an imported module binding, not the separate builtin
     # opt-in. Keep its observable header through the imported print alias.
     prelude = "from os.path import join\nfrom builtins import print as emit"
     files = _project(prelude, prelude)
@@ -563,13 +562,51 @@ def test_a_module_name_is_still_passed_so_patching_it_reaches_each_caller(
     before, after = tmp_path / "before", tmp_path / "after"
     _write(before, files)
     _write(after, files)
+    return before, after
+
+
+def _passes_join(after: Path, *, deferred: bool) -> bool:
+    """Whether some generated call hands over ``join``: as ``lambda: join``, or as the name."""
+    for path in (after / "pkg").glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not (isinstance(node, ast.Call) and "extracted_func" in ast.unparse(node.func)):
+                continue
+            for argument in node.args:
+                value = argument.body if isinstance(argument, ast.Lambda) else argument
+                if isinstance(argument, ast.Lambda) is deferred and (
+                    isinstance(value, ast.Name) and value.id == "join"
+                ):
+                    return True
+    return False
+
+
+@pytest.mark.strict_mode
+def test_a_module_name_is_still_passed_so_patching_it_reaches_each_caller(
+    tmp_path: Path,
+) -> None:
+    """Strict mode hands over a lookup, so the helper reads ``join`` where the block did."""
+    before, after = _patched_module_name_project(tmp_path)
     applied, _ = _refactor(after)
     assert applied > 0
-    assert any(
-        isinstance(node, ast.Lambda) and isinstance(node.body, ast.Name) and node.body.id == "join"
-        for path in (after / "pkg").glob("*.py")
-        for node in ast.walk(ast.parse(path.read_text()))
-    )
+    assert _passes_join(after, deferred=True)
+    assert _run(after, "check.py") == _run(before, "check.py")
+
+
+@pytest.mark.relaxed_mode
+def test_relaxed_mode_passes_an_imported_name_itself_and_each_caller_passes_its_own(
+    tmp_path: Path,
+) -> None:
+    """Relaxed mode hands over ``join`` as each caller's module binds it when it calls.
+
+    A patch applied to one module before its function runs still reaches
+    that function's call and no other (docs/DECISIONS.md, "Relaxed mode
+    passes arguments by value").
+    """
+    before, after = _patched_module_name_project(tmp_path)
+    applied, _ = _refactor(after)
+    assert applied > 0
+    assert _passes_join(after, deferred=False)
+    assert not _passes_join(after, deferred=True)
     assert _run(after, "check.py") == _run(before, "check.py")
 
 

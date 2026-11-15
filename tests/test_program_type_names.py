@@ -760,17 +760,8 @@ def _extract_first(path: Path) -> str:
     return changed
 
 
-@requires_mypy
-def test_a_thunk_returning_a_class_shares_its_variable_with_the_list_end_to_end(
-    tmp_path: Path,
-) -> None:
-    """rich's markdown elements: ``lambda: Row`` feeds ``isinstance``; ``self.rows`` takes the child.
-
-    mypy reveals the thunk as returning the class's constructor. Read as that,
-    the ordinary signature fails ``isinstance`` and the two type variables of
-    the generic one are unrelated; read as ``type[Row]``, one variable relates
-    the class to the list it fills. Before, only ``Any`` got this through.
-    """
+def _class_and_list_helper_annotations(tmp_path: Path) -> list[str]:
+    """rich's markdown elements: a class feeds ``isinstance``; ``self.rows`` takes the child."""
     _project(
         tmp_path,
         {
@@ -816,11 +807,41 @@ def test_a_thunk_returning_a_class_shares_its_variable_with_the_list_end_to_end(
         _annotation(parameter.annotation)
         for parameter in helper.args.posonlyargs + helper.args.args
     ]
-    assert kinds[:2] == [
+    assert "Any" not in changed, changed
+    return kinds
+
+
+@pytest.mark.strict_mode
+@requires_mypy
+def test_a_thunk_returning_a_class_shares_its_variable_with_the_list_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """Strict mode: ``lambda: Row`` feeds ``isinstance``.
+
+    mypy reveals the thunk as returning the class's constructor. Read as that,
+    the ordinary signature fails ``isinstance`` and the two type variables of
+    the generic one are unrelated; read as ``type[Row]``, one variable relates
+    the class to the list it fills. Before, only ``Any`` got this through.
+    """
+    assert _class_and_list_helper_annotations(tmp_path)[:2] == [
         "_typing.Callable[[], type[_TowelT0]]",
         "_typing.Callable[[], list[_TowelT0]]",
-    ], changed
-    assert "Any" not in changed, changed
+    ]
+
+
+@pytest.mark.relaxed_mode
+@requires_mypy
+def test_a_class_passed_by_value_shares_its_variable_with_the_list_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """Relaxed mode passes ``Row`` itself; ``self.rows`` follows a call and stays a thunk.
+
+    One type variable still relates the class to the list it fills.
+    """
+    assert _class_and_list_helper_annotations(tmp_path)[:2] == [
+        "type[_TowelT0]",
+        "_typing.Callable[[], list[_TowelT0]]",
+    ]
 
 
 @pytest.mark.strict_mode

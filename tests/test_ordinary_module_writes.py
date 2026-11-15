@@ -103,13 +103,31 @@ def test_normalized_identifiers_use_the_declared_source_encoding(tmp_path: Path)
     assert _run(after, "check.py") == _run(before, "check.py")
 
 
+STRICT_ONLY = pytest.mark.strict_mode
+"""On a case where a callee rebinds a module-level function between two reads of it.
+
+Strict mode reads the name again after the callee, as the block did. Relaxed
+mode assumes module functions are not rebound while a helper runs
+(docs/DECISIONS.md, "Relaxed mode passes arguments by value") and passes the
+function itself; ``tests/test_by_value_arguments.py`` pins that by its
+counterexample. The same case with a builtin runs in both modes.
+"""
+
+
+@pytest.mark.strict_mode
 @pytest.mark.parametrize("parameterize", [False, True])
 @pytest.mark.parametrize("names", [("len", "len"), ("measure", "measure"), ("measure", "compute")])
 @pytest.mark.parametrize("operation", ["rebind", "delete", "unbound"])
 def test_external_callee_can_change_lookup_between_reads(
     tmp_path: Path, parameterize: bool, names: Tuple[str, str], operation: str
 ) -> None:
-    """A dependency can import and modify the caller without receiving it as an argument."""
+    """A dependency can import and modify the caller without receiving it as an argument.
+
+    Strict mode: relaxed mode assumes that a module's functions are not
+    rebound or deleted while a helper runs (docs/DECISIONS.md, "Relaxed mode
+    passes arguments by value"), and passes ``measure`` itself. What it
+    still preserves is the next test's.
+    """
     name, other_name = names
     body = (
         f"    first = {name}(values)\n"
@@ -153,6 +171,18 @@ def test_external_callee_can_change_lookup_between_reads(
     applied, _ = _refactor(after / "pkg", parameterize)
     assert bool(applied) is (parameterize or name != "len")
     assert _run(after, "check.py", pythonpath=str(vendor)) == expected
+
+
+@pytest.mark.relaxed_mode
+@pytest.mark.parametrize("parameterize", [False, True])
+@pytest.mark.parametrize("operation", ["rebind", "unbound"])
+def test_relaxed_mode_still_reads_a_builtin_where_the_block_did(
+    tmp_path: Path, parameterize: bool, operation: str
+) -> None:
+    """A builtin is not a module's function: a callee that shadows or removes it is still seen."""
+    test_external_callee_can_change_lookup_between_reads(
+        tmp_path, parameterize, ("len", "len"), operation
+    )
 
 
 @pytest.mark.strict_mode
@@ -285,7 +315,7 @@ for module, name in ((a, "first"), (b, "second")):
 
 @pytest.mark.parametrize("parameterize", [False, True])
 @pytest.mark.parametrize("clustered", [False, True])
-@pytest.mark.parametrize("name", ["len", "measure"])
+@pytest.mark.parametrize("name", ["len", pytest.param("measure", marks=STRICT_ONLY)])
 def test_mixed_local_and_builtin_sites_keep_late_lookup(
     tmp_path: Path, parameterize: bool, clustered: bool, name: str
 ) -> None:
@@ -319,7 +349,7 @@ def test_mixed_local_and_builtin_sites_keep_late_lookup(
 
 
 @pytest.mark.parametrize("parameterize", [False, True])
-@pytest.mark.parametrize("name", ["len", "measure"])
+@pytest.mark.parametrize("name", ["len", pytest.param("measure", marks=STRICT_ONLY)])
 @pytest.mark.parametrize(
     "comprehension",
     [

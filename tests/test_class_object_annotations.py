@@ -84,9 +84,8 @@ def test_only_a_reference_to_the_class_itself_is_respelled(
     assert class_object_revealed(expression, revealed) == expected
 
 
-@requires_mypy
-def test_a_class_argument_reaches_isinstance_with_its_type(tmp_path: Path) -> None:
-    """The extracted guard's lookup thunk returns a class object with its type intact."""
+def _written_annotations_of_the_class_guard(tmp_path: Path) -> list[str]:
+    """The helper's parameter annotations for two guards that differ in the class they test."""
     (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
     path = tmp_path / "m.py"
     path.write_text(textwrap.dedent("""
@@ -139,11 +138,30 @@ def test_a_class_argument_reaches_isinstance_with_its_type(tmp_path: Path) -> No
             for argument in helper.args.posonlyargs + helper.args.args
             if argument.annotation is not None
         ]
-        # Module class names are read at their original point through thunks;
-        # each thunk must return the class object, not a constructor signature.
-        assert (
-            "_typing.Callable[[], type[Alpha]] | _typing.Callable[[], type[Beta]]" in written
-        ), f"the class lookup kept a constructor type: {written}"
         assert oracle.check_project({str(path): result}) == CheckSuccess()
+        return written
     finally:
         oracle.close()
+
+
+@pytest.mark.strict_mode
+@requires_mypy
+def test_a_class_argument_reaches_isinstance_with_its_type(tmp_path: Path) -> None:
+    """The extracted guard's lookup thunk returns a class object with its type intact.
+
+    Strict mode: module class names are read at their original point
+    through thunks; each thunk must return the class object, not a
+    constructor signature.
+    """
+    written = _written_annotations_of_the_class_guard(tmp_path)
+    assert (
+        "_typing.Callable[[], type[Alpha]] | _typing.Callable[[], type[Beta]]" in written
+    ), f"the class lookup kept a constructor type: {written}"
+
+
+@pytest.mark.relaxed_mode
+@requires_mypy
+def test_a_class_passed_by_value_reaches_isinstance_with_its_type(tmp_path: Path) -> None:
+    """Relaxed mode passes the class itself; the parameter is the class object, not a constructor."""
+    written = _written_annotations_of_the_class_guard(tmp_path)
+    assert "type[Alpha] | type[Beta]" in written, written

@@ -1,0 +1,43 @@
+import logging
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import profile_service
+
+
+class ListHandler(logging.Handler):
+    def emit(self, record):
+        print("LOG", record.levelname, record.getMessage())
+
+
+profile_service.logger.addHandler(ListHandler())
+profile_service.logger.setLevel(logging.DEBUG)
+profile_service.logger.propagate = False
+
+
+class Client:
+    def _answer(self, kind, user_id):
+        if user_id == 1:
+            return {"data": {"kind": kind, "user": user_id}}
+        if user_id == 2:
+            raise TimeoutError("slow")
+        if user_id == 3:
+            raise ConnectionError("refused")
+        raise KeyError(user_id)
+
+    def get_profile(self, user_id):
+        return self._answer("profile", user_id)
+
+    def get_preferences(self, user_id):
+        return self._answer("preferences", user_id)
+
+
+client = Client()
+for func in (profile_service.fetch_profile, profile_service.fetch_preferences):
+    for user_id in (1, 2, 3, 4):
+        try:
+            print(func.__name__, user_id, func(client, user_id))
+        except KeyError as exc:
+            print(func.__name__, user_id, "KeyError", exc)
+print("ok")
