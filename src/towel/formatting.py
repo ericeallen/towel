@@ -17,8 +17,8 @@
 ``ast.unparse`` renders a helper or a call on one line with single-quoted
 strings. A formatter makes the inserted text read like the surrounding code.
 The engine accepts any ``SnippetFormatter``; :func:`formatter_for_project`
-supplies ``ruff format`` when the project configures ruff and Black
-otherwise, whichever is installed, at the line length the project declares
+supplies ``ruff format`` or Black when the project configures a formatter,
+at the line length the project declares
 in any of its tool sections. Formatting must never change meaning, so every
 formatter is wrapped by :func:`checked`, which compares the syntax tree
 before and after, and each tool leaves alone what the project's
@@ -780,10 +780,10 @@ def _black_for_project(
 def formatter_for_project(path: Path) -> ToolChoice[SnippetFormatter]:
     """The formatter the project's configuration calls for, and a note on what was chosen.
 
-    ruff when the project configures it and it is installed; otherwise Black
-    when installed; otherwise none. The note explains a fallback or absence.
-    A formatter whose configuration excludes ``path`` leaves the code Towel
-    writes there as ``ast.unparse`` renders it.
+    Ruff when configured, with Black as its fallback; Black when configured
+    on its own; otherwise none. The note explains a fallback or absence.
+    A formatter whose configuration excludes ``path`` leaves the assembled
+    source text alone.
     """
     return _formatter_for_project(path, None)
 
@@ -800,6 +800,9 @@ def _formatter_for_project(
                 return _black_for_project(path, f"Black; {note}", tools)
             except ImportError:
                 return ToolChoice(None, f"{note}, and Black is not installed either")
+    tool = load_pyproject(_root(path)).get("tool", {})
+    if not isinstance(tool, Mapping) or not isinstance(tool.get("black"), Mapping):
+        return ToolChoice(None, "no formatter configured")
     try:
         return _black_for_project(path, "Black", tools)
     except ImportError:
