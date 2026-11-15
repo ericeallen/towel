@@ -332,9 +332,9 @@ def _excluded_name(value: str) -> str:
     )
 
 
-def _add_exclude_flag(parser: argparse.ArgumentParser) -> None:
+def _add_exclude_flag(options: argparse._ActionsContainer) -> None:
     """Add ``--exclude``, shared by the commands that analyze a directory."""
-    parser.add_argument(
+    options.add_argument(
         "--exclude",
         action="append",
         default=[],
@@ -346,14 +346,14 @@ def _add_exclude_flag(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_cross_module_flag(parser: argparse.ArgumentParser) -> None:
+def _add_cross_module_flag(options: argparse._ActionsContainer) -> None:
     """Add ``--cross-module``, shared by the commands that analyze a project.
 
     Off by default: a helper shared across modules adds an import between
     them, a change to how the project's modules depend on each other that a
     user should ask for rather than find in the diff.
     """
-    parser.add_argument(
+    options.add_argument(
         "--cross-module",
         dest="cross_module",
         action=argparse.BooleanOptionalAction,
@@ -366,13 +366,13 @@ def _add_cross_module_flag(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_parameterize_builtins_flag(parser: argparse.ArgumentParser) -> None:
+def _add_parameterize_builtins_flag(options: argparse._ActionsContainer) -> None:
     """Add ``--parameterize-builtins``, shared by the commands that analyze a project.
 
     Off by default: no helper takes a builtin as a parameter, since a call
     such as ``helper(rows, len)`` would surprise its reader.
     """
-    parser.add_argument(
+    options.add_argument(
         "--parameterize-builtins",
         dest="parameterize_builtins",
         action=argparse.BooleanOptionalAction,
@@ -386,6 +386,35 @@ def _add_parameterize_builtins_flag(parser: argparse.ArgumentParser) -> None:
         "with this flag. "
         "Eager evaluation requires a proved single use "
         "at the first effect and an immutable lookup result.",
+    )
+
+
+@dataclass(frozen=True)
+class _Sections:
+    """Where dry and preview list an option in their help, in the order a newcomer reads.
+
+    Add an option to the section that says what it is for: ``output``, what
+    the command prints, writes or asks; ``scope``, which code it examines;
+    ``limits``, how much it does; ``advanced``, what most runs leave at its
+    default. ``output`` is the parser's own options section, retitled, so
+    ``--help`` and an option added to the parser itself are listed there.
+    Within a section, options are listed in the order they are added.
+    """
+
+    output: argparse.ArgumentParser
+    scope: argparse._ArgumentGroup
+    limits: argparse._ArgumentGroup
+    advanced: argparse._ArgumentGroup
+
+
+def _sections(parser: argparse.ArgumentParser) -> _Sections:
+    """Give ``parser`` the four sections of its help, after its positional arguments."""
+    parser._optionals.title = "what you get"
+    return _Sections(
+        output=parser,
+        scope=parser.add_argument_group("what is examined"),
+        limits=parser.add_argument_group("limits"),
+        advanced=parser.add_argument_group("advanced"),
     )
 
 
@@ -407,23 +436,21 @@ Examples:
 
     parser.add_argument("input", help="Input file or directory")
     parser.add_argument("output", help="Output file or directory (can be same as input)")
-    parser.add_argument(
+    sections = _sections(parser)
+    sections.output.add_argument(
         "--interactive",
         dest="interactive",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Ask for confirmation before writing (the default); --no-interactive skips the prompt",
     )
-    parser.add_argument(  # earlier spelling, kept for scripts
+    sections.output.add_argument(  # earlier spelling, kept for scripts
         "--non-interactive", dest="interactive", action="store_false", help=argparse.SUPPRESS
     )
-    _add_exclude_flag(parser)
-    _add_cross_module_flag(parser)
-    _add_parameterize_builtins_flag(parser)
+    _add_json_flag(sections.output)
+    _add_shared_options(sections)
 
     _add_import_layout_flags(parser)
-    _add_tuning_flags(parser)
-    _add_execution_flags(parser)
     _add_progress_flag(
         parser,
         detail="'detail' logs each pass's discovered proposals and follow-ups instead of a bar",
@@ -441,68 +468,40 @@ def _seconds(text: str) -> float:
     return seconds
 
 
-def _add_execution_flags(
-    parser: argparse.ArgumentParser,
-    *,
-    presentation: Optional[argparse._MutuallyExclusiveGroup] = None,
-) -> None:
-    """Options shared by dry and the complete preview of that same run."""
-    parser.add_argument(
-        "--explain",
-        action="store_true",
-        help="Explain declined candidate pairs on stderr, including source files and line ranges",
-    )
-    parser.add_argument(
-        "--time-limit",
-        type=_seconds,
-        metavar="SECONDS",
-        help="Limit setup, analysis and verification to this many seconds; expiry exits 124 "
-        "without publishing output. Final publication and cleanup finish safely and may "
-        "extend past the limit.",
-    )
-    (parser if presentation is None else presentation).add_argument(
+def _add_shared_options(sections: _Sections) -> None:
+    """Add the options dry and preview share, each to its section of the help.
+
+    preview runs dry's pipeline with every one of them
+    (:meth:`PreviewOptions.dry_options`), so an option added here is added
+    to both dataclasses too. Within a section they follow the options the
+    command added first.
+    """
+    _add_report_flags(sections.output)
+    _add_exclude_flag(sections.scope)
+    _add_cross_module_flag(sections.scope)
+    _add_limit_flags(sections.limits)
+    _add_tool_flags(sections.advanced)
+    _add_parameterize_builtins_flag(sections.advanced)
+
+
+def _add_json_flag(options: argparse._ActionsContainer) -> None:
+    """Add ``--json``: to dry's output section, or to preview's choice of presentation."""
+    options.add_argument(
         "--json",
         action="store_true",
         help="Write one versioned JSON result to stdout; diagnostics go to stderr. "
         "dry also requires --no-interactive.",
     )
-    parser.add_argument(
-        "--max-refactorings",
-        dest="max_refactorings",
-        type=_count,
-        default=DEFAULT_MAX_ITERATIONS,
-        metavar="N",
-        help="Stop after N applied refactorings (0, the default, runs to a fixed point)",
-    )
-    parser.add_argument(  # earlier spelling, kept for scripts
-        "--max-iterations",
-        dest="max_refactorings",
-        type=_count,
-        metavar="N",
-        help=argparse.SUPPRESS,
-    )
 
-    parser.add_argument(
-        "--types",
-        dest="types",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Annotate generated helpers (the default), in code that already uses annotations: "
-        "the annotations the call sites declare, and the types the project's checker (mypy or "
-        "pyright, the 'types' extra) infers and verifies for the rest. --no-types leaves "
-        "helpers bare.",
+
+def _add_report_flags(options: argparse._ActionsContainer) -> None:
+    """Add the options that print more about a run without changing what it does."""
+    options.add_argument(
+        "--explain",
+        action="store_true",
+        help="Explain declined candidate pairs on stderr, including source files and line ranges",
     )
-    parser.add_argument(
-        "--format",
-        dest="format",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Format generated code (the default) with the project's formatter (ruff when "
-        "configured, else Black; the 'format' extra) at the line length the project declares, "
-        "and sort inserted imports the way the project does (ruff's I rules or isort). "
-        "--no-format inserts code as rendered. Configured Ruff lint checks remain active.",
-    )
-    parser.add_argument(
+    options.add_argument(
         "--stats",
         dest="stats",
         action=argparse.BooleanOptionalAction,
@@ -513,16 +512,16 @@ def _add_execution_flags(
     )
 
 
-def _add_tuning_flags(parser: argparse.ArgumentParser) -> None:
-    """The engine knobs the dry and preview commands share."""
-    parser.add_argument(
+def _add_limit_flags(options: argparse._ActionsContainer) -> None:
+    """Add the options that bound what a run considers and how long it works."""
+    options.add_argument(
         "--min-lines",
         type=_count,
         default=DEFAULT_MIN_LINES,
         metavar="N",
         help=f"Fewest source lines a duplicated block may span (default: {DEFAULT_MIN_LINES})",
     )
-    parser.add_argument(
+    options.add_argument(
         "--max-parameters",
         type=_count,
         default=DEFAULT_MAX_PARAMETERS,
@@ -531,7 +530,30 @@ def _add_tuning_flags(parser: argparse.ArgumentParser) -> None:
         "ordinary free inputs may add arguments. Whole-body ownership transfer must fit its "
         "complete positional signature, including the final lifetime holder, within this limit.",
     )
-    parser.add_argument(
+    options.add_argument(
+        "--max-refactorings",
+        dest="max_refactorings",
+        type=_count,
+        default=DEFAULT_MAX_ITERATIONS,
+        metavar="N",
+        help="Stop after N applied refactorings (0, the default, runs to a fixed point)",
+    )
+    options.add_argument(  # earlier spelling, kept for scripts; after the default it shares
+        "--max-iterations",
+        dest="max_refactorings",
+        type=_count,
+        metavar="N",
+        help=argparse.SUPPRESS,
+    )
+    options.add_argument(
+        "--time-limit",
+        type=_seconds,
+        metavar="SECONDS",
+        help="Limit setup, analysis and verification to this many seconds; expiry exits 124 "
+        "without publishing output. Final publication and cleanup finish safely and may "
+        "extend past the limit.",
+    )
+    options.add_argument(
         "--max-pairs",
         type=_count,
         default=DEFAULT_MAX_CANDIDATE_PAIRS,
@@ -540,6 +562,30 @@ def _add_tuning_flags(parser: argparse.ArgumentParser) -> None:
             "Most candidate block pairs one analysis evaluates; past it the largest groups of "
             f"similar blocks are left out with a warning (default: {DEFAULT_MAX_CANDIDATE_PAIRS})"
         ),
+    )
+
+
+def _add_tool_flags(options: argparse._ActionsContainer) -> None:
+    """Add the options that choose whether the project's type checker and formatter run."""
+    options.add_argument(
+        "--types",
+        dest="types",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Annotate generated helpers (the default), in code that already uses annotations: "
+        "the annotations the call sites declare, and the types the project's checker (mypy or "
+        "pyright, the 'types' extra) infers and verifies for the rest. --no-types leaves "
+        "helpers bare.",
+    )
+    options.add_argument(
+        "--format",
+        dest="format",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Format generated code (the default) with the project's formatter (ruff when "
+        "configured, else Black; the 'format' extra) at the line length the project declares, "
+        "and sort inserted imports the way the project does (ruff's I rules or isort). "
+        "--no-format inserts code as rendered. Configured Ruff lint checks remain active.",
     )
 
 
@@ -569,35 +615,33 @@ def _add_preview_parser(subparsers: "argparse._SubParsersAction[argparse.Argumen
     )
 
     parser.add_argument("target", help="File or directory to analyze")
-    parser.add_argument(
-        "--interactive",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Accepted for dry compatibility; preview never prompts or changes the input",
-    )
-    parser.add_argument("--non-interactive", action="store_true", help=argparse.SUPPRESS)
-    _add_exclude_flag(parser)
-    _add_cross_module_flag(parser)
-    _add_parameterize_builtins_flag(parser)
-    _add_tuning_flags(parser)
-    presentation = parser.add_mutually_exclusive_group()
-    _add_execution_flags(parser, presentation=presentation)
+    sections = _sections(parser)
+    presentation = sections.output.add_mutually_exclusive_group()
     presentation.add_argument(
         "--summary", action="store_true", help="Show the result summary without the diff"
     )
     presentation.add_argument(
         "--diff", action="store_true", help="Write only the unified diff to stdout"
     )
-    parser.add_argument(
-        "--inventory", action="store_true", help="Include the helper inventory for naming"
-    )
-    parser.add_argument(
+    _add_json_flag(presentation)
+    sections.output.add_argument(
         "--quick",
         action="store_true",
         help="List one structural analysis only, skipping type checks, formatting and follow-ups. "
         "This partial list is not an upper bound on eventual extractions; --max-refactorings "
         "applies only to the complete preview.",
     )
+    sections.output.add_argument(
+        "--inventory", action="store_true", help="Include the helper inventory for naming"
+    )
+    sections.output.add_argument(
+        "--interactive",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Accepted for dry compatibility; preview never prompts or changes the input",
+    )
+    sections.output.add_argument("--non-interactive", action="store_true", help=argparse.SUPPRESS)
+    _add_shared_options(sections)
     _add_progress_flag(
         parser,
         detail="'detail' logs each complete-preview pass; --quick performs only one analysis",

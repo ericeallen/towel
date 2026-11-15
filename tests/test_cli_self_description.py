@@ -73,6 +73,68 @@ def test_help_fits_the_terminal(command: List[str], monkeypatch: pytest.MonkeyPa
     assert not long_lines, long_lines
 
 
+def _command(name: str) -> argparse.ArgumentParser:
+    """The parser of ``towel <name>``."""
+    for action in cli._build_parser()._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            child = action.choices[name]
+            assert isinstance(child, argparse.ArgumentParser)
+            return child
+    raise AssertionError(f"towel has no command {name}")
+
+
+def _long_name(action: argparse.Action) -> str:
+    return next(option for option in action.option_strings if option.startswith("--"))
+
+
+SECTIONS = ("what you get", "what is examined", "limits", "advanced")
+"""dry's and preview's help sections, in the order a newcomer needs them."""
+
+SHARED_SECTIONS = {
+    "what you get": {"--json", "--explain", "--stats", "--progress"},
+    "what is examined": {"--exclude", "--cross-module"},
+    "limits": {
+        "--min-lines",
+        "--max-parameters",
+        "--max-refactorings",
+        "--time-limit",
+        "--max-pairs",
+    },
+    "advanced": {"--types", "--format", "--parameterize-builtins"},
+}
+OWN_OUTPUT_OPTIONS = {
+    "dry": {"--interactive"},
+    "preview": {"--summary", "--diff", "--quick", "--inventory"},
+}
+
+
+@pytest.mark.parametrize("command", ["dry", "preview"])
+def test_options_are_listed_in_the_order_a_newcomer_needs_them(
+    command: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """User audit CLI-04: the help listed --interactive, --exclude, --cross-module and nine
+    lines on --parameterize-builtins first, and what a newcomer wants (--summary, --diff,
+    --json, --quick) last. Options now come in sections: what you get, what is examined,
+    limits, advanced."""
+    listed = {
+        group.title: {
+            _long_name(action)
+            for action in group._group_actions
+            if action.option_strings and action.help != argparse.SUPPRESS
+        }
+        for group in _command(command)._action_groups
+    }
+    expected = {**SHARED_SECTIONS}
+    expected["what you get"] = {"--help", *SHARED_SECTIONS["what you get"]}
+    expected["what you get"] |= OWN_OUTPUT_OPTIONS[command]
+    for title, options in expected.items():
+        assert options <= listed[title], (title, options - listed[title])
+    assert set(listed) == {"positional arguments", *SECTIONS}
+    text = _help([command], monkeypatch)
+    headings = [text.index(f"\n{title}:\n") for title in ("positional arguments", *SECTIONS)]
+    assert headings == sorted(headings)
+
+
 @pytest.mark.parametrize("example", _examples())
 def test_every_help_example_is_a_valid_command_line(example: str) -> None:
     """``towel --help`` once showed ``towel rename-helpers`` without the target it requires."""
