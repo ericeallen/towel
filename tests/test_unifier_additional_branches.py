@@ -86,9 +86,9 @@ class TestUnifierLambdaAndComprehensions(unittest.TestCase):
     def setUp(self) -> None:
         self.unifier = Unifier(max_parameters=5, parameterize_constants=True)
 
-    def test_unify_lambda_param_alpha(self) -> None:
-        b1 = _parse_block("fn = lambda x: x + 1")
-        b2 = _parse_block("fn = lambda y: y + 1")
+    def test_unify_immediate_lambda_param_alpha(self) -> None:
+        b1 = _parse_block("result = (lambda x: x + 1)(3)")
+        b2 = _parse_block("result = (lambda y: y + 1)(3)")
         res = self.unifier.unify_blocks([b1, b2], [{}, {}])
         self.assertIsNotNone(res)
 

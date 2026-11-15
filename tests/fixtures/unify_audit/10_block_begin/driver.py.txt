@@ -1,0 +1,26 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import ledger
+
+txs = [
+    {"date": "2026-10-03", "amount": "-42.199", "category": "Groceries"},
+    {"date": "2026-09-28", "amount": "2500", "category": "Salary"},
+    {"date": "2026-10-01", "amount": "-1200.00", "category": "Rent"},
+    {"date": "2026-10-15", "amount": "-9.5", "category": None},
+    {"date": "2026-10-20", "amount": "-60", "category": "groceries", "void": True},
+    {"date": "2026-10-28", "amount": "2500", "category": "Salary"},
+    {"date": "2026-10-09", "amount": "-18.25"},
+]
+print(ledger.monthly_report(txs, "2026-10"))
+print(ledger.monthly_report(txs, "2026-09"))
+print(ledger.monthly_report([], "2026-10"))
+print(ledger.category_breakdown(txs))
+print(ledger.category_breakdown([]))
+for func, args in ((ledger.monthly_report, ([{"date": "x", "amount": "abc"}], "x")), (ledger.category_breakdown, ([{"amount": "1"}],))):
+    try:
+        func(*args)
+    except (ValueError, KeyError) as exc:
+        print(func.__name__, type(exc).__name__, exc)
+print("ok")

@@ -1,0 +1,22 @@
+def unique_emails(emails):
+    seen = set()
+    result = []
+    for email in emails:
+        normalized = email.strip().lower()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    result.sort()
+    return result
+
+
+def unique_tags(emails):
+    seen = set()
+    out = []
+    for email in emails:
+        normalized = email.strip().lower()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            out.append(normalized)
+    out.sort()
+    return out

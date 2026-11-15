@@ -1,0 +1,34 @@
+"""Customer segmentation for the account managers' report."""
+
+from dataclasses import dataclass
+
+
+@dataclass
+class Customer:
+    name: str
+    city: str
+    plan: str
+    monthly_spend: float
+
+
+def group_by_city(customers):
+    groups = {}
+    for customer in customers:
+        groups.setdefault(customer.city, []).append(customer)
+    for members in groups.values():
+        members.sort(key=lambda c: c.name)
+    return dict(sorted(groups.items()))
+
+
+def group_by_plan(customers):
+    groups = {}
+    for customer in customers:
+        groups.setdefault(customer.plan, []).append(customer)
+    for members in groups.values():
+        members.sort(key=lambda c: c.name)
+    return dict(sorted(groups.items()))
+
+
+def top_spenders(customers, limit=3):
+    ranked = sorted(customers, key=lambda c: c.monthly_spend, reverse=True)
+    return [c.name for c in ranked[:limit]]

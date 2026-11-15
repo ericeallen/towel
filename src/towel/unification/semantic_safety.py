@@ -797,8 +797,9 @@ def created_object_escapes(
 
     The supported cases call a function or lambda within the block with
     arguments its parameters accept, use it as a known builtin's callback,
-    or consume its iterator before leaving the block. Other uses decline
-    conservatively. Classes, coroutine functions and decorated definitions
+    or consume its iterator before leaving the block. A closed lambda can
+    also escape when unification preserves its parameter names. Other uses
+    decline conservatively. Classes, coroutine functions and decorated definitions
     can expose closures or defer execution beyond the block, and are not
     analyzed more precisely here. Object metadata is outside the contract.
     """
@@ -826,11 +827,29 @@ def created_object_escapes(
                 ):
                     return True
             elif isinstance(node, ast.Lambda):
-                if _makes_generator(node) or not context.lambda_only_called(node):
+                if _makes_generator(node) or (
+                    not (
+                        lambda_body_is_closed(node)
+                        and all(
+                            context.stored_as(name) == name for name in parameter_names(node.args)
+                        )
+                    )
+                    and not context.lambda_only_called(node)
+                ):
                     return True
             elif isinstance(node, ast.GeneratorExp) and not context.consumed(node):
                 return True
     return False
+
+
+def lambda_body_is_closed(node: ast.Lambda) -> bool:
+    """Whether the body reads only bindings the lambda itself creates.
+
+    Defaults are evaluated at creation, not deferred. A closed lambda can
+    outlive the block provided its keyword interface is retained; the
+    unifier enforces that before sharing its template.
+    """
+    return not (free_reads(node.body) - nested_scope_names(node).local)
 
 
 def _makes_generator(node: Union[ast.FunctionDef, ast.Lambda]) -> bool:

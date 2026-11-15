@@ -1,0 +1,21 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+from customers import Customer, group_by_city, group_by_plan, top_spenders
+
+people = [
+    Customer("Mina", "Oslo", "pro", 40.0),
+    Customer("Abe", "Lima", "free", 0.0),
+    Customer("Zoe", "Oslo", "free", 0.0),
+    Customer("Kai", "Lima", "pro", 55.5),
+    Customer("Bea", "Oslo", "team", 120.0),
+]
+for grouping in (group_by_city, group_by_plan):
+    for key, members in grouping(people).items():
+        print(grouping.__name__, key, [m.name for m in members])
+print(group_by_city([]), group_by_plan([]))
+print(top_spenders(people))
+assert list(group_by_city(people)) == ["Lima", "Oslo"]
+assert list(group_by_plan(people)) == ["free", "pro", "team"]
+print("ok")

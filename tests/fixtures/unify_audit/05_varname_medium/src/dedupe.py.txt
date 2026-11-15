@@ -1,0 +1,35 @@
+"""Normalisation of user-supplied lists before they are stored."""
+
+
+def unique_emails(emails):
+    seen = set()
+    result = []
+    for email in emails:
+        normalized = email.strip().lower()
+        if not normalized:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    result.sort()
+    return result
+
+
+def unique_tags(tags):
+    known = set()
+    out = []
+    for tag in tags:
+        cleaned = tag.strip().lower()
+        if not cleaned:
+            continue
+        if cleaned in known:
+            continue
+        known.add(cleaned)
+        out.append(cleaned)
+    out.sort()
+    return out
+
+
+def split_tags(text):
+    return [part for part in text.replace(";", ",").split(",")]

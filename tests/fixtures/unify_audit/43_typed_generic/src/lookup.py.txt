@@ -1,0 +1,47 @@
+"""Name lookups for the access-control screens."""
+
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+
+
+@dataclass
+class User:
+    id: int
+    name: str
+    email: str
+
+
+@dataclass
+class Group:
+    id: int
+    name: str
+    members: list[int] = field(default_factory=list)
+
+
+def find_user(users: Iterable[User], name: str) -> User | None:
+    wanted = name.strip().casefold()
+    matches = [user for user in users if user.name.casefold() == wanted]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        ids = ", ".join(str(match.id) for match in matches)
+        raise LookupError(f"{len(matches)} users are named {name!r}: {ids}")
+    return matches[0]
+
+
+def find_group(groups: Iterable[Group], name: str) -> Group | None:
+    wanted = name.strip().casefold()
+    matches = [group for group in groups if group.name.casefold() == wanted]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        ids = ", ".join(str(match.id) for match in matches)
+        raise LookupError(f"{len(matches)} groups are named {name!r}: {ids}")
+    return matches[0]
+
+
+def members_of(groups: Iterable[Group], users: Iterable[User], group_name: str) -> list[User]:
+    group = find_group(groups, group_name)
+    if group is None:
+        return []
+    return [user for user in users if user.id in group.members]

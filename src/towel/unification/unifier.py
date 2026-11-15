@@ -41,6 +41,7 @@ from .compiler_literals import (
     unstable_literal_pool,
 )
 from .parameterization import Parameterization
+from .semantic_safety import lambda_body_is_closed
 from .hof_promotion import LiteralPromotion
 from .statement_facts import mentioned_names
 from .static_positions import (
@@ -1010,6 +1011,15 @@ class Unifier(Parameterization, LiteralPromotion):
                 # See docs/KNOWN_LIMITATIONS.md for details
                 return False
 
+        signatures = [tuple(argument.arg for argument in node.args.args) for node in nodes]
+        if len(set(signatures)) > 1 and any(
+            lambda_body_is_closed(node) and not self._lambda_called_positionally(node, index)
+            for node, index in zip(nodes, block_indices)
+        ):
+            # The escape guard admits closed callbacks even to unknown
+            # consumers. Their keyword interface must remain unchanged.
+            return False
+
         # Defaults are evaluated where the lambda stands, before its parameters
         # exist, so they unify outside the parameters' renaming. Left out, a
         # block's own default was replaced by the template's, and only the
@@ -1048,6 +1058,64 @@ class Unifier(Parameterization, LiteralPromotion):
                     actual_param = node.args.args[param_idx].arg
                     key = (block_idx, actual_param)
                     self._restore_alpha_mapping(key, old_mappings)
+
+    def _lambda_called_positionally(self, node: ast.Lambda, block_index: int) -> bool:
+        """Prove calls cannot expose a lambda's parameter spellings.
+
+        A named callback needs a complete returning block: otherwise a
+        later statement outside the block could hand it to a keyword caller.
+        Unknown consumers and nested scopes do not establish this proof.
+        """
+        if self.current_blocks is None or block_index >= len(self.current_blocks):
+            return False
+        block = self.current_blocks[block_index]
+        parents = {
+            child: parent
+            for statement in block
+            for parent in ast.walk(statement)
+            for child in ast.iter_child_nodes(parent)
+        }
+
+        def called(value: ast.AST) -> bool:
+            parent = parents.get(value)
+            return (
+                isinstance(parent, ast.Call)
+                and parent.func is value
+                and not parent.keywords
+                and not any(isinstance(argument, ast.Starred) for argument in parent.args)
+                and len(node.args.args) - len(node.args.defaults)
+                <= len(parent.args)
+                <= len(node.args.args)
+            )
+
+        if called(node):
+            return True
+        parent = parents.get(node)
+        if not (
+            block
+            and isinstance(block[-1], ast.Return)
+            and isinstance(parent, ast.Assign)
+            and parent.value is node
+            and len(parent.targets) == 1
+            and isinstance(parent.targets[0], ast.Name)
+        ):
+            return False
+        target = parent.targets[0]
+        for statement in block:
+            for other in ast.walk(statement):
+                if (
+                    isinstance(
+                        other, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+                    )
+                    and other is not node
+                ):
+                    return False
+                if isinstance(other, (ast.Global, ast.Nonlocal)) and target.id in other.names:
+                    return False
+                if isinstance(other, ast.Name) and other.id == target.id and other is not target:
+                    if not isinstance(other.ctx, ast.Load) or not called(other):
+                        return False
+        return True
 
     def _unify_thunks(
         self, nodes: List[ast.Lambda], substitution: Substitution, block_indices: List[int]

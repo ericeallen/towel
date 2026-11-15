@@ -1,0 +1,21 @@
+"""Weekly activity report."""
+
+from datetime import date, timedelta
+
+
+def build_report(events, today):
+    start = today - timedelta(days=7)
+    recent = [event for event in events if start < event["day"] <= today]
+    by_user = {}
+    for event in recent:
+        by_user[event["user"]] = by_user.get(event["user"], 0) + 1
+    ranking = sorted(by_user.items(), key=lambda pair: (-pair[1], pair[0]))
+    lines = [f"weekly report for {today.isoformat()}"]
+    lines.append(f"{len(recent)} events from {len(by_user)} users")
+    for user, count in ranking[:3]:
+        lines.append(f"  {user}: {count}")
+    return "\n".join(lines)
+
+
+def main(events):
+    print(build_report(events, date(2026, 11, 14)))
