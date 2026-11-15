@@ -31,7 +31,7 @@ nav = [
   { "Using Towel on a project" = "USING_TOWEL.md" },
   { "Reading Towel's output" = "GENERATED_CODE.md" },
   { "Why something was left alone" = [
-    "WHY_LEFT_ALONE.md",
+    { "Common reasons" = "WHY_LEFT_ALONE.md" },
     { "Known limitations" = "KNOWN_LIMITATIONS.md" },
   ] },
   { "Typed projects" = "TYPING.md" },
