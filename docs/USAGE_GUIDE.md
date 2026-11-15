@@ -1,4 +1,4 @@
-# Towel - Usage Guide
+# Python API guide
 
 > **Supplementary API guide.** A how-to for the `UnificationRefactorEngine` API. Start with the [documentation index](README.md) or the [command-line guide](CLI_GUIDE.md) for CLI use. Current limitations are in [Known limitations](KNOWN_LIMITATIONS.md).
 

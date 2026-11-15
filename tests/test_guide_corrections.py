@@ -229,3 +229,17 @@ def test_usage_guide_gives_no_instruction_that_needs_a_source_checkout() -> None
     assert "DEFAULT_SIMILARITY_THRESHOLD" not in guide and "block_signature.py" not in guide
     assert "#fast-local-testing" not in guide
     assert "just test-smoke" in (ROOT / "tests" / "README.md").read_text(encoding="utf-8")
+
+
+def test_usage_guide_is_titled_as_the_pages_that_link_it_call_it() -> None:
+    """Audit finding 12 (documentation report D8).
+
+    The page was titled "Towel - Usage Guide" while the index and the quick start send
+    readers to the "Python API guide". A reader who follows the link should land on a
+    page of that name.
+    """
+    title = _guide("USAGE_GUIDE.md").splitlines()[0]
+    assert title == "# Python API guide"
+    for page in ("README.md", "QUICKSTART.md"):
+        names = re.findall(r"\[([^\]]+)\]\(USAGE_GUIDE\.md\)", _guide(page))
+        assert names == [title.removeprefix("# ")], page
