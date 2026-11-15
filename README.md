@@ -4,13 +4,10 @@ Towel finds repeated Python code and extracts it into shared helper functions.
 Preview the changes, review the generated code, give the helpers meaningful
 names, and run your project's tests before adopting the result.
 
-**Release status: 1.949 (beta).** **Latest published release: 1.949.**
-It was published on [PyPI](https://pypi.org/project/code-towel/1.949/) on
-November 10, 2026, and its
-[GitHub release](https://github.com/ericeallen/towel/releases/tag/v1.949)
-followed on November 13. Check the
-[GitHub releases](https://github.com/ericeallen/towel/releases) for completed
-validation and publication records.
+**Release status: 1.949 (beta).** This page describes that version. The
+[GitHub releases page](https://github.com/ericeallen/towel/releases) lists the
+published versions. The release notes there say what changed and, from 1.732
+on, how the release was validated.
 
 ## Install
 
@@ -18,22 +15,44 @@ The PyPI package is **[`code-towel`](https://pypi.org/project/code-towel/)**;
 the command is **`towel`**. The PyPI name `towel` belongs to an unrelated project,
 so `pip install towel` and `uvx towel` will not install this tool.
 
+Towel runs on Python 3.11 to 3.13. Install it as a command-line tool in an
+environment of its own, with [uv](https://docs.astral.sh/uv/) or
+[pipx](https://pipx.pypa.io/):
+
 ```bash
-pip install code-towel
+uv tool install code-towel     # or: pipx install code-towel
 towel --version
 towel --help
 ```
 
-The runtime uses only the standard library. Optional tools format inserted
-code and annotate and type-check generated helpers:
+uv downloads a suitable Python when the machine has none. Without uv or pipx,
+make a virtual environment with a Python in that range and install into it:
 
 ```bash
-pip install "code-towel[format,types]"
+python3 --version              # must be in that range
+python3 -m venv .venv && .venv/bin/pip install "code-towel>=1.414"
+.venv/bin/towel --version
+```
+
+A bare `pip install code-towel` often fails on a system Python: there may be
+no `pip` command, and Homebrew's and Debian's Pythons refuse to install outside
+an environment. The `>=1.414` stops an older Python with an old pip, such as
+the 3.9 that comes with macOS's developer tools, from installing a withdrawn
+1.0 release in place of this one.
+
+The runtime uses only the standard library. Optional tools format inserted
+code and annotate and type-check generated helpers. Install them into the
+same environment as Towel:
+
+```bash
+uv tool install "code-towel[format,types]"     # or: pipx install "code-towel[format,types]"
+.venv/bin/pip install "code-towel[format,types]>=1.414"
 ```
 
 Towel uses these tools when installed; `--no-format` and `--no-types` turn
-either behavior off. Update with `pip install --upgrade code-towel`, or run
-without installing with `uvx --from code-towel towel --help`.
+either behavior off. Update with `uv tool upgrade code-towel`,
+`pipx upgrade code-towel` or `.venv/bin/pip install --upgrade code-towel`, or
+run without installing with `uvx --from code-towel towel --help`.
 
 ## Try it on your project
 
@@ -48,8 +67,10 @@ towel dry path/to/project path/to/cleaned --no-interactive
 diff -ru path/to/project path/to/cleaned
 ```
 
-The output path must not already exist or overlap the input. Helpers are shared
-within a module by default; `--cross-module` also shares them between modules.
+A separate output path must not already exist or overlap the input. Giving the
+input path again as the output refactors the project in place, so commit your
+work first. Helpers are shared within a module by default; `--cross-module`
+also shares them between modules.
 A complete preview runs the full transformation pipeline. `--quick` gives a
 partial structural listing, which does not predict the final result.
 
@@ -129,16 +150,11 @@ Report security issues through the
 Towel is licensed under the [Apache License 2.0](https://github.com/ericeallen/towel/blob/v1.949/LICENSE);
 its source files carry Eric Allen copyright headers.
 
-## Releases and validation
+## Releases
 
-1.949 improves the product experience: complete-caller extraction selection,
-concise preview output with versioned JSON results, time limits, and a
-tutorial-first guide. Its
-[published release](https://github.com/ericeallen/towel/releases/tag/v1.949)
-carries the validated artifacts, and the repository's publication record
-describes how they were validated and published.
-1.948 repairs four silent `dry` miscompilations found in 1.947; its
-[published release](https://github.com/ericeallen/towel/releases/tag/v1.948)
-retains its validation record and artifacts under their original source
-identity. Earlier releases and their evidence remain in the
-[release history](https://github.com/ericeallen/towel/releases).
+The [changelog](https://github.com/ericeallen/towel/blob/v1.949/CHANGELOG.md)
+describes the user-visible changes in this version and in each earlier one.
+The [GitHub releases page](https://github.com/ericeallen/towel/releases) lists
+the published versions with their release notes and artifacts, and
+[PyPI](https://pypi.org/project/code-towel/#history) lists the installable
+packages.

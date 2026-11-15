@@ -14,6 +14,7 @@ import base64
 from collections.abc import Callable
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -43,6 +44,9 @@ def remote(
         "[Guide](https://github.com/ericeallen/towel/blob/v1.947/docs/GUIDE.md)\n",
         "SECURITY.md": "This source tree targets **1.947**.\n",
         "CHANGELOG.md": "## [Unreleased]\n\n## [1.947]\nPublished.\n",
+        "CONTRIBUTING.md": "# Contributing\n",
+        "docs/README.md": "These pages describe Towel **1.947**.\n",
+        "docs/QUICKSTART.md": "This guide describes version 1.947.\n",
         "docs/GUIDE.md": "# A current guide\n",
     }
     for path, content in documents.items():
@@ -69,7 +73,7 @@ def replace_document(responses: dict[str, bytes], path: str, before: str, after:
 
 def test_default_branch_name_is_discovered_and_postrelease_documentation_is_allowed() -> None:
     result = gate.verify(VERSION, RELEASE, request=request_for(remote()))
-    assert result == gate.Visibility("trunk", HEAD, RELEASE, 5)
+    assert result == gate.Visibility("trunk", HEAD, RELEASE, 8)
 
 
 def test_default_branch_at_exact_release_is_allowed() -> None:
@@ -103,6 +107,62 @@ def test_correct_status_with_old_documentation_links_is_rejected() -> None:
     replace_document(responses, "README.md", "blob/v1.947/", "blob/v1.792/")
     with pytest.raises(gate.VisibilityError, match="stale link"):
         gate.verify(VERSION, RELEASE, request=request_for(responses))
+
+
+@pytest.mark.parametrize("path", gate.STATUS_DOCUMENTS)
+@pytest.mark.parametrize(
+    "claim",
+    [
+        # Wording the 1.949 distributions carried; each isolates one phrase, wrapped as it was.
+        "At the November 8, 2026 preparation\ncheckpoint, this candidate is published.",
+        "it is unpublished; the latest confirmed release is 1.948.",
+        "**Latest published release: 1.948.**",
+        "The latest published\nrelease at that point was **1.948**.",
+        "- This source documents 1.948.",
+    ],
+)
+def test_front_door_that_states_its_own_publication_status_is_rejected(
+    path: str, claim: str
+) -> None:
+    """Audit finding 4: PyPI's page for 1.949 says that 1.949 is unpublished.
+
+    The distributions are frozen before upload, so the gate that precedes the
+    upload refuses a front door whose statement the upload would make false.
+    """
+    responses = remote()
+    endpoint = f"{PREFIX}/contents/{path}?ref={HEAD}"
+    record = gate.object_value(json.loads(responses[endpoint]))
+    content = base64.b64decode(gate.text(record["content"])).decode() + "\n" + claim + "\n"
+    record["content"] = base64.b64encode(content.encode()).decode()
+    responses[endpoint] = json.dumps(record).encode()
+    with pytest.raises(gate.VisibilityError, match="states its own publication status"):
+        gate.verify(VERSION, RELEASE, request=request_for(responses))
+
+
+def test_a_front_door_document_the_readme_does_not_link_is_still_read() -> None:
+    """The quick start is checked because it ships, not because the README mentions it."""
+    responses = remote()
+    missing = f"{PREFIX}/contents/docs/QUICKSTART.md?ref={HEAD}"
+
+    def request(endpoint: str) -> bytes:
+        if endpoint == missing:
+            # The GitHub CLI exits 1 when the API answers 404.
+            raise subprocess.CalledProcessError(1, ["gh", "api", endpoint])
+        return responses[endpoint]
+
+    with pytest.raises(subprocess.CalledProcessError):
+        gate.verify(VERSION, RELEASE, request=request)
+
+
+def test_naming_the_version_and_the_releases_page_is_not_a_publication_claim() -> None:
+    assert (
+        gate.publication_claims(
+            "**Release status: 1.947 (beta).** This page describes that version. The\n"
+            "[GitHub releases page](https://github.com/ericeallen/towel/releases) lists the\n"
+            "published versions. Security fixes are provided for the latest released version."
+        )
+        == ()
+    )
 
 
 def test_development_readme_cannot_pass_the_public_visibility_gate() -> None:
