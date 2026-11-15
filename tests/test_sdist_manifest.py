@@ -132,3 +132,10 @@ def test_r9p2_the_manifest_model_reads_the_directives_as_setuptools_does() -> No
         "global-exclude *.py[cod]  # a comment\n"
     )
     assert _shipped(tracked, manifest) == {"README.md", "top.py", "a/b.py", "a/c/e.toml"}
+
+
+def test_w2_published_hook_definition_ships_in_sdist() -> None:
+    """Audit W2: users installing the sdist get the published pre-commit hook."""
+    hook = ".pre-commit-hooks.yaml"
+    assert (REPOSITORY / hook).is_file()
+    assert hook in _shipped(frozenset({hook}), (REPOSITORY / "MANIFEST.in").read_text())

@@ -1,4 +1,4 @@
-include LICENSE README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md justfile .flake8 .pre-commit-config.yaml uv.lock
+include LICENSE README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md justfile .flake8 .pre-commit-config.yaml .pre-commit-hooks.yaml uv.lock
 recursive-include src *.py
 recursive-include tests *.py *.pynew *.md *.toml *.ini *.yml *.yaml
 recursive-include tests/ecosystem_context_sources *
