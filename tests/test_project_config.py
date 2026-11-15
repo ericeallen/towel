@@ -27,6 +27,20 @@ from tests.test_cli_integration import DUPLICATES, invoke
 FLAGS = ["--no-types", "--no-format", "--progress", "none"]
 
 
+def strict_mode_flags() -> list[str]:
+    """Keep parse-refusal regressions strict when the relaxed lane's parser lands.
+
+    The integration base of this lane is strict-only and has no mode flag yet.
+    """
+    parser = _build_parser()
+    subparsers = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    return (
+        ["--strict"]
+        if any("--strict" in a.option_strings for a in subparsers.choices["preview"]._actions)
+        else []
+    )
+
+
 def project(tmp_path: Path, settings: str) -> Path:
     (tmp_path / "pyproject.toml").write_text("[tool.towel]\n" + settings)
     source = tmp_path / "example.py"
@@ -168,7 +182,7 @@ def test_w1_dry_honors_policy_and_records_it_in_json(tmp_path: Path) -> None:
 def test_w1_failed_run_records_loaded_policy(tmp_path: Path) -> None:
     source = project(tmp_path, "types = false\n")
     source.write_text("def broken(:\n")
-    result = invoke(["preview", str(source), "--json", *FLAGS])
+    result = invoke(["preview", str(source), "--json", *FLAGS, *strict_mode_flags()])
     assert result.status == 1, result.stderr
     assert json.loads(result.stdout)["config_path"] == str(tmp_path / "pyproject.toml")
 

@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from tests.test_cli_integration import DUPLICATES, invoke
-from tests.test_project_config import FLAGS
+from tests.test_project_config import FLAGS, strict_mode_flags
 
 
 @pytest.mark.parametrize("presentation", [[], ["--summary"], ["--diff"], ["--json"]])
@@ -41,10 +41,9 @@ def test_w2_check_changes_only_status_and_never_the_tree(
 
 
 def test_w2_check_keeps_failure_status_and_json(tmp_path: Path) -> None:
-    # This base is strict; the runtime lane will add relaxed parse-file skipping.
     source = tmp_path / "broken.py"
     source.write_text("def broken(:\n")
-    result = invoke(["preview", str(source), "--check", "--json", *FLAGS])
+    result = invoke(["preview", str(source), "--check", "--json", *FLAGS, *strict_mode_flags()])
     assert result.status == 1, result.stderr
     assert json.loads(result.stdout)["status"] == "error"
     assert not (tmp_path / ".towel-helpers.json").exists()
