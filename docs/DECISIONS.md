@@ -13,8 +13,13 @@ however rarely it triggers, and "rarely" is not a defence. Declining is acceptab
 exists; a decline that exists only because Towel lost information of its own
 is a defect to fix, not a limitation to document.
 
+*Superseded in the default mode, as applied to when and in what order objects
+are finalized, by [Relaxed mode is the default; strict mode keeps exact lifetimes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes)
+(2026-11-14). In force as written under `--strict`.*
+
 **Contents by topic — selected entries**
 
+- [Relaxed and strict modes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes)
 - [Preservation contract](#2026-09-22-what-towel-preserves) · [Binding identity](#2026-09-23-a-name-is-its-binding-not-its-spelling)
 - [Same-class helpers](#2026-09-22-a-method-helper-lives-in-the-class-that-holds-both-duplicates) · [Class design](#2026-09-22-towel-does-not-change-externally-visible-class-design)
 - [Import names](#2026-09-22-import-names-come-from-the-program) · [Cross-module opt-in](#2026-09-23-cross-module-extraction-is-opt-in) · [Import refusals](#2026-09-24-an-import-problem-refuses-only-when-it-leaves-a-name-in-doubt)
@@ -79,6 +84,11 @@ Three consequences follow, each ruled on explicitly:
   keep method helpers" below.*
 
 *Status: implemented in 1.772.*
+
+*Superseded in the default mode, as applied to finalizers (a finalizer's
+effect as one of the "side effects and their order"), by
+[Relaxed mode is the default; strict mode keeps exact lifetimes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes)
+(2026-11-14). In force as written under `--strict`.*
 
 ## 2026-09-22: Methods keep method helpers
 
@@ -1631,6 +1641,11 @@ configured unused-binding lint rules applicable without discarding owned values.
 Assignment and tuple order are unchanged; outside reads, rebindings, deletions,
 parameters and global/nonlocal declarations preserve the original spelling.
 
+*Superseded in the default mode by
+[Relaxed mode is the default; strict mode keeps exact lifetimes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes)
+(2026-11-14), which keeps only its resource guard. In force as written under
+`--strict`.*
+
 ## 2026-10-06: Tiny helpers must repay their interface cost
 
 This historical calibration was superseded in 1.949 by the
@@ -1704,6 +1719,13 @@ vacuous. Default CLI controls must still demonstrate useful transformations.
 The previous README example is a permanent decline/opt-out regression; useful
 multi-site computations and before/after behavior are positive controls.
 
+*Superseded in the default mode, where it speaks of the lifetime holder, the
+ownership box and the deletions, by
+[Relaxed mode is the default; strict mode keeps exact lifetimes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes)
+(2026-11-14): the default mode generates none of them, so they cost nothing
+there, and the previous README example is a decline regression under `--strict`
+only. The counting rule itself is unchanged in both modes.*
+
 ## 2026-10-06: Rendered-variant refusals require fresh checker requests
 
 **Status:** the inner memo is removed and focused controls pass; final native,
@@ -1770,6 +1792,11 @@ and unsupported control-flow correlations supply no proof.
 configured checkers, errors, finalizers, identity and conservative controls.
 See the October coverage in [Adversarial review](ADVERSARIAL_REVIEW.md#october-proposal-and-cache-regressions).
 The reflection exclusion adopted October 2 is unchanged.*
+
+*Superseded in the default mode, where it requires every caller of a leading
+thunk to prove an immutable result and where it speaks of lifetime outputs, by
+[Relaxed mode is the default; strict mode keeps exact lifetimes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes)
+(2026-11-14). In force as written under `--strict`.*
 
 ## 2026-10-10: Share immutable facts without caching admission
 
@@ -1923,3 +1950,109 @@ thunks keep their timing and behavior for other cases.
 *Status: implemented with fresh-process mapping-replacement, wildcard-provider,
 shared-mutation, method, cross-module, CLI and fixed-point regressions. Final
 integrated gates remain separately required.*
+
+## 2026-11-14: Relaxed mode is the default; strict mode keeps exact lifetimes
+
+A user-perspective audit of 1.949 found that the rules protecting object
+lifetimes decide what a first run looks like. The quick start's own result has
+callers of the form `_towel_arguments = [(amount,)]`, `del amount`,
+`return helper(…, _towel_arguments.pop())`, and the same rules decline most
+blocks short of a whole function body as `owned_binding_frame_boundary`. The
+owner read the audit and decided: "I want a relaxed mode and it should be the
+default. I think we went too far with strictness. I agree with your audit's
+findings. I want this to be usable and pleasant."
+
+Towel therefore has two modes.
+
+- **Relaxed mode** is the default.
+- **Strict mode** is 1.949's behaviour, exactly: every guarantee, refusal and
+  generated form of the entries below as they were written. It is selected by
+  `--strict` on `towel dry` and `towel preview`, and by `strict=True` on
+  `UnificationRefactorEngine`. The JSON result names the mode that ran.
+
+**What relaxed mode preserves.** What a program computes and does: return
+values, output, exceptions, and the order of the side effects its calls
+perform.
+
+**What relaxed mode assumes.** Strict mode withdraws every assumption listed
+here.
+
+1. **Finalization.** The program does not depend on when or in what order
+   objects are finalized once it has stopped using them. The Python language
+   reference leaves that to the implementation: "An implementation is allowed
+   to postpone garbage collection or omit it altogether". CPython makes it
+   deterministic, and strict mode preserves what CPython does.
+
+**What follows from the first assumption.** In relaxed mode:
+
+- A caller calls its helper directly. There is no ownership transfer: no
+  `_towel_arguments` box, no `del`, no `_towel_owner` parameter, and no
+  `owned_binding_frame_boundary` or `ownership_parameter_budget` refusal. With
+  `f(Noisy("argument"))` and a body that binds `y = Noisy("local")`, the
+  original finalizes the argument and then the local as `f` returns; the
+  relaxed helper's frame finalizes the local first.
+- A helper returns only the names later code reads. No name is returned solely
+  to keep its object alive, so there is no `_towel_keep_*` binding, and a
+  block is not refused as `conditionally_bound_return` for a name nothing
+  reads again, or as `owned_binding_exception_boundary`. A `handle =
+  Noisy("handle")` that nothing reads after the block is finalized when the
+  helper returns, not when the function does.
+- Returned names are not checked against the original frame's release order;
+  they are returned in the order the block first assigns them.
+- An argument the helper evaluates first, once and on every path is passed by
+  value whatever its result, not only when the result is an immutable literal.
+
+**The resource guard.** One part of object lifetime is not left to the
+implementation: an object lives while it is reachable. Where a block binds a
+local that the original kept reachable until the function returned, relaxed
+mode lets the helper's return release it. That is a change the language
+permits a program to observe only through a finalizer, and for nearly every
+object the first assumption covers it. It does not cover an object whose
+finalizer destroys something the program can still reach another way:
+
+```python
+tmp = tempfile.TemporaryDirectory()
+path = os.path.join(tmp.name, "report.txt")
+# ... end of the duplicated block ...
+os.listdir(tmp.name)  # or any later use of `path`
+```
+
+A plain helper returning `path` would delete the directory on its return,
+before the caller lists it. So where a block binds a local directly to the
+result of calling one of a short, fixed list of standard-library constructors
+of this kind (temporary files and directories, process and thread pools,
+tkinter images, memory maps and `weakref.finalize`; the list and its criterion
+are in `unification/resource_guard.py`), relaxed mode keeps the object alive
+as long as the original did: the helper returns it and the caller binds it
+under its own name (`tmp, path = helper(…)`), and such a block inside a `try`
+or `with` that stays in the caller is left alone. The guard reads syntax only
+and its list is closed. A program that keeps some other resource alive only
+through a local it never reads again needs `--strict`, or better a `with`
+statement, which says what the program means in either mode.
+
+**What this supersedes.** In the default mode this entry supersedes, and under
+`--strict` it leaves in force as written:
+
+- the owner's standing rule at the head of this file, as applied to
+  finalization;
+- ["What Towel preserves"](#2026-09-22-what-towel-preserves) (2026-09-22), as
+  applied to finalizers;
+- ["Caller ownership includes implicit protocols and exceptional exits"](#2026-10-06-caller-ownership-includes-implicit-protocols-and-exceptional-exits)
+  (2026-10-06), of which the resource guard is what remains;
+- ["Complete extractions must repay their generated syntax"](#2026-11-08-complete-extractions-must-repay-their-generated-syntax)
+  (2026-11-08), where it speaks of holders, the box and deletions;
+- ["Retained proposals need source and lifetime proofs"](#2026-10-08-retained-proposals-need-source-and-lifetime-proofs)
+  (2026-10-08), where it requires an immutable result of a leading thunk and
+  speaks of lifetime outputs;
+- the sentence of [the 2026-10-08 proposal review](proposals/REVIEW_2026-10-08.md)
+  ruling out "a flag whose purpose is to bypass these obligations". The flag
+  now exists with the opposite sense: `--strict` restores the obligations, and
+  the default does without those that rest on finalization alone.
+
+The first assumption changes nothing else in those entries. In particular
+relaxed mode never redirects one existing function to another, and it keeps
+the reflection boundary of 2026-10-02.
+
+*Status: implemented, unreleased. Strict mode is pinned by the suite that
+shipped with 1.949, which runs it unchanged; relaxed mode by its own tests,
+the audit's scenario cases and a relaxed pass over the hostile batteries.*
