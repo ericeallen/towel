@@ -101,10 +101,11 @@ class BlockSite(NamedTuple):
 
 
 class GuardKey(NamedTuple):
-    """What a block guard's verdict depends on: the guard and where the block stands."""
+    """What a block guard's verdict depends on: the guard, block site and chosen mode."""
 
     guard: Callable[..., bool]
     site: BlockSite
+    strict: Optional[bool] = None
 
 
 class PerBlockKey(NamedTuple):

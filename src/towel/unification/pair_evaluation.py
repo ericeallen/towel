@@ -817,6 +817,7 @@ class PairEvaluation(
                 function,
                 analyzer,
                 site=site,
+                strict=self.strict,
             ):
                 self._debug_reject(RejectReason.CREATED_OBJECT_ESCAPES, pair)
                 return None

@@ -581,10 +581,13 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             captured_comprehension_changes_enclosing_cell,
             block_requires_original_frame,
             frame_read_outside_block,
-            created_object_escapes,
         ):
             if self._block_rejected(frame_guard, cand_nodes, fn, analyzer, site=site):
                 return None
+        if self._block_rejected(
+            created_object_escapes, cand_nodes, fn, analyzer, site=site, strict=self.strict
+        ):
+            return None
         if not self.strict and self._block_rejected(
             guarded_resource_crosses_exception_boundary, cand_nodes, fn, analyzer, site=site
         ):

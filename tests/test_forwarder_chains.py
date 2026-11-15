@@ -605,8 +605,10 @@ def _refactor_generator(
     call; termination must not rest on it.
     """
     if not escape_guard:
-        monkeypatch.setattr(pair_evaluation, "created_object_escapes", lambda *_: False)
-        monkeypatch.setattr(clustering, "created_object_escapes", lambda *_: False)
+        monkeypatch.setattr(
+            pair_evaluation, "created_object_escapes", lambda *_, strict=False: False
+        )
+        monkeypatch.setattr(clustering, "created_object_escapes", lambda *_, strict=False: False)
     engine = UnificationRefactorEngine(
         min_lines=min_lines,
         snippet_formatter=black_formatter(BlackSettings()) if formatted else None,

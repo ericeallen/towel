@@ -34,9 +34,10 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
         "return lambda: (local := 3) + local",
     ],
 )
-def test_closed_callbacks_may_escape(body: str) -> None:
-    """Audit D4: callbacks whose bodies read only their own names may outlive a block."""
-    assert not _escapes(body)
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_closed_callbacks_escape_only_in_relaxed_mode(body: str, strict: bool) -> None:
+    """Review D4: strict mode keeps the created-object policy of 1.949."""
+    assert _escapes(body, strict=strict) is strict
 
 
 @pytest.mark.parametrize(
@@ -47,9 +48,10 @@ def test_closed_callbacks_may_escape(body: str) -> None:
         "return lambda value: (yield value)",
     ],
 )
-def test_captured_callbacks_and_generators_still_decline(body: str) -> None:
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_captured_callbacks_and_generators_still_decline(body: str, strict: bool) -> None:
     """Audit D4: deferred reads cannot migrate into a helper's cells."""
-    assert _escapes(body)
+    assert _escapes(body, strict=strict)
 
 
 @pytest.mark.parametrize(
@@ -99,7 +101,10 @@ def test_stored_callbacks_keep_parameter_names(suffix: str, accepted: bool) -> N
     assert (Unifier().unify_blocks(blocks, [{}, {}]) is not None) is accepted
 
 
-def test_unknown_consumer_can_retain_and_keyword_call_closed_callbacks(tmp_path: Path) -> None:
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_unknown_consumer_can_retain_and_keyword_call_closed_callbacks(
+    tmp_path: Path, strict: bool
+) -> None:
     """Audit D4: an actual extraction preserves calls after the creating function returns."""
     source = """
 def first(consumer):
@@ -112,10 +117,11 @@ def second(consumer):
 """
     path = tmp_path / "retained.py"
     path.write_text(source)
-    transformed, count, _ = UnificationRefactorEngine(
-        min_lines=1, skip_trivial_helpers=False
-    ).refactor_to_fixed_point(str(path))
-    assert count > 0
+    engine = UnificationRefactorEngine(min_lines=1, skip_trivial_helpers=False, strict=strict)
+    transformed, count, _ = engine.refactor_to_fixed_point(str(path))
+    assert (count == 0) is strict
+    if strict:
+        assert engine.declined_pairs.get("created_object_escapes", 0) > 0
     exercise = """
 saved = []
 assert first(saved.append) == 'first'
@@ -167,7 +173,10 @@ assert saved(right=4) == 5
         exec(compile(program, "<declaration-outside-block>", "exec"), {})
 
 
-def test_closed_callback_parameter_does_not_capture_a_helper_argument(tmp_path: Path) -> None:
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_closed_callback_parameter_does_not_capture_a_helper_argument(
+    tmp_path: Path, strict: bool
+) -> None:
     """Audit D4: an unchanged callback signature still shadows a helper's free argument."""
     from tests.hostile_execution import ScopeWatch, observe
     from tests.hostile_refactoring import refactor_script
@@ -182,6 +191,67 @@ def test_closed_callback_parameter_does_not_capture_a_helper_argument(tmp_path: 
     before = observe(script.name, script.parent)
     assert before[0] == 0
     scopes = ScopeWatch()
-    assert refactor_script(script, file_finisher=scopes) > 0
+    assert refactor_script(script, file_finisher=scopes, strict=strict) > 0
     assert scopes.found == []
     assert observe(script.name, script.parent) == before
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_review_d4_escaping_lambda_qualname_policy(tmp_path: Path, strict: bool) -> None:
+    """Review D4: only relaxed mode may move a closed lambda to a helper's qualname."""
+    source = """
+def first(items, saved):
+    out = []
+    for item in items:
+        out.append(item * 2)
+    saved.append(lambda items, scale=3: items * scale)
+    return sum(out)
+
+
+def second(items, saved):
+    out = []
+    for item in items:
+        out.append(item * 5)
+    saved.append(lambda items, scale=4: items * scale)
+    return sum(out)
+"""
+    path = tmp_path / "qualname.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(min_lines=1, skip_trivial_helpers=False, strict=strict)
+    transformed, count, _ = engine.refactor_to_fixed_point(str(path))
+    moved_lambdas = [
+        node
+        for function in ast.parse(transformed).body
+        if isinstance(function, ast.FunctionDef) and function.name.startswith("__extracted_func_")
+        for node in ast.walk(function)
+        if isinstance(node, ast.Lambda)
+    ]
+    assert bool(moved_lambdas) is not strict
+    if not strict:
+        assert count > 0
+    exercise = """
+for function, total, default in ((first, 6, 6), (second, 15, 8)):
+    saved = []
+    assert function([1, 2], saved) == total
+    callback = saved[0]
+    assert callback(items=2) == default
+    assert callback(2, scale=10) == 20
+    assert callback.__qualname__.startswith(QUALNAME_PREFIX)
+"""
+    exec(
+        compile(
+            source + exercise.replace("QUALNAME_PREFIX", "function.__name__"),
+            "<original-qualname>",
+            "exec",
+        ),
+        {},
+    )
+    expected = "function.__name__" if strict else repr("__extracted_func_")
+    exec(
+        compile(
+            transformed + exercise.replace("QUALNAME_PREFIX", expected),
+            "<transformed-qualname>",
+            "exec",
+        ),
+        {},
+    )

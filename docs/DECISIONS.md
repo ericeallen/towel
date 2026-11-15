@@ -60,6 +60,9 @@ Three consequences follow, each ruled on explicitly:
   only called within it, or passed only to a small set of builtins that call
   it and keep nothing (`sorted`/`min`/`max` keys, and `map`/`filter` whose
   iterator is consumed in the block).
+  *Status: superseded for closed lambdas in relaxed mode from 2.0 by
+  [Relaxed mode is the default; strict mode keeps exact lifetimes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes).
+  In force as written under `--strict`.*
 - **No existing function is redirected to another.** When a duplicate is the
   whole body of an existing function, Towel used to rewrite `f2` as
   `return f1(...)`. A module-level call finds `f1` at call time, so a test
@@ -1994,6 +1997,13 @@ here.
    earlier order, and one predicate in `unification/argument_ownership.py`
    answers whether the running interpreter's release order is certified.
    Relaxed mode promises no release order and is the same on every version.
+
+2. **Closed lambda metadata.** From 2.0 a lambda whose body reads only its own
+   bindings may escape an extracted block when its parameter names are kept.
+   Its values, defaults and keyword calls are preserved; its `__qualname__`
+   changes to name the helper that now creates it. Relaxed mode assumes a
+   program does not depend on that metadata. Strict mode keeps 1.949's
+   `created_object_escapes` refusal for these lambdas.
 
 **What follows from the first assumption.** In relaxed mode:
 

@@ -19,8 +19,8 @@ helper, and carries the helper's name in its ``__qualname__`` (a lambda made
 from a unified template also has the template's parameter names). The guard
 lets a block move only when every such object is called in the block with
 arguments it accepts, handed to a builtin that calls it and keeps nothing,
-or consumed where it stands. Closed lambdas may escape when unification
-retains their keyword interface.
+or consumed where it stands. In relaxed mode closed lambdas may escape when
+unification retains their keyword interface.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from towel.unification.scope_analyzer import ScopeAnalyzer
 from towel.unification.semantic_safety import _binds, created_object_escapes
 
 
-def _escapes(body: str, *, after: str = "", module: str = "") -> bool:
+def _escapes(body: str, *, after: str = "", module: str = "", strict: bool = False) -> bool:
     """Whether the block ``body`` of ``def f(xs, k, flag)`` creates an observable object."""
     block = textwrap.indent(textwrap.dedent(body).strip(), "    ")
     rest = textwrap.indent(textwrap.dedent(after).strip(), "    ") if after else ""
@@ -47,7 +47,7 @@ def _escapes(body: str, *, after: str = "", module: str = "") -> bool:
         node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "f"
     )
     count = len(ast.parse(textwrap.dedent(body).strip()).body)
-    return created_object_escapes(analyzer, function, function.body[:count])
+    return created_object_escapes(analyzer, function, function.body[:count], strict=strict)
 
 
 @pytest.mark.parametrize(
@@ -77,8 +77,9 @@ def _escapes(body: str, *, after: str = "", module: str = "") -> bool:
         "kept = filter(lambda x: x > k, xs)\ny = [x for x in kept]",
     ],
 )
-def test_an_object_nothing_can_look_at_may_move(body: str) -> None:
-    assert not _escapes(body)
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_an_object_nothing_can_look_at_may_move(body: str, strict: bool) -> None:
+    assert not _escapes(body, strict=strict)
 
 
 @pytest.mark.parametrize(
@@ -105,8 +106,9 @@ def test_an_object_nothing_can_look_at_may_move(body: str) -> None:
         ("if flag:\n    def step():\n        return lambda: k\n    y = step()", ""),
     ],
 )
-def test_an_object_that_could_be_looked_at_declines(body: str, after: str) -> None:
-    assert _escapes(body, after=after)
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_an_object_that_could_be_looked_at_declines(body: str, after: str, strict: bool) -> None:
+    assert _escapes(body, after=after, strict=strict)
 
 
 @pytest.mark.parametrize(
@@ -122,9 +124,10 @@ def test_an_object_that_could_be_looked_at_declines(body: str, after: str) -> No
         ("twice = lambda x: x * 2\ny = [twice]", ""),
     ],
 )
-def test_closed_callbacks_do_not_need_known_consumers(body: str, after: str) -> None:
-    """Audit D4: preserved signatures make closed callbacks safe even for unknown consumers."""
-    assert not _escapes(body, after=after)
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_closed_callback_consumers_follow_mode(body: str, after: str, strict: bool) -> None:
+    """Review D4: only relaxed mode permits unknown consumers to observe closed callbacks."""
+    assert _escapes(body, after=after, strict=strict) is strict
 
 
 def test_a_builtin_the_module_can_shadow_is_not_trusted() -> None:

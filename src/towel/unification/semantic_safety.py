@@ -48,6 +48,7 @@ from typing import (
 from dataclasses import dataclass
 from weakref import WeakKeyDictionary
 
+from .defaults import DEFAULT_STRICT
 from .binding_detector import BindingDetector
 from .builtins import BUILTIN_NAMES, PYTHON_BUILTINS
 from .class_private import (
@@ -797,7 +798,11 @@ def _shadowable_names(module: Optional[ast.AST]) -> Optional[FrozenSet[str]]:
 
 
 def created_object_escapes(
-    analyzer: "ScopeAnalyzer", function: FunctionNode, nodes: Sequence[ast.stmt]
+    analyzer: "ScopeAnalyzer",
+    function: FunctionNode,
+    nodes: Sequence[ast.stmt],
+    *,
+    strict: bool = DEFAULT_STRICT,
 ) -> bool:
     """Whether a created callable or iterator can outlive the extracted block.
 
@@ -810,10 +815,12 @@ def created_object_escapes(
     The supported cases call a function or lambda within the block with
     arguments its parameters accept, use it as a known builtin's callback,
     or consume its iterator before leaving the block. A closed lambda can
-    also escape when unification preserves its parameter names. Other uses
-    decline conservatively. Classes, coroutine functions and decorated definitions
+    also escape in relaxed mode when unification preserves its parameter
+    names. Other uses decline conservatively. Classes, coroutine functions
+    and decorated definitions
     can expose closures or defer execution beyond the block, and are not
-    analyzed more precisely here. Object metadata is outside the contract.
+    analyzed more precisely here. Strict mode preserves the original refusal
+    policy for created callables whose ``__qualname__`` could be observed.
     """
     block = list(nodes)
     shadowable = _shadowable_names(analyzer.analyzed_tree)
@@ -841,7 +848,8 @@ def created_object_escapes(
             elif isinstance(node, ast.Lambda):
                 if _makes_generator(node) or (
                     not (
-                        lambda_body_is_closed(node)
+                        not strict
+                        and lambda_body_is_closed(node)
                         and all(
                             context.stored_as(name) == name for name in parameter_names(node.args)
                         )
