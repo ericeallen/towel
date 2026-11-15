@@ -1926,9 +1926,9 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
 
     if not options.complete_scope and inferred_rename_root(target) is None:
         reason = (
-            f"Cannot establish the consumer scope around {target}. Select the whole project "
-            "and pass --complete-scope to declare that target contains every ordinary consumer. "
-            "Use a file-qualified mapping key or --file to select definitions within that root."
+            f"No pyproject.toml, setup.cfg, setup.py or package __init__.py was found above "
+            f"{target}, so Towel cannot tell whether code outside it calls these helpers; "
+            "if nothing outside does, add --complete-scope."
         )
         if options.json:
             print(json.dumps({"applied": False, "dry_run": options.preview, "error": reason}))

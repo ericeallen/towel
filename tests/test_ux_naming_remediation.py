@@ -400,3 +400,30 @@ def test_recover_returns_restored_paths_and_prints_summary(tmp_path: Path) -> No
     assert result.status == 0, result.stderr
     assert result.stdout == "Restored 2 files; journal removed.\n"
     assert not cli_journal.exists()
+
+
+def test_scope_refusal_uses_plain_wording(tmp_path: Path) -> None:
+    """Audit Finding 8, item 5: unmarked directory refusal explains missing markers plainly."""
+    bare = tmp_path / "bare_dir"
+    bare.mkdir()
+    (bare / "m.py").write_text("def __extracted_func_0(x):\n    return x + 1\n", encoding="utf-8")
+    mapping = tmp_path / "renames.json"
+    mapping.write_text(json.dumps({"__extracted_func_0": "increment"}), encoding="utf-8")
+
+    human = invoke(["rename-helpers", str(bare), "--rename-file", str(mapping)])
+    assert human.status == 2
+    assert "Cannot establish the consumer scope" not in human.stderr
+    assert "No pyproject.toml, setup.cfg, setup.py or package __init__.py was found above" in (
+        human.stderr
+    )
+    assert "Towel cannot tell whether code outside it calls these helpers" in human.stderr
+    assert "if nothing outside does, add --complete-scope" in human.stderr
+
+    as_json = invoke(["rename-helpers", str(bare), "--rename-file", str(mapping), "--json"])
+    assert as_json.status == 2
+    payload = json.loads(as_json.stdout)
+    assert payload["applied"] is False
+    assert "No pyproject.toml, setup.cfg, setup.py or package __init__.py was found above" in (
+        payload["error"]
+    )
+    assert "--complete-scope" in payload["error"]
