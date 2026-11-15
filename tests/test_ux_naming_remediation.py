@@ -549,3 +549,58 @@ def test_interactive_rename_text_omits_unsupported_windows_instruction(tmp_path:
     assert "Ctrl+D" in result.stdout
     assert "Ctrl+Z" not in result.stdout
     assert "Windows" not in result.stdout
+
+
+def test_naming_guide_example_works_on_quickstart_and_omits_private_skill(tmp_path: Path) -> None:
+    """Audit Finding 8, item 9: docs/NAMING.md mapping works on quickstart output; no private skill."""
+    import re
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[1]
+    naming_doc = (repo_root / "docs" / "NAMING.md").read_text(encoding="utf-8")
+    assert "agent-skills" not in naming_doc
+    assert "towel-rename" not in naming_doc
+
+    quickstart_doc = (repo_root / "docs" / "QUICKSTART.md").read_text(encoding="utf-8")
+    source_code, test_code = re.findall(r"(?ms)^```python\n(.*?)^```", quickstart_doc)
+
+    demo = tmp_path / "demo"
+    demo.mkdir()
+    (demo / "pyproject.toml").write_text(
+        '[project]\nname = "towel-demo"\nversion = "0.0.0"\n', encoding="utf-8"
+    )
+    (demo / "charges.py").write_text(source_code, encoding="utf-8")
+    (demo / "test_charges.py").write_text(test_code, encoding="utf-8")
+
+    cleaned = tmp_path / "cleaned"
+    dry_res = invoke(
+        ["dry", str(demo), str(cleaned), "--no-interactive", "--no-types", "--no-format"]
+    )
+    assert dry_res.status == 0, dry_res.stderr
+
+    json_blocks = re.findall(r"(?ms)^```json\n(.*?)^```", naming_doc)
+    assert json_blocks, "expected a JSON mapping example in docs/NAMING.md"
+    renames_file = tmp_path / "renames.json"
+    renames_file.write_text(json_blocks[0], encoding="utf-8")
+
+    applied = invoke(
+        [
+            "rename-helpers",
+            str(cleaned),
+            "--complete-scope",
+            "--rename-file",
+            str(renames_file),
+        ]
+    )
+    assert applied.status == 0, applied.stderr
+    assert "discounted_total_with_shipping" in (cleaned / "charges.py").read_text(encoding="utf-8")
+
+    check = subprocess.run(
+        [sys.executable, "-m", "unittest", "discover", "-s", str(cleaned)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert check.returncode == 0, check.stdout + check.stderr
