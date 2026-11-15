@@ -62,7 +62,9 @@ def test_growing_input_seed_is_inconclusive_without_launching_after(tmp_path: Pa
 @pytest.mark.parametrize(
     ("body", "limited"),
     [
-        ("values = []\n    while True:\n        values.append(1)", True),
+        # Cross the memory budget before the call alarm without depending on
+        # how many millions of Python iterations the machine can run in 0.5 s.
+        ("values = []\n    while True:\n        values.append(b'x' * (1024 * 1024))", True),
         ("while True:\n        pass", True),
         ("while True:\n        print('x' * 1000)", True),
         ("raise MemoryError('control')", True),
