@@ -44,6 +44,7 @@ from ..diagnostics import REJECTIONS, debugging
 from .assignment_analyzer import has_reassignments_without_bindings
 from .block_analysis import (
     align_return_variables,
+    guarded_resource_crosses_exception_boundary,
     lifetime_order_preserved,
     owned_binding_crosses_exception_boundary,
 )
@@ -576,6 +577,10 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         ):
             if self._block_rejected(frame_guard, cand_nodes, fn, analyzer, site=site):
                 return None
+        if not self.strict and self._block_rejected(
+            guarded_resource_crosses_exception_boundary, cand_nodes, fn, analyzer, site=site
+        ):
+            return None
         lifetime_guards = (owned_binding_crosses_exception_boundary,) if self.strict else ()
         for guard in (
             *lifetime_guards,
@@ -620,7 +625,9 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             site=site,
             snapshot=snapshot,
             return_variables=frozenset(
-                self._find_return_variables(fn, cand_range, snapshot.initially_bound, cand_nodes)
+                self._find_return_variables(
+                    fn, cand_range, snapshot.initially_bound, cand_nodes, module=module
+                )
             ),
         )
 

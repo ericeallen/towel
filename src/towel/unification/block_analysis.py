@@ -63,6 +63,7 @@ from .block_signature import BlockSignature, BlockSignatureIndex, extract_block_
 from .extractor import has_complete_return_coverage, is_value_producing
 from .function_scope import code_names, function_names, identifiers, scope_moving_names
 from .frame_ownership import FrameOwnership, frame_ownership
+from .resource_guard import resource_bound_names
 from .models import (
     BlockBindingSnapshot,
     ArgumentHandoff,
@@ -310,6 +311,24 @@ def owned_binding_crosses_exception_boundary(
     return bool(lifetime_bound_names(nodes, bound))
 
 
+def guarded_resource_crosses_exception_boundary(
+    analyzer: ScopeAnalyzer, function: FunctionNode, nodes: Sequence[ast.stmt]
+) -> bool:
+    """Relaxed mode's remainder of ``owned_binding_crosses_exception_boundary``.
+
+    A helper that raises returns nothing, so a guarded resource the block
+    had bound (``resource_guard``) would be released while the caller's
+    handler or manager goes on, where the original kept it. Only a block
+    binding such a resource is refused; every other owned value is covered
+    by relaxed mode's assumption about finalization.
+    """
+    protected = memoized_per_node(_EXCEPTION_BOUNDARY_NODES, function, _exception_boundary_nodes)
+    if not nodes or id(nodes[0]) not in protected:
+        return False
+    bound = {binding.name for binding in own_scope_bindings(nodes) if not binding.deleted_on_exit}
+    return bool(resource_bound_names(nodes, analyzer.analyzed_tree) & bound)
+
+
 _LOCAL_ORDERS: "WeakKeyDictionary[ast.AST, Mapping[Tuple[str, int], Tuple[str, ...]]]" = (
     WeakKeyDictionary()
 )
@@ -497,7 +516,7 @@ class BlockAnalysis(EngineState):
             function, nodes, block_range, reassignments, site=site
         )
         required = self._find_return_variables(
-            function, block_range, snapshot.initially_bound, nodes
+            function, block_range, snapshot.initially_bound, nodes, module=module
         )
         outputs = tuple(sorted(required)) if returned is None else tuple(returned)
         if not required <= set(outputs):
@@ -910,6 +929,7 @@ class BlockAnalysis(EngineState):
         initially_bound: Set[str],
         block: Sequence[ast.stmt] = (),
         *,
+        module: Optional[ast.AST] = None,
         debug_label: Optional[str] = None,
     ) -> Set[str]:
         """The newly bound variables the helper must return.
@@ -920,7 +940,10 @@ class BlockAnalysis(EngineState):
         kept it until the function returned, and a helper would drop it on
         its own return. Relaxed mode assumes no program observes that
         (docs/DECISIONS.md, "Relaxed mode is the default; strict mode keeps
-        exact lifetimes").
+        exact lifetimes"), except for a local bound to a resource whose
+        finalizer destroys what the program can still reach (see
+        ``resource_guard``); ``module`` is the block's parsed module, whose
+        imports say which calls construct one.
         """
 
         if not initially_bound:
@@ -928,10 +951,13 @@ class BlockAnalysis(EngineState):
 
         result: Set[str] = set()
         debug_enabled = debugging(VALIDATION)
-        if self.strict and block and not self._is_value_producing(block):
+        if block and not self._is_value_producing(block):
             # Keeping caller ownership also matters at the end of a nested
             # suite, before its enclosing manager/finally cleanup executes.
-            result |= lifetime_bound_names(block, initially_bound)
+            if self.strict:
+                result |= lifetime_bound_names(block, initially_bound)
+            else:
+                result |= resource_bound_names(block, module) & initially_bound
 
         for usage in return_statement_usages(
             self, func, self._used_names, _end_position(block, block_range)

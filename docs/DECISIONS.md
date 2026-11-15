@@ -2025,10 +2025,21 @@ tkinter images, memory maps and `weakref.finalize`; the list and its criterion
 are in `unification/resource_guard.py`), relaxed mode keeps the object alive
 as long as the original did: the helper returns it and the caller binds it
 under its own name (`tmp, path = helper(…)`), and such a block inside a `try`
-or `with` that stays in the caller is left alone. The guard reads syntax only
-and its list is closed. A program that keeps some other resource alive only
-through a local it never reads again needs `--strict`, or better a `with`
-statement, which says what the program means in either mode.
+or `with` that stays in the caller is left alone.
+
+A weak reference is the other way a program reaches an object it no longer
+names: `watcher = weakref.ref(target)` in the block, `watcher() is not None`
+after it. The original answers true until the function returns; a helper that
+returned only `watcher` would answer false, which is a different value and
+not a finalizer running at another time. A local the block passes directly to
+`weakref.ref`, `weakref.proxy`, `weakref.WeakMethod` or `weakref.finalize` is
+therefore kept by the caller in the same way.
+
+The guard reads syntax only and both lists are closed. A program that keeps
+some other resource alive only through a local it never reads again, or
+registers one in a `WeakSet` or a weak dictionary, needs `--strict`, or better
+a `with` statement or an explicit reference, which say what the program means
+in either mode.
 
 **What this supersedes.** In the default mode this entry supersedes, and under
 `--strict` it leaves in force as written:
@@ -2053,6 +2064,8 @@ The first assumption changes nothing else in those entries. In particular
 relaxed mode never redirects one existing function to another, and it keeps
 the reflection boundary of 2026-10-02.
 
-*Status: implemented, unreleased. Strict mode is pinned by the suite that
-shipped with 1.949, which runs it unchanged; relaxed mode by its own tests,
-the audit's scenario cases and a relaxed pass over the hostile batteries.*
+*Status: implemented for 2.0. Strict mode is pinned by the tests and goldens
+that shipped with 1.949, which run it unchanged; relaxed mode by its own
+tests, the audit's scenario cases and a relaxed pass over the hostile
+batteries, whose only differences are twelve fixtures that record when a
+`__del__` runs.*

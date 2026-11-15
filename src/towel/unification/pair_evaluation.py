@@ -68,6 +68,7 @@ from .block_analysis import (
     owned_binding_crosses_exception_boundary,
     align_return_variables,
     first_assignment_order,
+    guarded_resource_crosses_exception_boundary,
     lifetime_bound_names,
     lifetime_order_preserved,
     local_cleanup_order,
@@ -777,8 +778,18 @@ class PairEvaluation(
             ):
                 self._debug_reject(RejectReason.LITERAL_POOL_BOUNDARY, pair)
                 return None
-            if self.strict and self._block_rejected(
-                owned_binding_crosses_exception_boundary, nodes, function, site=site
+            if (
+                self._block_rejected(
+                    owned_binding_crosses_exception_boundary, nodes, function, site=site
+                )
+                if self.strict
+                else self._block_rejected(
+                    guarded_resource_crosses_exception_boundary,
+                    nodes,
+                    function,
+                    analyzer,
+                    site=site,
+                )
             ):
                 self._debug_reject(RejectReason.OWNED_BINDING_EXCEPTION_BOUNDARY, pair)
                 return None
@@ -931,11 +942,11 @@ class PairEvaluation(
         """Block ``block_idx``'s binding snapshot and the variables it must return; None if it reassigns unsafely."""
         if block_idx == 0:
             func, nodes, block_range = ctx.func1, pair.block1_nodes, pair.block1_range
-            site = ctx.site1
+            site, analyzer = ctx.site1, ctx.scope_analyzer
             name, reason = pair.function1_name, RejectReason.UNSAFE_REASSIGNMENT_BLOCK1
         else:
             func, nodes, block_range = ctx.func2, pair.block2_nodes, pair.block2_range
-            site = ctx.site2
+            site, analyzer = ctx.site2, ctx.scope_analyzer2
             name, reason = pair.function2_name, RejectReason.UNSAFE_REASSIGNMENT_BLOCK2
         reassignments = self._get_assignment_reuse(func)
         has_unsafe, problematic_vars = self._per_block(
@@ -963,6 +974,7 @@ class PairEvaluation(
             block_range,
             snapshot.initially_bound,
             nodes,
+            module=analyzer.analyzed_tree,
             debug_label=debug_label if debug_enabled else None,
         )
         return snapshot, return_variables
