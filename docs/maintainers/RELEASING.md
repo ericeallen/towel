@@ -534,6 +534,7 @@ run on an ancestor or a different pull-request merge is insufficient.
 | Quality and distributions | `ubuntu-latest` | 3.13 | Black, Flake8, mypy, Bandit, dependency audit, build |
 | Installed-wheel integration | `macos-latest` | 3.13 | CLI, file publication/recovery, checker and formatter worker lifecycle |
 | Scheduled/manual corpus | `ubuntu-latest` | 3.13 | untyped (`--no-types`); 2 concurrent projects; 180-minute job limit |
+| Documentation site | `ubuntu-latest` | 3.13 | strict site build on pull requests and `main`; `main` deploys to GitHub Pages |
 
 `tests/test_release_documentation.py` compares this table with the workflow
 files and advertised Python classifiers. It also checks the 1.772 results

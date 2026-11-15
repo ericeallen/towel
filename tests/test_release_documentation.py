@@ -56,6 +56,7 @@ PATHS = (
     "pyproject.toml",
     ".github/workflows/ci.yml",
     ".github/workflows/ecosystem.yml",
+    ".github/workflows/docs.yml",
 )
 
 
@@ -195,6 +196,14 @@ def _check_automation(documents: Mapping[str, str]) -> None:
         "CLI, file publication/recovery, checker and formatter worker lifecycle |\n"
         f"| Scheduled/manual corpus | `{_runner(ecosystem)}` | {ecosystem_python} | "
         f"{mode}; {workers} concurrent projects; {timeout}-minute job limit |",
+    )
+    site = _job(documents[".github/workflows/docs.yml"], "build")
+    site_python = _one(r"^\s+python-version: '([\d.]+)'$", site)
+    _contains(_commands(site), "uv run --frozen --only-group docs zensical build --strict")
+    _contains(
+        _section(documents["docs/maintainers/RELEASING.md"], "### Configured automation"),
+        f"| Documentation site | `{_runner(site)}` | {site_python} | "
+        "strict site build on pull requests and `main`; `main` deploys to GitHub Pages |",
     )
 
 
@@ -396,6 +405,7 @@ def test_documented_measurements_keep_their_platform_resources_and_conditions(
         ),
         (".github/workflows/ecosystem.yml", "--workers 2", "--workers 4", _check_automation),
         (".github/workflows/ecosystem.yml", "--no-types ", "", _check_automation),
+        (".github/workflows/docs.yml", "build --strict", "build", _check_automation),
         (
             ".github/workflows/ci.yml",
             "- run: uv run --frozen mypy",

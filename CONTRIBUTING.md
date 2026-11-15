@@ -345,10 +345,19 @@ See [the evidence schema and release procedure](docs/maintainers/RELEASING.md#re
   original source and artifact identities. Follow the
   [version convention](docs/maintainers/RELEASING.md#version-number-convention) when choosing
   the next identifier; mathematical mnemonics do not define compatibility policy
-- Give each new guide an index entry and a backlink. Longer references should
-  have a compact contents list using their existing headings. Prefer relative
-  links inside `docs/`; the root README needs release-pinned absolute links
-  because it is also the PyPI description
+- Give each new page an index entry, a backlink and a place in the
+  documentation site's navigation (`nav` in `zensical.toml`). A page for users
+  goes at the top of `docs/`; a record for maintainers or contributors goes
+  under `docs/maintainers/` or `docs/design/`. Longer references should have a
+  compact contents list using their existing headings. Prefer relative links
+  inside `docs/`. The site serves `docs/` alone, so a page there links a file
+  outside it by its GitHub address on `main`
+  (`https://github.com/ericeallen/towel/blob/main/...`), which the navigation
+  test checks against your checkout. The root README needs release-pinned
+  absolute links because it is also the PyPI description
+- Build the site with `uv sync --frozen --extra dev --group docs`, then
+  `just docs`, which fails on any warning, such as a broken link or anchor;
+  `just docs-serve` previews it at http://localhost:8000
 - When moving a measured claim, move its documentation regression to the new
   canonical page. Preserve the evidence, numerical expectations and negative
   mutation tests; a new layout does not change what a historical run measured

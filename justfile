@@ -158,6 +158,17 @@ check-diagrams:
     # Pages sit in subdirectories of docs/ too, and macOS's bash has no globstar.
     node scripts/check_mermaid.mjs $(find docs -name '*.md' | sort) *.md
 
+# === Documentation ===
+
+# Build the documentation site into site/, strictly: any warning fails.
+# CI's documentation workflow runs this same command.
+docs:
+    uv run --frozen --only-group docs zensical build --strict --clean
+
+# Preview the documentation site at http://localhost:8000, rebuilding on change
+docs-serve:
+    uv run --frozen --only-group docs zensical serve
+
 # === Release ===
 
 # Set the version in pyproject.toml and refresh the lockfile
