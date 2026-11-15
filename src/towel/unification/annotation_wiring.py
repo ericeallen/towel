@@ -194,7 +194,7 @@ def _relates_result(variant: RefactoringProposal) -> bool:
 
 
 UNTYPED_REMEDY = TYPE_CHECKING_REMEDIES
-"""The way out when the checker cannot run at all: the one thing such a user can act on."""
+"""The two concrete remedies offered when type verification prevents a change."""
 
 
 def _table(document: Mapping[str, object], *keys: str) -> Mapping[str, object]:
@@ -1632,7 +1632,7 @@ class HelperAnnotationWiring(EngineState):
                     f"change applied, so no change could be judged: {result.reason}\n"
                     "Its check of the original project passed. If nothing has changed the "
                     "project since, this is a defect in Towel's verification; please report "
-                    "it. Nothing was written. Fix what stops the checker, or "
+                    "it. Nothing was written. "
                     f"{UNTYPED_REMEDY}"
                 )
 

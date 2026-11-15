@@ -273,7 +273,7 @@ class FixedPointDrivers(Materialization):
         raise RefactoringError(
             f"Nothing was applied, and the type checker could not run for "
             f"{len(self._unchecked)} proposal(s), which were therefore not judged: "
-            f"{self._unchecked_reason}\nFix what stops the checker, or {UNTYPED_REMEDY}"
+            f"{self._unchecked_reason}\n{UNTYPED_REMEDY}"
         )
 
     @staticmethod
