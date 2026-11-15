@@ -31,6 +31,7 @@ from towel.unification.unifier import Unifier
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.scope_analyzer import ScopeAnalyzer
 from tests.test_helpers import TemporaryModuleTestCase, assert_file_not_modified
+from tests.test_unifier_edge_cases import assert_lambda_keyword_behavior_preserved
 
 
 class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
@@ -273,19 +274,21 @@ point = (3, 4)
         self.assertIsNotNone(result)
 
     def test_unify_lambda_expressions(self):
-        """Audit D4: unify closed lambda bodies while preserving their keyword signature."""
+        """Review ruling 4: preserve the original differently named lambda parameters."""
         code1 = """
 func = lambda x: x * 2
 """
         code2 = """
-func = lambda x: x * 3
+func = lambda y: y * 3
 """
         tree1 = ast.parse(code1)
         tree2 = ast.parse(code2)
         blocks = [tree1.body, tree2.body]
 
         result = self.unifier.unify_blocks(blocks, [{}, {}])
-        self.assertIsNotNone(result)
+        self.assertIsNone(result)
+        with tempfile.TemporaryDirectory() as directory:
+            assert_lambda_keyword_behavior_preserved(Path(directory), blocks)
 
     def test_unify_assert_statements(self):
         """Test unifying assert statements."""

@@ -310,6 +310,10 @@ REFLECTION_OWNERSHIP_REFUSALS: Dict[str, str] = {
     "r9dc_star_import_of_a_module_part_way_through_a_cycle": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "xf7d_assert_moves_to_a_module_pytest_does_not_rewrite": "owned bindings straddle a partial or uncertified whole-body frame boundary",
 }
+# Review ruling 4 restores the adversarial callback parameter spelling. Even with
+# an explicit host import, sharing that callback would change its keyword signature.
+SIGNATURE_REFUSALS = {"r9sb_lambda_capture_across_modules"}
+
 TRANSFORMED = HISTORICAL_EXTRACTIONS - OWNERSHIP_REFUSALS.keys()
 REJECTED |= OWNERSHIP_REFUSALS.keys()
 
@@ -437,7 +441,7 @@ def _check_directory_program_output(
             modules = _modules(before)
             assert module_faces(after, modules) == module_faces(before, modules)
         if case not in KNOWN_DEFECTS:
-            ordinary_refusal = (
+            ordinary_refusal = case in SIGNATURE_REFUSALS or (
                 case in EXPLICIT_OWNERSHIP_REFUSALS
                 if explicit_imports
                 else (
