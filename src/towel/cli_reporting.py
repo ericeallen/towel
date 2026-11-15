@@ -161,6 +161,7 @@ class CommandResult(TypedDict):
     helpers; with no configured checker, existing annotations may be copied.
     """
 
+    config_path: str | None
     schema_version: Literal[1]
     types: NotRequired[TypesStatus]
     command: Literal["preview", "dry"]

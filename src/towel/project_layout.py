@@ -31,10 +31,11 @@ from .diagnostics import LOG
 import tomllib
 
 
-def load_pyproject(project_root: Path) -> Dict[str, Any]:
+def load_pyproject(project_root: Path, *, strict: bool = False) -> Dict[str, Any]:
     """Best-effort load of pyproject.toml using the available TOML parser.
 
     Returns an empty dict if parsing fails or file does not exist.
+    With ``strict=True``, read and parse errors are raised to the caller.
     """
     pyproject_path = project_root / "pyproject.toml"
     if not pyproject_path.exists():
@@ -44,8 +45,12 @@ def load_pyproject(project_root: Path) -> Dict[str, Any]:
         with pyproject_path.open("rb") as f:
             return tomllib.load(f)
     except OSError:
+        if strict:
+            raise
         return {}
     except ValueError as error:
+        if strict:
+            raise
         LOG.warning(
             "%s could not be parsed; none of its settings are read: %s",
             pyproject_path,

@@ -89,6 +89,7 @@ from towel.cli_reporting import (
     stopped_at_limit,
 )
 from towel.diagnostics import LOG, Settings, configure_stderr_logging
+from towel.config import ConfigurationError, apply_project_defaults
 from towel.program_files import is_exclusion_name, refuse_unparsed_program
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source, source_lines
@@ -225,8 +226,9 @@ Run towel COMMAND --help for a command's options and examples, and see
 docs/QUICKSTART.md for a first run.
 
 Exit status: 0 done, including when there was nothing to change; 1 failed,
-refused, or answered "no"; 2 invalid arguments, or a rename refused; 124 time
-limit reached; 130 interrupted; 143 terminated.""",
+refused, or answered "no"; 2 invalid arguments, or a rename refused; 3 preview
+--check would change code; 124 time limit reached; 130 interrupted;
+143 terminated.""",
     )
 
     parser.add_argument(
@@ -250,15 +252,24 @@ def main() -> None:
     _install_signal_handling()
     parser = _build_parser()
     args = parser.parse_args()
+    try:
+        args = apply_project_defaults(parser, args, sys.argv[1:])
+    except ConfigurationError as error:
+        parser.error(str(error))
+    except (OSError, ValueError) as error:
+        _write_failure_result(args, "error", "error", str(error))
+        parser.exit(1, f"Error: {error}\n")
+    if args.config_path is not None:
+        print(f"Using [tool.towel] from {args.config_path}", file=sys.stderr)
     if args.command == "dry" and args.json and args.interactive:
         parser.error("dry --json requires --no-interactive")
     if (
         args.command == "preview"
         and args.quick
-        and any((args.json, args.summary, args.diff, args.inventory, args.stats))
+        and any((args.json, args.summary, args.diff, args.inventory, args.stats, args.check))
     ):
         parser.error(
-            "--quick cannot be combined with --json, --summary, --diff, --inventory or --stats"
+            "--quick cannot be combined with --json, --summary, --diff, --inventory, --stats or --check"
         )
     result_stdout = sys.stdout
     configure_stderr_logging()
@@ -581,8 +592,10 @@ Examples, in a directory holding src/:
 
 When it changes anything, dry also writes .towel-helpers.json into output (or
 output.towel-helpers.json beside an output file): each new helper's call
-sites, for naming the helpers with rename-helpers. Delete it once you no
-longer need it. TOWEL_WORKERS=N limits the analysis to N worker processes.""",
+sites, for naming the helpers with rename-helpers. Use --no-helper-metadata
+to leave it out; rename-helpers then shows no call-site changes. Delete it
+once you no longer need it. TOWEL_WORKERS=N limits the analysis to N worker
+processes.""",
     )
 
     parser.add_argument(
@@ -607,6 +620,13 @@ longer need it. TOWEL_WORKERS=N limits the analysis to N worker processes.""",
     )
     sections.output.add_argument(  # earlier spelling, kept for scripts
         "--non-interactive", dest="interactive", action="store_false", help=argparse.SUPPRESS
+    )
+    sections.output.add_argument(
+        "--helper-metadata",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Write .towel-helpers.json with call-site changes for rename-helpers (default: on). "
+        "--no-helper-metadata leaves it out; rename-helpers then shows no call-site changes.",
     )
     _add_json_flag(sections.output)
     _add_shared_options(sections)
@@ -651,6 +671,12 @@ def _add_shared_options(sections: _Sections) -> None:
     to both dataclasses too. Within a section they follow the options the
     command added first.
     """
+    sections.advanced.add_argument(
+        "--no-config",
+        action="store_true",
+        help="Ignore [tool.towel] defaults in the project's pyproject.toml (default: read them). "
+        "Command-line options override project defaults.",
+    )
     _add_report_flags(sections.output)
     _add_exclude_flag(sections.scope)
     _add_cross_module_flag(sections.scope)
@@ -821,6 +847,12 @@ Examples, in a directory holding src/:
         "target", help="The file or directory to examine; preview changes nothing in it."
     )
     sections = _sections(parser)
+    sections.output.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit with status 3 if the complete preview would change code, or 0 if it would "
+        "not (default: off). Failures keep their own status; cannot be used with --quick.",
+    )
     presentation = sections.output.add_mutually_exclusive_group()
     presentation.add_argument(
         "--summary", action="store_true", help="Print the summary only, without the diff."
@@ -1265,6 +1297,8 @@ class DryOptions:
     strict: bool = DEFAULT_STRICT
     explain: bool = False
     quiet: bool = False
+    config_path: Optional[str] = None
+    helper_metadata: bool = True
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -1290,6 +1324,8 @@ class DryOptions:
             inventory=bool(getattr(args, "inventory", False)),
             explain=bool(getattr(args, "explain", False)),
             quiet=bool(getattr(args, "quiet", False)),
+            config_path=getattr(args, "config_path", None),
+            helper_metadata=bool(getattr(args, "helper_metadata", True)),
         )
 
 
@@ -1307,6 +1343,7 @@ class PreviewOptions:
     types: bool
     format: bool
     quick: bool
+    check: bool = False
     exclude: Tuple[str, ...] = ()
     cross_module: bool = False
     stats: bool = False
@@ -1317,6 +1354,7 @@ class PreviewOptions:
     strict: bool = DEFAULT_STRICT
     explain: bool = False
     quiet: bool = False
+    config_path: Optional[str] = None
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -1332,6 +1370,7 @@ class PreviewOptions:
             strict=bool(args.strict),
             format=bool(args.format),
             quick=bool(args.quick),
+            check=bool(getattr(args, "check", False)),
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
             stats=bool(args.stats),
@@ -1341,6 +1380,7 @@ class PreviewOptions:
             inventory=bool(getattr(args, "inventory", False)),
             explain=bool(getattr(args, "explain", False)),
             quiet=bool(getattr(args, "quiet", False)),
+            config_path=getattr(args, "config_path", None),
         )
 
     def dry_options(self, output: str) -> DryOptions:
@@ -1367,6 +1407,7 @@ class PreviewOptions:
             inventory=self.inventory,
             explain=self.explain,
             quiet=self.quiet,
+            config_path=self.config_path,
         )
 
 
@@ -1575,7 +1616,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                 print(line)
         if options.stats:
             _print_statistics(report)
-        if not preview:
+        if not preview and options.helper_metadata:
             # Publication has succeeded. This optional naming aid cannot
             # retroactively make that source transaction a failed command.
             try:
@@ -2089,9 +2130,16 @@ def _run_preview(args: argparse.Namespace) -> None:
     options = PreviewOptions.from_namespace(args)
     _warn_about_retired_flags(args)
     if options.quick:
-        if options.json or options.summary or options.diff or options.inventory or options.stats:
+        if (
+            options.json
+            or options.summary
+            or options.diff
+            or options.inventory
+            or options.stats
+            or options.check
+        ):
             raise ValueError(
-                "--quick cannot be combined with --json, --summary, --diff, --inventory or --stats"
+                "--quick cannot be combined with --json, --summary, --diff, --inventory, --stats or --check"
             )
         _run_quick_preview(options)
         return
@@ -2108,7 +2156,9 @@ def _run_preview(args: argparse.Namespace) -> None:
                 else:
                     print(result["diff"], end="")
             else:
-                _execute_dry(dry_options, preview=True)
+                result = _execute_dry(dry_options, preview=True)
+    if options.check and result["status"] == "complete" and result["applied"] > 0:
+        sys.exit(3)
 
 
 def _preview_text(text: str, options: DryOptions) -> str:
@@ -2221,6 +2271,7 @@ def _command_result(
             LOG.warning("Helper inventory unavailable: %s", error)
     result: CommandResult = {
         "schema_version": 1,
+        "config_path": options.config_path,
         "command": "preview" if preview else "dry",
         "mode": mode_name(options.strict),
         "status": "complete",
@@ -2255,6 +2306,7 @@ def _write_failure_result(
         return
     result: CommandResult = {
         "schema_version": 1,
+        "config_path": getattr(args, "config_path", None),
         "command": args.command,
         "mode": mode_name(bool(getattr(args, "strict", DEFAULT_STRICT))),
         "status": status,
