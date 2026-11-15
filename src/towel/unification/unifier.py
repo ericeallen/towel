@@ -41,6 +41,7 @@ from .compiler_literals import (
     unstable_literal_pool,
 )
 from .parameterization import Parameterization
+from .lexical_scopes import nested_scope_names
 from .semantic_safety import lambda_body_is_closed
 from .hof_promotion import LiteralPromotion
 from .statement_facts import mentioned_names
@@ -518,6 +519,41 @@ class Unifier(Parameterization, LiteralPromotion):
                     # Some None, some not - can't unify
                     return False
                 continue
+
+            elif field_name == "body" and (
+                all_instances(nodes, ast.FunctionDef)
+                or all_instances(nodes, ast.AsyncFunctionDef)
+                or all_instances(nodes, ast.ClassDef)
+            ):
+                # The output rename map is keyed by block and spelling, not
+                # lexical scope. Nested definitions must therefore retain
+                # their own binders; exporting a local rename would also
+                # rename an unrelated use outside the definition.
+                saved_alpha = self.alpha_renamings.copy()
+                try:
+                    for index, node in zip(block_indices, nodes):
+                        assert isinstance(
+                            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                        )
+                        names = nested_scope_names(node)
+                        masked_names = names.local | names.declared_global
+                        if names.is_class and any(
+                            saved_alpha.get((index, name), name) != name for name in masked_names
+                        ):
+                            # Methods skip the class namespace. A flat map
+                            # cannot mask a class binding here while retaining
+                            # its distinct outer correspondence in a method.
+                            return False
+                        for name in masked_names:
+                            self.alpha_renamings[(index, name)] = name
+                        # A nonlocal declaration refers to the enclosing
+                        # scope, so its correspondence must remain visible.
+                    if not self._unify_lists(
+                        [node.body for node in nodes], substitution, block_indices
+                    ):
+                        return False
+                finally:
+                    self.alpha_renamings = saved_alpha
 
             elif isinstance(first_value, list):
                 # Lists of AST nodes or primitives

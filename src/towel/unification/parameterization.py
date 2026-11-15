@@ -308,7 +308,7 @@ class Parameterization(UnifierState):
                 position_to_vars[position].append((block_idx, var_name))
 
         canonical_counter = 0
-        used_canonical_names = set()
+        used_canonical_names = set(self._reserved_parameter_names)
 
         for position, var_list in position_to_vars.items():
             # Only create alpha-renaming if multiple blocks have a variable at this position
@@ -338,6 +338,22 @@ class Parameterization(UnifierState):
         if len(set(canonical)) != 1 and any(key in self.alpha_renamings for key in keys):
             return False
         target = canonical[0]
+        if len(set(canonical)) != 1:
+            if any(
+                node.id in self._block_free_variables(index)
+                for node, index in zip(nodes, block_indices)
+            ):
+                # A read before this block binds the name refers to the
+                # incoming binding; it cannot acquire a new correspondence.
+                return False
+            # A fresh name cannot collide with an unchanged local or free
+            # name, including one not visited yet. Choosing the first site's
+            # spelling would silently identify b->a with an unrelated free a.
+            reserved = self._reserved_parameter_names | set(self.alpha_renamings.values())
+            number = 0
+            while f"__temp_{number}" in reserved:
+                number += 1
+            target = f"__temp_{number}"
         if any(
             index == other_index and name != other_name and mapped == target
             for index, name in keys
