@@ -208,3 +208,43 @@ def test_quiet_suppresses_progress_and_notes_but_keeps_diagnostics() -> None:
     assert (
         output.getvalue() == "Warning: visible warning\nError: visible error\nNote: normal note\n"
     )
+
+
+def test_heartbeat_reports_absolute_counts_and_pauses_before_fork(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit 7/runtime hook: pool counts stay alive without leaving a thread at fork."""
+    import threading
+
+    monkeypatch.setattr(progress, "load_tqdm", lambda: None)
+    with terminal(100) as (stream, master), contextlib.redirect_stderr(stream):
+        renderer = ProgressRenderer("auto", total=10, desc="pairs judged", unit="pair")
+        try:
+            renderer.heartbeat(3, 10)
+            renderer.heartbeat(7, 10, details={"rate": "2/s"})
+            output = read_terminal(master)
+            assert "pairs judged: 7/10 pair" in output
+            assert "rate=2/s" in output
+            assert any(thread.name == "towel-progress" for thread in threading.enumerate())
+            with progress.display_threads_stopped(timeout=2):
+                assert not any(thread.name == "towel-progress" for thread in threading.enumerate())
+            assert any(thread.name == "towel-progress" for thread in threading.enumerate())
+        finally:
+            renderer.close()
+    assert not any(thread.name == "towel-progress" for thread in threading.enumerate())
+
+
+def test_run_cleanup_catches_a_heartbeat_before_its_first_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit 7: a heartbeat begun immediately before exit cannot outlive the run."""
+    import threading
+
+    monkeypatch.setattr(progress, "load_tqdm", lambda: None)
+    with terminal() as (stream, master), contextlib.redirect_stderr(stream):
+        with progress.progress_run():
+            renderer = ProgressRenderer("auto", total=None, desc="apply", unit="it")
+            renderer.start_heartbeat()
+        assert renderer._closed
+        assert not any(thread.name == "towel-progress" for thread in threading.enumerate())
+        assert read_terminal(master).endswith("\r\x1b[2K")

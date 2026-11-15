@@ -419,7 +419,40 @@ class ProgressRenderer:
     def start_heartbeat(self) -> None:
         """Keep an active terminal display alive while verification is busy."""
         if self._enabled and not self._closed:
-            self._heartbeat.start()
+            self.refresh()
+            if self in _ACTIVE:
+                self._heartbeat.start()
+
+    def heartbeat(
+        self,
+        completed: int,
+        total: Optional[int] = None,
+        *,
+        label: Optional[str] = None,
+        details: Optional[Mapping[str, object]] = None,
+    ) -> None:
+        """Report absolute worker/apply counts and keep elapsed time moving.
+
+        Call after each completed chunk or application, and close in ``finally``.
+        A growing apply queue can use ``total=None`` and put its rate in
+        ``details``. All heartbeat threads obey ``display_threads_stopped``.
+        """
+        if not self._enabled or self._closed:
+            return
+        with _DRAWING:
+            if total != self._total or (label is not None and label != self._desc):
+                quietly(self._clear)
+            delta = completed - self._done
+            self._done, self._total = completed, total
+            if label is not None:
+                self._desc = label
+            if details is not None:
+                self._details = dict(details)
+            bar = self._bar
+            if bar is not None:
+                quietly(lambda: bar.update(delta))
+            quietly(self._draw)
+        self.start_heartbeat()
 
     def refresh(self) -> None:
         with _DRAWING:

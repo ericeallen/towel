@@ -20,9 +20,9 @@ re-analyzes the files it rewrote for localized follow-ups, and when that
 queue drains re-pairs changed files and previously declined proposals.
 An unchanged project with only declined proposals is a fixed point.
 The run stops there or when the iteration bound is reached. Progress follows the
-progress mode: ``tqdm`` (tqdm bars; without tqdm a warning once per process
-and an inline bar on stderr in their place), ``auto`` (the same without the
-warning), ``detail`` (a line per pass), or ``none``.
+progress mode: ``auto`` (terminal-only bars, with a built-in fallback),
+``tqdm`` (the same with a warning if tqdm is unavailable), ``detail``
+(a line per pass), or ``none``.
 """
 
 from __future__ import annotations
@@ -1169,8 +1169,11 @@ class _ApplyProgress:
             if len(queue) > self._LISTING_CAP:
                 LOG.info("    ... %d more", len(queue) - self._LISTING_CAP)
         if queue:
-            self.inline(applied, len(queue), "discovered", "proposals queued")
-            self._renderer.start_heartbeat()
+            self._renderer.heartbeat(
+                applied,
+                max_iterations if max_iterations > 0 else None,
+                details={"A": applied, "Q": len(queue), "on": "discovered: proposals queued"},
+            )
 
     def applying(self, applied: int, queued: int, iteration: int, desc: str) -> None:
         self.inline(applied, queued, "apply", f"#{iteration}: {desc}")
