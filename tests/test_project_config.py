@@ -134,15 +134,15 @@ def test_w1_config_discovery_uses_target_ancestry_and_command_only_settings(tmp_
 
 
 def test_w1_new_parser_options_need_no_loader_change(tmp_path: Path) -> None:
-    source = project(tmp_path, "strict = true\njobs = 2\n")
+    source = project(tmp_path, "test-policy-flag = true\ntest-policy-count = 2\n")
     parser = _build_parser()
     subparsers = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
     for name in ("dry", "preview"):
-        subparsers.choices[name].add_argument("--strict", action="store_true")
-        subparsers.choices[name].add_argument("--jobs", type=int)
+        subparsers.choices[name].add_argument("--test-policy-flag", action="store_true")
+        subparsers.choices[name].add_argument("--test-policy-count", type=int)
     argv = ["preview", str(source)]
     args = apply_project_defaults(parser, parser.parse_args(argv), argv)
-    assert args.strict is True and args.jobs == 2
+    assert args.test_policy_flag is True and args.test_policy_count == 2
 
 
 @pytest.mark.parametrize("contents", ["[tool.towel\n", "[tool]\ntowel = true\n"])
