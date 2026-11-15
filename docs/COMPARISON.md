@@ -9,7 +9,7 @@ program's behaviour. Which you want depends on the job.
 | Tool | Finds duplication | Changes your code | Checks the change |
 | --- | --- | --- | --- |
 | pylint's duplicate-code check | Yes, Python | No | — |
-| jscpd | Yes, over 200 languages | No, though an optional skill asks an AI assistant to | — |
+| jscpd | Yes, over 220 languages | No, though an optional skill asks an AI assistant to | Only as the assistant's own re-run of tests and jscpd |
 | PMD's CPD | Yes, many languages including Python | No | — |
 | An IDE's extract-method | Only copies of the code you select | Yes, the code you select | No |
 | An AI assistant | If you ask | Yes | No: you review and test it |
@@ -26,14 +26,16 @@ These report duplicated code and change nothing.
   signatures out of the comparison
   ([checker features](https://pylint.readthedocs.io/en/stable/user_guide/checkers/features.html),
   [options](https://pylint.readthedocs.io/en/stable/user_guide/configuration/all-options.html)).
-- **jscpd** is a "copy/paste detector for source code" covering over 220
-  languages and formats. It tokenizes each file and finds repeated token
+- **jscpd** is a "duplicate code detector for 220+ languages" and file
+  formats. It tokenizes each file and finds repeated token
   sequences with a rolling Rabin-Karp hash; opt-in passes also find copies that
   differ in names or values, or by a few edited lines. It reports through
   fifteen reporters, among them console, HTML, JSON, SARIF and a threshold that
   fails a CI build. Its optional `dry-refactoring` skill hands the clones it
-  finds to an AI coding assistant, which makes the change
-  ([README](https://github.com/kucherenko/jscpd)).
+  finds to an AI coding assistant, which makes the change and is then told to
+  confirm that the tests still pass and to re-run jscpd
+  ([README](https://github.com/kucherenko/jscpd),
+  [skill](https://github.com/kucherenko/jscpd/blob/master/skills/dry-refactoring/SKILL.md)).
 - **PMD's Copy/Paste Detector (CPD)** finds duplicated code in many languages,
   Python among them. `--minimum-tokens` sets the shortest duplicate it reports,
   and it writes text, XML, CSV or Markdown reports
