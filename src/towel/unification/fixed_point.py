@@ -1385,6 +1385,7 @@ class _ApplyProgress:
     def __init__(self, mode: ProgressMode, factory: Optional[ProgressBarFactory] = None) -> None:
         self._mode = mode
         self._started = time.monotonic()
+        self._limit: Optional[int] = None
         self._renderer = ProgressRenderer(
             mode, total=None, desc="apply", unit="it", factory=factory
         )
@@ -1406,7 +1407,7 @@ class _ApplyProgress:
         elapsed = max(time.monotonic() - self._started, 0.001)
         self._renderer.heartbeat(
             applied,
-            None,
+            self._limit,
             details={
                 "applied": applied,
                 "queued": queued,
@@ -1433,6 +1434,7 @@ class _ApplyProgress:
         self, queue: Sequence[RefactoringProposal], applied: int, max_iterations: int
     ) -> None:
         """A global pass queued ``queue``; list them in detail mode and open the bar."""
+        self._limit = max_iterations if max_iterations > 0 else None
         self.detail(f"Discovered {len(queue)} proposal(s)")
         if self._mode == "detail":
             for position, proposal in enumerate(queue[: self._LISTING_CAP], 1):
@@ -1441,11 +1443,7 @@ class _ApplyProgress:
             if len(queue) > self._LISTING_CAP:
                 LOG.info("    ... %d more", len(queue) - self._LISTING_CAP)
         if queue:
-            self._renderer.heartbeat(
-                applied,
-                max_iterations if max_iterations > 0 else None,
-                details={"A": applied, "Q": len(queue), "on": "discovered: proposals queued"},
-            )
+            self.inline(applied, len(queue), "discovered", "proposals queued")
 
     def applying(self, applied: int, queued: int, iteration: int, desc: str) -> None:
         self.inline(applied, queued, "apply", f"#{iteration}: {desc}")
