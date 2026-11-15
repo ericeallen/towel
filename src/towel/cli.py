@@ -89,7 +89,12 @@ from towel.unification.defaults import (
     DEFAULT_MAX_PARAMETERS,
     DEFAULT_MIN_LINES,
 )
-from towel.unification.progress import DEFAULT_PROGRESS, ProgressMode, normalize_progress
+from towel.unification.progress import (
+    DEFAULT_PROGRESS,
+    ProgressMode,
+    normalize_progress,
+    write_note,
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -890,10 +895,9 @@ def _type_oracle(project_path: "Path") -> Optional["TypeOracle"]:
 
     choice = type_oracle_for_project(project_path)
     if choice.tool is None:
-        print(
+        write_note(
             f"Note: {choice.note}, so helper annotations are copied from the call sites but not "
             'inferred or verified. Install the types extra (pip install "code-towel[types]").',
-            file=sys.stderr,
         )
     return choice.tool
 
@@ -912,15 +916,13 @@ def _generated_code_formatter(
             return
         reported.add(choice.note)
         if choice.tool is None:
-            print(
+            write_note(
                 f"Note: {choice.note}, so generated code is inserted unformatted. "
                 'Install the format extra (pip install "code-towel[format]") to format it.',
-                file=sys.stderr,
             )
         elif "not installed" in choice.note:
-            print(
+            write_note(
                 f"Note: {choice.note}; formatting generated code with {choice.note.split(';')[0]}.",
-                file=sys.stderr,
             )
 
     return formatter_factory_for_project(project_path, report)
@@ -934,7 +936,7 @@ def _file_finisher(
 
     choice = file_finisher_for_project(project_path, sort_imports=sort_imports)
     if "not installed" in choice.note:
-        print(f"Note: {choice.note}.", file=sys.stderr)
+        write_note(f"Note: {choice.note}.")
     return choice.tool
 
 

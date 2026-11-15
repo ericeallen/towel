@@ -98,3 +98,46 @@ def test_fitting_uses_terminal_cells_and_removes_control_characters() -> None:
     """Audit 7: wide file names and embedded newlines cannot wrap a progress line."""
     assert progress._fit_line("界界界x", 5) == "界界"
     assert progress._fit_line("a\nb\x1bc", 5) == "a b c"
+
+
+@pytest.mark.parametrize("use_tqdm", [False, True])
+def test_note_preserves_progress_and_its_own_line(
+    monkeypatch: pytest.MonkeyPatch,
+    use_tqdm: bool,
+) -> None:
+    """Audit CLI-02: a formatter note cannot land in the middle of a bar."""
+    if not use_tqdm:
+        monkeypatch.setattr(progress, "load_tqdm", lambda: None)
+    with terminal(80) as (stream, master), contextlib.redirect_stderr(stream):
+        renderer = ProgressRenderer("auto", total=3, desc="apply", unit="it")
+        renderer.update()
+        read_terminal(master)
+        renderer.note("formatter unavailable")
+        output = read_terminal(master)
+        assert "\r\x1b[2KNote: formatter unavailable\r\n" in output
+        assert "apply" in output.split("\n")[-1]
+        renderer.close()
+
+
+def test_logger_warnings_have_a_prefix_and_clear_the_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit 7: logger warnings have the same placement and prefix as other diagnostics."""
+    import logging
+    from towel.diagnostics import _CurrentStderrHandler
+
+    monkeypatch.setattr(progress, "load_tqdm", lambda: None)
+    handler = _CurrentStderrHandler()
+    with terminal(80) as (stream, master), contextlib.redirect_stderr(stream):
+        renderer = ProgressRenderer("auto", total=3, desc="apply", unit="it")
+        renderer.update()
+        read_terminal(master)
+        record = logging.LogRecord(
+            "towel", logging.WARNING, __file__, 1, "Skipping %s", ("bad.py",), None
+        )
+        handler.handle(record)
+        output = read_terminal(master)
+        assert "\r\x1b[2KWarning: Skipping bad.py\r\n" in output
+        assert "apply" in output.split("\n")[-1]
+        assert record.getMessage() == "Skipping bad.py"
+        renderer.close()

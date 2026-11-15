@@ -356,6 +356,10 @@ class ProgressRenderer:
             print(f"\r\x1b[2K{line}", end="", file=sys.stderr, flush=True)
         self._visible = True
 
+    def note(self, message: str) -> None:
+        """Write a note without colliding with this or a nested phase's display."""
+        write_note(message)
+
     def start_heartbeat(self) -> None:
         """Keep an active terminal display alive while verification is busy."""
         if self._enabled and not self._closed:
@@ -402,3 +406,23 @@ def _note_missing_tqdm() -> None:
     if not _TQDM_NOTED:
         _TQDM_NOTED = True
         LOG.warning("tqdm is not installed; progress is shown as inline bars on stderr instead")
+
+
+def write_message(message: str, *, prefix: str = "") -> None:
+    """Print a diagnostic on its own line, then restore the active progress phase."""
+    if prefix and not message.startswith(prefix + ":"):
+        message = f"{prefix}: {message}"
+    with _DRAWING:
+        active = _ACTIVE[-1] if _ACTIVE else None
+        if active is not None:
+            quietly(active._clear)
+        try:
+            print(message, file=sys.stderr, flush=True)
+        finally:
+            if active is not None:
+                quietly(active._draw)
+
+
+def write_note(message: str) -> None:
+    """Route a tool note through the display; accepts existing ``Note:`` prefixes."""
+    write_message(message, prefix="Note")

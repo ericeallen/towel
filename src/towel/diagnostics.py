@@ -121,6 +121,19 @@ class _CurrentStderrHandler(logging.StreamHandler[TextIO]):
     first stderr seen, which is wrong as soon as anything redirects it.
     """
 
+    def emit(self, record: logging.LogRecord) -> None:
+        from .unification.progress import write_message
+
+        prefix = (
+            "Error"
+            if record.levelno >= logging.ERROR
+            else ("Warning" if record.levelno >= logging.WARNING else "")
+        )
+        try:
+            write_message(self.format(record), prefix=prefix)
+        except Exception:
+            self.handleError(record)
+
     @property
     def stream(self) -> TextIO:
         return sys.stderr
@@ -131,7 +144,7 @@ class _CurrentStderrHandler(logging.StreamHandler[TextIO]):
 
 
 def configure_stderr_logging(level: int = logging.INFO) -> None:
-    """Send the ``towel`` loggers to stderr as bare messages; the command line calls this once.
+    """Send the ``towel`` loggers to stderr through the progress renderer; the command line calls this once.
 
     The logger keeps propagating: the root logger has no handlers on the
     command line, so nothing prints twice, and a capturing handler on the
