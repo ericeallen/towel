@@ -854,7 +854,7 @@ class FixedPointDrivers(Materialization):
         """
         if run.global_revision == run.revision and not rehearing:
             return None
-        reporter.announce_analysis(output_path)
+        reporter.announce_analysis(output_path, self._find_python_files)
         restrict = (
             frozenset(run.changed_since_global | run.deferred_paths)
             if self.incremental_global_passes and passes_so_far > 0 and not rehearing
@@ -1143,12 +1143,14 @@ class _ApplyProgress:
     def inline(self, applied: int, queued: int, phase: ProgressPhase, desc: str) -> None:
         self._renderer.set_postfix({"A": applied, "Q": queued, "on": f"{phase}: {desc}"})
 
-    def announce_analysis(self, output_path: Path) -> None:
+    def announce_analysis(
+        self, output_path: Path, discover: Callable[[str], Sequence[str]]
+    ) -> None:
         """Say how many files the coming global pass will analyze."""
-        if self._mode == "none":
+        if self._mode != "detail":
             return
         try:
-            file_count = sum(1 for _ in output_path.rglob("*.py"))
+            file_count = len(discover(str(output_path)))
         except OSError:
             # Only the directory walk for a progress message; a real I/O
             # problem will resurface in the analysis that follows.

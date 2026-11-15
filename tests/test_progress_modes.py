@@ -379,3 +379,44 @@ def test_quiet_cli_keeps_results_and_warnings(
     captured = capsys.readouterr()
     assert captured.out == "Result: unchanged\n"
     assert captured.err == "Warning: unreadable source\n"
+
+
+def test_detail_counts_the_same_files_as_analysis(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Audit 7: detail excludes environments, hidden directories, probes and --exclude names."""
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "included.py").write_text("def only():\n    return 1\n")
+    for name in [".hidden", "environment", "excluded", "__pycache__"]:
+        directory = root / name
+        directory.mkdir()
+        (directory / "ignored.py").write_text("def unused():\n    return 1\n")
+    (root / "environment" / "pyvenv.cfg").write_text("home = /python\n")
+    (root / "_towel_probe_test.py").write_text("pass\n")
+    engine = UnificationRefactorEngine(excluded_directories=("excluded",))
+    assert len(engine._find_python_files(str(root))) == 1
+    with caplog.at_level(logging.INFO, logger="towel"):
+        engine.refactor_directory_to_fixed_point(
+            str(root), str(tmp_path / "out"), progress="detail"
+        )
+    counts = [
+        record.getMessage() for record in caplog.records if "Analyzing " in record.getMessage()
+    ]
+    assert counts == ["[towel] Analyzing 1 file(s)..."]
+
+
+def test_non_detail_progress_does_not_walk_files_to_count_them(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit 7: a hidden count must not walk a virtual environment on every pass."""
+    from towel.unification.fixed_point import _ApplyProgress
+
+    def unexpected_walk(directory: str) -> list[str]:
+        raise AssertionError("non-detail display walked the project")
+
+    reporter = _ApplyProgress("auto")
+    reporter.announce_analysis(tmp_path, unexpected_walk)
+    reporter.close()
