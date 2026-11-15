@@ -1,0 +1,43 @@
+# Copyright 2025-2026 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Shopping cart."""
+
+
+class Cart:
+    def __init__(self, tax_rate=0.0):
+        self.tax_rate = tax_rate
+        self.items = {}
+        self.coupon = None
+
+    def add(self, sku, price, quantity=1):
+        if quantity <= 0:
+            raise ValueError("quantity must be positive")
+        current = self.items.get(sku, (price, 0))[1]
+        self.items[sku] = (price, current + quantity)
+
+    def remove(self, sku):
+        del self.items[sku]
+
+    def apply_coupon(self, code, percent):
+        self.coupon = (code, percent)
+
+    def subtotal(self):
+        return sum(price * quantity for price, quantity in self.items.values())
+
+    def total(self):
+        amount = self.subtotal()
+        if self.coupon:
+            amount *= 1 - self.coupon[1] / 100
+        return round(amount * (1 + self.tax_rate), 2)

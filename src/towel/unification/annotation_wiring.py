@@ -70,6 +70,7 @@ from .annotations import (
     infer_missing_annotations,
     respell_bare,
     sites_use_annotations,
+    function_uses_annotations,
     typing_imports_needed,
     unwritten_as_any,
     qualified_names_in_annotations,
@@ -497,6 +498,7 @@ class HelperAnnotationWiring(EngineState):
         self._type_known = KnownErrors()
         self._type_checked = None
         self._type_names_any = {}
+        self._unannotated_imports_noted = False
         self._type_unlooked = {}
         self._type_unreadable = frozenset()
         self._analysis_paths = tuple(file_paths)
@@ -1696,7 +1698,30 @@ class HelperAnnotationWiring(EngineState):
             return str(destination / absolute.relative_to(source))
         return original
 
-    def _decline_what_the_checker_cannot_see(self, paths: Sequence[str]) -> None:
+    def _proposal_stays_unannotated(self, proposal: RefactoringProposal) -> bool:
+        """Every caller and the helper are bare, even when helper annotation is disabled."""
+        if proposal.wants_type_inference or function_uses_annotations(proposal.extracted_function):
+            return False
+        for replacement in proposal.replacements:
+            path = replacement.file_path or proposal.file_path
+            tree = self._parsed_host(path)
+            if tree is None:
+                return False
+            enclosing = [
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and span_contains(node, replacement.line_range)
+            ]
+            if not enclosing or function_uses_annotations(
+                max(enclosing, key=lambda node: node.lineno)
+            ):
+                return False
+        return bool(proposal.replacements)
+
+    def _decline_what_the_checker_cannot_see(
+        self, paths: Sequence[str], proposal: RefactoringProposal
+    ) -> None:
         """Refuse a change to a file where the original check names what it cannot type.
 
         An import the checker cannot resolve or finds no types for, or a
@@ -1713,6 +1738,16 @@ class HelperAnnotationWiring(EngineState):
         module is not declined; see docs/KNOWN_LIMITATIONS.md.
         """
         if self._type_run_oracle is None or not self._type_names_any:
+            return
+        affected = any(self._where_checked(path) in self._type_names_any for path in paths)
+        if affected and not self.strict and self._proposal_stays_unannotated(proposal):
+            if not self._unannotated_imports_noted:
+                LOG.warning(
+                    "Unresolved imports do not block this unannotated extraction in relaxed "
+                    "mode: its callers and helper have no type annotations. "
+                    "Use --strict to require import resolution for every extraction."
+                )
+                self._unannotated_imports_noted = True
             return
         for path in dict.fromkeys(paths):
             errors = self._type_names_any.get(self._where_checked(path))
@@ -1771,7 +1806,7 @@ class HelperAnnotationWiring(EngineState):
         if errors:
             LOG.warning(pre_existing_summary(errors, root))
         changed = frozenset(self._where_checked(path) for path in analyzed)
-        warning = names_any_warning(self._type_names_any, root, changed)
+        warning = names_any_warning(self._type_names_any, root, changed, strict=self.strict)
         if warning:
             LOG.warning(warning)
 

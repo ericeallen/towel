@@ -272,6 +272,12 @@ class EngineState:
     annotate_helpers: bool
     """Whether helpers carry the annotations their call sites declare."""
 
+    strict: bool
+    """Whether even bare proposals require every imported name to have a known type."""
+
+    _unannotated_imports_noted: bool
+    """Whether this run has explained its relaxed import-resolution policy."""
+
     _change_log: List[AppliedChange]
     """Every call site rewritten so far in the current run."""
 

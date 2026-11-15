@@ -711,7 +711,7 @@ def test_a_file_whose_imports_the_checker_cannot_resolve_is_left_alone(
     assert engine.run_report.declined_proposals == {
         "not verifiable: its file holds a name the type checker cannot type": 1
     }
-    assert "No change to these 1 file(s) is attempted" in caplog.text
+    assert "Changes involving annotations in these 1 file(s) are declined" in caplog.text
     assert 'first.py:1: Cannot find implementation or library stub for module named "gone"' in (
         caplog.text
     )
@@ -985,7 +985,7 @@ def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
     )
     assert run.returncode == 0, run.stdout + run.stderr
     assert "The original project's type check reports 1 error(s) in 1 file(s)." in run.stderr
-    assert "No change to these 1 file(s) is attempted" in run.stderr
+    assert "Changes involving annotations in these 1 file(s) are declined" in run.stderr
     assert "pkg/blind.py:1: Cannot find implementation or library stub" in run.stderr
     assert (package / "blind.py").read_text(encoding="utf-8") == (
         "import towel_absent_module\n\n\n" + CLI_CALCULATIONS

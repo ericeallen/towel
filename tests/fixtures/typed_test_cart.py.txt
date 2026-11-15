@@ -1,0 +1,63 @@
+# Copyright 2025-2026 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import pytest
+
+from cart import Cart
+
+
+def test_total_includes_tax():
+    cart = Cart(tax_rate=0.1)
+    cart.add("towel", 12.50, quantity=2)
+    cart.add("soap", 3.00)
+    cart.add("brush", 4.25, quantity=4)
+    assert cart.subtotal() == 45.0
+    assert cart.total() == 49.5
+
+
+def test_coupon_reduces_total():
+    cart = Cart(tax_rate=0.1)
+    cart.add("towel", 12.50, quantity=2)
+    cart.add("soap", 3.00)
+    cart.add("brush", 4.25, quantity=4)
+    cart.apply_coupon("AUTUMN", 20)
+    assert cart.subtotal() == 45.0
+    assert cart.total() == 39.6
+
+
+def test_remove_item():
+    cart = Cart(tax_rate=0.1)
+    cart.add("towel", 12.50, quantity=2)
+    cart.add("soap", 3.00)
+    cart.add("brush", 4.25, quantity=4)
+    cart.remove("brush")
+    assert sorted(cart.items) == ["soap", "towel"]
+    assert cart.total() == 30.8
+
+
+def test_adding_same_sku_accumulates():
+    cart = Cart(tax_rate=0.1)
+    cart.add("towel", 12.50, quantity=2)
+    cart.add("soap", 3.00)
+    cart.add("brush", 4.25, quantity=4)
+    cart.add("soap", 3.00, quantity=2)
+    assert cart.items["soap"] == (3.00, 3)
+    assert cart.subtotal() == 51.0
+
+
+def test_rejects_non_positive_quantity():
+    cart = Cart()
+    with pytest.raises(ValueError):
+        cart.add("towel", 12.50, quantity=0)
+    assert cart.items == {}

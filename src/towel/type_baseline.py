@@ -1510,6 +1510,8 @@ def names_any_warning(
     names_any: Mapping[str, Tuple[TypeDiagnostic, ...]],
     root: Path,
     changed: Collection[str],
+    *,
+    strict: bool = True,
 ) -> Optional[str]:
     """Where the original check leaves names it cannot type, and what the run does there.
 
@@ -1533,9 +1535,14 @@ def names_any_warning(
         "of it, so a new error there would go unseen."
     ]
     if declined:
+        policy = (
+            f"No change to these {len(declined)} file(s) is attempted"
+            if strict
+            else f"Changes involving annotations in these {len(declined)} file(s) are declined"
+        )
         lines.append(
-            f"No change to these {len(declined)} file(s) is attempted; install what they "
-            "import, and its stubs, where Towel runs to have them refactored with types:"
+            f"{policy}; install what they import, and its stubs, where Towel runs "
+            "to have them refactored with types:"
         )
         listed = [(path, error) for path in declined for error in names_any[path]]
         lines += [

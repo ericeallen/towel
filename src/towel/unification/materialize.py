@@ -166,7 +166,7 @@ class Materialization(
             *(rep.file_path or proposal.file_path for rep in proposal.replacements),
         ]
         self._ensure_type_checking([*self._analysis_paths, *touched])
-        self._decline_what_the_checker_cannot_see(touched)
+        self._decline_what_the_checker_cannot_see(touched, proposal)
         self._decline_what_the_checker_does_not_look_at(proposal)
         counters = self._helper_name_counters.copy()
         try:
