@@ -15,7 +15,7 @@
 """Caller refinements constrain boundaries before expensive typed materialization.
 
 The positive examples matter as much as the refusals: a larger invalid window
-must not hide useful code within the narrowed region. See docs/DECISIONS.md,
+must not hide useful code within the narrowed region. See docs/design/DECISIONS.md,
 2026-09-27, for the policy this suite protects.
 
 These expectations are approved design requirements. A changed proposal list

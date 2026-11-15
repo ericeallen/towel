@@ -907,7 +907,7 @@ class Materialization(
         """Import the module-level helper into a file whose call sites need it.
 
         The import is spelled as the program's own imports show it works
-        wherever the program runs (``ImportModel.spelling``; docs/DECISIONS.md,
+        wherever the program runs (``ImportModel.spelling``; docs/design/DECISIONS.md,
         "Import names come from the program"): relatively between modules of
         one package, unless the importing file spells its own package
         absolutely, and absolutely across top-level packages only where the

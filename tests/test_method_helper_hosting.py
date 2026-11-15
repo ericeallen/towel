@@ -14,7 +14,7 @@
 
 """A helper goes into a class only when both duplicates are methods of that class.
 
-docs/DECISIONS.md ("A method helper lives in the class that holds both
+docs/design/DECISIONS.md ("A method helper lives in the class that holds both
 duplicates") rules out the placement Towel used to make: a block shared by
 two subclasses was hoisted into a base they had in common, a class that held
 none of the code. Every subclass of that base inherited the helper, including

@@ -1,6 +1,6 @@
 # Published 1.772 versus the next candidate
 
-[Proposals and experiments](README.md) · [Documentation index](../README.md)
+[Proposals and experiments](README.md) · [Documentation index](../../README.md)
 
 **Archive orientation, October 10:** this is the recorded 1.772 development
 comparison, not the current versioned 1.946 Voluptuous/Click cohorts against published
@@ -96,7 +96,7 @@ against those fingerprints.
 
 ## Evidence and interpretation
 
-[Retained records](../../tests/release_evidence/post-1772-published-comparison/README.md)
+[Retained records](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/post-1772-published-comparison/README.md)
 include each command, imported runtime identity, wheel/source hashes, exact
 dependency pins, request and answer hashes, timings, outputs and prerequisites.
 The external raw archive is

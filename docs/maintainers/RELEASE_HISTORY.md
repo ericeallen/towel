@@ -1,6 +1,6 @@
 # Historical release evidence
 
-[Documentation index](README.md)
+[Maintainers' records](README.md) · [Documentation index](../README.md)
 
 These records were previously on the project front page. Their dates, sources,
 measurements and qualifications are unchanged; they do not validate later source.

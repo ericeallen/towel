@@ -1,13 +1,13 @@
 # Work leading to 1.792
 
-[Proposals and experiments](README.md) · [Documentation index](../README.md)
+[Proposals and experiments](README.md) · [Documentation index](../../README.md)
 
 **Historical implementation record.** Release 1.792 was subsequently published
 from `44d779563578a32e24f8213fba96f43c6698ab43`. The pending-publication statements
 and 11.9% intermediate Packaging comparison below describe their dated
 checkpoints, not the completed release or later sources. The latest release is
 1.947, published October 26, 2026 after 1.946; use the
-[release overview](../RELEASE_1_947.md) for those subsequent audit repairs and
+[release overview](../../maintainers/RELEASE_1_947.md) for those subsequent audit repairs and
 completed validation.
 Use the [current proposal index](README.md) for the implemented four-stage
 follow-up and completed October 10 performance evidence. The historical source
@@ -18,14 +18,14 @@ The owner authorized this scope on September 27, 2026. Development ran on
 `release/1.792-audit-fixes`.
 Publication remains the owner's action. The implementation and development
 validation are complete; the owner selected 1.792 on September 30. Final
-versioned validation follows [the release procedure](../RELEASING.md).
+versioned validation follows [the release procedure](../../maintainers/RELEASING.md).
 Sections below preserve intermediate checkpoints under their recorded dates;
 the completed [validation](next-validation-final.md) and
 [published-wheel comparison](published-1772-comparison.md) supersede their
 pending-work statements.
 
 The October 5 audit repairs and their completed corpus and production-CLI
-comparison are recorded in the current [readiness report](../PRODUCTION_READINESS.md#1792-release-preparation).
+comparison are recorded in the current [readiness report](../../maintainers/PRODUCTION_READINESS.md#1792-release-preparation).
 The repaired candidate is 11.9% slower than published 1.772 on the measured
 Packaging fixture. The intermediate improvements below do not establish a
 performance gain for that final runtime. Publication and final evidence
@@ -327,7 +327,7 @@ the interrupted predecessor and the completed nonzero Towel corpus baseline;
 those do not become green upstream suites. Later documentary regressions are
 checked separately from the frozen suite counts.
 
-The repository-owned [release gate](../RELEASING.md#repository-owned-evidence-gate)
+The repository-owned [release gate](../../maintainers/RELEASING.md#repository-owned-evidence-gate)
 requires exact prebuilt artifacts and reviewed evidence. The development
 artifacts still numbered 1.772 remain validation only. The completed
 [comparison against the published 1.772 wheel](published-1772-comparison.md)

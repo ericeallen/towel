@@ -1,12 +1,12 @@
 # Adversarial review
 
-[Documentation index](README.md)
+[Maintainers' records](README.md) · [Documentation index](../README.md)
 
 A cumulative log of adversarial counterexamples and their repairs, across the
 September and October 2026 audit rounds. Each row records fixture coverage and, where
 noted, ecosystem checks at that time.
 
-The [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+The [October 2 decision](../design/DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
 supersedes the reflection, frame/source-reading and body-instrumentation
 protections recorded below. Their passing and failing results remain historical
 evidence; they do not describe the current checks or guarantee.

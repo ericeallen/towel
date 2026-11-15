@@ -1,8 +1,8 @@
 # Release Log
 
-[Documentation index](README.md)
+[Maintainers' records](README.md) · [Documentation index](../README.md)
 
-The [October 2 preservation decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+The [October 2 preservation decision](../design/DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
 removes reflection and self-instrumentation guarantees. Validation and repair
 records below retain the source, contract and results of their dated runs;
 they are not evidence of those retired protections in the current code.
@@ -66,7 +66,7 @@ for matrix counts, qualifications and hashes.
 ## 2026-11-08: 1.949 preparation
 
 Prepared **1.949** as an unpublished candidate for the product-experience and
-maturity fixes summarized in the [changelog](../CHANGELOG.md#1949). Local testing
+maturity fixes summarized in the [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1949). Local testing
 is in progress. This entry claims neither a complete exact-candidate release
 campaign nor new runtime performance measurements, remote CI or publication.
 The [readiness checkpoint](PRODUCTION_READINESS.md#1949-preparation-checkpoint-november-8-2026)
@@ -101,7 +101,7 @@ for matrix counts, qualifications and hashes.
 Towel **1.948** prepares the four silent `dry` miscompilation repairs found
 from the October 31 Gemini review, together with corrections to help examples,
 verification-cost reporting and progress output. The
-[1.948 changelog](../CHANGELOG.md#1948) records their scope. The candidate also
+[1.948 changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1948) records their scope. The candidate also
 includes the default-branch publication gate and the completed 1.947
 publication records, which retain their historical identities.
 
@@ -132,7 +132,7 @@ strict typing and the full Python 3.13 suite. Differential fuzzing completed
 [publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
 for matrix counts, corpus qualifications, hashes and resource limits.
 
-The [controlled comparison](PERFORMANCE.md#1947-published-release-comparison)
+The [controlled comparison](../PERFORMANCE.md#1947-published-release-comparison)
 observed Click +2.58%, Rich +8.84% and Voluptuous +1.25% mean full-CLI time
 versus 1.946, with two samples per version on a shared host. Original consumer
 outcomes were preserved. No general speed improvement is claimed.
@@ -152,7 +152,7 @@ incremental invalidation (`7947727` repair) and Black/isort worker ownership
 container memory limits and concurrent workloads; Sphinx itself uses Ruff.
 The corrected diagnostic subsequently expired at its three-hour deadline with
 no recorded memory-limit or OOM events, no adopted output and no transformed
-consumer tests. The [performance record](PERFORMANCE.md#1947-sphinx-memory-and-parsing-investigation)
+consumer tests. The [performance record](../PERFORMANCE.md#1947-sphinx-memory-and-parsing-investigation)
 retains these limits and the further narrow raw formatted-literal cache repair.
 The changed runtime requires a fresh freeze and complete release validation;
 final outcomes remain external and prior evidence keeps its original identity.
@@ -169,7 +169,7 @@ and one `TIMEOUT`. This incomplete campaign is not release acceptance.
 
 Bounded diagnostics traced the timeout to repeated parsing of a warning-free
 module whose ordinary raw-regex escapes were rejected by the lexical cache
-guard. The [performance record](PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
+guard. The [performance record](../PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
 documents the repeated inputs, narrow token-based correction and isolated
 33.096-second completed diagnostic without claiming a controlled speed ratio.
 The runtime correction requires a fresh freeze and complete release validation.
@@ -208,7 +208,7 @@ mapping guard repeatedly checked lexical warning eligibility before looking
 up module bindings: 2,988 calls over five exact strings, 99.8327% repeats.
 The published 1.946 wheel completed the same case and produced byte-identical
 Python files. Partial diagnostic profiles identify repeated tokenization,
-not an unprofiled production speed ratio. The [performance guide](PERFORMANCE.md#1947-large-module-builtin-guard-repair)
+not an unprofiled production speed ratio. The [performance guide](../PERFORMANCE.md#1947-large-module-builtin-guard-repair)
 retains the measurement conditions and limits.
 
 The subsequent repair covers all explicit module/global fallback reads and
@@ -309,7 +309,7 @@ an overbroad formatted-string warning guard. The repair admits these escapes
 when they precede every possible formatted-string start, preserving the
 existing diagnostic and cache boundaries. New runtime bytes require fresh
 complete performance assessments and release gates; the old completed gates
-remain bound to `a53e351`. See the [performance investigation](PERFORMANCE.md#october-10-voluptuous-regression-investigation).
+remain bound to `a53e351`. See the [performance investigation](../PERFORMANCE.md#october-10-voluptuous-regression-investigation).
 
 The preceding raw-regex repair source `a6dc6ed` completed fresh quality, strict typing,
 archive/RECORD and Twine checks plus a complete Voluptuous canary (182/182,
@@ -322,13 +322,13 @@ closure. Current caps are 2 CPUs/6 GiB RAM/12 GiB combined RAM+swap; per-CLI
 CPU is unavailable. Rich has zero actual samples in this new campaign after
 preproduct settling/preflight failures. Its measurements and fresh full gates
 remain pending, and restoration is unresolved. See the
-[source-bound portable record](../tests/release_evidence/1.946-warning-guard/README.md).
+[source-bound portable record](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-warning-guard/README.md).
 
 The later paired-backslash parity repair has scoped native diagnostic and
 fact-reuse evidence; it is outside those `a6dc6ed` samples. The latest prepared
 runtime requires a new final source freeze, fresh full release gates and new
 source-bound timing evidence. No completed campaign or timing benefit for that
-later runtime is claimed. See the [parity addendum](PERFORMANCE.md#october-10-backslash-parity-repair).
+later runtime is claimed. See the [parity addendum](../PERFORMANCE.md#october-10-backslash-parity-repair).
 
 At the earlier `9d57b0d` full audit, the canonical suite passed 10,583 tests and
 45 subtests, with 32 skips,
@@ -349,8 +349,8 @@ not establish isolated-host performance or restoration of the prior level.
 All original test pairs, visible diagnostics and output references passed;
 all measurement workers and containers closed. No actual sample was replaced,
 and no fallback or confirmation substitution was accepted. See
-[performance](PERFORMANCE.md#october-10-click-and-rich-assessment) and the
-[retained source-bound evidence](../tests/release_evidence/1.946-preparation/README.md).
+[performance](../PERFORMANCE.md#october-10-click-and-rich-assessment) and the
+[retained source-bound evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-preparation/README.md).
 
 ## 2026-10-08: 1.792 published release
 
@@ -375,7 +375,7 @@ runs and malformed formatter configuration.
 
 The initial tiny-helper policy weighs complete formal and wrapper cost against
 sharing across actual sites, rather than counting physical line wrapping. Its
-[decision](DECISIONS.md#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
+[decision](../design/DECISIONS.md#2026-10-06-tiny-helpers-must-repay-their-interface-cost)
 records the calibration and compatibility boundary.
 
 A later stub-provider control exposed an incomplete source-dependency closure
@@ -396,7 +396,7 @@ with original/old/new values and effects equal in the retained controls.
 The block memo halves repeated computations in its work-count control. Four
 complete typed/formatted CLI runs measure 56.72s uncached versus 56.70s cached,
 with byte-identical outputs and no established wall benefit. The
-[retained evidence](../tests/release_evidence/1.792-parameter-audit-fixes/README.md)
+[retained evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.792-parameter-audit-fixes/README.md)
 binds those observations to the runtime and drivers. Documentation updates
 preserve the validated runtime and executable-test bytes. Matrix, corpus,
 final release evidence and exact-commit CI were pending at that checkpoint. No new published-
@@ -415,7 +415,7 @@ unsafe fixtures remain negative checks beside useful extraction controls;
 At source checkpoint `1e87842`, the complete native Python 3.13 suite passed
 9,671 tests and 26 subtests, with 20 skips and 93% combined coverage. All four
 static gates passed. Full before/after source inventories matched exactly.
-[Native evidence](../tests/release_evidence/1.792-october6-native/README.md)
+[Native evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.792-october6-native/README.md)
 records runtime tree `87bd254a7948b5611b334e85856c2aec94d13207`.
 
 All three proposed optimizations were implemented and measured separately
@@ -424,7 +424,7 @@ produced byte-identical outputs (19 refactorings across 8 files); none
 established a whole-command speedup. Exact refusal retention was active,
 but all five stored refusals became stale before rehearing, so the workload
 gave it no repeated unchanged-revision work to skip.
-[Performance evidence](PERFORMANCE.md#october-6-optimization-experiments)
+[Performance evidence](../PERFORMANCE.md#october-6-optimization-experiments)
 retains all arm identities, samples and limits.
 
 No matrix or corpus was rerun, at the maintainer's explicit instruction.
@@ -450,14 +450,14 @@ Four fresh-process observations per version were run in two balanced blocks;
 all 12 commands succeeded, with identical repeated Python output within each
 version. That candidate applied 20 refactorings versus 18 for 1.772. Background
 activity was recorded; this was a capacity/repeatability experiment, not a
-quiet-host preflight pass. The [performance guide](PERFORMANCE.md#october-5-repaired-candidate-comparison)
+quiet-host preflight pass. The [performance guide](../PERFORMANCE.md#october-5-repaired-candidate-comparison)
 records the exact source, runtime, archives, settings and limits.
 
 Final source-bound evidence assembly, the standard repository release gate,
 exact-commit remote CI, the maintainer's performance disposition and
 publication remained pending at this checkpoint. This entry records completed local observations,
 not a published release or permission to upload. The retained
-[documentation evidence subset](../tests/release_evidence/1.792-audit-fixes/README.md)
+[documentation evidence subset](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.792-audit-fixes/README.md)
 keeps the original records and does not replace the full external bundle.
 
 ## 2026-10-05 (1.792 audit repairs)
@@ -540,7 +540,7 @@ and performance measurements; these focused controls did not approve it.
   instrumentation, source-reader and namespace protections have been removed.
   Ordinary binding, control flow, dispatch, effects and typing remain covered;
   a violation is a defect to fix or refuse. See the
-  [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract).
+  [October 2 decision](../design/DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract).
 - Source analysis shares immutable parse and file facts within bounded
   lifetimes. Subtype answers are reused within one inference, and immutable
   narrowing facts are shared across overlapping source windows. Unknown
@@ -641,7 +641,7 @@ and performance measurements; these focused controls did not approve it.
   insufficient: copied baseline cache values could hide a changed result.
   The configured cache directory is preserved. Final corpus validation remained
   pending at this checkpoint under the corrected harness and manifest.
-- The [complete CLI comparison](PERFORMANCE.md#october-2-complete-cli-comparison)
+- The [complete CLI comparison](../PERFORMANCE.md#october-2-complete-cli-comparison)
   measured the controlled typed, formatted Packaging fixture at 36.24 seconds
   versus 41.59 seconds for published 1.772, about 13% faster. Runtime commit
   `000d751` applied 19 extractions versus 18 and preserved the preceding
@@ -658,13 +658,13 @@ and performance measurements; these focused controls did not approve it.
 - Version: 1.792, named for ln 6; publication and tagging are not recorded here.
 - Changes: checked fixed-point preview, caller-narrowing boundaries, batched
   Pyright reveals, safe discovery in match/except-star suites, generated-helper
-  reuse and inert compound annotations. See [the changelog](../CHANGELOG.md#1792).
+  reuse and inert compound annotations. See [the changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1792).
 - Development validation completed at `3af8c4b`; later documentary and gate
   amendments passed 206 focused tests and quality checks at `253b434`, including
-  the actual rebuilt sdist. [The report](proposals/next-validation-final.md)
+  the actual rebuilt sdist. [The report](../design/proposals/next-validation-final.md)
   preserves platforms, counts, resources and corpus exceptions. Those artifacts
   still say 1.772 and are not release artifacts for 1.792.
-- Performance: [published-wheel measurements](proposals/published-1772-comparison.md)
+- Performance: [published-wheel measurements](../design/proposals/published-1772-comparison.md)
   distinguish the Sphinx first-reveal improvement from Packaging's flat full
   command. Their background-load conditions supersede the historical defaults
   below for those experiments.
@@ -695,7 +695,7 @@ describe belong to that version.
   candidate to this commit. The tag's annotation records the wheel and sdist
   hashes.
 - Scope: the fixes of audit rounds three and four, merged on `audit-1772`;
-  the [changelog](../CHANGELOG.md#1772---2026-09-26) lists them.
+  the [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1772---2026-09-26) lists them.
 - Tests: the full suite at `2b399ef` passed 7,751 on 3.11, 7,882 on 3.12 and
   7,899 on 3.13, with `just check` passing. `src/towel` differs from there
   to the release only in one corrected docstring, and GitHub CI passed the
@@ -740,12 +740,12 @@ describe belong to that version.
   Generic instance, class, and static helper methods are included; fresh
   declarations are emitted at module scope before the host class and roll back
   with a failed candidate. See the
-  [changelog](../CHANGELOG.md#1772---2026-09-26) and the
-  [type-parameter design](proposals/type-parameters.md).
+  [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1772---2026-09-26) and the
+  [type-parameter design](../design/proposals/type-parameters.md).
 - Inference order: a precise ordinary signature is preferred, and a generic
   candidate is tried when that signature contains `Any` or the whole project
   rejects it. At most two generic contracts are attempted. This ordering is
-  recorded in [known limitations](KNOWN_LIMITATIONS.md); it is a deliberate
+  recorded in [known limitations](../KNOWN_LIMITATIONS.md); it is a deliberate
   preference, not a claim that anti-unification is applied wherever it would
   help.
 - Validation at the release candidate: 2,756/2,800/2,801 passing tests on Python
@@ -795,7 +795,7 @@ describe belong to that version.
 - Audit fixes: generic binding scopes, builtin shadowing, import order,
   renaming safety, checker ownership and whole-project verification, and
   progress after rendering or verification refusals. See the
-  [changelog](../CHANGELOG.md#1732---2026-09-19) for the full release summary.
+  [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1732---2026-09-19) for the full release summary.
 - Type policy: an available checker must accept the complete original project
   before output copying. Existing errors require repair or explicit
   `--no-types`; infrastructure failure remains a distinct error. Clean

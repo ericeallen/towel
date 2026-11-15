@@ -1,9 +1,9 @@
 # Preparing a release
 
-[Documentation index](README.md)
+[Maintainers' records](README.md) · [Documentation index](../README.md)
 
 This source describes **1.949**: the product-experience and maturity
-improvements in the [changelog](../CHANGELOG.md#1949). The
+improvements in the [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1949). The
 [GitHub releases](https://github.com/ericeallen/towel/releases) record which
 versions have been published and, from 1.732 on, how each was validated. The
 [readiness report](PRODUCTION_READINESS.md) keeps the dated preparation and
@@ -19,7 +19,7 @@ validation and publication outcomes external to the shipped source:
 `8a853126f5499eb11dfa04fbe304dc332dc5ef73`. All four
 [exact-commit CI jobs](https://github.com/ericeallen/towel/actions/runs/40312460216)
 passed. Its [overview](RELEASE_1_947.md) and
-[changelog](../CHANGELOG.md#1947) describe the repair scope and the explicit
+[changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1947) describe the repair scope and the explicit
 rename consumer-scope requirement. The [readiness report](PRODUCTION_READINESS.md)
 records the completed local campaign, corpus exceptions, performance costs and
 artifact hashes. The dated preparation checkpoints below retain their original
@@ -38,7 +38,7 @@ the sole cause of the original signal kill: the failed and earlier passing
 campaigns used different memory limits and concurrent workloads. The corrected
 diagnostic then reached its three-hour deadline with no recorded OOM events;
 it produced no adopted output or transformed consumer test result. See the
-[diagnostic scope and parsing repair](PERFORMANCE.md#1947-sphinx-memory-and-parsing-investigation).
+[diagnostic scope and parsing repair](../PERFORMANCE.md#1947-sphinx-memory-and-parsing-investigation).
 
 The corpus harness now distinguishes signal kills from expired deadlines and
 defaults to one project worker. The further lexical correction admits only
@@ -57,7 +57,7 @@ runner's write, read, rename and removal probe passed before resumption.
 
 The resumed corpus then stopped on PrettyTable's 30-minute refactor timeout.
 Bounded diagnostics identified repeated parsing of a warning-free source caused
-by the lexical warning classifier. The [narrow runtime correction](PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
+by the lexical warning classifier. The [narrow runtime correction](../PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
 requires a new freeze and the complete declared release campaign. This differs
 from the permission-only repair: completed `877b375` gates do not validate the
 changed runtime. Preserve those records and the incomplete corpus under their
@@ -161,7 +161,7 @@ import/class lookups under possible mapping replacement, including wildcard
 exports of `__builtins__` and ordinary `receiver.__builtins__` stores/deletions
 anywhere in the analyzed program. A fresh per-analysis boolean records that
 program-wide hazard, including excluded runnable files and conservative
-unknown-input handling. See the [evaluation-scope policy](GENERATED_CODE.md#arguments-and-evaluation).
+unknown-input handling. See the [evaluation-scope policy](../GENERATED_CODE.md#arguments-and-evaluation).
 Separately, it memoizes only the source-derived
 builtin-mapping predicate, with one warning-free source/configuration fact per
 weakly held analyzer and an 8 MiB source-storage admission limit. Native warning
@@ -188,7 +188,7 @@ The earlier raw-regex guard source `a6dc6ed` has source-bound 1.946 artifacts,
 static/package checks and a complete Voluptuous canary. Its two completed
 shared-host R,F,F,R cohorts measured Voluptuous 3.75% lower and Click 23.39%
 slower than published `44d7795`, with two observations per source/workload.
-The [portable record](../tests/release_evidence/1.946-warning-guard/README.md)
+The [portable record](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-warning-guard/README.md)
 retains all eight actual samples, original pairs, outputs and closure. Rich
 had zero actual samples in that campaign; its cohort and fresh full release
 gates remained pending for that source. These limited measurements neither
@@ -627,7 +627,7 @@ cannot add beside them is refused and recorded, not resolved around.
 These dependencies expose the project's declared typing requirements, but do
 not reproduce every project-owned hook or CI invocation. In particular, a
 hook's Python target can differ from Towel's combined invocation; the Cheroot
-gap is recorded in the [completed development validation](proposals/next-validation-final.md).
+gap is recorded in the [completed development validation](../design/proposals/next-validation-final.md).
 Reconcile targets, flags, dependencies and interpreter before attributing a
 typed refusal to the project. Towel's import model sees the editable project
 from the tree it refactors rather than an installed copy elsewhere, which it
@@ -843,10 +843,10 @@ For the exact candidate commit:
 2. Run representative consumer projects' own tests before and after real transformations in disposable copies. Record upstream revisions, changed files/proposals, baseline failures or skips, and after-test results. A no-change run or compilation alone is not a consumer equivalence check.
 3. Inspect both distributions, check metadata and license inclusion, install the exact candidate wheel into a clean environment, and exercise its CLI entry points on Python 3.11, 3.12, and 3.13. For each interpreter do this twice: once bare, where `towel dry` must note that no formatter or checker is installed and still refactor, and once with the `format` and `types` extras, where it must format inserted code and annotate helpers on a small annotated project, report what verification will cost before its confirmation prompt, and confirm the finished project with a cold checker. Run from outside the checkout with `PYTHONPATH` unset, and verify that the imported `towel.__file__` belongs to the new environment's `site-packages`; an import from `src/towel` tests the checkout, not the wheel. Record the exact wheel path and hash, never select from stale `dist/` files with a broad wildcard. Ensure the version matches the proposed release throughout the metadata. CI builds the distributions and runs source tests on this interpreter matrix; it does not currently perform these clean-wheel smoke checks, so retain separate evidence for them.
 4. Audit the resolved runtime and development dependencies and perform a secret scan of the release contents and tracked history. Record the scope and limitations of each scan; a clean result does not guarantee absence of vulnerabilities or secrets.
-5. Review the current audit report and unresolved limitations. Confirm generated documentation claims only what [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) verifies and states the remaining limitations.
+5. Review the current audit report and unresolved limitations. Confirm generated documentation claims only what [KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md) verifies and states the remaining limitations.
 6. Run the differential fuzzer on the candidate, from seeds no earlier run has covered: `just fuzz` draws a random start and prints it, and `just fuzz N SEED` repeats a run exactly. Each seed generates a small project with the round-3 semantic auditor's grammar of near-duplicate blocks. Towel refactors it in the default mode and with `--cross-module`, and every twentieth seed again typed, with the strict checker its project configures. The program is observed before and after in fresh interpreters: output, exceptions, module and class structure, and public names. The default suite runs a fixed, measured subset of these seeds (`tests/test_differential_grammar.py`), so this run is the one that covers new ground. Run the scope family too, `just fuzz N SEED --family scope`: its blocks hold their function's only binding of a name the function reads elsewhere, which the grammar never writes.
    - Each failure is written as a hostile fixture, ready to commit, under the directory the run prints, with a note saying which battery it belongs to and what to add there. Pass `--prefix` to name the fixtures by your branch. The run exits 1 if any case failed.
-   - A failure of a class that [tests/audit_defects.py](../tests/audit_defects.py) names is a known defect. Commit its fixture only when it shows the class in a shape the batteries lack.
+   - A failure of a class that [tests/audit_defects.py](https://github.com/ericeallen/towel/blob/main/tests/audit_defects.py) names is a known defect. Commit its fixture only when it shows the class in a shape the batteries lack.
    - Any other failure is a finding for the audit, at the owner's P1 standard. Its fixture is committed as a strict expected failure, entered in its battery's `KNOWN_DEFECTS`, until the fix lands.
    - Record the seed range, the actual run count printed by each invocation, and each failure. The release recipe draws 2000 seeds; the number of runs depends on the selected family, forms, layouts and typed frequency. The earlier 1.772 campaign completed about 3,700 runs in two minutes on nine worker processes (`--jobs` defaults to half the cores), and found 27 failures, every one of a class the audit had reported. That historical count is not the current two-form grammar's run count.
 
@@ -972,7 +972,7 @@ Choose the version and complete these source edits before freezing, building,
 or running the release checks, so version and documentation edits do not
 require repeating acceptance work:
 
-1. Move completed changes from `[Unreleased]` into `## [X.Y]` in [CHANGELOG.md](../CHANGELOG.md) and leave an empty `[Unreleased]` above it. Add a date only if it is already known; publication metadata can record the actual date without changing frozen artifacts.
+1. Move completed changes from `[Unreleased]` into `## [X.Y]` in [CHANGELOG.md](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md) and leave an empty `[Unreleased]` above it. Add a date only if it is already known; publication metadata can record the actual date without changing frozen artifacts.
 2. Add a preparation entry to [RELEASE_LOG.md](RELEASE_LOG.md) naming the version, summary, existing evidence and its limits. Record the final commit, artifact hashes, completed outcomes and CI run externally alongside the artifacts; do not edit a shipped file after its validation freeze.
 3. Update the current-version summary in this document and the readiness report: say what the version contains and which evidence exists at the freeze, with its date. Replace the README development notice with the `**Release status: X (beta).**` line for the chosen version, and pin every repository link in the README to the chosen release tag before building. Do not describe a planned check or publication as completed, and do not say in the README, SECURITY.md, CONTRIBUTING.md, the documentation index or the quick start [whether the version is published](#what-shipped-files-may-say-about-a-release).
 
@@ -985,7 +985,7 @@ source.
 
 - Choose the exact unused version and approve the reviewed artifact hashes.
 - The repository is public (done September 15, 2026). Configure CI as a required check before relying on branch protection; verify the actual remote settings.
-- GitHub private vulnerability reporting is enabled (done September 15, 2026), and [SECURITY.md](../SECURITY.md) documents it as the reporting channel and names the supported version (the latest release). Confirm the "Report a vulnerability" button appears on the Security tab, and revisit the support policy as the project's release cadence settles.
+- GitHub private vulnerability reporting is enabled (done September 15, 2026), and [SECURITY.md](https://github.com/ericeallen/towel/blob/main/SECURITY.md) documents it as the reporting channel and names the supported version (the latest release). Confirm the "Report a vulnerability" button appears on the Security tab, and revisit the support policy as the project's release cadence settles.
 - Approve the publication destination and release notes. Preserve the historical yanks unless a separate reviewed decision changes their status.
 
-No security support window or response-time promise is established by this document. Update [SECURITY.md](../SECURITY.md) when those decisions are made.
+No security support window or response-time promise is established by this document. Update [SECURITY.md](https://github.com/ericeallen/towel/blob/main/SECURITY.md) when those decisions are made.

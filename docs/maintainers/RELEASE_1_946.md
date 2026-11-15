@@ -1,6 +1,6 @@
 # Towel 1.946: changes since 1.792
 
-[Documentation index](README.md) · [Changelog](../CHANGELOG.md#1946)
+[Maintainers' records](README.md) · [Documentation index](../README.md) · [Changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1946)
 
 **Publication verification, October 19, 2026:** PyPI contains 1.946, uploaded
 that day; the number names ln 7, approximately 1.945910149. The independently
@@ -40,8 +40,8 @@ where necessary to preserve compiler-pooled object identity. Complete literal
 expressions are passed when replacing individual parts would rebuild an object.
 Unproved folded floating arithmetic and private single-byte literals keep their
 original sites. The ordinary ownership, formatting-effect and parameter-budget
-checks still apply. See [generated code](GENERATED_CODE.md) and the
-[complete-CLI constant controls](../tests/test_occurrence_constant_cli.py).
+checks still apply. See [generated code](../GENERATED_CODE.md) and the
+[complete-CLI constant controls](https://github.com/ericeallen/towel/blob/main/tests/test_occurrence_constant_cli.py).
 
 ### Fresh outputs from conditional blocks
 
@@ -56,8 +56,8 @@ for lifetime preservation are returned in the original cleanup order too.
 Earlier reads, incompatible rebinding, captured outputs, unsupported ancestry,
 or missing source proof still prevent extraction. This is not general recovery
 across loops, `try`, asynchronous control flow or nested definitions. See
-[binding and ownership](ARCHITECTURE.md) and the
-[branch-local CLI controls](../tests/test_if_fresh_bindings_cli.py).
+[binding and ownership](../design/ARCHITECTURE.md) and the
+[branch-local CLI controls](https://github.com/ericeallen/towel/blob/main/tests/test_if_fresh_bindings_cli.py).
 
 ### Fewer unnecessary lambdas
 
@@ -72,8 +72,8 @@ defaulted, variadic and keyword-only signatures remain outside this pass.
 Every caller must prove an immutable result as well as unchanged evaluation
 order. Attributes, factories, unknown values and other unproved results stay
 deferred when eager evaluation could change their lifetime or exception cleanup.
-See [arguments and evaluation](GENERATED_CODE.md#arguments-and-evaluation) and
-[ordering controls](../tests/test_thunk_ordering_cli.py).
+See [arguments and evaluation](../GENERATED_CODE.md#arguments-and-evaluation) and
+[ordering controls](https://github.com/ericeallen/towel/blob/main/tests/test_thunk_ordering_cli.py).
 
 ## More precise typing and stronger correctness checks
 
@@ -102,7 +102,7 @@ See [arguments and evaluation](GENERATED_CODE.md#arguments-and-evaluation) and
   generated identifier spelling. Skipped source layout and original import
   boundaries remain checked. Required scope fixtures are included in the sdist.
 
-The [typing guide](TYPING.md), [limitations](KNOWN_LIMITATIONS.md) and
+The [typing guide](../TYPING.md), [limitations](../KNOWN_LIMITATIONS.md) and
 [adversarial review](ADVERSARIAL_REVIEW.md) describe the accepted cases and
 conservative refusals. Reflection and self-instrumentation were already outside
 the preservation guarantee in 1.792; this release does not introduce that policy.
@@ -117,7 +117,7 @@ checker, and the proposals not applied. `RunReport` carries the same counts.
 Before this, the report gave only declined pairs and unapplied proposals, so a
 reader could not tell where a project's duplicates went. The flag only reports,
 and output files are identical with and without it. See the
-[CLI guide](CLI_GUIDE.md#diagnostics).
+[CLI guide](../CLI_GUIDE.md#diagnostics).
 
 ## Bounded reuse of analysis facts
 
@@ -167,8 +167,8 @@ release acceptance. This later runtime repair is outside the earlier `a6dc6ed`
 measurements and requires a new freeze and fresh final gates.
 
 These are exact analysis changes, not a claim of overall acceleration. The
-[architecture](ARCHITECTURE.md) records their boundaries; the
-[performance guide](PERFORMANCE.md) records complete-command measurements.
+[architecture](../design/ARCHITECTURE.md) records their boundaries; the
+[performance guide](../PERFORMANCE.md) records complete-command measurements.
 
 ## Completed development evidence and remaining release work
 
@@ -210,7 +210,7 @@ This is shared-host evidence, not isolated-host certification. All runtime
 intervals were retained. Click applied four refactorings with 1.792 and five
 with the development source; Rich applied 15 with each. Original before/after
 tests and each version's expected generated outputs matched in all eight runs.
-The [retained measurement record](../tests/release_evidence/1.946-preparation/README.md)
+The [retained measurement record](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-preparation/README.md)
 keeps the source identities, raw samples and limits.
 
 The first versioned candidate, `a53e351`, completed quality, distribution,
@@ -227,7 +227,7 @@ were 90.984 → 87.569 seconds (−3.75%) and Click 47.165 → 58.195 seconds
 using 2 CPUs, 6 GiB RAM and 12 GiB combined RAM+swap. Original before/after
 outcomes, all 24 displayed Click failure records and repeated outputs matched;
 per-CLI CPU is unavailable. Rich had zero actual samples in that campaign
-and remained pending for that source. The [portable record](../tests/release_evidence/1.946-warning-guard/README.md)
+and remained pending for that source. The [portable record](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-warning-guard/README.md)
 keeps exact source/wheel identities and telemetry/closure limits.
 
 The standard [release procedure](RELEASING.md) calls for final frozen artifacts,
@@ -262,7 +262,7 @@ warning-guard and parity repairs.
   difference; the rest of 1.946's analysis is slightly faster than 1.792's.
   In 99% of those calls the inputs (module, source and tree) repeat an
   earlier call, so a per-analysis memo would remove nearly all of the cost.
-  The [2026-10-10 decision](DECISIONS.md) requires a fresh proof for every
+  The [2026-10-10 decision](../design/DECISIONS.md) requires a fresh proof for every
   admission and forbids reusing a verdict about the tree, so the proof is not
   cached. A byte-identical faster serializer saved only about a quarter of
   the dump time and was not adopted.
@@ -294,5 +294,5 @@ The remaining groups are:
 - Unified JSON and stat preview formats; complete checked preview already exists.
 
 Decorator trust overrides and redirection to existing user functions remain
-withdrawn. The [proposal index](proposals/README.md) records individual ideas,
+withdrawn. The [proposal index](../design/proposals/README.md) records individual ideas,
 their proof obligations and their historical evidence.

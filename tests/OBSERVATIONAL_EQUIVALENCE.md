@@ -133,7 +133,7 @@ Scenario tests that verify observational equivalence directly:
 
 Observational-equivalence testing found two real bugs early in development, both
 since fixed and each now covered by a regression fixture (see
-[../docs/ADVERSARIAL_REVIEW.md](../docs/ADVERSARIAL_REVIEW.md)):
+[../docs/ADVERSARIAL_REVIEW.md](../docs/maintainers/ADVERSARIAL_REVIEW.md)):
 
 - **Variable capture** — a parameter name from one block leaked into another, so
   the refactored call referenced an undefined name. The extractor now renames

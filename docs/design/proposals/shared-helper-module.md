@@ -1,6 +1,6 @@
 # A shared helper module for duplicates across unrelated directories
 
-[Proposals and experiments](README.md) · [Documentation index](../README.md)
+[Proposals and experiments](README.md) · [Documentation index](../../README.md)
 
 Status: proposal, recorded at the owner's direction on 2026-09-24 (see
 `docs/DECISIONS.md`). The idea is the owner's, and the figures below

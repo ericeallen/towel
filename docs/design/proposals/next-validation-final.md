@@ -1,6 +1,6 @@
 # Completed corrected-source validation after 1.772
 
-[Proposals and experiments](README.md) · [Documentation index](../README.md)
+[Proposals and experiments](README.md) · [Documentation index](../../README.md)
 
 **Archive orientation, October 10:** these completed development results retain
 their original source and version-1.772 artifacts. Published 1.792 and prepared,
@@ -12,7 +12,7 @@ Artifacts still carry version 1.772 and must not be uploaded. Later documentatio
 and evidence tests are separate from these frozen suite counts. The
 [earlier validation](next-validation.md) keeps its original source identity.
 
-The [retained evidence](../../tests/release_evidence/post-1772-corrected-validation/README.md)
+The [retained evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/post-1772-corrected-validation/README.md)
 contains raw command outputs and hash inventories. The external archive is
 `~/Knowledge/handoffs/towel/20260927T181305Z-codex-next-validation/release-gates-3af8c4b`.
 Documentation regressions compare the statements here with those immutable

@@ -18,7 +18,7 @@ Which files an import statement reaches, which module defines an imported name,
 whether a new import would close a static cycle, and whether running a
 module's top level can run code of its own (``ImportTimeCode``). What an
 import names is the program's own answer, the import model's
-(``ProgramImports``; docs/DECISIONS.md, "Import names come from the
+(``ProgramImports``; docs/design/DECISIONS.md, "Import names come from the
 program"), never one derived from packaging metadata or from where a copy
 of the tree happens to sit. Results are cached per run in an
 ``ImportGraphCache`` the engine owns.
@@ -1932,7 +1932,7 @@ def _new_top_level_packages(
     ``zeta/a.py`` made the installed ``zeta.a`` raise
     ``ModuleNotFoundError``. It relies on its own package, on what its
     import certainly loads, and, by the rule new imports are spelled by, on
-    every top-level package its modules import at run time (docs/DECISIONS.md,
+    every top-level package its modules import at run time (docs/design/DECISIONS.md,
     "Import names come from the program"). A module the program's imports
     give no absolute name to, outside the borrower's own package, is always
     new.

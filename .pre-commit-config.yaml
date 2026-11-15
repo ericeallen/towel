@@ -10,7 +10,8 @@ repos:
         entry: python -m black --check --line-length=100
         language: system
         types: [python]
-        exclude: ^(test_examples|\.templates/)
+        # A review's cases and Towel's recorded output on them stay as recorded.
+        exclude: ^(test_examples|\.templates/|docs/maintainers/reviews/)
       - id: flake8
         name: Flake8
         entry: python -m flake8 --config=.flake8

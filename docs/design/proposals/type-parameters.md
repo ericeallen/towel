@@ -1,6 +1,6 @@
 # Proposal: preserve type relationships in extracted helpers
 
-[Proposals and experiments](README.md) · [Documentation index](../README.md)
+[Proposals and experiments](README.md) · [Documentation index](../../README.md)
 
 Status: implemented and released in 1.772. This document records the shipped
 behavior, its inference order, and the cases it declines; it is no longer a

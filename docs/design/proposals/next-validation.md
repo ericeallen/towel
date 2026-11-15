@@ -1,6 +1,6 @@
 # Frozen validation of the post-1.772 candidate
 
-[Proposals and experiments](README.md) · [Documentation index](../README.md)
+[Proposals and experiments](README.md) · [Documentation index](../../README.md)
 
 **Archive orientation, October 10:** the pending corpus statement below belongs
 to this exact checkpoint. Later validation, published 1.792 and the prepared
@@ -20,7 +20,7 @@ The earlier typed-performance comparisons also use their own intermediate
 commits, as documented in [next-release.md](next-release.md).
 
 Raw records, original paths, and SHA-256 digests are retained in
-[the validation evidence](../../tests/release_evidence/post-1772-validation/README.md).
+[the validation evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/post-1772-validation/README.md).
 The offline regressions derive suite counts, coverage, fuzz outcomes, and smoke
 results from those records. They do not rerun the gates or query the current
 machine. The full external archive is

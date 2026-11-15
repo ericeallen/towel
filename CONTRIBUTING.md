@@ -161,7 +161,7 @@ All code contributions should include tests:
 - Aim for high test coverage of new code
 - Include both positive and negative test cases
 - **Preserve the intent of policy regressions.** Tests linked to an approved
-  entry in `docs/DECISIONS.md` encode a design requirement. When one fails,
+  entry in `docs/design/DECISIONS.md` encode a design requirement. When one fails,
   investigate the implementation against that requirement; changed engine
   output is not evidence that the expected behavior has changed. Revise an
   expectation only with evidence that the test contradicts the recorded rule,
@@ -285,7 +285,7 @@ that entry names; any other refusal is a `CRASH`. Setup failures, typing
 failures, crashes, timeouts and incomplete test runs fail its gate. A no-change
 or refused result does not validate a transformation.
 A release review must separately account for any refusal or fallback under
-[the evidence gate](docs/RELEASING.md#repository-owned-evidence-gate).
+[the evidence gate](docs/maintainers/RELEASING.md#repository-owned-evidence-gate).
 
 These checks execute third-party code with your privileges, so use a disposable
 machine or container. The opt-in is `--run-untrusted-code` or
@@ -297,7 +297,7 @@ configured checker dependencies. One wheel is built from `--towel-src` or
 supplied with `--towel-wheel`; a wheel whose code differs from the source is
 refused. Point `--towel-src` at a committed snapshot's `src` directory. Reports
 record the actual commit and dirty state; source archives need an independently
-retained source manifest. See [Production readiness](docs/PRODUCTION_READINESS.md)
+retained source manifest. See [Production readiness](docs/maintainers/PRODUCTION_READINESS.md)
 for results and qualifications.
 
 ## Local release verification
@@ -318,7 +318,7 @@ Validation-only artifacts must preserve their nonpublication status. Additional
 documentation/tests/evidence need exact source hashes, an explicit review and
 supplemental checks; their results are not part of the frozen suite counts.
 Runtime, configuration and corpus-harness changes invalidate old evidence.
-See [the evidence schema and release procedure](docs/RELEASING.md#repository-owned-evidence-gate).
+See [the evidence schema and release procedure](docs/maintainers/RELEASING.md#repository-owned-evidence-gate).
 
 ## Documentation
 
@@ -334,16 +334,16 @@ See [the evidence schema and release procedure](docs/RELEASING.md#repository-own
   SECURITY.md's `This source tree targets **X**`, and the version sentences of
   the documentation index and quick start name the version the source
   describes. They change only when
-  [a release is prepared](docs/RELEASING.md#recording-the-release). What has
+  [a release is prepared](docs/maintainers/RELEASING.md#recording-the-release). What has
   been published, and how it was validated, is recorded in the
   [GitHub release notes](https://github.com/ericeallen/towel/releases).
   `tests/test_current_release_documentation.py` enforces this
-- [Readiness](docs/PRODUCTION_READINESS.md) and the
-  [release log](docs/RELEASE_LOG.md) keep dated records of each release's
+- [Readiness](docs/maintainers/PRODUCTION_READINESS.md) and the
+  [release log](docs/maintainers/RELEASE_LOG.md) keep dated records of each release's
   gates, and those records stay as written. Do not report missing results as
   passed. Published artifacts and older development measurements retain their
   original source and artifact identities. Follow the
-  [version convention](docs/RELEASING.md#version-number-convention) when choosing
+  [version convention](docs/maintainers/RELEASING.md#version-number-convention) when choosing
   the next identifier; mathematical mnemonics do not define compatibility policy
 - Give each new guide an index entry and a backlink. Longer references should
   have a compact contents list using their existing headings. Prefer relative
@@ -397,4 +397,4 @@ weekly or on demand on a discarded runner; Dependabot proposes grouped updates
 weekly. Publication still requires review of the exact source, artifacts, CI
 and policy decisions.
 
-Release maintainers should follow [docs/RELEASING.md](docs/RELEASING.md).
+Release maintainers should follow [docs/maintainers/RELEASING.md](docs/maintainers/RELEASING.md).

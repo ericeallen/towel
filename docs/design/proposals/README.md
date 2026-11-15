@@ -1,6 +1,6 @@
 # Design proposals and experiments
 
-[Documentation index](../README.md)
+[Design](../README.md) · [Documentation index](../../README.md)
 
 The [October 8 review](REVIEW_2026-10-08.md) examines all 15 original documents
 and their individual ideas against the released 1.792 code and the frozen
@@ -9,10 +9,10 @@ and historical measurements. Priorities are recommendations, not a schedule.
 
 Older proposal bodies preserve their dates, measurements and contracts; current
 decisions and code take precedence. **1.947 was published October 26, 2026**,
-following 1.946. The [1.947 overview](../RELEASE_1_947.md) describes the audit
-repairs; the [publication record](../PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+following 1.946. The [1.947 overview](../../maintainers/RELEASE_1_947.md) describes the audit
+repairs; the [publication record](../../maintainers/PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
 separates completed release validation from the historical source-bound checks
-below. The [release comparison](../PERFORMANCE.md#1947-published-release-comparison)
+below. The [release comparison](../../PERFORMANCE.md#1947-published-release-comparison)
 records the measured full-CLI costs against 1.946 without claiming a general speedup.
 Documentation changes do not establish new release-gate results.
 Development checkpoints do not become current validation results, and their
@@ -26,7 +26,7 @@ within one owned analysis, preserving caller-tree and materialization checks,
 and requested fresh Python 3.11–3.13 suites and cache-on/off output comparisons.
 The October 18 Rich profile (+7.6% at `0b3494c`) predates this implementation. See the
 [decision](../DECISIONS.md#2026-10-18-one-analysis-may-reuse-its-source-correspondence-proof)
-and [publication checkpoint](../RELEASING.md#1946-publication-checkpoint-october-18-2026).
+and [publication checkpoint](../../maintainers/RELEASING.md#1946-publication-checkpoint-october-18-2026).
 Remote publication was unverified at that checkpoint. The October 10 records
 below remain historical.
 
@@ -49,7 +49,7 @@ The latest completed versioned cohorts compare repaired `a6dc6ed`/1.946 with
 published `44d7795`/1.792: Voluptuous was 3.75% lower and Click 23.39% slower,
 with two shared-host observations per source/workload in R,F,F,R order.
 Rich has zero actual samples in this new campaign and remains pending, as do
-fresh full release gates. The [current portable record](../../tests/release_evidence/1.946-warning-guard/README.md)
+fresh full release gates. The [current portable record](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-warning-guard/README.md)
 retains source/wheel/cap/tool identities, original pairs, outputs and closure;
 restoration remains unresolved.
 
@@ -118,5 +118,5 @@ requests or a queue of validation work to repeat.
 | [Published 1.772 comparison](published-1772-comparison.md) | Actual published wheel versus a development candidate; separate full-command and first-reveal timings. |
 
 For the release process and required evidence, use the
-[release procedure](../RELEASING.md). For shipped changes, use the
-[changelog](../../CHANGELOG.md).
+[release procedure](../../maintainers/RELEASING.md). For shipped changes, use the
+[changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md).

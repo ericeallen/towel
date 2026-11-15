@@ -36,4 +36,4 @@ observations to transform functions or classes, receive no preservation
 guarantee. Towel does not scan for or refuse code to protect those behaviors;
 decorators, ordinary calls and hooks share this boundary. Ordinary binding,
 control flow, evaluation order and effects remain covered. See the
-[October 2 decision](docs/DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract).
+[October 2 decision](docs/design/DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract).

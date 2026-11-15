@@ -10,10 +10,10 @@ soundness defect: fix the transformation or refuse it. Documenting an
 implementation gap does not waive this requirement.
 
 Reflection and self-instrumentation
-are excluded under the [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract);
+are excluded under the [October 2 decision](design/DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract);
 they are not detected to refuse or warn on a program. Read this together with
-[the production readiness report](PRODUCTION_READINESS.md) and
-[the adversarial review](ADVERSARIAL_REVIEW.md).
+[the production readiness report](maintainers/PRODUCTION_READINESS.md) and
+[the adversarial review](maintainers/ADVERSARIAL_REVIEW.md).
 
 **Contents**
 
@@ -485,7 +485,7 @@ The same exclusion covers source/AST/bytecode inspection, direct frame reads,
 source-sensitive callees and import hooks that transform module bodies. There
 is no exception for recognized libraries or for explicit `@` syntax: `@deco`,
 `f = deco(f)`, stacked calls and class hooks share the same boundary. The
-[October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+[October 2 decision](design/DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
 supersedes September 27's selected-instrumentation protection.
 
 Each helper call adds a stack frame. Recursive functions are refactored like
@@ -505,7 +505,7 @@ annotation keeps the checker's full name.
 
 With `--cross-module`, a helper shared across modules lives in one of them
 and the others import it, spelled as the program's own imports show that
-import works (docs/DECISIONS.md, "Import names come from the program"):
+import works (docs/design/DECISIONS.md, "Import names come from the program"):
 between two modules of one package the relative import, or the absolute one
 where the importing module already spells its own package absolutely; across
 top-level packages an absolute import only where the importing package
@@ -746,7 +746,7 @@ A helper becomes a method only when its completed body needs the receiver
 or class frame, and only of the class whose methods hold both duplicates, one module-level class statement, and nowhere else: a block
 shared by sibling classes, by a parent and its child, or by classes in
 different modules becomes a module-level function that takes the receiver as
-an ordinary argument (docs/DECISIONS.md, "A method helper lives in the class
+an ordinary argument (docs/design/DECISIONS.md, "A method helper lives in the class
 that holds both duplicates"). No class gains a member unless the code it
 replaces was already in that class. Whether such a function belongs in a
 class, an existing base, a mixin or a new one, is a design question Towel
@@ -992,7 +992,7 @@ where the evidence comes from:
   A module function shared by methods of different classes gets no generic
   signature whose receiver differs by site (see *Method insertion*).
   Function-hosted generic helpers remain unsupported. See
-  the [type-parameter design](proposals/type-parameters.md).
+  the [type-parameter design](design/proposals/type-parameters.md).
 - Mypy can report several different specializations for one expression inside
   a constrained generic function. Towel treats that reveal as ambiguous instead
   of keeping whichever note appeared last. A constrained local whose generic
@@ -1395,9 +1395,9 @@ TypeVar, Literal and cast, and Babel catalog-extraction calls, retain their
 position requirements. Those checks protect declared typing and build
 contracts rather than self-inspection by the refactored program.
 
-The [September 27 decision](DECISIONS.md#2026-09-27-supported-body-instrumentation-is-protected-regardless-of-syntax)
+The [September 27 decision](design/DECISIONS.md#2026-09-27-supported-body-instrumentation-is-protected-regardless-of-syntax)
 records the earlier supported-instrumentation implementation and validation.
-The [October 2 decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+The [October 2 decision](design/DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
 removed that exception.
 
 ## Conservative rejections
@@ -1557,7 +1557,7 @@ the proposals it built and did not apply, by reason:
   scopes do not bypass this rule: the generated syntax must cost strictly less.
   This conservative estimate does not credit all differing caller expressions,
   and it does not mean a necessary supplier or holder can be eliminated. See
-  [the calibration](DECISIONS.md#2026-11-08-complete-extractions-must-repay-their-generated-syntax).
+  [the calibration](design/DECISIONS.md#2026-11-08-complete-extractions-must-repay-their-generated-syntax).
   `skip_trivial_helpers=False` bypasses this optional filter.
 - Orphans. `orphaned_variables`: a name the block binds is read afterwards
   on a path that does not rebind it first, and the helper does not return
@@ -1917,7 +1917,7 @@ it tractable, all exact: they change no proposal.
   onto matching blocks. Site-sensitive safety checks also key or validate the
   relevant module, source and scope facts; equal AST structure alone cannot
   transfer a permission to another binding environment. Other immutable facts
-  use AST-lifetime memos. See [the cache boundaries](ARCHITECTURE.md)
+  use AST-lifetime memos. See [the cache boundaries](design/ARCHITECTURE.md)
   for the different lifetimes and invalidation rules.
 - The clustering pass scans a file for the sites that can share a helper
   once per distinct helper template, not once per pair (every pair of N
@@ -2027,7 +2027,7 @@ it tractable, all exact: they change no proposal.
 - In directory mode, a global re-pass after the first re-pairs only the
   functions in files rewritten since the previous global pass. This is
   exact; the argument is in
-  [ARCHITECTURE.md](ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact).
+  [ARCHITECTURE.md](design/ARCHITECTURE.md#incremental-global-passes-and-why-they-are-exact).
 - The import-cycle check parses each module once per analysis and caches
   its import edges by path, modification time, and size; it used to
   re-parse every reachable module for every cross-file pair, which on a

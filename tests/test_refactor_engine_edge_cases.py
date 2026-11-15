@@ -303,7 +303,7 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
 
         The helper used to be hoisted into ``Base``, a class that held none of
         the code, where every subclass anywhere would inherit it
-        (docs/DECISIONS.md, "A method helper lives in the class that holds
+        (docs/design/DECISIONS.md, "A method helper lives in the class that holds
         both duplicates").
         """
 

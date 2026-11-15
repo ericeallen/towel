@@ -1,6 +1,6 @@
 # Towel 1.947: audit repairs after 1.946
 
-[Documentation index](README.md) · [Changelog](../CHANGELOG.md#1947)
+[Maintainers' records](README.md) · [Documentation index](../README.md) · [Changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1947)
 
 **1.947 was published October 26, 2026** on
 [PyPI](https://pypi.org/project/code-towel/1.947/) and
@@ -16,7 +16,7 @@ known warning-location limitations. The separate self-dogfood run transformed
 Towel successfully and passed its tests. See the
 [publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
 for the interpreter matrix, fuzzing, artifact checks, corpus qualifications and
-hashes, and the [controlled comparison](PERFORMANCE.md#1947-published-release-comparison)
+hashes, and the [controlled comparison](../PERFORMANCE.md#1947-published-release-comparison)
 for observed runtime costs against 1.946. The historical checkpoints below
 retain the state of earlier candidates, including their failed and incomplete runs.
 
@@ -31,7 +31,7 @@ timeout. Repeated parsing of one warning-free module bypassed existing fact
 caches because the lexical guard confused ordinary raw-regex escapes with
 potentially warning-capable formatted strings. Token verification now admits
 those ordinary raw-string and comment cases while preserving the native path
-for uncertain inputs. See the [diagnostic evidence and limits](PERFORMANCE.md#1947-prettytable-warning-classifier-repair).
+for uncertain inputs. See the [diagnostic evidence and limits](../PERFORMANCE.md#1947-prettytable-warning-classifier-repair).
 The changed runtime requires a new freeze and complete release gates; completed
 checks remain bound to their original candidate.
 
@@ -59,7 +59,7 @@ and no transformed consumer tests ran. A further narrow lexical repair admits
 warning-free raw formatted literal segments on Python 3.12 and later token
 streams; Sphinx's LaTeX module had repeatedly missed existing parsing caches
 because of those segments. Python 3.11 and warning-capable or uncertain cases
-retain conservative handling. See the [diagnostic evidence and limits](PERFORMANCE.md#1947-sphinx-memory-and-parsing-investigation).
+retain conservative handling. See the [diagnostic evidence and limits](../PERFORMANCE.md#1947-sphinx-memory-and-parsing-investigation).
 The changed runtime needs a new freeze and complete release gates; final
 outcomes remain external to this preparation record.
 
@@ -78,7 +78,7 @@ findings:
    facts instead of repeatedly scanning the same statements. Pair budgets and
    ordering remain in force. These changes address measured analysis costs;
    their isolated costs do not establish a general speed improvement. The
-   [release comparison](PERFORMANCE.md#1947-published-release-comparison)
+   [release comparison](../PERFORMANCE.md#1947-published-release-comparison)
    records the measured complete-command results.
 3. **Definition-time lookup mappings.** When a module's `__builtins__` may be replaced,
    extraction declines explicit module/global fallback reads, including custom
@@ -91,12 +91,12 @@ findings:
    An ordinary `receiver.__builtins__` store/deletion anywhere in the analyzed
    program makes every module uncertain, irrespective of receiver aliases;
    excluded runnable files still contribute to that check.
-   See the [captured-mapping policy](GENERATED_CODE.md#arguments-and-evaluation).
+   See the [captured-mapping policy](../GENERATED_CODE.md#arguments-and-evaluation).
    A bounded source-only verdict memo avoids repeated large-module lexical
    scans for warning-free inputs while retaining native warning behavior and
    fresh AST/block proofs. Historical root/hazard observations preserve
    incremental pairing across local refreshes without overlooking genuine
-   dependency changes. See the [performance limits](PERFORMANCE.md#1947-large-module-builtin-guard-repair).
+   dependency changes. See the [performance limits](../PERFORMANCE.md#1947-large-module-builtin-guard-repair).
 4. **Each file's formatting policy.** Generated helpers, declarations and calls
    use their actual destination file's configuration. Ruff import sorting
    recognizes standalone, dotfile, extended and nested configurations through
@@ -121,13 +121,13 @@ and use a path-qualified mapping key to choose a specific definition. For an
 unmarked project whose complete scope Towel cannot establish, the CLI requires
 an explicit `--complete-scope` declaration. That declaration cannot bypass a
 known outside consumer. External installed consumers remain
-outside what a local project scan can prove. See the [naming guide](NAMING.md).
+outside what a local project scan can prove. See the [naming guide](../NAMING.md).
 
 This release preserves the existing behavioral contract: ordinary binding,
 evaluation order, effects and interfaces remain covered. Reflection and
 self-instrumentation remain outside that guarantee. The repairs do not restore
 project-wide reflection scans or broaden that exclusion. See
-[known limitations](KNOWN_LIMITATIONS.md).
+[known limitations](../KNOWN_LIMITATIONS.md).
 
 ## Historical preparation evidence
 

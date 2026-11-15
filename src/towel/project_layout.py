@@ -18,7 +18,7 @@ The project root is where staging copies from, where formatters, checkers
 and the import model read their configuration, and what the helper-name
 scan reads whole. Module names are not decided here: they are the names the
 program's own imports give its modules (``towel.import_model``;
-docs/DECISIONS.md, "Import names come from the program").
+docs/design/DECISIONS.md, "Import names come from the program").
 """
 
 from __future__ import annotations

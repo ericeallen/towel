@@ -1,6 +1,6 @@
 # Towel refactoring architecture
 
-[Documentation index](README.md)
+[Design](README.md) · [Documentation index](../README.md)
 
 Towel finds repeated Python code by unifying statement blocks, extracts each
 family of duplicates into one helper function, and rewrites the duplicates as
@@ -29,7 +29,7 @@ Start with the pipeline for the overall flow, or use the module map to find the 
 - [References](#references) · [Module map](#module-map)
 
 The engine is `UnificationRefactorEngine` in
-[`refactor_engine.py`](../src/towel/unification/refactor_engine.py). It is
+[`refactor_engine.py`](https://github.com/ericeallen/towel/blob/main/src/towel/unification/refactor_engine.py). It is
 assembled from mixins, one module per responsibility (block analysis, the
 pair decision, placement, reuse, insertion points, annotation wiring,
 materialization, clustering, parallel evaluation, the fixed-point drivers).
@@ -39,7 +39,7 @@ placement, reuse and annotation wiring; materialization on insertion
 points, placement, reuse and annotation wiring; the drivers on
 materialization; parallel evaluation on the drivers and the pair
 decision; and the engine on parallel evaluation. All of them share
-[`engine_state.py`](../src/towel/unification/engine_state.py), which
+[`engine_state.py`](https://github.com/ericeallen/towel/blob/main/src/towel/unification/engine_state.py), which
 declares the attributes every mixin may rely on and the operations the
 core module provides (parsing, structural ids, the rejection trace, the
 cache index, the analysis entry points), so mypy checks the seams. The
@@ -287,7 +287,7 @@ higher-order factory literals stay fixed unless the explicit API promotion
 option is enabled. Lambda constant differences and deferred expressions can
 produce different kinds of arguments in one substitution; downstream guards
 still determine whether a complete candidate is emitted. See
-[the argument guide](GENERATED_CODE.md#equal-looking-and-unused-arguments).
+[the argument guide](../GENERATED_CODE.md#equal-looking-and-unused-arguments).
 
 The result is a `Substitution` (in `substitution.py`): the template, the ordered
 parameters, and, per parameter, the argument expression at each call site and
@@ -492,7 +492,7 @@ decides:
   methods of one unique module-level class, every decorator is known to
   preserve the receiver, and the first parameter is `self` (or the method is
   a `classmethod`), the helper becomes a method of that class, and of no
-  other (docs/DECISIONS.md, "A method helper lives in the class that holds
+  other (docs/design/DECISIONS.md, "A method helper lives in the class that holds
   both duplicates"). Its name is class-private, `__extracted_func_0`, which
   the class stores as `_A__extracted_func_0` and its methods call as
   `self.__extracted_func_0()`, protecting it from accidental overrides by
@@ -541,7 +541,7 @@ decides:
   same-named sibling function cannot see. Towel never puts a helper into a
   class that did not already contain the duplicated code: which class, if
   any, such a function belongs in is a design question left to whoever
-  reviews the change (docs/DECISIONS.md, "Towel does not change externally
+  reviews the change (docs/design/DECISIONS.md, "Towel does not change externally
   visible class design"). Placing helpers in a common ancestor, as Towel once
   did, made them members of every subclass of a base that was often public
   API, needed a base-name resolution that twice went wrong, and moved code
@@ -612,7 +612,7 @@ the helper's `return` becomes, when the helper returns locals the block
 annotated, or as `None` when it returns nothing. Copying does not reason.
 
 *Inference through the project's checker.* A `TypeOracle`
-([`type_inference.py`](../src/towel/type_inference.py)) answers three
+([`type_inference.py`](https://github.com/ericeallen/towel/blob/main/src/towel/type_inference.py)) answers three
 questions: what type an expression has at a point in a module
 (`reveal`), whether one type is a subtype of another (`is_subtype`), and
 whether a prospective project type-checks (`check_project`). Results distinguish
@@ -682,7 +682,7 @@ flowchart LR
 
 Before using the oracle, the engine checks the complete original project,
 and the errors that check reports are the reference every later check is
-compared with ([`type_baseline.py`](../src/towel/type_baseline.py)): a change
+compared with ([`type_baseline.py`](https://github.com/ericeallen/towel/blob/main/src/towel/type_baseline.py)): a change
 is rejected only for an error the reference does not account for. It used to
 refuse any project whose check reported one, and in a study of 20 corpus
 projects that check was clean for 6, while all 17 that type-check pass their
@@ -726,7 +726,7 @@ questions that normalize a helper's annotations answer yes about it; the
 report before the run names those files. Nor is code the checker does not
 look at: a checker reports nothing in code it takes to be unreachable on the
 platform and Python it checks for, so its acceptance there says nothing.
-[`reachability.py`](../src/towel/reachability.py) places a `reveal_type((0))`
+[`reachability.py`](https://github.com/ericeallen/towel/blob/main/src/towel/reachability.py) places a `reveal_type((0))`
 probe before any statement, a one-line body first moved to a line of its
 own, and a statement a checker does not answer at is one it skips. Before the
 run the inferring checker is asked about the start of every block, and the
@@ -1028,7 +1028,7 @@ restore narrowing lost by moving a guard away from a captured lambda.
 ## Generated code formatting
 
 `ast.unparse` renders a helper on one line per statement with single-quoted
-strings. [`formatting.py`](../src/towel/formatting.py) supplies a
+strings. [`formatting.py`](https://github.com/ericeallen/towel/blob/main/src/towel/formatting.py) supplies a
 `SnippetFormatter` from the project's own configuration: `ruff format` when
 the file has an enclosing `[tool.ruff]`, `ruff.toml` or `.ruff.toml`
 configuration and ruff is installed, else
@@ -1097,7 +1097,7 @@ without them code is inserted as rendered, and the CLI says so.
 A syntax tree holds no comments, so a helper rendered by `ast.unparse` lost
 every comment of the blocks it replaced: a `# type: ignore` a checker needed,
 a `# pragma: no cover`, a `# noqa`, and every word of explanation.
-[`block_comments.py`](../src/towel/unification/block_comments.py) carries
+[`block_comments.py`](https://github.com/ericeallen/towel/blob/main/src/towel/unification/block_comments.py) carries
 them. When a site's call is generated, the comments between its block's
 first and last line are read from the module's tokens (`site_comments`),
 each anchored to the node it follows or precedes by a path of typed steps
@@ -1173,7 +1173,7 @@ Sharing a helper across modules is opt-in (`cross_module_helpers`,
 `--cross-module`): it adds an import between two modules, a change to how
 the project's modules depend on each other. Every name an import needs comes
 from the program's own imports, never from packaging metadata or from where a
-copy of the tree sits (docs/DECISIONS.md, "Import names come from the
+copy of the tree sits (docs/design/DECISIONS.md, "Import names come from the
 program"). `import_model.py` reads every Python file under the project root
 once, less the directories `--exclude` names, and builds an `ImportModel`:
 which location each top-level name the imports use refers to (attested,
@@ -1573,7 +1573,7 @@ measure is exact and changes no proposal.
   `structural_memo.py` stores a unification result as positions and
   rehydrates it onto the matching re-parsed block.
 - **Shared analysis graphs.** Each engine owns an `AnalysisSession`
-  ([`pipeline.py`](../src/towel/unification/pipeline.py)) that parses and
+  ([`pipeline.py`](https://github.com/ericeallen/towel/blob/main/src/towel/unification/pipeline.py)) that parses and
   analyzes each module once and returns the *same* graph on every access,
   keyed by path and current content. The session is an LRU bounded two
   ways: both its entry limit (128) and its 8 MiB source budget are raised
@@ -1675,7 +1675,7 @@ measure is exact and changes no proposal.
   not end within two seconds, keeps evaluation in the process, which the run
   says once. `TOWEL_WORKERS=1` disables
   forking; any other value caps the count. See
-  [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#resources-and-platform) for
+  [KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md#resources-and-platform) for
   measured memory and time.
 
 Measured figures, each with its input and commit. On the 1.618 snapshot of
@@ -1694,7 +1694,7 @@ resident size of 174 MB under `--no-types --no-format`, and 11.9 s and
 2026 (the same machine and settings, other work loading it to a load
 average of 11 to 13): on 46,165 lines it takes 35 s under `--no-types
 --no-format` (22 applied) and 138 s with the defaults (21 applied). The tables in
-[KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#performance) give the
+[KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md#performance) give the
 per-project figures. The [published-wheel comparison](proposals/published-1772-comparison.md)
 records the later first-Pyright-reveal improvement and Packaging full-command
 result with their separate timing boundaries; it establishes no complete-Sphinx
@@ -1715,7 +1715,7 @@ enabled: `towel.rejections` (why each pair was declined),
 overlapping proposals were dropped), and `towel.types` (what the checker
 revealed and the errors that made annotations fall back). Everything Towel
 takes from the environment goes through a frozen `Settings`
-([`diagnostics.py`](../src/towel/diagnostics.py)): `TOWEL_WORKERS`,
+([`diagnostics.py`](https://github.com/ericeallen/towel/blob/main/src/towel/diagnostics.py)): `TOWEL_WORKERS`,
 `TOWEL_CHECK_AST_IMMUTABLE`, and the four debug switches
 `DEBUG_PROPOSAL_REJECTIONS`, `DEBUG_VALIDATION`, `DEBUG_OVERLAP_FILTER`,
 and `TOWEL_DEBUG_TYPES`. The command line reads it once at startup, turns
@@ -1751,7 +1751,7 @@ a failed run nor a copy error leaves a partial output; an in-place run publishes
 `filesystem.staged_changes`, the whole run as one such plan. A batch is atomic per file, not globally
 atomic to a concurrent reader, and apply/recover need exclusive write access:
 snapshot checks detect a racing writer but cannot prevent one. See
-[SECURITY.md](../SECURITY.md).
+[SECURITY.md](https://github.com/ericeallen/towel/blob/main/SECURITY.md).
 
 Every run, `towel dry TARGET OUT` and `towel dry TARGET TARGET` alike,
 refactors a private copy. Everything the analysis reads besides the target --
@@ -1813,7 +1813,7 @@ only in that class's body, where the compiler stores it as
 written there, to a name that must be class-private too, and refuses the batch
 when the stored name is spelled anywhere else (explicitly, as a string, or as
 `__extracted_func_0` in another class of the same name) or when the class's
-body looks attributes up by a computed name. See the [naming guide](NAMING.md) for the end-to-end
+body looks attributes up by a computed name. See the [naming guide](../NAMING.md) for the end-to-end
 workflow.
 
 The selected definition is separate from its consumer-analysis scope.
@@ -1837,14 +1837,14 @@ The evidence that the engine holds up on real code is layered:
   execute adversarial fixtures before and after fixed-point refactoring and
   assert identical program output; each fixed engine defect is a fixture;
   the defects through the September 17–19, 2026 review are rows in
-  [ADVERSARIAL_REVIEW.md](ADVERSARIAL_REVIEW.md), and later ones are
+  [ADVERSARIAL_REVIEW.md](../maintainers/ADVERSARIAL_REVIEW.md), and later ones are
   recorded in CHANGELOG.md and PRODUCTION_READINESS.md.
 - **The standing ecosystem check** (`scripts/ecosystem_check.py`, `just
   ecosystem --run-untrusted-code`, weekly in CI) clones 141 public projects
   at pinned commits, among them Towel's own releases and current `main`,
   runs each one's own suite, refactors a copy, and runs the suite again,
   comparing test outcomes; it is the evidence in
-  [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md). It executes those
+  [PRODUCTION_READINESS.md](../maintainers/PRODUCTION_READINESS.md). It executes those
   projects' code with the caller's privileges, so it refuses to run without
   an explicit opt-in and is meant for a disposable machine or CI runner.
 - **Exactness tests** for the performance work: the per-function and
@@ -1854,8 +1854,8 @@ The evidence that the engine holds up on real code is layered:
 Behavioral comparison samples finite inputs and does not prove equivalence;
 unsupported callable shapes are reported as unverified. CI enforces an 85%
 coverage floor across Python 3.11–3.13. Coverage measures executed code, not
-correctness. See [CONTRIBUTING.md](../CONTRIBUTING.md) and
-[RELEASING.md](RELEASING.md).
+correctness. See [CONTRIBUTING.md](https://github.com/ericeallen/towel/blob/main/CONTRIBUTING.md) and
+[RELEASING.md](../maintainers/RELEASING.md).
 
 ## References
 
@@ -2021,9 +2021,9 @@ Existing unparsed-program refusal rules and excluded non-parsing-file treatment
 remain unchanged. This scan does not inspect reflective namespace operations
 or retain source/ASTs in its boolean. The source-local module-binding facts
 include the same attribute-write condition. That boolean is separate from the
-bounded per-analyzer source-verdict memo; the [performance guide](PERFORMANCE.md#1947-large-module-builtin-guard-repair)
+bounded per-analyzer source-verdict memo; the [performance guide](../PERFORMANCE.md#1947-large-module-builtin-guard-repair)
 records its storage and warning-policy limits. Both pair and clustered-site
-checks apply the [captured-mapping dependency policy](GENERATED_CODE.md#arguments-and-evaluation).
+checks apply the [captured-mapping dependency policy](../GENERATED_CODE.md#arguments-and-evaluation).
 
 The current per-file hazard lookup is separate from bounded historical
 `(project root, hazard)` observations. A local refresh visits only rewritten

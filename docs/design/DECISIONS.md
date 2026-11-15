@@ -1,6 +1,6 @@
 # Design decisions
 
-[Documentation index](README.md)
+[Design](README.md) · [Documentation index](../README.md)
 
 Each entry records a decision about what Towel promises or refuses, when it
 was made, what it rules out, and why. An entry is not rewritten when it is
@@ -488,7 +488,7 @@ The owner chose a **differential baseline**:
 This checks strictly more than `--no-types`, the advice it replaces.
 
 Making Towel's check agree with the project's own is recorded as a
-proposal, not adopted: `docs/proposals/project-own-check.md`. It would
+proposal, not adopted: `docs/design/proposals/project-own-check.md`. It would
 discover the check from tox, pre-commit, nox, Makefiles and workflows, and
 use its targets, flags and checkers, always including the package being
 refactored. On the same 20 projects it would agree exactly with the CI for
@@ -562,7 +562,7 @@ such duplicates recoverable, 3,831 of them between library modules. They
 include the largest cross-module duplicates in sphinx's C and C++ domains
 and in networkx's graph classes.
 
-It is recorded as a proposal, `docs/proposals/shared-helper-module.md`, and
+It is recorded as a proposal, `docs/design/proposals/shared-helper-module.md`, and
 is not part of 1.772. A new host alone does not make it sound. Four more
 things are needed:
 
@@ -734,7 +734,7 @@ The owner decided what goes into 1.772, and what waits:
   slowdown, observability, tests); and every documentation correction.
 - **Deferred to the next release:** declines that would be recovered only
   by making the safety analysis accept code it now refuses. They are listed,
-  with their measured cost, in `docs/proposals/decline-capabilities.md`.
+  with their measured cost, in `docs/design/proposals/decline-capabilities.md`.
 
 Each deferred item widens what Towel accepts, and needs its own soundness
 argument and an audit of its own. Adding them now would open another round
@@ -807,7 +807,7 @@ is the approach the hosting rule already takes for metaclasses and
 the list grows only by verified entries.
 
 The owner has proposed a user-supplied list of trusted decorators, as an
-escape hatch for a later release: `docs/proposals/trusted-decorators.md`.
+escape hatch for a later release: `docs/design/proposals/trusted-decorators.md`.
 
 The first measurement cost 7 of 721 refactorings across ten projects.
 Three gaps of the same hazard were then closed under the same rule:
@@ -1438,7 +1438,7 @@ TypeVar, Literal and cast analysis and Babel catalog extraction still constrain
 where source may move.
 
 *Status: implemented in the October 2 follow-up. The current
-[release preparation](PRODUCTION_READINESS.md#1792-release-preparation) links
+[release preparation](../maintainers/PRODUCTION_READINESS.md#1792-release-preparation) links
 its performance evidence and distinguishes it from earlier validation
 checkpoints; final release validation remains separately required.*
 
@@ -1465,7 +1465,7 @@ exclusions provide the broader escape hatch.
 
 Only the exact post-colon comment is a directive. Strings, parameter-line or
 preceding comments, inline-suite trailing comments and explanatory suffixes
-do not silently change the analysis scope. The [scope guide](CLI_GUIDE.md#protect-a-function)
+do not silently change the analysis scope. The [scope guide](../CLI_GUIDE.md#protect-a-function)
 shows the syntax.
 
 *Status: implemented with focused checks. Independent consumer validation and
@@ -1768,7 +1768,7 @@ and unsupported control-flow correlations supply no proof.
 
 *Status: implemented with API and actual CLI regressions, including both
 configured checkers, errors, finalizers, identity and conservative controls.
-See the October coverage in [Adversarial review](ADVERSARIAL_REVIEW.md#october-proposal-and-cache-regressions).
+See the October coverage in [Adversarial review](../maintainers/ADVERSARIAL_REVIEW.md#october-proposal-and-cache-regressions).
 The reflection exclusion adopted October 2 is unchanged.*
 
 ## 2026-10-10: Share immutable facts without caching admission
@@ -1838,7 +1838,7 @@ The memo is exact: under the engine's invariant that analysis never mutates its
 trees, a repeated call can only return the earlier answer. It is deferred
 rather than shipped because changing a correctness rule during the 1.946
 release would void that release's validation freeze; 1.946 ships with the
-regression documented in [RELEASE_1_946.md](RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
+regression documented in [RELEASE_1_946.md](../maintainers/RELEASE_1_946.md#where-the-remaining-time-goes-profiled-on-0b3494c).
 When the memo is implemented, `test_scoped_repeated_admissions_reprove_actual_tree`
 and `test_warmed_source_fact_never_validates_mutated_owner` change from
 "reprove every call" to "reprove after a detected mutation, and outside an

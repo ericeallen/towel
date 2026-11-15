@@ -1,6 +1,6 @@
 # Trusted decorators
 
-[Proposals and experiments](README.md) · [Documentation index](../README.md)
+[Proposals and experiments](README.md) · [Documentation index](../../README.md)
 
 Status: retired October 2, 2026. The owner removed reflection and body
 instrumentation from the preservation guarantee, including protections based

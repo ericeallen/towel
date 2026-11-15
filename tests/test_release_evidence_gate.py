@@ -730,6 +730,32 @@ def test_documentation_only_rebuild_reuses_runtime_checks_and_returns_final_arti
 
 
 @pytest.mark.parametrize(
+    "name",
+    [
+        "docs/maintainers/RELEASING.md",
+        "docs/design/DECISIONS.md",
+        "docs/design/proposals/dethunking.md",
+        "docs/maintainers/reviews/gemini-2026-10-31/REPORT.md",
+    ],
+)
+def test_pages_moved_under_docs_subdirectories_remain_prose(name: str) -> None:
+    """2.0 moved the project's records into docs/maintainers and docs/design.
+
+    A correction to one of them after validation is still a documentation-only
+    amendment, as it was when they sat at the top of docs/.
+    """
+    assert gate.documentation_path(name)
+    assert gate.amendment_path(name, {}, {})
+
+
+@pytest.mark.parametrize(
+    "name", ["docs/maintainers/reviews/gemini-2026-10-31/check_case.py", "zensical.toml"]
+)
+def test_site_configuration_and_scripts_beside_the_pages_are_not_prose(name: str) -> None:
+    assert not gate.documentation_path(name)
+
+
+@pytest.mark.parametrize(
     "name", ["docs/run.py", "docs/data.json", "tests/test_example.py", "uv.lock", "LICENSE"]
 )
 def test_documentation_rebuild_refuses_non_prose_changes(bundle: Bundle, name: str) -> None:

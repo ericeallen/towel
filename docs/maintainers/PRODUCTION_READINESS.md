@@ -1,8 +1,8 @@
 # Production readiness
 
-[Documentation index](README.md)
+[Maintainers' records](README.md) · [Documentation index](../README.md)
 
-The [October 2 preservation decision](DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
+The [October 2 preservation decision](../design/DECISIONS.md#2026-10-02-reflection-and-self-instrumentation-are-outside-the-preservation-contract)
 removes reflection and self-instrumentation guarantees. Validation and repair
 records below retain the source, contract and results of their dated runs;
 they are not evidence of those retired protections in the current code.
@@ -71,7 +71,7 @@ Towel **1.949** is an unpublished candidate. The product-experience and maturity
 fixes are implemented: complete rendered-helper usefulness checks, concise and
 structured CLI results, bounded runs, cancellation reporting, copy-first naming,
 a runnable adoption tutorial, a documented compatibility contract and focused
-installed-wheel macOS CI. See the [changelog](../CHANGELOG.md#1949).
+installed-wheel macOS CI. See the [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1949).
 
 Local testing is in progress. This checkpoint does not claim a completed
 exact-candidate release campaign, new runtime benchmarks, remote CI or
@@ -130,7 +130,7 @@ performance-restoration claim is made for this release.
 
 Towel **1.948** is prepared for validation and is not yet published. It repairs
 four silent `dry` miscompilations in 1.947 and corrects CLI help, cost reporting
-and progress behavior; see the [changelog](../CHANGELOG.md#1948).
+and progress behavior; see the [changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1948).
 
 The final versioned source still requires the complete Python 3.11–3.13
 suites and coverage, quality and dependency checks, differential fuzzing,
@@ -196,7 +196,7 @@ that this campaign finished without an OOM termination. The interrupted host
 collector's records were recovered from the completed container without
 rerunning the workload.
 
-The [controlled full-CLI comparison](PERFORMANCE.md#1947-published-release-comparison)
+The [controlled full-CLI comparison](../PERFORMANCE.md#1947-published-release-comparison)
 with 1.946 observed mean increases of 2.58% for Click, 8.84% for Rich and 1.25%
 for Voluptuous. All distinct generated outputs matched their original consumer
 test outcomes. Two samples per version on a shared host do not establish
@@ -233,7 +233,7 @@ and one `TIMEOUT`. PrettyTable's baseline passed 338 tests; no transformed-suite
 result was available from the timed-out run. The corpus is incomplete and does
 not clear release acceptance.
 
-The [bounded investigation](PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
+The [bounded investigation](../PERFORMANCE.md#1947-prettytable-warning-classifier-repair)
 identified repeated parsing caused by an overly conservative warning classifier.
 Its narrow runtime correction requires a fresh candidate and complete release
 gates. The isolated completed diagnostic does not transfer earlier gate results
@@ -304,7 +304,7 @@ to the definition-time builtin-mapping guard: 2,988 calls over five exact
 source strings, 99.8327% repeated. The independently verified published 1.946
 wheel completed the same case with byte-identical Python output. Partial
 profiles identify the cause but do not establish a production speed ratio.
-See the [performance investigation](PERFORMANCE.md#1947-large-module-builtin-guard-repair).
+See the [performance investigation](../PERFORMANCE.md#1947-large-module-builtin-guard-repair).
 
 The repaired guard conservatively covers all explicit module/global fallback
 reads and implicit import/class lookups under possible mapping replacement,
@@ -312,7 +312,7 @@ including wildcard imports exporting `__builtins__` through `__all__` and
 ordinary `receiver.__builtins__` stores/deletions anywhere in the analyzed
 program. One fresh analysis-owned boolean carries the program-wide hazard;
 excluded runnable files count, and unknown input cannot establish absence.
-See the [evaluation-scope policy](GENERATED_CODE.md#arguments-and-evaluation).
+See the [evaluation-scope policy](../GENERATED_CODE.md#arguments-and-evaluation).
 A separate source-local memo reuses only the immutable source/parser-dependent
 builtin-mapping verdict within a weakly owned scope analyzer, with one source and an 8 MiB source-storage budget per
 analyzer. Warning-capable sources and disabled
@@ -497,14 +497,14 @@ Original pairs, 24 displayed Click failure payloads, repeated per-arm outputs
 and owned-worker closure matched. Per-CLI CPU is unavailable. Rich has zero
 actual samples in this campaign; its fresh cohort and all remaining full
 source-bound release gates are pending. Restoration remains unresolved. The
-[current record](../tests/release_evidence/1.946-warning-guard/README.md)
+[current record](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-warning-guard/README.md)
 preserves all eight samples and telemetry limits; the earlier comparison below
 remains historical. A subsequent backslash-parity repair changes runtime bytes
 again: complete paired backslashes no longer cause the guard refusal, while
 native diagnostic and cache boundaries remain fixed. Its scoped checks do not
 inherit the `a6dc6ed` timings or certify a release. A new final freeze, fresh
 complete gates and new source-bound timing evidence remain pending. See the
-[parity addendum](PERFORMANCE.md#october-10-backslash-parity-repair) and the [investigation](PERFORMANCE.md#october-10-voluptuous-regression-investigation).
+[parity addendum](../PERFORMANCE.md#october-10-backslash-parity-repair) and the [investigation](../PERFORMANCE.md#october-10-voluptuous-regression-investigation).
 
 At that audit freeze, the complete canonical suite passed **10,583 tests and
 45 subtests**, with 32 skips and eight warnings. Coverage was **93.478046%**
@@ -552,9 +552,9 @@ pairs, visible payloads and output references matched, with every runtime
 CPU shortfall retained. This is shared-host evidence, not isolated-host
 certification; the performance-restoration target remains unmet. All eight
 owned containers and measurement workers closed, and source and frozen
-instrument bytes stayed unchanged. See [performance details](PERFORMANCE.md#october-10-click-and-rich-assessment),
-the [source-bound evidence guide](../tests/release_evidence/1.946-preparation/README.md)
-and [eight-sample record](../tests/release_evidence/1.946-preparation/measurements.json).
+instrument bytes stayed unchanged. See [performance details](../PERFORMANCE.md#october-10-click-and-rich-assessment),
+the [source-bound evidence guide](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-preparation/README.md)
+and [eight-sample record](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-preparation/measurements.json).
 
 The external raw audit and measurement records are retained under
 `~/Knowledge/handoffs/towel/20261009-performance-recovery-01a11b7c/`, including
@@ -600,7 +600,7 @@ updates preserve its runtime and executable-test bytes.
 
 The complete typed/formatted block-memo comparison measures 56.72s without the
 memo and 56.70s with it, with identical outputs. No wall-clock improvement is
-established. [Retained evidence](../tests/release_evidence/1.792-parameter-audit-fixes/README.md)
+established. [Retained evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.792-parameter-audit-fixes/README.md)
 records scope and failed attempts. This does not clear interpreter-matrix,
 corpus, final source-bound artifact/evidence or exact-commit CI gates. A fresh
 validation campaign was authorized at that checkpoint; its later completed
@@ -629,15 +629,15 @@ At `1e87842`, the complete native Python 3.13 suite passed **9,671 tests and
 26 subtests**, with 20 skips and **93% combined coverage**. Black, Flake8,
 mypy and Bandit passed. The before/after full source inventories matched;
 the run changed no source, fixture, test or documentation bytes. The
-[retained native evidence](../tests/release_evidence/1.792-october6-native/README.md)
+[retained native evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.792-october6-native/README.md)
 binds the runtime tree `87bd254a7948b5611b334e85856c2aec94d13207`, identical
 to the October 6 installed-wheel optimization comparison at `8626d50`.
 
-Version **1.792** carries the [post-1.772 changes](../CHANGELOG.md#1792):
+Version **1.792** carries the [post-1.772 changes](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1792):
 checked fixed-point preview, caller-narrowing preservation, Pyright reveal
 batching, broader safe duplicate discovery, generated-helper reuse and inert
-precise annotations, plus the [scoped function opt-out](CLI_GUIDE.md#protect-a-function).
-[Design decisions](DECISIONS.md) and intent-bearing tests
+precise annotations, plus the [scoped function opt-out](../CLI_GUIDE.md#protect-a-function).
+[Design decisions](../design/DECISIONS.md) and intent-bearing tests
 record the preservation contract.
 
 The October 5 audit repairs preserve opaque factory-result lifetimes and
@@ -680,19 +680,19 @@ change from the preceding candidate's corpus was python-dotenv, PASS to
 NO_CHANGE. No new runtime regression outside the pinned reflection
 expectations was found in this completed corpus.
 
-The [October 5 complete CLI comparison](PERFORMANCE.md#october-5-repaired-candidate-comparison)
+The [October 5 complete CLI comparison](../PERFORMANCE.md#october-5-repaired-candidate-comparison)
 measured the repaired runtime at **43.43 seconds versus 38.80 seconds** for
 published 1.772, **11.9% slower**, on the controlled typed, formatted Packaging
 fixture. Four fresh-process observations per arm were repeatable under the
 recorded background activity. The candidate applied 20 refactorings versus
 18; this is not an identical-transformation comparison or a whole-corpus
 speedup. The measured runtime was unchanged since `c5311b4`; the October 6
-repairs and optimizations have separate [paired installed CLI measurements](PERFORMANCE.md#october-6-optimization-experiments).
+repairs and optimizations have separate [paired installed CLI measurements](../PERFORMANCE.md#october-6-optimization-experiments).
 All three bounded optimization comparisons produced identical outputs and
 established no complete-command speedup. They do not compare the changed
 October 6 source with published 1.772 or clear a release gate.
 
-The [retained documentation evidence](../tests/release_evidence/1.792-audit-fixes/README.md)
+The [retained documentation evidence](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.792-audit-fixes/README.md)
 preserves original performance records and corpus summaries/review, with
 their source and archive identities. It is a subset of the external raw
 release evidence, not a complete publication bundle. Final source-bound
@@ -711,7 +711,7 @@ including through their callees. Ordinary behavior within that scope must be
 preserved or the transformation refused; reflection is not detected to refuse
 programs.
 
-The [October 2 complete CLI comparison](PERFORMANCE.md#october-2-complete-cli-comparison)
+The [October 2 complete CLI comparison](../PERFORMANCE.md#october-2-complete-cli-comparison)
 measured the controlled typed, formatted Packaging fixture at 36.24 seconds
 versus 41.59 seconds for published 1.772, about 13% faster. It used runtime
 commit `000d751`, applied one more refactoring than 1.772 and preserved the
@@ -721,10 +721,10 @@ repaired release candidate. The October 5 comparison above was the latest
 recorded published-version comparison at that preparation checkpoint; it does
 not measure the later audit follow-ups or the final release comparison above.
 
-The [completed development validation](proposals/next-validation-final.md)
+The [completed development validation](../design/proposals/next-validation-final.md)
 identifies its exact frozen source, three Linux interpreter runs, native
 transformed-source suite, 141-project corpus and reviewed exceptions.
-The earlier [published-wheel comparison](proposals/published-1772-comparison.md)
+The earlier [published-wheel comparison](../design/proposals/published-1772-comparison.md)
 established a large first-reveal gain for Sphinx and no meaningful complete-CLI
 gain for Packaging at its development snapshot. Those measurements
 have their own platform, load and timing boundaries; the historical default
@@ -759,14 +759,14 @@ from the program's own imports. A typed run is judged against the project's
 own check, error by error, where the original's errors stood. Code under a
 decorator that rewrites bodies stays where it is. Type anti-unification, the
 change the September 19 candidate carried, is part of it. The
-[changelog](../CHANGELOG.md#1772---2026-09-26) lists every change.
+[changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1772---2026-09-26) lists every change.
 
 Release evidence is valid only for the exact source it was taken from. The
 historical 1.772 validation below names its commits; the qualified runtime
 comparison in that section applies only to those historical states.
 Passing the sampled tests does not establish equivalence for arbitrary Python
 programs; review generated changes and the
-[known limitations](KNOWN_LIMITATIONS.md).
+[known limitations](../KNOWN_LIMITATIONS.md).
 
 ## Measurement environment
 
@@ -932,7 +932,7 @@ This is the documented scope of the guarantee rather than a defect: Towel
 verified with the checker this project configures, and that checker accepted
 the change, in part because its own narrowing of `Mapping[str, object]` through
 `isinstance(_, dict)` yields `dict[Any, Any]`. Projects wanting both checkers
-to hold should configure both. See [known limitations](KNOWN_LIMITATIONS.md).
+to hold should configure both. See [known limitations](../KNOWN_LIMITATIONS.md).
 
 Sphinx at `e44a40eb2f` supplies the typed evidence. It configures both mypy and
 Pyright in strict mode, and its complete original baseline is clean: mypy
@@ -1011,7 +1011,7 @@ made for the generic path. Across the two typed projects examined, no extracted
 helper ended up carrying the same multi-alternative union in two or more
 signature positions, so the preference for an ordinary signature over a generic
 one cost no measurable precision here; that preference is recorded in
-[known limitations](KNOWN_LIMITATIONS.md) and is not a general result.
+[known limitations](../KNOWN_LIMITATIONS.md) and is not a general result.
 
 ## Historical 1.732 validation (September 19, 2026)
 
@@ -1034,7 +1034,7 @@ retained in the accompanying September 19 audit evidence archive.
 The audit fixes cover generic binding scopes and builtin shadowing, ordered
 imports, helper renaming, checker isolation and cleanup, coherent project
 verification, and termination after permanent application refusals. The
-[1.732 changelog](../CHANGELOG.md#1732---2026-09-19) records the changes and
+[1.732 changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md#1732---2026-09-19) records the changes and
 their regressions; type-parameter inference remains deferred. Eight final
 regression cases cover missing corpus dependencies, PLY's import origin, and
 full-suite confirmation after isolated reruns. The original faulty manifest
@@ -1434,7 +1434,7 @@ model. The bar applied instead:
 2. Evaluation order, count, and conditionality of every expression are
    preserved by construction, or the proposal is rejected.
 3. Every remaining limitation is stated in
-   [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md), together with the rejections
+   [KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md), together with the rejections
    that enforce it.
 4. Failures are loud: a generated file that does not compile or a call that
    does not bind aborts the batch and rolls back.
@@ -1517,7 +1517,7 @@ regression. The table is the final run on commit `a00511e0e0e0`, macOS,
 Python 3.13, September 15, 2026, three projects at a time with two forked
 workers each; the report, per-project JSON, and all logs are archived with
 the release evidence. Platform and resource requirements are in
-[KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md#resources-and-platform).
+[KNOWN_LIMITATIONS.md](../KNOWN_LIMITATIONS.md#resources-and-platform).
 
 | Project (revision) | Verdict | Files changed | Refactor s | Suite |
 |---|---|---|---|---|

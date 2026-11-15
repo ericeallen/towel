@@ -1,12 +1,12 @@
 # Dethunking: where the remaining `lambda` arguments come from
 
-[Proposals and experiments](README.md) · [Documentation index](../README.md)
+[Proposals and experiments](README.md) · [Documentation index](../../README.md)
 
 Status: the census below was gathered 2026-09-17 on the 1.618 outputs.
 Item 1 was implemented during 1.946 preparation; its stage audit passed on
 `bf564f2`, and the final runtime audit passed on `9d57b0d`. Publication of 1.946
 was verified on October 19, and 1.947 was published October 26. The
-[1.947 publication record](../PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+[1.947 publication record](../../maintainers/PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
 retains its separate completed validation. Item 2 was resolved
 differently on 2026-09-18 (see below);
 items 3 and 4 remain research. The exact improvements are small; the large

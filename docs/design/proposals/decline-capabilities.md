@@ -1,11 +1,11 @@
 # Declines that need a wider analysis
 
-[Proposals and experiments](README.md) · [Documentation index](../README.md)
+[Proposals and experiments](README.md) · [Documentation index](../../README.md)
 
 Status: several recoveries shipped in 1.792; exact constant occurrences and
 bounded IF-only fresh outputs were implemented during 1.946 preparation.
 Publication of 1.946 was verified on October 19; 1.947 was published October 26.
-See the [1.947 publication record](../PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+See the [1.947 publication record](../../maintainers/PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
 for its separate completed release validation.
 The final runtime audit cited here is source-bound to `9d57b0d`, with its evidence in
 the [proposal index](README.md#preparation-checkpoint-october-10-2026). Broader

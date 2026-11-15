@@ -1,6 +1,6 @@
 # A preview that shows what `dry` would do
 
-[Proposals and experiments](README.md) · [Documentation index](../README.md)
+[Proposals and experiments](README.md) · [Documentation index](../../README.md)
 
 Status: implemented on the post-1.772 branch, September 27, 2026.
 

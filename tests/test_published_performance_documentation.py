@@ -31,7 +31,7 @@ from tests.test_next_validation_documentation import _contains, _number, _rows, 
 
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE = ROOT / "tests/release_evidence/post-1772-published-comparison"
-DOCUMENT = ROOT / "docs/proposals/published-1772-comparison.md"
+DOCUMENT = ROOT / "docs/design/proposals/published-1772-comparison.md"
 MANIFEST_SHA256 = "75589c7960dbc805fc39ccee061a871b1e78b442228552aa77b4d2e2ba3032cb"
 ORDER = ["published", "candidate", "candidate", "published"]
 

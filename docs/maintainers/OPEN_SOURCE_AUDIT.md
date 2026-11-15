@@ -1,6 +1,6 @@
 # Open-source readiness — 1.1.0a1
 
-[Documentation index](README.md)
+[Maintainers' records](README.md) · [Documentation index](../README.md)
 
 > Historical record of the September 12, 2026 alpha audit. The production-readiness pass that followed, with its counterexamples, repairs, and consumer evidence, is recorded in [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md), which supersedes the disposition below.
 
@@ -33,8 +33,8 @@ proposal changes and subsequent repairs passed the final runtime audit on
 versioned artifacts or constitute publication approval. The completed
 shared-host default-CLI comparison observed Click +21.85% and Rich +78.10%
 elapsed time against published 1.792, with two samples per version per workload;
-the restoration target was not met. See the [current proposal status](proposals/README.md)
-and [performance evidence](proposals/performance-roadmap.md#october-10-2026-preparation-and-completed-comparison).
+the restoration target was not met. See the [current proposal status](../design/proposals/README.md)
+and [performance evidence](../design/proposals/performance-roadmap.md#october-10-2026-preparation-and-completed-comparison).
 The September counts, artifacts, dependency/security scope and environment
 claims below retain their original identities; they are not current results.
 

@@ -1,11 +1,11 @@
 # Performance roadmap: what is worth doing, in what order
 
-[Proposals and experiments](README.md) · [Documentation index](../README.md)
+[Proposals and experiments](README.md) · [Documentation index](../../README.md)
 
 ## Current release observations
 
 The latest release is **1.947**, published October 26, 2026. Its
-[controlled comparison](../PERFORMANCE.md#1947-published-release-comparison)
+[controlled comparison](../../PERFORMANCE.md#1947-published-release-comparison)
 with 1.946 observed full-CLI mean increases of 2.58% for Click, 8.84% for Rich
 and 1.25% for Voluptuous, with original consumer outcomes preserved. These
 are two samples per version on a shared host, not a general performance claim.
@@ -21,7 +21,7 @@ cohorts: Voluptuous 90.984 → 87.569 seconds (−3.75%) and Click 47.165 →
 All original pairs, displayed Click failure records, repeated outputs and owned
 closure matched. Rich has zero actual samples here after preproduct failures;
 its measurements and fresh full release gates remain pending. Per-CLI CPU is
-unavailable. The [portable record](../../tests/release_evidence/1.946-warning-guard/README.md)
+unavailable. The [portable record](https://github.com/ericeallen/towel/blob/main/tests/release_evidence/1.946-warning-guard/README.md)
 retains all eight observations and the 2 CPU/6 GiB RAM/12 GiB combined caps.
 The restoration target remains unresolved; profiles are diagnostics, not timing
 samples. The earlier complete comparison below keeps its own source and caps.

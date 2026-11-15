@@ -47,7 +47,7 @@ six-CPU, 6 GiB container with no swap. All 141 projects completed without a
 phase timeout or signal termination. This validates that specific sequential
 campaign, not a universal memory bound or concurrent-workload guarantee.
 The final container was not OOM-killed; final lifetime peak memory was unavailable.
-See the [publication record](PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
+See the [publication record](maintainers/PRODUCTION_READINESS.md#1947-published-release-october-26-2026)
 for the observed peak's limits and the review of corpus outcomes.
 
 The historical memory figures below were measured on an Apple M5 Max

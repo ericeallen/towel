@@ -22,7 +22,7 @@ time; context.toml identifies the environment fields recorded by the operator.
 
 Changing engine output is not grounds for updating these expectations. Add
 new release evidence, or substantiate a correction to the old record. Keep
-the intent with each test; see docs/DECISIONS.md, September 27, and the policy
+the intent with each test; see docs/design/DECISIONS.md, September 27, and the policy
 regression rule in CONTRIBUTING.md. Formatting changes are harmless; removing
 conditions or changing a number without evidence is not. The readability pass
 moves resource and timing claims from README to their dedicated guides; the
@@ -51,8 +51,8 @@ PATHS = (
     "docs/REQUIREMENTS.md",
     "docs/PERFORMANCE.md",
     "docs/KNOWN_LIMITATIONS.md",
-    "docs/PRODUCTION_READINESS.md",
-    "docs/RELEASING.md",
+    "docs/maintainers/PRODUCTION_READINESS.md",
+    "docs/maintainers/RELEASING.md",
     "pyproject.toml",
     ".github/workflows/ci.yml",
     ".github/workflows/ecosystem.yml",
@@ -186,7 +186,7 @@ def _check_automation(documents: Mapping[str, str]) -> None:
     timeout = _one(r"^\s+timeout-minutes: (\d+)$", ecosystem)
     mode = "untyped (`--no-types`)" if "--no-types" in _commands(ecosystem) else "default typing"
     _contains(
-        _section(documents["docs/RELEASING.md"], "### Configured automation"),
+        _section(documents["docs/maintainers/RELEASING.md"], "### Configured automation"),
         f"| Full tests and coverage | `{_runner(tests)}` | {', '.join(versions)} | "
         f"{coverage}% coverage gate |\n"
         f"| Quality and distributions | `{_runner(quality)}` | {quality_python} | "
@@ -225,7 +225,7 @@ def _outcomes(name: str) -> dict[str, Outcome]:
 
 def _release(documents: Mapping[str, str]) -> str:
     return _section(
-        documents["docs/PRODUCTION_READINESS.md"],
+        documents["docs/maintainers/PRODUCTION_READINESS.md"],
         "## 1.772 release validation (September 26, 2026)",
     )
 
@@ -260,7 +260,7 @@ def _check_completed_results(documents: Mapping[str, str]) -> None:
         _contains(report, f"| {label} | {totals[verdict]} |")
     _contains(report, f"**The {len(full)}-project corpus**")
     _contains(
-        documents["docs/RELEASING.md"],
+        documents["docs/maintainers/RELEASING.md"],
         f"gave {totals['PASS']} `PASS`, {totals['NO_CHANGE']} `NO_CHANGE` "
         f"and six import-problem refusals among {len(full)} projects",
     )
@@ -297,7 +297,7 @@ def _check_measurements(documents: Mapping[str, str]) -> None:
             _section(documents[path], heading),
             f"{context['host']} ({context['host_cores']} cores, {context['host_memory_gib']} GiB)",
         )
-    for path in ("docs/KNOWN_LIMITATIONS.md", "docs/PRODUCTION_READINESS.md"):
+    for path in ("docs/KNOWN_LIMITATIONS.md", "docs/maintainers/PRODUCTION_READINESS.md"):
         _contains(
             _section(documents[path], "## Measurement environment"),
             f"{context['host']} with {context['host_cores']} cores and "
@@ -340,7 +340,7 @@ def _check_measurements(documents: Mapping[str, str]) -> None:
         "docs/PERFORMANCE.md",
         "CHANGELOG.md",
         "docs/KNOWN_LIMITATIONS.md",
-        "docs/PRODUCTION_READINESS.md",
+        "docs/maintainers/PRODUCTION_READINESS.md",
     ):
         _contains(documents[path], claim)
 
@@ -403,19 +403,19 @@ def test_documented_measurements_keep_their_platform_resources_and_conditions(
             _check_automation,
         ),
         (
-            "docs/PRODUCTION_READINESS.md",
+            "docs/maintainers/PRODUCTION_READINESS.md",
             "| PASS | 90 |",
             "| PASS | 141 |",
             _check_completed_results,
         ),
         (
-            "docs/PRODUCTION_READINESS.md",
+            "docs/maintainers/PRODUCTION_READINESS.md",
             "| 3.13 | 7,899 |",
             "| 3.13 | 7,900 |",
             _check_completed_results,
         ),
         (
-            "docs/PRODUCTION_READINESS.md",
+            "docs/maintainers/PRODUCTION_READINESS.md",
             "**Four projects took the untyped path**",
             "**All projects were typed**",
             _check_completed_results,
