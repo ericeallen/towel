@@ -75,6 +75,7 @@ from towel.cli_reporting import (
     source_diff,
 )
 from towel.diagnostics import LOG, REJECTIONS, Settings, configure_stderr_logging
+from towel.config import ConfigurationError, apply_project_defaults
 from towel.program_files import is_exclusion_name, refuse_unparsed_program
 from towel.unification.exceptions import TowelError
 from towel.source_text import read_source, source_lines
@@ -229,6 +230,15 @@ def main() -> None:
     _install_signal_handling()
     parser = _build_parser()
     args = parser.parse_args()
+    try:
+        args = apply_project_defaults(parser, args, sys.argv[1:])
+    except ConfigurationError as error:
+        parser.error(str(error))
+    except (OSError, ValueError) as error:
+        _write_failure_result(args, "error", "error", str(error))
+        parser.exit(1, f"Error: {error}\n")
+    if args.config_path is not None:
+        print(f"Using [tool.towel] from {args.config_path}", file=sys.stderr)
     if args.command == "dry" and args.json and args.interactive:
         parser.error("dry --json requires --no-interactive")
     if (
@@ -617,6 +627,12 @@ def _add_shared_options(sections: _Sections) -> None:
     to both dataclasses too. Within a section they follow the options the
     command added first.
     """
+    sections.advanced.add_argument(
+        "--no-config",
+        action="store_true",
+        help="Ignore [tool.towel] defaults in the project's pyproject.toml (default: read them). "
+        "Command-line options override project defaults.",
+    )
     _add_report_flags(sections.output)
     _add_exclude_flag(sections.scope)
     _add_cross_module_flag(sections.scope)
@@ -1210,6 +1226,7 @@ class DryOptions:
     summary: bool = False
     diff: bool = False
     inventory: bool = False
+    config_path: Optional[str] = None
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -1232,6 +1249,7 @@ class DryOptions:
             summary=bool(getattr(args, "summary", False)),
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
+            config_path=getattr(args, "config_path", None),
         )
 
 
@@ -1256,6 +1274,7 @@ class PreviewOptions:
     summary: bool = False
     diff: bool = False
     inventory: bool = False
+    config_path: Optional[str] = None
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -1277,6 +1296,7 @@ class PreviewOptions:
             summary=bool(getattr(args, "summary", False)),
             diff=bool(getattr(args, "diff", False)),
             inventory=bool(getattr(args, "inventory", False)),
+            config_path=getattr(args, "config_path", None),
         )
 
     def dry_options(self, output: str) -> DryOptions:
@@ -1300,6 +1320,7 @@ class PreviewOptions:
             summary=self.summary,
             diff=self.diff,
             inventory=self.inventory,
+            config_path=self.config_path,
         )
 
 
@@ -1980,6 +2001,7 @@ def _command_result(
             LOG.warning("Helper inventory unavailable: %s", error)
     return {
         "schema_version": 1,
+        "config_path": options.config_path,
         "command": "preview" if preview else "dry",
         "status": "complete",
         "input": str(Path(options.input).resolve()),
@@ -2007,6 +2029,7 @@ def _write_failure_result(
         return
     result: CommandResult = {
         "schema_version": 1,
+        "config_path": getattr(args, "config_path", None),
         "command": args.command,
         "status": status,
         # Failure reporting must not repeat the filesystem operation that

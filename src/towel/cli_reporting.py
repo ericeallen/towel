@@ -110,6 +110,7 @@ class CommandResult(TypedDict):
     before publication and therefore reports false, as a preview always does.
     """
 
+    config_path: str | None
     schema_version: Literal[1]
     command: Literal["preview", "dry"]
     status: Literal["complete", "incomplete", "error"]
