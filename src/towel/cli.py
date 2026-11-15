@@ -255,7 +255,9 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None
             parser.exit(1, f"Error: {error}\n")
     elif args.command == "recover":
         try:
-            recover(args.journal)
+            restored = recover(args.journal)
+            noun = "file" if len(restored) == 1 else "files"
+            print(f"Restored {len(restored)} {noun}; journal removed.")
         except BrokenPipeError:
             raise
         except (OSError, ValueError) as error:

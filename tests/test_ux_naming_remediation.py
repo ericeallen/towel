@@ -351,3 +351,52 @@ def test_rename_preview_prints_unified_diff_before_change_count(tmp_path: Path) 
     )
     assert preview_json.status == 0
     assert json.loads(preview_json.stdout)["changes"] == 4
+
+
+def test_recover_returns_restored_paths_and_prints_summary(tmp_path: Path) -> None:
+    """Audit Finding 8, item 4: changes.recover returns paths and CLI prints restored count."""
+    import os
+    from unittest.mock import patch
+
+    from towel.changes import ChangePlan, RecoveryRequired, apply_changes, recover
+
+    files = [tmp_path / "a.py", tmp_path / "b.py", tmp_path / "c.py"]
+    for path in files:
+        path.write_bytes(b"value = 1\n")
+    plan = ChangePlan.from_sources(
+        {str(p): p.read_bytes() for p in files},
+        {str(p): "value = 2\n" for p in files},
+    )
+    real_replace = os.replace
+    writes = 0
+
+    def fail_on_third(src_path: object, dst_path: object) -> None:
+        nonlocal writes
+        if Path(str(dst_path)) in files:
+            writes += 1
+            if writes > 2:
+                raise OSError("simulated interruption")
+        real_replace(str(src_path), str(dst_path))
+
+    with patch("towel.changes.os.replace", side_effect=fail_on_third):
+        try:
+            apply_changes(plan)
+        except RecoveryRequired:
+            pass
+    journal = next(tmp_path.glob(".towel-transaction-*"))
+    restored = recover(journal)
+    assert restored == [files[0].resolve(), files[1].resolve()]
+    assert not journal.exists()
+
+    # Now verify the CLI message on another 2-file interrupted transaction.
+    writes = 0
+    with patch("towel.changes.os.replace", side_effect=fail_on_third):
+        try:
+            apply_changes(plan)
+        except RecoveryRequired:
+            pass
+    cli_journal = next(tmp_path.glob(".towel-transaction-*"))
+    result = invoke(["recover", str(cli_journal)])
+    assert result.status == 0, result.stderr
+    assert result.stdout == "Restored 2 files; journal removed.\n"
+    assert not cli_journal.exists()
