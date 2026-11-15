@@ -27,7 +27,6 @@ buckets out when the projected pair count exceeds ``max_candidate_pairs``.
 """
 
 import ast
-import sys
 from dataclasses import dataclass
 import os
 import re
@@ -56,15 +55,8 @@ from .structural_memo import (
     StoredSubstitution,
     structural_id,
 )
-from .progress import (
-    ProgressBar,
-    DEFAULT_PROGRESS,
-    ProgressMode,
-    load_tqdm,
-    quietly,
-    wants_bar,
-    render_inline_bar,
-)
+from .progress import DEFAULT_PROGRESS, ProgressMode, ProgressRenderer
+
 from .parallel import ParallelEvaluation
 from .pair_evaluation import deferring_pair_if_proofs
 from .bounded_cache import BoundedCache
@@ -249,58 +241,19 @@ def _buckets_over_budget(
 
 
 class _PairingProgress:
-    """Progress of the pairing loop: a tqdm bar when wanted and available, else an inline bar."""
+    """Translate pairing events into the shared transient display."""
 
     def __init__(self, progress: ProgressMode, total_function_pairs: int) -> None:
-        self._total = total_function_pairs
-        self._done = 0
-        self._last_pct = -1
-        self._bar: Optional[ProgressBar] = None
-        wants = wants_bar(progress) and total_function_pairs > 0
-        if wants:
-            factory = load_tqdm()
-            if factory is not None:
-                self._bar = factory(
-                    total=total_function_pairs,
-                    desc="pairs",
-                    unit="fp",
-                    dynamic_ncols=True,
-                    leave=False,
-                )
-        self._inline = wants and self._bar is None
-        if self._inline:
-            print("Pairing blocks:", end=" ", flush=True, file=sys.stderr)
+        self._bar = ProgressRenderer(
+            progress, total=total_function_pairs, desc="Pairing blocks", unit="fp"
+        )
 
     def function_pair_done(self, pairs_so_far: int) -> None:
-        """One more function pair has been examined; ``pairs_so_far`` block pairs exist."""
-        self._done += 1
-        bar = self._bar
-        if bar is not None:
-            done = self._done
-
-            def advance() -> None:
-                bar.update(1)
-                if done % 20 == 0 or done == self._total:
-                    bar.set_postfix({"pairs": pairs_so_far}, refresh=True)
-
-            quietly(advance)
-        elif self._inline:
-            pct = int(100 * self._done / max(self._total, 1))
-            if pct != self._last_pct:
-                self._last_pct = pct
-                print(
-                    f"\rPairing blocks: [{render_inline_bar(pct, bar_len=24)}] {pct:3d}%"
-                    f" | pairs={pairs_so_far}",
-                    end="",
-                    flush=True,
-                    file=sys.stderr,
-                )
+        self._bar.set_postfix({"pairs": pairs_so_far}, refresh=False)
+        self._bar.update()
 
     def finish(self) -> None:
-        if self._bar is not None:
-            quietly(self._bar.close)
-        elif self._inline:
-            print(file=sys.stderr)
+        self._bar.close()
 
 
 def _traced_block(file_path: str, function: str, block_range: Optional[Tuple[int, int]]) -> str:

@@ -203,17 +203,18 @@ def _without_tqdm(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fixed_point, "_TQDM_NOTED", False)
 
 
-def test_default_progress_without_tqdm_draws_every_phase_inline(
+class _TerminalStream(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def test_explicit_tqdm_without_tqdm_draws_every_phase_inline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The apply phase, where verification spends the time, falls back as analysis does.
-
-    The note once said only the pairing phase drew an inline bar; analysis and
-    unification drew one too, and the apply phase alone drew nothing.
-    """
+    """Audit finding 7: explicit tqdm falls back to the common terminal renderer."""
     _make_fixture(tmp_path / "proj")
     _without_tqdm(monkeypatch)
-    err = io.StringIO()
+    err = _TerminalStream()
     with (
         caplog.at_level(logging.WARNING, logger="towel"),
         contextlib.redirect_stdout(io.StringIO()),
@@ -223,7 +224,7 @@ def test_default_progress_without_tqdm_draws_every_phase_inline(
             str(tmp_path / "proj"), str(tmp_path / "out"), progress="tqdm"
         )
     assert sum(count for count, _ in results.values()) == 2
-    for label in ("Analyzing files:", "Pairing blocks:", "[towel] apply ", "[towel] applied "):
+    for label in ("Analyzing files:", "Pairing blocks:", "apply:", "on=applied:"):
         assert label in err.getvalue(), (label, err.getvalue())
     notes = [record.getMessage() for record in caplog.records if "tqdm" in record.getMessage()]
     assert notes == ["tqdm is not installed; progress is shown as inline bars on stderr instead"]

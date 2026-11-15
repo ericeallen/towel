@@ -23,6 +23,8 @@ never change an analysis outcome, so every call into a bar goes through
 
 import atexit
 import sys
+import os
+import unicodedata
 import importlib
 import threading
 import time
@@ -244,27 +246,142 @@ def display_threads_stopped(timeout: float) -> Iterator[None]:
                 beat.start()
 
 
-def render_inline_bar(pct: int, bar_len: int = 24) -> str:
-    """A ``bar_len``-character ``#``/``-`` bar for a percentage, clamped to 0-100."""
-    pct = max(0, min(100, pct))
-    filled = (pct * bar_len) // 100
-    return "#" * filled + "-" * (bar_len - filled)
+_DRAWING = threading.RLock()
+_ACTIVE: List["ProgressRenderer"] = []
 
 
-def start_inline_status(label: str, enabled: bool) -> None:
-    """Emit the leading inline progress label when progress is enabled."""
-    if enabled:
-        print(label, end=" ", flush=True, file=sys.stderr)
+def _terminal_width() -> int:
+    try:
+        return max(1, os.get_terminal_size(sys.stderr.fileno()).columns - 1)
+    except (OSError, ValueError, AttributeError):
+        return 79
 
 
-def update_inline_status(label: str, pct: int, *, bar_len: int = 24, suffix: str = "") -> None:
-    """Print an inline progress update with consistent formatting."""
-    bar = render_inline_bar(pct, bar_len=bar_len)
-    suffix_text = f" {suffix}" if suffix else ""
-    print(f"\r{label} [{bar}] {pct:3d}%{suffix_text}", end="", flush=True, file=sys.stderr)
+def _fit_line(text: str, width: int) -> str:
+    """Fit printable text in display cells, leaving the terminal's wrap column free."""
+    result: List[str] = []
+    used = 0
+    for char in text:
+        if unicodedata.category(char).startswith("C"):
+            char = " "
+        cells = (
+            0
+            if unicodedata.combining(char)
+            else (2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1)
+        )
+        if used + cells > width:
+            break
+        result.append(char)
+        used += cells
+    return "".join(result)
 
 
-def finish_inline_status(enabled: bool) -> None:
-    """Terminate the inline status line so subsequent logs stay readable."""
-    if enabled:
-        print(file=sys.stderr)
+class ProgressRenderer:
+    """One transient, terminal-sized line shared by all analysis and apply phases.
+
+    Nested phases temporarily take over the line. Display failures cost only
+    the display; every drawing operation and every note uses the same lock.
+    """
+
+    def __init__(
+        self,
+        mode: ProgressMode,
+        *,
+        total: Optional[int],
+        desc: str,
+        unit: str,
+        factory: Optional[ProgressBarFactory] = None,
+    ) -> None:
+        self._enabled = wants_bar(mode) and sys.stderr.isatty() and total != 0
+        self._factory = (factory or load_tqdm()) if self._enabled else None
+        self._total = total
+        self._desc = desc
+        self._unit = unit
+        self._done = 0
+        self._details: Mapping[str, object] = {}
+        self._bar: Optional[ProgressBar] = None
+        self._closed = False
+        self._visible = False
+        self._started = time.monotonic()
+        self._heartbeat = Heartbeat(self.refresh)
+
+    def _activate(self) -> None:
+        if self not in _ACTIVE:
+            if _ACTIVE:
+                _ACTIVE[-1]._clear()
+            _ACTIVE.append(self)
+
+    def _clear(self) -> None:
+        if self._bar is not None:
+            quietly(self._bar.close)
+            self._bar = None
+        if self._visible:
+            print("\r\x1b[2K", end="", file=sys.stderr, flush=True)
+            self._visible = False
+
+    def _draw(self) -> None:
+        if not self._enabled or self._closed:
+            return
+        self._activate()
+        if _ACTIVE[-1] is not self:
+            return
+        if self._factory is not None and self._bar is None:
+            try:
+                self._bar = self._factory(
+                    total=self._total,
+                    desc=self._desc,
+                    unit=self._unit,
+                    dynamic_ncols=True,
+                    leave=False,
+                )
+                self._bar.update(self._done)
+            except Exception:
+                self._factory = None
+        if self._bar is not None:
+            self._bar.set_postfix(self._details, refresh=True)
+        else:
+            count = str(self._done) if self._total is None else f"{self._done}/{self._total}"
+            detail = " ".join(f"{key}={value}" for key, value in self._details.items())
+            elapsed = (time.monotonic() - self._started) / 60
+            line = _fit_line(
+                f"{self._desc}: {count} {self._unit} | {elapsed:.1f}m | {detail}", _terminal_width()
+            )
+            print(f"\r\x1b[2K{line}", end="", file=sys.stderr, flush=True)
+        self._visible = True
+
+    def start_heartbeat(self) -> None:
+        """Keep an active terminal display alive while verification is busy."""
+        if self._enabled and not self._closed:
+            self._heartbeat.start()
+
+    def refresh(self) -> None:
+        with _DRAWING:
+            quietly(self._draw)
+
+    def update(self, n: int = 1) -> None:
+        if not self._enabled:
+            return
+        with _DRAWING:
+            self._done += n
+            bar = self._bar
+            if bar is not None:
+                quietly(lambda: bar.update(n))
+            quietly(self._draw)
+
+    def set_postfix(self, ordered_dict: Mapping[str, object], refresh: bool = True) -> None:
+        if not self._enabled:
+            return
+        with _DRAWING:
+            self._details = dict(ordered_dict)
+            if refresh:
+                quietly(self._draw)
+
+    def close(self) -> None:
+        self._heartbeat.stop()
+        with _DRAWING:
+            self._closed = True
+            quietly(self._clear)
+            if self in _ACTIVE:
+                _ACTIVE.remove(self)
+                if _ACTIVE:
+                    quietly(_ACTIVE[-1]._draw)

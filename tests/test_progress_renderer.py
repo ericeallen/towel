@@ -1,0 +1,100 @@
+# Copyright 2025-2026 Eric Allen
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+"""Audit finding 7: transient progress must not become scrolling output."""
+
+import contextlib
+import io
+import os
+import pty
+import select
+import struct
+import termios
+import fcntl
+from typing import Iterator
+
+import pytest
+
+from towel.unification import progress
+from towel.unification.progress import ProgressRenderer
+
+
+@contextlib.contextmanager
+def terminal(columns: int = 40) -> Iterator[tuple[io.TextIOWrapper, int]]:
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, columns, 0, 0))
+    with os.fdopen(slave, "w", buffering=1) as stream:
+        try:
+            yield stream, master
+        finally:
+            os.close(master)
+
+
+def read_terminal(master: int) -> str:
+    chunks = []
+    while select.select([master], [], [], 0)[0]:
+        chunks.append(os.read(master, 65536))
+    return b"".join(chunks).decode()
+
+
+@pytest.mark.parametrize("mode", ["auto", "tqdm", "none", "detail"])
+def test_pipe_has_no_bar(mode: progress.ProgressMode) -> None:
+    """Audit 7: redirected stderr never contains carriage-return updates."""
+    output = io.StringIO()
+    with contextlib.redirect_stderr(output):
+        renderer = ProgressRenderer(mode, total=3, desc="analyze", unit="file")
+        renderer.update()
+        renderer.close()
+    assert output.getvalue() == ""
+
+
+def test_terminal_line_fits_and_finishes_without_scrolling(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit 7: three phases leave only the final result on a narrow terminal."""
+    monkeypatch.setattr(progress, "load_tqdm", lambda: None)
+    with terminal(32) as (stream, master), contextlib.redirect_stderr(stream):
+        for name in ["analyze", "pair", "apply"]:
+            renderer = ProgressRenderer("auto", total=3, desc=name, unit="file")
+            renderer.set_postfix({"path": "long/" * 40})
+            renderer.update(3)
+            renderer.close()
+        print("Result: 3 refactorings", file=stream, flush=True)
+        output = read_terminal(master)
+    assert output.count("\n") == 1
+    assert output.endswith("\r\x1b[2KResult: 3 refactorings\r\n")
+    for update in output.split("\r\x1b[2K")[:-1]:
+        assert len(update) <= 31
+
+
+def test_nested_phases_restore_outer_display(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit 7: local analysis and the apply heartbeat share one line."""
+    monkeypatch.setattr(progress, "load_tqdm", lambda: None)
+    with terminal() as (stream, master), contextlib.redirect_stderr(stream):
+        outer = ProgressRenderer("auto", total=None, desc="apply", unit="it")
+        inner = ProgressRenderer("auto", total=2, desc="analyze", unit="file")
+        outer.update()
+        inner.update()
+        read_terminal(master)
+        outer.refresh()
+        assert read_terminal(master) == ""
+        inner.close()
+        assert "apply" in read_terminal(master)
+        outer.close()
+    assert not progress._ACTIVE
+
+
+def test_fitting_uses_terminal_cells_and_removes_control_characters() -> None:
+    """Audit 7: wide file names and embedded newlines cannot wrap a progress line."""
+    assert progress._fit_line("界界界x", 5) == "界界"
+    assert progress._fit_line("a\nb\x1bc", 5) == "a b c"

@@ -42,7 +42,6 @@ from typing import (
     Union,
 )
 import ast
-import sys
 from collections import OrderedDict
 import hashlib
 from dataclasses import dataclass
@@ -61,15 +60,8 @@ from .models import (
 from .models import FunctionNode
 from .scope_analyzer import ScopeAnalyzer
 from .overlap import filter_overlapping_proposals
-from .progress import (
-    DEFAULT_PROGRESS,
-    ProgressBar,
-    ProgressMode,
-    load_tqdm,
-    quietly,
-    render_inline_bar,
-    wants_bar,
-)
+from .progress import DEFAULT_PROGRESS, ProgressMode, ProgressRenderer
+
 from ..diagnostics import LOG, Settings
 from ..source_text import read_source
 from .visitors import DefinitionDepthVisitor, FunctionCollector
@@ -411,26 +403,6 @@ def _read_and_normalize_module(path: str) -> Tuple[str, ast.AST]:
     return src, tree
 
 
-def _create_progress_bar(
-    use_progress: bool, total: int, desc: str, unit: str
-) -> Optional[ProgressBar]:
-    """Return a tqdm-style progress bar if tqdm is available, else None."""
-    if not use_progress or total <= 0:
-        return None
-    tqdm_cls = load_tqdm()
-    if tqdm_cls is None:
-        return None
-    try:
-        return tqdm_cls(total=total, desc=desc, unit=unit, dynamic_ncols=True, leave=False)
-    except Exception:
-        return None
-
-
-def _close_progress_bar(bar: Optional[ProgressBar]) -> None:
-    if bar is not None:
-        quietly(bar.close)
-
-
 def run_pipeline(
     paths: Sequence[str],
     *,
@@ -451,32 +423,17 @@ def run_pipeline(
     if invalidate_paths:
         analysis_session.invalidate(invalidate_paths)
 
-    use_progress = wants_bar(progress)
-    bar = _create_progress_bar(use_progress, len(paths), "analyze", "file")
-    inline_progress = use_progress and bar is None and len(paths) > 0
-    if inline_progress:
-        print("Analyzing files:", end=" ", flush=True, file=sys.stderr)
+    bar = ProgressRenderer(progress, total=len(paths), desc="Analyzing files", unit="file")
     analyses: List[ModuleAnalysis] = []
     try:
-        for index, path in enumerate(paths, 1):
+        for path in paths:
             try:
                 analyses.append(analysis_session.analyze_module(path))
             except SourceFileError as error:
                 LOG.warning("Skipping %s: %s", path, error)
-            if bar is not None:
-                quietly(lambda: bar.update(1))
-            elif inline_progress:
-                percent = int(100 * index / len(paths))
-                print(
-                    f"\rAnalyzing files: [{render_inline_bar(percent)}] {percent:3d}%",
-                    end="",
-                    flush=True,
-                    file=sys.stderr,
-                )
+            bar.update()
     finally:
-        _close_progress_bar(bar)
-        if inline_progress:
-            print(file=sys.stderr)
+        bar.close()
 
     functions = [function for analysis in analyses for function in analysis.functions]
     classes = [info for analysis in analyses for info in analysis.module.class_infos]
