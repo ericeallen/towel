@@ -19,7 +19,7 @@ from __future__ import annotations
 from difflib import unified_diff
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Literal, Sequence, TypedDict
+from typing import TYPE_CHECKING, List, Literal, NotRequired, Sequence, TypedDict
 
 from towel.source_files import python_sources
 from towel.source_text import read_source
@@ -102,7 +102,7 @@ class HelperInventory(TypedDict):
     helpers: List[HelperRecord]
 
 
-TypesStatus = Literal["enabled", "unverified", "off"]
+TypesStatus = Literal["verified", "unverified", "off"]
 
 
 class CommandResult(TypedDict):
@@ -112,15 +112,16 @@ class CommandResult(TypedDict):
     whether its final transaction committed. A time-limit refusal is always
     before publication and therefore reports false, as a preview always does.
 
-    ``types`` is ``enabled`` when a checker was selected (individual bare
-    proposals may need no verification), ``unverified`` when no checker was
-    available or the operation failed, and ``off`` for explicit ``--no-types``.
+    On completed runs, ``types`` is ``verified`` when a checker ran and
+    verified the accepted changes, ``unverified`` when no checker was
+    available, and ``off`` for explicit ``--no-types``. Failed or interrupted
+    runs omit it: ``status`` and ``error`` describe their outcome.
     A missing configured checker in relaxed mode gives ``unverified`` and bare
     helpers; with no configured checker, existing annotations may be copied.
     """
 
     schema_version: Literal[1]
-    types: TypesStatus
+    types: NotRequired[TypesStatus]
     command: Literal["preview", "dry"]
     status: Literal["complete", "incomplete", "error"]
     input: str

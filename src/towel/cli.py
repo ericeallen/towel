@@ -1451,7 +1451,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                 file=sys.stderr,
             )
         types_status: TypesStatus = (
-            "off" if not options.types else "enabled" if oracle is not None else "unverified"
+            "off" if not options.types else "verified" if oracle is not None else "unverified"
         )
         engine = UnificationRefactorEngine(
             max_parameters=options.max_parameters,
@@ -2090,7 +2090,6 @@ def _write_failure_result(
         return
     result: CommandResult = {
         "schema_version": 1,
-        "types": "unverified" if args.types else "off",
         "command": args.command,
         "status": status,
         # Failure reporting must not repeat the filesystem operation that

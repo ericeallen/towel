@@ -73,6 +73,7 @@ The preview/dry result schema is version 1:
 | `schema_version` | Integer `1`. |
 | `command` | `"preview"` or `"dry"`. |
 | `status` | `"complete"`, `"incomplete"` or `"error"`. |
+| `types` | On completed runs, `"verified"` means a checker ran and verified the accepted changes, `"unverified"` means no checker was available (including a missing configured checker in relaxed mode), and `"off"` means `--no-types`; absent on failed or interrupted runs, whose outcome is given by `status` and `error`. |
 | `input` | Absolute input path. |
 | `output` | Absolute destination path for `dry`; `null` for preview. |
 | `published` | `true` after successful `dry` publication; `false` for preview or an expired time budget; `null` when a failed or interrupted `dry` cannot confirm the publication state. |

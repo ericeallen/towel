@@ -194,7 +194,8 @@ def test_relaxed_missing_checker_previews_bare_helpers_with_explicit_warning(
     assert path.read_text() == SOURCE
     strict = invoke(["preview", target, *flags, "--strict"])
     assert strict.status == 1
-    assert json.loads(strict.stdout)["types"] == "unverified"
+    assert json.loads(strict.stdout)["status"] == "error"
+    assert "types" not in json.loads(strict.stdout)
     assert path.read_text() == SOURCE
     off = invoke(["preview", target, *flags, "--no-types"])
     assert off.status == 0
@@ -203,13 +204,13 @@ def test_relaxed_missing_checker_previews_bare_helpers_with_explicit_warning(
 
 
 @requires_mypy
-def test_available_configured_checker_is_named_as_enabled_in_json(tmp_path: Path) -> None:
+def test_available_configured_checker_is_named_as_verified_in_json(tmp_path: Path) -> None:
     """Typed audit item 2: the JSON distinguishes a checker run from fallback."""
     path = _project(tmp_path, "[tool.mypy]\n")
     path.write_text("value: int = 3\n")
     result = invoke(["preview", str(path), "--json", "--no-format", "--progress", "none"])
     assert result.status == 0, result.stderr
-    assert json.loads(result.stdout)["types"] == "enabled"
+    assert json.loads(result.stdout)["types"] == "verified"
 
 
 @pytest.mark.parametrize("in_place", [False, True])
@@ -265,3 +266,44 @@ def test_dry_discloses_unverified_fallback_before_consent(
             document = json.loads(result.stdout)
             assert document["published"] is True
             assert document["types"] == "unverified"
+
+
+@pytest.mark.parametrize("configured", [False, True])
+def test_unverified_json_means_no_checker_was_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured: bool
+) -> None:
+    """Typed round 2 finding 5: both missing-checker paths share one verification outcome."""
+    path = _project(tmp_path, "[tool.mypy]\n" if configured else "[project]\nname = 'example'\n")
+    _without_mypy(monkeypatch)
+    _without_pyright(monkeypatch)
+    result = invoke(["preview", str(path), "--json", "--no-format", "--progress", "none"])
+    document = json.loads(result.stdout)
+    assert result.status == 0, result.stderr
+    assert document["status"] == "complete"
+    assert document["types"] == "unverified"
+
+
+def test_failed_checker_is_an_error_not_a_missing_checker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Typed round 2 finding 5: failure must not masquerade as the unverified fallback."""
+    from towel import cli
+    from towel.type_inference import CheckFailure
+    from tests.test_type_run_policy import _Oracle
+
+    path = _project(tmp_path, "[tool.mypy]\n")
+    monkeypatch.setattr(cli, "_type_oracle", lambda _: _Oracle(lambda _: CheckFailure("timed out")))
+    result = invoke(["preview", str(path), "--json", "--no-format", "--progress", "none"])
+    document = json.loads(result.stdout)
+    assert result.status == 1
+    assert document["status"] == "error"
+    assert "timed out" in document["error"]
+    assert "types" not in document
+
+
+def test_types_field_is_in_the_public_schema() -> None:
+    """Typed round 2 finding 5: scripts have a documented meaning for each verification value."""
+    schema = (Path(__file__).parents[1] / "docs" / "COMPATIBILITY.md").read_text()
+    row = next(line for line in schema.splitlines() if line.startswith("| `types` |"))
+    assert all(f'"{value}"' in row for value in ("verified", "unverified", "off"))
+    assert "absent" in row and "status" in row
