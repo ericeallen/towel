@@ -648,7 +648,10 @@ def _lazily_read_names(node: ast.AST) -> Optional[FrozenSet[str]]:
     bases run once, where the class stands, and are not.
     """
     if isinstance(node, _NESTED_SCOPE_TYPES):
-        return frozenset(loaded_names(node))
+        # Parameters, locals and comprehension targets belong to their own
+        # scopes. Defaults and a comprehension's first iterable still read
+        # the enclosing scope, even when they spell one of those binders.
+        return frozenset(free_reads(node))
     if _TYPE_ALIAS is not None and isinstance(node, _TYPE_ALIAS):
         # Its own type parameters are bound in its annotation scope.
         return frozenset(loaded_names(node) - type_parameter_names(node))
