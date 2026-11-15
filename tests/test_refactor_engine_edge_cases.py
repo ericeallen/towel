@@ -74,7 +74,9 @@ class TestRefactorEngineEdgeCases(TemporaryModuleTestCase):
             proposals = self.engine.analyze_file(temp_path)
         self.assertEqual(proposals, [])
         (message,) = logs.output
-        self.assertIn(f"Skipping {temp_path}: '(' was never closed", message)
+        self.assertIn(
+            f"Skipping {Path(temp_path).resolve()}: line 1: '(' was never closed", message
+        )
 
     def test_analyze_files_with_no_functions(self):
         """Files that lack candidate functions yield no proposals."""
