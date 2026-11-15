@@ -35,10 +35,11 @@ from pathlib import Path, PurePath
 import shutil
 import stat
 import tempfile
-from typing import Iterable, Iterator, List, Mapping, Tuple
+from typing import Callable, Iterable, Iterator, List, Mapping, Tuple
 
 from .changes import JOURNAL_PREFIX, SET_ASIDE_PREFIX, ChangePlan, FileChange, StaleSource
-from .source_files import TOOL_DIRECTORIES, is_environment, is_probe_file
+from .program_files import skip_nonprogram_file
+from .source_files import TOOL_DIRECTORIES, is_environment, is_probe_file, skip_unreadable
 
 
 def _case_collisions(relatives: Iterable[PurePath]) -> List[Tuple[PurePath, PurePath]]:
@@ -100,6 +101,20 @@ def _refuse_unusable_output(
 def refuse_unusable_output(source: Path, destination: Path, *, allow_empty: bool = False) -> None:
     """Refuse now what ``copy_project`` would refuse, before a long run is spent on it."""
     _refuse_unusable_output(source, destination, allow_empty=allow_empty)
+    parent = destination.absolute().parent
+    try:
+        while not parent.exists():
+            parent = parent.parent
+        # Test the actual filesystem permissions and available space, including ACLs.
+        # Do not create the requested output or its missing parent directories.
+        with tempfile.TemporaryFile(prefix=".towel-write-", dir=parent) as probe:
+            probe.write(b"towel")
+            probe.flush()
+    except OSError as error:
+        raise ValueError(
+            f"Cannot write output {destination}: its existing parent {parent} is not"
+            f" writable ({error.strerror or error}). Choose a writable output directory."
+        ) from error
 
 
 def copy_project(source: Path, destination: Path, *, allow_empty: bool = False) -> None:
@@ -154,6 +169,41 @@ refused as though the project had an interrupted change pending, and named
 the stage in its remedy. A journal belongs to the files it sits beside, so
 none is copied into an output either.
 """
+
+_STAGE_OWNER = ".towel-owner"
+
+
+def _remove_dead_stages() -> None:
+    """Reclaim private stages marked by this version, only after their owner has exited.
+
+    Old unmarked stages, inaccessible owners and reused live PIDs are left alone.
+    A symlink or a directory writable by another account is never followed.
+    Windows has no harmless ``kill(pid, 0)`` probe, so leaves stages for manual cleanup.
+    """
+    if os.name == "nt":
+        return
+    for directory in Path(tempfile.gettempdir()).glob("towel-stage-*"):
+        try:
+            info = directory.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o077:
+                continue
+            if hasattr(os, "getuid") and info.st_uid != os.getuid():
+                continue
+            marker = directory / _STAGE_OWNER
+            if marker.is_symlink():
+                continue
+            owner = int(marker.read_text(encoding="ascii"))
+            if owner <= 0:
+                continue
+            try:
+                os.kill(owner, 0)
+            except ProcessLookupError:
+                shutil.rmtree(directory)
+        except (OSError, ValueError):
+            # Missing or unreadable markers cannot establish ownership; another
+            # run may also have reclaimed this stage since it was enumerated.
+            continue
+
 
 STAGED_SUFFIXES = frozenset({".py", ".pyi", ".toml", ".json", ".ini", ".cfg"})
 STAGED_NAMES = frozenset({"py.typed", ".gitignore"})
@@ -234,7 +284,7 @@ def _stage_plan(
     avoided = {path.resolve() for path in skipped}
     planned: List[PurePath] = []
     python_files = 0
-    for parent, directories, files in os.walk(root, followlinks=False):
+    for parent, directories, files in os.walk(root, followlinks=False, onerror=skip_unreadable):
         directory = Path(parent)
         # A target copied whole is walked here only to be counted, under the
         # same rules as the rest.
@@ -258,17 +308,23 @@ def _stage_plan(
         directories[:] = kept
         for name in sorted(files):
             path = directory / name
+            if name.startswith(".#") or (path.is_symlink() and not path.exists()):
+                continue
+            if name.endswith(".py") and skip_nonprogram_file(path):
+                continue
             if name.endswith((".py", ".pyi")):
                 python_files += 1
                 if python_files > limit:
                     raise ProjectTooLarge(
                         f"The project around {target} ({root}) holds more than {limit} Python"
-                        " files. A run refactors a private copy of the whole project, so that"
+                        " source/stub files (.py and .pyi), including modules outside the target."
+                        " A run refactors a private copy of the whole project, so that"
                         " nothing is written until it has succeeded and every decision sees the"
                         " modules around the target, and this one is too large to copy. Towel"
                         " takes the project to be the nearest directory with a pyproject.toml,"
-                        " setup.cfg or setup.py; give the code one, or move it out of the larger"
-                        " tree."
+                        " setup.cfg or setup.py; for an independent smaller project, give the code"
+                        " one in its own directory, or move that project out of the larger tree."
+                        " Selecting a smaller target alone does not shrink its project."
                     )
             if inside_target or (whole_target and path == target):
                 continue
@@ -279,12 +335,32 @@ def _stage_plan(
     return planned, python_files
 
 
-def _copy_entry(source: Path, destination: Path) -> None:
+def _copy_entry(source: Path, destination: Path) -> bool:
+    if not _readable_entry(source):
+        return False
     destination.parent.mkdir(parents=True, exist_ok=True)
     if source.is_symlink():
         os.symlink(os.readlink(source), destination)
     else:
         shutil.copy2(source, destination)
+    return True
+
+
+def _readable_entry(source: Path) -> bool:
+    """Probe only the source: a failed destination write must still fail the run."""
+    if source.is_symlink():
+        return True
+    try:
+        if source.is_dir():
+            with os.scandir(source):
+                pass
+        elif source.is_file():
+            with source.open("rb"):
+                pass
+    except OSError as error:
+        skip_unreadable(error)
+        return False
+    return True
 
 
 def _digest(content: bytes) -> str:
@@ -293,7 +369,13 @@ def _digest(content: bytes) -> str:
 
 @contextmanager
 def staged_project(
-    root: Path, target: Path, output: Path, *, limit: int
+    root: Path,
+    target: Path,
+    output: Path,
+    *,
+    limit: int,
+    preview: bool = False,
+    notice: Callable[[str], None] | None = None,
 ) -> Iterator[StagedProject]:
     """A private copy of the project at ``root`` in which ``target`` can be refactored.
 
@@ -306,34 +388,42 @@ def staged_project(
     will ever go back, and each staged file's digest is kept so that
     ``staged_changes`` can tell them apart. The copy lives outside the
     project, where no scan of it can find the stage, and is removed however
-    the block ends.
+    the block ends. Preview uses the same filtered plan, but allows hard-linked
+    originals because no changes are published over them. After a killed run,
+    the next run reclaims its marked stage once its owner process is gone.
     """
     root, target = root.resolve(), target.resolve()
     if not (target == root or target.is_relative_to(root)):
         raise ValueError(f"{target} is not inside its project root {root}")
     in_place = output.absolute() == target or output.resolve() == target
+    filtered = in_place or preview
     planned, _ = _stage_plan(
-        root, target, () if in_place else (output,), limit, whole_target=not in_place
+        root, target, () if in_place else (output,), limit, whole_target=not filtered
     )
-    if in_place and target.is_file() and target.relative_to(root) not in planned:
+    if filtered and target.is_file() and target.relative_to(root) not in planned:
         # A file refactored on request whatever its suffix still has to be there.
         planned.append(target.relative_to(root))
+    _remove_dead_stages()
     with tempfile.TemporaryDirectory(prefix="towel-stage-") as temporary:
+        (Path(temporary) / _STAGE_OWNER).write_text(str(os.getpid()), encoding="ascii")
         staged_root = Path(temporary).resolve() / (root.name or "project")
         staged_target = staged_root / target.relative_to(root)
         relatives: List[PurePath] = list(planned)
-        if in_place:
+        if filtered:
             pass  # the plan already holds the target's inputs
         elif target.is_dir():
             relatives.extend(path.relative_to(root) for path in target.rglob("*"))
         else:
             relatives.append(target.relative_to(root))
+        if not filtered and notice is not None:
+            _announce_copy(target, output, notice)
         _refuse_collisions_on(_case_collisions(relatives), Path(temporary), "staging")
         staged_root.mkdir()
-        for relative in planned:
-            _copy_entry(root / relative, staged_root / relative)
+        copied = [
+            relative for relative in planned if _copy_entry(root / relative, staged_root / relative)
+        ]
         staged_target.parent.mkdir(parents=True, exist_ok=True)
-        if in_place:
+        if filtered:
             if target.is_dir():
                 staged_target.mkdir(parents=True, exist_ok=True)
             yield StagedProject(
@@ -341,27 +431,52 @@ def staged_project(
                 target,
                 staged_root,
                 staged_target,
-                target,
-                _staged_digests(root, target, staged_root, planned),
-                _hard_linked(root, target, planned),
+                target if in_place else output,
+                _staged_digests(root, target, staged_root, copied),
+                _hard_linked(root, target, copied) if in_place and not preview else {},
             )
             return
         if target.is_dir():
             if staged_target.exists():
                 # The target is the root itself; the loop above copied nothing.
                 staged_target.rmdir()
-            shutil.copytree(target, staged_target, symlinks=True, ignore=_transient_entries)
+            if _readable_entry(target):
+                shutil.copytree(target, staged_target, symlinks=True, ignore=_transient_entries)
+            else:
+                staged_target.mkdir()
         else:
             shutil.copy2(target, staged_target)
         yield StagedProject(root, target, staged_root, staged_target, output)
 
 
+def _announce_copy(source: Path, output: Path, notice: Callable[[str], None]) -> None:
+    """Describe a large whole-target copy before copying any payload bytes."""
+    files = 0
+    size = 0
+    if source.is_dir():
+        for parent, directories, names in os.walk(
+            source, followlinks=False, onerror=skip_unreadable
+        ):
+            directories[:] = [
+                name for name in directories if not name.startswith(_TRANSIENT_PREFIXES)
+            ]
+            for name in names:
+                files += 1
+                size += (Path(parent) / name).lstat().st_size
+    else:
+        files = 1
+        size = source.stat().st_size
+    if files >= 1000 or size >= 10_000_000:
+        notice(f"Copying {files} files ({size / 1_000_000:.1f} MB) to {output}")
+
+
 def _transient_entries(directory: str, names: List[str]) -> List[str]:
-    """The ``copytree`` ignore that leaves Towel's own transient directories out of a target."""
+    """Leave transient directories and relaxed-mode unreadable entries out of a copy."""
     return [
         name
         for name in names
-        if name.startswith(_TRANSIENT_PREFIXES) and os.path.isdir(os.path.join(directory, name))
+        if (name.startswith(_TRANSIENT_PREFIXES) and os.path.isdir(os.path.join(directory, name)))
+        or not _readable_entry(Path(directory) / name)
     ]
 
 
