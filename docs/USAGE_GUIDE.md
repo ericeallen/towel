@@ -378,6 +378,9 @@ call `oracle.tool.close()` in a
 
 ### Directory Scanning
 
+`analyze_directory` is outside the supported `towel.api` surface; pin the exact
+Towel version if you call it, or pass the files you choose to `analyze_files`.
+
 ```python
 # Recursive (default) - searches subdirectories
 proposals = engine.analyze_directory("src/", recursive=True)
@@ -409,6 +412,10 @@ its own. `analyze_files` makes no such check first, but refuses the same
 way at the first pair it judges.
 
 ## Understanding Proposals
+
+Only `description` is part of the supported API; the other attributes below are
+outside the supported `towel.api` surface, where a proposal is opaque, so pin
+the exact Towel version before reading them.
 
 Each proposal contains:
 
@@ -496,6 +503,9 @@ helper's `def` line.
 ### Cross-File vs Same-File
 
 Cross-file proposals come only from an engine made with `cross_module_helpers=True`.
+The two methods below only return rendered text and are outside the supported
+`towel.api` surface; `apply_changes(engine.plan_refactoring(proposal))` is the
+supported way to apply either kind.
 
 ```python
 # Check if it's cross-file
@@ -659,23 +669,24 @@ changes using your project's tests and requirements. See the
 
 ## Tips
 
-### 1. Always Use analyze_files() or analyze_directory() for Cross-File
+### 1. Always Use analyze_files() for Cross-File
 
 ```python
 engine = UnificationRefactorEngine(cross_module_helpers=True)
+files = ["file1.py", "file2.py"]
 
 # ❌ BAD - Misses cross-file duplicates
 proposals1 = engine.analyze_file("file1.py")
 proposals2 = engine.analyze_file("file2.py")
 
 # ✅ GOOD - Finds cross-file duplicates
-proposals = engine.analyze_files(["file1.py", "file2.py"])
+proposals = engine.analyze_files(files)
 ```
 
 ### 2. Review Proposals Before Applying
 
 ```python
-proposals = engine.analyze_directory("src/")
+proposals = engine.analyze_files(files)
 
 # Review each proposal
 for i, prop in enumerate(proposals, 1):
@@ -694,11 +705,11 @@ Running the tool multiple times can find more opportunities:
 
 ```python
 # First pass
-proposals = engine.analyze_directory("src/")
+proposals = engine.analyze_files(files)
 # Apply proposals...
 
 # Second pass - may find more after first refactoring
-proposals2 = engine.analyze_directory("src/")
+proposals2 = engine.analyze_files(files)
 ```
 
 ### 4. Filter by Parameters
@@ -745,7 +756,7 @@ show it works (*How a cross-module import is spelled* above), so the result
 imports wherever the original did, in place or once an out-of-place copy is
 adopted into its real location. If you still hit an import error:
 
-- Refactor through `analyze_files()`/`analyze_directory()` or the `towel dry`
+- Refactor through `analyze_files()`, a fixed-point method or the `towel dry`
   command, which run the full pipeline including the import model; a
   hand-built `RefactoringProposal` skips host selection, and its import is
   refused when no spelling is known.
@@ -766,6 +777,11 @@ adopted into its real location. If you still hit an import error:
   exists, and its modules share helpers with the rest of the project again.
 
 ## Advanced Usage
+
+Custom filtering and the dry run below read proposal attributes, which are
+outside the supported `towel.api` surface (see
+[Understanding Proposals](#understanding-proposals)). Selective application
+uses only supported names.
 
 ### Custom Filtering
 
@@ -800,14 +816,21 @@ for proposal in proposals:
 ### Selective Application
 
 ```python
-from towel.changes import apply_changes
+from pathlib import Path
 
-proposals = engine.analyze_directory("src/", progress="none")
+from towel.api import UnificationRefactorEngine, apply_changes
+
+engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+files = sorted(str(path) for path in Path("src").glob("*.py"))
+plans = (
+    engine.plan_refactoring(proposal)
+    for proposal in engine.analyze_files(files, progress="none")
+)
 selected = next(
-    (proposal for proposal in proposals if "utils" in proposal.file_path),
+    (plan for plan in plans if any("utils" in str(change.path) for change in plan.changes)),
     None,
 )
 if selected is not None:
-    apply_changes(engine.plan_refactoring(selected))
+    apply_changes(selected)
 # Analyze again before selecting another proposal.
 ```

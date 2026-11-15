@@ -25,9 +25,13 @@ import argparse
 from pathlib import Path
 import re
 
+import pytest
+
 from tests.test_cli_integration import DUPLICATES, HELPER, invoke
 from tests.test_documentation_navigation import _prose
 from towel import cli
+from towel.api import UnificationRefactorEngine
+from towel.changes import apply_changes as internal_apply_changes
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -243,3 +247,106 @@ def test_usage_guide_is_titled_as_the_pages_that_link_it_call_it() -> None:
     for page in ("README.md", "QUICKSTART.md"):
         names = re.findall(r"\[([^\]]+)\]\(USAGE_GUIDE\.md\)", _guide(page))
         assert names == [title.removeprefix("# ")], page
+
+
+SUPPORTED_ENGINE_METHODS = {
+    "analyze_file",
+    "analyze_files",
+    "plan_refactoring",
+    "refactor_to_fixed_point",
+    "refactor_directory_to_fixed_point",
+}
+UNSUPPORTED = "outside the supported `towel.api` surface"
+
+
+def _sections(page: str) -> list[tuple[str, str]]:
+    """Each heading with the text up to the next heading of any level, fences kept whole."""
+    sections: list[tuple[str, str]] = []
+    heading = ""
+    lines: list[str] = []
+    fenced = False
+    for line in page.splitlines():
+        if line.startswith("```"):
+            fenced = not fenced
+        if not fenced and re.match(r"#{1,6} ", line):
+            sections.append((heading, "\n".join(lines)))
+            heading, lines = line, []
+        else:
+            lines.append(line)
+    sections.append((heading, "\n".join(lines)))
+    return sections
+
+
+def _unsupported_uses(page: str) -> list[tuple[str, str]]:
+    """Examples that reach past `towel.api` in a section that does not say so."""
+    found: list[tuple[str, str]] = []
+    for heading, text in _sections(page):
+        if UNSUPPORTED in _compact(text):
+            continue
+        for block in re.findall(r"(?ms)^```python\n(.*?)^```", text):
+            modules = set(re.findall(r"^\s*from (towel[\w.]*) import", block, re.MULTILINE))
+            methods = set(re.findall(r"\bengine\.(\w+)\(", block))
+            found += [(heading, name) for name in sorted(modules - {"towel.api"})]
+            found += [(heading, name) for name in sorted(methods - SUPPORTED_ENGINE_METHODS)]
+    return found
+
+
+def test_usage_guide_examples_use_the_supported_api_or_say_that_they_do_not() -> None:
+    """Audit finding 12 (Kimi's review, finding 5).
+
+    The compatibility contract names `towel.api` and five engine methods as the
+    supported surface. The guide imported `apply_changes` from `towel.changes` and
+    called `analyze_directory` without saying that either is outside it.
+    """
+    contract = _compact(_section(_guide("COMPATIBILITY.md"), "## Python API"))
+    for method in SUPPORTED_ENGINE_METHODS:
+        assert f"`{method}`" in contract
+    assert "`analyze_directory`" not in contract
+    guide = _guide("USAGE_GUIDE.md")
+    assert _unsupported_uses(guide) == []
+    assert UNSUPPORTED in _compact(_section(guide, "## Understanding Proposals"))
+    unmarked = (
+        "## Tips\n\n```python\nfrom towel.changes import apply_changes\n"
+        'proposals = engine.analyze_directory("src/")\n```\n'
+    )
+    assert _unsupported_uses(unmarked) == [
+        ("## Tips", "towel.changes"),
+        ("## Tips", "analyze_directory"),
+    ]
+    assert (
+        _unsupported_uses(unmarked.replace("## Tips\n", f"## Tips\n\nThis is {UNSUPPORTED}.")) == []
+    )
+
+
+def test_selective_application_example_gives_the_result_of_the_calls_it_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The supported spelling must do what the guide's earlier, internal one did."""
+    sources = {
+        "utils.py": DUPLICATES,
+        "orders.py": DUPLICATES.replace("first", "third").replace("second", "fourth"),
+    }
+    for name in ("before", "after"):
+        (tmp_path / name / "src").mkdir(parents=True)
+        for file, source in sources.items():
+            (tmp_path / name / "src" / file).write_text(source)
+
+    monkeypatch.chdir(tmp_path / "before")
+    engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+    proposals = engine.analyze_directory("src/", progress="none")
+    selected = next(proposal for proposal in proposals if "utils" in proposal.file_path)
+    internal_apply_changes(engine.plan_refactoring(selected))
+
+    monkeypatch.chdir(tmp_path / "after")
+    section = _section(_guide("USAGE_GUIDE.md"), "### Selective Application")
+    example = section.split("```python\n", 1)[1].split("```", 1)[0]
+    assert "from towel.api import UnificationRefactorEngine, apply_changes" in example
+    exec(compile(example, "docs/USAGE_GUIDE.md", "exec"), {})
+
+    results = {
+        name: {file: (tmp_path / name / "src" / file).read_text() for file in sources}
+        for name in ("before", "after")
+    }
+    assert results["after"] == results["before"]
+    assert "__extracted_func_0" in results["after"]["utils.py"]
+    assert results["after"]["orders.py"] == sources["orders.py"]
