@@ -41,7 +41,6 @@ import textwrap
 import pytest
 
 from tests.test_helpers import lifetime_order_certified
-from tests.test_helpers import child_mode_flags
 from towel.type_baseline import (
     KnownErrors,
     files_where_names_are_any,
@@ -770,7 +769,9 @@ def test_a_file_whose_imports_the_checker_cannot_resolve_is_left_alone(
         1,
     )
     oracle = _Oracle(lambda _: CheckSuccess((unresolved,)))
-    engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=oracle)
+    # Relaxed mode's policy, which declines only annotated changes there (the
+    # typed lane); strict mode attempts no change to the file at all.
+    engine = UnificationRefactorEngine(skip_trivial_helpers=False, type_oracle=oracle, strict=False)
     caplog.set_level(logging.WARNING, logger="towel")
     results, _ = engine.refactor_directory_to_fixed_point(
         str(tmp_path), str(tmp_path), progress="none"
@@ -1033,7 +1034,6 @@ CLI_CALCULATIONS = "\n\n".join(
 """The real CLI must exercise baseline typing with its normal usefulness policy."""
 
 
-@pytest.mark.strict_mode
 @requires_mypy
 def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
     tmp_path: Path,
@@ -1048,7 +1048,8 @@ def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
     (package / "seen.py").write_text(CLI_CALCULATIONS, encoding="utf-8")
     run = subprocess.run(
         [sys.executable, "-c", "from towel.cli import main; main()", "dry", "pkg", "pkg"]
-        + ["--no-format", "--no-interactive", "--progress", "none", *child_mode_flags()],
+        # Relaxed mode's typed policy (the typed lane), whatever the suite's default.
+        + ["--no-format", "--no-interactive", "--progress", "none", "--no-strict"],
         cwd=tmp_path,
         env={**os.environ, "TOWEL_WORKERS": "1"},
         capture_output=True,
