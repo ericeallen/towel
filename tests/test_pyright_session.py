@@ -30,6 +30,7 @@ never was.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import os
 import shutil
@@ -41,6 +42,7 @@ from typing import Any, Dict, List, Mapping, Sequence
 
 import pytest
 
+from tests.pyright_runtime_profiles import native_workspace_completion_refused
 from towel import pyright_session, type_inference
 from towel.pyright_session import Diagnostic
 from towel.source_files import PROBE_PREFIX
@@ -69,6 +71,34 @@ def _project(root: Path, *, returns: str = "int", value: str = "1") -> Path:
 
 def _consumer_errors(errors: Sequence[object]) -> int:
     return sum(1 for error in errors if "consumer" in getattr(error, "path", ""))
+
+
+@pytest.mark.parametrize("target", ["3.13", "3.14", "3.15"])
+def test_uncertified_workspace_completion_falls_back_to_complete_cli_checking(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, target: str
+) -> None:
+    """The configured target, not Towel's host interpreter, exposes the LSP defect."""
+    provider = _project(tmp_path)
+    config = tmp_path / "pyrightconfig.json"
+    config.write_text(
+        json.dumps({"typeCheckingMode": "strict", "include": ["pkg"], "pythonVersion": target}),
+        encoding="utf-8",
+    )
+    oracle = PyrightOracle()
+    try:
+        clean = oracle.check_project({str(provider): provider.read_text(encoding="utf-8")})
+        broken = oracle.check_project({str(provider): 'def make() -> str:\n    return "x"\n'})
+        if target == "3.13":
+            assert oracle._warmed and oracle.answered_from_a_session
+        else:
+            assert oracle._server is None and not oracle._warmed
+            assert pyright_session.WORKSPACE_COMPLETION_UNAVAILABLE in caplog.text
+    finally:
+        oracle.close()
+    assert isinstance(clean, CheckSuccess) and isinstance(broken, CheckSuccess)
+    assert _consumer_errors(clean.errors) == 0
+    assert _consumer_errors(broken.errors) == 3
+    assert provider.read_text(encoding="utf-8").endswith("return 1\n")
 
 
 @pytest.mark.parametrize("language_server", [True, False], ids=["session", "command-line"])
@@ -255,7 +285,10 @@ def test_a_server_slow_to_begin_is_waited_for_not_read_as_clean(
             except ProcessLookupError:
                 pass
         oracle.close()
-    assert stalled, "the server was never stalled, so this proved nothing"
+    if native_workspace_completion_refused():
+        assert not stalled and oracle._server is None
+    else:
+        assert stalled, "the server was never stalled, so this proved nothing"
     assert isinstance(broken, CheckSuccess)
     assert _consumer_errors(broken.errors) == 3, broken.errors
 

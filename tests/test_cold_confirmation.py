@@ -31,11 +31,12 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
-import textwrap
 from typing import Mapping, Sequence
 
 import pytest
 
+from tests.test_cli_integration import LITERAL_DUPLICATES
+from tests.pyright_runtime_profiles import assert_native_workspace_profile
 from towel.type_inference import (
     CheckFailure,
     CheckResult,
@@ -54,20 +55,9 @@ requires_pyright = pytest.mark.skipif(
     importlib.util.find_spec("pyright") is None, reason="pyright absent"
 )
 
-SOURCE = textwrap.dedent("""
-    def first(value: int) -> int:
-        total = value + 1
-        doubled = total * 2
-        answer = doubled - 3
-        return answer
-
-
-    def second(value: int) -> int:
-        total = value + 1
-        doubled = total * 2
-        answer = doubled - 4
-        return answer
-    """).lstrip()
+# Literal inputs exercise checker confirmation without needing a certified
+# transfer of caller-owned values into the generated helper.
+SOURCE = LITERAL_DUPLICATES.replace("():", "() -> int:")
 
 
 def _project(tmp_path: Path) -> Path:
@@ -88,7 +78,7 @@ def test_a_warm_session_is_recognised_and_the_command_line_is_not(tmp_path: Path
         assert not served_by_a_language_server(warm), "nothing checked yet"
         warm.check_project({str(path): path.read_text(encoding="utf-8")})
         cold.check_project({str(path): path.read_text(encoding="utf-8")})
-        assert served_by_a_language_server(warm)
+        assert_native_workspace_profile(warm)
         assert not served_by_a_language_server(cold)
     finally:
         warm.close()
@@ -143,6 +133,9 @@ class _AgreeableWhileWarm(PyrightOracle):
 def test_a_run_the_warm_checker_waved_through_fails_loudly_at_the_end(tmp_path: Path) -> None:
     """The cold check is the only thing that can catch a warm checker's blind spot."""
     path = _project(tmp_path)
+    # The deliberately defective warm checker needs a certified LSP target.
+    with (tmp_path / "pyproject.toml").open("a", encoding="utf-8") as config:
+        config.write('pythonVersion = "3.13"\n')
     oracle = _AgreeableWhileWarm()
     try:
         engine = UnificationRefactorEngine(
@@ -304,6 +297,8 @@ class _WarmThenUncheckable(PyrightOracle):
 def test_a_confirmation_that_could_not_run_is_not_silence(tmp_path: Path) -> None:
     """A check that did not happen has confirmed nothing, and must say so."""
     path = _project(tmp_path)
+    with (tmp_path / "pyproject.toml").open("a", encoding="utf-8") as config:
+        config.write('pythonVersion = "3.13"\n')
     oracle = _WarmThenUncheckable()
     try:
         engine = UnificationRefactorEngine(
@@ -333,6 +328,8 @@ class _SessionThatDiesMidRun(PyrightOracle):
 def test_a_run_whose_session_died_is_still_confirmed(tmp_path: Path) -> None:
     """Abandoning a session is exactly when its verdicts most want confirming."""
     path = _project(tmp_path)
+    with (tmp_path / "pyproject.toml").open("a", encoding="utf-8") as config:
+        config.write('pythonVersion = "3.13"\n')
     oracle = _SessionThatDiesMidRun()
     try:
         oracle.check_project({str(path): path.read_text(encoding="utf-8")})

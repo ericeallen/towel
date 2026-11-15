@@ -127,6 +127,24 @@ def test_empty_diagnostics_explicitly_clear_and_related_information_is_accepted(
     assert session._state == {}
 
 
+def test_implicit_template_stub_refuses_uncertified_workspace_completion(tmp_path: Path) -> None:
+    path = tmp_path / "m.py"
+    session = session_state(path)
+    before = copy.deepcopy(session._state)
+    template_stub = tmp_path / "typeshed-fallback/stdlib/string/templatelib.pyi"
+    with pytest.raises(SessionFailure, match="cannot certify completion"):
+        session._record({"uri": template_stub.as_uri(), "diagnostics": []})
+    assert session._state == before
+    assert not session._marker_answered
+
+
+def test_a_user_template_module_does_not_trigger_the_typeshed_refusal(tmp_path: Path) -> None:
+    path = tmp_path / "string/templatelib.pyi"
+    session = session_state(path)
+    session._record({"uri": path.as_uri(), "diagnostics": []})
+    assert session._state == {}
+
+
 def test_malformed_marker_publication_cannot_acknowledge_analysis(tmp_path: Path) -> None:
     path = tmp_path / pyright_session._MARKER_NAME
     session = session_state(tmp_path / "m.py")
