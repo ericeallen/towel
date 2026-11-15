@@ -37,9 +37,11 @@ def test_existing_output_preserved(tmp_path: Path) -> None:
     destination.mkdir()
     sentinel = destination / "keep.txt"
     sentinel.write_text("valuable")
-    with pytest.raises(ValueError, match="already exists"):
+    with pytest.raises(ValueError, match="already exists") as refusal:
         _run_dry(arguments(source, destination))
     assert sentinel.read_text() == "valuable"
+    # User audit, error case 30: the refusal said to "explicitly refactor in place", not how.
+    assert "(to refactor in place, give the same path twice)" in str(refusal.value)
 
 
 @pytest.mark.parametrize("ancestor", [True, False])

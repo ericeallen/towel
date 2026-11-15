@@ -66,15 +66,16 @@ def test_the_flag_becomes_an_option_of_the_command(
 
 
 def test_the_help_says_what_strict_mode_costs() -> None:
-    """The flag's help text is the brief's, so a reader can choose without the guides."""
+    """The help names the release, the cost and the default, so a reader can choose without the guides."""
     for command in ("dry", "preview"):
         result = invoke([command, "--help"])
         text = " ".join(result.stdout.split())
         assert "--strict, --no-strict" in text
         assert (
             "Preserve exactly when objects are released and when names are looked up, as "
-            "releases before this one did. Expect more blocks left alone and bookkeeping in "
-            "callers." in text
+            "releases before 2.0 did. Expect more blocks left alone and bookkeeping in callers. "
+            "Default: off: callers call helpers directly, on the assumption that the program "
+            "does not depend on when its objects are released." in text
         )
 
 

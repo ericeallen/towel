@@ -14,6 +14,11 @@
 Read remote state through the authenticated GitHub CLI. A correct local checkout,
 release branch or tag cannot establish what the repository front page presents.
 This check does not mutate GitHub, upload artifacts or replace local validation.
+
+The front page names the version it describes and never says whether that
+version has been published: the README is frozen into the distributions before
+upload, so such a sentence is false on PyPI afterwards. PyPI's page for 1.949
+calls 1.949 unpublished for that reason.
 """
 
 from __future__ import annotations
@@ -29,6 +34,22 @@ import subprocess
 import sys
 import tomllib
 from urllib.parse import quote, unquote, urlsplit
+
+# Each of these ships in the distributions and says which version it describes.
+STATUS_DOCUMENTS = (
+    "README.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "docs/README.md",
+    "docs/QUICKSTART.md",
+)
+# The wording by which those files described their own publication in 1.949.
+PUBLICATION_CLAIMS = (
+    "unpublished",
+    "preparation checkpoint",
+    "latest published release",
+    "this source documents",
+)
 
 
 class VisibilityError(ValueError):
@@ -64,6 +85,12 @@ def github(endpoint: str) -> bytes:
     return subprocess.run(
         ["gh", "api", endpoint], check=True, capture_output=True, timeout=60
     ).stdout
+
+
+def publication_claims(document: str) -> tuple[str, ...]:
+    """Find statements of publication status, whatever their case or line wrapping."""
+    compact = " ".join(document.split()).casefold()
+    return tuple(claim for claim in PUBLICATION_CLAIMS if claim in compact)
 
 
 def document_links(readme: str, repository: str, version: str) -> tuple[str, ...]:
@@ -114,6 +141,14 @@ def verify_documents(documents: Mapping[str, str], version: str, repository: str
         f"## [{version}]\n" in documents["CHANGELOG.md"],
         "Default-branch changelog lacks the release",
     )
+    for path in STATUS_DOCUMENTS:
+        require(bool(documents.get(path, "").strip()), f"Missing default-branch document: {path}")
+        claims = publication_claims(documents[path])
+        require(
+            not claims,
+            f"Default-branch {path} states its own publication status ({', '.join(claims)}); "
+            "it is frozen before upload, so name the version and link the releases page instead",
+        )
     for path in document_links(documents["README.md"], repository, version):
         require(bool(documents.get(path, "").strip()), f"Missing default-branch document: {path}")
 
@@ -162,8 +197,7 @@ def verify(
         )
 
     documents = {
-        path: read_document(path)
-        for path in ("pyproject.toml", "README.md", "SECURITY.md", "CHANGELOG.md")
+        path: read_document(path) for path in ("pyproject.toml", "CHANGELOG.md", *STATUS_DOCUMENTS)
     }
     for path in document_links(documents["README.md"], repository, version):
         if path not in documents:
