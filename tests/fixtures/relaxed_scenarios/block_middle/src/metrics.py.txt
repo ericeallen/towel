@@ -1,0 +1,36 @@
+"""Descriptive statistics for two unrelated reports."""
+
+import math
+
+
+def exam_summary(results):
+    values = [r["score"] for r in results if r["score"] is not None]
+    if not values:
+        return {"count": 0}
+    count = len(values)
+    mean = sum(values) / count
+    variance = sum((v - mean) ** 2 for v in values) / count
+    stddev = math.sqrt(variance)
+    low, high = min(values), max(values)
+    return {
+        "count": count,
+        "mean": round(mean, 2),
+        "stddev": round(stddev, 2),
+        "range": (low, high),
+    }
+
+
+def describe_response_times(log_lines):
+    values = []
+    for line in log_lines:
+        parts = line.split()
+        if len(parts) == 3 and parts[2].endswith("ms"):
+            values.append(float(parts[2][:-2]))
+    if not values:
+        return "no samples"
+    count = len(values)
+    mean = sum(values) / count
+    variance = sum((v - mean) ** 2 for v in values) / count
+    stddev = math.sqrt(variance)
+    low, high = min(values), max(values)
+    return f"n={count} mean={mean:.1f}ms sd={stddev:.1f}ms min={low:.0f}ms max={high:.0f}ms"

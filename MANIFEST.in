@@ -7,6 +7,7 @@ recursive-include tests/release_evidence *.txt *.json *.gz
 include .github/workflows/ci.yml .github/workflows/ecosystem.yml
 recursive-include test_examples *.py *.md
 recursive-include test_examples_expected_output *.py
+recursive-include test_examples_strict_expected_output *.py
 recursive-include test_examples_crossfile *.py *.md
 recursive-include test_examples_crossfile_expected_output *.py
 recursive-include scripts *

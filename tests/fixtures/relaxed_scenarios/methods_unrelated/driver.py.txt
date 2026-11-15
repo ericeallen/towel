@@ -1,0 +1,20 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+from shapes import Circle, Rectangle
+
+for shape in (Circle(1), Circle(0), Rectangle(3, 4), Rectangle(0, 0), Rectangle(2.5, 0.1)):
+    print(shape.describe())
+    print(shape.describe(unit="ft"))
+
+
+class Square(Rectangle):
+    name = "square"
+
+    def __init__(self, side):
+        super().__init__(side, side)
+
+
+print(Square(2).describe("cm"))
+print("ok")

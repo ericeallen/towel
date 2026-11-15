@@ -10,7 +10,137 @@ ensuring the refactoring system handles all edge cases correctly.
 # =============================================================================
 
 
-def __extracted_func_2(__param_0, _towel_owner):
+def __extracted_func_28(__param_0, __param_1):
+    result = __param_0 and __param_1 or __param_0
+    result = result and __param_0 + __param_1 or __param_0 - __param_1
+    return result
+
+
+def __extracted_func_27(__param_0, __param_1):
+    result = len(f'{__param_0 + __param_1}')
+    result += len(f'{__param_0 * 2:04d}')
+    result += len(f'{__param_0:.2f}')
+    return result
+
+
+def __extracted_func_26(__param_0, __param_1):
+    result = __param_0 * 2 if __param_0 > __param_1 else __param_0
+    result = result + 10 if result < 100 else result - 10
+    return result
+
+
+def __extracted_func_25(__param_0):
+    result = sum((x * 2 for x in __param_0))
+    result += sum((x for x in __param_0 if x > 0))
+    return result
+
+
+def __extracted_func_24(__param_0):
+    result = sum({i: x * 2 for i, x in enumerate(__param_0)}.values())
+    result += sum({i: x for i, x in enumerate(__param_0) if x > 0}.values())
+    return result
+
+
+def __extracted_func_23(__param_0):
+    result = sum({x * 2 for x in __param_0})
+    result += sum({x for x in __param_0 if x > 0})
+    return result
+
+
+def __extracted_func_22(__param_0, __param_1, __param_2):
+    result = (__param_0 + __param_1) * 2 + sum([i * 2 for i in __param_2 if i > __param_0])
+    result += len([i for i in __param_2 if __param_0 < i < __param_1])
+    result += sum(map(lambda i: i ** 2, filter(lambda i: i > 0, __param_2)))
+    return result
+
+
+def __extracted_func_21(__param_0, __param_1):
+    result = 1 if __param_0 is None else 0
+    result += 1 if __param_0 is not None else 0
+    result += 1 if __param_0 is __param_1 else 0
+    return result
+
+
+def __extracted_func_20(__param_0, __param_1):
+    result = 1 if __param_0 in __param_1 else 0
+    result += 1 if __param_0 not in __param_1 else 0
+    result += 1 if 'key' in {'key': __param_0} else 0
+    return result
+
+
+def __extracted_func_19(__param_0):
+    result = __param_0[0][0]
+    result += __param_0[1]['key']
+    result += __param_0[2][0][1]
+    return result
+
+
+def __extracted_func_18(__param_0, __param_1, __param_2):
+    result = 1 if __param_0 < __param_1 < __param_2 else 0
+    result += 1 if __param_0 <= __param_1 <= __param_2 else 0
+    result += 1 if __param_0 == __param_1 == __param_2 else 0
+    return result
+
+
+def __extracted_func_17(__param_0):
+    result = __param_0
+    with DummyContext(10) as value:
+        result += value
+    return result
+
+
+def __extracted_func_16(__param_0, __param_1, __param_2, __param_3, s1):
+    s2 = __param_0 % (__param_1, __param_2)
+    s3 = __param_3.format(__param_1, __param_2)
+    result = len(s1) + len(s2) + len(s3)
+    return result
+
+
+def __extracted_func_15(__param_0):
+    mapper = lambda x: x * 2
+    result = sum(map(mapper, __param_0))
+    result += sum(map(lambda x: x + 1, __param_0))
+    return result
+
+
+def __extracted_func_14(__param_0):
+    result = sum([x * 2 for x in __param_0])
+    result += sum([x for x in __param_0 if x > 0])
+    result += sum([x + y for x in __param_0 for y in __param_0])
+    return result
+
+
+def __extracted_func_13(__param_0):
+    result = __param_0.value
+    result += __param_0.data[0]
+    result += __param_0.get_value()
+    return result
+
+
+def __extracted_func_12(__param_0):
+    x, y = __param_0[:2]
+    result = x + y
+    a, b, c = __param_0[:3]
+    result += a + b + c
+    return result
+
+
+def __extracted_func_11(__param_0, __param_1):
+    result = __param_0 and __param_1
+    result = result or __param_1
+    result = not result
+    return result
+
+
+def __extracted_func_10(__param_0, __param_1):
+    result = total = __param_0 + __param_1
+    result += total
+    a = b = c = __param_0
+    result += a + b + c
+    return result
+
+
+def __extracted_func_9(__param_0):
     data = [__param_0, __param_0 + 1, __param_0 + 2]  # list
     data = data + list((__param_0, __param_0 + 1))  # tuple
     data = data + list({__param_0, __param_0 + 1})  # set
@@ -18,7 +148,55 @@ def __extracted_func_2(__param_0, _towel_owner):
     return sum(data)
 
 
-def __extracted_func_1(__param_0, _towel_owner):
+def __extracted_func_8(__param_0):
+    result = 0
+    if (n := len(__param_0)) > 5:
+        result += n
+    if (total := sum(__param_0)) > 10:
+        result += total
+    return result
+
+
+def __extracted_func_7(__param_0, __param_1):
+    result = helper(__param_0, __param_1)  # positional
+    result += helper(__param_0, __param_1, 20)  # with optional
+    result += helper(__param_0, __param_1, c=30)  # keyword
+    result += helper(__param_0, __param_1, 40, 50)  # *args
+    result += helper(__param_0, __param_1, d=60)  # **kwargs
+    return result
+
+
+def __extracted_func_6(__param_0):
+    result = __param_0[0]  # simple subscript
+    result += __param_0[-1]  # negative index
+    result += sum(__param_0[1:3])  # slice
+    result += sum(__param_0[::2])  # step slice
+    result += sum(__param_0[::-1])  # reverse
+    return result
+
+
+def __extracted_func_5(__param_0, __param_1):
+    result = __param_0 & __param_1  # and
+    result = result | __param_1  # or
+    result = result ^ __param_1  # xor
+    result = ~result  # not
+    result = result << 1  # left shift
+    result = result >> 1  # right shift
+    return result
+
+
+def __extracted_func_4(__param_0, __param_1):
+    result = __param_0 + __param_1  # addition
+    result = result - __param_1  # subtraction
+    result = result * 2  # multiplication
+    result = result / 2  # division
+    result = result // 2  # floor division
+    result = result % 3  # modulo
+    result = result ** 2  # exponentiation
+    return result
+
+
+def __extracted_func_3(__param_0):
     result = __param_0 + 42  # int
     result = result + 3.14  # float
     result = result + 1j  # complex
@@ -29,7 +207,19 @@ def __extracted_func_1(__param_0, _towel_owner):
     return result
 
 
-def __extracted_func_0(__param_0, __param_1, _towel_owner):
+def __extracted_func_2(__param_0):
+    result = __param_0
+    result += 10
+    result -= 5
+    result *= 2
+    result /= 2
+    result //= 2
+    result %= 3
+    result **= 2
+    return result
+
+
+def __extracted_func_1(__param_0, __param_1):
     result = 1 if __param_0 == __param_1 else 0
     result += 1 if __param_0 != __param_1 else 0
     result += 1 if __param_0 < __param_1 else 0
@@ -41,18 +231,29 @@ def __extracted_func_0(__param_0, __param_1, _towel_owner):
     return result
 
 
+def __extracted_func_0(__param_0):
+    result = __param_0
+    try:
+        result = result / __param_0
+    except ZeroDivisionError:
+        result = 0
+    except Exception as e:
+        result = -1
+    else:
+        result += 10
+    finally:
+        result += 1
+    return result
+
+
 def literals_a(x):
     """Test all literal types."""
-    _towel_arguments_1 = [(x,)]
-    del x
-    return __extracted_func_1(_towel_arguments_1[0][0], _towel_arguments_1.pop())
+    return __extracted_func_3(x)
 
 
 def literals_b(y):
     """Test all literal types."""
-    _towel_arguments_1 = [(y,)]
-    del y
-    return __extracted_func_1(_towel_arguments_1[0][0], _towel_arguments_1.pop())
+    return __extracted_func_3(y)
 
 
 # =============================================================================
@@ -62,16 +263,12 @@ def literals_b(y):
 
 def collections_a(x):
     """Test collection literal construction."""
-    _towel_arguments_2 = [(x,)]
-    del x
-    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
+    return __extracted_func_9(x)
 
 
 def collections_b(y):
     """Test collection literal construction."""
-    _towel_arguments_2 = [(y,)]
-    del y
-    return __extracted_func_2(_towel_arguments_2[0][0], _towel_arguments_2.pop())
+    return __extracted_func_9(y)
 
 
 # =============================================================================
@@ -81,26 +278,12 @@ def collections_b(y):
 
 def arithmetic_a(x, y):
     """Test all arithmetic operators."""
-    result = x + y  # addition
-    result = result - y  # subtraction
-    result = result * 2  # multiplication
-    result = result / 2  # division
-    result = result // 2  # floor division
-    result = result % 3  # modulo
-    result = result**2  # exponentiation
-    return result
+    return __extracted_func_4(x, y)
 
 
 def arithmetic_b(a, b):
     """Test all arithmetic operators."""
-    output = a + b  # addition
-    output = output - b  # subtraction
-    output = output * 2  # multiplication
-    output = output / 2  # division
-    output = output // 2  # floor division
-    output = output % 3  # modulo
-    output = output**2  # exponentiation
-    return output
+    return __extracted_func_4(a, b)
 
 
 # =============================================================================
@@ -110,18 +293,12 @@ def arithmetic_b(a, b):
 
 def comparisons_a(x, y):
     """Test all comparison operators."""
-    _towel_arguments = [(y, x)]
-    del x
-    del y
-    return __extracted_func_0(_towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
+    return __extracted_func_1(x, y)
 
 
 def comparisons_b(a, b):
     """Test all comparison operators."""
-    _towel_arguments = [(b, a)]
-    del a
-    del b
-    return __extracted_func_0(_towel_arguments[0][1], _towel_arguments[0][0], _towel_arguments.pop())
+    return __extracted_func_1(a, b)
 
 
 # =============================================================================
@@ -131,18 +308,12 @@ def comparisons_b(a, b):
 
 def logical_a(x, y):
     """Test logical operators."""
-    result = x and y
-    result = result or y
-    result = not result
-    return result
+    return __extracted_func_11(x, y)
 
 
 def logical_b(a, b):
     """Test logical operators."""
-    output = a and b
-    output = output or b
-    output = not output
-    return output
+    return __extracted_func_11(a, b)
 
 
 # =============================================================================
@@ -152,24 +323,12 @@ def logical_b(a, b):
 
 def bitwise_a(x, y):
     """Test bitwise operators."""
-    result = x & y  # and
-    result = result | y  # or
-    result = result ^ y  # xor
-    result = ~result  # not
-    result = result << 1  # left shift
-    result = result >> 1  # right shift
-    return result
+    return __extracted_func_5(x, y)
 
 
 def bitwise_b(a, b):
     """Test bitwise operators."""
-    output = a & b  # and
-    output = output | b  # or
-    output = output ^ b  # xor
-    output = ~output  # not
-    output = output << 1  # left shift
-    output = output >> 1  # right shift
-    return output
+    return __extracted_func_5(a, b)
 
 
 # =============================================================================
@@ -179,28 +338,12 @@ def bitwise_b(a, b):
 
 def augmented_a(x):
     """Test augmented assignment operators."""
-    result = x
-    result += 10
-    result -= 5
-    result *= 2
-    result /= 2
-    result //= 2
-    result %= 3
-    result **= 2
-    return result
+    return __extracted_func_2(x)
 
 
 def augmented_b(y):
     """Test augmented assignment operators."""
-    output = y
-    output += 10
-    output -= 5
-    output *= 2
-    output /= 2
-    output //= 2
-    output %= 3
-    output **= 2
-    return output
+    return __extracted_func_2(y)
 
 
 # =============================================================================
@@ -210,10 +353,7 @@ def augmented_b(y):
 
 def unpacking_a(data):
     """Test various unpacking patterns."""
-    x, y = data[:2]
-    result = x + y
-    a, b, c = data[:3]
-    result += a + b + c
+    result = __extracted_func_12(data)
     first, *rest = data
     result += first + sum(rest)
     return result
@@ -221,10 +361,7 @@ def unpacking_a(data):
 
 def unpacking_b(items):
     """Test various unpacking patterns."""
-    p, q = items[:2]
-    output = p + q
-    m, n, o = items[:3]
-    output += m + n + o
+    output = __extracted_func_12(items)
     head, *tail = items
     output += head + sum(tail)
     return output
@@ -237,22 +374,12 @@ def unpacking_b(items):
 
 def subscript_a(data):
     """Test subscript and slice operations."""
-    result = data[0]  # simple subscript
-    result += data[-1]  # negative index
-    result += sum(data[1:3])  # slice
-    result += sum(data[::2])  # step slice
-    result += sum(data[::-1])  # reverse
-    return result
+    return __extracted_func_6(data)
 
 
 def subscript_b(items):
     """Test subscript and slice operations."""
-    output = items[0]  # simple subscript
-    output += items[-1]  # negative index
-    output += sum(items[1:3])  # slice
-    output += sum(items[::2])  # step slice
-    output += sum(items[::-1])  # reverse
-    return output
+    return __extracted_func_6(items)
 
 
 # =============================================================================
@@ -271,18 +398,12 @@ class TestClass:
 
 def attributes_a(obj):
     """Test attribute access."""
-    result = obj.value
-    result += obj.data[0]
-    result += obj.get_value()
-    return result
+    return __extracted_func_13(obj)
 
 
 def attributes_b(thing):
     """Test attribute access."""
-    output = thing.value
-    output += thing.data[0]
-    output += thing.get_value()
-    return output
+    return __extracted_func_13(thing)
 
 
 # =============================================================================
@@ -296,22 +417,12 @@ def helper(a, b, c=10, *args, **kwargs):
 
 def calls_a(x, y):
     """Test various function call patterns."""
-    result = helper(x, y)  # positional
-    result += helper(x, y, 20)  # with optional
-    result += helper(x, y, c=30)  # keyword
-    result += helper(x, y, 40, 50)  # *args
-    result += helper(x, y, d=60)  # **kwargs
-    return result
+    return __extracted_func_7(x, y)
 
 
 def calls_b(a, b):
     """Test various function call patterns."""
-    output = helper(a, b)  # positional
-    output += helper(a, b, 20)  # with optional
-    output += helper(a, b, c=30)  # keyword
-    output += helper(a, b, 40, 50)  # *args
-    output += helper(a, b, d=60)  # **kwargs
-    return output
+    return __extracted_func_7(a, b)
 
 
 # =============================================================================
@@ -321,18 +432,12 @@ def calls_b(a, b):
 
 def list_comp_a(data):
     """Test list comprehensions."""
-    result = sum([x * 2 for x in data])
-    result += sum([x for x in data if x > 0])
-    result += sum([x + y for x in data for y in data])
-    return result
+    return __extracted_func_14(data)
 
 
 def list_comp_b(items):
     """Test list comprehensions."""
-    output = sum([x * 2 for x in items])
-    output += sum([x for x in items if x > 0])
-    output += sum([x + y for x in items for y in items])
-    return output
+    return __extracted_func_14(items)
 
 
 # =============================================================================
@@ -342,16 +447,12 @@ def list_comp_b(items):
 
 def set_comp_a(data):
     """Test set comprehensions."""
-    result = sum({x * 2 for x in data})
-    result += sum({x for x in data if x > 0})
-    return result
+    return __extracted_func_23(data)
 
 
 def set_comp_b(items):
     """Test set comprehensions."""
-    output = sum({x * 2 for x in items})
-    output += sum({x for x in items if x > 0})
-    return output
+    return __extracted_func_23(items)
 
 
 # =============================================================================
@@ -361,16 +462,12 @@ def set_comp_b(items):
 
 def dict_comp_a(data):
     """Test dict comprehensions."""
-    result = sum({i: x * 2 for i, x in enumerate(data)}.values())
-    result += sum({i: x for i, x in enumerate(data) if x > 0}.values())
-    return result
+    return __extracted_func_24(data)
 
 
 def dict_comp_b(items):
     """Test dict comprehensions."""
-    output = sum({i: x * 2 for i, x in enumerate(items)}.values())
-    output += sum({i: x for i, x in enumerate(items) if x > 0}.values())
-    return output
+    return __extracted_func_24(items)
 
 
 # =============================================================================
@@ -380,16 +477,12 @@ def dict_comp_b(items):
 
 def generator_a(data):
     """Test generator expressions."""
-    result = sum(x * 2 for x in data)
-    result += sum(x for x in data if x > 0)
-    return result
+    return __extracted_func_25(data)
 
 
 def generator_b(items):
     """Test generator expressions."""
-    output = sum(x * 2 for x in items)
-    output += sum(x for x in items if x > 0)
-    return output
+    return __extracted_func_25(items)
 
 
 # =============================================================================
@@ -399,18 +492,12 @@ def generator_b(items):
 
 def lambda_a(data):
     """Test lambda expressions."""
-    mapper = lambda x: x * 2
-    result = sum(map(mapper, data))
-    result += sum(map(lambda x: x + 1, data))
-    return result
+    return __extracted_func_15(data)
 
 
 def lambda_b(items):
     """Test lambda expressions."""
-    mapper = lambda x: x * 2
-    output = sum(map(mapper, items))
-    output += sum(map(lambda x: x + 1, items))
-    return output
+    return __extracted_func_15(items)
 
 
 # =============================================================================
@@ -420,16 +507,12 @@ def lambda_b(items):
 
 def ternary_a(x, threshold):
     """Test conditional expressions."""
-    result = x * 2 if x > threshold else x
-    result = result + 10 if result < 100 else result - 10
-    return result
+    return __extracted_func_26(x, threshold)
 
 
 def ternary_b(y, limit):
     """Test conditional expressions."""
-    output = y * 2 if y > limit else y
-    output = output + 10 if output < 100 else output - 10
-    return output
+    return __extracted_func_26(y, limit)
 
 
 # =============================================================================
@@ -440,19 +523,13 @@ def ternary_b(y, limit):
 def string_fmt_a(x, y):
     """Test string formatting."""
     s1 = f"x={x}, y={y}"
-    s2 = "x=%d, y=%d" % (x, y)
-    s3 = "x={}, y={}".format(x, y)
-    result = len(s1) + len(s2) + len(s3)
-    return result
+    return __extracted_func_16('x=%d, y=%d', x, y, 'x={}, y={}', s1)
 
 
 def string_fmt_b(a, b):
     """Test string formatting."""
     s1 = f"a={a}, b={b}"
-    s2 = "a=%d, b=%d" % (a, b)
-    s3 = "a={}, b={}".format(a, b)
-    output = len(s1) + len(s2) + len(s3)
-    return output
+    return __extracted_func_16('a=%d, b=%d', a, b, 'a={}, b={}', s1)
 
 
 # =============================================================================
@@ -462,18 +539,14 @@ def string_fmt_b(a, b):
 
 def fstring_a(x, y):
     """Test f-string with expressions."""
-    result = len(f"{x + y}")
-    result += len(f"{x * 2:04d}")
-    result += len(f"{x:.2f}")
+    result = __extracted_func_27(x, y)
     result += len(f"{x=}")
     return result
 
 
 def fstring_b(a, b):
     """Test f-string with expressions."""
-    output = len(f"{a + b}")
-    output += len(f"{a * 2:04d}")
-    output += len(f"{a:.2f}")
+    output = __extracted_func_27(a, b)
     output += len(f"{a=}")
     return output
 
@@ -485,34 +558,12 @@ def fstring_b(a, b):
 
 def exceptions_a(x):
     """Test exception handling."""
-    result = x
-    try:
-        result = result / x
-    except ZeroDivisionError:
-        result = 0
-    except Exception as e:
-        result = -1
-    else:
-        result += 10
-    finally:
-        result += 1
-    return result
+    return __extracted_func_0(x)
 
 
 def exceptions_b(y):
     """Test exception handling."""
-    output = y
-    try:
-        output = output / y
-    except ZeroDivisionError:
-        output = 0
-    except Exception as e:
-        output = -1
-    else:
-        output += 10
-    finally:
-        output += 1
-    return output
+    return __extracted_func_0(y)
 
 
 # =============================================================================
@@ -533,18 +584,12 @@ class DummyContext:
 
 def context_mgr_a(x):
     """Test context managers."""
-    result = x
-    with DummyContext(10) as value:
-        result += value
-    return result
+    return __extracted_func_17(x)
 
 
 def context_mgr_b(y):
     """Test context managers."""
-    output = y
-    with DummyContext(10) as value:
-        output += value
-    return output
+    return __extracted_func_17(y)
 
 
 # =============================================================================
@@ -554,22 +599,12 @@ def context_mgr_b(y):
 
 def walrus_a(data):
     """Test walrus operator."""
-    result = 0
-    if (n := len(data)) > 5:
-        result += n
-    if (total := sum(data)) > 10:
-        result += total
-    return result
+    return __extracted_func_8(data)
 
 
 def walrus_b(items):
     """Test walrus operator."""
-    output = 0
-    if (n := len(items)) > 5:
-        output += n
-    if (total := sum(items)) > 10:
-        output += total
-    return output
+    return __extracted_func_8(items)
 
 
 # =============================================================================
@@ -579,18 +614,12 @@ def walrus_b(items):
 
 def chained_comp_a(x, y, z):
     """Test chained comparisons."""
-    result = 1 if x < y < z else 0
-    result += 1 if x <= y <= z else 0
-    result += 1 if x == y == z else 0
-    return result
+    return __extracted_func_18(x, y, z)
 
 
 def chained_comp_b(a, b, c):
     """Test chained comparisons."""
-    output = 1 if a < b < c else 0
-    output += 1 if a <= b <= c else 0
-    output += 1 if a == b == c else 0
-    return output
+    return __extracted_func_18(a, b, c)
 
 
 # =============================================================================
@@ -600,16 +629,12 @@ def chained_comp_b(a, b, c):
 
 def short_circuit_a(x, y):
     """Test boolean short-circuit evaluation."""
-    result = x and y or x
-    result = result and (x + y) or (x - y)
-    return result
+    return __extracted_func_28(x, y)
 
 
 def short_circuit_b(a, b):
     """Test boolean short-circuit evaluation."""
-    output = a and b or a
-    output = output and (a + b) or (a - b)
-    return output
+    return __extracted_func_28(a, b)
 
 
 # =============================================================================
@@ -619,18 +644,12 @@ def short_circuit_b(a, b):
 
 def nested_a(data):
     """Test nested data structure access."""
-    result = data[0][0]
-    result += data[1]["key"]
-    result += data[2][0][1]
-    return result
+    return __extracted_func_19(data)
 
 
 def nested_b(items):
     """Test nested data structure access."""
-    output = items[0][0]
-    output += items[1]["key"]
-    output += items[2][0][1]
-    return output
+    return __extracted_func_19(items)
 
 
 # =============================================================================
@@ -640,20 +659,12 @@ def nested_b(items):
 
 def multi_assign_a(x, y):
     """Test multi-target assignment."""
-    result = total = x + y
-    result += total
-    a = b = c = x
-    result += a + b + c
-    return result
+    return __extracted_func_10(x, y)
 
 
 def multi_assign_b(m, n):
     """Test multi-target assignment."""
-    output = sum_val = m + n
-    output += sum_val
-    p = q = r = m
-    output += p + q + r
-    return output
+    return __extracted_func_10(m, n)
 
 
 # =============================================================================
@@ -686,18 +697,12 @@ def starred_b(items):
 
 def membership_a(x, data):
     """Test membership operators."""
-    result = 1 if x in data else 0
-    result += 1 if x not in data else 0
-    result += 1 if "key" in {"key": x} else 0
-    return result
+    return __extracted_func_20(x, data)
 
 
 def membership_b(y, items):
     """Test membership operators."""
-    output = 1 if y in items else 0
-    output += 1 if y not in items else 0
-    output += 1 if "key" in {"key": y} else 0
-    return output
+    return __extracted_func_20(y, items)
 
 
 # =============================================================================
@@ -707,18 +712,12 @@ def membership_b(y, items):
 
 def identity_a(x, y):
     """Test identity operators."""
-    result = 1 if x is None else 0
-    result += 1 if x is not None else 0
-    result += 1 if x is y else 0
-    return result
+    return __extracted_func_21(x, y)
 
 
 def identity_b(a, b):
     """Test identity operators."""
-    output = 1 if a is None else 0
-    output += 1 if a is not None else 0
-    output += 1 if a is b else 0
-    return output
+    return __extracted_func_21(a, b)
 
 
 # =============================================================================
@@ -728,15 +727,9 @@ def identity_b(a, b):
 
 def complex_expr_a(x, y, data):
     """Test complex nested expressions."""
-    result = (x + y) * 2 + sum([i * 2 for i in data if i > x])
-    result += len([i for i in data if x < i < y])
-    result += sum(map(lambda i: i**2, filter(lambda i: i > 0, data)))
-    return result
+    return __extracted_func_22(x, y, data)
 
 
 def complex_expr_b(a, b, items):
     """Test complex nested expressions."""
-    output = (a + b) * 2 + sum([i * 2 for i in items if i > a])
-    output += len([i for i in items if a < i < b])
-    output += sum(map(lambda i: i**2, filter(lambda i: i > 0, items)))
-    return output
+    return __extracted_func_22(a, b, items)

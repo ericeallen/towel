@@ -1,0 +1,29 @@
+"""Per-extension tallies for the disk usage report."""
+
+
+def count_by_extension(paths):
+    counts = {}
+    for path in paths:
+        name = path.rsplit("/", 1)[-1]
+        if name.startswith("."):
+            continue
+        if "." in name:
+            ext = name.rsplit(".", 1)[-1].lower()
+        else:
+            ext = ""
+        counts[ext] = counts.get(ext, 0) + 1
+    return counts
+
+
+def size_by_extension(entries):
+    sizes = {}
+    for path, size in entries:
+        name = path.rsplit("/", 1)[-1]
+        if name.startswith("."):
+            continue
+        if "." in name:
+            ext = name.rsplit(".", 1)[-1].lower()
+        else:
+            ext = ""
+        sizes[ext] = sizes.get(ext, 0) + size
+    return sizes

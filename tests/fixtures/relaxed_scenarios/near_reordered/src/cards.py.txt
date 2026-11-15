@@ -1,0 +1,21 @@
+"""Profile cards shown beside articles and reviews."""
+
+
+def build_author_card(author):
+    name = author["name"].strip().title()
+    handle = "@" + author["handle"].lstrip("@").lower()
+    bio = (author.get("bio") or "").strip()
+    if len(bio) > 40:
+        bio = bio[:37] + "..."
+    links = sorted(set(author.get("links", [])))
+    return {"title": name, "subtitle": handle, "text": bio, "links": links, "kind": "author"}
+
+
+def build_reviewer_card(reviewer):
+    handle = "@" + reviewer["handle"].lstrip("@").lower()
+    name = reviewer["name"].strip().title()
+    bio = (reviewer.get("bio") or "").strip()
+    if len(bio) > 40:
+        bio = bio[:37] + "..."
+    links = sorted(set(reviewer.get("links", [])))
+    return {"title": name, "subtitle": handle, "text": bio, "links": links, "kind": "reviewer"}

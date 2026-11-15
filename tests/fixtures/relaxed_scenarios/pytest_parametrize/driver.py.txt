@@ -1,0 +1,31 @@
+import contextlib
+import io
+import os
+import sys
+
+import pytest
+
+src = os.path.abspath(sys.argv[1])
+
+
+class Collector:
+    def __init__(self):
+        self.results = []
+
+    def pytest_runtest_logreport(self, report):
+        if report.when == "call" or report.outcome != "passed":
+            self.results.append((report.nodeid.split("::", 1)[1], report.when, report.outcome))
+
+
+collector = Collector()
+buffer = io.StringIO()
+os.chdir(src)
+with contextlib.redirect_stdout(buffer):
+    code = pytest.main(["-q", "-p", "no:cacheprovider", "--rootdir", src, src], plugins=[collector])
+for result in sorted(collector.results):
+    print(*result)
+print("exit", int(code), "tests", len(collector.results))
+if code != 0:
+    sys.stderr.write(buffer.getvalue())
+    sys.exit(1)
+print("ok")

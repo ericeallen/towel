@@ -10,12 +10,22 @@ counter = 0
 log = []
 
 
-def __extracted_func_0(__param_0, __param_1, __param_2):
+def __extracted_func_1(__param_0, __param_1):
+    temp = __param_0[:]
     __param_0.clear()
     __param_0.extend(__param_1)
     __param_1.clear()
-    __param_1.extend(__param_2)
+    __param_1.extend(temp)
     return len(__param_0) + len(__param_1)
+
+
+def __extracted_func_0(__param_0):
+    global counter
+    result = []
+    for x in __param_0:
+        counter += 1
+        result.append(x * 2)
+    return result
 
 
 def append_and_sum_a(items):
@@ -58,22 +68,12 @@ def process_with_cache_b(value, cache=[]):
 # Side effects in comprehensions
 def filter_and_log_a(items):
     """Side effect in list comprehension via global."""
-    global counter
-    result = []
-    for x in items:
-        counter += 1
-        result.append(x * 2)
-    return result
+    return __extracted_func_0(items)
 
 
 def filter_and_log_b(values):
     """Similar side effect pattern."""
-    global counter
-    output = []
-    for y in values:
-        counter += 1
-        output.append(y * 2)
-    return output
+    return __extracted_func_0(values)
 
 
 # Mutable object modification
@@ -109,11 +109,9 @@ def extend_and_return_b(target, values):
 # Multiple mutable arguments
 def swap_contents_a(list1, list2):
     """Swaps contents of two lists."""
-    temp = list1[:]
-    return __extracted_func_0(list1, list2, temp)
+    return __extracted_func_1(list1, list2)
 
 
 def swap_contents_b(a, b):
     """Similar swap pattern."""
-    backup = a[:]
-    return __extracted_func_0(a, b, backup)
+    return __extracted_func_1(a, b)

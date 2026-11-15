@@ -1,0 +1,20 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import serializers
+
+orders = [
+    {"id": 17, "customer": {"name": "  ada lovelace "}, "lines": [{"qty": 2, "unit_price": 12.5}, {"qty": 1, "unit_price": 3.0}]},
+    {"id": 18, "customer": {"name": "BOB"}, "lines": []},
+]
+for order in orders:
+    print(serializers.order_created_event(order))
+    print(serializers.order_row(order))
+for bad in ({"id": 1, "customer": {}, "lines": []}, {"customer": {"name": "x"}, "lines": []}, {"id": 2, "customer": {"name": "x"}}):
+    for func in (serializers.order_created_event, serializers.order_row):
+        try:
+            func(bad)
+        except KeyError as exc:
+            print(func.__name__, "KeyError", exc)
+print("ok")

@@ -1,0 +1,22 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import shipping
+
+parcels = [
+    {"weight_kg": 0.05, "length": 10, "width": 10, "height": 5},
+    {"weight_kg": 1.5, "length": 40, "width": 30, "height": 20, "fragile": True},
+    {"weight_kg": 12, "length": 60, "width": 40, "height": 40},
+    {"weight_kg": 2.0, "length": 10, "width": 10, "height": 10},
+]
+for parcel in parcels:
+    print(shipping.domestic_quote(parcel))
+    for zone in ("eu", "apac", "mars"):
+        print(zone, shipping.international_quote(parcel, zone))
+for func, args in ((shipping.domestic_quote, ({"weight_kg": 1},)), (shipping.international_quote, ({"length": 1}, "eu"))):
+    try:
+        func(*args)
+    except KeyError as exc:
+        print(func.__name__, "KeyError", exc)
+print("ok")

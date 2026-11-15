@@ -1,0 +1,25 @@
+"""Small numeric helpers used by the dashboards."""
+
+
+def average_score(scores):
+    if not scores:
+        return 0.0
+    total = 0.0
+    for score in scores:
+        total += score
+    return total / len(scores)
+
+
+def mean_latency(samples):
+    if not samples:
+        return 0.0
+    acc = 0.0
+    for sample in samples:
+        acc += sample
+    return acc / len(samples)
+
+
+def percentile(values, fraction):
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, int(fraction * len(ordered)))
+    return ordered[index]

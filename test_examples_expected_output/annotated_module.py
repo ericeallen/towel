@@ -15,6 +15,19 @@ SCALE: Final[float] = 100.0
 EMPTY_LABEL: Final[str] = "empty"
 
 
+def __extracted_func_0(floor: float, values: 'list[float]') -> 'tuple[float, float, int]':
+    total: float = 0.0
+    peak: float = float(floor)
+    count: int = 0
+    for value in values:
+        if value < floor:
+            continue
+        total += value
+        peak = max(peak, value)
+        count += 1
+    return (total, peak, count)
+
+
 @dataclass(frozen=True)
 class Summary:
     """The figures one pass over a series produces."""
@@ -27,15 +40,7 @@ class Summary:
 
 def summarize_values(values: list[float], *, label: str = "values", floor: float = 0) -> Summary:
     """Total, peak and count of the values at or above ``floor``."""
-    total: float = 0.0
-    peak: float = float(floor)
-    count: int = 0
-    for value in values:
-        if value < floor:
-            continue
-        total += value
-        peak = max(peak, value)
-        count += 1
+    total, peak, count = __extracted_func_0(floor, values)
     if count == 0:
         return Summary(EMPTY_LABEL, 0.0, 0.0, 0)
     return Summary(label, total, peak, count)
@@ -43,15 +48,7 @@ def summarize_values(values: list[float], *, label: str = "values", floor: float
 
 def summarize_scaled(values: list[float], *, label: str = "scaled", floor: float = 0) -> Summary:
     """The same figures after scaling every value by ``SCALE``."""
-    total: float = 0.0
-    peak: float = float(floor)
-    count: int = 0
-    for value in values:
-        if value < floor:
-            continue
-        total += value
-        peak = max(peak, value)
-        count += 1
+    total, peak, count = __extracted_func_0(floor, values)
     if count == 0:
         return Summary(EMPTY_LABEL, 0.0, 0.0, 0)
     return Summary(label, total * SCALE, peak * SCALE, count)
@@ -93,17 +90,17 @@ class Ledger:
         self.entries = list(values)
 
     def balance(self, opening: int = 0) -> tuple[int, int]:
-        running: int = opening
-        lowest: int = opening
-        for entry in self.entries:
-            running += entry
-            lowest = min(lowest, running)
+        running, lowest = self.__extracted_func_1(opening)
         return running, lowest
 
     def overdrawn(self, opening: int = 0) -> bool:
+        running, lowest = self.__extracted_func_1(opening)
+        return lowest < 0
+
+    def __extracted_func_1(self, opening: int) -> 'tuple[int, int]':
         running: int = opening
         lowest: int = opening
         for entry in self.entries:
             running += entry
             lowest = min(lowest, running)
-        return lowest < 0
+        return (running, lowest)

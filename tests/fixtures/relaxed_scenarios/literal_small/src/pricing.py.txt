@@ -1,0 +1,20 @@
+"""Price formatting helpers for the storefront."""
+
+
+def format_price_usd(amount):
+    rounded = round(amount, 2)
+    whole, _, frac = f"{rounded:.2f}".partition(".")
+    whole = f"{int(whole):,}"
+    return "$" + whole + "." + frac
+
+
+def format_price_chf(amount):
+    rounded = round(amount, 2)
+    whole, _, frac = f"{rounded:.2f}".partition(".")
+    whole = f"{int(whole):,}"
+    return "CHF " + whole + "." + frac
+
+
+def parse_price(text):
+    digits = text.replace(",", "").lstrip("$").replace("CHF", "").strip()
+    return float(digits)

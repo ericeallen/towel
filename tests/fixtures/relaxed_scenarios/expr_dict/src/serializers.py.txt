@@ -1,0 +1,27 @@
+"""Order representations for the event bus and the CSV export."""
+
+TAX_RATE = 0.08
+
+
+def order_created_event(order):
+    payload = {
+        "id": order["id"],
+        "customer": order["customer"]["name"].strip().title(),
+        "total": round(
+            sum(line["qty"] * line["unit_price"] for line in order["lines"]) * (1 + TAX_RATE), 2
+        ),
+        "lines": len(order["lines"]),
+    }
+    return {"type": "order.created", "version": 2, "payload": payload}
+
+
+def order_row(order):
+    summary = {
+        "id": order["id"],
+        "customer": order["customer"]["name"].strip().title(),
+        "total": round(
+            sum(line["qty"] * line["unit_price"] for line in order["lines"]) * (1 + TAX_RATE), 2
+        ),
+        "lines": len(order["lines"]),
+    }
+    return [str(summary["id"]), summary["customer"], f"{summary['total']:.2f}", str(summary["lines"])]

@@ -280,11 +280,21 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
 ### Test Examples (`test_examples/`, at the repository root)
 
 Real Python code examples used by the test suite. Their expected fixed-point
-outputs are the goldens in `test_examples_expected_output/` and, for the
+outputs in relaxed mode, the default, are the goldens in
+`test_examples_expected_output/`; `test_examples_strict_expected_output/` holds
+strict mode's, which are the goldens 1.949 shipped, unchanged, and
+`test_regression.py` holds each mode to its own set
+(`tests/generate_baseline.py --confirm --strict` rewrites the strict set, which
+should change only with a decision). The paragraphs below about
+`parameter_cells/` goldens, ownership-transfer calls and the sixteen unchanged
+goldens describe the strict set; relaxed mode renders the same on every
+compiler and leaves four inputs unchanged (`EXPECTED_UNCHANGED_EXAMPLES`;
+strict's sixteen are `STRICT_UNCHANGED_EXAMPLES`). The goldens for the
 cross-file packages in `test_examples_crossfile/` (`simple_crossfile`,
 `nested_structure`, `multi_level`, and `class_hierarchy`, a subclass in a
 second module repeating its base class's method body),
-`test_examples_crossfile_expected_output/`; regenerate them only after
+`test_examples_crossfile_expected_output/`, are the same in both modes;
+regenerate goldens only after
 verifying the new output (`just regenerate-baseline`) and review the diff,
 since regeneration is not validation.
 

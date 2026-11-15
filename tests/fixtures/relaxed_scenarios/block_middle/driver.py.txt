@@ -1,0 +1,15 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import metrics
+
+results = [{"score": 71}, {"score": None}, {"score": 88.5}, {"score": 64}, {"score": 93}]
+print(metrics.exam_summary(results))
+print(metrics.exam_summary([{"score": None}]))
+print(metrics.exam_summary([{"score": 50}]))
+lines = ["GET /a 120ms", "GET /b 80ms", "malformed", "POST /c 310.5ms", "GET /d 12s"]
+print(metrics.describe_response_times(lines))
+print(metrics.describe_response_times([]))
+print(metrics.describe_response_times(["GET /x 7ms"]))
+print("ok")

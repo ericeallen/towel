@@ -1,0 +1,35 @@
+from slug import slugify
+
+
+def test_spaces_become_hyphens():
+    result = slugify("Hello World")
+    assert isinstance(result, str)
+    assert result == "hello-world"
+    assert slugify(result) == result
+
+
+def test_punctuation_is_dropped():
+    result = slugify("What's new, in 3.12?")
+    assert isinstance(result, str)
+    assert result == "what-s-new-in-3-12"
+    assert slugify(result) == result
+
+
+def test_accents_are_folded():
+    result = slugify("Crème brûlée")
+    assert isinstance(result, str)
+    assert result == "creme-brulee"
+    assert slugify(result) == result
+
+
+def test_surrounding_noise_is_trimmed():
+    result = slugify("  --Draft: plan--  ")
+    assert isinstance(result, str)
+    assert result == "draft-plan"
+    assert slugify(result) == result
+
+
+def test_long_titles_are_cut():
+    result = slugify("a very long title " * 5)
+    assert len(result) <= 40
+    assert not result.endswith("-")

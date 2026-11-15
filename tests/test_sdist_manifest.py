@@ -40,6 +40,7 @@ READ_BY_THE_SUITE = (
     "tests",
     "test_examples",
     "test_examples_expected_output",
+    "test_examples_strict_expected_output",
     "test_examples_crossfile",
     "test_examples_crossfile_expected_output",
 )

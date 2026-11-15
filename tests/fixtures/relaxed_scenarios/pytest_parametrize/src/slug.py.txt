@@ -1,0 +1,12 @@
+"""URL slugs."""
+
+import re
+import unicodedata
+
+
+def slugify(text, max_length=40):
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
+    if len(text) > max_length:
+        text = text[:max_length].rstrip("-")
+    return text

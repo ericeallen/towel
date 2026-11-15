@@ -161,6 +161,31 @@ def find_duplicate_helpers(root: Path) -> list[str]:
 # whose extraction stops happening, or that starts to be refactored, moves in
 # or out of this set with an explanation in the commit, never silently.
 #
+# Relaxed mode, the default (docs/DECISIONS.md, "Relaxed mode is the default;
+# strict mode keeps exact lifetimes"), leaves four inputs alone:
+#
+# - bindings_comprehensions.py: every candidate block is a comprehension whose
+#   binder names differ, so nothing unifies without a parameter budget overrun.
+# - closure_adversarial.py: each duplicate rebinds a variable of an enclosing
+#   function, which a helper cannot do, or shares too little to repay one.
+# - example3_file1.py / example3_file2.py: their duplicate is across the two
+#   files, which single-file mode cannot see (the cross-file run is covered by
+#   test_crossfile_integration.py).
+#
+# The other twelve that strict mode leaves alone are extracted: their helpers
+# are called directly, with no ownership transfer to pay for and no partial
+# frame to refuse.
+EXPECTED_UNCHANGED_EXAMPLES = frozenset(
+    {
+        "bindings_comprehensions.py",
+        "closure_adversarial.py",
+        "example3_file1.py",
+        "example3_file2.py",
+    }
+)
+
+# Strict mode's set, as 1.949 pinned it:
+#
 # - bindings_comprehensions.py: every candidate block is a comprehension whose
 #   binder names differ, so nothing unifies without a parameter budget overrun.
 # - example3_file1.py / example3_file2.py: their duplicate is across the two
@@ -178,7 +203,7 @@ def find_duplicate_helpers(root: Path) -> list[str]:
 #   profitability policy leaves every definition intact, including annotations,
 #   closures, control flow and exception handling. Semantic tests exercise
 #   those extraction mechanisms separately with an explicit policy opt-out.
-EXPECTED_UNCHANGED_EXAMPLES = frozenset(
+STRICT_UNCHANGED_EXAMPLES = frozenset(
     {
         "annotated_module.py",
         "binding_constructs_comprehensive.py",
@@ -211,6 +236,13 @@ EXPECTED_UNCHANGED_CROSSFILE_PROJECTS = frozenset(
 
 
 class TestCompilerGoldenSelection(unittest.TestCase):
+    """Strict mode's goldens depend on the compiler's parameter cells; relaxed mode's do not.
+
+    A parameter captured in a cell cannot be handed over, so strict mode's
+    ownership transfer keeps the original definitions there. Relaxed mode
+    transfers nothing and renders the same on every supported compiler.
+    """
+
     def test_exact_cells_and_cell_free_profiles_have_distinct_goldens(self) -> None:
         for expected in PARAMETER_CELL_GOLDENS.values():
             with self.subTest(definitions=tuple(expected)):
@@ -248,7 +280,7 @@ class TestCompilerGoldenSelection(unittest.TestCase):
             (examples / name).write_bytes((project_root / "test_examples" / name).read_bytes())
             marker = outputs / "keep.py"
             marker.write_text("untouched\n")
-            engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+            engine = UnificationRefactorEngine(max_parameters=5, min_lines=3, strict=True)
             with (
                 patch(
                     "tests.compiler_golden_profiles._compiled_parameter_cells",
@@ -264,7 +296,7 @@ class TestCompilerGoldenSelection(unittest.TestCase):
 
     def test_reviewed_cell_goldens_restore_original_definitions_and_still_extract(self) -> None:
         examples = project_root / "test_examples"
-        goldens = project_root / "test_examples_expected_output"
+        goldens = project_root / "test_examples_strict_expected_output"
         self.assertEqual(
             {path.name for path in (goldens / "parameter_cells").glob("*.py")},
             set(PARAMETER_CELL_GOLDENS) | HISTORICAL_PARAMETER_CELL_GOLDENS,
@@ -295,7 +327,7 @@ class TestCompilerGoldenSelection(unittest.TestCase):
 
     def test_unprofitable_former_cell_extractions_retain_original_definitions(self) -> None:
         examples = project_root / "test_examples"
-        goldens = project_root / "test_examples_expected_output"
+        goldens = project_root / "test_examples_strict_expected_output"
         for file in HISTORICAL_PARAMETER_CELL_GOLDENS:
             self.assertEqual(_compiler_baseline(examples / file, goldens), goldens / file)
         for file, names in PROFITABILITY_RETAINED_DEFINITIONS.items():
@@ -331,13 +363,23 @@ class TestSingleFileRegression(unittest.TestCase):
     test_examples: Path
     expected_output: Path
 
+    # The mode under test, its goldens, and the inputs it leaves alone. The
+    # default mode is relaxed; TestStrictSingleFileRegression pins strict.
+    strict = False
+    golden_directory = "test_examples_expected_output"
+    unchanged_examples = EXPECTED_UNCHANGED_EXAMPLES
+
     @classmethod
     def setUpClass(cls):
         """Set up test fixtures."""
-        cls.engine = UnificationRefactorEngine(max_parameters=5, min_lines=3)
+        cls.engine = UnificationRefactorEngine(max_parameters=5, min_lines=3, strict=cls.strict)
         cls.tester = AutomaticEquivalenceTester(cls.engine)
         cls.test_examples = project_root / "test_examples"
-        cls.expected_output = project_root / "test_examples_expected_output"
+        cls.expected_output = project_root / cls.golden_directory
+
+    def _baseline(self, py_file: Path) -> Path:
+        """The golden for ``py_file``: one per input, the same on every compiler."""
+        return self.expected_output / py_file.name
 
     def test_expected_output_exists(self):
         """Verify that expected output directory exists."""
@@ -369,7 +411,7 @@ class TestSingleFileRegression(unittest.TestCase):
         }
         self.assertEqual(
             unchanged,
-            set(EXPECTED_UNCHANGED_EXAMPLES),
+            set(self.unchanged_examples),
             "A golden stopped or started matching its input; if the engine change is "
             "intended, update EXPECTED_UNCHANGED_EXAMPLES and say why in the commit",
         )
@@ -438,7 +480,7 @@ class TestSingleFileRegression(unittest.TestCase):
                 f"[Stability {idx}/{total_files}] Comparing {py_file.name}...", end=" ", flush=True
             )
             # Check if baseline exists for this file
-            baseline_file = _compiler_baseline(py_file, self.expected_output)
+            baseline_file = self._baseline(py_file)
 
             if not baseline_file.exists():
                 # No baseline for this file (skip)
@@ -489,11 +531,11 @@ class TestSingleFileRegression(unittest.TestCase):
             else:
                 print("ok", flush=True)
 
-        if untouched != EXPECTED_UNCHANGED_EXAMPLES:
+        if untouched != self.unchanged_examples:
             differences.append(
                 "the examples the engine left untouched are not the declared ones: "
-                f"stopped being refactored {sorted(untouched - EXPECTED_UNCHANGED_EXAMPLES)}, "
-                f"started being refactored {sorted(EXPECTED_UNCHANGED_EXAMPLES - untouched)}"
+                f"stopped being refactored {sorted(untouched - self.unchanged_examples)}, "
+                f"started being refactored {sorted(self.unchanged_examples - untouched)}"
             )
 
         if differences:
@@ -506,11 +548,30 @@ class TestSingleFileRegression(unittest.TestCase):
             self.fail(failure_msg)
 
 
+class TestStrictSingleFileRegression(TestSingleFileRegression):
+    """Strict mode against the goldens 1.949 shipped, byte for byte.
+
+    ``test_examples_strict_expected_output/`` is a copy of the golden
+    directory as it stood before relaxed mode became the default, and this
+    class holds strict mode to it with the expectations of that day:
+    the same unchanged set, the same compiler-profile selection.
+    """
+
+    strict = True
+    golden_directory = "test_examples_strict_expected_output"
+    unchanged_examples = STRICT_UNCHANGED_EXAMPLES
+
+    def _baseline(self, py_file: Path) -> Path:
+        return _compiler_baseline(py_file, self.expected_output)
+
+
 class TestCrossFileRegression(unittest.TestCase):
     """
     Regression tests for cross-file refactorings.
 
-    Ensures cross-file refactorings remain stable and correct.
+    Ensures cross-file refactorings remain stable and correct. The projects
+    render the same in both modes, so TestStrictCrossFileRegression holds
+    strict mode to the same goldens.
     """
 
     engine: UnificationRefactorEngine
@@ -518,11 +579,13 @@ class TestCrossFileRegression(unittest.TestCase):
     crossfile_examples: Path
     expected_output: Path
 
+    strict = False
+
     @classmethod
     def setUpClass(cls):
         """Set up test fixtures."""
         cls.engine = UnificationRefactorEngine(
-            max_parameters=5, min_lines=3, cross_module_helpers=True
+            max_parameters=5, min_lines=3, cross_module_helpers=True, strict=cls.strict
         )
         cls.tester = CrossFileEquivalenceTester(cls.engine)
         cls.crossfile_examples = project_root / "test_examples_crossfile"
@@ -607,7 +670,7 @@ class TestCrossFileRegression(unittest.TestCase):
                 source = Path(directory) / "source" / project_dir.name
                 shutil.copytree(project_dir, source)
                 engine = UnificationRefactorEngine(
-                    max_parameters=5, min_lines=3, cross_module_helpers=True
+                    max_parameters=5, min_lines=3, cross_module_helpers=True, strict=self.strict
                 )
                 results, reason = engine.refactor_directory_to_fixed_point(
                     str(source), str(out), progress="none"
@@ -688,7 +751,7 @@ class TestCrossFileRegression(unittest.TestCase):
                 self.assertEqual(before.returncode, 0, before.stderr)
                 self.assertEqual(before.stdout, expected)
                 engine = UnificationRefactorEngine(
-                    max_parameters=5, min_lines=3, cross_module_helpers=True
+                    max_parameters=5, min_lines=3, cross_module_helpers=True, strict=self.strict
                 )
                 results, reason = engine.refactor_directory_to_fixed_point(
                     str(source), str(out), progress="none"
@@ -700,6 +763,12 @@ class TestCrossFileRegression(unittest.TestCase):
                 self.assertEqual((after.stdout, after.stderr), (before.stdout, before.stderr))
 
 
+class TestStrictCrossFileRegression(TestCrossFileRegression):
+    """Strict mode against the same cross-file goldens, which 1.949 shipped."""
+
+    strict = True
+
+
 def main():
     """Run regression tests."""
     # Create test suite
@@ -708,7 +777,9 @@ def main():
 
     # Add test classes
     suite.addTests(loader.loadTestsFromTestCase(TestSingleFileRegression))
+    suite.addTests(loader.loadTestsFromTestCase(TestStrictSingleFileRegression))
     suite.addTests(loader.loadTestsFromTestCase(TestCrossFileRegression))
+    suite.addTests(loader.loadTestsFromTestCase(TestStrictCrossFileRegression))
 
     # Run with verbose output
     runner = unittest.TextTestRunner(verbosity=2)

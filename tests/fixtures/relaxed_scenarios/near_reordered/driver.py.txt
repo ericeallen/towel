@@ -1,0 +1,21 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import cards
+
+people = [
+    {"name": " ada lovelace ", "handle": "@Ada", "bio": "Wrote the first program. " * 3, "links": ["b", "a", "b"]},
+    {"name": "bob", "handle": "BOB", "bio": None},
+    {"name": "cy", "handle": "cy", "bio": "  short  ", "links": []},
+    {"handle": "nameless"},
+    {"name": "handleless"},
+    {},
+]
+for person in people:
+    for func in (cards.build_author_card, cards.build_reviewer_card):
+        try:
+            print(func.__name__, func(person))
+        except KeyError as exc:
+            print(func.__name__, "KeyError", exc)
+print("ok")

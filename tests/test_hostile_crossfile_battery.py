@@ -105,9 +105,15 @@ from typing import Dict
 import pytest
 
 from tests.hostile_execution import ScopeWatch, copy_fixture_tree, module_faces, observe
-from tests.hostile_refactoring import refactor_package, with_known_defects
+from tests.hostile_refactoring import OWNERSHIP_BOOKKEEPING, refactor_package
+from tests.hostile_refactoring import with_known_defects
 from towel.unification.exceptions import UnparsedProgramError
 from tests.test_cli_integration import invoke
+
+# The battery's pins are 1.949's: which packages strict mode transforms, and
+# which its ownership proof refuses. Relaxed mode, the default, has its own
+# pass below (test_relaxed_directory_refactoring_preserves_program_output).
+pytestmark = pytest.mark.strict_mode
 
 CASES = Path(__file__).parent / "hostile_crossfile"
 
@@ -458,6 +464,62 @@ def _check_directory_program_output(
                     )
                 )
             ), ("rejected" if not transformed else "transformed")
+
+
+RELAXED_OBSERVES_FINALIZATION: Dict[str, str] = {}
+"""Packages whose output differs in relaxed mode because they print when an object is finalized.
+
+As in ``test_hostile_battery``: relaxed mode assumes a program does not
+depend on when objects are finalized once it has stopped using them
+(docs/DECISIONS.md, "Relaxed mode is the default; strict mode keeps exact
+lifetimes"). No cross-file fixture watches a finalizer, so the list is
+empty, and any difference in relaxed mode is a defect to fix.
+"""
+
+
+@pytest.mark.parametrize(
+    "case",
+    sorted(
+        path.name for path in CASES.iterdir() if path.is_dir() and path.name not in REFLECTION_CASES
+    ),
+)
+def test_relaxed_directory_refactoring_preserves_program_output(case: str) -> None:
+    """The same battery in relaxed mode: identical output, and no ownership bookkeeping."""
+    with tempfile.TemporaryDirectory(prefix="towel-hostile-xf-relaxed-") as directory:
+        before = Path(directory) / "before"
+        after = Path(directory) / "after"
+        copy_fixture_tree(CASES / case, before)
+        copy_fixture_tree(CASES / case, after)
+        cross_module = case not in WITHOUT_CROSS_MODULE
+        if case in REFUSED:
+            # A program that will not parse is refused in every mode.
+            with pytest.raises(UnparsedProgramError, match=re.escape(f"  {REFUSED[case]}: line ")):
+                refactor_package(after / "pkg", cross_module=cross_module, strict=False)
+            assert _python_files(after) == _python_files(before)
+            return
+        scopes = ScopeWatch()
+        results = refactor_package(
+            after / "pkg",
+            cross_module=cross_module,
+            typed=case in TYPED,
+            file_finisher=scopes,
+            strict=False,
+        )
+        written, original = _python_files(after), _python_files(before)
+        transformed = written != original
+        assert transformed == (sum(applied for applied, _ in results.values()) > 0)
+        assert scopes.found == []
+        for name, text in written.items():
+            assert not OWNERSHIP_BOOKKEEPING.search(text) or (
+                OWNERSHIP_BOOKKEEPING.search(original[name])
+            ), name
+        if case in RELAXED_OBSERVES_FINALIZATION:
+            assert _run(after) != _run(before), "no longer differs: remove it from the list"
+        else:
+            assert _run(after) == _run(before)
+        if transformed:
+            modules = _modules(before)
+            assert module_faces(after, modules) == module_faces(before, modules)
 
 
 @pytest.mark.parametrize("case", sorted(BUILTIN_CALLER_LOOKUPS))

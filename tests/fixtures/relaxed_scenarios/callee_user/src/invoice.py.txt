@@ -1,0 +1,29 @@
+"""Invoice totals."""
+
+TAX_RATE = 0.2
+
+
+def net_price(item):
+    return item["unit_price"] * item["quantity"]
+
+
+def gross_price(item):
+    return net_price(item) * (1 + TAX_RATE)
+
+
+def total_net(items):
+    total = 0.0
+    for item in items:
+        if item.get("cancelled"):
+            continue
+        total += net_price(item)
+    return round(total, 2)
+
+
+def total_gross(items):
+    total = 0.0
+    for item in items:
+        if item.get("cancelled"):
+            continue
+        total += gross_price(item)
+    return round(total, 2)

@@ -1,0 +1,13 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import pricing
+
+for amount in (0, 5, 1234.5, 1234567.891, 0.005, 999.999, 19.99):
+    print(amount, pricing.format_price_usd(amount), "|", pricing.format_price_chf(amount))
+for text in ("$1,234.50", "CHF 19.99", "7"):
+    print(text, pricing.parse_price(text))
+assert pricing.format_price_usd(1234.5) == "$1,234.50"
+assert pricing.format_price_chf(1234.5) == "CHF 1,234.50"
+print("ok")
