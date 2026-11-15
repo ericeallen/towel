@@ -12,6 +12,8 @@
 PyPI freezes the README in each distribution. A later documentation edit cannot
 repair stale version links there. Check current metadata against the configured
 version; historical benchmark versions and results must retain their identities.
+For the same reason no shipped front-door file may say whether its own version
+has been published: publication happens after the freeze.
 The directory example must exercise fresh-source sequencing, since applying a
 second proposal from an obsolete analysis correctly raises StaleSource.
 """
@@ -30,6 +32,7 @@ from urllib.parse import unquote, urlsplit
 import pytest
 
 from tests.compiler_golden_profiles import lifetime_refusal_profile
+from scripts import verify_release_visibility as gate
 from tests.test_next_validation_documentation import _number, _rows, _table
 from tests.test_readme_links import _check_repository_links
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -65,6 +68,141 @@ def test_stale_current_version_and_release_commands_are_rejected(name: str) -> N
         documents[name] = documents[name].replace(version, "0.0")
     with pytest.raises(AssertionError):
         _check_current_version(documents, version)
+
+
+@pytest.mark.parametrize(
+    "name", ["README.md", "SECURITY.md", "CONTRIBUTING.md", "docs/README.md", "docs/QUICKSTART.md"]
+)
+def test_shipped_front_door_never_states_its_own_publication_status(name: str) -> None:
+    """User-perspective audit of 1.949, finding 4: PyPI says the release is unpublished.
+
+    The README frozen into 1.949 reads "this candidate is unpublished" and "Latest
+    published release: 1.948" on PyPI, and SECURITY.md, CONTRIBUTING.md, the
+    documentation index and the quick start shipped the same kind of sentence. These
+    files are frozen before publication, so any statement of whether their version is
+    published is false afterwards and cannot be corrected. They name the version they
+    describe; the GitHub release notes record what was published.
+    """
+    document = " ".join((ROOT / name).read_text().split()).casefold()
+    for phrase in (
+        "unpublished",
+        "preparation checkpoint",
+        "latest published release",
+        "this source documents",
+    ):
+        assert phrase not in document, f"{name} states its own publication status: {phrase!r}"
+
+
+def test_the_release_gate_refuses_the_same_files_and_phrases() -> None:
+    """One rule, checked here on the checkout and by `just release` on GitHub."""
+    assert set(gate.STATUS_DOCUMENTS) == {
+        "README.md",
+        "SECURITY.md",
+        "CONTRIBUTING.md",
+        "docs/README.md",
+        "docs/QUICKSTART.md",
+    }
+    assert set(gate.PUBLICATION_CLAIMS) == {
+        "unpublished",
+        "preparation checkpoint",
+        "latest published release",
+        "this source documents",
+    }
+    for name in gate.STATUS_DOCUMENTS:
+        assert gate.publication_claims((ROOT / name).read_text()) == ()
+
+
+@pytest.mark.parametrize(
+    "sentence,phrase",
+    [
+        ("this candidate is Unpublished and its validation", "unpublished"),
+        ("At the November 8, 2026 preparation\ncheckpoint, it", "preparation checkpoint"),
+        ("At that checkpoint: **Latest published release: 1.948.**", "latest published release"),
+        ("The latest published\n  release at that point", "latest published release"),
+        ("- This source documents 1.948.", "this source documents"),
+    ],
+)
+def test_the_status_check_sees_each_phrase_whatever_its_case_or_wrapping(
+    sentence: str, phrase: str
+) -> None:
+    """The 1.949 sentences were wrapped mid-phrase; a line-by-line search misses them."""
+    document = (ROOT / "SECURITY.md").read_text() + "\n" + sentence + "\n"
+    assert gate.publication_claims(document) == (phrase,)
+
+
+def test_the_source_to_be_frozen_satisfies_the_live_gate_document_rules() -> None:
+    """`just release` reads these documents from GitHub only after CI and promotion.
+
+    Apply its rules to the checkout first, where a refusal costs an edit and not a
+    repeated release step: one status line, the security target, the changelog
+    heading, tag-pinned links to files that exist, and no statement of publication.
+    """
+    readme = (ROOT / "README.md").read_text()
+    if "**Development branch:" in readme:
+        pytest.skip("the gate refuses a development README by design; it is finalized first")
+    version = str(tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"])
+    documents = {
+        name: (ROOT / name).read_text()
+        for name in ("pyproject.toml", "CHANGELOG.md", *gate.STATUS_DOCUMENTS)
+    }
+    for name in gate.document_links(readme, "ericeallen/towel", version):
+        documents.setdefault(name, (ROOT / name).read_text())
+    gate.verify_documents(documents, version, "ericeallen/towel")
+
+
+def test_package_metadata_describes_the_tool_in_the_words_people_search_for() -> None:
+    """User-perspective audit of 1.949, finding 4 (discovery report D4 and D10).
+
+    PyPI showed a summary without "duplicate" or "refactor", no keywords, a library
+    classifier on a command-line tool and no typing marker although the wheel ships
+    `py.typed`. The platform classifiers follow the README's Requirements sentence.
+    """
+    configuration = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    project = configuration["project"]
+    summary = str(project["description"]).casefold()
+    assert "duplicate" in summary and "refactor" in summary
+    assert "\n" not in summary, "The core metadata Summary field is one line"
+    assert {"refactoring", "duplicate code", "code duplication"} <= set(project["keywords"])
+    classifiers = set(project["classifiers"])
+    assert {
+        "Environment :: Console",
+        "Operating System :: MacOS",
+        "Operating System :: POSIX :: Linux",
+        "Typing :: Typed",
+    } <= classifiers
+    assert "Topic :: Software Development :: Libraries :: Python Modules" not in classifiers
+    assert "(macOS or Linux)" in (ROOT / "README.md").read_text()
+    assert configuration["tool"]["setuptools"]["package-data"]["towel"] == ["py.typed"]
+    assert (ROOT / "src/towel/py.typed").is_file(), "Typing :: Typed is a claim about the wheel"
+
+
+def _check_project_urls(urls: Mapping[str, str], version: str) -> None:
+    assert {"Homepage", "Documentation", "Changelog", "Issues", "Repository"} <= set(urls)
+    for label, url in urls.items():
+        parsed = urlsplit(url)
+        assert parsed.scheme == "https" and parsed.netloc, f"{label} is not an absolute link"
+        assert version not in url and not re.search(
+            r"/v?\d+\.\d+", parsed.path
+        ), f"{label} names a release and would go stale on the next one: {url}"
+
+
+def test_project_urls_cannot_go_stale_with_a_release() -> None:
+    """`just bump-version` rewrites one line of pyproject.toml, so no link may need rewriting.
+
+    The README's links are pinned to the release tag, and the release gate checks them.
+    Nothing checks these, so they name no tag: the Documentation and Changelog links
+    follow the default branch.
+    """
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    _check_project_urls(project["urls"], str(project["version"]))
+    for stale in (
+        "https://github.com/ericeallen/towel/blob/v1.949/docs/README.md",
+        "https://github.com/ericeallen/towel/releases/tag/v1.949",
+        "https://pypi.org/project/code-towel/1.949/",
+        "docs/README.md",
+    ):
+        with pytest.raises(AssertionError):
+            _check_project_urls({**project["urls"], "Documentation": stale}, "1.949")
 
 
 def _check_preservation_contract(text: str) -> None:

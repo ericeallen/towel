@@ -76,25 +76,26 @@ def test_development_readme_links_to_current_guides() -> None:
 
 
 def _check_repository_links(markdown: str, version: str) -> None:
-    """Current guides follow the source; published evidence keeps its stated identity."""
-    current, separator, historical = markdown.partition("## Releases and validation\n")
-    assert separator, "README must distinguish current guides from published release evidence"
-    published = re.search(r"\*\*Latest published release: ([0-9][^ *]+)\.\*\*", current)
-    assert published is not None, "README must identify the latest published version separately"
+    """Every repository document the README links is the one tagged with its own version.
+
+    Until 1.949 a `## Releases and validation` section kept links at the tag named by a
+    `**Latest published release: X.**` line. That line described the README's own
+    publication and was false on PyPI (audit finding 4), and the live gate has always
+    refused a link at any other tag, so the README now has one rule for all of them.
+    """
     documentation_links = []
-    for section, expected in ((current, version), (historical, published.group(1))):
-        for destination in _destinations(section):
-            url = urlsplit(destination)
-            prefix = "/ericeallen/towel/blob/"
-            if url.hostname != "github.com" or not url.path.startswith(prefix):
-                continue
-            tag, separator, path = unquote(url.path.removeprefix(prefix)).partition("/")
-            assert tag == f"v{expected}", f"README link uses a different release: {destination}"
-            relative = PurePosixPath(path)
-            assert separator and path and not relative.is_absolute() and ".." not in relative.parts
-            assert (ROOT / path).is_file(), f"README link names a missing file: {destination}"
-            documentation_links.append(destination)
-    assert documentation_links, "README must retain its versioned publication evidence"
+    for destination in _destinations(markdown):
+        url = urlsplit(destination)
+        prefix = "/ericeallen/towel/blob/"
+        if url.hostname != "github.com" or not url.path.startswith(prefix):
+            continue
+        tag, separator, path = unquote(url.path.removeprefix(prefix)).partition("/")
+        assert tag == f"v{version}", f"README link uses a different release: {destination}"
+        relative = PurePosixPath(path)
+        assert separator and path and not relative.is_absolute() and ".." not in relative.parts
+        assert (ROOT / path).is_file(), f"README link names a missing file: {destination}"
+        documentation_links.append(destination)
+    assert documentation_links, "README must keep its version-pinned guide links"
 
 
 def test_readme_repository_links_match_version_and_existing_paths() -> None:
@@ -103,25 +104,77 @@ def test_readme_repository_links_match_version_and_existing_paths() -> None:
 
 
 def test_current_guide_cannot_point_at_the_previous_release() -> None:
+    markdown = "[Quick start](https://github.com/ericeallen/towel/blob/v1.948/docs/QUICKSTART.md)"
+    with pytest.raises(AssertionError, match="different release"):
+        _check_repository_links(markdown, "1.949")
+
+
+def test_a_releases_section_cannot_keep_links_to_an_earlier_release() -> None:
+    """Audit finding 4: no part of the README is exempt from naming its own version's tag."""
     markdown = (
-        "**Latest published release: 1.948.**\n"
-        "[Quick start](https://github.com/ericeallen/towel/blob/v1.948/docs/QUICKSTART.md)\n"
-        "## Releases and validation\n"
+        "[Quick start](https://github.com/ericeallen/towel/blob/v1.949/docs/QUICKSTART.md)\n"
+        "## Releases\n"
         "[Evidence](https://github.com/ericeallen/towel/blob/v1.948/docs/PRODUCTION_READINESS.md)"
     )
     with pytest.raises(AssertionError, match="different release"):
         _check_repository_links(markdown, "1.949")
 
 
-def test_published_evidence_cannot_be_relabelled_as_the_candidate() -> None:
-    markdown = (
-        "**Latest published release: 1.948.**\n"
-        "[Quick start](docs/QUICKSTART.md)\n"
-        "## Releases and validation\n"
-        "[Evidence](https://github.com/ericeallen/towel/blob/v1.949/docs/PRODUCTION_READINESS.md)"
-    )
-    with pytest.raises(AssertionError, match="different release"):
-        _check_repository_links(markdown, "1.949")
+def test_a_readme_without_pinned_guides_is_not_accepted_as_having_checked_them() -> None:
+    with pytest.raises(AssertionError, match="version-pinned guide links"):
+        _check_repository_links("[Releases](https://github.com/ericeallen/towel/releases)", "1.949")
+
+
+RELEASES = "https://github.com/ericeallen/towel/releases"
+CONVENTION = (
+    f"**Release status: 1.949 (beta).** See the [releases page]({RELEASES}).\n\n"
+    "## Install\n\n"
+    "[Quick start](https://github.com/ericeallen/towel/blob/v1.949/docs/QUICKSTART.md)\n\n"
+    "## Releases\n\n"
+    "The [changelog](https://github.com/ericeallen/towel/blob/v1.949/CHANGELOG.md)"
+    f" and the [published versions]({RELEASES}).\n"
+)
+
+
+def _check_release_pointers(markdown: str, version: str) -> None:
+    """The README says where publication is recorded, since it cannot say what was published."""
+    status = [part for part in re.split(r"\n[ \t]*\n", markdown) if "**Release status:" in part]
+    assert len(status) == 1, "README must have exactly one release-status paragraph"
+    assert RELEASES in _destinations(status[0]), "The status paragraph must link the releases page"
+    _, separator, rest = markdown.partition("\n## Releases\n")
+    assert separator, "README must have a Releases section"
+    destinations = _destinations(rest.split("\n## ", 1)[0])
+    assert RELEASES in destinations, "The Releases section must link the releases page"
+    changelog = f"https://github.com/ericeallen/towel/blob/v{version}/CHANGELOG.md"
+    assert changelog in destinations, "The Releases section must link this version's changelog"
+
+
+def test_readme_points_to_the_release_record_instead_of_restating_it() -> None:
+    """Audit finding 4: PyPI's page for 1.949 says that 1.949 is unpublished.
+
+    The README is frozen into the distributions before publication. It therefore
+    names its version and links the page where publication is recorded afterwards.
+    """
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    _check_release_pointers((ROOT / "README.md").read_text(), version)
+    _check_release_pointers(CONVENTION, "1.949")
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        (f"See the [releases page]({RELEASES}).", "See the releases page."),
+        ("**Release status: 1.949 (beta).** See", "**Release status: 1.949 (beta).**\n\nSee"),
+        ("## Releases\n", "## History\n"),
+        (f" and the [published versions]({RELEASES})", ""),
+        ("blob/v1.949/CHANGELOG.md", "blob/v1.949/docs/README.md"),
+        ("blob/v1.949/CHANGELOG.md", "blob/v1.948/CHANGELOG.md"),
+    ],
+)
+def test_release_pointer_check_detects_a_readme_that_lost_them(before: str, after: str) -> None:
+    assert before in CONVENTION
+    with pytest.raises(AssertionError):
+        _check_release_pointers(CONVENTION.replace(before, after), "1.949")
 
 
 def test_r9p2_the_test_readme_lists_the_example_corpus_it_describes() -> None:
