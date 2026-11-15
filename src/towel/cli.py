@@ -1979,8 +1979,10 @@ def _find_extracted_helpers(
                 continue
             lines = source.split("\n")
             start = node.lineno - 1
-            preview = "\n".join(lines[start : start + 5])
-            helpers.append((py_file, node.name, node.lineno, preview))
+            full_source = ast.get_source_segment(source, node) or "\n".join(
+                lines[start : node.end_lineno or start + 5]
+            )
+            helpers.append((py_file, node.name, node.lineno, full_source))
 
     return sorted(helpers, key=lambda x: (str(x[0]), x[2]))
 
@@ -2155,7 +2157,11 @@ def helper_inventory(
         }
         qualnames = class_qualnames(tree)
         for node in ast.walk(tree):
-            if not isinstance(node, ast.FunctionDef) or node.name != name or node.lineno != lineno:
+            if (
+                not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                or node.name != name
+                or node.lineno != lineno
+            ):
                 continue
             enclosing = parents.get(node)
             scope_kind: HelperScopeKind
@@ -2409,12 +2415,14 @@ def _run_interactive_llm_mode(
     print("The response should be a JSON object mapping old names to new names.")
     print("You can use file-qualified names (e.g., 'path/to/file.py:func_name') to")
     print("rename functions only in specific files, or just the function name to rename")
-    print("across all files. A class-private helper, '__...' in a class, is named by its")
-    print("class ('path/to/file.py:Class.__func_name') and keeps a name starting with '__'.")
+    print("across all files. Generated parameters use 'path/to/file.py:func_name.__param_0'.")
+    print("A class-private helper, '__...' in a class, is named by its class")
+    print("('path/to/file.py:Class.__func_name') and keeps a name starting with '__'.")
     print()
     print("Example:")
     print('  {"__extracted_func_1": "calculate_total"}')
     print('  {"src/utils.py:__extracted_func_2": "validate_input"}')
+    print('  {"src/utils.py:__extracted_func_2.__param_0": "raw_value"}')
     print('  {"src/box.py:Box.__extracted_func_3": "__scaled_width"}')
     print()
     print(
@@ -2456,56 +2464,83 @@ def _generate_llm_prompt(
     helpers: List[Tuple[Path, str, int, str]],
     llm_type: str,
 ) -> str:
-    """Generate a prompt for an LLM to suggest better function names."""
+    """Generate a prompt for an LLM to suggest better function and parameter names."""
+    intro = (
+        "I have extracted duplicate code into helper functions, and both the functions and their\n"
+        "generated parameters still have placeholder names (__extracted_func_0, __param_0, etc.).\n"
+        "\n"
+        "Please review each helper, its generated parameter keys, and its call site, and suggest\n"
+        "descriptive names for both the helper functions and their __param_N parameters.\n"
+        "The new names should:\n"
+        "- Be descriptive and indicate each function's purpose and each parameter's role\n"
+        "- Follow Python naming conventions (lowercase with underscores)\n"
+        "- Be concise and meaningful, avoiding generic names like 'helper', 'utility', or 'arg'\n"
+        "- Name thunk parameters (called as name() inside the helper) for the value they yield\n"
+        "\n"
+        "Here are the extracted helpers:\n\n"
+    )
 
-    intro = """I have extracted duplicate code into helper functions, but they have generic names like __extracted_func_1, __extracted_func_2, etc.
-
-Please review each function and suggest a better, more descriptive name based on what the function does. The new names should:
-- Be descriptive and indicate the function's purpose
-- Follow Python naming conventions (lowercase with underscores)
-- Be concise but meaningful
-- Avoid generic names like "helper" or "utility"
-
-Here are the extracted functions:
-
-"""
-
-    keys = {
-        (entry["file"], entry["name"], entry["line"]): entry["rename_key"]
+    inventory_entries = {
+        (entry["file"], entry["name"], entry["line"]): entry
         for entry in helper_inventory(target, helpers)["helpers"]
     }
     functions_section = ""
     for i, (file_path, func_name, lineno, source_preview) in enumerate(helpers, 1):
         rel_path = file_path.relative_to(target)
-        key = keys.get((str(rel_path), func_name, lineno), func_name)
+        entry = inventory_entries.get((str(rel_path), func_name, lineno))
+        key = entry["rename_key"] if entry is not None else func_name
+        helper_source = entry["source"] if entry is not None and entry["source"] else source_preview
         functions_section += f"\n{i}. {func_name} ({rel_path}:{lineno}), rename key {key!r}\n"
-        if source_preview:
-            functions_section += "```python\n"
-            functions_section += source_preview + "\n"
-            functions_section += "```\n"
+        if helper_source:
+            functions_section += f"```python\n{helper_source}\n```\n"
+        if entry is not None:
+            generated_params = [
+                param for param in entry["parameters"] if param["name"].startswith("__param_")
+            ]
+            if generated_params:
+                functions_section += "Generated parameter rename keys:\n"
+                for param in generated_params:
+                    detail = ""
+                    if param["kind"] == "thunk":
+                        detail = f" (thunk, called as {param['name']}())"
+                    elif param["kind"] == "lifted":
+                        detail = " (callable)"
+                    samples = [b["expression"] for b in param["bindings"] if b["expression"]][:2]
+                    if samples:
+                        detail += f"; passed {', '.join(samples)}"
+                    functions_section += f"- {param['rename_key']!r}{detail}\n"
+            if entry["calls"] and entry["calls"][0]["statement"]:
+                call = entry["calls"][0]
+                functions_section += (
+                    f"Call site ({call['file']}:{call['line']}):\n"
+                    f"```python\n{call['statement']}\n```\n"
+                )
 
-    output_format = """
-
-Please provide your suggestions as a JSON object mapping old names to new names.
-
-If the same function name appears in multiple files, use file-qualified names (path:function_name)
-to rename them individually. Otherwise, you can use just the function name to rename across all files.
-A helper whose rename key names a class ("path.py:Class.__name") is class-private: use that key, and
-give it a new name that also starts with two underscores (and does not end with two), such as
-"__scaled_width", because the privacy is what keeps subclasses from overriding it.
-
-For example:
-
-```json
-{
-  "src/utils.py:__extracted_func_1": "calculate_total_price",
-  "src/validators.py:__extracted_func_1": "validate_email_format",
-  "__extracted_func_2": "format_date_string"
-}
-```
-
-Only include the JSON object in your response.
-"""
+    output_format = (
+        "\n"
+        "Please provide your suggestions as a JSON object mapping each rename key to its new\n"
+        "name, including both helper keys and generated __param_N parameter keys.\n"
+        "\n"
+        "Use the exact rename keys shown above (such as 'path.py:__extracted_func_0' for a\n"
+        "helper and 'path.py:__extracted_func_0.__param_0' for one of its parameters).\n"
+        "A helper whose rename key names a class ('path.py:Class.__name') is class-private:\n"
+        "use that key, and give it a new name that also starts with two underscores (and does\n"
+        "not end with two), such as '__scaled_width', because privacy keeps subclasses from\n"
+        "overriding it.\n"
+        "\n"
+        "For example:\n"
+        "\n"
+        "```json\n"
+        "{\n"
+        '  "src/utils.py:__extracted_func_1": "calculate_total_price",\n'
+        '  "src/utils.py:__extracted_func_1.__param_0": "tax_rate",\n'
+        '  "src/validators.py:__extracted_func_1": "validate_email_format",\n'
+        '  "__extracted_func_2": "format_date_string"\n'
+        "}\n"
+        "```\n"
+        "\n"
+        "Only include the JSON object in your response.\n"
+    )
 
     return intro + functions_section + output_format
 
