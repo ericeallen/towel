@@ -135,7 +135,9 @@ def test_validation_debugging_traces_both_blocks_of_a_pair(
         contextlib.redirect_stdout(io.StringIO()),
     ):
         proposals = engine.analyze_file(str(path))
-    assert [p.description for p in proposals] == ["Extract common code from first and second"]
+    assert [p.description for p in proposals] == [
+        "Reuse first (m.py) for duplicated code in second"
+    ]
     messages = [r.getMessage() for r in caplog.records if r.name == "towel.validation"]
     assert "\n=== Block1 Validation Debug ===" in messages
     assert "\n=== Block2 Validation Debug ===" in messages

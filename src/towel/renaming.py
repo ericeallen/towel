@@ -476,14 +476,14 @@ class _ParameterSpec(NamedTuple):
         return qualified, self.parameter
 
 
-def inferred_rename_root(target: Path) -> Path | None:
+def inferred_rename_root(target: Path, *, project_root: Path | None = None) -> Path | None:
     """An enclosing consumer scope established by metadata or regular-package ancestry.
 
     A bare namespace directory does not establish its surrounding project.
     CLI callers require an explicit completeness declaration in that case;
     library callers retain the documented complete-target precondition.
     """
-    root = find_project_root(target)
+    root = project_root if project_root is not None else find_project_root(target)
     if any((root / name).exists() for name in ("pyproject.toml", "setup.cfg")) or (
         (root / "setup.py").exists() and not is_package_dir(root)
     ):

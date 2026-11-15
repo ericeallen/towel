@@ -44,6 +44,10 @@ from tests.test_helpers import (
 )
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
+# These fixtures pin 1.949 binding independence and ownership guarantees.
+pytestmark = pytest.mark.strict_mode
+
+
 # These integer fixtures exercise the default reuse policy with substantial
 # shared arithmetic while retaining their original observed results and spans.
 IDENTICAL_PAIR = """

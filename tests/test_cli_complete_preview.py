@@ -159,7 +159,11 @@ def test_preview_shows_final_helper_definitions_and_dry_inventory(
     """A list of replaced calls alone cannot show the helper's behavior or its final bindings."""
     root = tmp_path / "input"
     root.mkdir()
-    (root / "module.py").write_text(DUPLICATES)
+    # This inventory test needs a fresh helper; plain whole functions now redirect.
+    source = DUPLICATES.replace("def first(", "@staticmethod\ndef first(").replace(
+        "def second(", "@staticmethod\ndef second("
+    )
+    (root / "module.py").write_text(source)
     target = root if directory else root / "module.py"
     flags = ["--no-types", "--no-format", "--progress", "none"]
     result = invoke(["preview", str(target), "--interactive", "--inventory", *flags])
@@ -183,7 +187,7 @@ def test_preview_shows_final_helper_definitions_and_dry_inventory(
     assert inventory == expected
     assert inventory["helpers"][0]["parameters"]
     assert "towel-preview-" not in result.stdout
-    assert (root / "module.py").read_text() == DUPLICATES
+    assert (root / "module.py").read_text() == source
     compatible = invoke(["preview", str(target), "--no-interactive", "--inventory", *flags])
     assert compatible.stdout == result.stdout and compatible.status == 0
 

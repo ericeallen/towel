@@ -21,7 +21,13 @@ import pytest
 from towel.unification import materialize
 from towel.unification.exceptions import RefactoringError, UnprofitableHelper
 from towel.unification.refactor_engine import UnificationRefactorEngine
-from tests.test_cli_integration import DUPLICATES, invoke
+from tests.test_cli_integration import DUPLICATES as REDIRECTABLE_DUPLICATES, invoke
+
+# Keep these tests on fresh-helper profitability; undecorated whole functions
+# now reuse their existing definition under the shape remediation policy.
+DUPLICATES = REDIRECTABLE_DUPLICATES.replace("def first(", "@staticmethod\ndef first(").replace(
+    "def second(", "@staticmethod\ndef second("
+)
 
 
 def test_materializer_raises_a_specific_usefulness_verdict(

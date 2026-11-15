@@ -341,6 +341,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         promote_equal_hof_literals: bool = False,
         parameterize_builtins: bool = False,
         strict: bool = DEFAULT_STRICT,
+        complete_scope: bool = False,
         excluded_directories: Sequence[str] = (),
         cross_module_helpers: bool = False,
         skip_trivial_helpers: bool = True,
@@ -429,14 +430,12 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 those output-quality filters, not semantic checks or unconditional
                 no-logic refusals (docs/DECISIONS.md, "Complete extractions must
                 repay their generated syntax").
-            reuse_existing_functions: Deprecated, and has no effect. It chose
-                whether a site that is the whole body of a plain module-level
-                function was left alone and the other sites rewritten to call
-                it; since 1.772 an extracted input function calls a fresh helper
-                instead, because such a call looked the other function up in
-                its module each time, so patching or rebinding it changed both.
-                Still accepted so existing callers keep working; it will be
-                removed in a later release.
+            reuse_existing_functions: Deprecated compatibility option; ignored.
+                Since 2.0, redirection follows the clean-program rebinding scan
+                and mode-specific completeness and ownership conditions.
+            complete_scope: Declare that the analyzed target contains every
+                ordinary consumer (default: False). Otherwise strict redirection
+                requires a scope established by project or package metadata.
             annotate_helpers: Give a helper the parameter and return annotations
                 its call sites agree on -- an annotated, never-rebound parameter
                 of the enclosing function, a literal's builtin type, the sites'
@@ -515,6 +514,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.parameterize_constants = parameterize_constants
         self.parameterize_builtins = parameterize_builtins
         self.strict = strict
+        self.complete_scope = complete_scope
+        self._declared_complete_scope = complete_scope
+        self._rebinding_sources: Dict[str, Optional[str]] = {}
+        self._reported_rebindings: set[str] = set()
         self.unifier = Unifier(
             max_parameters=max_parameters,
             parameterize_constants=parameterize_constants,
@@ -811,7 +814,15 @@ class UnificationRefactorEngine(ParallelEvaluation):
         for path in stale:
             self._evict_cached_analysis(path)
         self._analysis_paths = tuple(file_paths)
+        from .rebinding import rebinding_scope
+
         roots = {path: self._project_root_in_run(path) for path in file_paths}
+        self.complete_scope, self._rebinding_sources = rebinding_scope(
+            file_paths,
+            declared_complete=self._declared_complete_scope,
+            program_root=self._output_origin[1] if self._output_origin is not None else None,
+            project_roots=roots,
+        )
         mapping_writes = {
             root: project_may_replace_builtin_mapping(root, frozenset(self.excluded_directories))
             for root in sorted(set(roots.values()))

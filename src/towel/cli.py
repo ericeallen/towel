@@ -645,6 +645,11 @@ def _add_shared_options(sections: _Sections) -> None:
     _add_limit_flags(sections.limits)
     _add_tool_flags(sections.advanced)
     _add_strict_flag(sections.advanced)
+    sections.scope.add_argument(
+        "--complete-scope",
+        action="store_true",
+        help="Declare that the target contains every ordinary consumer (default: infer from project metadata or package ancestry)",
+    )
     _add_parameterize_builtins_flag(sections.advanced)
 
 
@@ -1242,6 +1247,7 @@ class DryOptions:
     diff: bool = False
     inventory: bool = False
     strict: bool = DEFAULT_STRICT
+    complete_scope: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "DryOptions":
@@ -1257,6 +1263,7 @@ class DryOptions:
             progress=normalize_progress(args.progress),
             types=bool(args.types),
             strict=bool(args.strict),
+            complete_scope=bool(args.complete_scope),
             format=bool(args.format),
             exclude=tuple(args.exclude or ()),
             cross_module=bool(args.cross_module),
@@ -1290,6 +1297,7 @@ class PreviewOptions:
     diff: bool = False
     inventory: bool = False
     strict: bool = DEFAULT_STRICT
+    complete_scope: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "PreviewOptions":
@@ -1303,6 +1311,7 @@ class PreviewOptions:
             max_refactorings=int(args.max_refactorings),
             types=bool(args.types),
             strict=bool(args.strict),
+            complete_scope=bool(args.complete_scope),
             format=bool(args.format),
             quick=bool(args.quick),
             exclude=tuple(args.exclude or ()),
@@ -1328,6 +1337,7 @@ class PreviewOptions:
             progress=self.progress,
             types=self.types,
             strict=self.strict,
+            complete_scope=self.complete_scope,
             format=self.format,
             exclude=self.exclude,
             cross_module=self.cross_module,
@@ -1475,6 +1485,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
             min_lines=options.min_lines,
             parameterize_builtins=options.parameterize_builtins,
             strict=options.strict,
+            complete_scope=options.complete_scope,
             max_candidate_pairs=options.max_pairs,
             settings=_settings(),
             parameterize_constants=True,
@@ -2160,6 +2171,7 @@ def _run_quick_preview(options: PreviewOptions) -> None:
         min_lines=options.min_lines,
         parameterize_builtins=options.parameterize_builtins,
         strict=options.strict,
+        complete_scope=options.complete_scope,
         max_candidate_pairs=options.max_pairs,
         settings=_settings(),
         parameterize_constants=True,

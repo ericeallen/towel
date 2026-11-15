@@ -221,12 +221,18 @@ def process_data_b(x):
         temp_path = self._write_temp(code)
 
         proposals = self.engine.analyze_file(temp_path)
-        # The docstrings are skipped, so the two bodies are whole-function
-        # duplicates, and both become calls of one helper.
+        # The distinct docstrings stay with their functions. Ignoring them
+        # exposes identical bodies, so the second function can call the first.
         self.assertEqual(
             [p.description for p in proposals],
-            ["Extract common code from process_data_a and process_data_b"],
+            ["Reuse process_data_a (m.py) for duplicated code in process_data_b"],
         )
+        written = self.engine.apply_refactoring(temp_path, proposals[0])
+        first, second = ast.parse(written).body
+        assert isinstance(first, ast.FunctionDef) and isinstance(second, ast.FunctionDef)
+        self.assertEqual(ast.dump(first), ast.dump(ast.parse(code).body[0]))
+        self.assertEqual(ast.get_docstring(second), "Process data variant B.")
+        self.assertEqual(ast.unparse(second.body[-1]), "return process_data_a(x)")
 
     def test_find_python_files_excludes_hidden(self):
         """Test that hidden directories are excluded."""

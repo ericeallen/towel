@@ -252,6 +252,15 @@ class EngineState:
     parameterize_builtins: bool
     """Whether a builtin that may differ between sites is passed as a parameter instead of declined."""
 
+    def _require_early_reused_helper(self, proposal: RefactoringProposal) -> None:
+        """Materialization proves a reused function available before imports."""
+        raise NotImplementedError
+
+    complete_scope: bool
+    _declared_complete_scope: bool
+    _rebinding_sources: Dict[str, Optional[str]]
+    _reported_rebindings: set[str]
+
     strict: bool
     """Whether 1.949's guarantees are kept in full: exact object lifetimes, and typed verification that
     gates even unannotated proposals on resolved imports. Relaxed mode, the default, assumes neither is needed."""

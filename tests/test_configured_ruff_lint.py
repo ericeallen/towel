@@ -25,7 +25,25 @@ from tests.test_cli_integration import invoke
 from towel.formatting import LintRejected, file_finisher_for_project
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
-DUPLICATED_LABELS = 'def first(label, pos):\n    if len(label) > 100:\n        raise ValueError("too long")\n    cp = ord(label[pos])\n    return cp\n\ndef second(label, pos):\n    if len(label) > 100:\n        raise ValueError("too long")\n    cp = ord(label[pos])\n    return cp\n'
+# Reuse of an existing function adds no helper warning. Decorators keep these
+# fixtures on the fresh-helper path whose Ruff baseline is being tested.
+DUPLICATED_LABELS = """def identity(function):
+    return function
+
+@identity
+def first(label, pos):
+    if len(label) > 100:
+        raise ValueError("too long")
+    cp = ord(label[pos])
+    return cp
+
+@identity
+def second(label, pos):
+    if len(label) > 100:
+        raise ValueError("too long")
+    cp = ord(label[pos])
+    return cp
+"""
 
 
 def _module(root: Path, source: str, rules: str) -> Path:
@@ -189,6 +207,9 @@ def test_lint_refusal_does_not_hide_a_useful_neighbor(tmp_path: Path) -> None:
     labels = DUPLICATED_LABELS
     (source / "labels.py").write_text(labels)
     neighbors = 'def first(x):\n    print(x)\n    print("hello")\n\ndef second(y):\n    print(y)\n    print("hello")\n'
+    neighbors = "def identity(function):\n    return function\n\n" + neighbors.replace(
+        "def first(", "@identity\ndef first("
+    ).replace("def second(", "@identity\ndef second(")
     (source / "neighbors.py").write_text(neighbors)
     engine = UnificationRefactorEngine(
         # The minimal neighbor isolates continued processing after a lint

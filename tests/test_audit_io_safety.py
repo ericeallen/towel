@@ -347,7 +347,8 @@ def test_r9p2_a_hard_linked_file_is_left_alone_and_the_rest_refactored_in_place(
     assert "not writable in place: its file is hard-linked 1" in run.stdout + run.stderr
     assert source.read_text() == outside.read_text() == SAFE_DUPLICATES
     assert source.stat().st_ino == outside.stat().st_ino
-    assert "__extracted_func" in other.read_text()
+    assert other.read_text() != SAFE_DUPLICATES
+    assert "two" in other.read_text()
 
 
 def test_r9p2_a_hard_linked_file_refactored_in_place_is_refused_before_the_run(
@@ -364,7 +365,8 @@ def test_r9p2_a_hard_linked_file_refactored_in_place_is_refused_before_the_run(
     written = tmp_path / "OUTPUT.py"
     remedy = _cli(["dry", str(source), str(written), "--no-types", "--no-interactive"])
     assert remedy.returncode == 0, remedy.stderr
-    assert "__extracted_func" in written.read_text()
+    assert written.read_text() != SAFE_DUPLICATES
+    assert "two" in written.read_text()
 
 
 def test_directory_does_not_retry_a_permanent_change_conflict(

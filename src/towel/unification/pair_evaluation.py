@@ -2031,6 +2031,9 @@ class PairEvaluation(
             self._debug_reject(RejectReason.DUPLICATE_PROPOSAL, pair)
             return None
         self._seen_proposals.add(identity)
+        redirected = self._redirect_to_existing_function(proposal, functions)
+        if redirected is not None:
+            return redirected
         if self.skip_trivial_helpers:
             # A handoff changes the owned render copy's signature. An existing
             # provider must keep its bookkeeping and every original consumer.

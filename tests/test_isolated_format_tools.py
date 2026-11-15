@@ -32,12 +32,19 @@ import pytest
 from towel.formatting import BlackSettings, black_formatter
 from towel.project_tools import IsolatedFormatTool, ToolFailure
 
-DUPLICATES = """def one():
+# Decorated functions cannot be reuse targets: this test must exercise the
+# formatter/import tools on a newly generated helper, not just redirect a call.
+DUPLICATES = """def identity(function):
+    return function
+
+@identity
+def one():
     x = 1
     y = 2
     z = 3
     return x * y + z
 
+@identity
 def two():
     x = 1
     y = 2

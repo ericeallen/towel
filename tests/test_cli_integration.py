@@ -167,9 +167,9 @@ def test_preview_finds_duplicates_without_changing_files(tmp_path: Path, directo
     assert "Would apply 1 refactoring(s)." in result.stdout
     assert "first" in result.stdout and "second" in result.stdout
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
-    # One unified diff includes the source and generated helper, without duplicate inventories.
+    # One unified diff includes the redirected call, without duplicate inventories.
     assert "--- before/module.py" in result.stdout and "+++ after/module.py" in result.stdout
-    assert "+def __extracted_func" in result.stdout
+    assert "+    return first(x)" in result.stdout
     assert "Call sites (- before / + after):" not in result.stdout
     assert "Helper inventory:" not in result.stdout
 

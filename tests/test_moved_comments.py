@@ -74,9 +74,15 @@ def _without_comments(source: str) -> str:
 def _engine(**options: object) -> UnificationRefactorEngine:
     # Minimal fixtures isolate comment placement and directive safety from
     # the optional readability policy. The CLI control keeps product defaults.
-    return UnificationRefactorEngine(
+    engine = UnificationRefactorEngine(
         min_lines=3, settings=SERIAL, skip_trivial_helpers=False, **options  # type: ignore[arg-type]
     )
+    # This harness tests newly inserted helpers and their comments. Redirects
+    # deliberately insert no helper, and have their own preservation tests.
+    from unittest.mock import patch
+
+    patch.object(engine, "_redirect_to_existing_function", return_value=None).start()
+    return engine
 
 
 def _refactor(path: Path, **options: object) -> str:

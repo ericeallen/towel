@@ -124,8 +124,10 @@ def test_default_cli_preserves_strict_types_of_whole_body_duplicates(
         arguments = (-3, 0, 2, 1.5) if name == "second" and second_type == "float" else (-3, 0, 2)
         assert [changed_function(x) for x in arguments] == [original_function(x) for x in arguments]
     if second_type == "int":
-        assert "__extracted_func" in output.read_text(), "the shared body is extracted"
-        assert "return first(x)" not in output.read_text()
+        assert (
+            "return first(x)" in output.read_text()
+        ), "the shared body reuses its existing function"
+        assert "__extracted_func" not in output.read_text()
 
 
 def test_a_checker_failure_is_not_taken_for_acceptance(tmp_path: Path) -> None:
@@ -138,7 +140,7 @@ def test_a_checker_failure_is_not_taken_for_acceptance(tmp_path: Path) -> None:
     assert isinstance(checker.check(str(path), original), CheckFailure)
     engine = UnificationRefactorEngine(type_oracle=checker)
     proposal = engine.analyze_file(str(path))[0]
-    assert proposal.reused_function is None
+    assert proposal.reused_function is not None
     with pytest.raises(RefactoringError, match="Original project type check failed"):
         engine.apply_refactoring(str(path), proposal)
     assert path.read_text() == original

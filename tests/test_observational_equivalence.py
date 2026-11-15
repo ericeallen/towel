@@ -685,12 +685,13 @@ def calculate_b(y):
         temp_file = self._write_temp(original_code)
 
         proposals = self.engine.analyze_file(temp_file)
-        # calculate_b duplicates the whole body of calculate_a, so the one
-        # proposal makes both call a new helper.
-        self.assertEqual(
-            [p.description for p in proposals],
-            ["Extract common code from calculate_a and calculate_b"],
-        )
+        # calculate_b duplicates calculate_a's whole body. A clean binding
+        # lets the default relaxed mode reuse calculate_a directly.
+        self.assertEqual(len(proposals), 1)
+        reused = proposals[0].reused_function
+        self.assertIsNotNone(reused)
+        assert reused is not None
+        self.assertEqual(reused.name, "calculate_a")
 
         refactored_code = self.engine.apply_refactoring(temp_file, proposals[0])
 
