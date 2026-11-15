@@ -12,6 +12,8 @@
 PyPI freezes the README in each distribution. A later documentation edit cannot
 repair stale version links there. Check current metadata against the configured
 version; historical benchmark versions and results must retain their identities.
+For the same reason no shipped front-door file may say whether its own version
+has been published: publication happens after the freeze.
 The directory example must exercise fresh-source sequencing, since applying a
 second proposal from an obsolete analysis correctly raises StaleSource.
 """
@@ -29,6 +31,7 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 
+from scripts import verify_release_visibility as gate
 from tests.test_next_validation_documentation import _number, _rows, _table
 from tests.test_readme_links import _check_repository_links
 
@@ -63,6 +66,86 @@ def test_stale_current_version_and_release_commands_are_rejected(name: str) -> N
         documents[name] = documents[name].replace(version, "0.0")
     with pytest.raises(AssertionError):
         _check_current_version(documents, version)
+
+
+@pytest.mark.parametrize(
+    "name", ["README.md", "SECURITY.md", "CONTRIBUTING.md", "docs/README.md", "docs/QUICKSTART.md"]
+)
+def test_shipped_front_door_never_states_its_own_publication_status(name: str) -> None:
+    """User-perspective audit of 1.949, finding 4: PyPI says the release is unpublished.
+
+    The README frozen into 1.949 reads "this candidate is unpublished" and "Latest
+    published release: 1.948" on PyPI, and SECURITY.md, CONTRIBUTING.md, the
+    documentation index and the quick start shipped the same kind of sentence. These
+    files are frozen before publication, so any statement of whether their version is
+    published is false afterwards and cannot be corrected. They name the version they
+    describe; the GitHub release notes record what was published.
+    """
+    document = " ".join((ROOT / name).read_text().split()).casefold()
+    for phrase in (
+        "unpublished",
+        "preparation checkpoint",
+        "latest published release",
+        "this source documents",
+    ):
+        assert phrase not in document, f"{name} states its own publication status: {phrase!r}"
+
+
+def test_the_release_gate_refuses_the_same_files_and_phrases() -> None:
+    """One rule, checked here on the checkout and by `just release` on GitHub."""
+    assert set(gate.STATUS_DOCUMENTS) == {
+        "README.md",
+        "SECURITY.md",
+        "CONTRIBUTING.md",
+        "docs/README.md",
+        "docs/QUICKSTART.md",
+    }
+    assert set(gate.PUBLICATION_CLAIMS) == {
+        "unpublished",
+        "preparation checkpoint",
+        "latest published release",
+        "this source documents",
+    }
+    for name in gate.STATUS_DOCUMENTS:
+        assert gate.publication_claims((ROOT / name).read_text()) == ()
+
+
+@pytest.mark.parametrize(
+    "sentence,phrase",
+    [
+        ("this candidate is Unpublished and its validation", "unpublished"),
+        ("At the November 8, 2026 preparation\ncheckpoint, it", "preparation checkpoint"),
+        ("At that checkpoint: **Latest published release: 1.948.**", "latest published release"),
+        ("The latest published\n  release at that point", "latest published release"),
+        ("- This source documents 1.948.", "this source documents"),
+    ],
+)
+def test_the_status_check_sees_each_phrase_whatever_its_case_or_wrapping(
+    sentence: str, phrase: str
+) -> None:
+    """The 1.949 sentences were wrapped mid-phrase; a line-by-line search misses them."""
+    document = (ROOT / "SECURITY.md").read_text() + "\n" + sentence + "\n"
+    assert gate.publication_claims(document) == (phrase,)
+
+
+def test_the_source_to_be_frozen_satisfies_the_live_gate_document_rules() -> None:
+    """`just release` reads these documents from GitHub only after CI and promotion.
+
+    Apply its rules to the checkout first, where a refusal costs an edit and not a
+    repeated release step: one status line, the security target, the changelog
+    heading, tag-pinned links to files that exist, and no statement of publication.
+    """
+    readme = (ROOT / "README.md").read_text()
+    if "**Development branch:" in readme:
+        pytest.skip("the gate refuses a development README by design; it is finalized first")
+    version = str(tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"])
+    documents = {
+        name: (ROOT / name).read_text()
+        for name in ("pyproject.toml", "CHANGELOG.md", *gate.STATUS_DOCUMENTS)
+    }
+    for name in gate.document_links(readme, "ericeallen/towel", version):
+        documents.setdefault(name, (ROOT / name).read_text())
+    gate.verify_documents(documents, version, "ericeallen/towel")
 
 
 def _check_preservation_contract(text: str) -> None:
