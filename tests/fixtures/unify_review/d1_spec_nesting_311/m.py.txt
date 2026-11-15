@@ -1,0 +1,30 @@
+def first(records, width):
+    matching = [r for r in records if r > 0]
+    if not matching:
+        return "none"
+    lines = []
+    for r in matching:
+        lines.append(f"{r:{width:02}}")
+        lines.append(f"[{r}]")
+        lines.append(f"<{r}>")
+    lines.sort()
+    lines.reverse()
+    total = len(lines)
+    lines.append(str(total))
+    return "\n".join(lines)
+
+
+def second(records, width):
+    matching = [r for r in records if r > 0]
+    if not matching:
+        return "none"
+    lines = []
+    for r in matching:
+        lines.append(f"{r:{width:03}}")
+        lines.append(f"[{r}]")
+        lines.append(f"<{r}>")
+    lines.sort()
+    lines.reverse()
+    total = len(lines)
+    lines.append(str(total))
+    return "\n".join(lines)

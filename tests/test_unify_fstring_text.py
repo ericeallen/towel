@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import ast
+import shutil
+import subprocess
 from typing import Callable, cast
 
 import pytest
@@ -59,6 +61,7 @@ def test_differing_text_round_trips(left: str, right: str) -> None:
         is_value_producing=True,
         function_name="helper",
     )
+    rendered_programs: list[str] = []
     for index, expression in enumerate((left, right)):
         call = extractor.generate_call(
             function_name=helper.name,
@@ -86,13 +89,24 @@ def test_differing_text_round_trips(left: str, right: str) -> None:
         wrapper.body = [call]
         module = ast.fix_missing_locations(ast.Module(body=[helper, wrapper], type_ignores=[]))
         rendered = ast.unparse(module)
-        ast.parse(rendered, feature_version=(3, 11))
+        rendered_programs.append(rendered)
         namespace: dict[str, object] = {}
         exec(compile(rendered, "<audit-d1>", "exec"), namespace)
         run = cast(Callable[[object], object], namespace["run"])
         for value in (7, -2.5, "é{quoted}"):
             assert run(value) == eval(expression, {"x": value})
     assert [ast.dump(ast.Module(body=block, type_ignores=[])) for block in blocks] == originals
+    python311 = shutil.which("python3.11")
+    if python311 is None:
+        pytest.skip("Python 3.11 unavailable: behavior passed; actual parser assertion skipped")
+    for rendered in rendered_programs:
+        parsed = subprocess.run(
+            [python311, "-c", "import ast, sys; ast.parse(sys.stdin.read())"],
+            input=rendered,
+            capture_output=True,
+            text=True,
+        )
+        assert parsed.returncode == 0, parsed.stderr
 
 
 def test_text_parameter_excludes_shared_affixes() -> None:

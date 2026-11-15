@@ -49,7 +49,7 @@ def _parsed(source: str) -> list[ast.stmt]:
     return list(ast.parse(textwrap.dedent(source)).body)
 
 
-def _substituted(source: str, name: str) -> str:
+def _substituted(source: str, name: str, *, oldest_python: tuple[int, int] = (3, 11)) -> str:
     """The helper body the extractor writes when block 0's ``name`` is ``__param_0``."""
     substitution = Substitution()
     substitution.add_mapping(0, ast.Name(id=name, ctx=ast.Load()), PARAMETER)
@@ -59,6 +59,7 @@ def _substituted(source: str, name: str) -> str:
         free_variables=set(),
         enclosing_names=set(),
         is_value_producing=False,
+        oldest_python=oldest_python,
     )
     return ast.unparse(ast.Module(body=helper.body, type_ignores=[]))
 
@@ -295,4 +296,6 @@ PEP_701_ONLY = frozenset({"nested_format_spec"})
 )
 def test_r9sb_every_evaluated_position_is_substituted(case: str) -> None:
     source, expected = POSITIONS[case]
-    assert _substituted(source, "box") == _expected(expected)
+    # These fixtures explicitly exercise newer syntax, not an undeclared target.
+    oldest_python = (3, 12) if case in PEP_701_ONLY else (3, 11)
+    assert _substituted(source, "box", oldest_python=oldest_python) == _expected(expected)

@@ -1,0 +1,2 @@
+import sys; sys.path.insert(0, sys.argv[1]); import m
+for f in (m.first, m.second): print(f([1.5, -1, 2.25], 6))

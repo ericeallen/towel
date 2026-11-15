@@ -92,6 +92,7 @@ from .placement import HelperPlacement
 from .block_analysis import BlockAnalysis
 from .function_index import FunctionIndex
 from .function_scope import function_names, identifiers
+from .annotation_wiring import declared_oldest_python
 from .models import BlockBindingSnapshot, ClusterContext, HelperTemplate, encloses
 
 
@@ -208,6 +209,13 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 global_decls=template.globals_to_declare or None,
                 nonlocal_decls=template.nonlocals_to_declare or None,
                 function_name=template.func_def.name,
+                oldest_python=min(
+                    declared_oldest_python(
+                        self._origin_in_run(path), project_root=self._project_root_in_run(path)
+                    )
+                    or (3, 11)
+                    for path in (pair.file_path, pair.file_path2, candidate.file_path)
+                ),
             )
         except UnsupportedExtraction as error:
             self._debug_decline_site(
