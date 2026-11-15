@@ -724,6 +724,12 @@ Examples:
         help=argparse.SUPPRESS,
     )
 
+    parser.add_argument(
+        "--format",
+        action="store_true",
+        help="Format touched files with the project's configured formatter",
+    )
+
 
 CHANGE_SIDECAR_NAME = ".towel-helpers.json"
 
@@ -1095,6 +1101,7 @@ class RenameOptions:
     preview: bool
     llm: Optional[str]
     complete_scope: bool
+    format: bool = False
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace) -> "RenameOptions":
@@ -1109,6 +1116,7 @@ class RenameOptions:
             preview=bool(args.preview),
             llm=str(raw_llm) if raw_llm is not None else None,
             complete_scope=bool(args.complete_scope),
+            format=bool(getattr(args, "format", False)),
         )
 
 
@@ -1950,6 +1958,7 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
             options.preview,
             options.json,
             restrict_selection=bool(options.files or options.functions),
+            format_files=options.format,
         )
         return
 
@@ -1960,6 +1969,7 @@ def _run_rename_helpers(args: argparse.Namespace) -> None:
         options.llm or "generic",
         options.preview,
         restrict_selection=bool(options.files or options.functions),
+        format_files=options.format,
     )
 
 
@@ -2293,6 +2303,7 @@ def _apply_rename_file(
     as_json: bool = False,
     *,
     restrict_selection: bool = False,
+    format_files: bool = False,
 ) -> None:
     """Apply renamings from a JSON file, reporting a structured result when asked.
 
@@ -2309,12 +2320,13 @@ def _apply_rename_file(
         raise ValueError("Rename file must contain a JSON object (dict)")
 
     try:
-        total_changes = _apply_rename_mappings(
+        total_changes, touched_paths = _stage_and_apply_rename_mappings(
             target,
             renames,
             dry_run,
             quiet=as_json,
             selected_helpers=helpers if restrict_selection else None,
+            format_files=format_files,
         )
     except ValueError as error:
         if as_json:
@@ -2335,6 +2347,10 @@ def _apply_rename_file(
         )
         return
     print(f"\n{'[PREVIEW] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
+    if not dry_run and not format_files and touched_paths:
+        hint = _format_restore_hint(target, touched_paths)
+        if hint is not None:
+            print(hint)
 
 
 def _apply_rename_mappings(
@@ -2344,8 +2360,31 @@ def _apply_rename_mappings(
     quiet: bool = False,
     *,
     selected_helpers: Optional[List[Tuple[Path, str, int, str]]] = None,
+    format_files: bool = False,
 ) -> int:
     """Validate every mapping and stage the entire rename batch before any write."""
+    count, _ = _stage_and_apply_rename_mappings(
+        target,
+        renames,
+        dry_run,
+        quiet=quiet,
+        selected_helpers=selected_helpers,
+        format_files=format_files,
+    )
+    return count
+
+
+def _stage_and_apply_rename_mappings(
+    target: Path,
+    renames: Mapping[str, object],
+    dry_run: bool,
+    quiet: bool = False,
+    *,
+    selected_helpers: Optional[List[Tuple[Path, str, int, str]]] = None,
+    format_files: bool = False,
+) -> Tuple[int, List[Path]]:
+    """Validate, optionally format with the project's formatter, and apply a rename batch."""
+    from towel.changes import ChangePlan
     from towel.renaming import plan_rename_batch
 
     specifications: List[Tuple[str, str, Optional[Path]]] = []
@@ -2408,20 +2447,141 @@ def _apply_rename_mappings(
                 specifications.append((name, new_name, path))
                 labels.append(spec)
     planned = plan_rename_batch(target, specifications, labels=labels)
+    plan = planned.plan
+    if format_files and plan.changes:
+        before_map, after_map = _format_touched_sources(
+            [(c.path, c.before, c.after) for c in plan.changes]
+        )
+        plan = ChangePlan.from_sources(before_map, after_map)
     if not dry_run:
-        apply_changes(planned.plan)
+        apply_changes(plan)
     if not quiet:
         already_set = set(planned.already_applied)
         for spec, new_name in renames.items():
             suffix = " (already applied)" if spec in already_set else ""
             print(f"  {spec} -> {new_name}{suffix}")
         if dry_run:
-            diff = _format_plan_diff(
-                target, [(c.path, c.before, c.after) for c in planned.plan.changes]
-            )
+            diff = _format_plan_diff(target, [(c.path, c.before, c.after) for c in plan.changes])
             if diff:
                 print("\n" + diff.rstrip("\n"))
-    return planned.count
+    return planned.count, [c.path for c in plan.changes]
+
+
+def _configured_project_formatter(path: Path) -> Optional[str]:
+    """Return ``'ruff'`` or ``'black'`` when configured for ``path``, else ``None``."""
+    from towel.formatting import _ruff_configuration
+    from towel.project_layout import find_project_root, load_pyproject
+
+    ruff_config = _ruff_configuration(path)
+    absolute = path.resolve()
+    folder = absolute if absolute.is_dir() else absolute.parent
+    project_root = find_project_root(path).resolve()
+    black_config: Optional[Path] = None
+    for directory in (folder, *folder.parents):
+        pyproject = load_pyproject(directory)
+        tool = pyproject.get("tool", {}) if isinstance(pyproject, Mapping) else {}
+        if isinstance(tool, Mapping) and isinstance(tool.get("black"), Mapping):
+            black_config = directory / "pyproject.toml"
+            break
+        if directory == project_root:
+            break
+    if ruff_config is None and black_config is None:
+        return None
+    if ruff_config is not None and black_config is None:
+        return "ruff"
+    if black_config is not None and ruff_config is None:
+        return "black"
+    assert ruff_config is not None and black_config is not None
+    if ruff_config.parent in black_config.parent.parents:
+        return "black"
+    if black_config.parent in ruff_config.parent.parents or ruff_config.name != "pyproject.toml":
+        return "ruff"
+    tool = load_pyproject(ruff_config.parent).get("tool", {})
+    ruff_table = tool.get("ruff", {}) if isinstance(tool, Mapping) else {}
+    if isinstance(ruff_table, Mapping) and isinstance(ruff_table.get("format"), Mapping):
+        return "ruff"
+    return "black"
+
+
+def _format_touched_sources(
+    changes: List[Tuple[Path, bytes, bytes]],
+) -> Tuple[Dict[str, bytes], Dict[str, str]]:
+    """Format touched files only when the project configures Ruff or Black."""
+    from towel.formatting import (
+        FormatterUnavailable,
+        _RunFormatTools,
+        _black_for_project,
+        ruff_formatter,
+    )
+    from towel.source_text import decode_source
+
+    before_map: Dict[str, bytes] = {}
+    after_map: Dict[str, str] = {}
+    tools = _RunFormatTools()
+    try:
+        for path, before_bytes, after_bytes in changes:
+            before_map[str(path)] = before_bytes
+            text = decode_source(after_bytes)
+            kind = _configured_project_formatter(path)
+            if kind == "ruff":
+                try:
+                    formatter = ruff_formatter(path)
+                except FormatterUnavailable as error:
+                    raise ValueError(
+                        "Project configures Ruff, but 'ruff' is not installed; "
+                        "install ruff or omit --format"
+                    ) from error
+                rendered = formatter(text)
+                after_map[str(path)] = rendered + "\n" if rendered else text
+            elif kind == "black":
+                try:
+                    choice = _black_for_project(path, "Black", tools)
+                except ImportError as error:
+                    raise ValueError(
+                        "Project configures Black, but 'black' is not installed; "
+                        "install black or omit --format"
+                    ) from error
+                if choice.tool is not None:
+                    rendered = choice.tool(text)
+                    after_map[str(path)] = rendered + "\n" if rendered else text
+                else:
+                    after_map[str(path)] = text
+            else:
+                after_map[str(path)] = text
+    finally:
+        for worker in list(tools._tools.values()):
+            worker.close()
+    return before_map, after_map
+
+
+def _display_touched_path(target: Path, file_path: Path) -> str:
+    resolved = file_path.resolve()
+    cwd = Path.cwd().resolve()
+    if resolved.is_relative_to(cwd):
+        return resolved.relative_to(cwd).as_posix()
+    resolved_target = target.resolve()
+    if resolved.is_relative_to(resolved_target):
+        return str(target / resolved.relative_to(resolved_target))
+    return str(file_path)
+
+
+def _format_restore_hint(target: Path, touched_paths: List[Path]) -> Optional[str]:
+    """One-line command naming the project's configured formatter on touched files, if any."""
+    import shlex
+
+    by_tool: Dict[str, List[str]] = {}
+    for path in touched_paths:
+        kind = _configured_project_formatter(path)
+        if kind is not None:
+            by_tool.setdefault(kind, []).append(_display_touched_path(target, path))
+    if not by_tool:
+        return None
+    commands: List[str] = []
+    if "ruff" in by_tool:
+        commands.append(shlex.join(("ruff", "format", *by_tool["ruff"])))
+    if "black" in by_tool:
+        commands.append(shlex.join(("black", *by_tool["black"])))
+    return f"To restore formatting, run: {' && '.join(commands)}"
 
 
 def _format_plan_diff(target: Path, changes: List[Tuple[Path, bytes, bytes]]) -> str:
@@ -2477,6 +2637,7 @@ def _run_interactive_llm_mode(
     dry_run: bool,
     *,
     restrict_selection: bool = False,
+    format_files: bool = False,
 ) -> None:
     """Run interactive mode: generate LLM prompt and apply suggestions."""
     print(f"\nFound {len(helpers)} extracted helper function(s) to rename.\n")
@@ -2535,16 +2696,21 @@ def _run_interactive_llm_mode(
     _banner("STEP 2: APPLYING RENAMINGS")
 
     try:
-        total_changes = _apply_rename_mappings(
+        total_changes, touched_paths = _stage_and_apply_rename_mappings(
             target,
             renames,
             dry_run,
             selected_helpers=helpers if restrict_selection else None,
+            format_files=format_files,
         )
     except ValueError as error:
         print(f"Error: {error}", file=sys.stderr)
         sys.exit(2)
     print(f"\n{'[PREVIEW] Would make' if dry_run else 'Applied'} {total_changes} change(s)")
+    if not dry_run and not format_files and touched_paths:
+        hint = _format_restore_hint(target, touched_paths)
+        if hint is not None:
+            print(hint)
 
 
 def _generate_llm_prompt(

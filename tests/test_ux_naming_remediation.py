@@ -451,3 +451,85 @@ def test_llm_flag_is_hidden_from_help_accepted_and_emits_one_deprecation_line(
     stderr_lines = [line for line in with_llm.stderr.splitlines() if line.strip()]
     assert len(stderr_lines) == 1
     assert "--llm" in stderr_lines[0] and "deprecated" in stderr_lines[0].lower()
+
+
+def test_rename_formatting_hint_and_format_flag_respect_project_configuration(
+    tmp_path: Path,
+) -> None:
+    """Audit Finding 8, item 7: print formatter command hint, support --format, skip when unconfigured."""
+    unformatted_code = (
+        "def __extracted_func_0(first_item, second_item, third_item):\n"
+        "    tag = 'single_quotes'\n"
+        "    return first_item + second_item + third_item + len(tag)\n\n"
+        "def compute(alpha, beta, gamma):\n"
+        "    return __extracted_func_0(alpha, beta, gamma)\n"
+    )
+    untouched_code = "OTHER = 'leave_me_alone'\n"
+
+    # 1. Ruff configured, without --format -> no reformat, ends with ruff format hint.
+    ruff_dir = tmp_path / "ruff_proj"
+    ruff_dir.mkdir()
+    (ruff_dir / "pyproject.toml").write_text("[tool.ruff]\nline-length = 50\n", encoding="utf-8")
+    (ruff_dir / "orders.py").write_text(unformatted_code, encoding="utf-8")
+    (ruff_dir / "untouched.py").write_text(untouched_code, encoding="utf-8")
+    mapping = tmp_path / "renames.json"
+    mapping.write_text(
+        json.dumps(
+            {"orders.py:__extracted_func_0": "calculate_combined_item_total_with_tag_length"}
+        ),
+        encoding="utf-8",
+    )
+
+    no_fmt = invoke(["rename-helpers", str(ruff_dir), "--rename-file", str(mapping)])
+    assert no_fmt.status == 0, no_fmt.stderr
+    assert "'single_quotes'" in (ruff_dir / "orders.py").read_text(encoding="utf-8")
+    last_line = [line for line in no_fmt.stdout.splitlines() if line.strip()][-1]
+    assert "ruff format" in last_line and "orders.py" in last_line
+    assert "untouched.py" not in last_line
+
+    # 2. Ruff configured, WITH --format -> touched file formatted, untouched file left alone.
+    (ruff_dir / "orders.py").write_text(unformatted_code, encoding="utf-8")
+    with_fmt = invoke(["rename-helpers", str(ruff_dir), "--rename-file", str(mapping), "--format"])
+    assert with_fmt.status == 0, with_fmt.stderr
+    formatted_orders = (ruff_dir / "orders.py").read_text(encoding="utf-8")
+    assert '"single_quotes"' in formatted_orders
+    assert "def calculate_combined_item_total_with_tag_length(\n" in formatted_orders
+    assert (ruff_dir / "untouched.py").read_text(encoding="utf-8") == untouched_code
+
+    # 3. Black configured -> hint names black, and --format runs Black.
+    black_dir = tmp_path / "black_proj"
+    black_dir.mkdir()
+    (black_dir / "pyproject.toml").write_text("[tool.black]\nline-length = 50\n", encoding="utf-8")
+    (black_dir / "orders.py").write_text(unformatted_code, encoding="utf-8")
+    black_hint = invoke(["rename-helpers", str(black_dir), "--rename-file", str(mapping)])
+    assert black_hint.status == 0, black_hint.stderr
+    black_last = [line for line in black_hint.stdout.splitlines() if line.strip()][-1]
+    assert "black" in black_last and "orders.py" in black_last
+
+    (black_dir / "orders.py").write_text(unformatted_code, encoding="utf-8")
+    black_fmt = invoke(
+        ["rename-helpers", str(black_dir), "--rename-file", str(mapping), "--format"]
+    )
+    assert black_fmt.status == 0, black_fmt.stderr
+    assert '"single_quotes"' in (black_dir / "orders.py").read_text(encoding="utf-8")
+
+    # 4. No formatter configured -> NO hint, and --format NEVER reformats.
+    plain_dir = tmp_path / "plain_proj"
+    plain_dir.mkdir()
+    (plain_dir / "pyproject.toml").write_text("[project]\nname = 'plain'\n", encoding="utf-8")
+    (plain_dir / "orders.py").write_text(unformatted_code, encoding="utf-8")
+    plain_no_fmt = invoke(["rename-helpers", str(plain_dir), "--rename-file", str(mapping)])
+    assert plain_no_fmt.status == 0, plain_no_fmt.stderr
+    assert "ruff format" not in plain_no_fmt.stdout and "black" not in plain_no_fmt.stdout
+
+    (plain_dir / "orders.py").write_text(unformatted_code, encoding="utf-8")
+    plain_with_fmt = invoke(
+        ["rename-helpers", str(plain_dir), "--rename-file", str(mapping), "--format"]
+    )
+    assert plain_with_fmt.status == 0, plain_with_fmt.stderr
+    plain_text = (plain_dir / "orders.py").read_text(encoding="utf-8")
+    assert "'single_quotes'" in plain_text
+    assert (
+        "def calculate_combined_item_total_with_tag_length(first_item, second_item, third_item):"
+        in plain_text
+    )
