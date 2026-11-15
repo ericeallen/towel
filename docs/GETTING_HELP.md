@@ -28,7 +28,7 @@ A report that lets someone run what you ran gets an answer fastest. Include:
   or output that shows the difference. By Towel's own rule, a change in the
   behaviour of a program that does not use reflection is a defect to fix.
 
-The bug-report form on the [new-issue page](https://github.com/ericeallen/towel/issues/new/choose)
+The bug-report template on the [new-issue page](https://github.com/ericeallen/towel/issues/new/choose)
 asks for the same things.
 
 ## Security problems
