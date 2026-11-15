@@ -99,6 +99,8 @@ from ..type_inference import relocate_oracle
 from .annotation_wiring import UNTYPED_REMEDY
 from .materialize import Materialization
 from .rehearing import exact_candidate_key, execution_context
+from .helper_merging import merge_module_helpers
+from .rebinding import rebinding_scope
 
 _TQDM_NOTED = False
 
@@ -469,10 +471,55 @@ class FixedPointDrivers(Materialization):
             if max_iterations > 0 and iteration >= max_iterations:
                 break
 
+        merged = self._merge_equal_module_helpers(
+            [file_path], max_iterations - num_applied if max_iterations > 0 else None
+        )
+        if file_path in merged:
+            added = merged[file_path]
+            descriptions.extend(added)
+            num_applied += len(added)
+            current_code = decode_source(Path(file_path).read_bytes())
         if num_applied:
             self.confirm_run_with_a_cold_checker([file_path])
         self._refuse_a_run_the_checker_emptied(num_applied)
         return current_code, num_applied, descriptions
+
+    def _merge_equal_module_helpers(
+        self, paths: Sequence[str], remaining: Optional[int] = None
+    ) -> Dict[str, List[str]]:
+        """Finish the run with one body per equal generated module helper group."""
+        _, program = rebinding_scope(paths, declared_complete=self.complete_scope)
+        merged: Dict[str, List[str]] = {}
+        for path in paths:
+            if remaining is not None and remaining <= 0:
+                break
+            if Path(path).resolve() in self._unwritable_in_place:
+                continue
+            original = Path(path).read_bytes()
+            source = decode_source(original)
+            result = merge_module_helpers(path, source, program, max_merges=remaining)
+            if not result.aliases:
+                continue
+            output = result.source
+            if self.file_finisher is not None:
+                output = self.file_finisher(path, output)
+                if canonical_dump(ast.parse(output)) != canonical_dump(ast.parse(result.source)):
+                    raise RefactoringError("File finisher changed the merged helper AST")
+            if self._active_type_oracle() is not None and self._project_errors({path: output}):
+                LOG.info(
+                    "Equal helpers in %s kept separate: the type checker refused the aliases", path
+                )
+                continue
+            apply_changes(ChangePlan.from_sources({path: original}, {path: output}))
+            self._follow_the_written_change()
+            self.invalidate_paths([path])
+            program[str(Path(path).resolve())] = output
+            merged[path] = [
+                f"Merge equal helper {alias} into {target}" for alias, target in result.aliases
+            ]
+            if remaining is not None:
+                remaining -= len(result.aliases)
+        return merged
 
     def _rendered_or_none(
         self, file_path: str, proposal: RefactoringProposal, original: bytes
@@ -667,9 +714,17 @@ class FixedPointDrivers(Materialization):
             reporter.close()
         # Only a run that finished is confirmed: one that failed is published
         # nowhere, and nothing it applied reached the user.
+        paths = self._find_python_files(str(directory))
+        remaining = max_iterations - run.applied if max_iterations > 0 else None
+        for path, descriptions in self._merge_equal_module_helpers(paths, remaining).items():
+            for description in descriptions:
+                run.record(path, description)
+                run.applied += 1
         if run.applied:
-            self.confirm_run_with_a_cold_checker(self._find_python_files(str(directory)))
+            self.confirm_run_with_a_cold_checker(paths)
         self._refuse_a_run_the_checker_emptied(run.applied)
+        if max_iterations > 0 and run.applied >= max_iterations:
+            return run.results, "iteration_cap"
         return outcome
 
     @contextmanager
