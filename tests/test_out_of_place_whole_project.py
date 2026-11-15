@@ -232,7 +232,10 @@ def test_every_reported_path_names_the_output_not_the_stage(tmp_path: Path) -> N
     ran = _dry(project / case.target, output)
     assert ran.returncode == 0, ran.stdout + ran.stderr
     assert "towel-stage" not in ran.stdout + ran.stderr
-    assert f"{output / 'b.py'}: 1 refactoring(s)" in ran.stdout, ran.stdout
+    # Since 2.0 the summary names files relative to the target (audit finding 7),
+    # under "Refactoring directory: <output>"; neither names the stage.
+    assert f"Refactoring directory: {output}\n" in ran.stdout, ran.stdout
+    assert "\n  b.py: 1 refactoring(s)\n" in ran.stdout, ran.stdout
     sidecar = json.loads((output / ".towel-helpers.json").read_text(encoding="utf-8"))
     files = {site["file"] for sites in sidecar["helpers"].values() for site in sites}
     assert files == {"a.py", "b.py"}

@@ -28,6 +28,7 @@ checker cannot type is not changed at all.
 
 from __future__ import annotations
 
+import re
 import ast
 from collections.abc import Callable, Mapping, Sequence
 import importlib.util
@@ -992,4 +993,9 @@ def test_mypy_a_module_importing_what_mypy_cannot_find_is_left_alone_and_named(
     )
     seen = (package / "seen.py").read_text(encoding="utf-8")
     _typed_value_helper(seen, return_type="int")
-    assert "not verifiable: its file holds a name the type checker cannot type 1" in run.stdout
+    # Since 2.0 each reason is a line, its code in brackets (audit finding 7).
+    assert re.search(
+        r"^ +1  .*\[not verifiable: its file holds a name the type checker cannot type\]$",
+        run.stdout,
+        re.MULTILINE,
+    )
