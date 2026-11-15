@@ -115,7 +115,8 @@ class CommandResult(TypedDict):
     On completed runs, ``types`` is ``verified`` when a checker ran and
     verified the accepted changes, ``unverified`` when no checker was
     available, and ``off`` for explicit ``--no-types``. Failed or interrupted
-    runs omit it: ``status`` and ``error`` describe their outcome.
+    runs omit it: ``status`` and ``error`` describe their outcome. It is also
+    omitted when a checker was available but no readable source needed checking.
     A missing configured checker in relaxed mode gives ``unverified`` and bare
     helpers; with no configured checker, existing annotations may be copied.
     """

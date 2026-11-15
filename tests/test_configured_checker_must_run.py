@@ -308,3 +308,36 @@ def test_types_field_is_in_the_public_schema() -> None:
     row = next(line for line in schema.splitlines() if line.startswith("| `types` |"))
     assert all(f'"{value}"' in row for value in ("verified", "unverified", "off"))
     assert "absent" in row and "status" in row
+
+
+@pytest.mark.parametrize("excluded", [False, True])
+@pytest.mark.parametrize("command", ["preview", "dry"])
+def test_empty_targets_make_no_verification_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, excluded: bool, command: str
+) -> None:
+    """Typed round 2 finding 5 follow-up: a selected checker need not actually run."""
+    from towel import cli
+    from towel.type_inference import CheckSuccess
+    from tests.test_type_run_policy import _Oracle
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("[tool.mypy]\n")
+    flags = []
+    if excluded:
+        ignored = project / "ignored"
+        ignored.mkdir()
+        (ignored / "typed.py").write_text(SOURCE)
+        flags = ["--exclude", "ignored"]
+    oracle = _Oracle(lambda _: CheckSuccess())
+    monkeypatch.setattr(cli, "_type_oracle", lambda _: oracle)
+    arguments = [command, str(project)]
+    if command == "dry":
+        arguments += [str(tmp_path / "output"), "--no-interactive"]
+    result = invoke([*arguments, "--json", "--no-format", "--progress", "none", *flags])
+    assert result.status == 0, result.stderr
+    document = json.loads(result.stdout)
+    assert document["status"] == "complete"
+    assert document["applied"] == 0
+    assert not oracle.checks, "the empty target must not trigger a whole-project check"
+    assert "types" not in document, "do not claim that the selected checker ran"

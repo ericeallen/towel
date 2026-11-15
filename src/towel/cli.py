@@ -2065,9 +2065,8 @@ def _command_result(
             # A naming aid is optional; a failed read after dry has committed
             # must not turn published output into a reported failed operation.
             LOG.warning("Helper inventory unavailable: %s", error)
-    return {
+    result: CommandResult = {
         "schema_version": 1,
-        "types": types_status,
         "command": "preview" if preview else "dry",
         "status": "complete",
         "input": str(Path(options.input).resolve()),
@@ -2083,6 +2082,9 @@ def _command_result(
         "helpers": inventory,
         "error": None,
     }
+    if types_status != "verified" or engine.type_check_ran:
+        result["types"] = types_status
+    return result
 
 
 def _write_failure_result(

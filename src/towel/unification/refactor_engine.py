@@ -481,6 +481,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.type_oracle = type_oracle
         self._type_run_oracle = type_oracle
         self._type_run_baseline = None
+        self._type_check_ran = False
         self._type_known = KnownErrors()
         self._type_checked = None
         self._type_names_any = {}

@@ -483,6 +483,11 @@ class HelperAnnotationWiring(EngineState):
     # What the project's mypy settles about the fallback rungs, per module, once per run.
     _ladder_policies: Mapping[str, _LadderPolicy] = {}
 
+    @property
+    def type_check_ran(self) -> bool:
+        """Whether the run checked source, rather than only selecting an available checker."""
+        return self._type_check_ran
+
     def begin_refactoring_run(self, file_paths: Sequence[str]) -> None:
         """Establish a new run's original project before inference or changes.
 
@@ -494,6 +499,7 @@ class HelperAnnotationWiring(EngineState):
         """
         self._type_run_oracle = self.type_oracle
         self._type_run_baseline = None
+        self._type_check_ran = False
         self._declared_pythons = {}
         self._forget_run_lookups()
         self._ladder_policies = {}
@@ -544,6 +550,7 @@ class HelperAnnotationWiring(EngineState):
             else:
                 begin_checked_run(self._type_run_oracle, list(originals))
                 baseline = self._type_run_oracle.check_project(originals)
+                self._type_check_ran = True
                 self._type_run_baseline = baseline
                 if not isinstance(baseline, CheckFailure):
                     for diagnostic in baseline.errors:

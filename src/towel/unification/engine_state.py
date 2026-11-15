@@ -299,6 +299,9 @@ class EngineState:
     type_oracle: Optional[TypeOracle]
     _type_run_oracle: Optional[TypeOracle]
     """Per-run view of the caller's oracle, relocated when the driver copies its input."""
+    _type_check_ran: bool
+    """Whether this run actually submitted source to its checker."""
+
     _type_run_baseline: Optional[CheckResult]
     """Original complete-project result; None means the run has not checked its baseline."""
     _type_known: KnownErrors
