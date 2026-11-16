@@ -165,3 +165,46 @@ def test_relaxed_staging_skips_unreadable_inputs(
     finally:
         locked_file.chmod(0o600)
         locked_directory.chmod(0o700)
+
+
+@pytest.mark.parametrize("directory", [False, True])
+def test_full_copy_names_unreadable_inputs_missing_from_output(
+    tmp_path: Path, directory: bool
+) -> None:
+    """D5: adopting a relaxed full copy must not silently lose unreadable input."""
+    import os
+    from tests.test_cli_integration import LITERAL_DUPLICATES, invoke
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text("")
+    (project / "good.py").write_text(LITERAL_DUPLICATES)
+    locked = project / ("locked" if directory else "locked.py")
+    if directory:
+        locked.mkdir()
+        (locked / "data.txt").write_text("keep me")
+    else:
+        locked.write_text("keep me")
+    locked.chmod(0)
+    output = tmp_path / "out"
+    try:
+        if os.access(locked, os.R_OK):
+            pytest.skip("Current user bypasses permissions")
+        result = invoke(
+            [
+                "dry",
+                str(project),
+                str(output),
+                "--no-types",
+                "--no-format",
+                "--no-interactive",
+                "--quiet",
+                "--no-strict",
+            ]
+        )
+        assert result.status == 0, result
+        assert "not copied to" in result.stderr
+        assert str(output / locked.name) in result.stderr
+        assert not (output / locked.name).exists()
+    finally:
+        locked.chmod(0o700 if directory else 0o600)

@@ -37,6 +37,7 @@ import stat
 import tempfile
 from typing import Callable, Iterable, Iterator, List, Mapping, Tuple
 
+from .diagnostics import LOG
 from .changes import JOURNAL_PREFIX, SET_ASIDE_PREFIX, ChangePlan, FileChange, StaleSource
 from .program_files import skip_nonprogram_file
 from .source_files import (
@@ -449,7 +450,14 @@ def staged_project(
                 # The target is the root itself; the loop above copied nothing.
                 staged_target.rmdir()
             if _readable_entry(target):
-                shutil.copytree(target, staged_target, symlinks=True, ignore=_transient_entries)
+                shutil.copytree(
+                    target,
+                    staged_target,
+                    symlinks=True,
+                    ignore=lambda directory, names: _transient_entries(
+                        directory, names, output / Path(directory).relative_to(target)
+                    ),
+                )
             else:
                 staged_target.mkdir()
         else:
@@ -481,14 +489,17 @@ def _announce_copy(source: Path, output: Path, notice: Callable[[str], None]) ->
         notice(f"Copying {files} files ({size / 1_000_000:.1f} MB) to {output}")
 
 
-def _transient_entries(directory: str, names: List[str]) -> List[str]:
-    """Leave transient directories and relaxed-mode unreadable entries out of a copy."""
-    return [
-        name
-        for name in names
-        if (name.startswith(_TRANSIENT_PREFIXES) and os.path.isdir(os.path.join(directory, name)))
-        or not _readable_entry(Path(directory) / name)
-    ]
+def _transient_entries(directory: str, names: List[str], destination: Path) -> List[str]:
+    """Name unreadable inputs missing from a full copy, including under --quiet."""
+    omitted = []
+    for name in names:
+        source = Path(directory) / name
+        if name.startswith(_TRANSIENT_PREFIXES) and source.is_dir():
+            omitted.append(name)
+        elif not _readable_entry(source):
+            omitted.append(name)
+            LOG.warning("%s was not copied to %s: input cannot be read", source, destination / name)
+    return omitted
 
 
 def _staged_digests(
