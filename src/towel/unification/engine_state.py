@@ -260,6 +260,7 @@ class EngineState:
     _declared_complete_scope: bool
     _rebinding_sources: Dict[str, Optional[str]]
     _reported_rebindings: set[str]
+    excluded_directories: Tuple[str, ...]
 
     strict: bool
     """Whether 1.949's guarantees are kept in full: exact object lifetimes, and typed verification that

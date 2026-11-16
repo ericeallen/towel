@@ -341,3 +341,20 @@ def test_unconfigured_formatter_note_offers_configuration(tmp_path: Path, strict
     assert "no formatter configured" in result.stderr
     assert "Configure Ruff or Black" in result.stderr
     assert "Install the format extra" not in result.stderr
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_excluded_sources_do_not_block_redirects(tmp_path: Path, strict: bool) -> None:
+    """Review 6c: the rebinding scan must honor the command's source exclusions."""
+    source = tmp_path / "src"
+    broken = source / "broken_dir"
+    broken.mkdir(parents=True)
+    (broken / "py2.py").write_text('print "python two"\n')
+    (source / "pyproject.toml").write_text('[project]\nname="example"\nversion="0"\n')
+    (source / "mod.py").write_text(REDIRECT_SOURCE)
+    before = observe(source, "import mod; print(mod.report([1, 2]))")
+    output = tmp_path / "out"
+    result = dry(source, output, strict, "--exclude", "broken_dir")
+    assert "cannot be analyzed" not in result.stderr
+    assert "    total(order, log)" in (output / "mod.py").read_text()
+    assert observe(output, "import mod; print(mod.report([1, 2]))") == before

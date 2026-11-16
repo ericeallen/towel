@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from ..renaming import inferred_rename_root
 from ..project_layout import find_project_root
@@ -34,6 +34,7 @@ def rebinding_scope(
     declared_complete: bool,
     program_root: Path | None = None,
     project_roots: Mapping[str, Path] | None = None,
+    excluded: Iterable[str] = (),
 ) -> tuple[bool, dict[str, str | None]]:
     """Read the consumer scope, including modules with no duplicate functions.
 
@@ -63,7 +64,7 @@ def rebinding_scope(
     sources: dict[str, str | None] = {}
     for root in sorted(scan_roots):
         try:
-            expanded.update(path.resolve() for path in python_sources(root))
+            expanded.update(path.resolve() for path in python_sources(root, excluded=excluded))
         except OSError:
             # A read-only consumer scope is evidence for redirecting; failure
             # to inspect it must not turn an ordinary extraction into a failure.

@@ -822,6 +822,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
             declared_complete=self._declared_complete_scope,
             program_root=self._output_origin[1] if self._output_origin is not None else None,
             project_roots=roots,
+            excluded=self.excluded_directories,
         )
         mapping_writes = {
             root: project_may_replace_builtin_mapping(root, frozenset(self.excluded_directories))
