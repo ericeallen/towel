@@ -270,7 +270,7 @@ def census_line(report: "RunReport") -> str:
     )
     unreadable, ignored, excluded = _skipped_counts(report)
     if unreadable:
-        line += f" Skipped {_plural(unreadable, 'file')} it could not read."
+        line += f" Skipped {_plural(unreadable, 'file')} it could not read or parse."
     if ignored:
         line += (
             f" Skipped {_plural(ignored, 'file')} Git ignores (--include-ignored includes them)."

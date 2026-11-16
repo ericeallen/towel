@@ -38,7 +38,7 @@ def test_census_groups_omissions_by_reason() -> None:
         ),
     )
     assert census_line(report) == (
-        "Analysed 1 Python file (2 functions). Skipped 1 file it could not read."
+        "Analysed 1 Python file (2 functions). Skipped 1 file it could not read or parse."
         " Skipped 2 files Git ignores (--include-ignored includes them)."
         " Skipped 1 file in excluded directories."
     )
@@ -65,5 +65,11 @@ def test_mixed_omissions_name_only_selected_files_as_unreadable() -> None:
 def test_unreadable_only_wording_is_preserved() -> None:
     """Runtime item 6: retain the established read-failure wording."""
     report = RunReport(skipped_files=(SkippedFile("locked.py", UNREADABLE),))
-    assert census_line(report).endswith("Skipped 1 file it could not read.")
+    assert census_line(report).endswith("Skipped 1 file it could not read or parse.")
     assert outcome_line(report, 0, "src") == "No Python file under src could be read."
+
+
+def test_parse_failure_census_names_parsing() -> None:
+    """Round 2 minor: invalid syntax must not be described solely as a read failure."""
+    report = RunReport(skipped_files=(SkippedFile("bad.py", "line 1: invalid syntax"),))
+    assert "could not read or parse" in census_line(report)

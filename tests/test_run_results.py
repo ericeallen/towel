@@ -149,7 +149,7 @@ def test_the_census_counts_what_was_read_and_skips_an_undecodable_file_once(
     (project / "wide.py").write_bytes(UTF16_MODULE)
     result = invoke(["dry", str(project), str(tmp_path / "out"), "--no-interactive", *FLAGS])
     assert result.status == 0, result
-    assert "Analysed 1 Python file (2 functions). Skipped 1 file it could not read." in (
+    assert "Analysed 1 Python file (2 functions). Skipped 1 file it could not read or parse." in (
         result.stdout
     )
     assert result.stderr.count("wide.py") == 1

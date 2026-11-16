@@ -172,7 +172,7 @@ def test_cli_aliases_do_not_duplicate_unreadable_inputs(tmp_path: Path, command:
         assert result.status == 0, result
         assert result.stderr.count("Skipping ") == 2, result.stderr
         if command == "quick":
-            assert "Skipped 2 files it could not read." in result.stdout
+            assert "Skipped 2 files it could not read or parse." in result.stdout
         else:
             payload = json.loads(result.stdout)
             assert payload["applied"] > 0
