@@ -317,10 +317,7 @@ def unparsed_refusal(
     subject = "this file" if len(unparsed) == 1 else f"these {len(unparsed)} files"
     verb = "does" if len(unparsed) == 1 else "do"
     requirement = declared_requirement(root)
-    names = exclusion_names(unparsed, root, target)
-    lead = " ".join(f"--exclude {name}" for name in sorted(set(names.values())))
     lines = [
-        *((lead + ". Leave out this input to continue.",) if lead else ()),
         *_exclusion_remedy(unparsed, root, target),
         f"Refusing to refactor: {subject} of the program {verb} not parse or cannot be read on"
         f" Python {_version(running)}, which Towel is running on:",
@@ -421,9 +418,9 @@ def _exclusion_remedy(
     lines: List[str] = []
     if reached:
         lines.append(
-            "Or, if it is not meant to run, such as deliberately invalid test data, leave it out: "
-            + " ".join(f"--exclude {name}" for name in sorted(set(names.values())))
-            + ". Towel then refactors no directory or file of that name, and takes one that does"
+            " ".join(f"--exclude {name}" for name in sorted(set(names.values())))
+            + ". Leave out this input if it is not meant to run, such as deliberately invalid"
+            " test data. Towel then refactors no directory or file of that name, and takes one that does"
             " not parse for no part of the program."
         )
     given = [failure for failure in unparsed if failure.path not in reached]

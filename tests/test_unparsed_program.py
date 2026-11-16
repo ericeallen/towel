@@ -355,7 +355,8 @@ def test_a_file_at_the_project_root_is_excluded_by_its_name(tmp_path: Path) -> N
     _project(tmp_path, {"benchmark.py": "print 'fast'\n"})
     text = _refusal(tmp_path)
     assert "  benchmark.py: line 1: Missing parentheses in call to 'print'" in text
-    assert "leave it out: --exclude benchmark.py. Towel then refactors no directory" in text
+    assert text.startswith("--exclude benchmark.py. Leave out this input")
+    assert "Towel then refactors no directory" in text
     refuse_unparsed_program(tmp_path, ["benchmark.py"])
 
 
@@ -656,3 +657,13 @@ def test_real_template_prefix_recommends_a_newer_python(tmp_path: Path, prefix: 
     path = tmp_path / "new.py"
     path.write_text(f'{prefix}"hello {{name}}"\n')
     assert _uses_newer_syntax(path, (3, 13))
+
+
+def test_refusal_leads_with_one_exclusion_remedy(tmp_path: Path) -> None:
+    """D4 wording: lead with the remedy without repeating the same exclusion."""
+    from towel.program_files import UnparsedFile, unparsed_refusal
+
+    error = unparsed_refusal((UnparsedFile(tmp_path / "bad.py", "invalid syntax"),), tmp_path)
+    text = str(error)
+    assert text.startswith("--exclude bad.py")
+    assert text.count("--exclude bad.py") == 1
