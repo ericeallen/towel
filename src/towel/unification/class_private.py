@@ -15,7 +15,7 @@
 """Class-private names: what a ``__name`` written in a class body is stored as.
 
 A method helper is named ``__extracted_func_0`` so that no subclass, in the
-project or outside it, can override it or collide with it (docs/DECISIONS.md,
+project or outside it, can override it or collide with it (docs/design/DECISIONS.md,
 "A method helper lives in the class that holds both duplicates"). Python
 rewrites such an identifier wherever it is written inside a class body, so
 ``def __extracted_func_0`` in ``class A`` defines ``_A__extracted_func_0``

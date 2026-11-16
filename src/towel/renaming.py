@@ -397,7 +397,7 @@ def _module_names(target: Path, paths: Sequence[Path]) -> dict[Path, str]:
 
     A rename follows every import of a helper to the definition it binds, by
     module name, so a module must be known by the name the program's imports
-    use for it (docs/DECISIONS.md, "Import names come from the program"),
+    use for it (docs/design/DECISIONS.md, "Import names come from the program"),
     read from the whole project around ``target``: the tests beside a ``src``
     layout import ``alpha.a``, whatever its packaging metadata says. A module
     they give no name keeps one no absolute import can spell, so that only a
@@ -492,6 +492,15 @@ def inferred_rename_root(target: Path) -> Path | None:
     return root if is_package_dir(directory) else None
 
 
+@dataclass(frozen=True)
+class PlannedRenames:
+    """Staged rename edits, their identifier edit count, and keys already in place."""
+
+    plan: ChangePlan
+    count: int
+    already_applied: tuple[str, ...] = ()
+
+
 def plan_renames(
     target: Path, specifications: Sequence[tuple[str, str, Path | None]]
 ) -> tuple[ChangePlan, int]:
@@ -513,14 +522,43 @@ def plan_renames(
     the whole batch. Without a discoverable project anchor, the caller declares
     the target (or a file target's parent) to be the complete consumer scope.
     """
+    planned = plan_rename_batch(target, specifications)
+    return planned.plan, planned.count
+
+
+def plan_rename_batch(
+    target: Path,
+    specifications: Sequence[tuple[str, str, Path | None]],
+    *,
+    labels: Sequence[str] | None = None,
+) -> PlannedRenames:
+    """Validate and plan a rename batch, recognising keys whose new names are in place."""
+    if not specifications:
+        return PlannedRenames(ChangePlan(()), 0, ())
+    resolved_labels = (
+        list(labels)
+        if labels is not None
+        else [
+            _default_spec_label(target, old, file_filter) for old, _, file_filter in specifications
+        ]
+    )
+    if len(resolved_labels) != len(specifications):
+        raise ValueError("Each rename specification requires a matching label")
     for old, new, _ in specifications:
         _validate_names((*old.split("."), new))
     selected_paths = frozenset(path.resolve() for path in python_sources(target))
     root = find_project_root(target)
     modules = _load_rename_modules(root)
     definition_modules = [module for module in modules if module.path in selected_paths]
-    private, specifications = _class_private_specifications(definition_modules, specifications)
-    function_specifications, parameter_specifications = _split_specifications(specifications)
+    active_specifications, already_applied = _classify_specifications(
+        target, definition_modules, specifications, resolved_labels
+    )
+    if not active_specifications:
+        return PlannedRenames(ChangePlan(()), 0, tuple(already_applied))
+    private, remaining_specs = _class_private_specifications(
+        definition_modules, active_specifications
+    )
+    function_specifications, parameter_specifications = _split_specifications(remaining_specs)
     parameter_specifications += [
         _ParameterSpec(helper.name, parameter, new, helper.module.path, helper)
         for helper, parameter, new in private
@@ -540,7 +578,7 @@ def plan_renames(
         modules, [(helper, new) for helper, parameter, new in private if parameter is None]
     )
     if not selected and not method_renames and not private_renames and not parameter_specifications:
-        return ChangePlan(()), 0
+        return PlannedRenames(ChangePlan(()), 0, tuple(already_applied))
     destinations: set[tuple[str, str]] = set()
     for (module_name, _), new in selected.items():
         if (module_name, new) in destinations:
@@ -570,8 +608,352 @@ def plan_renames(
             count += len(edits.changes)
     missing = {spec.key for spec in parameter_specifications if spec.key not in parameters_found}
     if missing:
-        raise ValueError(f"No helper defines these parameters: {sorted(missing)}")
-    return ChangePlan.from_sources(before, after), count
+        available = _format_available_keys(_available_rename_keys(target, definition_modules))
+        raise ValueError(
+            f"No helper defines these parameters: {sorted(missing)}; available keys: {available}"
+        )
+    return PlannedRenames(ChangePlan.from_sources(before, after), count, tuple(already_applied))
+
+
+def _default_spec_label(target: Path, old: str, file_filter: Path | None) -> str:
+    if file_filter is None:
+        return old
+    resolved_target = target.resolve()
+    resolved_filter = file_filter.resolve()
+    if resolved_target.is_dir() and resolved_target in resolved_filter.parents:
+        return f"{resolved_filter.relative_to(resolved_target).as_posix()}:{old}"
+    return old
+
+
+def _function_parameters(node: FunctionNode) -> tuple[str, ...]:
+    return tuple(
+        arg.arg
+        for arg in (
+            *node.args.posonlyargs,
+            *node.args.args,
+            *node.args.kwonlyargs,
+            *(opt for opt in (node.args.vararg, node.args.kwarg) if opt is not None),
+        )
+    )
+
+
+def _available_rename_keys(target: Path, modules: Sequence[_Module]) -> list[str]:
+    resolved_target = target.resolve()
+    is_single_file = resolved_target.is_file()
+    primary: list[str] = []
+    fallback: list[str] = []
+    for module in modules:
+        prefix = (
+            ""
+            if is_single_file
+            else f"{module.path.resolve().relative_to(resolved_target).as_posix()}:"
+        )
+        qualnames = class_qualnames(module.tree)
+        parents = {
+            child: parent
+            for parent in ast.walk(module.tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        functions = sorted(
+            (
+                node
+                for node in ast.walk(module.tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            ),
+            key=lambda item: (item.lineno, item.col_offset),
+        )
+        for node in functions:
+            scope = module.scopes.nodes.get(node)
+            if scope is None:
+                continue
+            if scope is module.scopes.root:
+                helper_key = f"{prefix}{node.name}"
+                param_prefix = helper_key
+                has_receiver = False
+            elif scope.kind == "class":
+                enclosing = parents.get(node)
+                if not isinstance(enclosing, ast.ClassDef):
+                    continue
+                qualname = qualnames.get(enclosing, enclosing.name)
+                private = (
+                    is_class_private(node.name) and mangling_prefix(enclosing.name) is not None
+                )
+                if private:
+                    helper_key = f"{prefix}{qualname}.{node.name}"
+                    param_prefix = helper_key
+                elif not node.name.startswith("__"):
+                    helper_key = node.name
+                    param_prefix = f"{prefix}{node.name}"
+                else:
+                    continue
+                decorators = {
+                    (d.id if isinstance(d, ast.Name) else getattr(d, "attr", ""))
+                    for d in node.decorator_list
+                }
+                has_receiver = "staticmethod" not in decorators
+            else:
+                continue
+            is_generated = bool(GENERATED_HELPER_NAME.fullmatch(node.name))
+            parameters = _function_parameters(node)
+            if is_generated:
+                primary.append(helper_key)
+                for index, param in enumerate(parameters):
+                    if (index == 0 and has_receiver) or param == "_towel_owner":
+                        continue
+                    primary.append(f"{param_prefix}.{param}")
+            else:
+                fallback.append(helper_key)
+                for index, param in enumerate(parameters):
+                    if (index == 0 and has_receiver) or param == "_towel_owner":
+                        continue
+                    if param.startswith("__param_"):
+                        primary.append(f"{param_prefix}.{param}")
+                    else:
+                        fallback.append(f"{param_prefix}.{param}")
+    return list(dict.fromkeys(primary or fallback))
+
+
+def _format_available_keys(keys: Sequence[str]) -> str:
+    if not keys:
+        return "none"
+    if len(keys) > 20:
+        return ", ".join(keys[:20]) + f", ... ({len(keys)} total)"
+    return ", ".join(keys)
+
+
+def _filters_overlap(first: Path | None, second: Path | None) -> bool:
+    return first is None or second is None or first.resolve() == second.resolve()
+
+
+def _class_methods_named(
+    modules: Sequence[_Module], qualname: str, method_name: str
+) -> list[FunctionNode]:
+    matches: list[FunctionNode] = []
+    for module in modules:
+        for owner, class_qualname in class_qualnames(module.tree).items():
+            if class_qualname != qualname:
+                continue
+            matches.extend(
+                item
+                for item in owner.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.name == method_name
+            )
+    return matches
+
+
+def _classify_specifications(
+    target: Path,
+    definition_modules: Sequence[_Module],
+    specifications: Sequence[tuple[str, str, Path | None]],
+    labels: Sequence[str],
+) -> tuple[list[tuple[str, str, Path | None]], list[str]]:
+    available = _format_available_keys(_available_rename_keys(target, definition_modules))
+    active_by_index: dict[int, tuple[str, str, Path | None]] = {}
+    already_by_index: dict[int, str] = {}
+    active_helpers: list[tuple[Path | None, str | None, str]] = []
+    already_helpers: list[tuple[Path | None, str | None, str, str]] = []
+    deferred: list[tuple[int, str, str, Path | None, str]] = []
+
+    for index, ((old, new, file_filter), label) in enumerate(zip(specifications, labels)):
+        matching = [
+            module
+            for module in definition_modules
+            if file_filter is None or module.path.resolve() == file_filter.resolve()
+        ]
+        if "." not in old:
+            definitions = [
+                (module, node)
+                for module in matching
+                for node in ast.walk(module.tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == old
+            ]
+            if definitions:
+                if old == new and all(
+                    module.scopes.nodes[node] is module.scopes.root
+                    or (
+                        module.scopes.nodes[node].kind == "class"
+                        and not is_class_private(node.name)
+                    )
+                    for module, node in definitions
+                ):
+                    already_by_index[index] = label
+                else:
+                    active_by_index[index] = (old, new, file_filter)
+                    active_helpers.append((file_filter, None, old))
+                continue
+            in_place = [
+                node
+                for module in matching
+                for node in ast.walk(module.tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == new
+                and (
+                    module.scopes.nodes[node] is module.scopes.root
+                    or (
+                        module.scopes.nodes[node].kind == "class"
+                        and not is_class_private(new)
+                        and not new.startswith("__")
+                    )
+                )
+            ]
+            if in_place:
+                already_by_index[index] = label
+                already_helpers.append((file_filter, None, old, new))
+                continue
+            raise ValueError(f"Unknown rename key {label!r}; available keys: {available}")
+
+        parts = old.split(".")
+        private_helper_splits = [
+            (".".join(parts[:split]), parts[split])
+            for split in range(1, len(parts))
+            if split == len(parts) - 1 and is_class_private(parts[split])
+        ]
+        handled_private_helper = False
+        for qualname, helper in private_helper_splits:
+            has_class = any(
+                class_qualname == qualname
+                for module in matching
+                for class_qualname in class_qualnames(module.tree).values()
+            )
+            if not has_class:
+                continue
+            defined = _class_methods_named(matching, qualname, helper)
+            if defined:
+                if helper == new:
+                    already_by_index[index] = label
+                else:
+                    active_by_index[index] = (old, new, file_filter)
+                    active_helpers.append((file_filter, qualname, helper))
+                handled_private_helper = True
+                break
+            if is_class_private(new) and _class_methods_named(matching, qualname, new):
+                already_by_index[index] = label
+                already_helpers.append((file_filter, qualname, helper, new))
+                handled_private_helper = True
+                break
+            if len(parts) != 2 or not any(
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == parts[0]
+                for module in matching
+                for node in ast.walk(module.tree)
+            ):
+                raise ValueError(f"Unknown rename key {label!r}; available keys: {available}")
+        if not handled_private_helper:
+            deferred.append((index, old, new, file_filter, label))
+
+    for index, old, new, file_filter, label in deferred:
+        matching = [
+            module
+            for module in definition_modules
+            if file_filter is None or module.path.resolve() == file_filter.resolve()
+        ]
+        parts = old.split(".")
+        private_param_splits = [
+            (".".join(parts[:split]), parts[split], parts[split + 1])
+            for split in range(1, len(parts) - 1)
+            if split == len(parts) - 2 and is_class_private(parts[split])
+        ]
+        resolved_private_param = False
+        for qualname, helper, parameter in private_param_splits:
+            has_class = any(
+                class_qualname == qualname
+                for module in matching
+                for class_qualname in class_qualnames(module.tree).values()
+            )
+            if not has_class:
+                continue
+            defined = _class_methods_named(matching, qualname, helper)
+            if defined:
+                if any(parameter in _function_parameters(fn) for fn in defined):
+                    if parameter == new:
+                        already_by_index[index] = label
+                    else:
+                        active_by_index[index] = (old, new, file_filter)
+                    resolved_private_param = True
+                    break
+                helper_is_active = any(
+                    q == qualname and h == helper and _filters_overlap(f, file_filter)
+                    for f, q, h in active_helpers
+                )
+                if not helper_is_active and any(new in _function_parameters(fn) for fn in defined):
+                    already_by_index[index] = label
+                    resolved_private_param = True
+                    break
+                raise ValueError(
+                    f"No helper defines parameter {label!r}; available keys: {available}"
+                )
+            prior_targets = [
+                new_helper
+                for f, q, h, new_helper in already_helpers
+                if q == qualname and h == helper and _filters_overlap(f, file_filter)
+            ]
+            if any(
+                new in _function_parameters(fn) and parameter not in _function_parameters(fn)
+                for new_helper in prior_targets
+                for fn in _class_methods_named(matching, qualname, new_helper)
+            ):
+                already_by_index[index] = label
+                resolved_private_param = True
+                break
+            raise ValueError(f"No helper defines parameter {label!r}; available keys: {available}")
+        if resolved_private_param:
+            continue
+
+        if len(parts) == 2:
+            helper, parameter = parts
+            functions = [
+                node
+                for module in matching
+                for node in ast.walk(module.tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == helper
+            ]
+            if functions:
+                if any(parameter in _function_parameters(fn) for fn in functions):
+                    if parameter == new:
+                        already_by_index[index] = label
+                    else:
+                        active_by_index[index] = (old, new, file_filter)
+                    continue
+                helper_is_active = any(
+                    q is None and h == helper and _filters_overlap(f, file_filter)
+                    for f, q, h in active_helpers
+                )
+                if not helper_is_active and any(
+                    new in _function_parameters(fn) for fn in functions
+                ):
+                    already_by_index[index] = label
+                    continue
+                raise ValueError(
+                    f"No helper defines parameter {label!r}; available keys: {available}"
+                )
+            prior_targets = [
+                new_helper
+                for f, q, h, new_helper in already_helpers
+                if q is None and h == helper and _filters_overlap(f, file_filter)
+            ]
+            if any(
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == new_helper
+                and new in _function_parameters(node)
+                and parameter not in _function_parameters(node)
+                for new_helper in prior_targets
+                for module in matching
+                for node in ast.walk(module.tree)
+            ):
+                already_by_index[index] = label
+                continue
+            if GENERATED_HELPER_NAME.fullmatch(parameter) or is_class_private(new):
+                raise ValueError(f"Unknown rename key {label!r}; available keys: {available}")
+            raise ValueError(f"No helper defines parameter {label!r}; available keys: {available}")
+
+        raise ValueError(
+            f"Unknown rename key {label!r} (names no class-private helper defined in that class); "
+            f"available keys: {available}"
+        )
+
+    active = [active_by_index[i] for i in sorted(active_by_index)]
+    already = [already_by_index[i] for i in sorted(already_by_index)]
+    return active, already
 
 
 def _validate_names(names: Iterable[str]) -> None:

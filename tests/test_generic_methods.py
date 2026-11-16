@@ -25,6 +25,7 @@ import sys
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.type_inference import CheckSuccess, MypyInferrer, PyrightOracle, TypeOracle
 from towel.unification.models import MethodKind, is_generated_helper_name
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -63,7 +64,7 @@ def _annotation(node: ast.expr | None) -> str:
 
 def _extract(
     path: Path, oracle: TypeOracle, host: str, method_kind: MethodKind
-) -> tuple[str, ast.FunctionDef]:
+) -> tuple[str, ast.FunctionDef | None]:
     """The rendered module and its helper: a method of ``host``, or a module function.
 
     A helper that dispatches on nothing is a module-level function, since
@@ -76,6 +77,10 @@ def _extract(
         skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=oracle
     )
     proposals = engine.analyze_file(str(path))
+    if not lifetime_order_certified() and not proposals:
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == source
+        return source, None
     static = method_kind == "staticmethod"
     proposal = next(
         proposal
@@ -157,34 +162,38 @@ def test_constrained_generic_methods_preserve_dispatch_and_reject_mixed_argument
     source = _ordinary_source(method_kind)
     path = _project(tmp_path, source)
     rendered, helper = _extract(path, oracle, "Calculator", method_kind)
-    holder = helper.args.args[-1]
-    assert holder.arg == "_towel_owner" and _annotation(holder.annotation) == "object"
-    explicit = [
-        argument for argument in helper.args.args[:-1] if argument.arg not in {"self", "cls"}
-    ]
-    assert len(explicit) == 2
-    binder = _annotation(explicit[0].annotation)
-    assert _annotation(explicit[1].annotation) == binder
-    assert _annotation(helper.returns) == binder
-    assert binder not in {"int", "str", "int | str", "Any"}
-    # A method helper is called from a method appended to the class; a module
-    # helper, from a function appended to the module.
-    via, indent, receiver = (
-        ("", "", "") if method_kind == "staticmethod" else ("self.", "    ", "self")
-    )
-    valid = rendered + (
-        f"\n{indent}def valid({receiver}) -> None:\n"
-        f"{indent}    {via}{helper.name}(1, 2, None)\n"
-        f'{indent}    {via}{helper.name}("a", "b", None)\n'
-    )
-    assert oracle.check(str(path), valid) == CheckSuccess()
-    invalid = rendered + (
-        f"\n{indent}def invalid({receiver}) -> None:\n"
-        f'{indent}    {via}{helper.name}(1, "x", None)\n'
-    )
-    rejected = oracle.check(str(path), invalid)
-    assert isinstance(rejected, CheckSuccess) and rejected.errors
-    assert all("private" not in error.message.lower() for error in rejected.errors)
+    if lifetime_order_certified():
+        assert helper is not None
+        holder = helper.args.args[-1]
+        assert holder.arg == "_towel_owner" and _annotation(holder.annotation) == "object"
+        explicit = [
+            argument for argument in helper.args.args[:-1] if argument.arg not in {"self", "cls"}
+        ]
+        assert len(explicit) == 2
+        binder = _annotation(explicit[0].annotation)
+        assert _annotation(explicit[1].annotation) == binder
+        assert _annotation(helper.returns) == binder
+        assert binder not in {"int", "str", "int | str", "Any"}
+        # A method helper is called from a method appended to the class; a module
+        # helper, from a function appended to the module.
+        via, indent, receiver = (
+            ("", "", "") if method_kind == "staticmethod" else ("self.", "    ", "self")
+        )
+        valid = rendered + (
+            f"\n{indent}def valid({receiver}) -> None:\n"
+            f"{indent}    {via}{helper.name}(1, 2, None)\n"
+            f'{indent}    {via}{helper.name}("a", "b", None)\n'
+        )
+        assert oracle.check(str(path), valid) == CheckSuccess()
+        invalid = rendered + (
+            f"\n{indent}def invalid({receiver}) -> None:\n"
+            f'{indent}    {via}{helper.name}(1, "x", None)\n'
+        )
+        rejected = oracle.check(str(path), invalid)
+        assert isinstance(rejected, CheckSuccess) and rejected.errors
+        assert all("private" not in error.message.lower() for error in rejected.errors)
+    else:
+        assert helper is None
     scenario = (
         "class Derived(Calculator):\n    pass\n"
         "instance = Derived()\n"
@@ -238,17 +247,21 @@ def test_method_parameters_are_fresh_while_generic_host_parameters_keep_their_sc
     source = _generic_source(style, method_kind)
     path = _project(tmp_path, source)
     rendered, helper = _extract(path, oracle, "Box", method_kind)
-    items = next(argument for argument in helper.args.args if argument.arg == "items")
-    item_type = _annotation(items.annotation)
-    assert item_type.startswith("list[") and item_type.endswith("]")
-    binder = item_type[5:-1]
-    assert binder not in {"T", "U", "V", "Any"}
-    assert _annotation(helper.returns) == (
-        f"tuple[T, {binder}]" if method_kind == "instance" else binder
-    )
-    if style == "pep695":
-        assert "class Box[T]" in rendered
-        assert "def first[U]" in rendered and "def second[V]" in rendered
+    if lifetime_order_certified():
+        assert helper is not None
+        items = next(argument for argument in helper.args.args if argument.arg == "items")
+        item_type = _annotation(items.annotation)
+        assert item_type.startswith("list[") and item_type.endswith("]")
+        binder = item_type[5:-1]
+        assert binder not in {"T", "U", "V", "Any"}
+        assert _annotation(helper.returns) == (
+            f"tuple[T, {binder}]" if method_kind == "instance" else binder
+        )
+        if style == "pep695":
+            assert "class Box[T]" in rendered
+            assert "def first[U]" in rendered and "def second[V]" in rendered
+    else:
+        assert helper is None
     scenario = "box = Box(7)\n" "observed = (box.first(['a']), box.second([3.5]), box.calls)\n"
     expected = (
         ((7, "a"), (7, 3.5), 0)
@@ -274,18 +287,22 @@ def test_qualified_method_calls_preserve_both_class_and_method_type_relationship
     source = source.replace("return item", "return base, item")
     path = _project(tmp_path, source)
     rendered, helper = _extract(path, oracle, "Box", method_kind)
-    arguments = {argument.arg: argument.annotation for argument in helper.args.args}
-    base_type = _annotation(arguments["base"])
-    items_type = _annotation(arguments["items"])
-    assert items_type.startswith("list[") and items_type.endswith("]")
-    item_type = items_type[5:-1]
-    assert item_type not in {"T", "U", "V", "Any", base_type}
-    assert _annotation(helper.returns) == f"tuple[{base_type}, {item_type}]"
-    if method_kind == "classmethod":
-        assert base_type == "T", "The bound cls receiver retains the host's parameter"
-    # A static helper reached through bare Box has no specialized receiver.
-    # It can quantify T independently and infer the same result from base.
-    assert base_type not in {"U", "V", "Any"}
+    if lifetime_order_certified():
+        assert helper is not None
+        arguments = {argument.arg: argument.annotation for argument in helper.args.args}
+        base_type = _annotation(arguments["base"])
+        items_type = _annotation(arguments["items"])
+        assert items_type.startswith("list[") and items_type.endswith("]")
+        item_type = items_type[5:-1]
+        assert item_type not in {"T", "U", "V", "Any", base_type}
+        assert _annotation(helper.returns) == f"tuple[{base_type}, {item_type}]"
+        if method_kind == "classmethod":
+            assert base_type == "T", "The bound cls receiver retains the host's parameter"
+        # A static helper reached through bare Box has no specialized receiver.
+        # It can quantify T independently and infer the same result from base.
+        assert base_type not in {"U", "V", "Any"}
+    else:
+        assert helper is None
     scenario = (
         "box = Box(7)\n" "observed = (box.first(11, ['a']), box.second(13, [3.5]), box.calls)\n"
     )

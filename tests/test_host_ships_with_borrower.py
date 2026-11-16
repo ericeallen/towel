@@ -227,7 +227,7 @@ def test_a_test_module_that_imports_the_package_may_borrow_from_it(
 def test_a_borrower_gains_only_top_level_packages_it_already_imports(tmp_path: Path) -> None:
     """Its own package is always there; another only when its package already imports it.
 
-    That is the rule every new import is spelled by (docs/DECISIONS.md,
+    That is the rule every new import is spelled by (docs/design/DECISIONS.md,
     "Import names come from the program"), applied to what the host's import
     loads as well: ``tests`` imports ``zeta``, so a test module may borrow
     from ``zeta``, while ``zeta`` imports ``gamma`` but ``tests`` never does.

@@ -26,6 +26,7 @@ import textwrap
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.type_inference import (
     CheckResult,
     CheckSuccess,
@@ -111,28 +112,34 @@ def test_scoped_local_annotations_follow_the_fresh_signature_binder(
         skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=oracle
     )
     proposals = engine.analyze_file(str(path))
-    assert proposals
-    proposal = proposals[0]
-    before_helper = ast.dump(proposal.extracted_function, include_attributes=True)
-    rendered = engine.apply_refactoring(str(path), proposal)
-    assert oracle.check(str(path), rendered) == CheckSuccess(), rendered
-    assert path.read_text() == original
-    assert ast.dump(proposal.extracted_function, include_attributes=True) == before_helper
-    helper = next(
-        node
-        for node in ast.parse(rendered).body
-        if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
-    )
-    annotations = {
-        node.target.id: node.annotation
-        for node in ast.walk(helper)
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
-    }
-    assert ast.dump(annotations["count"]) == ast.dump(ast.Name(id="int", ctx=ast.Load()))
-    result_type = _annotation(annotations["result"])
-    assert result_type == _annotation(helper.args.args[0].annotation)
-    assert result_type == _annotation(helper.returns)
-    assert result_type not in {"list[T]", "list[U]", "Any"}
+    if lifetime_order_certified():
+        assert proposals
+        proposal = proposals[0]
+        before_helper = ast.dump(proposal.extracted_function, include_attributes=True)
+        rendered = engine.apply_refactoring(str(path), proposal)
+        assert oracle.check(str(path), rendered) == CheckSuccess(), rendered
+        assert path.read_text() == original
+        assert ast.dump(proposal.extracted_function, include_attributes=True) == before_helper
+        helper = next(
+            node
+            for node in ast.parse(rendered).body
+            if isinstance(node, ast.FunctionDef) and "extracted_func" in node.name
+        )
+        annotations = {
+            node.target.id: node.annotation
+            for node in ast.walk(helper)
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+        }
+        assert ast.dump(annotations["count"]) == ast.dump(ast.Name(id="int", ctx=ast.Load()))
+        result_type = _annotation(annotations["result"])
+        assert result_type == _annotation(helper.args.args[0].annotation)
+        assert result_type == _annotation(helper.returns)
+        assert result_type not in {"list[T]", "list[U]", "Any"}
+    else:
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        rendered = path.read_text()
+        assert rendered == original
     namespace: dict[str, object] = {}
     exec(compile(rendered, str(path), "exec"), namespace)
     first, second = namespace["first"], namespace["second"]
@@ -202,7 +209,7 @@ def test_representative_body_can_come_from_either_original_scope(tmp_path: Path)
     candidate = candidates[0].helper
     local = [node for node in ast.walk(candidate) if isinstance(node, ast.AnnAssign)]
     assert _annotation(local[1].annotation) == _annotation(candidate.returns)
-    assert ast.dump(local[0].annotation) == "Name(id='int', ctx=Load())"
+    assert ast.dump(local[0].annotation) == ast.dump(ast.Name(id="int", ctx=ast.Load()))
     assert ast.dump(helper, include_attributes=True) == before
 
 
@@ -225,7 +232,13 @@ def test_concrete_local_type_columns_follow_the_same_signature_generalization(
     engine = UnificationRefactorEngine(
         skip_trivial_helpers=False, min_lines=2, reuse_existing_functions=False, type_oracle=oracle
     )
-    proposal = engine.analyze_file(str(path))[0]
+    proposals = engine.analyze_file(str(path))
+    if not lifetime_order_certified():
+        assert proposals == []
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_text() == source
+        return
+    proposal = proposals[0]
     rendered = engine.apply_refactoring(str(path), proposal)
     assert oracle.check(str(path), rendered) == CheckSuccess(), rendered
     helper = next(
@@ -237,7 +250,7 @@ def test_concrete_local_type_columns_follow_the_same_signature_generalization(
     assert _annotation(locals_[1].annotation) == _annotation(helper.args.args[0].annotation)
     assert _annotation(locals_[1].annotation) == _annotation(helper.returns)
     assert "TypeVar" in rendered and "Any" not in rendered
-    assert ast.dump(locals_[0].annotation) == "Name(id='int', ctx=Load())"
+    assert ast.dump(locals_[0].annotation) == ast.dump(ast.Name(id="int", ctx=ast.Load()))
     assert path.read_text() == source
 
 

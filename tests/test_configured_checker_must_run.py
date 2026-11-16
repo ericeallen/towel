@@ -35,31 +35,16 @@ import pytest
 
 from towel import type_inference
 from towel.type_inference import type_oracle_for_project
-from tests.test_cli_integration import invoke
+from tests.test_cli_integration import LITERAL_DUPLICATES, invoke
 
 requires_mypy = pytest.mark.skipif(importlib.util.find_spec("mypy") is None, reason="mypy absent")
 requires_pyright = pytest.mark.skipif(
     importlib.util.find_spec("pyright") is None, reason="pyright absent"
 )
 
-# Keep the public CLI's readability policy enabled: this shared arithmetic is
-# substantial enough that disabling an unavailable checker still extracts it.
-BODY = """    total = value + 1
-    doubled = total * 2
-    answer = doubled - 3
-    answer = answer + 17
-    answer = answer * 19
-    answer = answer - 23
-    answer = answer // 29
-    answer = answer + 31
-    answer = answer * 37
-    answer = answer - 41
-    answer = answer // 43
-"""
-SOURCE = (
-    'def first(value: int) -> int:\n    print("first")\n' + BODY + "    return answer\n\n\n"
-    'def second(value: int) -> int:\n    print("second")\n' + BODY + "    return answer\n"
-)
+# Literal inputs keep the checker-availability regression independent of the
+# runtime certification for transferring caller arguments.
+SOURCE = LITERAL_DUPLICATES.replace("():", "() -> int:")
 
 
 def _without_pyright(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -170,7 +155,8 @@ def test_relaxed_missing_checker_previews_bare_helpers_with_explicit_warning(
     _without_pyright(monkeypatch)
     target = str(tmp_path if directory else path)
     flags = ["--no-format", "--progress", "none", "--json"]
-    relaxed = invoke(["preview", target, *flags])
+    # Relaxed mode's policy (the typed lane), whatever the suite's default.
+    relaxed = invoke(["preview", target, *flags, "--no-strict"])
     assert relaxed.status == 0, relaxed.stderr
     document = json.loads(relaxed.stdout)
     assert document["types"] == "unverified"
@@ -241,6 +227,8 @@ def test_dry_discloses_unverified_fallback_before_consent(
 
     monkeypatch.setattr(cli, "_confirm", informed_confirmation)
     flags = ["--no-interactive", "--json"] if consent == "unattended" else []
+    # Relaxed mode's fallback (the typed lane); strict mode refuses instead.
+    flags.append("--no-strict")
     result = invoke(
         ["dry", str(project), str(destination), "--no-format", "--progress", "none", *flags],
         stdin="y\n" if consent == "yes" else "n\n",
@@ -277,7 +265,10 @@ def test_unverified_json_means_no_checker_was_available(
     path = _project(tmp_path, "[tool.mypy]\n" if configured else "[project]\nname = 'example'\n")
     _without_mypy(monkeypatch)
     _without_pyright(monkeypatch)
-    result = invoke(["preview", str(path), "--json", "--no-format", "--progress", "none"])
+    # Relaxed mode's fallback for a configured checker; strict mode refuses it.
+    result = invoke(
+        ["preview", str(path), "--json", "--no-format", "--progress", "none", "--no-strict"]
+    )
     document = json.loads(result.stdout)
     assert result.status == 0, result.stderr
     assert document["status"] == "complete"

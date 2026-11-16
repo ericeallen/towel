@@ -26,7 +26,7 @@ from typing import Iterator, List, Optional, Tuple
 import pytest
 
 from towel import cli, type_inference
-from tests.test_cli_integration import DUPLICATES, HELPER, invoke
+from tests.test_cli_integration import HELPER, LITERAL_DUPLICATES as DUPLICATES, invoke
 from tests.test_recovery_journal import _interrupted_transaction
 
 _EXAMPLE = re.compile(r"^\s*towel (?P<arguments>[^#]*?)\s*(#.*)?$")
@@ -289,8 +289,9 @@ def test_interactive_run_without_a_checker_does_not_announce_type_checking(
     project = _project(tmp_path / "project", cli._COST_NOTE_FILES)
     _without_checkers(monkeypatch)
     result = invoke(["dry", str(project), str(tmp_path / "out"), "--interactive"], stdin="n\n")
-    assert result.status == 1, result.stderr
-    assert "Proceed? (y/N)" in result.stdout and "Aborted" in result.stderr
+    # Nothing in the project repeats, so since 2.0 there is nothing to confirm.
+    assert result.status == 0, result.stderr
+    assert "Write these changes?" not in result.stdout + result.stderr
     assert "Type checking is on" not in result.stdout
 
 

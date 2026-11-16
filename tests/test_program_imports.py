@@ -44,6 +44,7 @@ from towel.unification.import_graph import (
 )
 from towel.unification.program_imports import program_imports
 from towel.unification.refactor_engine import UnificationRefactorEngine
+from towel.unification.argument_ownership import _supported_runtime
 
 # Small fixtures exercise extraction mechanics independently of the usefulness policy.
 
@@ -116,6 +117,7 @@ def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(
     tmp_path: Path, safe: bool
 ) -> None:
     root = _vendoring(tmp_path / "project", safe=safe)
+    original_sources = {path: path.read_bytes() for path in root.rglob("*.py")}
 
     def imported(exercise: str = "import pkg.b_borrower\n") -> str:
         completed = subprocess.run(
@@ -161,6 +163,13 @@ def test_excluding_a_vendored_directory_does_not_hide_what_a_host_runs(
         results, _ = engine.refactor_directory_to_fixed_point(
             str(root / "pkg"), str(root / "pkg"), progress="none"
         )
+    if not _supported_runtime():
+        assert results == {}
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert {path: path.read_bytes() for path in root.rglob("*.py")} == original_sources
+        assert imported() == before == ""
+        assert imported(host_observations) == before_calls
+        return
     assert set(results) == {
         str(root / "pkg/a_host.py"),
         str(root / "pkg/b_borrower.py"),

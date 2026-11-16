@@ -28,7 +28,11 @@ from towel.unification.models import RefactoringProposal, Replacement
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 BODY = "    a = x + 1\n    b = a * 2\n    c = b + 3\n    return c\n"
-THREE_FUNCTIONS = "".join(f"def {name}(x):\n" + BODY for name in ("first", "second", "third"))
+# Target selection needs a real clustered proposal independently of argument
+# ownership certification, so each function supplies its own literal input.
+THREE_FUNCTIONS = "".join(
+    f"def {name}():\n    x = 1\n" + BODY for name in ("first", "second", "third")
+)
 
 
 class CorruptThirdOccurrence(UnificationRefactorEngine):

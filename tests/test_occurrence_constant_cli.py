@@ -25,6 +25,7 @@ import subprocess
 import sys
 
 import pytest
+from tests.test_helpers import strict_lifetime_refusal
 from tests.test_helpers import child_mode_flags
 import towel
 
@@ -321,6 +322,10 @@ def _dry(project: Path, output: Path, *, cross_module: bool, memo: bool = True) 
         if path.endswith(".py")
     )
     assert changed == (applied > 0), ran.stdout
+    if strict_lifetime_refusal():
+        assert applied == 0, ran.stdout
+        assert "lifetime_order_uncertified" in ran.stdout + ran.stderr
+        assert all((output / path).read_bytes() == value for path, value in original.items())
     return applied
 
 
@@ -342,6 +347,9 @@ def _assert_moved_and_bounded(output: Path, names: tuple[str, ...]) -> None:
         if isinstance(node, ast.FunctionDef)
     ]
     helpers = [node for node in functions if node.name.startswith("__extracted_func_")]
+    if strict_lifetime_refusal():
+        assert helpers == []
+        return
     assert helpers
     assert all(len(node.args.args) + len(node.args.posonlyargs) <= 5 for node in helpers)
     # A positive must recover the differing arithmetic, not merely a common suffix.
@@ -361,7 +369,7 @@ def test_complete_typed_formatted_cli_recovers_occurrence_vectors(
     project = _project(tmp_path / "input", sources)
     before = _observe(project, tmp_path / "observed-before", program)
     output = tmp_path / "output"
-    assert _dry(project, output, cross_module=False) > 0
+    assert (_dry(project, output, cross_module=False) > 0) is not strict_lifetime_refusal()
     _assert_moved_and_bounded(output, tuple(f"f{index}" for index in range(len(case.rows))))
     assert _observe(output, tmp_path / "observed-after", program) == before
     assert before[0] == 0
@@ -379,7 +387,11 @@ def test_retained_operand_keeps_its_caller_pool_identity(
     project = _project(tmp_path / "input", sources)
     before = _observe(project, tmp_path / "observed-before", program)
     output = tmp_path / "output"
-    assert _dry(project, output, cross_module=cross_module) >= (2 if cross_module else 1)
+    applied = _dry(project, output, cross_module=cross_module)
+    if strict_lifetime_refusal():
+        assert applied == 0
+    else:
+        assert applied >= (2 if cross_module else 1)
     _assert_moved_and_bounded(output, ("f0", "f1"))
     assert _observe(output, tmp_path / "observed-after", program) == before
     assert before[0] == 0
@@ -399,7 +411,7 @@ def test_evaluated_fstring_constants_recover_without_changing_format_effects(
     project = _project(tmp_path / "input", sources)
     before = _observe(project, tmp_path / "observed-before", program)
     output = tmp_path / "output"
-    assert _dry(project, output, cross_module=False) > 0
+    assert (_dry(project, output, cross_module=False) > 0) is not strict_lifetime_refusal()
     _assert_moved_and_bounded(output, ("f0", "f1"))
     assert _observe(output, tmp_path / "observed-after", program) == before
     assert before[0] == 0
@@ -414,7 +426,9 @@ def test_cli_memo_disabled_and_reparsed_copy_preserve_occurrence_behavior(tmp_pa
         project = _project(tmp_path / f"input-{index}", sources.copy())
         before = _observe(project, tmp_path / f"observed-before-{index}", program)
         output = tmp_path / f"output-{index}"
-        assert _dry(project, output, cross_module=False, memo=memo) > 0
+        assert (
+            _dry(project, output, cross_module=False, memo=memo) > 0
+        ) is not strict_lifetime_refusal()
         _assert_moved_and_bounded(output, ("f0", "f1"))
         observed = _observe(output, tmp_path / f"observed-after-{index}", program)
         assert observed == before and before[0] == 0
@@ -475,7 +489,7 @@ for function in (m.f0, m.f1):
     before = _observe(project, tmp_path / "observed-before", program)
     output = tmp_path / "output"
     applied = _dry(project, output, cross_module=False)
-    if expression == "OFFSET":
+    if expression == "OFFSET" or strict_lifetime_refusal():
         # Mutable module loads are a deliberate boundary of the occurrence-only recovery.
         assert applied == 0
     else:

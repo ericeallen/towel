@@ -26,6 +26,7 @@ from types import CodeType
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from tests.test_parameterize_builtins import _refactor, _run, _write
 from towel.unification.scope_analyzer import ScopeAnalyzer
 from towel.unification.semantic_safety import builtin_mapping_reads, module_resolved_names
@@ -210,7 +211,10 @@ def test_build_class_opcode_ignores_lexical_build_class_shadowing(shadow: str) -
         ("import provider", "IMPORT_NAME"),
         ("from provider import value", "IMPORT_NAME"),
         ("class Inner:\n    pass", "LOAD_BUILD_CLASS"),
-        ("assert False", "LOAD_ASSERTION_ERROR"),
+        (
+            "assert False",
+            "LOAD_COMMON_CONSTANT" if sys.version_info >= (3, 14) else "LOAD_ASSERTION_ERROR",
+        ),
     ],
 )
 def test_implicit_mapping_operations_have_no_explicit_hook_name_load(
@@ -220,6 +224,11 @@ def test_implicit_mapping_operations_have_no_explicit_hook_name_load(
     function = next(value for value in module.co_consts if isinstance(value, CodeType))
     instructions = list(dis.get_instructions(function))
     assert any(instruction.opname == opcode for instruction in instructions)
+    if body == "assert False" and sys.version_info >= (3, 14):
+        assert any(
+            instruction.opname == opcode and instruction.argrepr == "AssertionError"
+            for instruction in instructions
+        )
     assert not any(
         instruction.opname in {"LOAD_NAME", "LOAD_GLOBAL"}
         and instruction.argval in {"__import__", "__build_class__", "AssertionError"}
@@ -376,7 +385,13 @@ def test_safe_frame_timing_and_fixed_interpreter_operations_still_extract(
     path = tmp_path / "sample.py"
     _write(tmp_path, {"sample.py": source})
     assert _run(tmp_path, "sample.py") == expected
-    applied, _ = _refactor(path, parameterize_builtins=flag)
-    assert applied == 1
-    assert "__extracted_func_" in path.read_text()
+    before = path.read_bytes()
+    applied, declined = _refactor(path, parameterize_builtins=flag)
+    if lifetime_order_certified():
+        assert applied == 1
+        assert "__extracted_func_" in path.read_text()
+    else:
+        assert applied == 0
+        assert declined.get("lifetime_order_uncertified", 0) > 0
+        assert path.read_bytes() == before
     assert _run(tmp_path, "sample.py") == expected

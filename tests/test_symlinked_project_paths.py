@@ -192,14 +192,17 @@ def test_the_worker_names_a_file_once_whichever_way_it_is_spelled(
 
 
 TWINS = textwrap.dedent("""\
-    def first(value: int, name: str) -> int:
+    value: int = 1
+    name: str = "probe"
+
+    def first() -> int:
         total = value + len(name)
         doubled = total * 2
         answer = doubled - 3
         return answer
 
 
-    def second(value: int, name: str) -> int:
+    def second() -> int:
         total = value + len(name)
         doubled = total * 2
         answer = doubled - 3

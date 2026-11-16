@@ -3570,13 +3570,26 @@ NAMES_ANY_FILES = re.compile(
     r"(?:is attempted|are declined)",
     re.M,
 )
-UNVERIFIABLE = re.compile(
-    r"(?:not verifiable: its file holds a name the type checker cannot type |"
-    r"The type checker could not verify )(\d+)"
-)
+
+
+def _counted_reason(reason: str) -> "re.Pattern[str]":
+    """How a run's closing count of ``reason`` reads.
+
+    Since Towel 2.0 each reason is a line of its own, ``  N  <sentence> [reason]``;
+    before, ``reason N`` in a comma-separated list. The count is whichever group matched.
+    """
+    quoted = re.escape(reason)
+    return re.compile(rf"^ *(\d+)  .*\[{quoted}\]$|{quoted} (\d+)", re.M)
+
+
+def _count_of(found: "Optional[re.Match[str]]") -> int:
+    return int(found.group(1) or found.group(2)) if found else 0
+
+
+UNVERIFIABLE = _counted_reason("not verifiable: its file holds a name the type checker cannot type")
 UNLOOKED = re.compile(r"^warning: the type checker does not look at (\d+) region\(s\)", re.M)
-UNLOOKED_DECLINED = re.compile(
-    r"not verifiable: the type checker does not look at the code it changes (\d+)"
+UNLOOKED_DECLINED = _counted_reason(
+    "not verifiable: the type checker does not look at the code it changes"
 )
 
 
@@ -3694,7 +3707,7 @@ def _unchecked_code(log_path: Path) -> Optional[UncheckedCode]:
         return None
     return UncheckedCode(
         regions=int(regions.group(1)) if regions else 0,
-        declined_proposals=int(declined.group(1)) if declined else 0,
+        declined_proposals=_count_of(declined),
     )
 
 
@@ -3719,7 +3732,7 @@ def _pre_existing_errors(log_path: Path) -> Optional[PreExistingErrors]:
         files=int(reported.group(2)) if reported else 0,
         names_any=int(names_any.group(1)) if names_any else 0,
         declined_files=int(declined_files.group(1)) if declined_files else 0,
-        declined_proposals=int(declined_proposals.group(1)) if declined_proposals else 0,
+        declined_proposals=_count_of(declined_proposals),
     )
 
 

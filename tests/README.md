@@ -47,9 +47,9 @@ Representative complete-CLI controls are `test_occurrence_constant_cli.py`,
 `test_thunk_ordering_cli.py`, `test_if_fresh_bindings_cli.py` and
 `test_comprehension_cell_capture_cli.py`. These coexist with the standing
 positive and hostile batteries; no reduced suite replaces the full check.
-See [the 1.947 overview](../docs/RELEASE_1_947.md), the
-[1.946 capability overview](../docs/RELEASE_1_946.md) and the
-[readiness report](../docs/PRODUCTION_READINESS.md) for the distinction between
+See [the 1.947 overview](../docs/maintainers/RELEASE_1_947.md), the
+[1.946 capability overview](../docs/maintainers/RELEASE_1_946.md) and the
+[readiness report](../docs/maintainers/PRODUCTION_READINESS.md) for the distinction between
 source-bound development checks and each versioned release campaign.
 
 ## Test Structure
@@ -212,7 +212,7 @@ there and every other run under `$TMPDIR` stops with `RecoveryRequired`.
   a cross-file extraction, move the package and say why in the commit. A
   fixture that came from a repaired ecosystem defect
   (`xf9_same_named_base_class`) is cited in
-  `docs/ADVERSARIAL_REVIEW.md`; the others pin behaviour the engine must keep.
+  `docs/maintainers/ADVERSARIAL_REVIEW.md`; the others pin behaviour the engine must keep.
 - **Audit findings and differential testing** — the batteries hold the
   round-3 audit's cases (`r7fz_*`, `xf7fz_*`): every one it reported as a
   P1, and a sample of the rest from each of its families. A fixture whose

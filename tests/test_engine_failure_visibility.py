@@ -35,8 +35,11 @@ from towel.unification.refactor_engine import UnificationRefactorEngine
 )
 def test_unexpected_engine_error_propagates(tmp_path: Path, component: str, method: str) -> None:
     source = tmp_path / "example.py"
+    # Fault injection must reach each component without requiring a proof of
+    # caller ownership transfer on this interpreter.
     source.write_text(
-        "def first(x):\n    y=x+1\n    z=y*2\n    return z\n\ndef second(x):\n    y=x+1\n    z=y*2\n    return z\n"
+        "def first():\n    x=1\n    y=x+1\n    z=y*2\n    return z\n\n"
+        "def second():\n    x=1\n    y=x+1\n    z=y*2\n    return z\n"
     )
     assert UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3).analyze_files(
         [str(source)], progress="none"

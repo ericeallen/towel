@@ -23,7 +23,8 @@ from typing import Dict
 
 import pytest
 
-from tests.test_names_typed_any import TWINS, requires_pyright
+from tests.test_names_typed_any import requires_pyright
+from tests.test_cli_integration import LITERAL_DUPLICATES
 from towel.type_baseline import ImportProbes, import_probes, imports_typed_as_any
 from towel.type_inference import PyrightOracle, RevealKey
 from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -244,7 +245,7 @@ def test_typed_extraction_preserves_a_file_with_self_annotations(tmp_path: Path)
 class Example:
     def clone(self) -> Self:
         return self
-""" + TWINS
+""" + LITERAL_DUPLICATES.replace("():", "() -> int:")
     path = tmp_path / "example.py"
     path.write_text(source)
     oracle = PyrightOracle(language_server=False)
@@ -271,7 +272,7 @@ class Example:
     for name in ("first", "second"):
         original, changed = before[name], after[name]
         assert callable(original) and callable(changed)
-        assert [original(value) for value in (-3, 0, 4)] == [changed(value) for value in (-3, 0, 4)]
+        assert original() == changed() == (7 if name == "first" else 9)
 
 
 @pytest.mark.parametrize(

@@ -26,6 +26,7 @@ from typing import Callable, cast
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.extractor import HygienicExtractor
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.scope_analyzer import ScopeAnalyzer
@@ -37,12 +38,16 @@ from towel.unification.semantic_safety import (
 from towel.unification.substitution import Substitution
 
 
-def _rewrites(tmp_path: Path, source: str) -> list[str]:
+def _rewrites(tmp_path: Path, source: str, *, lifetime_sensitive: bool = False) -> list[str]:
     path = tmp_path / "subject.py"
     path.write_text(source, encoding="utf-8")
     engine = UnificationRefactorEngine(skip_trivial_helpers=False, min_lines=3)
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         proposals = engine.analyze_files([str(path)], progress="none")
+    if lifetime_sensitive and not lifetime_order_certified():
+        assert not proposals
+        assert "lifetime_order_uncertified" in engine.declined_pairs
+        assert path.read_text() == source
     return [engine.apply_refactoring(str(path), proposal) for proposal in proposals]
 
 
@@ -63,13 +68,15 @@ def test_comprehension_iterable_uses_containing_scope(tmp_path: Path, comprehens
     original: dict[str, object] = {}
     exec(source, original)
     expected = cast(Callable[..., object], original["first"])([1, 2], [3, 4])
-    outputs = _rewrites(tmp_path, source)
+    outputs = _rewrites(tmp_path, source, lifetime_sensitive=True)
     function = original["first"]
     assert isinstance(function, FunctionType)
     if set(function.__code__.co_cellvars) & {"xs", "ys"}:
         # On Python 3.11, the inner iterable of a nested comprehension
         # captures ys. Whole-body ownership transfer cannot certify cells.
         assert not outputs, "Cell-bound parameters must retain their ownership refusal"
+        return
+    if not lifetime_order_certified():
         return
     assert outputs, "Self-contained comprehension extraction should remain useful"
     for output in outputs:
@@ -133,9 +140,10 @@ def test_same_class_private_extraction_remains_eligible(tmp_path: Path) -> None:
             for name in ("first", "second")
         )
     )
-    outputs = _rewrites(tmp_path, source)
-    assert outputs
-    for output in outputs:
+    outputs = _rewrites(tmp_path, source, lifetime_sensitive=True)
+    if lifetime_order_certified():
+        assert outputs
+    for output in [source, *outputs]:
         namespace: dict[str, object] = {}
         exec(output, namespace)
         exec("observed = (C().first(), C().second())", namespace)
@@ -187,9 +195,10 @@ def test_complete_loop_extraction_retains_break_behavior(tmp_path: Path) -> None
         "        output.append(value * 2)\n    return output\n"
     )
     source = "".join(f"def {name}(values):\n{body}" for name in ("first", "second"))
-    outputs = _rewrites(tmp_path, source)
-    assert outputs, "Complete loops should remain eligible for extraction"
-    for output in outputs:
+    outputs = _rewrites(tmp_path, source, lifetime_sensitive=True)
+    if lifetime_order_certified():
+        assert outputs, "Complete loops should remain eligible for extraction"
+    for output in [source, *outputs]:
         namespace: dict[str, object] = {}
         exec(output, namespace)
         for name in ("first", "second"):

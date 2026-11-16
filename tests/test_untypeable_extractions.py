@@ -36,10 +36,12 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import textwrap
 from typing import Optional
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from tests.typed_fixtures import apply_one, requires_mypy
 from towel.type_inference import TypeDiagnostic
 from towel.unification.annotation_ladder import (
@@ -48,6 +50,7 @@ from towel.unification.annotation_ladder import (
     narrowing_refused_in_thunk,
 )
 from towel.unification.exceptions import Untypeable
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 
 def _declined(outcome: object, reason: str) -> str:
@@ -58,14 +61,24 @@ def _declined(outcome: object, reason: str) -> str:
     return message
 
 
+def _assert_lifetime_refusal(tmp_path: Path, source: str) -> None:
+    path = tmp_path / "module.py"
+    original = textwrap.dedent(source).lstrip()
+    path.write_text(original)
+    engine = UnificationRefactorEngine(
+        min_lines=2, reuse_existing_functions=False, skip_trivial_helpers=False
+    )
+    assert engine.analyze_file(str(path)) == []
+    assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+    assert path.read_text() == original and engine.change_log == ()
+
+
 @requires_mypy
 def test_a_lambda_that_needs_a_tests_narrowing_is_declined_after_one_check(
     tmp_path: Path,
 ) -> None:
     """rich's progress columns: ``int(task.total) if task.total is not None else completed``."""
-    outcome = apply_one(
-        tmp_path,
-        """
+    source = """
         class Task:
             def __init__(self, total: float | None, completed: float, finished: bool) -> None:
                 self.total = total
@@ -89,9 +102,11 @@ def test_a_lambda_that_needs_a_tests_narrowing_is_declined_after_one_check(
                 else fallback
             )
             return value + 1
-        """,
-        pick="describe_total and describe_done",
-    )
+        """
+    if not lifetime_order_certified():
+        _assert_lifetime_refusal(tmp_path, source)
+        return
+    outcome = apply_one(tmp_path, source, pick="describe_total and describe_done")
     message = _declined(outcome, "narrows what a call-site lambda reads")
     assert "task.total is not None" in message
     assert outcome.prospective_checks == 1, outcome.checked_helpers
@@ -102,9 +117,7 @@ def test_a_lambda_that_needs_a_tests_narrowing_is_declined_after_one_check(
 def test_a_nullable_result_aliased_before_consumption_is_declined_after_one_check(
     tmp_path: Path,
 ) -> None:
-    outcome = apply_one(
-        tmp_path,
-        """
+    source = """
         class Task:
             def __init__(self, total: float | None, completed: float, finished: bool) -> None:
                 self.total = total
@@ -126,9 +139,11 @@ def test_a_nullable_result_aliased_before_consumption_is_declined_after_one_chec
             else:
                 value = fallback
             return value + 1
-        """,
-        pick="describe_total and describe_done",
-    )
+        """
+    if not lifetime_order_certified():
+        _assert_lifetime_refusal(tmp_path, source)
+        return
+    outcome = apply_one(tmp_path, source, pick="describe_total and describe_done")
     message = _declined(outcome, "narrows what a call-site lambda reads")
     assert "task.total is not None" in message
     assert "float | None" in message

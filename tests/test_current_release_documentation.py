@@ -31,12 +31,20 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 
+from tests.test_helpers import strict_lifetime_refusal
 from scripts import verify_release_visibility as gate
 from tests.test_next_validation_documentation import _number, _rows, _table
 from tests.test_readme_links import _check_repository_links
+from towel.unification.refactor_engine import UnificationRefactorEngine
 
 ROOT = Path(__file__).resolve().parents[1]
-PAGES = ("README.md", "SECURITY.md", "CHANGELOG.md", "CONTRIBUTING.md", "docs/RELEASING.md")
+PAGES = (
+    "README.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "docs/maintainers/RELEASING.md",
+)
 
 
 def _check_current_version(documents: Mapping[str, str], version: str) -> None:
@@ -44,7 +52,7 @@ def _check_current_version(documents: Mapping[str, str], version: str) -> None:
     assert f"This source tree targets **{version}**" in documents["SECURITY.md"]
     assert f"## [{version}]\n" in documents["CHANGELOG.md"]
     _check_repository_links(documents["README.md"], version)
-    for name in ("CONTRIBUTING.md", "docs/RELEASING.md"):
+    for name in ("CONTRIBUTING.md", "docs/maintainers/RELEASING.md"):
         assert "`just release VERSION /path/to/release-evidence.json`" in documents[name]
         assert "`just release VERSION`" not in documents[name]
 
@@ -58,7 +66,7 @@ def test_current_release_metadata_and_readme_tags_match_the_package() -> None:
 def test_stale_current_version_and_release_commands_are_rejected(name: str) -> None:
     documents = {path: (ROOT / path).read_text() for path in PAGES}
     version = str(tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"])
-    if name in {"CONTRIBUTING.md", "docs/RELEASING.md"}:
+    if name in {"CONTRIBUTING.md", "docs/maintainers/RELEASING.md"}:
         documents[name] = documents[name].replace(
             "just release VERSION /path/to/release-evidence.json", "just release VERSION"
         )
@@ -246,7 +254,11 @@ def test_historical_release_summaries_retain_the_completed_october_measurements(
         assert len(samples) == 2
         seconds[arm] = mean(samples)
     phrase = f"{seconds['candidate']:.2f} seconds versus {seconds['published']:.2f} seconds"
-    for name in ("CHANGELOG.md", "docs/PRODUCTION_READINESS.md", "docs/RELEASE_LOG.md"):
+    for name in (
+        "CHANGELOG.md",
+        "docs/maintainers/PRODUCTION_READINESS.md",
+        "docs/maintainers/RELEASE_LOG.md",
+    ):
         assert phrase in " ".join((ROOT / name).read_text().split())
 
 
@@ -265,9 +277,9 @@ def test_preparation_performance_summaries_match_all_retained_samples() -> None:
     documents = {
         name: " ".join((ROOT / name).read_text().split())
         for name in (
-            "docs/RELEASE_HISTORY.md",
+            "docs/maintainers/RELEASE_HISTORY.md",
             "CHANGELOG.md",
-            "docs/RELEASE_1_946.md",
+            "docs/maintainers/RELEASE_1_946.md",
             "docs/PERFORMANCE.md",
         )
     }
@@ -321,7 +333,7 @@ def test_release_branch_can_receive_exact_commit_ci_without_changing_main() -> N
     version = str(tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"])
     assert any(fnmatchcase("release/" + version, pattern) for pattern in branches)
     assert any(fnmatchcase("main", pattern) for pattern in branches)
-    procedure = " ".join((ROOT / "docs/RELEASING.md").read_text().split())
+    procedure = " ".join((ROOT / "docs/maintainers/RELEASING.md").read_text().split())
     assert "CI runs for pull requests and pushes to `main` or `release/**`" in procedure
     assert "run's `headSha` is the frozen release commit" in procedure
 
@@ -342,7 +354,14 @@ def test_directory_guide_example_reanalyzes_and_preserves_input(
     assert namespace["reason"] == "fixed_point"
     assert (source / "example.py").read_text() == code
     output = (tmp_path / "src_cleaned/example.py").read_text()
-    assert "__extracted_func_" in output
+    if strict_lifetime_refusal():
+        engine = namespace["engine"]
+        assert isinstance(engine, UnificationRefactorEngine)
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert namespace["results"] == {}
+        assert output == code
+    else:
+        assert "__extracted_func_" in output
     before: dict[str, object] = {}
     after: dict[str, object] = {}
     observe = (

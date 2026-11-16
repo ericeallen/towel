@@ -27,6 +27,7 @@ from typing import Mapping
 
 import pytest
 
+from tests.pyright_runtime_profiles import assert_native_workspace_profile
 from towel import type_inference
 from towel.pyright_session import Diagnostic, SessionFailure
 from towel.type_inference import (
@@ -100,7 +101,7 @@ def test_batch_answers_match_individual_probes_and_follow_dependency_changes(
         assert len(actual) == 3 and not unanswered_files(actual)
         assert exchanges == [(tmp_path, tuple(str(path) for path in paths[:2]))]
         if language_server:
-            assert oracle.answered_from_a_session, "the supposed warm test fell back"
+            assert_native_workspace_profile(oracle)
         assert {path: path.read_bytes() for path in original} == original
         assert set(original) == {path for path in tmp_path.rglob("*") if path.is_file()}
         # A fresh disk revision must invalidate the warm verdict. The batch
@@ -145,6 +146,10 @@ def test_server_failure_retries_the_complete_batch_on_the_command_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = _project(tmp_path)
+    # This injected session failure needs a functioning workspace backend.
+    # Native 3.14/3.15 capability refusal is exercised by the batch test above.
+    config = tmp_path / "pyrightconfig.json"
+    config.write_text(config.read_text().replace("{", '{"pythonVersion":"3.13",', 1))
     oracle = PyrightOracle()
 
     def fail(

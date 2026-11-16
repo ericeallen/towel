@@ -26,6 +26,7 @@ import sys
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from towel.import_model import NameStatus
 from towel.unification.import_graph import (
     ImportChange,
@@ -282,6 +283,7 @@ def test_explicitly_loaded_module_still_shares_a_helper_end_to_end(
     )
     host, borrower = _program(tmp_path, body.format(name="first", factor=5), regular=regular)
     borrower.write_text("import pkg.a\n" + body.format(name="second", factor=7))
+    original = {path: path.read_bytes() for path in (host, borrower)}
     engine = UnificationRefactorEngine(
         skip_trivial_helpers=False, min_lines=3, cross_module_helpers=True
     )
@@ -289,7 +291,12 @@ def test_explicitly_loaded_module_still_shares_a_helper_end_to_end(
         results, _ = engine.refactor_directory_to_fixed_point(
             str(host.parent), str(host.parent), progress="none"
         )
-    assert sum(count for count, _ in results.values()) > 0
+    if lifetime_order_certified():
+        assert sum(count for count, _ in results.values()) > 0
+    else:
+        assert results == {}
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert {path: path.read_bytes() for path in original} == original
     result = subprocess.run(
         [
             sys.executable,

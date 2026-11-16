@@ -22,13 +22,29 @@ from typing import Callable, Iterator
 
 import pytest
 
+from tests.test_helpers import lifetime_order_certified
 from tests.test_definition_time_builtins import BODY, _source
 from tests.test_parameterize_builtins import _run, _write
 from towel.unification import builtin_mapping_writes as writes
 from towel.unification import refactor_engine
+from towel.unification.models import RefactoringProposal
 from towel.unification.exceptions import UnparsedProgramError
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from towel.unification.bounded_cache import BoundedCache
+
+
+def _assert_extracted_or_refused(
+    engine: UnificationRefactorEngine, proposals: list[RefactoringProposal]
+) -> None:
+    """Python ownership ruling: preserve project-fact checks under either profile.
+
+    Only strict mode refuses for release order; relaxed mode extracts on every runtime.
+    """
+    if lifetime_order_certified() or not engine.strict:
+        assert proposals
+    else:
+        assert not proposals
+        assert "lifetime_order_uncertified" in engine.declined_pairs
 
 
 @pytest.mark.strict_mode
@@ -158,7 +174,9 @@ def test_new_writer_rechecks_unchanged_pairs_and_cached_cluster_membership(
 
     monkeypatch.setattr(refactor_engine, "project_may_replace_builtin_mapping", observed)
     first = engine.analyze_file(str(target))
-    assert first and len(engine._cluster_scan_cache) > 0
+    _assert_extracted_or_refused(engine, first)
+    if lifetime_order_certified():
+        assert len(engine._cluster_scan_cache) > 0
     third = next(
         node
         for node in ast.parse(source).body
@@ -172,7 +190,7 @@ def test_new_writer_rechecks_unchanged_pairs_and_cached_cluster_membership(
             for replacement in proposal.replacements
         )
 
-    assert includes_third()
+    assert includes_third() is lifetime_order_certified()
     assert scans == [tmp_path]
     writer.write_text("def configure(receiver):\n    receiver.__builtins__ = {}\n")
     second = engine.analyze_files([str(target)], changed_files=frozenset({str(writer)}))
@@ -186,7 +204,8 @@ def test_new_writer_rechecks_unchanged_pairs_and_cached_cluster_membership(
 
     writer.write_text("VALUE = 1\n")
     first = engine.analyze_files([str(target)], changed_files=frozenset({str(writer)}))
-    assert first and includes_third()
+    _assert_extracted_or_refused(engine, first)
+    assert includes_third() is lifetime_order_certified()
     assert scans == [tmp_path, tmp_path, tmp_path]
 
 
@@ -213,7 +232,12 @@ def test_project_mapping_writer_keeps_lexical_extraction_useful(tmp_path: Path, 
     )
     final, applied, _ = engine.refactor_to_fixed_point(str(tmp_path / "target.py"), progress="none")
     (tmp_path / "target.py").write_text(final)
-    assert applied > 0
+    if lifetime_order_certified():
+        assert applied > 0
+    else:
+        assert applied == 0
+        assert final == source
+        assert "lifetime_order_uncertified" in engine.declined_pairs
     assert _run(tmp_path, "target.py") == expected
 
 
@@ -228,7 +252,7 @@ def test_new_project_marker_refreshes_the_scanned_scope(tmp_path: Path) -> None:
     )
     target = tmp_path / "inner/target.py"
     engine = UnificationRefactorEngine(min_lines=3, max_parameters=6, skip_trivial_helpers=False)
-    assert engine.analyze_file(str(target))
+    _assert_extracted_or_refused(engine, engine.analyze_file(str(target)))
     (tmp_path / "pyproject.toml").write_text('[project]\nname="pkg"\nversion="0"\n')
     assert not engine.analyze_file(str(target))
     assert "builtin_mapping_replaced" in engine.declined_pairs
@@ -264,10 +288,10 @@ def test_local_subset_keeps_other_project_facts_until_they_are_rechecked(
         return original(functions, progress=progress, changed_files=changed_files)
 
     monkeypatch.setattr(engine, "find_block_pairs", spy)
-    assert engine.analyze_files(paths)
-    assert engine.analyze_files(paths[:1])
+    _assert_extracted_or_refused(engine, engine.analyze_files(paths))
+    _assert_extracted_or_refused(engine, engine.analyze_files(paths[:1]))
     changed = frozenset(paths[:1])
-    assert engine.analyze_files(paths, changed_files=changed)
+    _assert_extracted_or_refused(engine, engine.analyze_files(paths, changed_files=changed))
     assert seen.pop() == changed
     writer = roots[1] / "writer.py"
     for text, expected in (("receiver.__builtins__ = {}\n", True), ("VALUE = 1\n", False)):
@@ -276,7 +300,13 @@ def test_local_subset_keeps_other_project_facts_until_they_are_rechecked(
         proposals = engine.analyze_files(paths, changed_files=frozenset({str(writer)}))
         assert seen.pop() is None, "A genuine fact change must recheck unchanged target files"
         assert engine._project_may_replace_builtin_mapping(paths[1]) is expected
-        assert any(proposal.file_path == paths[1] for proposal in proposals) is not expected
+        if lifetime_order_certified():
+            assert any(proposal.file_path == paths[1] for proposal in proposals) is not expected
+        elif not expected:
+            _assert_extracted_or_refused(engine, proposals)
+        else:
+            assert not any(proposal.file_path == paths[1] for proposal in proposals)
+            assert "builtin_mapping_replaced" in engine.declined_pairs
 
 
 def test_changed_project_root_rechecks_pairs_even_when_both_facts_are_false(
@@ -293,10 +323,10 @@ def test_changed_project_root_rechecks_pairs_even_when_both_facts_are_false(
         return original(functions, progress=progress, changed_files=changed_files)
 
     monkeypatch.setattr(engine, "find_block_pairs", spy)
-    assert engine.analyze_file(target)
+    _assert_extracted_or_refused(engine, engine.analyze_file(target))
     assert not engine._project_may_replace_builtin_mapping(target)
     (tmp_path / "pyproject.toml").write_text('[project]\nname="pkg"\nversion="0"\n')
-    assert engine.analyze_files([target], changed_files=frozenset())
+    _assert_extracted_or_refused(engine, engine.analyze_files([target], changed_files=frozenset()))
     assert seen[-1] is None
     assert not engine._project_may_replace_builtin_mapping(target)
 
@@ -308,8 +338,8 @@ def test_evicted_mapping_observation_rechecks_instead_of_assuming_unchanged(
     engine = UnificationRefactorEngine(min_lines=3, max_parameters=6, skip_trivial_helpers=False)
     engine._builtin_mapping_snapshots = BoundedCache(1)
     first, second = (str(tmp_path / name) for name in ("first.py", "second.py"))
-    assert engine.analyze_file(first)
-    assert engine.analyze_file(second)
+    _assert_extracted_or_refused(engine, engine.analyze_file(first))
+    _assert_extracted_or_refused(engine, engine.analyze_file(second))
     assert len(engine._builtin_mapping_snapshots) == 1
     seen: list[frozenset[str] | None] = []
     original = engine.find_block_pairs
@@ -319,5 +349,5 @@ def test_evicted_mapping_observation_rechecks_instead_of_assuming_unchanged(
         return original(functions, progress=progress, changed_files=changed_files)
 
     monkeypatch.setattr(engine, "find_block_pairs", spy)
-    assert engine.analyze_files([first], changed_files=frozenset())
+    _assert_extracted_or_refused(engine, engine.analyze_files([first], changed_files=frozenset()))
     assert seen == [None]

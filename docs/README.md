@@ -11,43 +11,41 @@ These pages describe Towel **1.949**.
 | I want to… | Read |
 | --- | --- |
 | Install Towel and review my first extraction | [Quick start](QUICKSTART.md) |
-| Choose CLI options, exclude files, refactor in place or recover an interrupted write | [Command-line guide](CLI_GUIDE.md) |
-| Check supported platforms and resource use | [Requirements and resources](REQUIREMENTS.md) |
-| Estimate a run or understand a timing claim | [Performance and timing](PERFORMANCE.md) |
+| Run Towel on a real project and review what it changed | [Using Towel on a project](USING_TOWEL.md) |
+| Understand a helper, a lambda or an argument Towel wrote | [Understanding generated code](GENERATED_CODE.md) |
+| Find out why Towel left some code alone | [Why something was left alone](WHY_LEFT_ALONE.md) |
+| Refactor a project checked by mypy or Pyright | [Type checking and helper annotations](TYPING.md) |
 | Share helpers between modules or resolve an import refusal | [Cross-module guide](CROSS_MODULE.md) |
 | Give generated helpers and parameters meaningful names | [Naming guide](NAMING.md) |
-| Call Towel from Python | [Python API guide](USAGE_GUIDE.md) |
-| Integrate Towel into scripts or understand upgrade guarantees | [Compatibility contract](COMPATIBILITY.md) |
+| Follow a recipe for CI, pre-commit or a large project | [Recipes](RECIPES.md) |
+| See extractions Towel made in real projects | [Gallery](GALLERY.md) |
+| Find a quick answer | [Frequently asked questions](FAQ.md) |
 
-## Understand the result
+## Reference
 
-| Question | Read |
+| I need… | Read |
 | --- | --- |
-| How does extraction work, and why does output sometimes contain lambdas? | [Understanding generated code](GENERATED_CODE.md) |
-| Which type checker runs, where do annotations come from, and why is a typed proposal declined? | [Type checking and helper annotations](TYPING.md) |
-| What is verified, conservatively rejected or outside the supported model? | [Known limitations](KNOWN_LIMITATIONS.md) |
-| How are the algorithms and implementation organized? | [Architecture](ARCHITECTURE.md) |
-| Why did we choose these semantics and policies? | [Design decisions](DECISIONS.md) |
+| Every command-line option, file exclusion, in-place runs and recovery | [Command-line guide](CLI_GUIDE.md) |
+| Exit statuses, the JSON result and what may change between releases | [Compatibility contract](COMPATIBILITY.md) |
+| To call Towel from Python | [Python API guide](USAGE_GUIDE.md) |
+| Supported platforms and resource use | [Requirements and resources](REQUIREMENTS.md) |
+| To estimate how long a run takes | [Performance and timing](PERFORMANCE.md) |
+| Everything Towel verifies, declines or does not model | [Known limitations](KNOWN_LIMITATIONS.md) |
+| The meaning of a term | [Glossary](GLOSSARY.md) |
 
-## Contribute and release
+## About Towel
 
-- [Agent work log](agent_log.md): current development hypotheses and pending checks; not release approval.
+- [How Towel is validated](VALIDATION.md): the tests and checks each release passes.
+- [How Towel compares](COMPARISON.md): clone detectors, an IDE's extract-method and AI assistants, and what each is good at.
+- [Changelog](https://github.com/ericeallen/towel/blob/main/CHANGELOG.md): user-visible changes by version.
+- [Getting help](GETTING_HELP.md): where to ask, what to put in a report, and how to report a security problem.
 
-- [Contributing](../CONTRIBUTING.md): setup, coding standards, tests and documentation maintenance.
-- [Release procedure](RELEASING.md): frozen source, exact artifacts, evidence gate and CI.
-- [Security policy](../SECURITY.md): private reporting and supported-release policy.
-- [Code of conduct](../CODE_OF_CONDUCT.md): community expectations.
+## For contributors and maintainers
 
-## Changes and evidence
+- [Contributing](https://github.com/ericeallen/towel/blob/main/CONTRIBUTING.md): setup, coding standards, tests and documentation maintenance.
+- [Security policy](https://github.com/ericeallen/towel/blob/main/SECURITY.md): private reporting and supported-release policy.
+- [Code of conduct](https://github.com/ericeallen/towel/blob/main/CODE_OF_CONDUCT.md): community expectations.
+- [Design](design/README.md): architecture, design decisions and proposals.
+- [Maintainers' records](maintainers/README.md): the release procedure, release log, readiness reports, reviews and audits.
 
-- [Changelog](../CHANGELOG.md): user-visible changes by version.
-- [1.947 overview](RELEASE_1_947.md): the seven audit repairs, scope changes and validation boundary.
-- [1.946 overview](RELEASE_1_946.md): historical improvements since 1.792 and their limits.
-- [Production readiness](PRODUCTION_READINESS.md): validation scope, results and qualifications.
-- [Release log](RELEASE_LOG.md): dated engineering and validation checkpoints.
-- [Historical release evidence](RELEASE_HISTORY.md): earlier releases' records, under their original sources.
-- [Adversarial review](ADVERSARIAL_REVIEW.md): discovered defects and their regression coverage.
-- [Open-source audit](OPEN_SOURCE_AUDIT.md): the historical distribution and maintenance audit.
-- [Design proposals and experiments](proposals/README.md): implementation status, deferred designs and dated measurements.
-
-For an overview of the project, return to the [project README](../README.md).
+For an overview of the project, return to the [project README](https://github.com/ericeallen/towel/blob/main/README.md).

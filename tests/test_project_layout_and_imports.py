@@ -52,9 +52,9 @@ package-dir = {"" = "src"}
         write_file(
             a_py,
             """
-def fa(x):
+def fa():
     s = 0
-    if x:
+    if True:
         s += 1
     return s
 """.lstrip(),
@@ -65,9 +65,9 @@ def fa(x):
             """
 from .alpha import fa
 
-def fb(x):
+def fb():
     s = 0
-    if x:
+    if True:
         s += 1
     return s
 """.lstrip(),

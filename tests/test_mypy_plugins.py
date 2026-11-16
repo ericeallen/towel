@@ -26,6 +26,7 @@ is written, quoting mypy's own message.
 
 from __future__ import annotations
 
+import re
 import ast
 import os
 import subprocess
@@ -260,7 +261,10 @@ def test_a_refactoring_of_a_plugin_project_passes_the_projects_own_mypy(tmp_path
         ]
     )
     assert result.status == 0, result
-    assert "No refactorings found!" in result.stdout, result
+    assert re.search(
+        r"No repeated code found in \d+ files?\.|Found \d+ places? with similar code and extracted none\.",
+        result.stdout,
+    ), result
     assert {path: path.read_bytes() for path in original} == original
     assert _fresh_mypy(root) == []
     # The original owning loop/preamble boundary remains refused. A pure
@@ -320,7 +324,7 @@ def test_a_refactoring_of_a_plugin_project_passes_the_projects_own_mypy(tmp_path
         ]
     )
     assert result.status == 0, result
-    assert "Applied " in result.stdout and "No refactorings found!" not in result.stdout, result
+    assert "Applied " in result.stdout and "extracted none" not in result.stdout, result
     helpers = [
         node
         for path in (root / "src" / "alpha").glob("*.py")

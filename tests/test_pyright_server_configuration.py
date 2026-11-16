@@ -49,7 +49,12 @@ from typing import List, Mapping, Tuple
 
 import pytest
 
-from towel.pyright_session import server_settings
+from tests.test_helpers import strict_lifetime_refusal
+from tests.pyright_runtime_profiles import (
+    assert_native_workspace_profile,
+    native_workspace_completion_refused,
+)
+from towel.pyright_session import WORKSPACE_COMPLETION_UNAVAILABLE, server_settings
 from towel.type_inference import (
     CheckResult,
     CheckSuccess,
@@ -138,7 +143,10 @@ def _baseline_and_candidate(
     try:
         baseline = oracle.check_project({str(init): init.read_text(encoding="utf-8")})
         candidate = oracle.check_project({str(init): _without_the_edit_export(init)})
-        assert served_by_a_language_server(oracle) is language_server
+        if language_server:
+            assert_native_workspace_profile(oracle)
+        else:
+            assert not served_by_a_language_server(oracle)
     finally:
         oracle.close()
     return _errors(baseline, project), _errors(candidate, project)
@@ -312,13 +320,20 @@ SOURCE = textwrap.dedent("""
     """).lstrip()
 
 
-def test_a_src_layout_project_is_refactored_and_confirmed(tmp_path: Path) -> None:
+def test_a_src_layout_project_is_refactored_and_confirmed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """A run over a ``src`` layout whose tests import the package, in Towel's own environment.
 
     The server could not resolve the package from the tests, so the original
     project was refused as having type errors it does not have. Now the run
     applies, every candidate is judged against its consumers, and the cold
     confirmation of the finished project agrees.
+
+    On Python 3.14 and 3.15 pyright's server never finishes analysing the
+    workspace (``tests/pyright_runtime_profiles.py``): the run warns that the
+    server is unavailable and checks with pyright's command line instead,
+    applying the same refactoring.
     """
     _write(
         tmp_path,
@@ -345,8 +360,21 @@ def test_a_src_layout_project_is_refactored_and_confirmed(tmp_path: Path) -> Non
             type_oracle=oracle,
         )
         _, applied, _ = engine.refactor_to_fixed_point(str(module), progress="none")
-        assert served_by_a_language_server(oracle), "the run was not checked by a server"
+        if strict_lifetime_refusal():
+            assert applied == 0
+            assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+            assert module.read_text(encoding="utf-8") == SOURCE
+        elif native_workspace_completion_refused():
+            assert_native_workspace_profile(oracle)
+            assert not served_by_a_language_server(oracle)
+            assert (
+                "pyright language server unavailable ("
+                f"{WORKSPACE_COMPLETION_UNAVAILABLE}); using the command line"
+            ) in caplog.text
+        else:
+            assert served_by_a_language_server(oracle), "the run was not checked by a server"
     finally:
         oracle.close()
-    assert applied >= 1
-    assert "_extracted_func" in module.read_text(encoding="utf-8")
+    if not strict_lifetime_refusal():
+        assert applied >= 1
+        assert "_extracted_func" in module.read_text(encoding="utf-8")

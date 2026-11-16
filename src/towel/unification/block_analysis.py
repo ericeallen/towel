@@ -57,6 +57,7 @@ from .assignment_analyzer import (
     _collect_block_binding_stats,
     analyze_assignments,
 )
+from . import argument_ownership
 from .argument_ownership import argument_handoff_plan
 from .extraction_policy import overlaps_protected
 from .block_signature import BlockSignature, BlockSignatureIndex, extract_block_signature
@@ -358,6 +359,8 @@ def _compiled_local_orders(module: ast.AST) -> Mapping[Tuple[str, int], Tuple[st
 
 def local_cleanup_order(function: FunctionNode, analyzer: ScopeAnalyzer) -> Tuple[str, ...]:
     """Original local slots, including cells; unavailable compiler evidence yields no order."""
+    if not argument_ownership._supported_runtime():
+        return ()
     module = analyzer.analyzed_tree
     if not isinstance(module, ast.Module):
         return ()
@@ -376,6 +379,8 @@ def lifetime_order_preserved(
     owned = lifetime_bound_names(block, set(returned))
     if len(owned) < 2:
         return True
+    if not argument_ownership._supported_runtime():
+        return False
     original = [name for name in local_cleanup_order(function, analyzer) if name in owned]
     return original == [name for name in returned if name in owned]
 
@@ -944,7 +949,7 @@ class BlockAnalysis(EngineState):
         later code could observe (see ``lifetime_bound_names``): the original
         kept it until the function returned, and a helper would drop it on
         its own return. Relaxed mode assumes no program observes that
-        (docs/DECISIONS.md, "Relaxed mode is the default; strict mode keeps
+        (docs/design/DECISIONS.md, "Relaxed mode is the default; strict mode keeps
         exact lifetimes"), except for a local bound to a resource whose
         finalizer destroys what the program can still reach (see
         ``resource_guard``); ``module`` is the block's parsed module, whose

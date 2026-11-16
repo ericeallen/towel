@@ -22,13 +22,19 @@ stood still for minutes at a time, which is indistinguishable from a hung run.
 
 from __future__ import annotations
 
+import contextlib
+import io
+import sys
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any, List, Mapping, Optional
+from typing import List, Mapping, cast
+
+import pytest
 
 from towel.unification.fixed_point import _ApplyProgress
 from towel.unification.progress import Heartbeat
+from towel.unification.models import RefactoringProposal
 
 
 def test_it_redraws_until_stopped() -> None:
@@ -67,6 +73,11 @@ def test_stopping_is_idempotent_and_leaves_no_thread_behind() -> None:
     assert not [thread for thread in threading.enumerate() if thread.name == "towel-progress"]
 
 
+class _TerminalStream(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
 class _RecordingBar:
     """A bar that remembers what it was told, standing in for tqdm."""
 
@@ -91,14 +102,17 @@ class _RecordingBar:
 
 
 def _reporter_showing(bar: _RecordingBar, period: float) -> _ApplyProgress:
-    reporter = _ApplyProgress("tqdm", lambda **kwargs: bar)
-    reporter._heartbeat = Heartbeat(reporter._redraw, period=period)
+    with contextlib.redirect_stderr(_TerminalStream()):
+        reporter = _ApplyProgress("tqdm", lambda **kwargs: bar)
+    reporter._renderer._heartbeat = Heartbeat(reporter._renderer.refresh, period=period)
     return reporter
 
 
-def _proposal(description: str = "Extract common code from first and second") -> Any:
+def _proposal(
+    description: str = "Extract common code from first and second",
+) -> RefactoringProposal:
     """Enough of a proposal for the reporter, which only ever reads its description."""
-    return SimpleNamespace(description=description)
+    return cast(RefactoringProposal, SimpleNamespace(description=description))
 
 
 DESCRIPTION = "Extract common code from first and second"
@@ -152,15 +166,18 @@ def test_a_run_with_nothing_to_do_starts_no_display_thread() -> None:
         reporter.close()
 
 
-def test_the_inline_display_reports_elapsed_time(capsys: object) -> None:
-    """Without tqdm the line is redrawn too, so it must carry something that moves."""
-    reporter = _ApplyProgress("auto", None)
-    started: Optional[float] = getattr(reporter, "_started", None)
-    assert started is not None
-    reporter._started = time.monotonic() - 125.0
-    reporter.applying(1, 2, 3, "Extract common code from first and second")
-    captured = capsys.readouterr()  # type: ignore[attr-defined]
-    assert "2.1m" in captured.err, captured.err
+def test_the_inline_display_reports_elapsed_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audit finding 7: the terminal fallback carries a clock while work is stalled."""
+    monkeypatch.setitem(sys.modules, "tqdm.auto", None)
+    terminal = _TerminalStream()
+    with contextlib.redirect_stderr(terminal):
+        reporter = _ApplyProgress("auto", None)
+        try:
+            reporter._renderer._started = time.monotonic() - 125.0
+            reporter.applying(1, 2, 3, "Extract common code from first and second")
+            assert "2.1m" in terminal.getvalue(), terminal.getvalue()
+        finally:
+            reporter.close()
 
 
 def test_a_run_that_raises_still_closes_the_bar() -> None:

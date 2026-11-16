@@ -22,7 +22,8 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.test_helpers import method_helper_calls, refactor_to_fixed_point_silently
+from tests.test_helpers import lifetime_order_certified
+from tests.test_helpers import method_helper_calls
 from tests.test_method_host_machinery import _module, _run
 from tests.test_parameterize_builtins import _refactor
 from towel.unification.models import ClassInfo
@@ -146,12 +147,16 @@ def test_protocol_aliases_preserve_runtime_structural_conformance(
     )
     before = _run(tmp_path, driver)
     assert before == "True\n|"
-    final, applied = refactor_to_fixed_point_silently(
-        str(tmp_path / "box.py"), min_lines=3, skip_trivial_helpers=False
-    )
-    assert applied > 0
-    assert not method_helper_calls(final)
-    assert any(isinstance(node, ast.FunctionDef) for node in ast.parse(final).body)
+    engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=False)
+    final, applied, _ = engine.refactor_to_fixed_point(str(tmp_path / "box.py"))
+    if lifetime_order_certified():
+        assert applied > 0
+        assert not method_helper_calls(final)
+        assert any(isinstance(node, ast.FunctionDef) for node in ast.parse(final).body)
+    else:
+        assert applied == 0
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert final == source
     (tmp_path / "box.py").write_text(final)
     assert _run(tmp_path, driver) == before
 
@@ -184,6 +189,10 @@ def test_protocol_alias_imports_preserve_builtin_mapping_policy(
         # Source-only analysis cannot prove the provider's runtime exports.
         assert applied == 0
         assert "builtin_mapping_replaced" in declined
+        assert final == source
+    elif not lifetime_order_certified():
+        assert applied == 0
+        assert "lifetime_order_uncertified" in declined
         assert final == source
     else:
         assert applied > 0
@@ -226,23 +235,28 @@ def test_concrete_subclasses_keep_private_method_helpers(
     driver = "from box import Box\nprint(Box().first(1), Box().second(2))\n"
     before = _run(tmp_path, driver)
     assert before.endswith("4 6\n|")
-    final, applied = refactor_to_fixed_point_silently(
-        str(tmp_path / "box.py"), min_lines=3, skip_trivial_helpers=False
-    )
-    assert applied > 0
-    calls = method_helper_calls(final)
-    assert len(calls) == 2
-    helpers = [
-        node
-        for node in ast.walk(ast.parse(final))
-        if isinstance(node, ast.ClassDef) and node.name == "Box"
-        for node in node.body
-        if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func")
-    ]
-    assert len(helpers) == 1
-    assert all(
-        isinstance(call.func, ast.Attribute) and call.func.attr == helpers[0].name for call in calls
-    )
+    engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=False)
+    final, applied, _ = engine.refactor_to_fixed_point(str(tmp_path / "box.py"))
+    if lifetime_order_certified():
+        assert applied > 0
+        calls = method_helper_calls(final)
+        assert len(calls) == 2
+        helpers = [
+            node
+            for node in ast.walk(ast.parse(final))
+            if isinstance(node, ast.ClassDef) and node.name == "Box"
+            for node in node.body
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func")
+        ]
+        assert len(helpers) == 1
+        assert all(
+            isinstance(call.func, ast.Attribute) and call.func.attr == helpers[0].name
+            for call in calls
+        )
+    else:
+        assert applied == 0
+        assert engine.declined_pairs.get("lifetime_order_uncertified", 0) > 0
+        assert final == source
     (tmp_path / "box.py").write_text(final)
     assert _run(tmp_path, driver) == before
 

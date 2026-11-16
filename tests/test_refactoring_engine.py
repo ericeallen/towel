@@ -25,6 +25,7 @@ import unittest
 import ast
 import tempfile
 from pathlib import Path
+from tests.test_helpers import lifetime_order_certified
 from towel.unification.refactor_engine import UnificationRefactorEngine
 
 # Small fixtures exercise extraction mechanics independently of the usefulness policy.
@@ -267,7 +268,17 @@ class TestDirectoryAnalysis(unittest.TestCase):
                 | ({p.reused_function.file_path} if p.reused_function else set())
                 for p in proposals
             ]
-            self.assertIn({str(copy1), str(copy2)}, spanned)
+            if lifetime_order_certified():
+                self.assertIn({str(copy1), str(copy2)}, spanned)
+            else:
+                self.assertEqual(proposals, [])
+                self.assertGreater(
+                    self.engine.declined_pairs.get("lifetime_order_uncertified", 0), 0
+                )
+                self.assertEqual(copy1.read_text(), file1_original)
+                self.assertEqual(
+                    copy2.read_text(), "import example3_file1  # noqa: F401\n\n\n" + file2_original
+                )
 
         # Verify files were not modified
         assert_file_not_modified(file1_path, file1_original)

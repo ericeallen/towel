@@ -49,30 +49,30 @@ _BODIES = {
         f"    print({POISON!r}, doubled)\n"
         "    return doubled - {index}\n"
     ),
-    "listed": (
-        "    items = [value, value]\n"
-        "    items.append(len(items))\n"
-        "    items.reverse()\n"
-        "    return items[{index}]\n"
+    "bitwise": (
+        "    total = value ^ 5\n"
+        "    doubled = total | 7\n"
+        "    final = doubled & 11\n"
+        "    return final ^ {index}\n"
     ),
-    "worded": (
-        "    text = str(value).strip()\n"
-        "    padded = text.rjust(12, '.')\n"
-        "    upper = padded.upper()\n"
-        "    return upper[{index}:]\n"
+    "shifted": (
+        "    total = value << 2\n"
+        "    doubled = total >> 1\n"
+        "    final = doubled % 11\n"
+        "    return final >> {index}\n"
     ),
-    "mapped": (
-        "    table = {{'key': value}}\n"
-        "    table.setdefault('other', [])\n"
-        "    keys = sorted(table)\n"
-        "    return keys, {index}\n"
+    "divided": (
+        "    total = value * 5\n"
+        "    doubled = total - 7\n"
+        "    final = doubled // 11\n"
+        "    return final + {index}\n"
     ),
 }
 
 
 def _module() -> str:
     return "\n".join(
-        f"def {name}_{which}(value):\n" + body.format(index=index)
+        f"def {name}_{which}():\n    value = 3\n" + body.format(index=index)
         for name, body in _BODIES.items()
         for index, which in enumerate(("first", "second"))
     )

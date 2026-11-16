@@ -25,7 +25,7 @@ the final holder.
 DEFAULT_STRICT = False
 """Whether exact object lifetimes are preserved; relaxed mode is the default.
 
-docs/DECISIONS.md, "Relaxed mode is the default; strict mode keeps exact
+docs/design/DECISIONS.md, "Relaxed mode is the default; strict mode keeps exact
 lifetimes".
 """
 

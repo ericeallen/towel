@@ -88,7 +88,7 @@ around these boundaries instead of repeatedly checking a proposal that cannot
 preserve the caller's types.
 
 The intent is both to save typed validation time and to retain useful
-extractions. The [design decisions](DECISIONS.md) record this requirement;
+extractions. The [design decisions](design/DECISIONS.md) record this requirement;
 declining every proposal would not satisfy it.
 
 Narrowing can also be lost when a guarded expression becomes a caller-side
@@ -192,7 +192,7 @@ Generated annotations must also avoid introducing runtime effects. Compound
 annotation forms are quoted where needed, including compatibility with the
 project's oldest declared Python. For example, a project supporting Python
 3.9 without postponed annotations cannot evaluate `int | None`, so that form
-is written as a string. The [architecture reference](ARCHITECTURE.md#helper-annotations)
+is written as a string. The [architecture reference](design/ARCHITECTURE.md#helper-annotations)
 gives the exact rendering rules.
 
 ## Generic helpers and signature fallbacks
@@ -206,7 +206,7 @@ Existing generic callers receive fresh helper type parameters with supported
 bounds and constraints preserved. Instance and class methods retain type
 parameters already bound by their host class; static helpers infer them from
 their explicit arguments. See the
-[type-parameter design](proposals/type-parameters.md) for the inference order
+[type-parameter design](design/proposals/type-parameters.md) for the inference order
 and unsupported cases.
 
 Towel tries a precise ordinary signature, then supported generic signatures.

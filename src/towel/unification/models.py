@@ -349,6 +349,7 @@ class RejectReason(StrEnum):
     PRIVATE_NAME_LEXICAL_CLASS = "private_name_lexical_class"
     REBOUND_EXTERNAL_BINDING = "rebound_external_binding"
     OWNED_BINDING_FRAME_BOUNDARY = "owned_binding_frame_boundary"
+    LIFETIME_ORDER_UNCERTIFIED = "lifetime_order_uncertified"
     RELATIVE_IMPORT_ACROSS_PACKAGES = "relative_import_across_packages"
     RETURN_VARIABLES_NOT_ALIGNED = "return_variables_not_aligned"
     RETURN_VERSUS_VARIABLES = "return_versus_variables"
@@ -375,6 +376,7 @@ class RejectReason(StrEnum):
     UNPROFITABLE_HELPER = "unprofitable_helper"
     UNPROVEN_IMPORT = "unproven_import"
     UNSUPPORTED_EXTRACTION = "unsupported_extraction"
+    UNSUPPORTED_SYNTAX = "unsupported_syntax"
     UNSAFE_REASSIGNMENT_BLOCK1 = "unsafe_reassignment_block1"
     UNSAFE_REASSIGNMENT_BLOCK2 = "unsafe_reassignment_block2"
     VALUE_PRODUCING_MISMATCH = "value_producing_mismatch"
@@ -489,6 +491,54 @@ class PairTally:
     candidate_pairs: int = 0
     duplicate_pairs: int = 0
     distinct_proposals: int = 0
+
+
+@dataclass(frozen=True)
+class SkippedFile:
+    """A file an analysis could not read, and why, in words for its user."""
+
+    path: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class AnalysisCensus:
+    """What one analysis looked at: the files it read, their functions, and the files it skipped."""
+
+    files: int = 0
+    functions: int = 0
+    skipped: Tuple[SkippedFile, ...] = ()
+
+
+@dataclass(frozen=True)
+class BlockLocation:
+    """Where one block stands: its file and first and last lines."""
+
+    path: str
+    first_line: int
+    last_line: int
+
+    @property
+    def lines(self) -> int:
+        return self.last_line - self.first_line + 1
+
+
+@dataclass(frozen=True)
+class LeftAlone:
+    """Similar code a run did not extract: where it is, and the reason it is counted under.
+
+    ``reason`` is a ``RejectReason`` value, with what it names in brackets
+    when it names something (``builtin_may_differ_by_module[len]``), or a
+    ``DeclineReason`` for a proposal built and then not applied.
+    """
+
+    blocks: Tuple[BlockLocation, ...]
+    reason: str
+
+    @property
+    def lines(self) -> int:
+        """How much code was left alone: the lines of all its blocks."""
+        return sum(block.lines for block in self.blocks)
 
 
 @dataclass(frozen=True)
