@@ -93,4 +93,6 @@ def test_timeout_during_pairs_retains_census_without_claiming_no_duplicates(
         assert f"Analysed 1 Python file ({functions} functions)." in preview.stdout
         assert "No Python" not in preview.stdout
         assert "No repeated code" not in preview.stdout
+        assert "these changes" not in preview.stdout
+        assert "no changes were applied" in preview.stdout
     assert source.read_bytes() == before

@@ -2332,6 +2332,8 @@ def _print_complete_preview(
     if engine.preview_incomplete:
         headline.append(
             "Partial preview: these changes are not finally confirmed (time limit exceeded)."
+            if applied
+            else "Preview incomplete: no changes were applied before the time limit."
         )
     outcome = None if engine.preview_incomplete else outcome_line(report, applied, options.input)
     if outcome is not None:
