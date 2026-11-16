@@ -545,6 +545,10 @@ class ExistingFunctionReuse(EngineState):
         call.func = ast.Name(id=target.node.name, ctx=ast.Load())
         assigned = self._assigned_names(node)
         if isinstance(node, ast.Assign) and assigned is not None and plan.return_positions:
+            if self.strict and plan.return_positions != tuple(sorted(plan.return_positions)):
+                # First stores allocate frame slots; permuting them changes
+                # the order in which their values are released on frame exit.
+                return None
             reordered = [assigned[position] for position in plan.return_positions]
             node.targets = [_store_target(reordered)]
         return dataclasses.replace(replacement, node=node)
