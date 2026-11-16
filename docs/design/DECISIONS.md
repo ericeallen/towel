@@ -2134,7 +2134,8 @@ itself when one of these holds for it at every call site.
    and no definition whose decorators, defaults or annotations call
    something, and no class with decorators, keywords, a base that may define
    `__init_subclass__`, or an attribute whose value may define
-   `__set_name__`. Imports are taken to run nothing of the importing module.
+   `__set_name__`. An import counts as code that runs: through a circular
+   import, the imported module may call the function before the name exists.
 2. *The helper evaluates it exactly once on every path, and nothing it does
    before could change its value or fail.* Passing by value moves the
    expression to the call, ahead of every step the helper takes before it,

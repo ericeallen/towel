@@ -30,12 +30,15 @@ says which arguments must stay deferred and why.
 from __future__ import annotations
 
 import ast
+import contextlib
+import io
 import re
 from pathlib import Path
 from typing import List
 
 import pytest
 
+from towel.api import UnificationRefactorEngine
 from towel.unification.semantic_safety import stable_module_names
 from towel.unification.thunk_inlining import _evaluated_at_most_once
 from tests.test_builtins_across_modules import (
@@ -997,6 +1000,37 @@ def test_a_module_name_is_not_read_early_where_module_code_runs_the_block_first(
     generated, same = refactored(tmp_path, source, strict=strict)
     assert "(alpha)" not in generated and "(alpha," not in generated
     assert same
+
+
+CIRCULAR_IMPORT = MODULE_CODE_RUN_EARLY.replace("EARLY", "import trigger")
+CIRCULAR_TRIGGER = 'from case import first\nprint("during import", first(False))\n'
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_an_import_may_call_back_into_the_module_before_its_later_names_exist(
+    tmp_path: Path, strict: bool
+) -> None:
+    """Round-2 review of lane ``byvalue``, defect 1 (case N1): a circular import.
+
+    ``import trigger`` imports ``case`` while ``case`` is still running, and
+    calls ``first(False)`` before ``alpha`` is defined. Passed by value,
+    ``alpha`` was read at the call and raised ``NameError``.
+    """
+    directories = {name: tmp_path / name for name in ("original", "changed")}
+    for directory in directories.values():
+        directory.mkdir()
+        (directory / "case.py").write_text(CIRCULAR_IMPORT)
+        (directory / "trigger.py").write_text(CIRCULAR_TRIGGER)
+        (directory / "driver.py").write_text("import case\n")
+    engine = UnificationRefactorEngine(min_lines=3, skip_trivial_helpers=False, strict=strict)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        engine.refactor_to_fixed_point(str(directories["changed"] / "case.py"))
+    generated = (directories["changed"] / "case.py").read_text()
+    assert "_extracted_func_0" in generated
+    assert "(alpha" not in generated
+    before = run_script(directories["original"] / "driver.py")
+    assert before[0] == 0 and "during import 0" in before[1]
+    assert run_script(directories["changed"] / "driver.py") == before
 
 
 LOOKUP_IN_A_TRY = """\

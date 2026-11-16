@@ -1265,11 +1265,11 @@ def _runs_nothing(statement: ast.stmt, quiet_bases: AbstractSet[str]) -> bool:
     ``__set_name__``: it qualifies without decorators or keywords, with
     bases among ``quiet_bases`` (``_quiet_bases``), and with a body of such definitions and of assignments of
     values built from constants. An assignment to names, an expression and
-    ``pass`` qualify when their expressions run nothing. An import is taken
-    to run nothing of this module: the imported module would have to call
-    back into this one while it is still being executed.
+    ``pass`` qualify when their expressions run nothing. An import does not:
+    the imported module may import this one while it is still being
+    executed and call its functions (a circular import).
     """
-    if isinstance(statement, (ast.Import, ast.ImportFrom, ast.Pass)):
+    if isinstance(statement, ast.Pass):
         return True
     if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
         arguments = statement.args
