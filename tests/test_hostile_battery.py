@@ -218,7 +218,7 @@ HISTORICAL_EXTRACTIONS = {
     # annotations) is read from the caller.
     "r152_definition_time_reads",
     "r154_bare_annotation_reads_the_caller",
-    # Closed factories may escape (D4, r156); captured objects retain their
+    # Closed factories may escape in relaxed mode (D4, r156); captured objects retain their
     # checks. What the block only calls or consumes moves with it (r157).
     "r156_created_objects_that_escape",
     "r157_created_objects_only_called",
@@ -422,8 +422,10 @@ HISTORICAL_EXTRACTIONS = {
 # cannot hand new owned locals back to a caller retaining other values, and
 # a conditionally unbound local cannot be returned just to extend its lifetime.
 # Audit D1 recovers whole-body r108/r69 extractions; D3 recovers u0417
-# renamed locals, and D4 recovers closed callbacks in r156. Their runtime, scope and public-name checks remain intact.
+# renamed locals. D4 recovers r156 only in relaxed mode; strict retains the
+# created-object and partial-frame refusals. Runtime, scope and public-name checks remain intact.
 OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "r156_created_objects_that_escape": "strict mode keeps created-object and partial-frame refusals",
     "h04_closure_freevar": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "h39_augassign_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "h52_del_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",

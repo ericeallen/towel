@@ -1,0 +1,14 @@
+def first(xs, k):
+    out = []
+    for x in xs:
+        a = x * 2
+        out.append(a + a)
+    return out
+
+
+def second(xs, a):
+    out = []
+    for x in xs:
+        b = x * 2
+        out.append(b + a)
+    return out

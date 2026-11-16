@@ -23,7 +23,7 @@ import ast
 from towel.unification.unifier import Unifier
 
 
-def _parse_block(src: str):
+def _parse_block(src: str) -> list[ast.stmt]:
     tree = ast.parse(src)
     return tree.body
 
@@ -86,11 +86,20 @@ class TestUnifierLambdaAndComprehensions(unittest.TestCase):
     def setUp(self) -> None:
         self.unifier = Unifier(max_parameters=5, parameterize_constants=True)
 
-    def test_unify_immediate_lambda_param_alpha(self) -> None:
-        b1 = _parse_block("result = (lambda x: x + 1)(3)")
-        b2 = _parse_block("result = (lambda y: y + 1)(3)")
+    def test_unify_lambda_param_alpha(self) -> None:
+        """Unify review R2: escaping lambdas must retain their distinct keyword signatures."""
+        b1 = _parse_block("fn = lambda x: x + 1")
+        b2 = _parse_block("fn = lambda y: y + 1")
         res = self.unifier.unify_blocks([b1, b2], [{}, {}])
-        self.assertIsNotNone(res)
+        self.assertIsNone(res)
+        for block, keyword, other in ((b1, "x", "y"), (b2, "y", "x")):
+            namespace: dict[str, object] = {}
+            exec(compile(ast.Module(body=block, type_ignores=[]), "<lambda>", "exec"), namespace)
+            callback = namespace["fn"]
+            assert callable(callback)
+            self.assertEqual(callback(**{keyword: 3}), 4)
+            with self.assertRaisesRegex(TypeError, "unexpected keyword argument"):
+                callback(**{other: 3})
 
     def test_unify_dict_comp_alpha(self) -> None:
         b1 = _parse_block("result = {k: v for k, v in items}")

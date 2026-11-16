@@ -485,22 +485,25 @@ class BlockAnalysis(EngineState):
         analyzer: Optional[ScopeAnalyzer] = None,
         *,
         site: Optional[BlockSite],
+        strict: Optional[bool] = None,
     ) -> bool:
-        """Evaluate a block guard once per (guard, block site).
+        """Evaluate a block guard once per (guard, block site, chosen mode).
 
         ``site`` is ``_block_site(func, nodes)``, which a caller evaluating
         several guards of one block computes once; a block without one is
-        judged afresh. The guard is called with ``analyzer`` when given.
+        judged afresh. The guard is called with ``analyzer`` and a ``strict``
+        keyword only when each is given.
         """
-        key = None if site is None else GuardKey(guard, site)
+        key = None if site is None else GuardKey(guard, site, strict)
         if key is not None:
             cached = self._block_guard_cache.get(key)
             if cached is not None:
                 return cached
+        options = {} if strict is None else {"strict": strict}
         if analyzer is not None:
-            verdict = bool(guard(analyzer, func, list(nodes)))
+            verdict = bool(guard(analyzer, func, list(nodes), **options))
         else:
-            verdict = bool(guard(func, list(nodes)))
+            verdict = bool(guard(func, list(nodes), **options))
         if key is not None:
             self._block_guard_cache[key] = verdict
         return verdict

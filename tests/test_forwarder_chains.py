@@ -130,17 +130,15 @@ def _summaries(source: str, names: list[str]) -> list[object]:
 
 
 def _chain(count: int) -> str:
-    # Distinct field counts retain the live-variable suffix after D1 text parameterization.
     return "order = None\n" + textwrap.dedent("\n".join(f"""
         def f{index}():
             items = [i for i in order.items if i.in_stock]
             subtotal = sum(i.price for i in items)
             total = round(subtotal * 1.08, 2)
-            return f"F{index} {{order.id}}: ${'{total}' * (index + 1)}"
+            return f"F{index} {{order.id}}: ${{total}}"
         """ for index in range(count)))
 
 
-@pytest.mark.strict_mode
 def test_identical_blocks_with_a_live_variable_share_one_helper(tmp_path: Path) -> None:
     source = textwrap.dedent(_chain(12))
     final, applied = refactor_to_fixed_point_silently(write_module(tmp_path, source))
@@ -155,21 +153,13 @@ def test_identical_blocks_with_a_live_variable_share_one_helper(tmp_path: Path) 
     assert helpers == ["__extracted_func_0"], "one helper serves every site"
     assert applied == 1
     for index in range(12):
-        assignment = functions[f"f{index}"].body[0]
-        assert isinstance(assignment, ast.Assign)
-        # Keep the computed list and opaque sum result alive beside the
-        # live total, in compiler binding order, using one helper for twelve sites.
-        expected = ast.parse(
-            "_towel_keep_items, _towel_keep_subtotal, total = __extracted_func_0()"
-        ).body[0]
-        assert ast.dump(assignment) == ast.dump(expected)
+        # Review ruling 4: D1 now shares the whole original body, including its f-string.
+        assert unparsed_body(functions[f"f{index}"]) == f"return __extracted_func_0('{index}')"
     names = [f"f{index}" for index in range(12)]
     assert _summaries(final, names) == _summaries(source, names)
 
 
-@pytest.mark.strict_mode
 def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: Path) -> None:
-    # Audit D1 shares literal text; distinct conversions keep the caller tails separate.
     final, _applied = refactor_to_fixed_point_silently(
         write_module(
             tmp_path,
@@ -178,19 +168,19 @@ def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: 
                 tmp = v + 1
                 base = tmp - 3
                 total = base * 2
-                return f"a {total!s}"
+                return f"a {total}"
 
             def b(v):
                 tmp = v + 1
                 base = tmp - 3
                 total = base * 2
-                return f"b {total!r}"
+                return f"b {total}"
 
             def c(v):
                 step = v + 1
                 offset = step - 3
                 amount = offset * 2
-                return f"c {amount!a}"
+                return f"c {amount}"
             """),
         ),
         3,
@@ -205,10 +195,10 @@ def test_clustered_sites_keep_their_own_spelling_of_the_returned_name(tmp_path: 
         "__extracted_func_0"
     ]
     assert _applied == 1
-    assert (
-        unparsed_body(functions["c"])
-        == "_towel_keep_step, _towel_keep_offset, amount = __extracted_func_0()\nreturn f'c {amount!a}'"
-    )
+    # D1 shares the final f-string too, retaining each caller's distinct text.
+    for name in ("a", "b", "c"):
+        assert unparsed_body(functions[name]) == f"return __extracted_func_0('{name}')"
+    _assert_runtime_values(tmp_path, final, ["a", "b", "c"])
 
 
 @pytest.mark.strict_mode
@@ -758,8 +748,10 @@ def _refactor_generator(
     call; termination must not rest on it.
     """
     if not escape_guard:
-        monkeypatch.setattr(pair_evaluation, "created_object_escapes", lambda *_: False)
-        monkeypatch.setattr(clustering, "created_object_escapes", lambda *_: False)
+        monkeypatch.setattr(
+            pair_evaluation, "created_object_escapes", lambda *_, strict=False: False
+        )
+        monkeypatch.setattr(clustering, "created_object_escapes", lambda *_, strict=False: False)
     engine = UnificationRefactorEngine(
         min_lines=min_lines,
         snippet_formatter=black_formatter(BlackSettings()) if formatted else None,

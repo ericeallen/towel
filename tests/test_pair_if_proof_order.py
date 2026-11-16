@@ -282,17 +282,38 @@ def test_accepted_pair_retains_both_fresh_proofs_for_each_caller(
                 function()
 
 
-def test_unification_failure_avoids_initial_certificates(tmp_path: Path) -> None:
-    # Audit D1 now unifies differing f-string text; distinct operators still fail.
-    source = SOURCE.replace("answer = doubled + 7", "answer = doubled - 7")
-    early = _inputs(tmp_path, source)
-    assert _proposal(early) is None
-    assert len(early.engine.proofs) == 2 and all(item[2] for item in early.engine.proofs)
-    later = _inputs(tmp_path, source)
-    with evaluation.deferring_pair_if_proofs(later.engine):
-        assert _proposal(later) is None
-    assert later.engine.events == ["bindings", "shape", "unify"]
-    assert not later.engine.proofs
+@pytest.mark.parametrize("deferred", [False, True])
+def test_fstring_unification_retains_fresh_certificates(tmp_path: Path, deferred: bool) -> None:
+    """Review ruling 4: D1 now accepts the original f-strings under either proof schedule."""
+    source = SOURCE.replace("answer = doubled + 3", "answer = f'{doubled}:first'").replace(
+        "answer = doubled + 7", "answer = f'{doubled}:second'"
+    )
+    inputs = _inputs(tmp_path, source)
+    with evaluation.deferring_pair_if_proofs(inputs.engine) if deferred else nullcontext():
+        result = _proposal(inputs)
+    assert result is not None
+    assert inputs.engine.events == (
+        ["bindings", "shape", "unify", "nested"]
+        if deferred
+        else ["nested", "bindings", "shape", "unify"]
+    )
+    assert inputs.engine.proofs == [
+        ("f", None, True),
+        ("g", None, True),
+        ("f", tuple(result.return_variables), True),
+        ("g", tuple(result.return_variables), True),
+    ]
+    rendered = inputs.engine.apply_refactoring(inputs.pair.file_path, result)
+    for text in (source, rendered):
+        namespace: Dict[str, object] = {}
+        exec(compile(text, "<fstring-proof-order>", "exec"), namespace)
+        for name, expected in (("f", "40:first"), ("g", "40:second40:second")):
+            function = cast("Callable[[], object]", namespace[name])
+            namespace["FLAG"] = True
+            assert function() == expected
+            namespace["FLAG"] = False
+            with pytest.raises(UnboundLocalError, match="answer"):
+                function()
 
 
 def test_local_invalid_flow_adds_unification_work_but_cannot_render(tmp_path: Path) -> None:

@@ -97,7 +97,7 @@ from .semantic_safety import (
 )
 from .clustering import Clustering
 from .reuse import ExistingFunctionReuse
-from .annotation_wiring import HelperAnnotationWiring
+from .annotation_wiring import HelperAnnotationWiring, declared_oldest_python
 from .annotations import complete_with_any
 from .placement import HelperPlacement, _helper_reads_class_private_names
 from .profitability import worthwhile_helper
@@ -831,6 +831,7 @@ class PairEvaluation(
                 function,
                 analyzer,
                 site=site,
+                strict=self.strict,
             ):
                 self._debug_reject(RejectReason.CREATED_OBJECT_ESCAPES, pair)
                 return None
@@ -1470,6 +1471,13 @@ class PairEvaluation(
                 nonlocal_decls=free.nonlocals_to_declare if free.nonlocals_to_declare else None,
                 # Use hygienic double-underscore name; engine will prefix underscore for methods.
                 function_name="__extracted_func",
+                oldest_python=min(
+                    declared_oldest_python(
+                        self._origin_in_run(path), project_root=self._project_root_in_run(path)
+                    )
+                    or (3, 11)
+                    for path in (pair.file_path, pair.file_path2)
+                ),
             )
         except UnsupportedExtraction as error:
             self._debug_reject(RejectReason.UNSUPPORTED_EXTRACTION, pair, detail=str(error))
