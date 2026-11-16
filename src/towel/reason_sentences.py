@@ -98,6 +98,12 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         _CROSS_MODULE + "the project imports the module that would hold the helper only"
         " under a condition."
     ),
+    RejectReason.COROUTINE_EXCEPTION_BOUNDARY: _says(
+        "The block awaits, so it would become an async helper, and an exception would leave"
+        " that helper changed: a StopIteration turns into a RuntimeError before a handler or"
+        " with statement around the block, or in its async generator, sees it, or a"
+        " GeneratorExit the block stops is raised again in its function."
+    ),
     RejectReason.CREATED_OBJECT_ESCAPES: _says(
         "The block creates a function, lambda, class or generator that is used after the block,"
         " or handed to code Towel cannot see (such as items.sort(key=lambda ...)).",

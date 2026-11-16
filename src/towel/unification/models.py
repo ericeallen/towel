@@ -316,6 +316,7 @@ class RejectReason(StrEnum):
     CLOSURE_CROSSES_BLOCK_BOUNDARY = "closure_crosses_block_boundary"
     CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"
     CONDITIONALLY_IMPORTED_HOST = "conditionally_imported_host"
+    COROUTINE_EXCEPTION_BOUNDARY = "coroutine_exception_boundary"
     CREATED_OBJECT_ESCAPES = "created_object_escapes"
     OWNED_BINDING_EXCEPTION_BOUNDARY = "owned_binding_exception_boundary"
     OWNERSHIP_PARAMETER_BUDGET = "ownership_parameter_budget"

@@ -130,6 +130,7 @@ from .models import (
 )
 from .orphan_detector import orphaned_variables
 from .parameters import fresh_parameter_name
+from .async_helpers import exception_changes_at_coroutine_boundary
 from .scope_analyzer import Scope, ScopeAnalyzer
 from .semantic_safety import (
     created_object_escapes,
@@ -581,6 +582,13 @@ def _fresh_parameter_name(
     return name
 
 
+def _exception_changes_in_an_async_helper(
+    analyzer: ScopeAnalyzer, function: FunctionNode, nodes: Sequence[ast.stmt]
+) -> bool:
+    """``exception_changes_at_coroutine_boundary`` for a block of ``analyzer``'s module."""
+    return exception_changes_at_coroutine_boundary(analyzer.analyzed_tree, function, nodes)
+
+
 class PairEvaluation(
     Clustering, HelperPlacement, BlockAnalysis, ExistingFunctionReuse, HelperAnnotationWiring
 ):
@@ -942,6 +950,11 @@ class PairEvaluation(
                     ),
                     pair,
                 )
+                return None
+            if self._block_rejected(
+                _exception_changes_in_an_async_helper, nodes, function, analyzer, site=site
+            ):
+                self._debug_reject(RejectReason.COROUTINE_EXCEPTION_BOUNDARY, pair)
                 return None
             if self._block_rejected(
                 frame_read_outside_block,

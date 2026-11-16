@@ -2262,7 +2262,8 @@ timeout from `asyncio.timeout` or a cancel scope entered outside the block
 (they cancel the task), and an exception thrown in by `throw()`. It is raised
 there, runs the `finally` and handlers the block holds, which moved with it,
 and crosses the helper's boundary into the caller's handlers as any exception
-leaves a function. `asyncio.current_task()` is the same task, the context
+leaves a function, with the two exceptions below, which a coroutine's boundary
+changes. `asyncio.current_task()` is the same task, the context
 variables are the same context (an awaited coroutine runs in its awaiter's
 context), and a task group or timeout entered outside the block is entered
 around the call. Strict mode's lifetimes hold as well: a coroutine's frame
@@ -2292,6 +2293,29 @@ reflection, outside the contract as it is for every helper.
 - No call is written as `return await helper(…)` in an async generator, where
   `return` takes no value; a block that returns from one is
   `frame_sensitive_block`.
+- **Exceptions a coroutine's boundary changes.** A `StopIteration` that
+  leaves a coroutine becomes `RuntimeError("coroutine raised StopIteration")`
+  (PEP 479). In the original it reached the function's own handlers as
+  itself, and became a `RuntimeError` only at the function's boundary. Any
+  call, attribute or operator can let one out of the block (`next(items)` on
+  an empty iterator is enough), and Towel does not try to show that the block
+  cannot. So a block that awaits is declined, as
+  `coroutine_exception_boundary`, where its function would see the
+  exception's type: under a `try` whose handler may catch `StopIteration` or
+  `RuntimeError`, under a `with` or `async with`, whose exit receives it, or
+  in an async generator, whose boundary words the `RuntimeError` differently.
+  A handler is known not to catch them only when it names builtin exception
+  classes that the module never rebinds, or classes the module defines with
+  an undecorated `class` statement, which can never be a base of a builtin
+  exception. Second, a `GeneratorExit` that `close()` delivers at an `await`
+  inside the helper is raised again in the caller once the helper returns
+  (PEP 380), even where the block stopped it and went on; a block is
+  declined for the same reason where, inside it, an `await` stands under a
+  handler that may catch `GeneratorExit`, a `finally` that may return,
+  break, continue or suspend, or a `with` or `async with`. A
+  `StopAsyncIteration`, and a `GeneratorExit` the block raises itself, leave
+  a coroutine unchanged (measured on CPython 3.13). The independent review of
+  this lane found the first of these on 2026-11-16.
 - **Generators stay refused.** A block holding `yield` or `yield from` is
   declined with its own reason, `generator_block`: as a helper of its own it
   would be a separate generator, and sharing it would need `yield from` with
@@ -2302,8 +2326,8 @@ scenarios 27 and 28, and hostile programs run before and after in both modes
 (a cancellation delivered inside the helper, an exception crossing its
 boundary, a timeout and a task group entered outside the block, the running
 task's identity, an awaiting body strict mode leaves alone, duplicates straddling an
-`async with`, an awaiting difference, and an async generator's early
-`return`).*
+`async with`, an awaiting difference, an async generator's early
+`return`, and the exceptions a coroutine's boundary changes).*
 
 ## 2026-11-16: Relaxed mode reads a module both modules import alike
 

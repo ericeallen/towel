@@ -31,12 +31,14 @@ the block, the running task's identity, and duplicates that straddle an
 from __future__ import annotations
 
 import ast
+import textwrap
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import pytest
 
 from towel.reason_sentences import explain
+from towel.unification.async_helpers import exception_changes_at_coroutine_boundary
 from towel.unification.models import RejectReason
 from towel.unification.refactor_engine import UnificationRefactorEngine
 from tests.test_callback_parameters import FIXTURES, refactored, refactored_scenario
@@ -585,3 +587,255 @@ def test_strict_mode_leaves_an_awaiting_body_whose_release_order_it_cannot_certi
     assert same and generated == FINALIZED
     relaxed, _ = refactored(tmp_path, FINALIZED, strict=False)
     assert _async_helpers(relaxed)
+
+
+# -- Exceptions a coroutine's boundary changes ---------------------------------
+#
+# Review of lane reach, finding 1: a StopIteration leaving a coroutine becomes
+# a RuntimeError (PEP 479), so a handler around the block in its function saw
+# a different exception once the block was an async helper. Each program below
+# is the review's reproduction or one of its relatives; each is declined in
+# both modes, and runs as before.
+
+STOP_ITERATION = """
+import asyncio
+
+async def first(items, log):
+    try:
+        log.append("begin")
+        await asyncio.sleep(0)
+        next(items)
+        log.append("consumed")
+        await asyncio.sleep(0)
+        log.append("end")
+    except StopIteration:
+        return "caught"
+    return "finished"
+
+async def second(items, log):
+    try:
+        log.append("begin")
+        await asyncio.sleep(0)
+        next(items)
+        log.append("consumed")
+        await asyncio.sleep(0)
+        log.append("end")
+    except StopIteration:
+        log.append("caught")
+        return "caught"
+    return "finished"
+
+async def main():
+    for function in (first, second):
+        log = []
+        try:
+            result = await function(iter(()), log)
+        except RuntimeError as error:
+            result = str(error)
+        print(result, log)
+
+asyncio.run(main())
+"""
+
+SUPPRESSED = """
+import asyncio
+import contextlib
+
+async def first(items, log):
+    with contextlib.suppress(StopIteration):
+        log.append("begin")
+        await asyncio.sleep(0)
+        log.append(next(items))
+        await asyncio.sleep(0)
+        log.append("end")
+    return log + ["first"]
+
+async def second(items, log):
+    with contextlib.suppress(StopIteration, LookupError):
+        log.append("begin")
+        await asyncio.sleep(0)
+        log.append(next(items))
+        await asyncio.sleep(0)
+        log.append("end")
+    return log + ["second"]
+
+async def main():
+    for function in (first, second):
+        try:
+            print(await function(iter(()), []))
+        except RuntimeError as error:
+            print("escaped:", error)
+
+asyncio.run(main())
+"""
+
+IN_AN_ASYNC_GENERATOR = """
+import asyncio
+
+async def first(items, log):
+    log.append("begin")
+    await asyncio.sleep(0)
+    log.append(next(items))
+    await asyncio.sleep(0)
+    log.append("end")
+    yield "first"
+
+async def second(items, log):
+    log.append("begin")
+    await asyncio.sleep(0)
+    log.append(next(items))
+    await asyncio.sleep(0)
+    log.append("end")
+    yield "second"
+
+async def main():
+    for function in (first, second):
+        try:
+            print([value async for value in function(iter(()), [])])
+        except RuntimeError as error:
+            print(error)
+
+asyncio.run(main())
+"""
+
+STOPS_GENERATOR_EXIT = """
+import types
+
+@types.coroutine
+def pause():
+    yield "paused"
+
+async def first(log):
+    log.append("begin")
+    try:
+        await pause()
+    except BaseException as error:
+        log.append(type(error).__name__)
+    log.append("block end")
+    log.append("after the block in first")
+
+async def second(log):
+    log.append("begin")
+    try:
+        await pause()
+    except BaseException as error:
+        log.append(type(error).__name__)
+    log.append("block end")
+    for word in ("after", "second"):
+        log.append(word)
+
+for function in (first, second):
+    log = []
+    coroutine = function(log)
+    coroutine.send(None)
+    try:
+        coroutine.close()
+    except RuntimeError as error:
+        log.append(str(error))
+    print(log)
+"""
+
+
+@MODES
+@pytest.mark.parametrize(
+    "source",
+    [STOP_ITERATION, SUPPRESSED, IN_AN_ASYNC_GENERATOR, STOPS_GENERATOR_EXIT],
+    ids=["handler_around", "with_around", "async_generator", "generator_exit"],
+)
+def test_an_exception_a_coroutine_boundary_would_change_keeps_its_block_in_place(
+    tmp_path: Path, source: str, strict: bool
+) -> None:
+    """Review of lane reach, finding 1: ``StopIteration`` became ``RuntimeError`` before its handler."""
+    _, declined = _verdict(tmp_path / "boundary.py", source, strict)
+    assert "coroutine_exception_boundary" in declined
+    generated, same = refactored(tmp_path, source, strict=strict)
+    assert not _async_helpers(generated)
+    assert same
+
+
+UNRELATED_HANDLER = """
+import asyncio
+
+async def first(items, log):
+    try:
+        log.append("begin")
+        await asyncio.sleep(0)
+        log.append(next(items, "none"))
+        await asyncio.sleep(0)
+        log.append("end")
+    except (ValueError, KeyError):
+        return "caught"
+    return log + ["first"]
+
+async def second(items, log):
+    try:
+        log.append("begin")
+        await asyncio.sleep(0)
+        log.append(next(items, "none"))
+        await asyncio.sleep(0)
+        log.append("end")
+    except (ValueError, KeyError):
+        log.append("caught")
+        return "caught"
+    return log + ["second"]
+
+async def main():
+    print(await first(iter(()), []), await second(iter([1]), []))
+
+asyncio.run(main())
+"""
+
+
+def test_a_handler_that_catches_neither_exception_does_not_hold_the_block_back(
+    tmp_path: Path,
+) -> None:
+    """``except (ValueError, KeyError)`` sees neither ``StopIteration`` nor ``RuntimeError``."""
+    generated, same = refactored(tmp_path, UNRELATED_HANDLER)
+    assert _async_helpers(generated)
+    assert same
+
+
+def test_the_boundary_sentence_names_both_exceptions() -> None:
+    sentence = explain(str(RejectReason.COROUTINE_EXCEPTION_BOUNDARY)).sentence
+    assert "StopIteration" in sentence and "GeneratorExit" in sentence
+
+
+def _judged(function_body: str, prelude: str = "") -> bool:
+    """The guard's verdict on the whole body of ``f``, written in ``function_body``."""
+    module = ast.parse(prelude + "async def f(x):\n" + textwrap.indent(function_body, "    "))
+    function = next(node for node in module.body if isinstance(node, ast.AsyncFunctionDef))
+    return exception_changes_at_coroutine_boundary(module, function, function.body)
+
+
+@pytest.mark.parametrize(
+    ("body", "prelude", "refused"),
+    [
+        # A handler in the block that may stop a GeneratorExit at its await.
+        ("try:\n    await x\nexcept BaseException:\n    pass\n", "", True),
+        ("try:\n    await x\nexcept:\n    pass\n", "", True),
+        ("try:\n    await x\nexcept (ValueError, GeneratorExit):\n    pass\n", "", True),
+        ("try:\n    await x\nexcept Errors:\n    pass\n", "Errors = BaseException\n", True),
+        ("try:\n    await x\nexcept x.Error:\n    pass\n", "", True),
+        # A finally that ends or suspends the exception passing through it.
+        ("for _ in x:\n    try:\n        await x\n    finally:\n        break\n", "", True),
+        ("try:\n    await x\nfinally:\n    await x\n", "", True),
+        # A context manager's exit, which may suppress it.
+        ("with x:\n    await x\n", "", True),
+        ("async with x:\n    await x\n", "", True),
+        # Nothing stops it.
+        ("try:\n    await x\nexcept Exception:\n    pass\n", "", False),
+        (
+            "try:\n    await x\nexcept Refused:\n    pass\n",
+            "class Refused(BaseException):\n    pass\n",
+            False,
+        ),
+        ("try:\n    await x\nfinally:\n    x.close()\n", "", False),
+        ("async with x:\n    x.append(1)\nawait x\n", "", False),
+        # A block that never awaits is no coroutine.
+        ("with x:\n    x.append(1)\n", "", False),
+    ],
+)
+def test_what_may_stop_a_generator_exit_inside_the_block(
+    body: str, prelude: str, refused: bool
+) -> None:
+    assert _judged(body, prelude) is refused
