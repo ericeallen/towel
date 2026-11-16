@@ -311,10 +311,11 @@ def frame_aliases(module: Optional[ast.AST]) -> FrameAliases:
 
 
 def requires_original_frame(nodes: Iterable[ast.AST], aliases: FrameAliases = NO_ALIASES) -> bool:
-    """Reject control flow, suspension and aliased ``super`` that cannot move.
+    """Reject control flow, ``yield`` and aliased ``super`` that cannot move.
 
     Generator delegation needs a separate transformation preserving send/throw
-    and return values. An aliased zero-argument ``super`` needs the original
+    and return values (``holds_yield``). A block that awaits moves into an
+    ``async def`` helper that its site awaits, and is not refused here. An aliased zero-argument ``super`` needs the original
     class cell and receiver. Reflection is outside the preservation contract.
     Each statement's verdict is memoized: it is a property of that statement
     and its module alone, and a statement belongs to every block that spans it.
@@ -338,8 +339,36 @@ def block_requires_original_frame(
     its function's ``super()`` could mean something else in a helper of that
     class (``_super_differs_in_a_helper``): no home at all would keep it.
     """
-    return requires_original_frame(nodes, frame_aliases(analyzer.analyzed_tree)) or (
-        needs_class_body(nodes) and _super_differs_in_a_helper(function)
+    return (
+        requires_original_frame(nodes, frame_aliases(analyzer.analyzed_tree))
+        or (needs_class_body(nodes) and _super_differs_in_a_helper(function))
+        or _returns_from_an_async_generator(function, nodes)
+    )
+
+
+def holds_yield(nodes: Iterable[ast.AST]) -> bool:
+    """Whether the block holds ``yield`` or ``yield from``, which no helper of its own can share."""
+    return any(
+        isinstance(node, (ast.Yield, ast.YieldFrom))
+        for statement in nodes
+        for node in ast.walk(statement)
+    )
+
+
+def _returns_from_an_async_generator(function: FunctionNode, nodes: Sequence[ast.stmt]) -> bool:
+    """A ``return`` in an async generator, whose call would be ``return await helper()``.
+
+    An async generator's ``return`` takes no value, so the call that stands
+    for a block that returns could not be written.
+    """
+    if not isinstance(function, ast.AsyncFunctionDef) or not any(
+        isinstance(node, (ast.Yield, ast.YieldFrom))
+        for statement in function.body
+        for node in walk_own_scope(statement)
+    ):
+        return False
+    return any(
+        isinstance(node, ast.Return) for statement in nodes for node in walk_own_scope(statement)
     )
 
 
@@ -509,10 +538,10 @@ def _statement_requires_original_frame(statement: ast.AST, aliases: FrameAliases
     if has_external_loop_control(block) or _has_comprehension_assignment(block):
         return True
     for node in ast.walk(statement):
-        if isinstance(node, (ast.Yield, ast.YieldFrom, ast.Await, ast.AsyncFor, ast.AsyncWith)):
-            return True
-        if isinstance(node, ast.comprehension) and node.is_async:
-            # An async comprehension is only valid inside an async function.
+        # ``await``, ``async for``, ``async with`` and async comprehensions
+        # move into an ``async def`` helper that each site awaits
+        # (``async_helpers``); a generator's ``yield`` cannot move.
+        if isinstance(node, (ast.Yield, ast.YieldFrom)):
             return True
         if isinstance(node, ast.Call) and _is_aliased_super_call(node, aliases):
             return True

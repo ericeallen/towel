@@ -2237,3 +2237,70 @@ item 2.
 audit's cases 06, 07, 21, 24 and 42, the shapes it quoted from microblog,
 csvkit and dirty-equals, and hostile programs run before and after in both
 modes.*
+
+## 2026-11-16: A block that awaits becomes an async helper that each site awaits
+
+Through 1.949 a block holding `await`, `async for`, `async with` or an async
+comprehension was declined as `frame_sensitive_block`, with `yield`. The
+design record had already found the refusal over-broad: "An `async def` helper
+awaited at each site would be sound", for 904 of 1,168 such pairs on anyio,
+httpcore and starlette ([decline capabilities](proposals/decline-capabilities.md)).
+The user-perspective audit of 1.949 met it in its two async scenarios.
+
+Since 2.0, in both modes, such a block is extracted into an `async def` helper,
+and each site awaits it: `response = await helper(…)`, `return await
+helper(…)`, or `await helper(…)` alone. A method helper is an `async def`
+method awaited as `await self.helper(…)`.
+
+**Why this preserves behaviour.** Awaiting a coroutine runs it in the task
+that awaits it, at once and without a scheduling point of its own: control
+reaches the event loop only where the helper's body suspends, and its body is
+the block. So the task suspends at the same `await`s, in the same order, with
+nothing in between. Everything delivered to a task is delivered at the `await`
+where it is suspended, which is now inside the helper: a cancellation, a
+timeout from `asyncio.timeout` or a cancel scope entered outside the block
+(they cancel the task), and an exception thrown in by `throw()`. It is raised
+there, runs the `finally` and handlers the block holds, which moved with it,
+and crosses the helper's boundary into the caller's handlers as any exception
+leaves a function. `asyncio.current_task()` is the same task, the context
+variables are the same context (an awaited coroutine runs in its awaiter's
+context), and a task group or timeout entered outside the block is entered
+around the call. Strict mode's lifetimes hold as well: a coroutine's frame
+releases its locals when the coroutine returns, in the order a function's
+frame does (measured on 2026-11-16 on CPython 3.11, 3.12 and 3.13: arguments,
+then locals, for both), and the coroutine itself is released as the `await`
+completes. Strict mode's certificate for handing a whole body's arguments over
+to its helper is written for a plain `def` only, so a whole coroutine body it
+would certify as a function is declined there as
+`owned_binding_frame_boundary`; every other pair is judged as its synchronous
+twin is.
+
+**What is outside the contract.** What changes is one more frame: on the
+stack `sys._getframe()` and `inspect.stack()` walk, in a traceback, and in the
+coroutine chain `Task.get_stack()` and `cr_await` expose. Reading those is
+reflection, outside the contract as it is for every helper.
+
+**What is checked, what is refused.**
+
+- A candidate is a run of whole statements of one suite, so an `async with`
+  or `async for` is either wholly inside the block, with its enter and exit,
+  or wholly around it. Duplicates that straddle one, from inside its body to
+  after it, form no candidate.
+- An expression that awaits is never made a parameter: a `lambda:` cannot
+  hold `await`, and passing it by value would move the suspension to the call.
+  Such a pair is `unification_failed`.
+- No call is written as `return await helper(…)` in an async generator, where
+  `return` takes no value; a block that returns from one is
+  `frame_sensitive_block`.
+- **Generators stay refused.** A block holding `yield` or `yield from` is
+  declined with its own reason, `generator_block`: as a helper of its own it
+  would be a separate generator, and sharing it would need `yield from` with
+  every value sent, thrown and returned forwarded, which Towel does not write.
+
+*Status: implemented for 2.0, with `tests/test_async_helpers.py`: the audit's
+scenarios 27 and 28, and hostile programs run before and after in both modes
+(a cancellation delivered inside the helper, an exception crossing its
+boundary, a timeout and a task group entered outside the block, the running
+task's identity, an awaiting body strict mode leaves alone, duplicates straddling an
+`async with`, an awaiting difference, and an async generator's early
+`return`).*

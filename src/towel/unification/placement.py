@@ -56,6 +56,7 @@ from .models import (
     Replacement,
 )
 from .argument_ownership import render_argument_handoff
+from .async_helpers import awaiting_helper_calls, awaits_in_own_frame
 from .class_private import is_class_private, mangling_prefix, rewritten_identifiers
 from .scope_analyzer import ScopeAnalyzer
 from .semantic_safety import needs_class_body
@@ -675,8 +676,8 @@ class HelperPlacement(EngineState):
         elif naming.original_name != naming.final_name:
             node = self._retarget_helper_calls(node, naming.original_name, naming.final_name)
         if repl.argument_handoff is not None:
-            return render_argument_handoff(node, repl.argument_handoff, naming.final_name)
-        if handed:
+            node = render_argument_handoff(node, repl.argument_handoff, naming.final_name)
+        elif handed:
             for call in ast.walk(node):
                 if isinstance(call, ast.Call) and (
                     isinstance(call.func, ast.Name)
@@ -685,6 +686,9 @@ class HelperPlacement(EngineState):
                     and call.func.attr == naming.final_name
                 ):
                     call.args.append(ast.Constant(value=None))
+        # A helper that awaits is a coroutine function, and its call is awaited.
+        if awaits_in_own_frame(proposal.extracted_function.body):
+            node = awaiting_helper_calls(node, naming.final_name)
         return node
 
     @staticmethod

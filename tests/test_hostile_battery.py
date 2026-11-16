@@ -454,7 +454,6 @@ OWNERSHIP_REFUSALS: Dict[str, str] = {
     "r1792_factory_finalizer_continuation": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r1792_factory_finalizer_order": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r39_cluster_alpha": "ordered retained-value slots do not align across sites",
-    "r45_async_no_await": "retained local is not definitely bound on every block exit",
     "r46_nonlocal_counter": "retained local is not definitely bound on every block exit",
     "r76_return_order": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r7bi_augassign_and_del_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",

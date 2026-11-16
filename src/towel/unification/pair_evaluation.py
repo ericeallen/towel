@@ -137,6 +137,7 @@ from .semantic_safety import (
     nested_bindings_escape,
     nested_scopes_cross_block_boundary,
     block_requires_original_frame,
+    holds_yield,
     frame_read_outside_block,
     needs_class_body,
     unbinds_external_name,
@@ -807,7 +808,14 @@ class PairEvaluation(
                 analyzer,
                 site=site,
             ):
-                self._debug_reject(RejectReason.FRAME_SENSITIVE_BLOCK, pair)
+                self._debug_reject(
+                    (
+                        RejectReason.GENERATOR_BLOCK
+                        if holds_yield(nodes)
+                        else RejectReason.FRAME_SENSITIVE_BLOCK
+                    ),
+                    pair,
+                )
                 return None
             if self._block_rejected(
                 frame_read_outside_block,

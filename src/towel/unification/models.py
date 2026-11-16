@@ -323,6 +323,7 @@ class RejectReason(StrEnum):
     EXISTING_HELPER_BECOMES_FORWARDER = "existing_helper_becomes_forwarder"
     FRAME_READ_IN_FUNCTION = "frame_read_in_function"
     FRAME_SENSITIVE_BLOCK = "frame_sensitive_block"
+    GENERATOR_BLOCK = "generator_block"
     HOST_HAS_STUB = "host_has_stub"
     IMPORT_CYCLE = "import_cycle"
     IMPORT_TIME_EFFECTS = "import_time_effects"

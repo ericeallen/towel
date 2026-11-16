@@ -1,0 +1,53 @@
+import asyncio
+import inspect
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import aclient
+
+
+class Response:
+    def __init__(self, status, payload=None):
+        self.status = status
+        self.payload = payload
+
+    def raise_for_status(self):
+        if self.status >= 400:
+            raise RuntimeError(f"HTTP {self.status}")
+
+    async def json(self):
+        await asyncio.sleep(0)
+        return self.payload
+
+
+class Client:
+    def __init__(self):
+        self.calls = []
+
+    async def get(self, path):
+        self.calls.append(path)
+        await asyncio.sleep(0)
+        kind, ident = path.strip("/").split("/")
+        if ident == "1":
+            return Response(200, {kind[:-1]: {"id": 1, "kind": kind}})
+        if ident == "2":
+            return Response(404)
+        return Response(500)
+
+
+async def main():
+    client = Client()
+    for func in (aclient.fetch_user, aclient.fetch_team):
+        for ident in (1, 2, 3):
+            try:
+                print(func.__name__, ident, await func(client, ident))
+            except RuntimeError as exc:
+                print(func.__name__, ident, "RuntimeError", exc)
+    print(await asyncio.gather(aclient.fetch_user(client, 1), aclient.fetch_team(client, 1)))
+    print(client.calls)
+
+
+asyncio.run(main())
+print(inspect.iscoroutinefunction(aclient.fetch_user), inspect.iscoroutinefunction(aclient.fetch_team))
+print("ok")

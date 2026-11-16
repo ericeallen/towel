@@ -124,9 +124,13 @@ PAIR_REASONS: Mapping[RejectReason, Explanation] = {
         " call of super through another name, elsewhere in the function, needs."
     ),
     RejectReason.FRAME_SENSITIVE_BLOCK: _says(
-        "The block only works in its own function: it holds yield, await, async for or async"
-        " with, a break or continue for a loop outside it, an assignment expression in a"
-        " comprehension, or a super() call that needs its own method."
+        "The block only works in its own function: it holds a break or continue for a loop"
+        " outside it, an assignment expression in a comprehension, a super() call that needs"
+        " its own method, or a return from an async generator."
+    ),
+    RejectReason.GENERATOR_BLOCK: _says(
+        "The block holds yield or yield from: as a helper of its own it would be a separate"
+        " generator, and Towel does not share code that yields."
     ),
     RejectReason.HOST_HAS_STUB: _says(
         _CROSS_MODULE + "the module that would hold the helper has a .pyi stub, which type"
