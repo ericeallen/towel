@@ -112,3 +112,20 @@ def test_deadline_during_normal_pool_cleanup_is_delivered_after_cleanup() -> Non
             signal.raise_signal(signal.SIGALRM)
             cleaned = True
     assert cleaned
+
+
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM])
+def test_recorded_signal_survives_a_broken_pool(signum: int) -> None:
+    """D1: a pool error cannot discard the cancellation recorded before it."""
+    from concurrent.futures.process import BrokenProcessPool
+    from towel.execution_budget import polling_interrupts
+
+    previous = signal.getsignal(signum)
+    expected = KeyboardInterrupt if signum == signal.SIGINT else SystemExit
+    with pytest.raises(expected) as raised:
+        with polling_interrupts():
+            signal.raise_signal(signum)
+            raise BrokenProcessPool("worker received the group signal")
+    if isinstance(raised.value, SystemExit):
+        assert raised.value.code == 143
+    assert signal.getsignal(signum) == previous

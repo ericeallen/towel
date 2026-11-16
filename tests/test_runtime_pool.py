@@ -101,12 +101,16 @@ def _run(tmp_path: Path, mode: str) -> tuple[int, list[int], float, str]:
         start_new_session=True,
     )
     try:
-        if mode in {"int", "term"}:
+        if mode in {"int", "term", "gint", "gterm"}:
             end = started + 5
             while not list(markers.iterdir()) and process.poll() is None and time.monotonic() < end:
                 time.sleep(0.01)
             started = time.monotonic()
-            process.send_signal(signal.SIGINT if mode == "int" else signal.SIGTERM)
+            signum = signal.SIGINT if mode in {"int", "gint"} else signal.SIGTERM
+            if mode.startswith("g"):
+                os.killpg(process.pid, signum)
+            else:
+                process.send_signal(signum)
         try:
             output, _ = process.communicate(timeout=4 if mode != "death" else 20)
         except subprocess.TimeoutExpired:
@@ -124,3 +128,17 @@ def _run(tmp_path: Path, mode: str) -> tuple[int, list[int], float, str]:
         except ProcessLookupError:
             pass
         process.communicate(timeout=5)
+
+
+@pytest.mark.parametrize("repeat", range(10))
+@pytest.mark.parametrize("mode,status", [("gint", 130), ("gterm", 143)])
+def test_group_signal_never_falls_back_to_serial(
+    tmp_path: Path, repeat: int, mode: str, status: int
+) -> None:
+    """D1: ten trials per group signal cancel promptly and leave no worker alive."""
+    actual, pids, elapsed, output = _run(tmp_path, mode)
+    assert actual == status, output
+    assert pids
+    assert elapsed < 2, output
+    assert "finishing serially" not in output
+    assert all(not _alive(pid) for pid in pids), (pids, output)

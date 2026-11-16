@@ -131,8 +131,12 @@ def polling_interrupts() -> Iterator[Callable[[], None]]:
     try:
         for signum in previous:
             signal.signal(signum, record)
-        yield check
-        check()
+        try:
+            yield check
+        finally:
+            # Pool cleanup has finished even when a failed future unwinds the scope.
+            # Deliver its recorded cancellation before a caller can fall back.
+            check()
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
