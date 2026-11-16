@@ -414,6 +414,8 @@ def format_at_indentation(formatter: SnippetFormatter, source: str, prefix: str)
     the materializer's reindentation, each tab represents a four-space level.
     The suites are only formatter input, never generated program statements.
     """
+    from .unification.source_render import reindent_source
+
     depth = (len(prefix.expandtabs(4)) + 3) // 4
     if not depth:
         return formatter(source)
@@ -421,7 +423,7 @@ def format_at_indentation(formatter: SnippetFormatter, source: str, prefix: str)
     wrapped = "\n".join(
         [
             *("    " * level + "if True:" for level in range(depth)),
-            *(indentation + line for line in source.split("\n")),
+            reindent_source(source, indentation),
         ]
     )
     formatted = formatter(wrapped)
@@ -436,9 +438,7 @@ def format_at_indentation(formatter: SnippetFormatter, source: str, prefix: str)
     # Formatter indentation may use tabs or a configured width of its own.
     first = next(line for line in lines if line.strip())
     margin = first[: len(first) - len(first.lstrip())]
-    unwrapped = "\n".join(
-        line[len(margin) :] if line.startswith(margin) else line for line in lines
-    )
+    unwrapped = reindent_source("\n".join(lines), "", margin)
     # Ruff separates a definition from its synthetic enclosing ``if`` with a
     # blank line. That suite's spacing does not belong to the destination;
     # insertion supplies its own separator. Keep blanks the input already had.

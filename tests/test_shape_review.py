@@ -300,3 +300,33 @@ def compute_b(): return "two"
         names = [arg.arg for arg in (*helper.args.posonlyargs, *helper.args.args)]
         assert names.index("__param_0") < names.index("__param_1")
     assert observe(output.parent, "import mod; print(mod.first(True), mod.second(False))") == before
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("indent", ["  ", "\t"])
+def test_ruff_preserves_multiline_arguments_at_project_indentation(
+    tmp_path: Path, strict: bool, indent: str
+) -> None:
+    """Review 6a: synthetic formatter suites must not indent string contents."""
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "pyproject.toml").write_text(
+        '[project]\nname="example"\nversion="0"\nrequires-python=">=3.11"\n'
+        "[tool.ruff]\nindent-width = 2\n"
+        + ('[tool.ruff.format]\nindent-style = "tab"\n' if indent == "\t" else "")
+    )
+    (source / "mod.py").write_text(
+        'def first():\n  text = """first\n  second\nlast"""\n'
+        '  text = text.strip()\n  text = text.upper()\n  return text + "!"\n\n'
+        'def second():\n  text = """other\n  sample\nend"""\n'
+        '  text = text.strip()\n  text = text.upper()\n  return text + "?"\n'.replace(
+            "\n  ", "\n" + indent
+        )
+    )
+    driver = "import mod; print(repr((mod.first(), mod.second())))"
+    before = observe(source, driver)
+    output = tmp_path / "out"
+    result = dry(source, output, strict)
+    assert "formatter changed its code" not in result.stdout
+    assert "__extracted_func_0" in (output / "mod.py").read_text()
+    assert observe(output, driver) == before
