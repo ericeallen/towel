@@ -181,7 +181,10 @@ def test_preview_finds_duplicates_without_changing_files(tmp_path: Path, directo
     # One unified diff includes the source and generated helper, without duplicate inventories.
     if lifetime_order_certified():
         assert "--- before/module.py" in result.stdout and "+++ after/module.py" in result.stdout
-        assert "+    return first(x)" in result.stdout
+        if cli.DEFAULT_STRICT:
+            assert "+def __extracted_func" in result.stdout
+        else:
+            assert "+    return first(x)" in result.stdout
     else:
         assert "--- before/" not in result.stdout
         assert "+def __extracted_func" not in result.stdout
