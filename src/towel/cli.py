@@ -2415,7 +2415,11 @@ def _run_quick_preview(options: PreviewOptions) -> None:
             )
 
         print(f"Analyzing file: {target}")
-        all_proposals = engine.analyze_files([target], progress=options.progress)
+        from towel.project_layout import find_project_root
+
+        all_proposals = engine.analyze_files(
+            [target], progress=options.progress, program_root=find_project_root(Path(target))
+        )
     else:
         print(f"Analyzing directory: {target}")
         all_proposals = engine.analyze_directory(target, recursive=True, progress=options.progress)

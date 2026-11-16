@@ -412,6 +412,7 @@ class EngineState:
         progress: ProgressMode = DEFAULT_PROGRESS,
         invalidate_paths: Optional[List[str]] = None,
         changed_files: Optional[FrozenSet[str]] = None,
+        program_root: Optional[Path] = None,
     ) -> List[RefactoringProposal]:
         """Provided by UnificationRefactorEngine."""
         raise NotImplementedError

@@ -40,7 +40,7 @@ def rebinding_scope(
 
     Project metadata and package ancestry establish the same scope as helper
     renaming. Without an anchor only the explicitly analyzed program is known.
-    Every selection includes sibling consumers, even without a complete scope.
+    CLI entry points supply a consumer root even without a complete scope.
     """
     # Completeness belongs to the original project, not to a temporary
     # staging directory whose name/layout may hide an unanchored src root.
@@ -53,12 +53,13 @@ def rebinding_scope(
     }
     complete = declared_complete or bool(roots and None not in roots)
     expanded = set(Path(path).resolve() for path in paths)
-    scan_roots = set(project_scopes.values())
+    scan_roots = {root for root in roots if root is not None}
     # src is an import root. Its sibling tests and scripts are consumers too,
     # even when no packaging metadata establishes completeness.
     scan_roots.update(root.parent for root in project_scopes.values() if root.name == "src")
     if program_root is not None:
         scan_roots.add(program_root)
+        scan_roots.update(project_scopes.values())
     if declared_complete:
         scan_roots.update(Path(path).parent for path in paths)
     sources: dict[str, str | None] = {}

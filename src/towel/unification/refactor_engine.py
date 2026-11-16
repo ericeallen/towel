@@ -733,12 +733,14 @@ class UnificationRefactorEngine(ParallelEvaluation):
         progress: ProgressMode = DEFAULT_PROGRESS,
         invalidate_paths: Optional[List[str]] = None,
         changed_files: Optional[FrozenSet[str]] = None,
+        program_root: Optional[Path] = None,
     ) -> List[RefactoringProposal]:
         """Analyze multiple files using the compiler-style pipeline and return proposals.
 
         Args:
             file_paths: The files to analyze together.
             progress: How progress is shown (see ``ProgressMode``).
+            program_root: Read-only consumer scope supplied by the entry point.
             invalidate_paths: Re-parse and re-analyze these paths even if cached.
             changed_files: When given, only pairs with a function in one of
                 these files are considered (see ``incremental_global_passes``).
@@ -755,6 +757,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 progress=progress,
                 invalidate_paths=invalidate_paths,
                 changed_files=changed_files,
+                program_root=program_root,
             )
 
     def _analyze_files(
@@ -764,6 +767,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         progress: ProgressMode,
         invalidate_paths: Optional[List[str]],
         changed_files: Optional[FrozenSet[str]],
+        program_root: Optional[Path],
     ) -> List[RefactoringProposal]:
         """Analyze with the caller's shared, bounded source context active."""
         # The index and last unification's inputs belong to one analysis.
@@ -792,7 +796,9 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.complete_scope, self._rebinding_sources = rebinding_scope(
             file_paths,
             declared_complete=self._declared_complete_scope,
-            program_root=self._output_origin[1] if self._output_origin is not None else None,
+            program_root=(
+                self._output_origin[1] if self._output_origin is not None else program_root
+            ),
             project_roots=roots,
             excluded=self.excluded_directories,
         )

@@ -358,3 +358,17 @@ def test_excluded_sources_do_not_block_redirects(tmp_path: Path, strict: bool) -
     assert "cannot be analyzed" not in result.stderr
     assert "    total(order, log)" in (output / "mod.py").read_text()
     assert observe(output, "import mod; print(mod.report([1, 2]))") == before
+
+
+def test_unanchored_library_selection_has_no_implicit_complete_scope(tmp_path: Path) -> None:
+    """A library file selection is explicit; CLI entry points supply their consumer root."""
+    from towel.unification.rebinding import rebinding_scope
+
+    selected = tmp_path / "mod.py"
+    selected.write_text(REDIRECT_SOURCE)
+    unrelated = tmp_path / "other.py"
+    unrelated.write_text('print "old syntax"\n')
+    complete, sources = rebinding_scope([str(selected)], declared_complete=False)
+    assert not complete and set(sources) == {str(selected)}
+    _, program = rebinding_scope([str(selected)], declared_complete=False, program_root=tmp_path)
+    assert str(unrelated) in program
