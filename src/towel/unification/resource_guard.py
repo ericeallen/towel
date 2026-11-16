@@ -25,10 +25,14 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from pathlib import Path
 from typing import FrozenSet, Iterator, Mapping, Optional, Sequence
 from weakref import WeakKeyDictionary
 
+from ..analysis_sources import parse_analysis_source
+from ..source_text import try_read_source
 from .assignment_analyzer import own_scope_bindings
+from .import_graph import ImportGraphCache, imported_alias_sites
 from .module_bindings import dotted_name, import_origin
 from .models import is_generated_helper_name
 from .parameters import parameter_nodes
@@ -206,7 +210,16 @@ def _resolution(module: ast.AST) -> _Resolution:
                         recorded.add(id(alias))
                         origins.setdefault(name, []).append(
                             _Origin(
-                                _position(current), import_origin(current, alias), True, conditional
+                                _position(current),
+                                (
+                                    "." * current.level
+                                    + (current.module + "." if current.module else "")
+                                    + alias.name
+                                    if isinstance(current, ast.ImportFrom) and current.level
+                                    else import_origin(current, alias)
+                                ),
+                                True,
+                                conditional,
                             )
                         )
                     elif (
@@ -294,6 +307,58 @@ def _resolution(module: ast.AST) -> _Resolution:
     return _Resolution(scopes, locations)
 
 
+@dataclass(frozen=True)
+class ResourceImports:
+    """The importing file and the engine's current project import graph."""
+
+    file_path: str
+    cache: ImportGraphCache
+
+    def follow(
+        self, origins: FrozenSet[str], seen: FrozenSet[tuple[Path, str]] = frozenset()
+    ) -> FrozenSet[str]:
+        found = set(origins)
+        for origin in origins:
+            if origin in RESOURCE_CONSTRUCTORS or origin in WEAK_REFERENCE_CONSTRUCTORS:
+                continue
+            level = len(origin) - len(origin.lstrip("."))
+            head, _, tail = origin.lstrip(".").partition(".")
+            alias = ast.alias(name="*")
+            statement = ast.ImportFrom(module=None if level else head, names=[alias], level=level)
+            sites = imported_alias_sites(
+                self.file_path, statement, alias, origin.lstrip(".") if level else tail, self.cache
+            )
+            for file, name in sites or ():
+                key = (file, name)
+                if key in seen or len(seen) >= 32:
+                    continue
+                source = try_read_source(file)
+                if source is None:
+                    continue
+                try:
+                    module = parse_analysis_source(source, str(file))
+                except SyntaxError:
+                    continue
+                resolution = memoized_per_node(_RESOLUTIONS, module, _resolution)
+                targets = resolution.origins(name, 0, (10**9, 0), deferred=True)
+                found.update(ResourceImports(str(file), self.cache).follow(targets, seen | {key}))
+        return frozenset(found)
+
+
+def _call_origins(
+    call: ast.Call, resolution: Optional[_Resolution], imports: Optional[ResourceImports]
+) -> FrozenSet[str]:
+    spelling = dotted_name(call.func)
+    if spelling is None:
+        return frozenset()
+    origins = (
+        resolution.origins(spelling, resolution.locations.get(id(call), 0), _position(call))
+        if resolution is not None
+        else frozenset({"builtins.open" if spelling == "open" else spelling})
+    )
+    return origins if imports is None else imports.follow(origins)
+
+
 _RESOLUTIONS: WeakKeyDictionary[ast.AST, _Resolution] = WeakKeyDictionary()
 _OWNING_HELPERS: WeakKeyDictionary[ast.AST, FrozenSet[str]] = WeakKeyDictionary()
 
@@ -330,7 +395,7 @@ def _helper_callees(call: ast.Call, resolution: Optional[_Resolution]) -> Frozen
     )
 
 
-def _owning_helpers(module: ast.AST) -> FrozenSet[str]:
+def _owning_helpers(module: ast.AST, imports: Optional[ResourceImports] = None) -> FrozenSet[str]:
     """Retain the guard's guarantee across subsequent extraction passes.
 
     A helper's result can contain an owner the first pass deliberately kept.
@@ -356,12 +421,7 @@ def _owning_helpers(module: ast.AST) -> FrozenSet[str]:
             if not isinstance(node, ast.Call):
                 continue
             dependencies.setdefault(helper.name, set()).update(_helper_callees(node, resolution))
-            spelling = dotted_name(node.func)
-            origins = (
-                resolution.origins(spelling, resolution.locations.get(id(node), 0), _position(node))
-                if spelling
-                else frozenset()
-            )
+            origins = _call_origins(node, resolution, imports)
             if origins & WEAK_REFERENCE_CONSTRUCTORS or (
                 origins & RESOURCE_CONSTRUCTORS and id(node) not in managed
             ):
@@ -375,7 +435,11 @@ def _owning_helpers(module: ast.AST) -> FrozenSet[str]:
         owning = expanded
 
 
-def resource_guard(block: Sequence[ast.stmt], module: Optional[ast.AST]) -> ResourceGuard:
+def resource_guard(
+    block: Sequence[ast.stmt],
+    module: Optional[ast.AST],
+    imports: Optional[ResourceImports] = None,
+) -> ResourceGuard:
     """Each recognized call is managed, retained by a stable name, or refused.
 
     Rebinding is conservatively checked across all paths. Returning a stable
@@ -386,7 +450,11 @@ def resource_guard(block: Sequence[ast.stmt], module: Optional[ast.AST]) -> Reso
         memoized_per_node(_RESOLUTIONS, module, _resolution) if module is not None else None
     )
     owning_helpers = (
-        memoized_per_node(_OWNING_HELPERS, module, _owning_helpers)
+        (
+            memoized_per_node(_OWNING_HELPERS, module, _owning_helpers)
+            if imports is None
+            else _owning_helpers(module, imports)
+        )
         if module is not None
         else frozenset()
     )
@@ -471,14 +539,7 @@ def resource_guard(block: Sequence[ast.stmt], module: Optional[ast.AST]) -> Reso
                     "Towel cannot preserve through another helper. Keep this call in place, or use `--strict`."
                 )
             )
-        spelling = dotted_name(node.func)
-        if spelling is None:
-            continue
-        origins = (
-            resolution.origins(spelling, resolution.locations.get(id(node), 0), _position(node))
-            if resolution is not None
-            else frozenset({"builtins.open" if spelling == "open" else spelling})
-        )
+        origins = _call_origins(node, resolution, imports)
         resource = bool(origins & RESOURCE_CONSTRUCTORS)
         weak = bool(origins & WEAK_REFERENCE_CONSTRUCTORS)
         if not resource and not weak:
@@ -544,6 +605,10 @@ def resource_guard(block: Sequence[ast.stmt], module: Optional[ast.AST]) -> Reso
     return ResourceGuard(frozenset(names))
 
 
-def resource_bound_names(block: Sequence[ast.stmt], module: Optional[ast.AST]) -> FrozenSet[str]:
+def resource_bound_names(
+    block: Sequence[ast.stmt],
+    module: Optional[ast.AST],
+    imports: Optional[ResourceImports] = None,
+) -> FrozenSet[str]:
     """Stable resource names; callers must also check the guard's refusal."""
-    return resource_guard(block, module).names
+    return resource_guard(block, module, imports).names

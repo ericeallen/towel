@@ -2039,6 +2039,9 @@ therefore applies one of three rules:
   afterwards is returned under that same name (`tmp, path = helper(…)`). The
   stability check includes later statements in the containing function, so
   extracting a shorter prefix cannot lose an alias before a later rebinding.
+  Calls inside loops, including loops enclosing the block and comprehensions
+  with assignment expressions, are refused: textual order does not prove
+  stability across iterations. This applies to weak referents too.
 - Otherwise the block is declined as `resource_lifetime_unproven`, with a plain
   explanation suggesting a `with` statement or `--strict`. This includes
   containers, attributes, subscripts, unpacking, conditional expressions,
@@ -2058,7 +2061,8 @@ its defining module `multiprocessing.pool.Pool`) and
 `mmap.mmap`; `weakref.finalize`; builtin `open`, `io.open`, `os.fdopen` and
 `socket.socket`. Files and sockets qualify because descriptors and locks can
 be observed without holding the owning object. Import aliases are resolved
-in their lexical scope; a shadowing local or parameter is not that import.
+in their lexical scope, including re-exports through project modules; a
+shadowing local or parameter is not that import.
 The list and its criterion are in `unification/resource_guard.py`.
 
 A weak reference is the other way a program reaches an object it no longer
@@ -2073,7 +2077,8 @@ block instead of returning a name that no longer owns the object.
 The guard is a list of known constructors, not a proof of resource ownership.
 It reads syntax only. A program that keeps some other resource alive only
 through a local it never reads again, obtains one through an unrecognized
-factory, or registers one in a `WeakSet` or a weak dictionary needs
+factory (including a constructor passed through a parameter default,
+`functools.partial`, or a tuple-unpacked copy), or registers one in a `WeakSet` or a weak dictionary needs
 `--strict`, or better a `with` statement or an explicit reference.
 
 **What this supersedes.** In the default mode this entry supersedes, and under

@@ -63,7 +63,7 @@ from .block_signature import BlockSignature, BlockSignatureIndex, extract_block_
 from .extractor import has_complete_return_coverage, is_value_producing
 from .function_scope import code_names, function_names, identifiers, scope_moving_names
 from .frame_ownership import FrameOwnership, frame_ownership
-from .resource_guard import resource_bound_names
+from .resource_guard import ResourceImports, resource_bound_names
 from .models import (
     BlockBindingSnapshot,
     ArgumentHandoff,
@@ -312,7 +312,10 @@ def owned_binding_crosses_exception_boundary(
 
 
 def guarded_resource_crosses_exception_boundary(
-    analyzer: ScopeAnalyzer, function: FunctionNode, nodes: Sequence[ast.stmt]
+    analyzer: ScopeAnalyzer,
+    function: FunctionNode,
+    nodes: Sequence[ast.stmt],
+    names: Optional[FrozenSet[str]] = None,
 ) -> bool:
     """Relaxed mode's remainder of ``owned_binding_crosses_exception_boundary``.
 
@@ -326,7 +329,8 @@ def guarded_resource_crosses_exception_boundary(
     if not nodes or id(nodes[0]) not in protected:
         return False
     bound = {binding.name for binding in own_scope_bindings(nodes) if not binding.deleted_on_exit}
-    return bool(resource_bound_names(nodes, analyzer.analyzed_tree) & bound)
+    resources = resource_bound_names(nodes, analyzer.analyzed_tree) if names is None else names
+    return bool(resources & bound)
 
 
 _LOCAL_ORDERS: "WeakKeyDictionary[ast.AST, Mapping[Tuple[str, int], Tuple[str, ...]]]" = (
@@ -930,6 +934,7 @@ class BlockAnalysis(EngineState):
         block: Sequence[ast.stmt] = (),
         *,
         module: Optional[ast.AST] = None,
+        resource_imports: Optional[ResourceImports] = None,
         debug_label: Optional[str] = None,
     ) -> Set[str]:
         """The newly bound variables the helper must return.
@@ -957,7 +962,7 @@ class BlockAnalysis(EngineState):
             if self.strict:
                 result |= lifetime_bound_names(block, initially_bound)
             else:
-                result |= resource_bound_names(block, module) & initially_bound
+                result |= resource_bound_names(block, module, resource_imports) & initially_bound
 
         for usage in return_statement_usages(
             self, func, self._used_names, _end_position(block, block_range)

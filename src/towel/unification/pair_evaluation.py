@@ -52,7 +52,7 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, FrozenSet, Iterator
 
-from .resource_guard import resource_guard
+from .resource_guard import ResourceImports, resource_guard
 
 from ..canonical_ast import canonical_dump
 from ..analysis_sources import parsing_is_pure
@@ -757,10 +757,8 @@ class PairEvaluation(
         )
         for nodes, function, analyzer, site, source, file_path in blocks:
             if not self.strict:
-                resources = self._per_block(
-                    "resource_guard",
-                    lambda: resource_guard(nodes, analyzer.analyzed_tree),
-                    site=site,
+                resources = resource_guard(
+                    nodes, analyzer.analyzed_tree, ResourceImports(file_path, self.import_graph)
                 )
                 if resources.refusal is not None:
                     self._debug_reject(
@@ -796,12 +794,8 @@ class PairEvaluation(
                     owned_binding_crosses_exception_boundary, nodes, function, site=site
                 )
                 if self.strict
-                else self._block_rejected(
-                    guarded_resource_crosses_exception_boundary,
-                    nodes,
-                    function,
-                    analyzer,
-                    site=site,
+                else guarded_resource_crosses_exception_boundary(
+                    analyzer, function, nodes, resources.names
                 )
             ):
                 self._debug_reject(RejectReason.OWNED_BINDING_EXCEPTION_BOUNDARY, pair)
@@ -988,6 +982,10 @@ class PairEvaluation(
             snapshot.initially_bound,
             nodes,
             module=analyzer.analyzed_tree,
+            resource_imports=ResourceImports(
+                pair.file_path if block_idx == 0 else pair.file_path2 or pair.file_path,
+                self.import_graph,
+            ),
             debug_label=debug_label if debug_enabled else None,
         )
         return snapshot, return_variables
