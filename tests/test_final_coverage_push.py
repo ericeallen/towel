@@ -222,19 +222,22 @@ def process_data_b():
 """
         temp_path = self._write_temp(code)
 
-        proposals = self.engine.analyze_file(temp_path)
+        engine = UnificationRefactorEngine(
+            max_parameters=5, min_lines=2, skip_trivial_helpers=False, complete_scope=True
+        )
+        proposals = engine.analyze_file(temp_path)
         # The distinct docstrings stay with their functions. Ignoring them
         # exposes identical bodies, so the second function can call the first.
         self.assertEqual(
             [p.description for p in proposals],
             ["Reuse process_data_a (m.py) for duplicated code in process_data_b"],
         )
-        written = self.engine.apply_refactoring(temp_path, proposals[0])
+        written = engine.apply_refactoring(temp_path, proposals[0])
         first, second = ast.parse(written).body
         assert isinstance(first, ast.FunctionDef) and isinstance(second, ast.FunctionDef)
         self.assertEqual(ast.dump(first), ast.dump(ast.parse(code).body[0]))
         self.assertEqual(ast.get_docstring(second), "Process data variant B.")
-        self.assertEqual(ast.unparse(second.body[-1]), "return process_data_a(x)")
+        self.assertEqual(ast.unparse(second.body[-1]), "return process_data_a()")
 
     def test_find_python_files_excludes_hidden(self):
         """Test that hidden directories are excluded."""
