@@ -14,7 +14,8 @@
 
 """Writing a call in place of a block's text, and nothing else.
 
-A block is a run of statements, and a line can hold more than the block:
+A block is a run of statements, or one expression inside a statement
+(``expression_sites``), and a line can hold more than the block:
 ``a = n + 1; b = a * 2`` where the block starts at ``b``, ``b = 1; c = 2``
 where it ends at ``b``, ``if x: a; b`` where it is the body written after
 its header's colon, or a line whose first part closes a statement continued
@@ -109,6 +110,9 @@ def splice_block(block_lines: Sequence[str], columns: BlockColumns, code: str) -
     kept_tail = tail if holds_code(tail) else ""
     indentation = first[: len(first) - len(first.lstrip())]
     code_lines = code.split("\n")
+    if _is_word(head[-1:]) and _is_word(code_lines[0][:1]):
+        # ``not[a, b]`` and ``return(a and b)`` need no blank; ``not helper()`` does.
+        head += " "
     text = (
         head
         + code_lines[0]
@@ -118,6 +122,11 @@ def splice_block(block_lines: Sequence[str], columns: BlockColumns, code: str) -
     written = "".join(block_lines)
     removed = written[len(head) : len(written) - len(kept_tail)]
     return Splice(tuple(source_lines(text)), textwrap.dedent(indentation + removed).rstrip("\n"))
+
+
+def _is_word(character: str) -> bool:
+    """Whether ``character`` can be part of a name or a number."""
+    return character.isalnum() or character == "_"
 
 
 def shared_lines(lines: Sequence[str], block: Sequence[ast.stmt]) -> FrozenSet[int]:

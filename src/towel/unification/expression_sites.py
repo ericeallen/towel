@@ -52,13 +52,20 @@ Not candidates (docs/design/DECISIONS.md, "Expressions are candidates"):
 from __future__ import annotations
 
 import ast
+import functools
+import io
+import keyword
+import tokenize
 from dataclasses import dataclass, replace
-from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Tuple
+from typing import Dict, FrozenSet, Iterable, Iterator, List, Optional, Sequence, Tuple
 from weakref import WeakKeyDictionary
 
 from .assignment_analyzer import stored_names
+from .block_comments import DEFAULT_EXCLUSION, NodePath, SiteComments, site_comments
 from .block_signature import BlockSignature, extract_block_signature
-from .models import FunctionNode
+from .models import ExpressionPlace, FunctionNode
+from .splicing import BlockColumns
+from ..source_text import source_lines
 
 MINIMUM_SYNTAX_UNITS = 7
 """Fewest syntax units an expression candidate holds.
@@ -112,6 +119,17 @@ class ExpressionSite:
     @property
     def first_line(self) -> int:
         return self.expression.lineno
+
+    @property
+    def place(self) -> ExpressionPlace:
+        expression = self.expression
+        return ExpressionPlace(
+            (expression.lineno, expression.col_offset),
+            (expression.end_lineno or expression.lineno, expression.end_col_offset or 0),
+            self.exact_truth,
+            self.statement_line,
+            self.comprehension_iterables,
+        )
 
     @property
     def last_line(self) -> int:
@@ -548,3 +566,193 @@ def comprehension_locals(block: Sequence[ast.AST]) -> FrozenSet[str]:
     """
     site = expression_site(block)
     return frozenset() if site is None else site.comprehension_names | site.unbound_names
+
+
+# -- The call in the expression's place -----------------------------------------
+
+
+def replacement_span(source: str, site: ExpressionSite) -> Tuple[Tuple[int, int], BlockColumns]:
+    """The lines and columns of ``source`` that the call replacing ``site`` takes the place of.
+
+    The expression's own text, and with it the parentheses that only group
+    it, when nothing but line breaks stands between them and it: a call
+    needs none, and ``if (`` a call ``):`` over three lines is not what
+    anyone would write. Parentheses that hold a comment beside the
+    expression stay, so the comment does. A generator expression written as
+    a call's only argument uses the call's parentheses as its own, and
+    those stay with the call.
+    """
+    expression = site.expression
+    start = (expression.lineno, expression.col_offset)
+    end = (expression.end_lineno or expression.lineno, expression.end_col_offset or 0)
+    if site.shares_parentheses:
+        start, end = (start[0], start[1] + 1), (end[0], end[1] - 1)
+    else:
+        start, end = _with_grouping_parentheses(source, start, end)
+    return (start[0], end[0]), BlockColumns(start[1], end[1])
+
+
+_Position = Tuple[int, int]
+_LAYOUT = frozenset({tokenize.NL, tokenize.COMMENT})
+_ENDS_A_VALUE = frozenset({")", "]", "}", "..."})
+_VALUE_KEYWORDS = frozenset({"None", "True", "False"})
+
+
+@functools.lru_cache(maxsize=8)
+def _significant_tokens(source: str) -> Optional[Tuple[tokenize.TokenInfo, ...]]:
+    """The tokens of ``source`` with byte columns, or None when it cannot be tokenized."""
+    lines = source_lines(source)
+    try:
+        tokens = tuple(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (tokenize.TokenError, SyntaxError, IndentationError):
+        return None
+
+    def in_bytes(position: _Position) -> _Position:
+        line, column = position
+        if not 1 <= line <= len(lines) or lines[line - 1].isascii():
+            return position
+        return line, len(lines[line - 1][:column].encode("utf-8"))
+
+    return tuple(
+        token._replace(start=in_bytes(token.start), end=in_bytes(token.end)) for token in tokens
+    )
+
+
+def _with_grouping_parentheses(
+    source: str, start: _Position, end: _Position
+) -> Tuple[_Position, _Position]:
+    """``start`` and ``end`` widened over parentheses that do nothing but group the expression.
+
+    The token before the expression must be ``(`` and the one after it
+    ``)``, with only line breaks between: a comment there would be lost
+    with the parentheses. The ``(`` must open a group, not a call's or a
+    definition's argument list: what precedes it is an operator, a keyword
+    or the start of a statement, never a name, a literal or a closing
+    bracket. Positions count bytes, as the syntax tree's do.
+    """
+    tokens = _significant_tokens(source)
+    if tokens is None:
+        return start, end
+    first = next((index for index, token in enumerate(tokens) if token.start == start), None)
+    if first is None or first == 0:
+        return start, end
+    opening = first - 1
+    while opening > 0 and tokens[opening].type == tokenize.NL:
+        opening -= 1
+    if tokens[opening].type != tokenize.OP or tokens[opening].string != "(":
+        return start, end
+    closing = next((index for index, token in enumerate(tokens) if token.start >= end), None)
+    while closing is not None and closing < len(tokens) and tokens[closing].type == tokenize.NL:
+        closing += 1
+    if (
+        closing is None
+        or closing >= len(tokens)
+        or tokens[closing].type != tokenize.OP
+        or tokens[closing].string != ")"
+    ):
+        return start, end
+    before = opening - 1
+    while before >= 0 and tokens[before].type in _LAYOUT:
+        before -= 1
+    if before >= 0 and not _opens_a_group_after(tokens[before]):
+        return start, end
+    return tokens[opening].start, tokens[closing].end
+
+
+def _opens_a_group_after(token: tokenize.TokenInfo) -> bool:
+    """Whether a ``(`` written after ``token`` groups an expression, and is not a call."""
+    if token.type == tokenize.NAME:
+        return keyword.iskeyword(token.string) and token.string not in _VALUE_KEYWORDS
+    if token.type == tokenize.OP:
+        return token.string not in _ENDS_A_VALUE
+    return token.type in (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENCODING)
+
+
+def as_expression_call(call: ast.stmt) -> ast.stmt:
+    """The generated ``return helper(...)`` as the call alone, which is what an expression site gets.
+
+    Kept as an expression statement so that every consumer of a call site
+    finds a statement holding the call; ``Replacement.expression`` says its
+    value is used where it stands.
+    """
+    if not isinstance(call, ast.Return) or call.value is None:
+        raise ValueError("an expression candidate's helper returns its value")
+    return ast.copy_location(ast.Expr(value=call.value), call)
+
+
+def is_whole_body(place: ExpressionPlace, body: Sequence[ast.stmt]) -> bool:
+    """Whether a function of this ``body`` does nothing but return the expression at ``place``.
+
+    ``return E`` for a helper that returns the value, and ``return True if E
+    else False`` for one in the exact truth form: the shapes this module
+    gives its helpers, so that a later pass finds the helper it made.
+    """
+    if len(body) != 1 or not isinstance(body[0], ast.Return) or body[0].value is None:
+        return False
+    value = body[0].value
+    if place.exact_truth:
+        if not (
+            isinstance(value, ast.IfExp)
+            and isinstance(value.body, ast.Constant)
+            and value.body.value is True
+            and isinstance(value.orelse, ast.Constant)
+            and value.orelse.value is False
+        ):
+            return False
+        value = value.test
+    return (value.lineno, value.col_offset) == place.start and (
+        value.end_lineno,
+        value.end_col_offset,
+    ) == place.end
+
+
+def comments_at(
+    source: str,
+    block: Sequence[ast.stmt],
+    argument_lines: Iterable[int] = (),
+    exclusion: str = DEFAULT_EXCLUSION,
+) -> SiteComments:
+    """``site_comments`` for any block, an expression candidate's included.
+
+    A comment between the operands of an expression stood inside brackets:
+    the grouping parentheses or the call around the expression, which stay
+    at the site. In the helper it needs brackets again, so each such
+    comment is recorded as grouped with the whole returned value, and the
+    helper is written ``return (`` ... ``)`` around it.
+    """
+    comments = site_comments(source, block, argument_lines, exclusion)
+    if not is_expression_block(block) or not comments.comments:
+        return comments
+    value = getattr(block[0], "value")
+    whole = NodePath(0, type(block[0]).__name__, (("value", -1, type(value).__name__),))
+    return replace(
+        comments,
+        comments=tuple(
+            (
+                comment
+                if comment.anchor.group is not None
+                else replace(comment, anchor=replace(comment.anchor, group=whole))
+            )
+            for comment in comments.comments
+        ),
+    )
+
+
+def expression_at(source: str, place: ExpressionPlace) -> Optional[ast.expr]:
+    """The expression of ``source`` standing at ``place``, parsed from its own text.
+
+    None when the text there is not one expression, as when ``source`` is
+    not the text the place was recorded in.
+    """
+    lines = source_lines(source)
+    (first, start), (last, end) = place.start, place.end
+    if not 1 <= first <= last <= len(lines):
+        return None
+    encoded = [line.encode("utf-8") for line in lines[first - 1 : last]]
+    encoded[-1] = encoded[-1][:end]
+    encoded[0] = encoded[0][start:]
+    try:
+        text = b"".join(encoded).decode("utf-8")
+        return ast.parse("(" + text + "\n)", mode="eval").body
+    except (SyntaxError, UnicodeDecodeError, ValueError):
+        return None

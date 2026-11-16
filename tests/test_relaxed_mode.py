@@ -232,11 +232,37 @@ def test_relaxed_mode_extracts_the_audits_cases_with_plain_calls(tmp_path: Path,
     assert _output(driver, str(output)) == _output(driver, str(source))
 
 
-@pytest.mark.parametrize("name", DECLINED_BY_1949)
+VALUE_EXTRACTED_IN_STRICT_MODE = ("expr_dict",)
+"""The case strict mode declines as statements and, since 2.0, extracts as an expression.
+
+Audit case 45: two assignments of one dictionary to differently named
+variables. A helper of the assignments would own the variable, which the
+lifetime rules decline; a helper of the dictionary alone
+(``towel.unification.expression_sites``) binds nothing, the assignment stays
+in the caller, and no lifetime changes.
+"""
+
+
+@pytest.mark.parametrize(
+    "name", [name for name in DECLINED_BY_1949 if name not in VALUE_EXTRACTED_IN_STRICT_MODE]
+)
 def test_strict_mode_still_leaves_the_declined_cases_alone(tmp_path: Path, name: str) -> None:
     """Strict mode is 1.949: the lifetime rules decline these, which is what the audit found."""
     driver, source, output = _scenario(tmp_path, name, strict=True)
     assert _python_text(output) == _python_text(source)
+
+
+@pytest.mark.parametrize("name", VALUE_EXTRACTED_IN_STRICT_MODE)
+def test_strict_mode_extracts_the_value_of_an_assignment_it_declines(
+    tmp_path: Path, name: str
+) -> None:
+    """The binding stays in the caller, so the call is plain and nothing is released differently."""
+    driver, source, output = _scenario(tmp_path, name, strict=True)
+    generated = _python_text(output)
+    assert "    payload = __extracted_func_0(order)\n" in generated
+    assert "    summary = __extracted_func_0(order)\n" in generated
+    assert "_towel_" not in generated and "lambda" not in generated
+    assert _output(driver, str(output)) == _output(driver, str(source))
 
 
 UNDECORATED_WHERE_UNCERTIFIED = ("copies4_functions",)

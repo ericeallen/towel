@@ -38,7 +38,7 @@ import ast
 import os
 
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple, cast
 from ..canonical_ast import canonical_dump
 from ..diagnostics import REJECTIONS, debugging
 from .assignment_analyzer import has_reassignments_without_bindings
@@ -48,7 +48,7 @@ from .block_analysis import (
     lifetime_order_preserved,
     owned_binding_crosses_exception_boundary,
 )
-from .block_comments import call_argument_lines, directive_conflict, site_comments
+from .block_comments import call_argument_lines, directive_conflict
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
 from .extractor import HygienicExtractor, UnsupportedExtraction
 from .unsupported_syntax import unsupported_syntax
@@ -90,6 +90,17 @@ from .semantic_safety import (
     unbinds_external_name,
 )
 from .splicing import BlockColumns
+from .expression_sites import (
+    ExpressionSite,
+    as_expression_call,
+    comments_at,
+    comprehension_locals,
+    expression_signature,
+    expression_site,
+    is_expression_block,
+    replacement_span,
+    truth_decides,
+)
 from .thunk_inlining import inline_leading_thunks, reorder_eligible_thunk_parameters
 from .typing_forms import ModuleText
 from .visitors import FreeNameCollector, body_without_docstring
@@ -277,13 +288,15 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                     "this runtime's retained-local cleanup order has not been certified",
                 )
             return None
-        # A name the call rebinds is not orphaned by moving the block.
-        indices = self._get_block_indices(candidate.function, candidate.nodes)
-        if indices is None:
-            return None
-        body = body_without_docstring(candidate.function.body)
-        if orphaned_variables(body, indices) - set(returned):
-            return None
+        # A name the call rebinds is not orphaned by moving the block; an
+        # expression candidate binds nothing a later read could miss.
+        if not is_expression_block(candidate.nodes):
+            indices = self._get_block_indices(candidate.function, candidate.nodes)
+            if indices is None:
+                return None
+            body = body_without_docstring(candidate.function.body)
+            if orphaned_variables(body, indices) - set(returned):
+                return None
         # Generate a call node for the candidate
         try:
             call_node2 = self.extractor.generate_call(
@@ -332,10 +345,13 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             for index, argument in enumerate(node.args)
             if index in free_positions and isinstance(argument, ast.Name)
         }
+        # Nor does the function's lookup see the targets of a comprehension
+        # around an expression candidate, which are the names read there.
         if self._rebindable_module_names(
             module_resolved_names(
                 candidate.function, candidate.analyzer, eager_free_names, exact=True
-            ),
+            )
+            - comprehension_locals(candidate.nodes),
             candidate.analyzer,
         ):
             return None
@@ -347,10 +363,11 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             permitted=self._builtin_parameter_positions(template.param_order, subst2),
         ):
             return None
+        hidden = comprehension_locals(candidate.nodes)
         if thunk_reads_possibly_unbound_local(
             call_node2,
-            self._own_scope_locals(candidate.function, candidate.site),
-            available[1],
+            self._own_scope_locals(candidate.function, candidate.site) | hidden,
+            available[1] - hidden,
         ) or thunk_meets_an_inlined_comprehension(
             call_node2, candidate.function, candidate.analyzer
         ):
@@ -537,7 +554,12 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         made by the caller.
         """
         pair = template.pair
-        template_signature = extract_block_signature(pair.block1_nodes)
+        template_site = expression_site(pair.block1_nodes)
+        template_signature = (
+            extract_block_signature(pair.block1_nodes)
+            if template_site is None
+            else expression_signature(cast(ast.Return, pair.block1_nodes[0]))
+        )
         for entry in functions.in_file(pair.file_path):
             fn = entry.node
             # A helper inserted into the pair's deepest common enclosing
@@ -553,7 +575,12 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 fn, candidate_class, analyzed if isinstance(analyzed, ast.Module) else None
             )
             context = ClusterContext(candidate_class, candidate_info)
-            for cand_range, cand_nodes, cand_sig in self._signed_blocks(fn):
+            # A helper of statements is shared by statements, and a helper of
+            # an expression by expressions.
+            candidates = (
+                self._signed_blocks(fn) if template_site is None else self._signed_expressions(fn)
+            )
+            for cand_range, cand_nodes, cand_sig in candidates:
                 # The size gate and signature filter are constant-time and
                 # reject most blocks; the semantic guards each walk the
                 # candidate's function, so they run only on survivors. Every
@@ -562,6 +589,11 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                     continue
                 if not quick_filter(template_signature, cand_sig):
                     continue
+                if template_site is not None:
+                    form = self._in_template_form(template_site, cand_nodes)
+                    if form is None:
+                        continue
+                    cand_nodes = form
                 candidate = self._admissible_candidate(
                     entry, cand_nodes, self._block_site(fn, cand_nodes), pair=pair
                 )
@@ -576,25 +608,50 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 if found is None:
                     continue
                 call_node, arguments, handoff = found
+                columns = BlockColumns.of(cand_nodes)
+                expression = expression_site(cand_nodes)
+                if expression is not None:
+                    cand_range, columns = replacement_span(entry.source, expression)
+                    call_node = as_expression_call(call_node)
                 yield ClusteredSite(
                     Replacement(
                         line_range=cand_range,
-                        columns=BlockColumns.of(cand_nodes),
+                        columns=columns,
                         node=call_node,
                         argument_handoff=handoff,
                         file_path=entry.file_path,
                         class_name=entry.class_name,
                         method_kind=None,
                         implicit_param=None,
-                        comments=site_comments(
+                        comments=comments_at(
                             entry.source,
                             cand_nodes,
                             arguments,
                             self._coverage_exclusion(entry.file_path).pattern,
                         ),
+                        expression=None if expression is None else expression.place,
                     ),
                     context,
                 )
+
+    def _in_template_form(
+        self, template: ExpressionSite, candidate: List[ast.stmt]
+    ) -> Optional[List[ast.stmt]]:
+        """An expression candidate's block in the form of the template's helper, if it has one.
+
+        Relaxed mode has one form, ``return E``. In strict mode an expression
+        whose truth the compiler tests by jumps joins a helper in the exact
+        truth form only where it is itself only tested, and a helper that
+        returns the value only where the value is used (``truth_decides``).
+        """
+        site = expression_site(candidate)
+        if site is None:
+            return None
+        if not (self.strict and truth_decides(site.expression)):
+            return None if template.exact_truth else candidate
+        if site.tests_truth != template.exact_truth:
+            return None
+        return self._in_exact_truth_form(candidate) if template.exact_truth else candidate
 
     def _admissible_candidate(
         self,
@@ -653,11 +710,14 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         ):
             return None
         reassignments = self._get_assignment_reuse(fn)
-        if self._per_block(
-            "reassignments",
-            lambda: has_reassignments_without_bindings(fn, cand_nodes, reassignments),
-            site=site,
-        )[0]:
+        if (
+            not is_expression_block(cand_nodes)
+            and self._per_block(
+                "reassignments",
+                lambda: has_reassignments_without_bindings(fn, cand_nodes, reassignments),
+                site=site,
+            )[0]
+        ):
             return None
         cand_range = self._block_line_span(cand_nodes)
         if cand_range is None:

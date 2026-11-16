@@ -327,7 +327,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         file_finisher: Optional[Callable[[str, str], str]] = None,
         incremental_global_passes: bool = True,
         max_candidate_pairs: int = DEFAULT_MAX_CANDIDATE_PAIRS,
-        expression_candidates: bool = False,
+        expression_candidates: bool = True,
         settings: Optional[Settings] = None,
     ):
         """
@@ -448,11 +448,13 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 declined for a cycle stays declined), and any proposal it
                 produced was applied, which changed its files. False re-pairs
                 everything on every global pass.
-            expression_candidates: Also enumerate as candidates the
-                expressions repeated inside statements that otherwise differ
-                (``towel.unification.expression_sites``). Off (default: False)
-                until the engine can judge such a candidate and write its
-                calls; runs of whole statements are the only candidates.
+            expression_candidates: Also take as a candidate one expression
+                repeated inside statements that otherwise differ, such as a
+                condition written in an ``if`` and in a comprehension's
+                ``if`` clause (default: True). Its helper returns the
+                expression and each site calls it where the expression stood
+                (``towel.unification.expression_sites``). False considers
+                runs of whole statements only, as releases through 1.949 did.
             settings: What Towel reads from the environment (worker cap,
                 debug switches). Read once from ``os.environ`` when omitted.
         """
@@ -1218,6 +1220,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
         # count too, including generated helpers from previous passes. Keep
         # incremental filtering below the budget calculation, as before.
         partners = _Partners.of(all_functions, self.cross_module_helpers)
+        # A function's statement blocks, then its expression candidates: the
+        # two never share a bucket (``expression_signature``).
         blocks = [
             (
                 self._signed_blocks(entry.node) + self._signed_expressions(entry.node)

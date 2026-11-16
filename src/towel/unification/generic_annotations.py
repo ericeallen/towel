@@ -260,13 +260,15 @@ def _site_types(
     if function is None:
         return None
     resolver = context.resolver(site.source, site.file_path, site.start_line)
-    declared_site = CallSite(site.statement, site.call, function, module, site.file_path)
+    declared_site = CallSite(
+        site.statement, site.call, function, module, site.file_path, site.value_used
+    )
     arguments: list[TypeTerm | _ProbeKey] = []
     expressions: list[str] = []
     for index, argument in enumerate(site.call.args):
         if index == receiver_index:
             continue
-        expressions.append(ast.unparse(argument))
+        expressions.append(site.probe_text(argument))
         if index in unused:
             top = resolver.resolve_revealed("builtins.object")
             if top is None:
@@ -283,7 +285,7 @@ def _site_types(
     result: TypeTerm | None = None
     if isinstance(site.statement, ast.Return) and site.declared_return is not None:
         result = resolver.resolve(site.declared_return)
-    elif isinstance(site.statement, ast.Expr):
+    elif isinstance(site.statement, ast.Expr) and not site.value_used:
         result = resolver.resolve(ast.Constant(value=None))
     result_probes = (
         tuple(

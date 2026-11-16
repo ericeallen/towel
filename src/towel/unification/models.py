@@ -155,6 +155,28 @@ class ArgumentHandoff:
     module_dump: str
 
 
+class ExpressionPlace(NamedTuple):
+    """Where the expression a call replaces stands, as its syntax tree node records it.
+
+    ``line_range`` and ``columns`` of the replacement may reach further, over
+    parentheses that only grouped the expression. ``exact_truth`` says the
+    helper returns ``True if E else False`` for this expression ``E``.
+
+    ``statement_line`` is the first line of the statement that holds the
+    expression (of the whole ``if`` for an ``elif``), where a type checker
+    can be asked what the expression's names are. ``comprehension_iterables``
+    gives, for each variable a comprehension around the expression binds by
+    name, the iterable it ranges over: the variable does not exist at that
+    line, and an element of its iterable has its type.
+    """
+
+    start: Tuple[int, int]
+    end: Tuple[int, int]
+    exact_truth: bool = False
+    statement_line: int = 0
+    comprehension_iterables: Tuple[Tuple[str, str], ...] = ()
+
+
 @dataclass
 class Replacement:
     """Represents a replacement call to the extracted function/method."""
@@ -174,6 +196,11 @@ class Replacement:
     # block of whole lines, as a replacement built by hand is.
     columns: Optional[BlockColumns] = None
     argument_handoff: Optional[ArgumentHandoff] = None
+    # Set when the call replaces an expression inside a statement
+    # (``expression_sites``), not statements: ``node`` is then the call as an
+    # expression statement, written where the expression stood, and its value
+    # is used there.
+    expression: Optional["ExpressionPlace"] = None
 
 
 GENERATED_HELPER_NAME = re.compile(r"_{1,2}extracted_func(?:_\d+)?")

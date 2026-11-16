@@ -97,6 +97,10 @@ class CallSite:
     function: FunctionNode
     module: ast.Module
     file_path: str
+    # The call replaces an expression and its value is used where it stands
+    # (``Replacement.expression``): the statement holding the call says
+    # nothing of what the helper returns.
+    value_used: bool = False
 
 
 def call_in_statement(statement: ast.AST, helper_name: str) -> Optional[ast.Call]:
@@ -235,11 +239,28 @@ def _return_annotation(
             slice=ast.Tuple(elts=[copy.deepcopy(a) for a in annotations], ctx=ast.Load()),
             ctx=ast.Load(),
         )
+    if site.value_used:
+        # An expression's helper returns what the expression gave, which no
+        # declaration at the site states, unless it is the exact truth form.
+        return ast.Name(id="bool", ctx=ast.Load()) if returns_exact_truth(helper) else None
     if isinstance(site.statement, ast.Return):
         return site.function.returns
     if isinstance(site.statement, ast.Expr):
         return ast.Constant(value=None)
     return None
+
+
+def returns_exact_truth(helper: ast.FunctionDef) -> bool:
+    """Whether ``helper`` ends with ``return True if E else False``, which is a ``bool`` whatever ``E`` is."""
+    last = helper.body[-1] if helper.body else None
+    return (
+        isinstance(last, ast.Return)
+        and isinstance(last.value, ast.IfExp)
+        and isinstance(last.value.body, ast.Constant)
+        and last.value.body.value is True
+        and isinstance(last.value.orelse, ast.Constant)
+        and last.value.orelse.value is False
+    )
 
 
 def _annotated_locals(helper: ast.FunctionDef) -> Dict[str, ast.expr]:
@@ -908,6 +929,64 @@ class ApplySite:
     statement: ast.stmt
     call: ast.Call
     declared_return: Optional[ast.expr] = None
+    # Set for a call that replaces an expression (``Replacement.expression``).
+    # ``start_line`` is then the first line of the statement holding the
+    # expression, where its names can be asked about, and no line is the
+    # site's own (``end_line`` precedes ``start_line``). ``value`` is the
+    # expression itself; ``comprehension_iterables`` gives what each
+    # comprehension variable around it ranges over.
+    value: Optional[ast.expr] = None
+    comprehension_iterables: Tuple[Tuple[str, str], ...] = ()
+
+    @property
+    def value_used(self) -> bool:
+        return self.value is not None
+
+    def probe_text(self, expression: ast.AST) -> str:
+        """What to ask the checker the type of, for ``expression`` written at this site.
+
+        The expression itself, except that a comprehension variable, which
+        does not exist where the question is asked, is replaced by an
+        element of the iterable it ranges over: ``next(iter(members))`` for
+        ``member`` of ``for member in members``.
+        """
+        if not self.comprehension_iterables:
+            return ast.unparse(expression)
+        elements: Dict[str, ast.expr] = {}
+        for name, iterable in self.comprehension_iterables:
+            ranged = _ElementsOf(elements).visit(ast.parse(iterable, mode="eval").body)
+            elements[name] = ast.Call(
+                func=ast.Name(id="next", ctx=ast.Load()),
+                args=[
+                    ast.Call(func=ast.Name(id="iter", ctx=ast.Load()), args=[ranged], keywords=[])
+                ],
+                keywords=[],
+            )
+        return ast.unparse(
+            ast.fix_missing_locations(_ElementsOf(elements).visit(copy.deepcopy(expression)))
+        )
+
+    def value_probe(self) -> Optional[str]:
+        """What to ask the checker for the type the helper returns, at an expression site."""
+        return None if self.value is None else self.probe_text(self.value)
+
+
+class _ElementsOf(ast.NodeTransformer):
+    """Replace each read of a comprehension variable by an element of its iterable."""
+
+    def __init__(self, elements: Mapping[str, ast.expr]) -> None:
+        self.elements = elements
+
+    def visit_Name(self, node: ast.Name) -> ast.AST:
+        if isinstance(node.ctx, ast.Load) and node.id in self.elements:
+            return copy.deepcopy(self.elements[node.id])
+        return node
+
+    def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
+        # A lambda's own parameter of the same name is another variable.
+        own = {argument.arg for argument in ast.walk(node.args) if isinstance(argument, ast.arg)}
+        inner = _ElementsOf({n: e for n, e in self.elements.items() if n not in own})
+        return ast.Lambda(args=node.args, body=inner.visit(node.body))
 
 
 @dataclass(frozen=True)
@@ -1202,24 +1281,31 @@ def infer_missing_annotations(
     if not probed and not want_return:
         return _InferredHelper(annotated, ())
     requests: List[RevealRequest] = []
-    return_probes: List[Tuple[str, int, int]] = []
+    # Where each revealed result stands: file, line, first expression, how many.
+    return_probes: List[Tuple[str, int, int, int]] = []
     for site in sites:
-        if probed:
+        # An expression site asks for its value on the line it asks for its
+        # arguments on, so the value is one more expression of that request.
+        value = site.value_probe() if want_return else None
+        if probed or value is not None:
             requests.append(
                 RevealRequest(
                     site.file_path,
                     site.source,
                     site.start_line,
                     site.indent,
-                    tuple(ast.unparse(site.call.args[index]) for index in probed),
+                    tuple(site.probe_text(site.call.args[index]) for index in probed)
+                    + (() if value is None else (value,)),
                 )
             )
-        if want_return:
+        if value is not None:
+            return_probes.append((site.file_path, site.start_line, len(probed), 1))
+        elif want_return:
             for line, indent, expressions in _return_probes(site, return_variables):
                 requests.append(
                     RevealRequest(site.file_path, site.source, line, indent, expressions)
                 )
-                return_probes.append((site.file_path, line, len(expressions)))
+                return_probes.append((site.file_path, line, 0, len(expressions)))
     revealed = inferrer.reveal(requests)
     if debugging(TYPES):
         for key, text in sorted(revealed.items()):
@@ -1254,8 +1340,8 @@ def infer_missing_annotations(
     observed_return_any = False
     if want_return:
         texts = [
-            revealed.get((path, line, offset))
-            for path, line, count in return_probes
+            revealed.get((path, line, first + offset))
+            for path, line, first, count in return_probes
             for offset in range(count)
         ]
         # A checker's type for an expression can differ in a return context.
@@ -1369,6 +1455,9 @@ def _return_probes(
     differently from the helper's.
     """
     lines = source_lines(site.source)
+    value = site.value_probe()
+    if value is not None:
+        return [(site.start_line, site.indent, (value,))]
     if return_variables:
         after = site.end_line + 1
         if after > len(lines):

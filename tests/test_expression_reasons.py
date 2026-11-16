@@ -24,9 +24,12 @@ helper are a place with similar code at all.
 
 from __future__ import annotations
 
+import textwrap
+from pathlib import Path
 
 import pytest
 
+from towel.api import UnificationRefactorEngine
 from towel.cli_reporting import reason_lines
 from towel.reason_sentences import (
     EXPRESSION_REASONS,
@@ -38,6 +41,31 @@ from towel.reason_sentences import (
 )
 from towel.unification.fixed_point import RunReport
 from towel.unification.models import RejectReason, expression_count
+from tests.test_cli_integration import invoke
+
+UNTYPED = ["--no-types", "--no-format", "--progress", "none"]
+
+TESTED_AND_USED = """
+def tested(member, now):
+    if (
+        member.is_active
+        and not member.is_banned
+        and member.email_verified
+        and member.warnings < 3
+    ):
+        return 1
+    return 0
+
+
+def used(member, now):
+    value = (
+        member.is_active
+        and not member.is_banned
+        and member.email_verified
+        and member.warnings < 3
+    )
+    return value
+"""
 
 
 @pytest.mark.parametrize("reason", sorted(RejectReason))
@@ -91,3 +119,67 @@ def test_expressions_and_statements_declined_for_one_reason_are_two_lines() -> N
         " (Here: len.) [builtin_argument]",
         "     What you can do: Rename the variable that shadows the builtin.",
     ]
+
+
+# -- End to end -----------------------------------------------------------------
+
+
+def test_the_engine_counts_a_declined_expression_pair_where_the_expressions_stand(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "m.py"
+    path.write_text(TESTED_AND_USED)
+    engine = UnificationRefactorEngine(strict=True)
+    assert engine.analyze_file(str(path)) == []
+    assert engine.declined_pairs == {expression_count("truth_test_repeated"): 1}
+    (place,) = engine.last_left_alone
+    assert place.reason == expression_count("truth_test_repeated")
+    assert [(block.first_line, block.last_line) for block in place.blocks] == [(4, 7), (15, 18)]
+    assert engine.last_pair_tally.candidate_pairs == 1
+
+
+def test_a_run_explains_an_expression_it_left_alone(tmp_path: Path) -> None:
+    """The sentence, the code, what to do, and where: the lines of the two expressions."""
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "m.py").write_text(TESTED_AND_USED)
+    result = invoke(["preview", str(source), "--strict", *UNTYPED])
+    assert result.status == 0, result.stderr
+    assert "Found 1 place with similar code and extracted none." in result.stdout
+    assert (
+        "  1  With --strict: the expression decides an if or while at one place and gives a"
+        " value at another" in result.stdout
+    )
+    assert "[truth_test_repeated]" in result.stdout
+    assert "What you can do: Without --strict the expression is extracted." in result.stdout
+    assert "  m.py:4-7 and m.py:15-18: With --strict: the expression decides" in result.stdout
+
+
+def test_expressions_that_share_only_their_outline_are_not_similar_code(tmp_path: Path) -> None:
+    """Two unrelated conditions of three operands: nothing is counted, nothing is reported."""
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "m.py").write_text(textwrap.dedent("""
+            def ships(order, stock):
+                if (
+                    order.total > stock.limit
+                    and order.customer.is_active
+                    and stock.count(order.sku) > 0
+                ):
+                    stock.reserve(order)
+
+
+            def readable(path, mode):
+                found = (
+                    path.exists()
+                    and mode in ("r", "w")
+                    and not path.is_dir()
+                )
+                return found
+            """))
+    result = invoke(["preview", str(source), *UNTYPED])
+    assert result.status == 0, result.stderr
+    assert "No repeated code found in 1 file." in result.stdout
+    engine = UnificationRefactorEngine()
+    assert engine.analyze_file(str(source / "m.py")) == []
+    assert [reason for reason in engine.declined_pairs if reason.startswith("expression ")] == []

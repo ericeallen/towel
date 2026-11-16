@@ -59,6 +59,7 @@ from .annotation_ladder import (
     used_imports,
     without_quoted_none,
 )
+from .expression_sites import expression_at
 from .annotations import (
     OLDEST_PYTHON,
     ApplySite,
@@ -613,6 +614,7 @@ class HelperAnnotationWiring(EngineState):
                     function=function.node,
                     module=module,
                     file_path=file_path,
+                    value_used=replacement.expression is not None,
                 )
             )
         annotated = annotate_helper(
@@ -844,6 +846,34 @@ class HelperAnnotationWiring(EngineState):
             start_line, end_line = replacement.line_range
             if not 1 <= start_line <= len(lines):
                 return []
+            place = replacement.expression
+            if place is not None:
+                # The checker is asked where a statement can be written: at
+                # the start of the statement that holds the expression.
+                value = expression_at(source, place)
+                asked = place.statement_line
+                if (
+                    value is None
+                    or not 1 <= asked <= len(lines)
+                    or any(
+                        site.file_path == file_path and site.start_line == asked for site in sites
+                    )
+                ):
+                    return []
+                sites.append(
+                    ApplySite(
+                        file_path=file_path,
+                        source=source,
+                        start_line=asked,
+                        end_line=asked - 1,
+                        indent=self._get_indent(lines[asked - 1]),
+                        statement=replacement.node,
+                        call=call,
+                        value=value,
+                        comprehension_iterables=place.comprehension_iterables,
+                    )
+                )
+                continue
             sites.append(
                 ApplySite(
                     file_path=file_path,
