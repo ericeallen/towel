@@ -190,6 +190,27 @@ def preserve_call_source(node: ast.AST, source: str) -> str:
     return _checked(_edits(rendered, changes), rendered)
 
 
+def _fstring_quotes(original: str, rendered: str) -> str:
+    """Keep a substituted f-string's opening and closing delimiters when safe."""
+    old_start = next((i for i, char in enumerate(original) if char in "\"'"), None)
+    new_start = next((i for i, char in enumerate(rendered) if char in "\"'"), None)
+    if old_start is None or new_start is None:
+        return rendered
+    old_quote = original[old_start]
+    if original.startswith(old_quote * 3, old_start):
+        old_quote *= 3
+    new_quote = rendered[new_start]
+    if rendered.startswith(new_quote * 3, new_start):
+        new_quote *= 3
+    interior = rendered[new_start + len(new_quote) : -len(new_quote)]
+    # Reusing a delimiter inside an expression would require Python 3.12's
+    # f-string grammar. Keep the renderer's portable spelling in that case.
+    if old_quote in interior:
+        return rendered
+    candidate = original[:old_start] + old_quote + interior + old_quote
+    return _checked(candidate, rendered)
+
+
 def _expression_edits(original: ast.AST, expected: ast.AST, source: str) -> Optional[list[Edit]]:
     """Substitute expression spans; a change to statement structure declines."""
     if canonical_dump(original) == canonical_dump(expected):
@@ -230,8 +251,11 @@ def _expression_edits(original: ast.AST, expected: ast.AST, source: str) -> Opti
         bounds = _bounds(source, original)
         if bounds is not None:
             text = ast.unparse(expected)
+            if isinstance(original, ast.JoinedStr) and isinstance(expected, ast.JoinedStr):
+                text = _fstring_quotes(source[bounds[0] : bounds[1]], text)
             if not isinstance(
-                expected, (ast.Name, ast.Constant, ast.Call, ast.Attribute, ast.Subscript)
+                expected,
+                (ast.Name, ast.Constant, ast.Call, ast.Attribute, ast.Subscript, ast.JoinedStr),
             ):
                 text = "(" + text + ")"
             return [Edit(*bounds, text)]

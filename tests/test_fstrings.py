@@ -150,7 +150,6 @@ def test_literal_input_fstrings_still_extract_and_execute(tmp_path: Path, body: 
     path.write_text(source)
     engine = UnificationRefactorEngine(
         skip_trivial_helpers=False,
-        reuse_existing_functions=False,
         max_parameters=5,
         min_lines=1,
         parameterize_constants=True,
@@ -158,7 +157,13 @@ def test_literal_input_fstrings_still_extract_and_execute(tmp_path: Path, body: 
     proposals = engine.analyze_file(str(path))
     assert len(proposals) == 1
     proposal = proposals[0]
-    assert len(proposal.replacements) == 2
+    if engine.strict:
+        assert proposal.reused_function is None
+        assert len(proposal.replacements) == 2
+    else:
+        assert proposal.reused_function is not None
+        assert proposal.reused_function.name == "first"
+        assert len(proposal.replacements) == 1
     assert any(isinstance(node, ast.JoinedStr) for node in ast.walk(proposal.extracted_function))
     ast.parse(ast.unparse(proposal.extracted_function))
     rendered = engine.apply_refactoring(str(path), proposal)

@@ -205,3 +205,21 @@ last"""
     assert isinstance(original, type) and isinstance(changed, type)
     assert original().first(3) == changed().first(3)
     assert original().second(4) == changed().second(4)
+
+
+@pytest.mark.parametrize("quote", ['"', "'", '"""'])
+def test_parameterized_fstring_keeps_its_delimiters_without_extra_parentheses(quote: str) -> None:
+    """Shape review: substituting an f-string affix need not respell the entire literal."""
+    from towel.unification.source_render import _expression_edits, _edits
+
+    source = f"label = f{quote}status: OK ({{factor}}){quote}"
+    expected = f"label = f{quote}status: {{__param_0}} ({{factor}}){quote}"
+    edits = _expression_edits(ast.parse(source), ast.parse(expected), source)
+    assert edits is not None
+    result = _edits(source, edits)
+    assert result == expected
+    before: dict[str, object] = {"factor": 3}
+    after: dict[str, object] = {"factor": 3, "__param_0": "OK"}
+    exec(source, before)
+    exec(result, after)
+    assert before["label"] == after["label"] == "status: OK (3)"
