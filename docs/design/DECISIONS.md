@@ -2321,7 +2321,11 @@ each import binds is compared, not its spelling: `import os.path` binds `os`
 to the package, as `import os` does, while `import os.path as os` binds it to
 the submodule, so those two do not count as alike. Each module's `re` is then
 the object `sys.modules` holds under that name, so the two lookups give the
-same module. This rests on the third assumption of
+same module. Each module must also have run its import before the statement
+that defines the function holding its block, on every path: the helper reads
+the host's binding, which exists whenever it runs, and a borrower that calls
+its function before its own `import` would otherwise succeed where it raised
+`NameError`. A module that imports later keeps passing the name. This rests on the third assumption of
 [Relaxed mode is the default; strict mode keeps exact lifetimes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes),
 taken for module names bound by an import: the module's own code never rebinds
 the name (checked as `stable_module_names` checks it), and nothing outside it

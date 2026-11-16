@@ -292,6 +292,47 @@ def test_dotted_imports_that_bind_the_same_package_are_alike(tmp_path: Path) -> 
     assert run_script(driver, str(tmp_path / "out")) == run_script(driver, str(source))
 
 
+LATE_IMPORT_TAIL = """
+
+try:
+    print(second(1))
+except NameError:
+    print("not ready")
+
+import library
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_an_import_that_has_not_run_yet_is_not_read_from_the_host(
+    tmp_path: Path, strict: bool
+) -> None:
+    """Review of lane reach, finding 3: the borrower calls its function before ``import library``.
+
+    The original call raises ``NameError``; a helper reading the host's
+    ``library`` would succeed (relaxed mode printed ``41`` before the fix).
+    The borrower's import binds the name only after the call can run, so the
+    lookup stays with the caller.
+    """
+    source = _library_project(tmp_path, "import library\n", "", LATE_IMPORT_TAIL)
+    _dry(source, tmp_path / "out", *(["--strict"] if strict else []))
+    driver = tmp_path / "driver.py"
+    expected = (0, "not ready\n41 41\n", "")
+    assert run_script(driver, str(source)) == expected
+    assert run_script(driver, str(tmp_path / "out")) == expected
+
+
+def test_an_import_above_the_function_is_still_read_bare(tmp_path: Path) -> None:
+    """The same borrower with its import first: the helper reads the host's ``library``."""
+    tail = LATE_IMPORT_TAIL.replace("\nimport library\n", "\n")
+    source = _library_project(tmp_path, "import library\n", "import library\n", tail)
+    _, generated = _dry(source, tmp_path / "out")
+    (helper,) = _helpers(generated)
+    assert "library" not in _parameters(helper)
+    driver = tmp_path / "driver.py"
+    assert run_script(driver, str(tmp_path / "out")) == run_script(driver, str(source))
+
+
 # -- Builtins across modules -----------------------------------------------------
 
 COUNTS = """

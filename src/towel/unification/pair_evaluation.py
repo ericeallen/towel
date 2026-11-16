@@ -140,6 +140,7 @@ from .semantic_safety import (
     holds_yield,
     module_binds,
     modules_imported_alike,
+    module_names_bound_before_definition,
     frame_read_outside_block,
     needs_class_body,
     unbinds_external_name,
@@ -718,7 +719,12 @@ class PairEvaluation(
         if differing and not self.strict:
             # Relaxed mode: a module every participating module imports alike
             # is the same object in each, and the host holds the import.
-            differing = differing - self._modules_imported_alike(placement, functions)
+            # Each site's module has run that import before defining the
+            # site's function (``_bound_before_both_sites``).
+            differing = differing - (
+                self._modules_imported_alike(placement, functions)
+                & self._bound_before_both_sites(ctx)
+            )
         if builtin_reads and not self.strict and not self.parameterize_builtins:
             # Relaxed mode: a builtin means the same in every module unless a
             # participating module binds the name (docs/design/DECISIONS.md,
@@ -1571,7 +1577,12 @@ class PairEvaluation(
         conditionally. Passing it instead would snapshot module data at the
         call. Across files the other module's same-named binding may differ,
         so the name stays a parameter there, except in relaxed mode a module
-        both modules bind by one and the same ``import`` (``modules_imported_alike``).
+        both modules bind by one and the same ``import`` (``modules_imported_alike``),
+        and each module has executed that import before the statement that
+        defines the function holding its block. The helper reads the host's
+        binding, which exists whenever it runs; the borrower's original read
+        raised ``NameError`` if the borrower called its function before its
+        own import ran.
         """
         if not free_vars or (pair.is_cross_file and self.strict):
             return frozenset()
@@ -1586,7 +1597,29 @@ class PairEvaluation(
             for tree in (ctx.scope_analyzer.analyzed_tree, ctx.scope_analyzer2.analyzed_tree)
             if isinstance(tree, ast.Module)
         ]
-        return kept & modules_imported_alike(modules) if len(modules) == 2 else frozenset()
+        if len(modules) != 2:
+            return frozenset()
+        return kept & modules_imported_alike(modules) & self._bound_before_both_sites(ctx)
+
+    @staticmethod
+    def _bound_before_both_sites(ctx: "_PairContext") -> FrozenSet[str]:
+        """Module names each site's module binds before the statement defining the site's function.
+
+        A module name the helper reads bare from its host must already have
+        been bound in the borrower whenever the borrower's own code read it:
+        otherwise the original raised ``NameError`` where the helper succeeds.
+        Nothing calls a function before its definition runs, so a binding on
+        every path before that statement suffices.
+        """
+        bound: List[FrozenSet[str]] = []
+        for function, tree in (
+            (ctx.func1, ctx.scope_analyzer.analyzed_tree),
+            (ctx.func2, ctx.scope_analyzer2.analyzed_tree),
+        ):
+            if not isinstance(tree, ast.Module):
+                return frozenset()
+            bound.append(module_names_bound_before_definition(function, tree))
+        return bound[0] & bound[1]
 
     # -- 7 ---------------------------------------------------------------------
 

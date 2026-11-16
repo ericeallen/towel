@@ -1284,6 +1284,20 @@ def modules_imported_alike(modules: Sequence[ast.Module]) -> FrozenSet[str]:
     return frozenset(common or ())
 
 
+def module_names_bound_before_definition(
+    function: FunctionNode, module: ast.Module
+) -> FrozenSet[str]:
+    """Module names bound on every path before the top-level statement that defines ``function``.
+
+    Nothing can call the function before that statement has run, so each of
+    these names is bound whenever the function reads it
+    (``_module_names_bound_before``).
+    """
+    return _module_names_bound_before(
+        module, _top_level_statement(_module_parents(module), function)
+    )
+
+
 def module_binds(module: ast.Module, names: AbstractSet[str]) -> FrozenSet[str]:
     """Which of ``names`` the module binds in its own namespace, as its code is written.
 
