@@ -1414,40 +1414,104 @@ def _quiet_bases(module: ast.Module) -> FrozenSet[str]:
     return frozenset(quiet)
 
 
-def _stable_names_bound_for(module: ast.Module, statement: ast.stmt) -> FrozenSet[str]:
-    """The stable module names bound whenever a function defined in ``statement`` can run.
+def _stable_names_bound_for(module: ast.Module, function: FunctionNode) -> FrozenSet[str]:
+    """The stable module names bound whenever ``function`` can run.
 
-    Those bound above it, and those bound below it with nothing between but
-    statements that run nothing (``_runs_nothing``): then no module-level
-    code can call the function before the name exists. ``f()`` at the top
-    level followed by ``def helper`` leaves ``helper`` unbound during that
-    call, and a read of it on a path the call does not take must stay where
-    it is.
+    Those bound above the top-level statement that holds it, and, when
+    nothing can run ``function`` before that statement completes
+    (``_runs_only_after_its_statement``), those bound below it with nothing
+    between but statements that run nothing (``_runs_nothing``). ``f()`` at
+    the top level followed by ``def helper`` leaves ``helper`` unbound during
+    that call, and a read of it on a path the call does not take must stay
+    where it is.
     """
-    by_index = _STABLE_BOUND_FOR.get(module)
-    if by_index is None:
-        by_index = {}
-        _STABLE_BOUND_FOR[module] = by_index
-    index = next(i for i, item in enumerate(module.body) if item is statement)
-    known = by_index.get(index)
+    known = _STABLE_BOUND_FOR.get(function)
     if known is None:
+        parents = _module_parents(module)
         quiet_bases = _quiet_bases(module)
-        limit = next(
-            (
-                later
-                for later in range(index + 1, len(module.body))
-                if not _runs_nothing(module.body[later], quiet_bases)
-            ),
-            len(module.body),
-        )
+        statement = _top_level_statement(parents, function)
+        index = next(i for i, item in enumerate(module.body) if item is statement)
+        limit = index
+        if _runs_only_after_its_statement(function, parents, quiet_bases):
+            limit = next(
+                (
+                    later
+                    for later in range(index + 1, len(module.body))
+                    if not _runs_nothing(module.body[later], quiet_bases)
+                ),
+                len(module.body),
+            )
         known = frozenset(
             name for name, bound_at in _stable_bindings(module).items() if bound_at < limit
         )
-        by_index[index] = known
+        _STABLE_BOUND_FOR[function] = known
     return known
 
 
-_STABLE_BOUND_FOR: "WeakKeyDictionary[ast.AST, Dict[int, FrozenSet[str]]]" = WeakKeyDictionary()
+_STABLE_BOUND_FOR: "WeakKeyDictionary[ast.AST, FrozenSet[str]]" = WeakKeyDictionary()
+
+
+def _runs_only_after_its_statement(
+    function: FunctionNode, parents: Mapping[ast.AST, ast.AST], quiet_bases: AbstractSet[str]
+) -> bool:
+    """Whether no code can call ``function`` before its top-level statement has completed.
+
+    Walks outward from ``function``. Each definition on the way may have no
+    decorators: they run once it exists and may call it. The rest of each
+    enclosing block must run nothing: the statements after it in a class
+    body, an ``if`` branch or a ``case``. A class on the way must also be
+    made quietly (``_runs_nothing``, its own body aside), since its
+    decorators, its metaclass, its bases' ``__init_subclass__`` and its
+    attributes' ``__set_name__`` run once its body has. The rest of an
+    enclosing function's body runs only when that function is called,
+    which the walk covers by continuing from it. A loop, ``try`` or
+    ``with`` around the definition runs code after it (another iteration,
+    a handler, ``finally``, ``__exit__``), so the walk gives up there.
+    """
+    child: ast.AST = function
+    while True:
+        if (
+            isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and child.decorator_list
+        ):
+            return False
+        parent = parents.get(child)
+        if parent is None or isinstance(parent, ast.Module):
+            return True
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            child = parent
+            continue
+        if isinstance(parent, ast.ClassDef):
+            if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                return False
+            if not (
+                not parent.keywords
+                and all(
+                    isinstance(base, ast.Name) and base.id in quiet_bases for base in parent.bases
+                )
+                and all(
+                    _class_statement_runs_nothing(statement, quiet_bases)
+                    for statement in parent.body
+                    if statement is not child
+                )
+            ):
+                return False
+            child = parent
+            continue
+        if isinstance(parent, (ast.If, ast.match_case)):
+            block = next(
+                body
+                for body in (
+                    (parent.body, parent.orelse) if isinstance(parent, ast.If) else (parent.body,)
+                )
+                if any(statement is child for statement in body)
+            )
+            position = next(i for i, statement in enumerate(block) if statement is child)
+            if not all(_runs_nothing(later, quiet_bases) for later in block[position + 1 :]):
+                return False
+            child = parents[parent] if isinstance(parent, ast.match_case) else parent
+            continue
+        return False
 
 
 def call_site_names(
@@ -1469,9 +1533,7 @@ def call_site_names(
     module = analyzer.analyzed_tree
     if not stable_modules or not isinstance(module, ast.Module):
         return available
-    stable = _stable_names_bound_for(
-        module, _top_level_statement(_module_parents(module), function)
-    )
+    stable = _stable_names_bound_for(module, function)
     return available | module_resolved_names(function, analyzer, stable)
 
 

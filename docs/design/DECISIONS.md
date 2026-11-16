@@ -2136,6 +2136,12 @@ itself when one of these holds for it at every call site.
    `__init_subclass__`, or an attribute whose value may define
    `__set_name__`. An import counts as code that runs: through a circular
    import, the imported module may call the function before the name exists.
+   What stands between them includes the rest of every statement that
+   encloses the function: the statements after it in its class body, `if`
+   branch or `case`, the creation of each enclosing class, and the
+   decorators of the function and of each definition around it. Inside a
+   loop, `try` or `with` only names bound above the enclosing top-level
+   statement qualify.
 2. *The helper evaluates it exactly once on every path, and nothing it does
    before could change its value or fail.* Passing by value moves the
    expression to the call, ahead of every step the helper takes before it,

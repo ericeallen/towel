@@ -1033,6 +1033,130 @@ def test_an_import_may_call_back_into_the_module_before_its_later_names_exist(
     assert run_script(directories["changed"] / "driver.py") == before
 
 
+DEFINED_INSIDE = """\
+def run_first(target):
+    print("decorated", target.first(False))
+    return target
+
+
+def run_false(function):
+    print("decorated", function(False))
+    return function
+
+
+OUTER
+
+
+def alpha(value):
+    return value + 1
+
+
+def beta(value):
+    return value + 2
+
+
+print(RUNNERfirst(True), RUNNERsecond(True))
+"""
+
+DUPLICATES = """\
+def first(enabled):
+    print("start")
+    if enabled:
+        print(alpha(1))
+    print("end")
+    return 0
+
+
+def second(enabled):
+    print("start")
+    if enabled:
+        print(beta(1))
+    print("end")
+    return 0
+"""
+
+
+def _indented(text: str, depth: int) -> str:
+    return "".join(
+        ("    " * depth + line if line.strip() else line) for line in text.splitlines(True)
+    )
+
+
+@pytest.mark.parametrize(
+    "outer, runner",
+    [
+        # The review's case N2: the class body calls the method it has just defined.
+        (
+            "class Runner:\n"
+            + _indented(DUPLICATES, 1)
+            + '\n    print("during class", first(False))',
+            "Runner.",
+        ),
+        # A nested class, called from the rest of the enclosing class's body.
+        (
+            "class Outer:\n    class Runner:\n"
+            + _indented(DUPLICATES, 2)
+            + '\n    print("during outer", Runner.first(False))',
+            "Outer.Runner.",
+        ),
+        # A nested class, called from its own body.
+        (
+            "class Outer:\n    class Runner:\n"
+            + _indented(DUPLICATES, 2)
+            + '\n        print("during inner", first(False))',
+            "Outer.Runner.",
+        ),
+        # A decorator of the class calls the method as the class is made.
+        ("@run_first\nclass Runner:\n" + _indented(DUPLICATES, 1), "Runner."),
+        # A decorator of the function itself calls it as soon as it exists.
+        # (``second`` comes first: a decorated definition after ``first`` would stop its scan.)
+        (
+            "@run_false\n" + DUPLICATES.split("\n\n\n")[1] + "\n\n" + DUPLICATES.split("\n\n\n")[0],
+            "",
+        ),
+        # A module-level ``if``, whose body calls the function it defines.
+        (
+            "if True:\n" + _indented(DUPLICATES, 1) + '\n    print("during if", first(False))',
+            "",
+        ),
+    ],
+    ids=[
+        "class-body",
+        "nested-class-outer",
+        "nested-class-inner",
+        "class-decorator",
+        "function-decorator",
+        "module-if",
+    ],
+)
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_module_name_is_not_read_early_where_the_enclosing_statement_runs_the_block(
+    tmp_path: Path, strict: bool, outer: str, runner: str
+) -> None:
+    """Round-2 review of lane ``byvalue``, defect 2 (case N2): the rest of an enclosing statement.
+
+    The proof that ``alpha`` exists whenever ``first`` can run scanned only
+    the module statements after the whole statement that holds ``first``.
+    Code later in that class body, an enclosing class, a class decorator or
+    an ``if`` body called ``first(False)`` before ``alpha`` was defined.
+    """
+    source = DEFINED_INSIDE.replace("OUTER", outer).replace("RUNNER", runner)
+    generated, same = refactored(tmp_path, source, strict=strict)
+    assert "_extracted_func_0" in generated
+    assert "(alpha" not in generated
+    assert same
+
+
+def test_a_method_of_a_class_that_runs_nothing_takes_a_later_module_function_by_value(
+    tmp_path: Path,
+) -> None:
+    """The control for the test above: with nothing in the class to call it, ``alpha`` is passed."""
+    source = DEFINED_INSIDE.replace("OUTER", "class Runner:\n" + _indented(DUPLICATES, 1))
+    generated, same = refactored(tmp_path, source.replace("RUNNER", "Runner."))
+    assert "(alpha" in generated
+    assert same
+
+
 LOOKUP_IN_A_TRY = """\
 class Client:
     def __init__(self, broken=False):
