@@ -393,6 +393,13 @@ EXPRESSION_REASONS: Mapping[RejectReason, Explanation] = {
     RejectReason.NOT_STRUCTURALLY_SIMILAR: _says(
         "The expressions have the same outline but are less than 60% alike in detail."
     ),
+    RejectReason.OWNED_BINDING_EXCEPTION_BOUNDARY: _says(
+        "With --strict: the expression is inside a try or with statement and reads a variable"
+        " its function assigns again, or a comprehension's variable; if the helper raised, it"
+        " would keep that variable's object until the handler is done, longer than it is kept"
+        " now.",
+        "Without --strict the expression is extracted.",
+    ),
     RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL: _says(
         "An argument would be wrapped in a lambda and reads a local variable that may have no"
         " value yet, or the variable of a comprehension around the expression.",

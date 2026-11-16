@@ -100,6 +100,7 @@ from .structural_memo import load_substitution, store_substitution
 from .ast_paths import has_shared_expressions
 from .expression_sites import (
     expression_signature,
+    expression_site,
     is_expression_block,
     expression_sites,
     in_exact_truth_form,
@@ -321,6 +322,49 @@ def owned_binding_crosses_exception_boundary(
         return False
     bound = {binding.name for binding in own_scope_bindings(nodes) if not binding.deleted_on_exit}
     return bool(lifetime_bound_names(nodes, bound))
+
+
+def expression_arguments_outlive_a_handler(
+    analyzer: ScopeAnalyzer, function: FunctionNode, nodes: Sequence[ast.stmt]
+) -> bool:
+    """Strict mode: whether a failed helper of an expression could hold a value past its release.
+
+    The helper's frame holds its arguments, and a helper that raises stays
+    on the traceback until the handler or manager around its site is done,
+    or for as long as the program keeps the exception. Where the site's
+    function then rebinds a name the expression read (``x = None`` in the
+    handler), the original released the value and the helper still holds
+    it. Outside a handler or manager the exception leaves the site's frame
+    too, which holds the same values for as long. So under one, every name
+    the expression reads must be a module name or a parameter the function
+    never binds again, deletes or lets a nested scope rebind. A
+    comprehension's variable is rebound by every step, and is released
+    when the comprehension fails; it is not such a name.
+    """
+    site = expression_site(nodes)
+    if site is None:
+        return False
+    protected = memoized_per_node(_EXCEPTION_BOUNDARY_NODES, function, _exception_boundary_nodes)
+    if id(site.anchor) not in protected:
+        return False
+    read = frozenset(node.id for node in ast.walk(site.expression) if isinstance(node, ast.Name))
+    held = read - module_resolved_names(function, analyzer, read)
+    bound = function_names(function).bound
+    parameters = frozenset(parameter_names(function.args))
+    rebound = {
+        name
+        for node in ast.walk(function)
+        for name in (
+            node.names
+            if isinstance(node, ast.Nonlocal)
+            else (
+                [node.id]
+                if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load)
+                else []
+            )
+        )
+    }
+    return any(name not in parameters or bound[name] != 1 or name in rebound for name in held)
 
 
 def guarded_resource_crosses_exception_boundary(

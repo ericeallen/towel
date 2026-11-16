@@ -66,6 +66,7 @@ from .assignment_analyzer import (
 )
 from .block_analysis import (
     owned_binding_crosses_exception_boundary,
+    expression_arguments_outlive_a_handler,
     align_return_variables,
     first_assignment_order,
     guarded_resource_crosses_exception_boundary,
@@ -807,6 +808,9 @@ class PairEvaluation(
             if (
                 self._block_rejected(
                     owned_binding_crosses_exception_boundary, nodes, function, site=site
+                )
+                or self._block_rejected(
+                    expression_arguments_outlive_a_handler, nodes, function, analyzer, site=site
                 )
                 if self.strict
                 else self._block_rejected(

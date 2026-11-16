@@ -47,6 +47,7 @@ from .block_analysis import (
     guarded_resource_crosses_exception_boundary,
     lifetime_order_preserved,
     owned_binding_crosses_exception_boundary,
+    expression_arguments_outlive_a_handler,
 )
 from .block_comments import call_argument_lines, directive_conflict
 from .block_signature import DEFAULT_SIMILARITY_THRESHOLD, extract_block_signature, quick_filter
@@ -694,6 +695,10 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 return None
         if not self.strict and self._block_rejected(
             guarded_resource_crosses_exception_boundary, cand_nodes, fn, analyzer, site=site
+        ):
+            return None
+        if self.strict and self._block_rejected(
+            expression_arguments_outlive_a_handler, cand_nodes, fn, analyzer, site=site
         ):
             return None
         lifetime_guards = (owned_binding_crosses_exception_boundary,) if self.strict else ()

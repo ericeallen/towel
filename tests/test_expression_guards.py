@@ -31,6 +31,8 @@ the programs that count truth tests say so.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import textwrap
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Tuple
@@ -109,6 +111,11 @@ def program(
         return function
 
     return register
+
+
+UNDER_A_HANDLER = str(RejectReason.OWNED_BINDING_EXCEPTION_BOUNDARY)
+"""Strict mode's earlier refusal of a program whose expression reads, under a handler, a name its
+function rebinds or a comprehension's variable (``expression_arguments_outlive_a_handler``)."""
 
 
 # -- Evaluation order ---------------------------------------------------------
@@ -276,6 +283,41 @@ def _() -> None:
 
     for table, key in (({}, "a"), ({"a": 0}, "a"), ({"a": 2}, "a"), ({"a": 2}, "b")):
         print(first(table, key), second(table, key))
+    """
+
+
+@program("a_handler_releases_a_parameter_the_expression_read", EXTRACTED, UNDER_A_HANDLER)
+def _() -> None:
+    """
+    def boom():
+        raise KeyError("stop")
+
+    def first(item, a):
+        try:
+            value = (
+                note("one", a)
+                and boom()
+                and note("three", item)
+            )
+            return value
+        except KeyError:
+            item = None
+            print("handler one")
+        return item
+
+    def second(item, a):
+        try:
+            return [
+                note("one", a)
+                and boom()
+                and note("three", item)
+            ]
+        except KeyError:
+            item = None
+            print("handler two")
+        return item
+
+    print(first(T("i1"), 1), second(T("i2"), 1))
     """
 
 
@@ -482,7 +524,11 @@ def _() -> None:
     """
 
 
-@program("a_local_that_may_be_unassigned", RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL)
+@program(
+    "a_local_that_may_be_unassigned",
+    RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL,
+    UNDER_A_HANDLER,
+)
 def _() -> None:
     """
     def first(flag, a):
@@ -516,7 +562,11 @@ def _() -> None:
     """
 
 
-@program("a_comprehension_variable_not_yet_assigned", RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL)
+@program(
+    "a_comprehension_variable_not_yet_assigned",
+    RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL,
+    UNDER_A_HANDLER,
+)
 def _() -> None:
     """
     def first(rows, y):
@@ -547,7 +597,11 @@ def _() -> None:
     """
 
 
-@program("a_loop_test_after_its_body_deleted_a_name", RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL)
+@program(
+    "a_loop_test_after_its_body_deleted_a_name",
+    RejectReason.THUNK_OF_POSSIBLY_UNBOUND_LOCAL,
+    UNDER_A_HANDLER,
+)
 def _() -> None:
     """
     def first(a, b):
@@ -824,3 +878,89 @@ def test_strict_mode_reproduces_truth_tests_and_releases(tmp_path: Path) -> None
         assert "True if" in generated and same
     generated, same, _ = outcome(tmp_path, _source("two_places_that_use_the_value"), strict=True)
     assert "True if" not in generated and "__extracted_func_0(" in generated and same
+
+
+RELEASED_IN_A_HANDLER = """
+events = []
+
+
+class Noisy:
+    def __init__(self, name):
+        self.name = name
+
+    def __del__(self):
+        events.append("del:" + self.name)
+
+
+def boom():
+    raise RuntimeError("stop")
+
+
+def f1(a):
+    x = Noisy("x1")
+    try:
+        res = (
+            a > 0
+            and boom()
+            and x is not None
+            and a < 100
+            and a != 42
+        )
+        return res
+    except RuntimeError:
+        x = None
+        events.append("handler:f1")
+    return x
+
+
+def f2(a):
+    x = Noisy("x2")
+    try:
+        out = (
+            a > 0
+            and boom()
+            and x is not None
+            and a < 100
+            and a != 42
+        )
+        return out
+    except RuntimeError:
+        x = None
+        events.append("handler:f2")
+    return x
+
+
+print(f1(5), f2(5), events)
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_strict_mode_leaves_an_expression_inside_a_try_alone(tmp_path: Path, strict: bool) -> None:
+    """Review of the ``expressions`` lane, defect 3: strict mode released ``x`` after the handler.
+
+    A helper that raises stays on the traceback, and its frame holds its
+    arguments until the handler ends, so ``x = None`` in the handler no
+    longer released ``x`` there. Through 1.949 strict mode declined both
+    assignments (``owned_binding_exception_boundary``); it still does, and
+    leaves their values alone too. Relaxed mode promises no release order.
+    """
+    generated, same, declined = outcome(tmp_path, RELEASED_IN_A_HANDLER, strict=strict)
+    if strict:
+        # What remains is the extraction of both whole bodies, as 1.949 made it.
+        assert generated == _statements_only(tmp_path, RELEASED_IN_A_HANDLER), generated
+        assert same
+        assert set(declined) == {str(RejectReason.OWNED_BINDING_EXCEPTION_BOUNDARY)}
+    else:
+        assert "__extracted_func_0(" in generated
+
+
+def _statements_only(tmp_path: Path, source: str) -> str:
+    """``source`` refactored in strict mode without expression candidates."""
+    path = tmp_path / "statements_only.py"
+    path.write_text(source)
+    engine = UnificationRefactorEngine(
+        min_lines=3, skip_trivial_helpers=False, strict=True, expression_candidates=False
+    )
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        engine.refactor_to_fixed_point(str(path))
+    return path.read_text()

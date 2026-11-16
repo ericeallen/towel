@@ -2322,7 +2322,17 @@ objects the expression creates and drops are created and dropped by the same
 code, inside the helper; the arguments are further references to objects the
 site's frame holds for the whole call. So strict mode extracts an expression
 whose whole assignment it declines (`owned_binding_frame_boundary`): the
-binding stays in the caller.
+binding stays in the caller. Under a handler or a manager there is one more
+condition (the review of 2026-11-16). A helper that raises stays on the
+traceback, and its frame holds its arguments, until the handler is done or
+for as long as the program keeps the exception; `x = None` in the `except`
+clause would no longer release `x`. So there every name the expression reads
+must be a module name or a parameter its function never binds again, deletes
+or lets a nested function rebind; otherwise strict mode declines it
+(`owned_binding_exception_boundary`). A comprehension's variable never
+qualifies: the comprehension releases it when it fails. Outside a handler or
+a manager, the exception leaves the site's frame too, and that frame holds
+the same objects for as long.
 
 **Pairs.** Two expressions pair when they stand in different functions, have
 the same root (its kind, operator, number of operands, argument and clause

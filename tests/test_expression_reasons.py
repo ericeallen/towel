@@ -87,6 +87,14 @@ def test_the_new_reason_says_what_strict_mode_cannot_do() -> None:
     assert explanation.remedy == "Without --strict the expression is extracted."
 
 
+def test_an_expression_under_a_handler_is_not_said_to_assign_a_variable() -> None:
+    """Review of the ``expressions`` lane, defect 3: strict mode's refusal, said of an expression."""
+    explanation = explain(expression_count(str(RejectReason.OWNED_BINDING_EXCEPTION_BOUNDARY)))
+    assert "--strict" in explanation.sentence and "handler" in explanation.sentence
+    assert "assigns a variable" not in explanation.sentence
+    assert explanation.remedy == "Without --strict the expression is extracted."
+
+
 def test_an_expression_count_keeps_its_reason_code_and_what_it_names() -> None:
     counted = expression_count("builtin_argument[len]")
     assert reason_code(counted) == "builtin_argument"
