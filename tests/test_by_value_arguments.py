@@ -30,6 +30,7 @@ says which arguments must stay deferred and why.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 from typing import List
 
@@ -607,6 +608,69 @@ def test_strict_mode_defers_the_attribute_read_before_any_call(tmp_path: Path) -
     assert same
 
 
+PROTOCOL_BEFORE_A_READ = """\
+class Stats:
+    def __init__(self):
+        self.total = 7
+        self.count = 2
+
+
+def report(label, value):
+    print(label, value)
+    return value
+
+
+def show_total(stats, label):
+    title = TITLE
+    shown = report(title, stats.total + 1)
+    print("done", title)
+    return shown
+
+
+def show_count(stats, label):
+    title = TITLE
+    shown = report(title, stats.count + 2)
+    print("done", title)
+    return shown
+
+
+class Label:
+    def __init__(self, stats):
+        self.stats = stats
+
+    def __format__(self, spec):
+        self.stats.total = 100
+        return "label"
+
+    def __hash__(self):
+        self.stats.total = 100
+        return 1
+
+    def __repr__(self):
+        return "label"
+
+
+stats = Stats()
+print(show_total(stats, Label(stats)))
+"""
+
+
+@pytest.mark.parametrize("title", ['f"{label}"', "{label: 0}"])
+@pytest.mark.parametrize("strict", [False, True])
+def test_a_read_is_not_moved_ahead_of_formatting_or_hashing(
+    tmp_path: Path, strict: bool, title: str
+) -> None:
+    """Review of lane ``byvalue``, defect 4: ``__format__`` and ``__hash__`` may change what is read.
+
+    Here they set ``stats.total`` to 100, so the block prints 101. Read at
+    the call, before the label is formatted or hashed, it would print 8.
+    """
+    source = PROTOCOL_BEFORE_A_READ.replace("TITLE", title)
+    generated, same = refactored(tmp_path, source, strict=strict)
+    assert re.search(r"report\(title, __param_\d+\(\)", generated), generated
+    assert same
+
+
 CALL_AS_AN_ARGUMENT = """\
 class Database:
     def paginate(self, query, page):
@@ -1077,7 +1141,11 @@ def _expression(text: str) -> ast.expr:
     "text, plain",
     [
         ("a.b.c[0] + d", True),
-        ("f'{a.b}: {c}'", True),
+        ("f'{a.b}: {c}'", False),  # formatting runs __format__
+        ("f'text'", True),
+        ("{a: b}", False),  # hashing runs __hash__
+        ("{'k': b, 1: c}", True),
+        ("{a, 'k'}", False),
         ("a if b else c", True),
         ("[a, {'k': b}]", True),
         ("lambda x: g(x)", True),  # made, not run

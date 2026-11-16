@@ -532,12 +532,15 @@ _NOT_PLAIN = (
 
 
 def _plain(expression: ast.expr) -> bool:
-    """Whether ``expression`` calls nothing, awaits nothing and iterates nothing.
+    """Whether ``expression`` calls nothing, awaits nothing, iterates, formats or hashes nothing.
 
     What is left reads names, attributes and subscripts, applies operators
-    and comparisons, formats an f-string and builds displays, which relaxed
-    mode takes to have no side effects. A lambda without defaults is made,
-    not run; one with defaults, or a ``**`` in a dict display, is left out.
+    and comparisons and builds displays, which relaxed mode takes to have
+    no side effects. Formatting a value in an f-string runs its
+    ``__format__``, and a set or dict display hashes what is not a constant
+    with ``__hash__``: the assumptions do not cover those protocols. A
+    lambda without defaults is made, not run; one with defaults, or a
+    ``**`` in a dict display, is left out.
     """
     pending: List[ast.AST] = [expression]
     while pending:
@@ -548,7 +551,15 @@ def _plain(expression: ast.expr) -> bool:
             if node.args.defaults or node.args.kw_defaults:
                 return False
             continue
-        if isinstance(node, ast.Dict) and any(key is None for key in node.keys):
+        if isinstance(node, ast.FormattedValue):
+            return False
+        if isinstance(node, ast.Dict) and not all(
+            isinstance(key, ast.Constant) for key in node.keys
+        ):
+            return False
+        if isinstance(node, ast.Set) and not all(
+            isinstance(element, ast.Constant) for element in node.elts
+        ):
             return False
         pending.extend(ast.iter_child_nodes(node))
     return True
@@ -557,17 +568,18 @@ def _plain(expression: ast.expr) -> bool:
 def _quiet(step: Step) -> bool:
     """Whether a step that may raise still changes nothing a plain expression reads.
 
-    Reading a name, an attribute or a subscript, an operator, a comparison,
-    formatting, hashing a key. Not a call, a store to an attribute or a
-    subscript, an augmented assignment, a ``del``, unpacking, or ``**``.
+    Reading a name, an attribute or a subscript, an operator, a comparison.
+    Not a call, a store to an attribute or a subscript, an augmented
+    assignment, a ``del``, unpacking, ``**``, formatting (``__format__``)
+    or hashing a key that is not a constant (``__hash__``).
     """
     if isinstance(step, _Operation):
-        return step.kind in (_Kind.HASH, _Kind.READ)
+        return step.kind is _Kind.READ or (
+            step.kind is _Kind.HASH and _hashes_quietly(step.operand, step.display)
+        )
     if isinstance(step, (ast.Name, ast.Attribute, ast.Subscript)):
         return isinstance(step.ctx, ast.Load)
-    return isinstance(
-        step, (ast.BinOp, ast.UnaryOp, ast.Compare, ast.FormattedValue, ast.JoinedStr, ast.Slice)
-    )
+    return isinstance(step, (ast.BinOp, ast.UnaryOp, ast.Compare, ast.JoinedStr, ast.Slice))
 
 
 def _quiet_branch(statement: ast.stmt) -> Optional[FrozenSet[str]]:

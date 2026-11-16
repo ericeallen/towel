@@ -2134,13 +2134,16 @@ itself when one of these holds for it at every call site.
    that no module-level code can run the function before the name exists.
 2. *The helper evaluates it exactly once on every path, and nothing before it
    could change its value.* The expression calls nothing (attribute chains,
-   subscripts, operators, comparisons, f-strings and displays over the call
-   site's values; the second assumption), and every step the helper takes
-   before it is quiet: no call, no `await` or `yield`, no store to an
-   attribute or a subscript, no augmented assignment, no `del`, no unpacking,
-   and no rebinding of a name the expression reads. Formatting a value in an
-   f-string, testing its truth and hashing it as a key are taken to be plain
-   in the same way. An `if` that only assigns names does not end such a
+   subscripts, operators, comparisons and displays over the call site's
+   values; the second assumption), and every step the helper takes before it
+   is quiet: no call, no `await` or `yield`, no store to an attribute or a
+   subscript, no augmented assignment, no `del`, no unpacking, and no
+   rebinding of a name the expression reads. Formatting a value (an f-string
+   field runs `__format__`, and through it `__str__` or `__repr__`), hashing
+   a key that is not a constant (`__hash__`) and iterating (`__iter__`) are
+   not covered by the assumptions: they may change what a later read gives,
+   so they end the prefix, and an expression that does one is not plain.
+   An `if` that only assigns names does not end such a
    prefix. Neither does entering a `try` whose every handler names a builtin
    exception class that cannot catch what a plain expression raises
    (`except TimeoutError`, not `except Exception`, `except KeyError` or
