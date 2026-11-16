@@ -24,9 +24,11 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import io
 import os
 import re
 import sys
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
@@ -345,10 +347,34 @@ def _uses_newer_syntax(path: Path, running: PythonVersion) -> bool:
         running < (3, 12)
         and bool(re.search(r"(?m)^\s*(?:type \w+.*=|(?:def|class) \w+\[)", text))
         or running < (3, 14)
-        and bool(re.search(r"\bt(?:r)?[\"']|(?m:^\s*except \w+\s*,\s*\w+\s*:)", text))
+        and (
+            _has_template_string(text)
+            or bool(re.search(r"(?m:^\s*except \w+\s*,\s*\w+\s*:)", text))
+        )
         or running < (3, 15)
         and bool(re.search(r"(?m)^\s*lazy (?:from|import) ", text))
     )
+
+
+def _has_template_string(text: str) -> bool:
+    """Recognize a template prefix outside comments and ordinary string literals."""
+    previous: Optional[tokenize.TokenInfo] = None
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tokenize.tok_name[token.type] == "TSTRING_START":
+                return True
+            if (
+                previous is not None
+                and previous.type == tokenize.NAME
+                and previous.string.lower() in {"t", "tr", "rt"}
+                and token.type == tokenize.STRING
+                and previous.end == token.start
+            ):
+                return True
+            previous = token
+    except (tokenize.TokenError, SyntaxError):
+        pass  # The file is already known to be invalid; only a seen prefix is evidence.
+    return False
 
 
 def _python_remedy(

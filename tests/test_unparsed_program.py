@@ -636,3 +636,23 @@ def test_a_file_that_changes_during_the_run_is_parsed_again(tmp_path: Path) -> N
     assert parse_failure(path) is None
     path.write_text(NEWER + "# longer now\n")
     assert parse_failure(path) is not None
+
+
+@pytest.mark.parametrize("expression", ['x.split("t")', "'t'", '"t\'"', '# t"literal"'])
+def test_ordinary_t_text_does_not_recommend_a_newer_python(tmp_path: Path, expression: str) -> None:
+    """Round 2 minor: a quoted t or comment is not Python 3.14 template syntax."""
+    from towel.program_files import _uses_newer_syntax
+
+    path = tmp_path / "bad.py"
+    path.write_text(expression + "\ndef broken(:\n")
+    assert not _uses_newer_syntax(path, (3, 13))
+
+
+@pytest.mark.parametrize("prefix", ["t", "T", "tr", "rt", "Tr", "rT"])
+def test_real_template_prefix_recommends_a_newer_python(tmp_path: Path, prefix: str) -> None:
+    """Round 2 minor: valid template prefixes still receive the newer-Python remedy."""
+    from towel.program_files import _uses_newer_syntax
+
+    path = tmp_path / "new.py"
+    path.write_text(f'{prefix}"hello {{name}}"\n')
+    assert _uses_newer_syntax(path, (3, 13))
