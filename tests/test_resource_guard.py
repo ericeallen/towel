@@ -41,6 +41,7 @@ from towel.unification.resource_guard import (
     RESOURCE_CONSTRUCTORS,
     WEAK_REFERENCE_CONSTRUCTORS,
     resource_bound_names,
+    resource_guard,
 )
 
 # The default mode is what this module pins.
@@ -59,6 +60,10 @@ def _names(source: str) -> set[str]:
 def test_the_list_is_the_one_the_decision_names() -> None:
     """An addition is a decision (docs/DECISIONS.md), so the list is pinned whole."""
     assert RESOURCE_CONSTRUCTORS == {
+        "builtins.open",
+        "io.open",
+        "os.fdopen",
+        "socket.socket",
         "tempfile.TemporaryDirectory",
         "tempfile.NamedTemporaryFile",
         "tempfile.TemporaryFile",
@@ -93,7 +98,6 @@ def test_the_weak_reference_constructors_are_the_ones_the_decision_names() -> No
         # The finalizer is listed as a resource too, though its registry keeps it alive.
         ("import weakref", "done = weakref.finalize(target, callback)", {"target", "done"}),
         # Only the object watched: a callback is held strongly by the reference.
-        ("import weakref", "watcher = weakref.ref(make(), callback)", {"make"}),
         ("import weakref", "watcher = other.ref(target)", set()),
         ("import weakref", "watcher = weakref.getweakrefcount(target)", set()),
     ],
@@ -109,6 +113,10 @@ def test_a_local_watched_by_a_weak_reference_is_kept(
 @pytest.mark.parametrize(
     "imports,call",
     [
+        ("import socket", "socket.socket()"),
+        ("", "open(path)"),
+        ("import io", "io.open(path)"),
+        ("import os", "os.fdopen(fd)"),
         ("import tempfile", "tempfile.TemporaryDirectory()"),
         ("import tempfile as tf", "tf.NamedTemporaryFile('w')"),
         ("from tempfile import TemporaryDirectory", "TemporaryDirectory(prefix='x')"),
@@ -160,15 +168,9 @@ def test_every_plain_name_binding_form_counts(statement: str) -> None:
         ("import tempfile", "held = tempfile.gettempdir()"),
         ("import tempfile", "held = tempfile.mkdtemp()"),
         ("import threading", "held = threading.Lock()"),
-        ("import socket", "held = socket.socket()"),
-        ("", "held = open(path)"),
         # Not a direct call of the constructor.
         ("import tempfile", "held = tempfile.TemporaryDirectory"),
-        ("import tempfile", "held = tempfile.TemporaryDirectory().name"),
-        ("import tempfile", "held = wrap(tempfile.TemporaryDirectory())"),
-        # Reachable through its container, or released by its statement.
-        ("import tempfile", "self.held = tempfile.TemporaryDirectory()"),
-        ("import tempfile", "cache['held'] = tempfile.TemporaryDirectory()"),
+        # Released by its complete with statement.
         ("import tempfile", "with tempfile.TemporaryDirectory() as held:\n        pass"),
         # Another module's name spelled the same.
         ("from project.scratch import TemporaryDirectory", "held = TemporaryDirectory()"),
@@ -178,7 +180,9 @@ def test_every_plain_name_binding_form_counts(statement: str) -> None:
     ],
 )
 def test_the_guard_is_silent_for_everything_else(imports: str, statement: str) -> None:
-    assert _names(f"{imports}\n\ndef work(self, cache, path, wrap):\n    {statement}\n") == set()
+    result = _guard(f"{imports}\n\ndef work(self, cache, path, wrap):\n    {statement}\n")
+    assert result.names == frozenset()
+    assert result.refusal is None
 
 
 # -- The guard in a run --------------------------------------------------------
@@ -417,3 +421,196 @@ def test_strict_mode_never_consults_the_list(
     monkeypatch.setattr("towel.unification.resource_guard.RESOURCE_CONSTRUCTORS", frozenset[str]())
     emptied, _, _ = _refactored(tmp_path, REPORTS, strict=True)
     assert strict == emptied
+
+
+def _guard(source: str, *, prefix: int | None = None):
+    module = ast.parse(source)
+    function = next(
+        node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == "work"
+    )
+    return resource_guard(function.body[:prefix], module)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "held = tempfile.TemporaryDirectory(); backup = held; held = None",
+        "held = tempfile.TemporaryDirectory(); backup = held; del held",
+        "held = tempfile.TemporaryDirectory(); held += extra",
+        "held = tempfile.TemporaryDirectory();\n    if flag:\n        held = None",
+        "held = tempfile.TemporaryDirectory();\n    for held in values:\n        pass",
+        "held = tempfile.TemporaryDirectory();\n    try:\n        fail()\n    except Exception as held:\n        pass",
+        'held = tempfile.TemporaryDirectory();\n    match extra:\n        case {"x": held}:\n            pass',
+        "box.held = tempfile.TemporaryDirectory()",
+        "box[0] = tempfile.TemporaryDirectory()",
+        "held = [tempfile.TemporaryDirectory()]",
+        "held, = (tempfile.TemporaryDirectory(),)",
+        "held = tempfile.TemporaryDirectory() if flag else None",
+        "consume(tempfile.TemporaryDirectory())",
+        "held = tempfile.TemporaryDirectory().name",
+        "def later(held=tempfile.TemporaryDirectory()):\n        pass",
+    ],
+)
+def test_unretained_constructor_is_declined(statement: str) -> None:
+    """Review defect 1 and ownership gaps: recognize every listed call, not only assignments."""
+    result = _guard(f"import tempfile\ndef work(flag, values, extra, box):\n    {statement}\n")
+    assert result.refusal is not None
+    assert "line " in result.refusal and "--strict" in result.refusal
+
+
+@pytest.mark.parametrize(
+    "weak",
+    ["ref(target)", "proxy(target)", "WeakMethod(target.method)", "finalize(target, callback)"],
+)
+def test_weak_reference_rebinding_is_declined_even_outside_prefix(weak: str) -> None:
+    """Review defect 1: a shorter candidate cannot hide the later rebinding."""
+    source = f"import weakref\ndef work():\n    target = Target()\n    backup = target\n    watched = weakref.{weak}\n    target = None\n"
+    assert _guard(source, prefix=3).refusal is not None
+
+
+def test_constructor_rebinding_is_declined_even_outside_prefix() -> None:
+    """Review defect 1: retaining a name only until a later reassignment loses its alias."""
+    source = "import tempfile\ndef work():\n    held = tempfile.TemporaryDirectory()\n    backup = held\n    path = held.name\n    held = None\n"
+    assert _guard(source, prefix=3).refusal is not None
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import tempfile\ndef work(tempfile):\n    held = tempfile.TemporaryDirectory()\n",
+        "import tempfile\ndef work(fake):\n    tempfile = fake\n    held = tempfile.TemporaryDirectory()\n",
+        "from tempfile import TemporaryDirectory as TD\ndef work(TD):\n    held = TD()\n",
+        "import tempfile\ndef unrelated():\n    import tempfile as tf\ndef work(tf):\n    held = tf.TemporaryDirectory()\n",
+        'def work(open):\n    held = open("x")\n',
+        "import tempfile\ndef work():\n    try:\n        fail()\n    except Exception as tempfile:\n        held = tempfile.TemporaryDirectory()\n",
+        "import tempfile\ndef work(values):\n    held = [tempfile.TemporaryDirectory() for tempfile in values]\n",
+    ],
+)
+def test_shadowing_is_resolved_in_the_actual_scope(source: str) -> None:
+    """Review scope note: same spelling does not make a local/parameter an imported constructor."""
+    result = _guard(source)
+    assert result.names == frozenset()
+    assert result.refusal is None
+
+
+def test_a_comprehension_target_does_not_shadow_the_enclosing_import() -> None:
+    """Scope regression: comprehension bindings cannot hide an outer listed constructor."""
+    source = "import tempfile\ndef work(values):\n    items = [tempfile for tempfile in values]\n    held = tempfile.TemporaryDirectory()\n"
+    assert _guard(source).names == {"held"}
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        'open("x")',
+        'io.open("x")',
+        "os.fdopen(fd)",
+        "socket.socket()",
+        "tempfile.TemporaryDirectory()",
+    ],
+)
+def test_whole_with_statement_manages_the_resource(call: str) -> None:
+    """Coordinator rule 1: a whole with owns cleanup without returning its target."""
+    result = _guard(
+        f"import io, os, socket, tempfile\ndef work(fd):\n    with {call} as held:\n        use(held)\n    held = None\n"
+    )
+    assert result.names == frozenset()
+    assert result.refusal is None
+
+
+def test_a_later_module_assignment_cannot_hide_an_earlier_resource_call(tmp_path: Path) -> None:
+    """Scope regression: functions can run before the module replaces their imported global."""
+    source = REPORTS + "\ntempfile = None\n"
+    _, original, changed = _refactored(tmp_path, source)
+    assert _run(original)[0] == 0
+    assert _run(changed) == _run(original)
+
+
+def test_deleting_a_module_shadow_restores_builtin_open(tmp_path: Path) -> None:
+    """Scope regression: a deleted module name must not hide the owning builtin file."""
+    from tests.test_relaxed_review import CASES
+
+    source = "open = None\ndel open\n" + CASES["ext_descriptor_open"]["source"]
+    _, original, changed = _refactored(tmp_path, source)
+    assert _run(original)[0] == 0
+    assert _run(changed) == _run(original)
+
+
+def test_keyword_weakmethod_keeps_its_receiver() -> None:
+    """The keyword form has the same weak ownership as its positional counterpart."""
+    result = _guard(
+        "import weakref\ndef work():\n    target = Target()\n    watched = weakref.WeakMethod(meth=target.method)\n"
+    )
+    assert result.names == {"target"}
+    assert result.refusal is None
+
+
+def test_a_weak_reference_to_an_expression_is_declined() -> None:
+    """An arbitrary expression does not establish a stable local owner."""
+    result = _guard("import weakref\ndef work():\n    watched = weakref.ref(make())\n")
+    assert result.refusal is not None
+
+
+@pytest.mark.parametrize(
+    "conditional",
+    [
+        "try:\n        pass\n    except* ValueError:\n        make = None",
+        "False and (make := None)",
+        "(make := None) if False else None",
+        "assert True, (make := None)",
+    ],
+)
+def test_conditional_shadowing_does_not_erase_the_import(conditional: str) -> None:
+    """A skipped binding leaves the constructor available on another path."""
+    source = f"from tempfile import TemporaryDirectory\ndef work():\n    make = TemporaryDirectory\n    {conditional}\n    held = make()\n"
+    assert _guard(source).names == {"held"}
+
+
+def test_a_closure_can_rebind_a_resource_owner() -> None:
+    """A nonlocal write is another path that prevents proof of stable ownership."""
+    source = "import tempfile\ndef work():\n    held = tempfile.TemporaryDirectory()\n    backup = held\n    def rebind():\n        nonlocal held\n        held = None\n    rebind()\n"
+    assert _guard(source).refusal is not None
+
+
+@pytest.mark.parametrize("declaration", ["global", "nonlocal"])
+def test_import_writes_in_the_declared_scope_are_visible(declaration: str) -> None:
+    """A global/nonlocal declaration does not erase an import executed before the call."""
+    body = f"def work():\n    {declaration} tempfile\n    import tempfile\n    held = tempfile.TemporaryDirectory()\n"
+    if declaration == "nonlocal":
+        from textwrap import indent
+
+        body = "def outer():\n    tempfile = None\n" + indent(body, "    ")
+    module = ast.parse(body)
+    function = next(
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.FunctionDef) and node.name == "work"
+    )
+    assert resource_guard(function.body, module).names == {"held"}
+
+
+@pytest.mark.parametrize("constructor", ["tempfile.TemporaryDirectory()", "weakref.ref(target)"])
+def test_generated_helpers_cannot_hide_their_returned_owner(constructor: str) -> None:
+    """Fixed-point regression: a later helper must not discard earlier retained ownership."""
+    source = f"import tempfile, weakref\ndef __extracted_func_0(target):\n    held = {constructor}\n    return held\ndef __extracted_func_1(target):\n    return __extracted_func_0(target)\ndef work(target):\n    held = __extracted_func_1(target)\n"
+    assert _guard(source).refusal is not None
+
+
+def test_a_generated_helper_with_managed_resources_can_still_move() -> None:
+    """An entire internal with statement does not transfer resource ownership to its caller."""
+    source = "def __extracted_func_0(path):\n    with open(path) as handle:\n        return handle.read()\ndef work(path):\n    text = __extracted_func_0(path)\n"
+    assert _guard(source).refusal is None
+
+
+def test_an_import_alias_cannot_hide_a_generated_helpers_ownership() -> None:
+    """A cross-module generated helper needs the same protection through an alias."""
+    source = (
+        "from helpers import __extracted_func_0 as make\ndef work():\n    held, path = make()\n"
+    )
+    assert _guard(source).refusal is not None
+
+
+def test_a_local_helper_cannot_supply_an_imported_helpers_ownership() -> None:
+    """Summary identities retain qualification: a same-spelled local body proves nothing abroad."""
+    source = "from provider import __extracted_func_0 as make\ndef __extracted_func_0():\n    return 1\ndef work():\n    held, path = make()\n"
+    assert _guard(source).refusal is not None

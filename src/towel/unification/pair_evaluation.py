@@ -52,6 +52,8 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import AbstractSet, Dict, List, Optional, Sequence, Set, Tuple, FrozenSet, Iterator
 
+from .resource_guard import resource_guard
+
 from ..canonical_ast import canonical_dump
 from ..analysis_sources import parsing_is_pure
 from ..diagnostics import VALIDATION, debugging
@@ -754,6 +756,17 @@ class PairEvaluation(
             ),
         )
         for nodes, function, analyzer, site, source, file_path in blocks:
+            if not self.strict:
+                resources = self._per_block(
+                    "resource_guard",
+                    lambda: resource_guard(nodes, analyzer.analyzed_tree),
+                    site=site,
+                )
+                if resources.refusal is not None:
+                    self._debug_reject(
+                        RejectReason.RESOURCE_LIFETIME_UNPROVEN, pair, detail=resources.refusal
+                    )
+                    return None
             mapping_reads = builtin_mapping_reads(
                 function,
                 nodes,

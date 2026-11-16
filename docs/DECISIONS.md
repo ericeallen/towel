@@ -2030,28 +2030,51 @@ os.listdir(tmp.name)  # or any later use of `path`
 ```
 
 A plain helper returning `path` would delete the directory on its return,
-before the caller lists it. So where a block binds a local directly to the
-result of calling one of a short, fixed list of standard-library constructors
-of this kind (temporary files and directories, process and thread pools,
-tkinter images, memory maps and `weakref.finalize`; the list and its criterion
-are in `unification/resource_guard.py`), relaxed mode keeps the object alive
-as long as the original did: the helper returns it and the caller binds it
-under its own name (`tmp, path = helper(…)`), and such a block inside a `try`
-or `with` that stays in the caller is left alone.
+before the caller lists it. For each recognized constructor call, relaxed mode
+therefore applies one of three rules:
+
+- A call managed by a `with` statement wholly inside the block needs no extra
+  retention: that statement still controls cleanup.
+- A result bound directly to a local that is never rebound, deleted or augmented
+  afterwards is returned under that same name (`tmp, path = helper(…)`). The
+  stability check includes later statements in the containing function, so
+  extracting a shorter prefix cannot lose an alias before a later rebinding.
+- Otherwise the block is declined as `resource_lifetime_unproven`, with a plain
+  explanation suggesting a `with` statement or `--strict`. This includes
+  containers, attributes, subscripts, unpacking, conditional expressions,
+  results passed into another call, and objects retained only by an alias of
+  a rebound direct target. A resource inside a `try` or `with` left in the
+  caller is also refused, because an exceptional exit cannot return it.
+
+Later extraction passes leave calls to generated resource-owning helpers in
+place: their returned owners must not disappear inside another helper. An
+imported generated helper is also left in place when its body is unavailable
+to this guard. Ordinary factories remain outside the constructor list.
+
+The list comprises `tempfile.TemporaryDirectory`, `NamedTemporaryFile`,
+`TemporaryFile` and `SpooledTemporaryFile`; `multiprocessing.Pool` (including
+its defining module `multiprocessing.pool.Pool`) and
+`multiprocessing.pool.ThreadPool`; `tkinter.PhotoImage` and `BitmapImage`;
+`mmap.mmap`; `weakref.finalize`; builtin `open`, `io.open`, `os.fdopen` and
+`socket.socket`. Files and sockets qualify because descriptors and locks can
+be observed without holding the owning object. Import aliases are resolved
+in their lexical scope; a shadowing local or parameter is not that import.
+The list and its criterion are in `unification/resource_guard.py`.
 
 A weak reference is the other way a program reaches an object it no longer
 names: `watcher = weakref.ref(target)` in the block, `watcher() is not None`
 after it. The original answers true until the function returns; a helper that
-returned only `watcher` would answer false, which is a different value and
-not a finalizer running at another time. A local the block passes directly to
+returned only `watcher` would answer false. A local passed directly to
 `weakref.ref`, `weakref.proxy`, `weakref.WeakMethod` or `weakref.finalize` is
-therefore kept by the caller in the same way.
+kept by the same stable-name rule (for `WeakMethod`, the receiver of the
+bound method). Rebinding or an unrecognized ownership shape declines the
+block instead of returning a name that no longer owns the object.
 
-The guard reads syntax only and both lists are closed. A program that keeps
-some other resource alive only through a local it never reads again, or
-registers one in a `WeakSet` or a weak dictionary, needs `--strict`, or better
-a `with` statement or an explicit reference, which say what the program means
-in either mode.
+The guard is a list of known constructors, not a proof of resource ownership.
+It reads syntax only. A program that keeps some other resource alive only
+through a local it never reads again, obtains one through an unrecognized
+factory, or registers one in a `WeakSet` or a weak dictionary needs
+`--strict`, or better a `with` statement or an explicit reference.
 
 **What this supersedes.** In the default mode this entry supersedes, and under
 `--strict` it leaves in force as written:

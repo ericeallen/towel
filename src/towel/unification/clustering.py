@@ -39,6 +39,8 @@ import os
 
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
+from .resource_guard import resource_guard
+
 from ..canonical_ast import canonical_dump
 from ..diagnostics import REJECTIONS, debugging
 from .assignment_analyzer import has_reassignments_without_bindings
@@ -565,6 +567,14 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         """
         fn, fpath, analyzer = entry.node, entry.file_path, entry.scope_analyzer
         module = analyzer.analyzed_tree
+        if (
+            not self.strict
+            and self._per_block(
+                "resource_guard", lambda: resource_guard(cand_nodes, module), site=site
+            ).refusal
+            is not None
+        ):
+            return None
         if unstable_literal_pool(cand_nodes) or unsafe_byte_literal_moves(
             cand_nodes, module if isinstance(module, ast.Module) else None
         ):

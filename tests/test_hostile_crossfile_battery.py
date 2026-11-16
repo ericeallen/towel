@@ -465,17 +465,6 @@ def _check_directory_program_output(
             ), ("rejected" if not transformed else "transformed")
 
 
-RELAXED_OBSERVES_FINALIZATION: Dict[str, str] = {}
-"""Packages whose output differs in relaxed mode because they print when an object is finalized.
-
-As in ``test_hostile_battery``: relaxed mode assumes a program does not
-depend on when objects are finalized once it has stopped using them
-(docs/DECISIONS.md, "Relaxed mode is the default; strict mode keeps exact
-lifetimes"). No cross-file fixture watches a finalizer, so the list is
-empty, and any difference in relaxed mode is a defect to fix.
-"""
-
-
 @pytest.mark.parametrize(
     "case",
     sorted(
@@ -512,10 +501,8 @@ def test_relaxed_directory_refactoring_preserves_program_output(case: str) -> No
             assert not OWNERSHIP_BOOKKEEPING.search(text) or (
                 OWNERSHIP_BOOKKEEPING.search(original[name])
             ), name
-        if case in RELAXED_OBSERVES_FINALIZATION:
-            assert _run(after) != _run(before), "no longer differs: remove it from the list"
-        else:
-            assert _run(after) == _run(before)
+        # No cross-file fixture observes finalization; every output byte matters.
+        assert _run(after) == _run(before)
         if transformed:
             modules = _modules(before)
             assert module_faces(after, modules) == module_faces(before, modules)
