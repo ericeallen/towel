@@ -105,3 +105,40 @@ def test_enclosing_signature_orders_pair_and_cluster_inputs(tmp_path: Path, stri
         "alpha",
         "middle",
     ]
+
+
+@pytest.mark.parametrize("kind", ["thunk", "affix", "pool", "fstring_pool"])
+def test_synthetic_parameter_uses_keep_their_source_positions(kind: str) -> None:
+    """Review 5: nested synthetic names must sort where their original expression occurred."""
+    from towel.unification.unifier import Unifier
+
+    if kind in ("pool", "fstring_pool"):
+        prefix = "head=1000000" if kind == "pool" else 'head=f"shared prefix {value}"'
+        blocks = [ast.parse(f"{prefix}\nreturn head, value + {tail}").body for tail in (5, 7)]
+        subst = Unifier().unify_blocks(blocks, [{}, {}], thread_literal_pools=True)
+        assert subst is not None and subst.literal_pool is not None
+        first = subst.literal_pool.parameter
+        later = next(name for name in subst.param_expressions if name != first)
+        block = blocks[0]
+        free = {"value"}
+    else:
+        expression = "compute()" if kind == "thunk" else 'f"status: OK {value}"'
+        block = ast.parse(f"head = {expression}\nreturn head, 10").body
+        subst = Substitution()
+        first, later = "__param_0", "__param_1"
+        if kind == "thunk":
+            subst.add_mapping(0, ast.parse("compute()", mode="eval").body, first)
+            subst.function_params[first] = []
+        else:
+            subst.add_mapping(0, ast.Constant("status: OK "), first)
+            subst.fstring_affixes[first] = ("status: ", " ")
+        subst.add_mapping(0, ast.Constant(10), later)
+        free = {"value"} if kind == "affix" else set()
+    _, order = HygienicExtractor().extract_function(
+        template_block=block,
+        substitution=subst,
+        free_variables=free,
+        enclosing_names=set(),
+        is_value_producing=True,
+    )
+    assert order[first] < order[later]

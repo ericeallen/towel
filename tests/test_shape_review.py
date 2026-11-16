@@ -261,3 +261,42 @@ def test_quick_preview_reads_sibling_rebindings(tmp_path: Path, strict: bool) ->
     assert result.status == 0, result
     assert "Reuse total" not in result.stdout
     assert "Found 0" not in result.stdout
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_thunk_parameter_order_matches_first_textual_use(tmp_path: Path, strict: bool) -> None:
+    """Review 5: a thunk used before a literal must precede that literal in the helper."""
+    source = tmp_path / "mod.py"
+    source.write_text("""def first(flag):
+    local_scale = 3
+    head = compute_a() if flag else "fallback"
+    mid = head.upper()
+    tail = len(mid) * local_scale + 10
+    return f"{mid}:{tail}"
+
+def second(flag):
+    local_scale = 3
+    head = compute_b() if flag else "fallback"
+    mid = head.upper()
+    tail = len(mid) * local_scale + 20
+    return f"{mid}:{tail}"
+
+def compute_a(): return "one"
+def compute_b(): return "two"
+""")
+    before = observe(tmp_path, "import mod; print(mod.first(True), mod.second(False))")
+    output = tmp_path / "out" / "mod.py"
+    dry(source, output, strict)
+    text = output.read_text()
+    import ast
+
+    helpers = [
+        node
+        for node in ast.parse(text).body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("__extracted_func_")
+    ]
+    assert helpers or strict  # strict can decline the ownership transfer
+    for helper in helpers:
+        names = [arg.arg for arg in (*helper.args.posonlyargs, *helper.args.args)]
+        assert names.index("__param_0") < names.index("__param_1")
+    assert observe(output.parent, "import mod; print(mod.first(True), mod.second(False))") == before

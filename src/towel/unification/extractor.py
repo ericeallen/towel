@@ -204,7 +204,7 @@ class ParameterSubstituter(ast.NodeTransformer):
                 return None
             return ast.copy_location(
                 ast.Subscript(
-                    value=ast.Name(id=maybe_param_name, ctx=ast.Load()),
+                    value=ast.copy_location(ast.Name(id=maybe_param_name, ctx=ast.Load()), node),
                     slice=ast.Constant(index),
                     ctx=ast.Load(),
                 ),
@@ -214,7 +214,7 @@ class ParameterSubstituter(ast.NodeTransformer):
         if self.subst.is_function_param(maybe_param_name):
             bound_vars = self.subst.get_function_param_vars(maybe_param_name)
             call = ast.Call(
-                func=ast.Name(id=maybe_param_name, ctx=ast.Load()),
+                func=ast.copy_location(ast.Name(id=maybe_param_name, ctx=ast.Load()), node),
                 args=[ast.Name(id=var, ctx=ast.Load()) for var in bound_vars],
                 keywords=[],
             )
@@ -245,7 +245,9 @@ class ParameterSubstituter(ast.NodeTransformer):
                             new_values.append(ast.Constant(prefix))
                         new_values.append(
                             ast.FormattedValue(
-                                value=ast.Name(id=parameter, ctx=ast.Load()),
+                                value=ast.copy_location(
+                                    ast.Name(id=parameter, ctx=ast.Load()), value
+                                ),
                                 conversion=-1,
                                 format_spec=None,
                             )
@@ -270,7 +272,9 @@ class ParameterSubstituter(ast.NodeTransformer):
                             ast.copy_location(
                                 ast.FormattedValue(
                                     value=ast.Subscript(
-                                        value=ast.Name(id=parameter, ctx=ast.Load()),
+                                        value=ast.copy_location(
+                                            ast.Name(id=parameter, ctx=ast.Load()), value
+                                        ),
                                         slice=ast.Constant(index),
                                         ctx=ast.Load(),
                                     ),
