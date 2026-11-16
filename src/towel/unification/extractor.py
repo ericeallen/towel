@@ -763,8 +763,9 @@ def _unified_argument(
     """The argument ``block_idx`` passes for a parameter the unifier introduced.
 
     The block's own expression, wrapped as a thunk when the parameter is a
-    function parameter and as a forwarding lambda when the helper calls it;
-    None when the substitution records no expression for this block.
+    function parameter and, in strict mode, as a forwarding lambda when the
+    helper calls it; None when the substitution records no expression for
+    this block.
     """
     pool = substitution.literal_pool
     if pool is not None and pool.parameter == param_name:
@@ -782,7 +783,7 @@ def _unified_argument(
             )
         if substitution.is_function_param(param_name):
             return _thunk(expr, substitution.get_function_param_vars(param_name))
-        if param_name in substitution.params_used_as_callee:
+        if param_name in substitution.params_used_as_callee and not substitution.callees_by_value:
             return _forwarding_lambda(expr)
         return cast(ast.expr, expr)
     return None

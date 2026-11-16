@@ -83,7 +83,7 @@ from .block_comments import (
 from .builtins import BUILTIN_NAMES, CALL_ARGUMENT_BUILTINS
 from .semantic_safety import (
     captured_comprehension_changes_enclosing_cell,
-    available_argument_names,
+    call_site_names,
     builtins_passed,
     builtin_mapping_reads,
     function_scope_names,
@@ -1277,9 +1277,15 @@ class PairEvaluation(
                 )
             self._debug_reject(RejectReason.INCOMPLETE_LIFETIME_BLOCK2, pair, str(incomplete_vars))
             return None
+        # Relaxed mode counts the module's functions, classes and imports
+        # among the names a call site resolves (``stable_module_names``).
         available = (
-            available_argument_names(ctx.func1, pair.block1_nodes, ctx.scope_analyzer),
-            available_argument_names(ctx.func2, pair.block2_nodes, ctx.scope_analyzer2),
+            call_site_names(
+                ctx.func1, pair.block1_nodes, ctx.scope_analyzer, stable_modules=not self.strict
+            ),
+            call_site_names(
+                ctx.func2, pair.block2_nodes, ctx.scope_analyzer2, stable_modules=not self.strict
+            ),
         )
         for reason, func, nodes, entering, resolvable in (
             (
@@ -1342,7 +1348,9 @@ class PairEvaluation(
         ):
             self._debug_reject(RejectReason.REBOUND_EXTERNAL_BINDING, pair)
             return None
-        defer_impure_parameters(substitution, pair.block1_nodes, available)
+        defer_impure_parameters(
+            substitution, pair.block1_nodes, available, callees_by_value=not self.strict
+        )
         free_vars = _thunk_uncertain_free_variables(
             substitution,
             free_vars,
@@ -1350,7 +1358,12 @@ class PairEvaluation(
             unified.hygienic_renames,
             available,
             tuple(
-                module_resolved_names(function, analyzer, set().union(*map(loaded_names, nodes)))
+                self._rebindable_module_names(
+                    module_resolved_names(
+                        function, analyzer, set().union(*map(loaded_names, nodes))
+                    ),
+                    analyzer,
+                )
                 for function, nodes, analyzer in (
                     (ctx.func1, pair.block1_nodes, scope_analyzer),
                     (ctx.func2, pair.block2_nodes, scope_analyzer2),
@@ -1463,12 +1476,17 @@ class PairEvaluation(
         except UnsupportedExtraction as error:
             self._debug_reject(RejectReason.UNSUPPORTED_EXTRACTION, pair, detail=str(error))
             return None
+        policy = self._value_policy(
+            (
+                (ctx.func1, pair.block1_nodes, ctx.scope_analyzer, free.available_names[0]),
+                (ctx.func2, pair.block2_nodes, ctx.scope_analyzer2, free.available_names[1]),
+            ),
+            unified.hygienic_renames,
+        )
         param_order = reorder_eligible_thunk_parameters(
-            func_def, unified.substitution, param_order, any_result=not self.strict
+            func_def, unified.substitution, param_order, policy
         )
-        inline_leading_thunks(
-            func_def, unified.substitution, param_order, any_result=not self.strict
-        )
+        inline_leading_thunks(func_def, unified.substitution, param_order, policy)
         if has_impure_eager_parameters(unified.substitution, free.available_names):
             self._debug_reject(RejectReason.IMPURE_EAGER_PARAMETER, pair)
             return None

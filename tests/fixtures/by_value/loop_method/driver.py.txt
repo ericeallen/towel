@@ -1,0 +1,19 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+import cleaning
+
+rows = [
+    {"name": "  ada LOVELACE ", "email": " ADA@Example.com", "age": 36},
+    {"name": "bob", "email": None, "age": " 41 "},
+    {"email": "X@Y.Z "},
+]
+original = [dict(row) for row in rows]
+print(cleaning.strip_columns(rows, ["name", "email", "age"]))
+print(cleaning.lowercase_columns(rows, ["email"]))
+print(cleaning.title_columns(rows, ["name", "missing"]))
+print(cleaning.title_columns(cleaning.strip_columns(rows, ["name"]), ["name"]))
+assert rows == original, "inputs must not be mutated"
+print(cleaning.strip_columns([], ["name"]))
+print("ok")
