@@ -126,3 +126,58 @@ def total(order, log):
     output = tmp_path / "out"
     dry(source, output, strict)
     assert observe(output, "import mod; print(mod.BOOT)") == before
+
+
+REDIRECT_SOURCE = """def total(order, log):
+    if not order:
+        raise ValueError("empty")
+    log.append(len(order))
+    log.append(sum(order) * 2)
+
+def report(order):
+    log = []
+    if not order:
+        raise ValueError("empty")
+    log.append(len(order))
+    log.append(sum(order) * 2)
+    return f"amount={log[-1]}"
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "with mock.patch(target='original.total', new=replacement):\n    print(original.report([1, 2]))",
+        "with mock.patch.object(target=original, attribute='total', new=replacement):\n    print(original.report([1, 2]))",
+        "with mock.patch(f'{original.__name__}.total', replacement):\n    print(original.report([1, 2]))",
+        "target = 'original.total'\nwith mock.patch(target, replacement):\n    print(original.report([1, 2]))",
+        "attr = 'total'\nwith mock.patch.object(original, attr, replacement):\n    print(original.report([1, 2]))",
+        "with mock.patch.dict(original.__dict__, {'total': replacement}):\n    print(original.report([1, 2]))",
+        "with mock.patch.multiple(original, **{'total': replacement}):\n    print(original.report([1, 2]))",
+        "ns = original.__dict__\nns['total'] = replacement\nprint(original.report([1, 2]))",
+        "args = (original, 'total', replacement)\nsetattr(*args)\nprint(original.report([1, 2]))",
+        "original.__setattr__('total', replacement)\nprint(original.report([1, 2]))",
+        "p = mock.patch\nwith p('original.total', replacement):\n    print(original.report([1, 2]))",
+        "p = setattr\np(original, 'total', replacement)\nprint(original.report([1, 2]))",
+        "mp = pytest.MonkeyPatch()\nmp.setattr(target=original, name='total', value=replacement)\nprint(original.report([1, 2]))\nmp.undo()",
+        "mp = pytest.MonkeyPatch()\nmp.delattr(target='original.total')\nprint(original.report([1, 2]))\nmp.undo()",
+    ],
+)
+def test_patch_forms_preserve_independent_callers(
+    tmp_path: Path, strict: bool, mutation: str
+) -> None:
+    """Review 2: patching an original must not change its former duplicate's behavior."""
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "pyproject.toml").write_text('[project]\nname="example"\nversion="0"\n')
+    (source / "original.py").write_text(REDIRECT_SOURCE)
+    (source / "client.py").write_text(
+        "import unittest.mock as mock, original, pytest\n"
+        "replacement = lambda order, log: log.append(0)\n" + mutation + "\n"
+    )
+    before = observe(source, "import client")
+    assert before == "amount=6\n"
+    output = tmp_path / "out"
+    dry(source, output, strict)
+    assert observe(output, "import client") == before

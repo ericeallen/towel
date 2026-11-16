@@ -172,6 +172,63 @@ def _namespace_mapping_write(node: ast.AST, name: str, *, provider: bool) -> boo
     )
 
 
+def _call_spelling(node: ast.expr, aliases: Mapping[str, str]) -> str:
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        return _call_spelling(node.value, aliases) + "." + node.attr
+    return ""
+
+
+def _mutation_reference(node: ast.expr, aliases: Mapping[str, str]) -> bool:
+    spelling = _call_spelling(node, aliases)
+    return "patch" in spelling.split(".") or spelling.rsplit(".", 1)[-1] in (
+        "setattr",
+        "delattr",
+        "__setattr__",
+        "__delattr__",
+    )
+
+
+def _patch_may_rebind(node: ast.Call, name: str, aliases: Mapping[str, str]) -> bool:
+    """Only a known, literal non-target attribute can discharge a mutation call.
+
+    Unknown overloads, splats and computed names are evidence against reuse.
+    Receiver identity is deliberately not inferred: module objects can escape.
+    """
+    spelling = _call_spelling(node.func, aliases)
+    called = spelling.rsplit(".", 1)[-1]
+    if not _mutation_reference(node.func, aliases):
+        return False
+    if any(isinstance(arg, ast.Starred) for arg in node.args) or any(
+        keyword.arg is None for keyword in node.keywords
+    ):
+        return True
+    keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+    if called == "multiple":
+        return name in keywords or not keywords
+    if called in ("dict", "__setattr__", "__delattr__"):
+        return True
+    if called == "patch":
+        attribute = node.args[0] if node.args else keywords.get("target")
+    elif called == "object":
+        attribute = node.args[1] if len(node.args) > 1 else keywords.get("attribute")
+    elif called in ("setattr", "delattr"):
+        # MonkeyPatch also accepts a dotted target in its first argument.
+        target = node.args[0] if node.args else keywords.get("target")
+        if isinstance(target, ast.Constant) and isinstance(target.value, str):
+            attribute = target
+        else:
+            attribute = node.args[1] if len(node.args) > 1 else keywords.get("name")
+    else:
+        return True
+    return not (
+        isinstance(attribute, ast.Constant)
+        and isinstance(attribute.value, str)
+        and attribute.value.rsplit(".", 1)[-1] != name
+    )
+
+
 def rebinding_reason(
     sources: Mapping[str, str | None],
     target_path: str,
@@ -204,6 +261,16 @@ def rebinding_reason(
             for alias in node.names
         }
         for node in ast.walk(tree):
+            # An escaped mutation primitive or namespace mapping can be used
+            # under any alias. Decline at the escape instead of guessing its uses.
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and (
+                node.value is not None
+                and (
+                    _namespace_mapping(node.value, provider=provider)
+                    or _mutation_reference(node.value, aliases)
+                )
+            ):
+                line = node.lineno
             if _namespace_mapping_write(node, name, provider=provider):
                 line = getattr(node, "lineno", 1)
             if (
@@ -214,29 +281,8 @@ def rebinding_reason(
                 line = node.lineno
             if not isinstance(node, ast.Call):
                 continue
-            called = (
-                aliases.get(node.func.id, node.func.id)
-                if isinstance(node.func, ast.Name)
-                else node.func.attr if isinstance(node.func, ast.Attribute) else ""
-            )
-            if called in ("setattr", "delattr") and len(node.args) >= 2:
-                attribute = node.args[1]
-                if not isinstance(attribute, ast.Constant) or attribute.value == name:
-                    line = node.lineno
-            # mock.patch, patch.object, patch.multiple, monkeypatch.setattr,
-            # imported aliases, and dotted-string monkeypatch overloads.
-            spelling = ast.unparse(node.func)
-            if (
-                called in ("patch", "object", "multiple", "setattr", "delattr")
-                or "patch" in spelling
-            ):
-                if any(
-                    isinstance(argument, ast.Constant)
-                    and isinstance(argument.value, str)
-                    and argument.value.rsplit(".", 1)[-1] == name
-                    for argument in node.args
-                ) or any(keyword.arg == name for keyword in node.keywords):
-                    line = node.lineno
+            if _patch_may_rebind(node, name, aliases):
+                line = node.lineno
         if line is not None:
             return f"Cannot redirect to {name}: {path}:{line} may rebind it."
     return None
