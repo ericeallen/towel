@@ -395,6 +395,27 @@ def _module_namespace_names(
 
 
 # How a refused host is reported, by what its import would change.
+def _dotted_name(path: Path) -> str:
+    """The module name a file's package directories give it: ``pkg/contacts.py`` is ``pkg.contacts``."""
+    parts = [path.stem] if path.stem != "__init__" else []
+    directory = path.parent
+    while (directory / "__init__.py").is_file():
+        parts.insert(0, directory.name)
+        directory = directory.parent
+    return ".".join(parts) or path.name
+
+
+def _import_change_subject(borrower: str, host: str, change: ImportChange) -> str:
+    """Which module would import which, and what that import would change, in words."""
+    if change is ImportChange.PACKAGE_BINDING and "." in host:
+        package, attribute = host.rsplit(".", 1)
+        return (
+            f"{borrower} does not import {host} at its top, and loading {host} there"
+            f" would replace the attribute {attribute} of package {package}"
+        )
+    return f"{borrower} would import {host}, and {change.value}"
+
+
 _IMPORT_CHANGE_REASONS = {
     ImportChange.UNKNOWN: RejectReason.IMPORT_TIME_EFFECTS,
     ImportChange.RUNS_CODE: RejectReason.IMPORT_TIME_EFFECTS,
@@ -1958,32 +1979,55 @@ class PairEvaluation(
                 for borrower in participating - {candidate}
             )
         ]
+
+        def name(path: str) -> str:
+            return program.module_name(Path(path)) or _dotted_name(Path(path))
+
         if not importable:
-            self._debug_reject(RejectReason.UNPROVEN_IMPORT, pair)
+            borrower = next(
+                other
+                for other in sorted(participating - {canonical_file})
+                if program.spelling(Path(other), Path(canonical_file)) is None
+            )
+            self._debug_reject(
+                RejectReason.UNPROVEN_IMPORT,
+                pair,
+                subject=f"no import of {name(canonical_file)} is known to work in {name(borrower)}",
+            )
             return None
         refusal: Optional[RejectReason] = None
+        subject: Optional[str] = None
         for candidate in importable:
             if would_create_import_cycle(candidate, participating, self.import_graph):
+                if subject is None:
+                    others = ", ".join(name(path) for path in sorted(participating - {candidate}))
+                    subject = (
+                        f"{name(candidate)} imports {others}, so importing it back closes a cycle"
+                    )
                 continue
             # The other modules would import the helper through the host's
             # stub, which a type checker reads in its place and lacks it.
             if host_has_stub(candidate, self.import_graph):
-                refusal = refusal or RejectReason.HOST_HAS_STUB
+                if refusal is None:
+                    refusal, subject = RejectReason.HOST_HAS_STUB, f"{name(candidate)} has a stub"
                 continue
             # The new import must not change what importing a borrower does: a
             # host that prints or registers at import time would do so wherever
             # the borrower is imported, one that needs an absent package or one
             # that does not ship with the borrower would stop its import.
             changes = [
-                change
+                (borrower, change)
                 for borrower in sorted(participating - {candidate})
                 if (change := import_change(candidate, borrower, self.import_graph)) is not None
             ]
             if changes:
-                refusal = refusal or _IMPORT_CHANGE_REASONS[changes[0]]
+                if refusal is None:
+                    borrower, change = changes[0]
+                    refusal = _IMPORT_CHANGE_REASONS[change]
+                    subject = _import_change_subject(name(borrower), name(candidate), change)
                 continue
             return candidate
-        self._debug_reject(refusal or RejectReason.IMPORT_CYCLE, pair)
+        self._debug_reject(refusal or RejectReason.IMPORT_CYCLE, pair, subject=subject)
         return None
 
     # -- 11 --------------------------------------------------------------------

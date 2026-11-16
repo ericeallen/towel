@@ -79,9 +79,11 @@ from towel.cli_reporting import (
     analysed_record,
     census_line,
     left_alone_count,
+    cross_module_lines,
     left_alone_lines,
     outcome_line,
     reason_lines,
+    shared_across_modules,
     render_preview,
     shows_pairs,
     run_outcome,
@@ -1624,7 +1626,8 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                 f" {UNTYPED_REMEDY}"
             )
         if not preview and not (options.json or options.diff):
-            for line in _left_alone_report(report, options, applied, relative):
+            shared = shared_across_modules(engine.change_log)
+            for line in _left_alone_report(report, options, applied, relative, shared=shared):
                 print(line)
         if options.stats:
             _print_statistics(report)
@@ -1803,9 +1806,19 @@ def _print_changed_files(
 
 
 def _left_alone_report(
-    report: "RunReport", options: DryOptions, applied: int, relative: Callable[[str], str]
+    report: "RunReport",
+    options: DryOptions,
+    applied: int,
+    relative: Callable[[str], str],
+    *,
+    shared: bool = False,
 ) -> List[str]:
-    """Why code was left alone, then where: the largest places, or with --explain all of them."""
+    """Why code was left alone, then where: the largest places, or with --explain all of them.
+
+    With ``--cross-module``, when no helper is called from two modules
+    (``shared`` is false), one message closes it: what each pair of modules
+    lacked, and the one remedy (``cross_module_lines``).
+    """
     pairs = shows_pairs(applied, options.explain)
     problem = report.first_unverifiable_reason
     if problem:
@@ -1813,8 +1826,10 @@ def _left_alone_report(
         target = Path(options.input).resolve()
         root = target if target.is_dir() else target.parent
         problem = problem.removeprefix(str(root) + os.sep)
-    return reason_lines(report, pairs=pairs, first_unverifiable=problem) + left_alone_lines(
-        report, relative, every=options.explain, pairs=pairs
+    return (
+        reason_lines(report, pairs=pairs, first_unverifiable=problem)
+        + left_alone_lines(report, relative, every=options.explain, pairs=pairs)
+        + (cross_module_lines(report, relative) if options.cross_module and not shared else [])
     )
 
 
@@ -2244,7 +2259,13 @@ def _print_complete_preview(
                 else source_diff(Path(options.input), Path(options.output), options.exclude)
             ),
             _preview_inventory(engine, options) if options.inventory else None,
-            _left_alone_report(report, options, applied, relative),
+            _left_alone_report(
+                report,
+                options,
+                applied,
+                relative,
+                shared=shared_across_modules(engine.change_log),
+            ),
         ),
         end="",
     )
