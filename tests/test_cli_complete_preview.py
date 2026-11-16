@@ -205,8 +205,9 @@ def test_preview_shows_final_helper_definitions_and_dry_inventory(
     assert compatible.stdout == result.stdout and compatible.status == 0
 
 
+@pytest.mark.parametrize("strict", [False, True])
 def test_complete_preview_keeps_cross_module_followups_and_exclusions(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, strict: bool
 ) -> None:
     """Re-analysis after rewriting the shared host must still find its other extraction."""
     root = tmp_path / "project"
@@ -216,6 +217,7 @@ def test_complete_preview_keeps_cross_module_followups_and_exclusions(
     (root / "vendor" / "ignored.py").write_text("this is intentionally invalid Python!!!\n")
     completed = _capture_preview(monkeypatch)
     flags = [
+        "--strict" if strict else "--no-strict",
         "--no-types",
         "--no-format",
         "--cross-module",
@@ -237,7 +239,12 @@ def test_complete_preview_keeps_cross_module_followups_and_exclusions(
     assert dry.status == 0, dry
     written = _contents(output)
     assert written.pop("vendor/ignored.py") == b"this is intentionally invalid Python!!!\n"
-    assert written == completed[0][1]
+    previewed = dict(completed[0][1])
+    if strict:
+        # Strict retains excluded source in the whole-program stage; relaxed
+        # mode omits the invalid fixture. Both produce the same selected changes.
+        assert previewed.pop("vendor/ignored.py") == b"this is intentionally invalid Python!!!\n"
+    assert written == previewed
 
 
 def test_quick_is_explicitly_partial_and_does_not_run_checkers_or_formatters(

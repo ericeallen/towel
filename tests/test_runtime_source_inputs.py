@@ -147,7 +147,7 @@ def test_strict_unreadable_directory_remedy_works(tmp_path: Path, mode: int) -> 
 
 @pytest.mark.parametrize("command", ["preview", "dry", "quick"])
 def test_cli_aliases_do_not_duplicate_unreadable_inputs(tmp_path: Path, command: str) -> None:
-    """R6/R9: original, alias and stage paths identify the same unavailable input."""
+    """R6/R9: relaxed original, alias and stage paths identify one unavailable input."""
     import json
     from tests.test_cli_integration import LITERAL_DUPLICATES, invoke
 
@@ -165,7 +165,7 @@ def test_cli_aliases_do_not_duplicate_unreadable_inputs(tmp_path: Path, command:
     try:
         arguments = ["preview" if command == "quick" else command, str(alias)]
         arguments.extend(["--quick"] if command == "quick" else ["--json"])
-        arguments.extend(["--no-types", "--no-format"])
+        arguments.extend(["--no-types", "--no-format", "--no-strict"])
         if command == "dry":
             arguments.extend([str(tmp_path / "out"), "--no-interactive"])
         result = invoke(arguments)

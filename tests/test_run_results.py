@@ -139,23 +139,27 @@ def test_an_applied_run_counts_and_lists_what_it_changes(tmp_path: Path) -> None
     assert "left alone" not in preview.stdout
 
 
+@pytest.mark.parametrize("strict", [False, True])
 def test_the_census_counts_what_was_read_and_skips_an_undecodable_file_once(
     tmp_path: Path,
+    strict: bool,
 ) -> None:
     """Item 1, and robustness R6: a UTF-16 file beside a module is named once, with why."""
+    flags = [*FLAGS, "--strict" if strict else "--no-strict"]
     project = tmp_path / "project"
     project.mkdir()
     (project / "example.py").write_text(DUPLICATES)
     (project / "wide.py").write_bytes(UTF16_MODULE)
-    result = invoke(["dry", str(project), str(tmp_path / "out"), "--no-interactive", *FLAGS])
+    result = invoke(["dry", str(project), str(tmp_path / "out"), "--no-interactive", *flags])
     assert result.status == 0, result
     assert "Analysed 1 Python file (2 functions). Skipped 1 file it could not read or parse." in (
         result.stdout
     )
     assert result.stderr.count("wide.py") == 1
-    # Preflight now diagnoses the original, before its private copy is analysed.
-    assert re.search(r"Skipping \S*wide\.py: it cannot be decoded:", result.stderr)
-    document = json.loads(invoke(["preview", str(project), "--json", *FLAGS]).stdout)
+    # Relaxed preflight diagnoses decoding; strict keeps the historical analysis warning.
+    reason = "it is not UTF-8 text" if strict else "it cannot be decoded:"
+    assert re.search(r"Skipping \S*wide\.py: " + re.escape(reason), result.stderr)
+    document = json.loads(invoke(["preview", str(project), "--json", *flags]).stdout)
     assert document["analysed"]["files"] == 1
     assert document["analysed"]["functions"] == 2
     assert [entry["path"] for entry in document["analysed"]["skipped"]] == ["wide.py"]
