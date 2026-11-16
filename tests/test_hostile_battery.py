@@ -424,8 +424,6 @@ HISTORICAL_EXTRACTIONS = {
 # renamed locals, and D4 recovers closed callbacks in r156. Their runtime, scope and public-name checks remain intact.
 OWNERSHIP_REFUSALS: Dict[str, str] = {
     "h04_closure_freevar": "owned bindings straddle a partial or uncertified whole-body frame boundary",
-    "h39_augassign_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
-    "h52_del_after_block": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "h61_str_method_param": "retained local is not definitely bound on every block exit",
     "r103_lambda_parameter_spelling": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "r107_unbound_global_argument": "owned bindings straddle a partial or uncertified whole-body frame boundary",
@@ -537,6 +535,14 @@ TRANSFORMED = (
     # Gemini review of 2026-10-31: the statement after a semicolon on the
     # block's last line reads c, so the helper returns it.
     "rgm_orphan_semicolon_after_block_in_same_named_methods",
+    # Twins that differ in an expression over their loop variable
+    # (``total += i`` against ``total += i * 2``) pass it as a function of
+    # that variable since 2.0, so their whole bodies unify and move under a
+    # certified handoff. Through 1.949 only partial blocks of them unified:
+    # h39 and h52 were ownership refusals, and these three found nothing.
+    "h51_semicolons",
+    "h53_nested_func_reads_retvar",
+    "r79_list_display_in_loop",
 }
 
 # Reviewed Python 3.14/3.15 refusal profile: these fixtures previously used

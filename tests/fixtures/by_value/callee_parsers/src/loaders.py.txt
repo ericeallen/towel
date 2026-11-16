@@ -1,0 +1,47 @@
+"""Loading of the comma-separated seed files."""
+
+
+def parse_user(line):
+    name, email = line.split(",")
+    if "@" not in email:
+        raise ValueError(f"bad email {email.strip()!r}")
+    return {"name": name.strip(), "email": email.strip().lower()}
+
+
+def parse_product(line):
+    sku, price = line.split(",")
+    return {"sku": sku.strip().upper(), "price": float(price)}
+
+
+def load_users(path):
+    records = []
+    errors = []
+    with open(path, encoding="utf-8") as handle:
+        for lineno, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            try:
+                records.append(parse_user(line))
+            except ValueError as exc:
+                errors.append(f"{path}:{lineno}: {exc}")
+    if errors and not records:
+        raise SystemExit(f"{path}: no usable records")
+    return records, errors
+
+
+def load_products(path):
+    records = []
+    errors = []
+    with open(path, encoding="utf-8") as handle:
+        for lineno, line in enumerate(handle, start=1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            try:
+                records.append(parse_product(line))
+            except ValueError as exc:
+                errors.append(f"{path}:{lineno}: {exc}")
+    if errors and not records:
+        raise SystemExit(f"{path}: no usable records")
+    return records, errors

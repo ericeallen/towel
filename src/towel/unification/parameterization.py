@@ -37,7 +37,7 @@ from .substitution import Substitution, structural_text
 from .constant_consistency import constant_identity
 from .binding_context import bound_variables_in_block
 from .static_positions import is_statically_read
-from .statement_facts import loaded_names
+from .statement_facts import bindings_of, loaded_names
 from .statement_facts import memoized_per_node
 from .unifier_state import UnifierState
 from .bounded_cache import memoizing
@@ -168,11 +168,15 @@ class Parameterization(UnifierState):
             return False
         common_bound_vars = self._common_bound_variables(exprs, block_indices)
         if common_bound_vars:
-            # A thunk can only close over names the call site can pass: the
-            # block's free variables, not a comprehension's own targets.
+            # The expression reads names its block binds, so it is passed as
+            # a function of them: ``lambda item: item.weight_kg``, which the
+            # helper calls where the block evaluated it. That is complete
+            # only if the function takes every such name; one the block
+            # binds later (and the finder has not met) would be read from
+            # the caller's frame instead.
             if not all(
                 set(common_bound_vars) <= self._block_free_variables(idx) for idx in block_indices
-            ):
+            ) and not self._takes_every_bound_name(exprs, block_indices, common_bound_vars):
                 return False
         else:
             # A bare name passed as an argument must exist at the call site.
@@ -238,6 +242,31 @@ class Parameterization(UnifierState):
         if bound_per_expr and len({tuple(bound) for bound in bound_per_expr}) == 1:
             return bound_per_expr[0] or None
         return None
+
+    def _takes_every_bound_name(
+        self, exprs: Sequence[ast.AST], block_indices: Sequence[int], taken: Sequence[str]
+    ) -> bool:
+        """Whether ``taken`` holds every name its block binds that each expression reads.
+
+        A loop target, a ``with`` or ``except`` name, or a local the block
+        assigns does not exist at the call site; an expression reading one
+        can be passed only as a function of it. Names bound in a nested
+        scope of the block count too, whichever scope the expression stands
+        in: that over-approximates, and only declines.
+        """
+        if self.current_blocks is None:
+            return False
+        for idx, expr in zip(block_indices, exprs):
+            if idx >= len(self.current_blocks):
+                return False
+            bound = {
+                name
+                for statement in self.current_blocks[idx]
+                for name in bindings_of(statement, into_nested_scopes=True)
+            }
+            if (bound & loaded_names(expr)) - set(taken):
+                return False
+        return True
 
     def _block_free_variables(self, idx: int) -> Set[str]:
         """Names its call site supplies, copied from facts owned by this unification.

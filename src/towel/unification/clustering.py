@@ -71,7 +71,7 @@ from .statement_facts import bindings_of, statement_shape
 from .substitution import Substitution
 from .semantic_safety import (
     captured_comprehension_changes_enclosing_cell,
-    available_argument_names,
+    call_site_names,
     builtins_passed,
     builtin_mapping_reads,
     free_variable_positions,
@@ -92,7 +92,7 @@ from .semantic_safety import (
 from .splicing import BlockColumns
 from .thunk_inlining import inline_leading_thunks, reorder_eligible_thunk_parameters
 from .typing_forms import ModuleText
-from .visitors import body_without_docstring
+from .visitors import FreeNameCollector, body_without_docstring
 
 from .builtins import CALL_ARGUMENT_BUILTINS
 from .engine_state import BlockSite, ClusteredSite, ClusterScanKey, TemplateKey
@@ -198,9 +198,16 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             return None
         available = (
             template.available_names,
-            available_argument_names(candidate.function, candidate.nodes, candidate.analyzer),
+            call_site_names(
+                candidate.function,
+                candidate.nodes,
+                candidate.analyzer,
+                stable_modules=not self.strict,
+            ),
         )
-        defer_impure_parameters(subst2, pair.block1_nodes, available)
+        defer_impure_parameters(
+            subst2, pair.block1_nodes, available, callees_by_value=not self.strict
+        )
         # Unifying another occurrence may require a different,
         # more general helper. Its parameter numbers alone do
         # not identify the meanings of the existing helper's
@@ -227,10 +234,17 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 error,
             )
             return None
-        candidate_order = reorder_eligible_thunk_parameters(
-            candidate_helper, subst2, candidate_order, any_result=not self.strict
+        policy = self._value_policy(
+            (
+                (pair.function1_node, pair.block1_nodes, pair.scope_analyzer1, available[0]),
+                (candidate.function, candidate.nodes, candidate.analyzer, available[1]),
+            ),
+            cluster_renames,
         )
-        inline_leading_thunks(candidate_helper, subst2, candidate_order, any_result=not self.strict)
+        candidate_order = reorder_eligible_thunk_parameters(
+            candidate_helper, subst2, candidate_order, policy
+        )
+        inline_leading_thunks(candidate_helper, subst2, candidate_order, policy)
         if (
             candidate_order != template.param_order
             or canonical_dump(candidate_helper) != template.func_def_dump
@@ -318,8 +332,11 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             for index, argument in enumerate(node.args)
             if index in free_positions and isinstance(argument, ast.Name)
         }
-        if module_resolved_names(
-            candidate.function, candidate.analyzer, eager_free_names, exact=True
+        if self._rebindable_module_names(
+            module_resolved_names(
+                candidate.function, candidate.analyzer, eager_free_names, exact=True
+            ),
+            candidate.analyzer,
         ):
             return None
         if builtins_passed(
@@ -339,7 +356,10 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
         ):
             return None
         # Validate candidate call-site does not reference undefined names
-        used2 = self._used_names(call_node2)
+        # A lambda the call passes reads its own parameters, not the site's names.
+        reader = FreeNameCollector()
+        reader.visit(call_node2)
+        used2 = reader.used
         if any(n.startswith("__param_") for n in used2):
             # Skip brittle candidate that leaked placeholders
             return None

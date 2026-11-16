@@ -1,0 +1,29 @@
+"""Lookups against the account service, tolerant of its outages."""
+
+import logging
+
+logger = logging.getLogger("profile_service")
+
+
+def fetch_profile(client, user_id):
+    try:
+        response = client.get_profile(user_id)
+    except TimeoutError:
+        logger.warning("profile lookup timed out for %s", user_id)
+        return None
+    except ConnectionError as exc:
+        logger.error("profile lookup failed for %s: %s", user_id, exc)
+        return None
+    return response["data"]
+
+
+def fetch_preferences(client, user_id):
+    try:
+        response = client.get_preferences(user_id)
+    except TimeoutError:
+        logger.warning("preferences lookup timed out for %s", user_id)
+        return None
+    except ConnectionError as exc:
+        logger.error("preferences lookup failed for %s: %s", user_id, exc)
+        return None
+    return response["data"]
