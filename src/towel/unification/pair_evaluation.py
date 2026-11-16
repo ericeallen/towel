@@ -1299,8 +1299,12 @@ class PairEvaluation(
                 self._debug_reject(RejectReason.CONDITIONALLY_BOUND_RETURN, pair, str(not_definite))
                 return None
         # A free variable bound after the block would be read before it is defined.
-        if free_vars1 & analysis.snapshot1.bound_after_block:
-            incomplete_vars = free_vars1 & analysis.snapshot1.bound_after_block
+        # A comprehension's variable read by an expression inside it is the
+        # comprehension's own, whatever its function binds later by that name.
+        late1 = analysis.snapshot1.bound_after_block - comprehension_locals(pair.block1_nodes)
+        late2 = analysis.snapshot2.bound_after_block - comprehension_locals(pair.block2_nodes)
+        if free_vars1 & late1:
+            incomplete_vars = free_vars1 & late1
             if debug_enabled:
                 VALIDATION.debug(
                     f"  REJECTED: Block1 uses variables defined AFTER the block: {incomplete_vars}"
@@ -1308,8 +1312,8 @@ class PairEvaluation(
                 VALIDATION.debug("    These variables would be used before they're defined")
             self._debug_reject(RejectReason.INCOMPLETE_LIFETIME_BLOCK1, pair, str(incomplete_vars))
             return None
-        if free_vars2 & analysis.snapshot2.bound_after_block:
-            incomplete_vars = free_vars2 & analysis.snapshot2.bound_after_block
+        if free_vars2 & late2:
+            incomplete_vars = free_vars2 & late2
             if debug_enabled:
                 VALIDATION.debug(
                     f"  REJECTED: Block2 uses variables defined AFTER the block: {incomplete_vars}"

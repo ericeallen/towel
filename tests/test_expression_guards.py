@@ -1076,3 +1076,46 @@ def test_a_name_that_may_be_unassigned_is_not_read_ahead_of_a_subscript(
         tmp_path, textwrap.dedent(UNASSIGNED_AFTER_A_SUBSCRIPT[name]), strict=strict
     )
     assert same, generated
+
+
+SHADOWED_LATER = """
+def first(items, low):
+    found = [
+        x * 2 + low
+        for x in items
+        if x > low
+        and x % 2 == 0
+        and x != 42
+    ]
+    x = 0
+    return found, x
+
+
+def second(items, low):
+    return [
+        x * 2 + low
+        for x in items
+        if x > low
+        and x % 2 == 0
+        and x != 42
+    ]
+
+
+print(first([1, 2, 4, 42], 1), second([0, 2, 6], 1))
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_a_comprehensions_variable_is_not_the_local_its_function_binds_later(
+    tmp_path: Path, strict: bool
+) -> None:
+    """Review of the ``expressions`` lane, second suspicion: a needless refusal.
+
+    ``x`` in the comprehension is the comprehension's own variable, bound
+    where the condition reads it; ``x = 0`` after the comprehension binds
+    the function's. The pair was declined as reading a variable assigned
+    only later in its function (``incomplete_lifetime_block1``).
+    """
+    generated, same, declined = outcome(tmp_path, SHADOWED_LATER, strict=strict)
+    assert str(RejectReason.INCOMPLETE_LIFETIME_BLOCK1) not in declined, declined
+    assert "__extracted_func_0(" in generated and same
