@@ -123,3 +123,96 @@ def test_the_remedy_works(tmp_path: Path) -> None:
     assert len(_helpers(generated)) == 1
     driver = source.parent / "driver.py"
     assert run_script(driver, str(output)) == run_script(driver, str(source))
+
+
+# -- A module both modules import alike ------------------------------------------
+
+WORDS = """
+
+def {name}(rows, text):
+    words = re.split(r"\\s+", text.strip())
+    joined = "-".join(words)
+    found = re.findall(r"[a-z]+", joined)
+    return found + rows
+"""
+
+FAKE_RE = """
+def split(pattern, text):
+    return ["fake"]
+
+
+def findall(pattern, text):
+    return ["fake", text]
+"""
+
+
+def _two_modules(
+    tmp_path: Path, first_prelude: str, second_prelude: str, body: str = WORDS, **extra: str
+) -> Path:
+    root = tmp_path / "src"
+    _write(
+        root,
+        {
+            "pkg/__init__.py": "",
+            "pkg/fake_re.py": FAKE_RE,
+            "pkg/first.py": first_prelude + body.format(name="first"),
+            "pkg/second.py": "import pkg.first\n"
+            + second_prelude
+            + body.format(name="second")
+            + extra.get("second_extra", ""),
+        },
+    )
+    _write(
+        tmp_path,
+        {
+            "driver.py": "import sys\nsys.path.insert(0, sys.argv[1])\n"
+            "from pkg import first, second\n"
+            "print(first.first(['x'], ' a b  c '), second.second(['y'], 'one two'))\n"
+        },
+    )
+    return root
+
+
+def _parameters(helper: ast.FunctionDef) -> List[str]:
+    return [argument.arg for argument in helper.args.posonlyargs + helper.args.args]
+
+
+def _same(tmp_path: Path, source: Path) -> bool:
+    driver = tmp_path / "driver.py"
+    return run_script(driver, str(tmp_path / "out")) == run_script(driver, str(source))
+
+
+def test_a_module_both_import_alike_is_read_bare(tmp_path: Path) -> None:
+    source = _two_modules(tmp_path, "import re\n", "import re\n")
+    _, generated = _dry(source, tmp_path / "out")
+    (helper,) = _helpers(generated)
+    assert "re" not in _parameters(helper)
+    assert "re.split(" in ast.unparse(helper)
+    assert _same(tmp_path, source)
+
+
+def test_strict_mode_still_passes_a_module_it_reads(tmp_path: Path) -> None:
+    source = _two_modules(tmp_path, "import re\n", "import re\n")
+    _, generated = _dry(source, tmp_path / "out", "--strict")
+    for helper in _helpers(generated):
+        assert "re.split(" not in ast.unparse(helper)
+    assert _same(tmp_path, source)
+
+
+@pytest.mark.parametrize(
+    "second_prelude",
+    [
+        "import pkg.fake_re as re\n",  # another module under the same name
+        "re = __import__('re')\n",  # module data, not an import
+        "from pkg import fake_re as re\n",  # an attribute read once, not an import
+    ],
+    ids=["other_module", "assigned", "from_import"],
+)
+def test_a_module_name_bound_otherwise_in_one_module_is_still_passed(
+    tmp_path: Path, second_prelude: str
+) -> None:
+    source = _two_modules(tmp_path, "import re\n", second_prelude)
+    _, generated = _dry(source, tmp_path / "out")
+    for helper in _helpers(generated):
+        assert "re.split(" not in ast.unparse(helper) or "re" in _parameters(helper)
+    assert _same(tmp_path, source)

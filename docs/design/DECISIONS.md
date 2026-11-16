@@ -2304,3 +2304,26 @@ boundary, a timeout and a task group entered outside the block, the running
 task's identity, an awaiting body strict mode leaves alone, duplicates straddling an
 `async with`, an awaiting difference, and an async generator's early
 `return`).*
+
+## 2026-11-16: Relaxed mode reads a module both modules import alike
+
+With `--cross-module`, a helper in one module replaces code in another, and a
+name the code read in its own module is read in the host's. Through 1.949 every
+such module name became a parameter (a `lambda: re` in strict mode, `re` itself
+in relaxed mode since [Relaxed mode passes arguments by value](#2026-11-14-relaxed-mode-passes-arguments-by-value)).
+A function copied character for character into two modules that each begin
+`import re` came out as `helper(…, re)`, which no reviewer would merge.
+
+In relaxed mode a name that every participating module binds only by one and
+the same absolute import (`import re` in each, or `import os.path as osp` in
+each) is read bare in the helper; the host already holds the import. Each
+module's `re` is then the object `sys.modules` holds under that name, so the
+two lookups give the same module. This rests on the third assumption of
+[Relaxed mode is the default; strict mode keeps exact lifetimes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes),
+taken for module names bound by an import: the module's own code never rebinds
+the name (checked as `stable_module_names` checks it), and nothing outside it
+does either. A program that patches one module's import (`mock.patch("pkg.b.re")`)
+while the other keeps the real one needs `--strict`, which passes the lookup
+to the helper as before.
+
+*Status: implemented for 2.0, with `tests/test_cross_module_plain_case.py`.*

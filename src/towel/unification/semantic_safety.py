@@ -1239,6 +1239,43 @@ def stable_module_names(module: ast.Module) -> FrozenSet[str]:
     return frozenset(_stable_bindings(module))
 
 
+def modules_imported_alike(modules: Sequence[ast.Module]) -> FrozenSet[str]:
+    """The names every module binds only by one and the same ``import``, and never otherwise.
+
+    ``import re`` in each module, or ``import os.path as osp`` in each: the
+    name is then the object ``sys.modules`` holds under one module name in
+    all of them. Each module must also agree with relaxed mode's assumption
+    of stable module names (``stable_module_names``): nothing in it rebinds,
+    deletes or declares ``global`` the name. ``from`` imports do not count;
+    what they bind is an attribute read once, not a module.
+    """
+    common: Optional[Dict[str, str]] = None
+    for module in modules:
+        targets: Dict[str, Set[str]] = {}
+        others: Set[str] = set()
+        for item in walk_own_scope(module):
+            if isinstance(item, ast.Import):
+                for alias in item.names:
+                    bound = alias.asname or alias.name.split(".", 1)[0]
+                    targets.setdefault(bound, set()).add(alias.name)
+            elif isinstance(item, ast.ImportFrom):
+                others.update(import_binding_names(item))
+            elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                others.add(item.name)
+        stable = stable_module_names(module)
+        alike = {
+            name: next(iter(found))
+            for name, found in targets.items()
+            if len(found) == 1 and name in stable and name not in others
+        }
+        common = (
+            alike
+            if common is None
+            else {name: target for name, target in common.items() if alike.get(name) == target}
+        )
+    return frozenset(common or ())
+
+
 def _stable_bindings(module: ast.Module) -> Mapping[str, int]:
     """Each stable module name with the index of the top-level statement that first binds it."""
     bindings: Mapping[str, int] = memoized_per_node(

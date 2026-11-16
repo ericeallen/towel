@@ -138,6 +138,7 @@ from .semantic_safety import (
     nested_scopes_cross_block_boundary,
     block_requires_original_frame,
     holds_yield,
+    modules_imported_alike,
     frame_read_outside_block,
     needs_class_body,
     unbinds_external_name,
@@ -710,6 +711,10 @@ class PairEvaluation(
             self._debug_reject(RejectReason.BARE_NAME_DIFFERS_BY_MODULE, pair)
             return None
         differing, builtin_reads = reads
+        if differing and not self.strict:
+            # Relaxed mode: a module every participating module imports alike
+            # is the same object in each, and the host holds the import.
+            differing = differing - self._modules_imported_alike(placement, functions)
         if builtin_reads and not self.parameterize_builtins:
             self._debug_reject(
                 RejectReason.BUILTIN_MAY_DIFFER_BY_MODULE,
@@ -721,6 +726,22 @@ class PairEvaluation(
         # builtin spelling. Preserve each lookup at its caller; absence of a
         # write in the project's source cannot establish equal namespaces.
         return _Placed(unified, rendered, placement, differing | builtin_reads)
+
+    @staticmethod
+    def _modules_imported_alike(placement: _Placement, functions: FunctionIndex) -> FrozenSet[str]:
+        """The names every participating module binds by one and the same ``import``."""
+        host = placement.home.file_path
+        paths = sorted(
+            {host} | {replacement.file_path or host for replacement in placement.replacements}
+        )
+        modules = []
+        for path in paths:
+            artifacts = functions.in_file(path)
+            tree = artifacts[0].scope_analyzer.analyzed_tree if artifacts else None
+            if not isinstance(tree, ast.Module):
+                return frozenset()
+            modules.append(tree)
+        return modules_imported_alike(modules)
 
     @staticmethod
     def _host_namespace_reads(
@@ -1468,14 +1489,23 @@ class PairEvaluation(
         and the helper reads it where the block did, as late and as
         conditionally. Passing it instead would snapshot module data at the
         call. Across files the other module's same-named binding may differ,
-        so the name stays a parameter there.
+        so the name stays a parameter there, except in relaxed mode a module
+        both modules bind by one and the same ``import`` (``modules_imported_alike``).
         """
-        if pair.is_cross_file or not free_vars:
+        if not free_vars or (pair.is_cross_file and self.strict):
             return frozenset()
         # A shared free name is spelled the same at both sites: hygienic
         # renaming touches only the names a block binds.
         kept = module_resolved_names(ctx.func1, ctx.scope_analyzer, free_vars)
-        return module_resolved_names(ctx.func2, ctx.scope_analyzer2, kept)
+        kept = module_resolved_names(ctx.func2, ctx.scope_analyzer2, kept)
+        if not pair.is_cross_file:
+            return kept
+        modules = [
+            tree
+            for tree in (ctx.scope_analyzer.analyzed_tree, ctx.scope_analyzer2.analyzed_tree)
+            if isinstance(tree, ast.Module)
+        ]
+        return kept & modules_imported_alike(modules) if len(modules) == 2 else frozenset()
 
     # -- 7 ---------------------------------------------------------------------
 
