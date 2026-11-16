@@ -423,9 +423,10 @@ def test_reflection_does_not_request_builtin_parameterization(
         assert "lifetime_order_uncertified" in declined
         assert _python_files(project) == original
         return
-    # Relaxed mode shares the ``print`` line and leaves ``len``, which the
-    # module or its tests write, where it was; strict mode shares nothing.
-    assert bool(applied) is flag or _len_left_to_callers(project)
+    # In both modes the module or its tests write ``len``, so no helper reads
+    # it bare: without the flag nothing is shared, with it ``len`` is passed.
+    assert bool(applied) is flag
+    assert _len_left_to_callers(project)
     assert all("len" not in parameters for parameters in _parameters(project))
     if flag:
         assert "builtin_may_differ_by_module" not in declined
