@@ -372,3 +372,35 @@ def test_unanchored_library_selection_has_no_implicit_complete_scope(tmp_path: P
     assert not complete and set(sources) == {str(selected)}
     _, program = rebinding_scope([str(selected)], declared_complete=False, program_root=tmp_path)
     assert str(unrelated) in program
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("kind", ["script", "symlink_file", "symlink_directory"])
+def test_nonstandard_consumers_cannot_hide_rebindings(
+    tmp_path: Path, strict: bool, kind: str
+) -> None:
+    """Shape review: read-only consumers include scripts and cannot silently omit links."""
+    source = tmp_path / "project"
+    source.mkdir()
+    (source / "pyproject.toml").write_text('[project]\nname="example"\nversion="0"\n')
+    (source / "mod.py").write_text(REDIRECT_SOURCE)
+    consumer = "#!/usr/bin/env python3\nimport mod\nmod.total = lambda o, l: l.append(0)\nprint(mod.report([1, 2]))\n"
+    if kind == "script":
+        script = source / "bin" / "cli"
+        script.parent.mkdir()
+        script.write_text(consumer)
+    else:
+        external = tmp_path / "external"
+        external.mkdir()
+        (external / "client.py").write_text(consumer)
+        if kind == "symlink_file":
+            script = source / "client.py"
+            script.symlink_to(external / "client.py")
+        else:
+            (source / "scripts").symlink_to(external, target_is_directory=True)
+            script = source / "scripts" / "client.py"
+    driver = f"import runpy; runpy.run_path({str(script)!r})"
+    before = observe(source, driver)
+    output = tmp_path / "out" / "mod.py"
+    dry(source / "mod.py", output, strict)
+    assert observe(output.parent, driver) == before == "amount=6\n"

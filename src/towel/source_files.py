@@ -62,10 +62,42 @@ def _is_python_source(path: Path) -> bool:
     )
 
 
+def _is_source_consumer(path: Path) -> bool:
+    """Read-only analysis also sees scripts and unresolved source links.
+
+    Links are returned as uncertainty, never followed. Their caller must
+    decline a proof that depends on having inspected them.
+    """
+    if is_probe_file(path):
+        return False
+    if not path.is_symlink() and not path.is_file():
+        return False
+    if path.suffix in (".py", ".pyw"):
+        return True
+    if path.suffix:
+        return False
+    if path.is_symlink():
+        return True
+    try:
+        with path.open("rb") as stream:
+            header = stream.readline(256)
+    except OSError:
+        return True
+    return header.startswith(b"#!") and b"python" in header.lower()
+
+
 def python_sources(
-    directory: Path, *, recursive: bool = True, excluded: Iterable[str] = ()
+    directory: Path,
+    *,
+    recursive: bool = True,
+    excluded: Iterable[str] = (),
+    include_consumers: bool = False,
 ) -> list[Path]:
     """Sorted regular sources, excluding symlinks, tool directories and environments.
+
+    ``include_consumers`` is for read-only proofs: also return Python shebang
+    scripts, .pyw files and unresolved source links (including directory links).
+    Those links must be treated as unknown consumers, never followed or edited.
 
     Hidden directories and ``TOOL_DIRECTORIES`` are skipped by name, an
     environment by what it holds (:func:`is_environment`), whatever its name.
@@ -80,18 +112,28 @@ def python_sources(
     A missing explicit root has no sources; errors encountered within an
     existing root still fail the inventory.
     """
+    is_source = _is_source_consumer if include_consumers else _is_python_source
     try:
         directory.stat()
     except FileNotFoundError:
         return []
     if directory.is_file():
-        return [directory] if _is_python_source(directory) else []
+        return [directory] if is_source(directory) else []
     ignored = {*TOOL_DIRECTORIES, *excluded}
     found: list[Path] = []
     for parent, directories, filenames in os.walk(
         directory, followlinks=False, onerror=_raise_walk_error
     ):
         root = Path(parent)
+        if include_consumers and recursive:
+            found.extend(
+                root / name
+                for name in directories
+                if not name.startswith(".")
+                and name not in ignored
+                and (root / name).is_symlink()
+                and not is_environment(root / name)
+            )
         directories[:] = sorted(
             name
             for name in directories
@@ -103,6 +145,6 @@ def python_sources(
         )
         for name in filenames:
             path = root / name
-            if name not in ignored and _is_python_source(path):
+            if name not in ignored and is_source(path):
                 found.append(path)
     return sorted(found)

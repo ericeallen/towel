@@ -65,7 +65,11 @@ def rebinding_scope(
     sources: dict[str, str | None] = {}
     for root in sorted(scan_roots):
         try:
-            expanded.update(path.resolve() for path in python_sources(root, excluded=excluded))
+            for path in python_sources(root, excluded=excluded, include_consumers=True):
+                if path.is_symlink():
+                    sources[str(path)] = None
+                else:
+                    expanded.add(path.resolve())
         except OSError:
             # A read-only consumer scope is evidence for redirecting; failure
             # to inspect it must not turn an ordinary extraction into a failure.
