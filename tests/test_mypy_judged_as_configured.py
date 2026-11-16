@@ -54,6 +54,7 @@ from mypy.errors import CompileError  # noqa: E402
 from mypy.find_sources import create_source_list  # noqa: E402
 from mypy.modulefinder import BuildSource, SearchPaths, compute_search_paths  # noqa: E402
 from mypy import build as mypy_build  # noqa: E402
+from mypy.fscache import FileSystemCache
 from mypy.build import BuildResult, default_data_dir  # noqa: E402
 from mypy.options import Options  # noqa: E402
 
@@ -426,7 +427,9 @@ def test_a_complete_build_leaves_out_a_changed_file_the_project_does_not_follow(
     options = _options(tmp_path, "[tool.mypy]\n" + _override("tools.*", "skip"))
     built: list[list[str]] = []
 
-    def build(sources: Sequence[BuildSource], options: Options) -> BuildResult:
+    def build(
+        sources: Sequence[BuildSource], options: Options, *, fscache: FileSystemCache
+    ) -> BuildResult:
         built.append([source.module for source in sources])
         return BUILT
 
@@ -694,7 +697,9 @@ def test_a_build_refused_for_a_file_found_twice_is_retried_under_the_importers_n
 ) -> None:
     built: list[list[str]] = []
 
-    def build(sources: Sequence[BuildSource], options: Options) -> BuildResult:
+    def build(
+        sources: Sequence[BuildSource], options: Options, *, fscache: FileSystemCache
+    ) -> BuildResult:
         built.append([source.module for source in sources])
         if len(built) == 1:
             raise CompileError([FOUND_TWICE.format(path=tmp_path / "tools" / "gen" / "x.py")])
@@ -712,7 +717,9 @@ def test_a_build_refused_for_a_file_found_twice_is_retried_under_the_importers_n
 def test_a_refusal_no_rename_answers_is_raised_as_mypy_gave_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def build(sources: Sequence[BuildSource], options: Options) -> BuildResult:
+    def build(
+        sources: Sequence[BuildSource], options: Options, *, fscache: FileSystemCache
+    ) -> BuildResult:
         raise CompileError(["m.py:1: error: invalid syntax"])
 
     monkeypatch.setattr(mypy_build, "build", build)
