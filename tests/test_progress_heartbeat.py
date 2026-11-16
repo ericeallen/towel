@@ -144,7 +144,8 @@ def test_the_bar_says_which_proposal_is_being_weighed() -> None:
     finally:
         reporter.close()
     latest = bar.postfixes[-1]
-    assert latest["A"] == 2 and latest["Q"] == 7
+    assert latest["applied"] == 2 and latest["queued"] == 7
+    assert str(latest["rate"]).endswith("/s")
     assert "#9" in str(latest["on"]) and "first" in str(latest["on"])
 
 

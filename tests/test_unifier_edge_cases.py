@@ -13,9 +13,12 @@
 # limitations under the License.
 
 import ast
-from typing import List, cast
+from pathlib import Path
+from typing import Callable, List, cast
 
-from tests.test_helpers import parse_block
+import pytest
+
+from tests.test_helpers import parse_block, refactor_to_fixed_point_silently, write_module
 from towel.unification.unifier import Unifier
 from towel.unification.substitution import Substitution
 
@@ -62,13 +65,36 @@ def test_unify_tuple_literals():
     assert subst is not None
 
 
-def test_unify_lambda_expressions():
+def assert_lambda_keyword_behavior_preserved(tmp_path: Path, blocks: List[List[ast.stmt]]) -> None:
+    source = "\n".join(
+        f"def {name}():\n    {ast.unparse(block[0])}\n    return func\n"
+        for name, block in zip(("first", "second"), blocks)
+    )
+    final, applied = refactor_to_fixed_point_silently(write_module(tmp_path, source))
+    assert applied == 0, "different escaping lambda keyword signatures must remain separate"
+    for text in (source, final):
+        namespace: dict[str, object] = {}
+        exec(compile(text, "<lambda-keywords>", "exec"), namespace)
+        for name, keyword, other, expected in (
+            ("first", "x", "y", 6),
+            ("second", "y", "x", 9),
+        ):
+            factory = cast(Callable[[], Callable[..., int]], namespace[name])
+            callback = factory()
+            assert callback(**{keyword: 3}) == expected
+            with pytest.raises(TypeError, match="unexpected keyword argument"):
+                callback(**{other: 3})
+
+
+def test_unify_lambda_expressions(tmp_path: Path):
+    """Review ruling 4: retain the original distinct keyword signatures and decline."""
     code1 = "func = lambda x: x * 2"
-    code2 = "func = lambda x: x * 3"
+    code2 = "func = lambda y: y * 3"
     blocks = [parse_block(code1), parse_block(code2)]
     u = Unifier(max_parameters=5, parameterize_constants=True)
     subst = u.unify_blocks(blocks, [{}, {}])
-    assert subst is not None
+    assert subst is None
+    assert_lambda_keyword_behavior_preserved(tmp_path, blocks)
 
 
 def test_unify_assert_statements():

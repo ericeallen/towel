@@ -235,10 +235,11 @@ def test_an_edit_made_while_the_project_was_being_copied_is_kept(
     edited = "# edited while Towel copied it\n" + MODULE
     real_copy = filesystem._copy_entry
 
-    def copy_then_edit(source: Path, destination: Path) -> None:
-        real_copy(source, destination)
-        if source == files["a.py"]:
+    def copy_then_edit(source: Path, destination: Path) -> bool:
+        copied = real_copy(source, destination)
+        if copied and source == files["a.py"]:
             source.write_text(edited, encoding="utf-8")
+        return copied
 
     monkeypatch.setattr(filesystem, "_copy_entry", copy_then_edit)
     engine = UnificationRefactorEngine(

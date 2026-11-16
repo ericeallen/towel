@@ -111,7 +111,13 @@ from .models import (
 )
 from ..type_baseline import KnownErrors
 from ..type_inference import TypeOracle
-from ..source_files import python_sources
+from ..source_files import (
+    current_source_policy,
+    ignored_by_git,
+    python_sources,
+    source_policy,
+    warn_skipped,
+)
 from ..source_text import read_source
 from ..analysis_sources import (
     ParserConfiguration,
@@ -305,6 +311,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         promote_equal_hof_literals: bool = False,
         parameterize_builtins: bool = False,
         strict: bool = DEFAULT_STRICT,
+        include_ignored: bool = False,
         excluded_directories: Sequence[str] = (),
         cross_module_helpers: bool = False,
         skip_trivial_helpers: bool = True,
@@ -478,6 +485,8 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self.cross_module_helpers = cross_module_helpers
         self.parameterize_constants = parameterize_constants
         self.parameterize_builtins = parameterize_builtins
+        self.include_ignored = include_ignored
+        self._discovery_skipped: Tuple[SkippedFile, ...] = ()
         self.strict = strict
         self.unifier = Unifier(
             max_parameters=max_parameters,
@@ -694,7 +703,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         python_files = self._find_python_files(directory, recursive)
 
         if not python_files:
-            self._census = AnalysisCensus()
+            self._census = AnalysisCensus(skipped=self._input_skips())
             self._pair_rejections, self._pair_left_alone = {}, []
             self._pair_tally = PairTally()
             return []
@@ -715,12 +724,40 @@ class UnificationRefactorEngine(ParallelEvaluation):
         Returns:
             List of Python file paths
         """
-        return [
-            str(path)
-            for path in python_sources(
-                Path(directory), recursive=recursive, excluded=self.excluded_directories
+        skipped: List[SkippedFile] = []
+        with source_policy(strict=self.strict, include_ignored=self.include_ignored):
+            files = python_sources(
+                Path(directory),
+                recursive=recursive,
+                excluded=self.excluded_directories,
+                include_ignored=self.include_ignored,
+                skipped=lambda path, reason: skipped.append(SkippedFile(str(path), reason)),
             )
-        ]
+        if self._output_origin is not None and not self.include_ignored:
+            origin, stage = self._output_origin
+            originals = {path: origin / path.relative_to(stage) for path in files}
+            ignored = ignored_by_git(origin, originals.values())
+            skipped.extend(
+                SkippedFile(str(path), "Git ignores it (use --include-ignored to analyse it)")
+                for path, original in originals.items()
+                if original in ignored
+            )
+            files = [path for path in files if originals[path] not in ignored]
+        self._discovery_skipped = tuple(skipped)
+        return [str(path) for path in files]
+
+    def _input_skips(self) -> Tuple[SkippedFile, ...]:
+        """Include preflight omissions even when they never entered the stage."""
+        policy = current_source_policy()
+        reasons = {item.path: item.reason for item in self._discovery_skipped}
+        if policy is not None:
+            for path, reason in policy.skipped.items():
+                if self._output_origin is not None:
+                    origin, stage = self._output_origin
+                    if path.is_relative_to(origin):
+                        path = stage / path.relative_to(origin)
+                reasons[str(path)] = reason
+        return tuple(SkippedFile(path, reason) for path, reason in sorted(reasons.items()))
 
     def analyze_files(
         self,
@@ -740,6 +777,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
                 these files are considered (see ``incremental_global_passes``).
         """
         with (
+            source_policy(strict=self.strict, include_ignored=self.include_ignored),
             sharing_analysis_sources(check_ast_immutable=self._settings.check_ast_immutable),
             sharing_if_transfer_sources(),
             sharing_compiler_literal_facts(),
@@ -815,15 +853,30 @@ class UnificationRefactorEngine(ParallelEvaluation):
         def take_census(census: AnalysisCensus) -> None:
             # Each pass of a run reads the files again; a file it cannot read
             # is reported once a run, not once a pass.
+            policy = current_source_policy()
+
+            def input_identity(path: str) -> str:
+                return str(policy.original(Path(path))) if policy is not None else path
+
             for skipped in census.skipped:
-                if skipped.path not in self._skips_reported:
-                    self._skips_reported.add(skipped.path)
-                    LOG.warning("Skipping %s: %s", skipped.path, skipped.reason)
+                path = Path(skipped.path)
+                identity = input_identity(skipped.path)
+                if identity not in self._skips_reported:
+                    self._skips_reported.add(identity)
+                    warn_skipped(path, skipped.reason)
             self._census = dataclasses.replace(
                 census,
-                skipped=census.skipped
+                skipped=tuple(
+                    {
+                        input_identity(item.path): item
+                        for item in (*self._input_skips(), *census.skipped)
+                    }.values()
+                )
                 + tuple(SkippedFile(path, IMPORTS_A_MISSING_MODULE) for path in left_out),
             )
+            # Reading has finished even if the deadline interrupts pair evaluation.
+            if self._run_census is None:
+                self._run_census = self._census
 
         return run_pipeline(
             file_paths,

@@ -24,7 +24,7 @@ from __future__ import annotations
 import argparse
 import ast
 from contextlib import contextmanager, redirect_stdout
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from gettext import gettext
 import json
 import logging
@@ -57,6 +57,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
+    from towel.filesystem import StagedProject
     from towel.import_model import ImportModel, ImportProblem, MissingModule
     from towel.type_inference import TypeOracle
     from towel.unification.fixed_point import BeforePublication, RunReport
@@ -89,6 +90,7 @@ from towel.cli_reporting import (
     stopped_at_limit,
 )
 from towel.diagnostics import LOG, Settings, configure_stderr_logging
+from towel.relaxed_suitability import RelaxedFinding, findings_for_target, relaxed_notice
 from towel.config import ConfigurationError, apply_project_defaults
 from towel.program_files import is_exclusion_name, refuse_unparsed_program
 from towel.unification.exceptions import TowelError
@@ -306,6 +308,12 @@ def main() -> None:
 
 
 _SETTINGS: Optional[Settings] = None
+
+
+def _execution_settings(jobs: Optional[int]) -> Settings:
+    """An explicit CLI/config worker count wins over the environment."""
+    settings = _settings()
+    return settings if jobs is None else replace(settings, workers=jobs)
 
 
 def _settings() -> Settings:
@@ -649,6 +657,16 @@ the platform's ``time_t`` overflows; either once ended a run in a traceback
 """
 
 
+def _jobs(text: str) -> int:
+    try:
+        count = int(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("jobs must be a positive integer") from error
+    if count < 1:
+        raise argparse.ArgumentTypeError("jobs must be a positive integer")
+    return count
+
+
 def _seconds(text: str) -> float:
     """A finite positive wall-clock budget the interval timer can hold."""
     try:
@@ -682,6 +700,19 @@ def _add_shared_options(sections: _Sections) -> None:
     _add_report_flags(sections.output)
     _add_exclude_flag(sections.scope)
     _add_cross_module_flag(sections.scope)
+    sections.limits.add_argument(
+        "--jobs",
+        type=_jobs,
+        default=None,
+        metavar="N",
+        help="Use at most N pair workers (default: TOWEL_WORKERS, otherwise the smaller of "
+        "8, the core count and what fits in memory; 1 runs serially).",
+    )
+    sections.scope.add_argument(
+        "--include-ignored",
+        action="store_true",
+        help="Analyse files ignored by git (default: skip them; build directories stay excluded).",
+    )
     _add_limit_flags(sections.limits)
     _add_tool_flags(sections.advanced)
     _add_strict_flag(sections.advanced)
@@ -1306,6 +1337,8 @@ class DryOptions:
     strict: bool = DEFAULT_STRICT
     explain: bool = False
     quiet: bool = False
+    jobs: Optional[int] = None
+    include_ignored: bool = False
     config_path: Optional[str] = None
     helper_metadata: bool = True
 
@@ -1333,6 +1366,8 @@ class DryOptions:
             inventory=bool(getattr(args, "inventory", False)),
             explain=bool(getattr(args, "explain", False)),
             quiet=bool(getattr(args, "quiet", False)),
+            jobs=getattr(args, "jobs", None),
+            include_ignored=bool(getattr(args, "include_ignored", False)),
             config_path=getattr(args, "config_path", None),
             helper_metadata=bool(getattr(args, "helper_metadata", True)),
         )
@@ -1363,6 +1398,8 @@ class PreviewOptions:
     strict: bool = DEFAULT_STRICT
     explain: bool = False
     quiet: bool = False
+    jobs: Optional[int] = None
+    include_ignored: bool = False
     config_path: Optional[str] = None
 
     @classmethod
@@ -1389,6 +1426,8 @@ class PreviewOptions:
             inventory=bool(getattr(args, "inventory", False)),
             explain=bool(getattr(args, "explain", False)),
             quiet=bool(getattr(args, "quiet", False)),
+            jobs=getattr(args, "jobs", None),
+            include_ignored=bool(getattr(args, "include_ignored", False)),
             config_path=getattr(args, "config_path", None),
         )
 
@@ -1416,6 +1455,8 @@ class PreviewOptions:
             inventory=self.inventory,
             explain=self.explain,
             quiet=self.quiet,
+            jobs=self.jobs,
+            include_ignored=self.include_ignored,
             config_path=self.config_path,
         )
 
@@ -1467,6 +1508,13 @@ def _run_dry(args: argparse.Namespace) -> None:
 
 
 def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResult":
+    from towel.source_files import source_policy
+
+    with source_policy(strict=options.strict, include_ignored=options.include_ignored):
+        return _execute_dry_with_policy(options, preview=preview)
+
+
+def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "CommandResult":
     """Run the shared pipeline; only its presentation and destination differ for preview."""
     # Import here to avoid loading heavy modules if not needed
     from towel.unification.refactor_engine import UnificationRefactorEngine
@@ -1501,6 +1549,10 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                 "Output already exists; choose a new path"
                 " (to refactor in place, give the same path twice)"
             )
+    if source != destination and not preview:
+        from towel.filesystem import refuse_unusable_output
+
+        refuse_unusable_output(source, destination)
     refuse_unparsed_program(source, options.exclude)
     if options.cross_module and is_dir:
         _judge_import_problems(source, options.exclude)
@@ -1567,7 +1619,8 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
             parameterize_builtins=options.parameterize_builtins,
             strict=options.strict,
             max_candidate_pairs=options.max_pairs,
-            settings=_settings(),
+            settings=_execution_settings(options.jobs),
+            include_ignored=options.include_ignored,
             parameterize_constants=True,
             excluded_directories=options.exclude,
             cross_module_helpers=options.cross_module,
@@ -1582,6 +1635,18 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         if not preview:
             print()
 
+        findings: Tuple[RelaxedFinding, ...] = ()
+        if not options.strict:
+            findings = findings_for_target(source)
+            if findings:
+                write_note(relaxed_notice(findings))
+
+        content: Optional[_PreviewContent] = None
+
+        def capture(stage: StagedProject) -> None:
+            nonlocal content
+            content = _preview_content(engine, options, stage)
+
         results: Dict[str, Tuple[int, List[str]]]
         if is_file:
             if not preview:
@@ -1592,9 +1657,12 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                 progress=options.progress,
                 output_path=output_path,
                 before_publication=ask,
+                before_preview=capture if preview else None,
             )
             termination = (
-                "iteration_cap" if 0 < options.max_refactorings <= applied else "fixed_point"
+                "time_limit"
+                if engine.preview_incomplete
+                else "iteration_cap" if 0 < options.max_refactorings <= applied else "fixed_point"
             )
             results = {output_path: (applied, descriptions)} if applied else {}
         else:
@@ -1606,6 +1674,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                 max_iterations=options.max_refactorings,
                 progress=options.progress,
                 before_publication=ask,
+                before_preview=capture if preview else None,
             )
             applied = sum(count for count, _ in results.values())
             termination = termination_reason
@@ -1613,7 +1682,7 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
         report = engine.run_report
         relative = _relative_to_run(options)
         if preview:
-            _print_complete_preview(engine, options, applied, results, termination)
+            _print_complete_preview(engine, options, applied, results, termination, content=content)
         else:
             _print_dry_summary(report, options, applied, results, termination, relative)
         if engine.checker_failures:
@@ -1641,7 +1710,14 @@ def _execute_dry(options: DryOptions, *, preview: bool = False) -> "CommandResul
                     error,
                 )
         return _command_result(
-            engine, options, applied, termination, preview=preview, types_status=types_status
+            engine,
+            options,
+            applied,
+            termination,
+            preview=preview,
+            types_status=types_status,
+            content=content,
+            findings=findings,
         )
     finally:
         if oracle is not None:
@@ -2166,9 +2242,15 @@ def _run_preview(args: argparse.Namespace) -> None:
                 if options.json:
                     print(json.dumps(result, indent=2))
                 else:
-                    print(result["diff"], end="")
+                    print(result.get("partial_diff", result["diff"]), end="")
             else:
                 result = _execute_dry(dry_options, preview=True)
+    if result["status"] == "incomplete":
+        print(
+            "Time limit exceeded; partial preview is not finally confirmed. Input files were not changed.",
+            file=sys.stderr,
+        )
+        sys.exit(124)
     if options.check and result["status"] == "complete" and result["applied"] > 0:
         sys.exit(3)
 
@@ -2205,12 +2287,31 @@ def _preview_paths(options: DryOptions) -> Iterator[None]:
             handler.removeFilter(path_filter)
 
 
+@dataclass(frozen=True)
+class _PreviewContent:
+    diff: str
+    inventory: HelperInventory | None
+
+
+def _preview_content(
+    engine: UnificationRefactorEngine, options: DryOptions, stage: StagedProject
+) -> _PreviewContent:
+    """Read the filtered private stage before it is removed, without publishing a copy."""
+    staged_options = replace(options, output=str(stage.target))
+    return _PreviewContent(
+        source_diff(Path(options.input), stage.target, options.exclude),
+        _preview_inventory(engine, staged_options) if options.inventory or options.json else None,
+    )
+
+
 def _print_complete_preview(
     engine: "UnificationRefactorEngine",
     options: DryOptions,
     applied: int,
     results: Mapping[str, Tuple[int, List[str]]],
     termination: str,
+    *,
+    content: Optional[_PreviewContent] = None,
 ) -> None:
     """Report only the completed pipeline's accepted changes, in their execution order.
 
@@ -2223,7 +2324,13 @@ def _print_complete_preview(
     report = engine.run_report
     relative = _relative_to_run(options)
     headline = [census_line(report)]
-    outcome = outcome_line(report, applied, options.input)
+    if engine.preview_incomplete:
+        headline.append(
+            "Partial preview: these changes are not finally confirmed (time limit exceeded)."
+            if applied
+            else "Preview incomplete: no changes were applied before the time limit."
+        )
+    outcome = None if engine.preview_incomplete else outcome_line(report, applied, options.input)
     if outcome is not None:
         headline.append(outcome)
     stopped = stopped_at_limit(termination, options.max_refactorings)
@@ -2238,12 +2345,8 @@ def _print_complete_preview(
         render_preview(
             applied,
             headline,
-            (
-                ""
-                if options.summary
-                else source_diff(Path(options.input), Path(options.output), options.exclude)
-            ),
-            _preview_inventory(engine, options) if options.inventory else None,
+            ("" if options.summary else content.diff if content is not None else ""),
+            content.inventory if content is not None and options.inventory else None,
             _left_alone_report(report, options, applied, relative),
         ),
         end="",
@@ -2269,12 +2372,16 @@ def _command_result(
     *,
     preview: bool,
     types_status: TypesStatus,
+    content: Optional[_PreviewContent] = None,
+    findings: Sequence[RelaxedFinding] = (),
 ) -> CommandResult:
     inventory = None
     if options.json:
         try:
-            inventory = _preview_inventory(engine, options)
-            if not preview:
+            inventory = (
+                content.inventory if content is not None else _preview_inventory(engine, options)
+            )
+            if not preview and inventory is not None:
                 output = Path(options.output).resolve()
                 inventory["target"] = str(output if output.is_dir() else output.parent)
         except (OSError, ValueError) as error:
@@ -2286,23 +2393,30 @@ def _command_result(
         "config_path": options.config_path,
         "command": "preview" if preview else "dry",
         "mode": mode_name(options.strict),
-        "status": "complete",
+        "status": "incomplete" if engine.preview_incomplete else "complete",
         "input": str(Path(options.input).resolve()),
         "output": None if preview else str(Path(options.output).resolve()),
         "published": not preview,
         "applied": applied,
         "termination": termination,
         "diff": (
-            source_diff(Path(options.input), Path(options.output), options.exclude)
-            if preview and (options.json or options.diff)
+            content.diff
+            if content is not None
+            and not engine.preview_incomplete
+            and (options.json or options.diff)
             else ""
         ),
         "helpers": inventory,
         "error": None,
-        "outcome": run_outcome(engine.run_report, applied),
+        "outcome": None if engine.preview_incomplete else run_outcome(engine.run_report, applied),
         "analysed": analysed_record(engine.run_report, _relative_to_run(options)),
         "left_alone": left_alone_count(engine.run_report, applied),
+        "relaxed_findings": [finding.to_json() for finding in findings],
     }
+    if engine.preview_incomplete:
+        result["partial_diff"] = content.diff if content is not None else ""
+        result["finally_confirmed"] = False
+        result["error"] = "Time limit exceeded; partial preview is not finally confirmed"
     if types_status != "verified" or engine.type_check_ran:
         result["types"] = types_status
     return result
@@ -2335,6 +2449,7 @@ def _write_failure_result(
         "outcome": None,
         "analysed": None,
         "left_alone": 0,
+        "relaxed_findings": [],
     }
     try:
         print(json.dumps(result, indent=2))
@@ -2359,6 +2474,13 @@ def _quick_report(engine: "UnificationRefactorEngine") -> "RunReport":
 
 
 def _run_quick_preview(options: PreviewOptions) -> None:
+    from towel.source_files import source_policy
+
+    with source_policy(strict=options.strict, include_ignored=options.include_ignored):
+        _run_quick_preview_with_policy(options)
+
+
+def _run_quick_preview_with_policy(options: PreviewOptions) -> None:
     """List one analysis without promising that the proposals will pass dry's checks."""
     from towel.unification.refactor_engine import UnificationRefactorEngine
     from towel.unification.overlap import filter_overlapping_proposals
@@ -2384,11 +2506,18 @@ def _run_quick_preview(options: PreviewOptions) -> None:
         parameterize_builtins=options.parameterize_builtins,
         strict=options.strict,
         max_candidate_pairs=options.max_pairs,
-        settings=_settings(),
+        settings=_execution_settings(options.jobs),
+        include_ignored=options.include_ignored,
         parameterize_constants=True,
         excluded_directories=options.exclude,
         cross_module_helpers=options.cross_module,
     )
+
+    if not options.strict:
+        source = Path(target).resolve()
+        findings = findings_for_target(source)
+        if findings:
+            write_note(relaxed_notice(findings))
 
     # Analyze
     if is_file:

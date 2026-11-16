@@ -206,8 +206,8 @@ def test_tqdm_bar_tracks_applied_proposals_across_analysis_phases(
     assert all(0 <= bar.count <= applied for bar in apply_bars)
     # Nested analysis temporarily owns the line. Restoring the apply display
     # must preserve its count and the remaining queue, including at a cap.
-    assert apply_bars[-1].postfixes[-1]["A"] == applied
-    assert apply_bars[-1].postfixes[-1]["Q"] == 2 - applied
+    assert apply_bars[-1].postfixes[-1]["applied"] == applied
+    assert apply_bars[-1].postfixes[-1]["queued"] == 2 - applied
     assert all(bar.closed for bar in FakeBar.instances)
 
 
@@ -228,7 +228,7 @@ def test_auto_without_tqdm_draws_and_clears_the_terminal_line(
     # (a redirected report) stays clean.
     text = err.getvalue()
     assert "on=discovered:" in text and "on=applied:" in text
-    assert "A=2 Q=0" in text
+    assert "applied=2 queued=0" in text
     assert text.endswith("\r\x1b[2K"), "the transient line is cleared at the fixed point"
     assert "\n" not in text
     assert "\r" not in out.getvalue()

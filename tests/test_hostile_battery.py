@@ -37,6 +37,7 @@ valid syntax, without asserting preservation for reflection or instrumentation.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 import re
 import shutil
@@ -217,7 +218,7 @@ HISTORICAL_EXTRACTIONS = {
     # annotations) is read from the caller.
     "r152_definition_time_reads",
     "r154_bare_annotation_reads_the_caller",
-    # Closed factories may escape (D4, r156); captured objects retain their
+    # Closed factories may escape in relaxed mode (D4, r156); captured objects retain their
     # checks. What the block only calls or consumes moves with it (r157).
     "r156_created_objects_that_escape",
     "r157_created_objects_only_called",
@@ -421,8 +422,10 @@ HISTORICAL_EXTRACTIONS = {
 # cannot hand new owned locals back to a caller retaining other values, and
 # a conditionally unbound local cannot be returned just to extend its lifetime.
 # Audit D1 recovers whole-body r108/r69 extractions; D3 recovers u0417
-# renamed locals, and D4 recovers closed callbacks in r156. Their runtime, scope and public-name checks remain intact.
+# renamed locals. D4 recovers r156 only in relaxed mode; strict retains the
+# created-object and partial-frame refusals. Runtime, scope and public-name checks remain intact.
 OWNERSHIP_REFUSALS: Dict[str, str] = {
+    "r156_created_objects_that_escape": "strict mode keeps created-object and partial-frame refusals",
     "h04_closure_freevar": "owned bindings straddle a partial or uncertified whole-body frame boundary",
     "h61_str_method_param": "retained local is not definitely bound on every block exit",
     "r103_lambda_parameter_spelling": "owned bindings straddle a partial or uncertified whole-body frame boundary",
@@ -810,7 +813,7 @@ def test_refactoring_preserves_program_output(case: str) -> None:
 _EARLY = "a __del__ records when a local nothing reads again is released: at the helper's return"
 _ORDER = "a __del__ records the order in which one function exit releases an argument and a local"
 RELAXED_OBSERVES_FINALIZATION: Dict[str, str] = {
-    "r1792_external_exception_partial": _ORDER,
+    "r1792_external_exception_partial": "two locals are finalized after a caught exception",
     "r1792_factory_finalizer_continuation": _EARLY,
     "r1792_factory_finalizer_order": _EARLY,
     "r1792_protocol_caught_exception": _EARLY,
@@ -835,9 +838,79 @@ and an entry whose output stops differing fails until it is removed.
 """
 
 
-def _events(output: str) -> list[str]:
-    """The events in the complete list a finalizer-watching fixture prints last."""
-    return sorted(re.findall(r"'[^']*'|\d+", output[output.rindex("[") :]))
+_PROTOCOL_FINALIZERS = frozenset({"drop:first", "drop:second"})
+_RESOURCE_FINALIZERS = frozenset({"inner:first", "outer:first", "inner:second", "outer:second"})
+_FACTORY_FINALIZERS = {
+    "r1792_factory_finalizer_continuation": frozenset({"closed"}),
+    "r1792_factory_finalizer_order": frozenset({"z", "a"}),
+}
+Event = int | str
+
+
+def _event_sequence(expression: str) -> tuple[Event, ...]:
+    parsed: object = ast.literal_eval(expression)
+    assert isinstance(parsed, (list, tuple)), "fixture must print an event sequence"
+    assert all(type(event) in (int, str) for event in parsed), "unexpected event type"
+    return tuple(parsed)
+
+
+def _split_events(output: str) -> tuple[str, tuple[Event, ...]]:
+    prefix, separator, events = output.rpartition("[")
+    assert separator and output.endswith("\n"), "fixture must end with its event list"
+    return prefix, _event_sequence(separator + events)
+
+
+def _events(
+    output: str, finalizers: frozenset[str] = _PROTOCOL_FINALIZERS
+) -> tuple[str, tuple[Event, ...], tuple[str, ...]]:
+    """Preserve printed values and ordinary effect order; only finalizers may move."""
+    prefix, events = _split_events(output)
+    return (
+        prefix,
+        tuple(event for event in events if event not in finalizers),
+        tuple(sorted(event for event in events if isinstance(event, str) and event in finalizers)),
+    )
+
+
+def _factory_events(
+    output: str, finalizers: frozenset[str]
+) -> tuple[tuple[Event, ...], tuple[str, ...]]:
+    """Validate the two factories' finalizer-dependent counts and event snapshots.
+
+    Each call emits one ordinary number and owns one object per finalizer label.
+    The first return counts its number plus zero or more of its finalizers.
+    The second return snapshots both numbers, all first-call finalizers and
+    zero or more second-call finalizers. Both calls have finished by print.
+    """
+    prefix, events = _split_events(output)
+    matched = re.fullmatch(r"(\d+) (\(.*\)) ", prefix)
+    assert matched is not None, "factory must print its count and tuple snapshot"
+    count = int(matched.group(1))
+    snapshot = _event_sequence(matched.group(2))
+    ordinary = tuple(event for event in events if event not in finalizers)
+    assert len(ordinary) == 2 and all(type(event) is int for event in ordinary)
+    assert 1 <= count <= 1 + len(finalizers), "first count changed beyond finalization"
+    first_snapshot = events[:count]
+    assert tuple(event for event in first_snapshot if event not in finalizers) == ordinary[:1]
+    assert all(first_snapshot.count(event) <= 1 for event in finalizers)
+    assert tuple(event for event in snapshot if event not in finalizers) == ordinary
+    assert events[: len(snapshot)] == snapshot, "snapshot is not a prefix of the final trace"
+    for event in finalizers:
+        assert events.count(event) == 2, "a factory finalizer was lost or duplicated"
+        assert 1 <= snapshot.count(event) <= 2, "snapshot lost a first-call finalizer"
+    return ordinary, tuple(sorted(event for event in events if isinstance(event, str)))
+
+
+def _relaxed_events(case: str, output: str) -> tuple[str, tuple[Event, ...], tuple[str, ...]]:
+    if case in _FACTORY_FINALIZERS:
+        ordinary, finalizers = _factory_events(output, _FACTORY_FINALIZERS[case])
+        return "", ordinary, finalizers
+    labels = (
+        _RESOURCE_FINALIZERS
+        if case in {"r1792_external_exception_partial", "r1792_value_return_owner"}
+        else _PROTOCOL_FINALIZERS
+    )
+    return _events(output, labels)
 
 
 @pytest.mark.parametrize(
@@ -881,7 +954,7 @@ def test_relaxed_refactoring_preserves_program_output(case: str) -> None:
             else:
                 assert output != expected_output, "no longer differs: remove it from the list"
             # The same events in the end; only where the finalizers fall differs.
-            assert _events(output) == _events(expected_output)
+            assert _relaxed_events(case, output) == _relaxed_events(case, expected_output)
         else:
             assert _run(after) == _run(before)
         if transformed:

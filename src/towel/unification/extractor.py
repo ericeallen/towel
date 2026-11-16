@@ -39,6 +39,7 @@ from typing import (
     Union,
     cast,
 )
+from ..declared_python import PythonVersion
 from .substitution import Substitution
 from .ast_paths import Path, path_map
 from .visitors import all_instances, visit_as
@@ -62,6 +63,44 @@ if TYPE_CHECKING:
 
 class UnsupportedExtraction(ValueError):
     """A valid source construct cannot be represented by this extractor."""
+
+
+def _format_spec_depth(node: ast.JoinedStr) -> int:
+    """Maximum field depth along format specs; an f-string in an expression starts afresh."""
+    return max(
+        (
+            1
+            + (
+                _format_spec_depth(value.format_spec)
+                if isinstance(value.format_spec, ast.JoinedStr)
+                else 0
+            )
+            for value in node.values
+            if isinstance(value, ast.FormattedValue)
+        ),
+        default=0,
+    )
+
+
+def check_fstring_grammar(nodes: Sequence[ast.AST], oldest_python: PythonVersion) -> None:
+    """Refuse format-spec fields the target cannot parse, independently of the host parser.
+
+    Before PEP 701 (Python 3.12), a replacement field's format spec can
+    contain fields, but those fields cannot contain another replacement
+    field. ``ast.parse(feature_version=...)`` on newer Python does not
+    enforce this older f-string grammar.
+    """
+    if oldest_python < (3, 12) and any(
+        _format_spec_depth(node) > 2
+        for root in nodes
+        for node in ast.walk(root)
+        if isinstance(node, ast.JoinedStr)
+    ):
+        major, minor = oldest_python
+        raise UnsupportedExtraction(
+            f"a parameter in a nested format spec requires Python 3.12; "
+            f"the project supports Python {major}.{minor}"
+        )
 
 
 class ParameterSubstituter(ast.NodeTransformer):
@@ -863,6 +902,7 @@ class HygienicExtractor:
         global_decls: Optional[Set[str]] = None,
         nonlocal_decls: Optional[Set[str]] = None,
         function_name: str = "extracted_function",
+        oldest_python: PythonVersion = (3, 11),
     ) -> Tuple[ast.FunctionDef, Dict[str, int]]:
         """
         Extract code into a function.
@@ -880,6 +920,7 @@ class HygienicExtractor:
                 assignment to a module global keeps writing the global.
             nonlocal_decls: Names to declare ``nonlocal`` in the helper body, for
                 the same reason across an enclosing function scope.
+            oldest_python: Oldest supported target; without a declaration, Python 3.11.
             function_name: Requested name for the helper; made unique against
                 ``enclosing_names``.
 
@@ -905,6 +946,7 @@ class HygienicExtractor:
             param_names_unified,
             {name: name for name in param_names_unified},
         )
+        check_fstring_grammar(body_nodes, oldest_python)
         body: List[ast.stmt] = list(body_nodes)
         if param_names_unified:
             # Parameters the body calls are passed as thunks; record them.

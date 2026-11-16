@@ -12,38 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The files of the program that Towel reads whole, and the refusal when one does not parse here.
+"""Whole-program sources and the policy for inputs that cannot be read.
 
-Some of Towel's checks read the whole program, not only the code being
-refactored, for ordinary binding and import dependencies. Each reads the
-files :func:`program_files` yields, so each leaves out the same directories.
-
-A file one of them cannot parse may run on a newer Python. Skipping it can
-hide ordinary module assignments and imports. A run therefore refuses before
-anything is written when a file of the program does not parse on the
-interpreter Towel runs on (:func:`refuse_unparsed_program`). The refusal names
-each file and the parser's complaint, and gives two remedies: run Towel on a
-Python that parses it, or, if it is not meant to run, such as deliberately
-invalid test data, ``--exclude`` it, by its own name or its directory's. Each
-scan refuses in the same words if it meets such a file itself
-(:func:`refuse_unparsed_file`).
-Only the parse depends on the Python version: a file that does not decode in
-its declared encoding runs on no Python, and is left alone, as one that
-cannot be read is.
-
-``--exclude`` means "do not refactor these", and a file it names is still
-read by every scan, as evidence: a test suite excluded to keep it unchanged
-still contributes evidence about ordinary module assignments. Only a file that is
-both excluded and does not parse here is taken at the user's word as no part
-of the program (:func:`excluded_by`).
+Strict runs refuse unreadable or unparsable files, retaining the historical decode skip.
+Relaxed runs warn once and treat those inputs as no part of the program.
+Valid sources excluded from extraction, including Git-ignored files, still
+contribute to whole-program checks. Editor locks and dangling links never do.
 """
 
 from __future__ import annotations
 
 import ast
 import hashlib
+import io
 import os
+import re
 import sys
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
@@ -64,7 +49,14 @@ from .consumers import MAXIMUM_FILES, SKIPPED_DIRECTORIES
 from .declared_python import PythonVersion, declared_newest_python, declared_requirement
 from .declared_python import python_lower_bound
 from .project_layout import find_project_root
-from .source_files import is_environment, python_sources
+from .source_files import (
+    current_source_policy,
+    is_environment,
+    python_sources,
+    readable_directory,
+    skip_unreadable,
+    warn_skipped,
+)
 from .source_text import decode_source
 from .unification.bounded_cache import BoundedCache
 from .unification.exceptions import UnparsedProgramError
@@ -86,13 +78,51 @@ def program_directories(
     are not followed, and an unreadable directory is passed over, reporting
     the error to ``on_error`` when supplied. Callers pick files by suffix.
     """
-    for parent, directories, files in os.walk(root, onerror=on_error):
+    policy = current_source_policy()
+
+    def walk_error(error: OSError) -> None:
+        if policy is not None:
+            skip_unreadable(error)
+        elif on_error is not None:
+            on_error(error)
+
+    for parent, directories, files in os.walk(root, onerror=walk_error):
+        if policy is not None and not readable_directory(Path(parent)):
+            directories.clear()
+            continue
         directories[:] = sorted(
             name
             for name in directories
             if name not in _LEFT_OUT and not is_environment(Path(parent, name))
         )
-        yield parent, sorted(files)
+        yield parent, sorted(
+            name
+            for name in files
+            if not name.startswith(".#")
+            and not _dangling_link(Path(parent, name))
+            and not (name.endswith(".py") and skip_nonprogram_file(Path(parent, name)))
+        )
+
+
+def _dangling_link(path: Path) -> bool:
+    try:
+        return path.is_symlink() and not path.exists()
+    except OSError:
+        return False
+
+
+def skip_nonprogram_file(path: Path) -> bool:
+    """Relaxed runs take unreadable/unparsable source to be no part of the program."""
+    policy = current_source_policy()
+    if path.name.startswith(".#") or _dangling_link(path):
+        return True
+    if policy is None or policy.strict:
+        return False
+    failure = parse_failure(path, include_decoding_errors=True)
+    if failure is None:
+        return False
+    warn_skipped(path, failure.complaint)
+    return True
 
 
 def program_files(root: Path) -> Iterator[Path]:
@@ -127,60 +157,44 @@ class UnparsedFile:
         return f"{_shown(self.path, root)}: {self.complaint}"
 
 
-_ComplaintKey = Tuple[str, bytes, ParserConfiguration]
+_ComplaintKey = Tuple[str, bytes, ParserConfiguration, bool]
 _COMPLAINTS: BoundedCache[_ComplaintKey, Optional[str]] = BoundedCache(1 << 15)
 """What the parser said of each file version, None when it parsed: a run asks twice."""
 
 
-def parse_failure(path: Path) -> Optional[UnparsedFile]:
-    """Why ``path`` does not parse on this interpreter; None when it parses, or cannot run anywhere.
-
-    Decoded as the interpreter decodes it (a byte-order mark or coding
-    cookie, else UTF-8), then parsed. Only the parse depends on the Python
-    version. A file that cannot be read, or does not decode in its declared
-    encoding, runs on no Python, and is left alone as it always was.
-    """
+def parse_failure(path: Path, *, include_decoding_errors: bool = False) -> Optional[UnparsedFile]:
+    """Describe read/parse failures; optionally include historically skipped decode errors."""
     try:
         data = path.read_bytes()
-    except OSError:
-        return None
-    stamp = (str(path.absolute()), hashlib.sha256(data).digest(), parser_configuration())
+    except OSError as error:
+        return UnparsedFile(path, f"it cannot be read: {error.strerror or error}")
+    stamp = (
+        str(path.absolute()),
+        hashlib.sha256(data).digest(),
+        parser_configuration(),
+        include_decoding_errors,
+    )
     cacheable = parsing_is_pure(data)
     if cacheable and stamp in _COMPLAINTS:
         complaint = _COMPLAINTS[stamp]
     else:
-        complaint = _complaint(data, path)
+        complaint = _complaint(data, path, include_decoding_errors)
         if cacheable:
             _COMPLAINTS.put(stamp, complaint)
     return None if complaint is None else UnparsedFile(path, complaint)
 
 
-def _complaint(data: bytes, path: Path) -> Optional[str]:
+def _complaint(data: bytes, path: Path, include_decoding_errors: bool) -> Optional[str]:
     try:
         text = decode_source(data)
-    except SyntaxError as error:
-        # Newer decode_source rejects null bytes before ast.parse sees them.
-        # Only text that would decode without them is a source with a null
-        # byte, as 3.11 to 3.13 see it; anything else (UTF-16 without a
-        # cookie, say) is not text in its declared encoding, and is skipped.
-        return _described(error) if b"\0" in data and _text_without_nulls(data) else None
-    except (UnicodeError, LookupError):
-        return None  # Not text in its declared encoding, or the cookie names no codec.
+    except (SyntaxError, UnicodeError, LookupError) as error:
+        return f"it cannot be decoded: {_described(error)}" if include_decoding_errors else None
     try:
         ast.parse(text, filename=str(path))
     except (SyntaxError, ValueError, RecursionError) as error:
         # ValueError: a null byte, before 3.12 made that a SyntaxError.
         return _described(error)
     return None
-
-
-def _text_without_nulls(data: bytes) -> bool:
-    """Whether ``data`` would decode as source once its null bytes are removed."""
-    try:
-        decode_source(data.replace(b"\0", b""))
-    except (UnicodeError, SyntaxError, LookupError):
-        return False
-    return True
 
 
 def _described(error: BaseException) -> str:
@@ -228,7 +242,7 @@ def _unparsed_below(
             candidates[path] = None
     own = [target] if target.is_file() else python_sources(target, excluded=excluded_names)
     candidates.update(dict.fromkeys(own))
-    found = (parse_failure(path) for path in sorted(candidates))
+    found = (parse_failure(path) for path in sorted(candidates) if not skip_nonprogram_file(path))
     return tuple(failure for failure in found if failure is not None)
 
 
@@ -242,6 +256,9 @@ def refuse_unparsed_program(target: Path, excluded_names: Iterable[str] = ()) ->
     nothing in an excluded directory, would not know the target's names.
     """
     excluded = frozenset(excluded_names)
+    policy = current_source_policy()
+    if policy is not None:
+        policy.excluded_names = policy.excluded_names | excluded
     root = find_project_root(target).resolve()
     resolved = target.resolve()
     holders = sorted(excluded & _holding_names(resolved, root))
@@ -272,6 +289,8 @@ def refuse_unparsed_file(
     file decodes, as under ``-W error`` for an invalid escape, the scan
     still could not read it, and that refuses too.
     """
+    if skip_nonprogram_file(path):
+        return
     resolved = root.resolve()
     if excluded_by(path, resolved, excluded_names):
         return
@@ -299,20 +318,60 @@ def unparsed_refusal(
     verb = "does" if len(unparsed) == 1 else "do"
     requirement = declared_requirement(root)
     lines = [
-        f"Refusing to refactor: {subject} of the program {verb} not parse on"
+        *_exclusion_remedy(unparsed, root, target),
+        f"Refusing to refactor: {subject} of the program {verb} not parse or cannot be read on"
         f" Python {_version(running)}, which Towel is running on:",
         *(f"  {failure.describe(root)}" for failure in unparsed),
-        "Towel reads the whole program for what could make a change unsafe, such as a"
-        " decorator applied by hand or a builtin a test patches, and a file it cannot parse"
-        " may still run on a newer Python, doing what Towel never saw.",
-        _python_remedy(
-            declared_newest_python(root),
-            python_lower_bound(requirement) if requirement is not None else None,
-            running,
-        ),
-        *_exclusion_remedy(unparsed, root, target),
     ]
+    if any(_uses_newer_syntax(failure.path, running) for failure in unparsed):
+        lines.append(
+            _python_remedy(
+                declared_newest_python(root),
+                python_lower_bound(requirement) if requirement is not None else None,
+                running,
+            )
+        )
     return UnparsedProgramError("\n".join(lines))
+
+
+def _uses_newer_syntax(path: Path, running: PythonVersion) -> bool:
+    """Offer a newer Python only for syntax known to have been added after this one."""
+    try:
+        text = decode_source(path.read_bytes())
+    except (OSError, UnicodeError, SyntaxError, LookupError):
+        return False
+    return (
+        running < (3, 12)
+        and bool(re.search(r"(?m)^\s*(?:type \w+.*=|(?:def|class) \w+\[)", text))
+        or running < (3, 14)
+        and (
+            _has_template_string(text)
+            or bool(re.search(r"(?m:^\s*except \w+\s*,\s*\w+\s*:)", text))
+        )
+        or running < (3, 15)
+        and bool(re.search(r"(?m)^\s*lazy (?:from|import) ", text))
+    )
+
+
+def _has_template_string(text: str) -> bool:
+    """Recognize a template prefix outside comments and ordinary string literals."""
+    previous: Optional[tokenize.TokenInfo] = None
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tokenize.tok_name[token.type] == "TSTRING_START":
+                return True
+            if (
+                previous is not None
+                and previous.type == tokenize.NAME
+                and previous.string.lower() in {"t", "tr", "rt"}
+                and token.type == tokenize.STRING
+                and previous.end == token.start
+            ):
+                return True
+            previous = token
+    except (tokenize.TokenError, SyntaxError):
+        pass  # The file is already known to be invalid; only a seen prefix is evidence.
+    return False
 
 
 def _python_remedy(
@@ -359,10 +418,9 @@ def _exclusion_remedy(
     lines: List[str] = []
     if reached:
         lines.append(
-            "Or, if it is not meant to run, such as deliberately invalid test data, leave it"
-            " out: "
-            + " ".join(f"--exclude {name}" for name in sorted(set(names.values())))
-            + ". Towel then refactors no directory or file of that name, and takes one that does"
+            " ".join(f"--exclude {name}" for name in sorted(set(names.values())))
+            + ". Leave out this input if it is not meant to run, such as deliberately invalid"
+            " test data. Towel then refactors no directory or file of that name, and takes one that does"
             " not parse for no part of the program."
         )
     given = [failure for failure in unparsed if failure.path not in reached]
@@ -370,7 +428,7 @@ def _exclusion_remedy(
         lines.append(
             ", ".join(_shown(failure.path, root) for failure in given)
             + ": the file the run was given to refactor, which no --exclude leaves out; fix it,"
-            " or run Towel on a Python that parses it."
+            " or select its parent directory and exclude this filename."
         )
     return lines
 

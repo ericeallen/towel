@@ -39,6 +39,8 @@ import os
 
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, Iterator, List, Optional, Sequence, Set, Tuple
+from .resource_guard import ResourceImports, resource_guard
+
 from ..canonical_ast import canonical_dump
 from ..diagnostics import REJECTIONS, debugging
 from .assignment_analyzer import has_reassignments_without_bindings
@@ -101,6 +103,7 @@ from .placement import HelperPlacement
 from .block_analysis import BlockAnalysis
 from .function_index import FunctionIndex
 from .function_scope import function_names, identifiers
+from .annotation_wiring import declared_oldest_python
 from .models import BlockBindingSnapshot, ClusterContext, HelperTemplate, encloses
 
 
@@ -224,6 +227,13 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
                 global_decls=template.globals_to_declare or None,
                 nonlocal_decls=template.nonlocals_to_declare or None,
                 function_name=template.func_def.name,
+                oldest_python=min(
+                    declared_oldest_python(
+                        self._origin_in_run(path), project_root=self._project_root_in_run(path)
+                    )
+                    or (3, 11)
+                    for path in (pair.file_path, pair.file_path2, candidate.file_path)
+                ),
             )
         except UnsupportedExtraction as error:
             self._debug_decline_site(
@@ -619,6 +629,13 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             return None
         fn, fpath, analyzer = entry.node, entry.file_path, entry.scope_analyzer
         module = analyzer.analyzed_tree
+        resources = (
+            None
+            if self.strict
+            else resource_guard(cand_nodes, module, ResourceImports(fpath, self.import_graph))
+        )
+        if resources is not None and resources.refusal is not None:
+            return None
         if unstable_literal_pool(cand_nodes) or unsafe_byte_literal_moves(
             cand_nodes, module if isinstance(module, ast.Module) else None
         ):
@@ -627,12 +644,15 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             captured_comprehension_changes_enclosing_cell,
             block_requires_original_frame,
             frame_read_outside_block,
-            created_object_escapes,
         ):
             if self._block_rejected(frame_guard, cand_nodes, fn, analyzer, site=site):
                 return None
-        if not self.strict and self._block_rejected(
-            guarded_resource_crosses_exception_boundary, cand_nodes, fn, analyzer, site=site
+        if self._block_rejected(
+            created_object_escapes, cand_nodes, fn, analyzer, site=site, strict=self.strict
+        ):
+            return None
+        if resources is not None and guarded_resource_crosses_exception_boundary(
+            analyzer, fn, cand_nodes, resources.names
         ):
             return None
         lifetime_guards = (owned_binding_crosses_exception_boundary,) if self.strict else ()
@@ -680,7 +700,12 @@ class Clustering(InsertionPoints, HelperPlacement, BlockAnalysis):
             snapshot=snapshot,
             return_variables=frozenset(
                 self._find_return_variables(
-                    fn, cand_range, snapshot.initially_bound, cand_nodes, module=module
+                    fn,
+                    cand_range,
+                    snapshot.initially_bound,
+                    cand_nodes,
+                    module=module,
+                    resource_imports=ResourceImports(fpath, self.import_graph),
                 )
             ),
         )

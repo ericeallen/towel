@@ -57,10 +57,12 @@ from typing import (
     Tuple,
 )
 
+from contextvars import ContextVar
+
 from mypy import build
 from mypy.build import BuildSource
 from mypy.errors import CompileError, Errors
-from mypy.find_sources import InvalidSourceList, create_source_list
+from mypy.find_sources import InvalidSourceList, create_source_list as _mypy_source_list
 from mypy.fscache import FileSystemCache
 from mypy.main import process_options
 from mypy.modulefinder import (
@@ -74,6 +76,56 @@ from mypy.modulefinder import (
 )
 from mypy.options import BuildType, Options
 from mypy.util import decode_python_encoding
+
+
+class _ProgramFileSystemCache(FileSystemCache):
+    """Show mypy the same program as relaxed analysis, including through imports.
+
+    Excluding a file from discovery alone is insufficient: mypy follows an
+    import back into it. Its filesystem interface makes an unavailable input
+    absent for discovery, probes and builds without changing the user's tree.
+    """
+
+    def __init__(self, skipped: Sequence[str]) -> None:
+        super().__init__()
+        self._skipped = tuple(Path(path).resolve() for path in skipped)
+
+    def omitted(self, path: str) -> bool:
+        resolved = Path(os.path.realpath(path))
+        return any(resolved.is_relative_to(skipped) for skipped in self._skipped)
+
+    def stat_or_none(self, path: str) -> Optional[os.stat_result]:
+        return None if self.omitted(path) else super().stat_or_none(path)
+
+    def listdir(self, path: str) -> list[str]:
+        if self.omitted(path):
+            return []
+        return [
+            name for name in super().listdir(path) if not self.omitted(os.path.join(path, name))
+        ]
+
+    def read(self, path: str) -> bytes:
+        if self.omitted(path):
+            raise FileNotFoundError(path)
+        return super().read(path)
+
+
+_INPUT_CACHE: ContextVar[Optional[_ProgramFileSystemCache]] = ContextVar(
+    "mypy_program_inputs", default=None
+)
+
+
+def _file_system() -> FileSystemCache:
+    return _INPUT_CACHE.get() or FileSystemCache()
+
+
+def create_source_list(
+    paths: Sequence[str], options: Options, *, allow_empty_dir: bool = False
+) -> list[BuildSource]:
+    cache = _INPUT_CACHE.get()
+    selected = [path for path in paths if cache is None or not cache.omitted(path)]
+    return _mypy_source_list(selected, options, _file_system(), allow_empty_dir=allow_empty_dir)
+
 
 _PROBE_CACHE = "probes"
 """The cache, inside the owned one, of the probes that check untyped defs.
@@ -136,6 +188,7 @@ def _read_configuration(
                 stdout=said,
                 stderr=said,
                 require_targets=False,
+                fscache=_file_system(),
             )
     except SystemExit as stopped:
         raise ValueError(
@@ -659,7 +712,7 @@ def _walked_like_mypy(entry: str, options: Options) -> bool:
     return not (
         name in ("__pycache__", "site-packages", "node_modules")
         or name.startswith(".")
-        or matches_exclude(entry, options.exclude, FileSystemCache(), False)
+        or matches_exclude(entry, options.exclude, _file_system(), False)
     )
 
 
@@ -706,7 +759,7 @@ def _named_modules(options: Options, root: Path) -> list[BuildSource]:
     """
     sys_path, _ = get_search_dirs(options.python_executable)
     search = SearchPaths((str(root),), tuple(mypy_path() + options.mypy_path), tuple(sys_path), ())
-    finder = FindModuleCache(search, FileSystemCache(), options)
+    finder = FindModuleCache(search, _file_system(), options)
     found: list[BuildSource] = []
     for package in options.packages or ():
         found.extend(finder.find_modules_recursive(package))
@@ -765,7 +818,7 @@ def _where_installed_code_hides_the_project(
     answer for what they happen to share a name with.
     """
     searched = {os.path.realpath(path) for path in (*search.mypy_path, *search.python_path)}
-    finder = FindModuleCache(search, FileSystemCache(), options)
+    finder = FindModuleCache(search, _file_system(), options)
     hidden: set[str] = set()
     asked: set[Tuple[str, str]] = set()
     for source in run:
@@ -912,7 +965,7 @@ def _build_as_the_project_reaches(
                 or _followed(options, source.module, source.path) is not _Followed.NOT_FOLLOWED
             ]
         try:
-            return build.build(sources=current, options=options), current
+            return build.build(sources=current, options=options, fscache=_file_system()), current
         except CompileError as error:
             as_imported = _named_by_its_importer(error.messages, current, judged, renamed)
             if as_imported is None:
@@ -949,7 +1002,7 @@ def _judged_by_the_project(
         named = {os.path.realpath(source.path) for source in run if source.path is not None}
         return lambda path: os.path.realpath(path) in named
     excludes = list(options.exclude)
-    cache = FileSystemCache()
+    cache = _file_system()
 
     def judged(path: str) -> bool:
         candidate = Path(path)
@@ -1137,6 +1190,15 @@ class _Answered(NamedTuple):
 
 
 def _request(request: object, cache: str) -> _Answered:
+    skipped = _strings(request.get("skipped_paths") or []) if isinstance(request, dict) else []
+    token = _INPUT_CACHE.set(_ProgramFileSystemCache(skipped) if skipped else None)
+    try:
+        return _request_with_inputs(request, cache)
+    finally:
+        _INPUT_CACHE.reset(token)
+
+
+def _request_with_inputs(request: object, cache: str) -> _Answered:
     if not isinstance(request, dict):
         raise ValueError("Expected a request object")
     root_value = request.get("root")

@@ -60,6 +60,9 @@ Three consequences follow, each ruled on explicitly:
   only called within it, or passed only to a small set of builtins that call
   it and keep nothing (`sorted`/`min`/`max` keys, and `map`/`filter` whose
   iterator is consumed in the block).
+  *Status: superseded for closed lambdas in relaxed mode from 2.0 by
+  [Relaxed mode is the default; strict mode keeps exact lifetimes](#2026-11-14-relaxed-mode-is-the-default-strict-mode-keeps-exact-lifetimes).
+  In force as written under `--strict`.*
 - **No existing function is redirected to another.** When a duplicate is the
   whole body of an existing function, Towel used to rewrite `f2` as
   `return f1(...)`. A module-level call finds `f1` at call time, so a test
@@ -2011,6 +2014,13 @@ except in cases where it is clearly necessary (if there even are such
 cases)." What follows from them is in
 [Relaxed mode passes arguments by value](#2026-11-14-relaxed-mode-passes-arguments-by-value).
 
+2. **Closed lambda metadata.** From 2.0 a lambda whose body reads only its own
+   bindings may escape an extracted block when its parameter names are kept.
+   Its values, defaults and keyword calls are preserved; its `__qualname__`
+   changes to name the helper that now creates it. Relaxed mode assumes a
+   program does not depend on that metadata. Strict mode keeps 1.949's
+   `created_object_escapes` refusal for these lambdas.
+
 **What follows from the first assumption.** In relaxed mode:
 
 - A caller calls its helper directly. There is no ownership transfer: no
@@ -2046,28 +2056,58 @@ os.listdir(tmp.name)  # or any later use of `path`
 ```
 
 A plain helper returning `path` would delete the directory on its return,
-before the caller lists it. So where a block binds a local directly to the
-result of calling one of a short, fixed list of standard-library constructors
-of this kind (temporary files and directories, process and thread pools,
-tkinter images, memory maps and `weakref.finalize`; the list and its criterion
-are in `unification/resource_guard.py`), relaxed mode keeps the object alive
-as long as the original did: the helper returns it and the caller binds it
-under its own name (`tmp, path = helper(…)`), and such a block inside a `try`
-or `with` that stays in the caller is left alone.
+before the caller lists it. For each recognized constructor call, relaxed mode
+therefore applies one of three rules:
+
+- A call managed by a `with` statement wholly inside the block needs no extra
+  retention: that statement still controls cleanup.
+- A result bound directly to a local that is never rebound, deleted or augmented
+  afterwards is returned under that same name (`tmp, path = helper(…)`). The
+  stability check includes later statements in the containing function, so
+  extracting a shorter prefix cannot lose an alias before a later rebinding.
+  Calls inside loops, including loops enclosing the block and comprehensions
+  with assignment expressions, are refused: textual order does not prove
+  stability across iterations. This applies to weak referents too.
+- Otherwise the block is declined as `resource_lifetime_unproven`, with a plain
+  explanation suggesting a `with` statement or `--strict`. This includes
+  containers, attributes, subscripts, unpacking, conditional expressions,
+  results passed into another call, and objects retained only by an alias of
+  a rebound direct target. A resource inside a `try` or `with` left in the
+  caller is also refused, because an exceptional exit cannot return it.
+
+Later extraction passes leave calls to generated resource-owning helpers in
+place: their returned owners must not disappear inside another helper. An
+imported generated helper is also left in place when its body is unavailable
+to this guard. Ordinary factories remain outside the constructor list.
+
+The list comprises `tempfile.TemporaryDirectory`, `NamedTemporaryFile`,
+`TemporaryFile` and `SpooledTemporaryFile`; `multiprocessing.Pool` (including
+its defining module `multiprocessing.pool.Pool`) and
+`multiprocessing.pool.ThreadPool`; `tkinter.PhotoImage` and `BitmapImage`;
+`mmap.mmap`; `weakref.finalize`; builtin `open`, `io.open`, `io.FileIO`,
+`os.fdopen`, `socket.socket`, `socket.socketpair` and `socket.create_connection`. Files and sockets qualify because descriptors and locks can
+be observed without holding the owning object. Import aliases are resolved
+in their lexical scope, including re-exports through project modules; a
+shadowing local or parameter is not that import.
+The list and its criterion are in `unification/resource_guard.py`.
 
 A weak reference is the other way a program reaches an object it no longer
 names: `watcher = weakref.ref(target)` in the block, `watcher() is not None`
 after it. The original answers true until the function returns; a helper that
-returned only `watcher` would answer false, which is a different value and
-not a finalizer running at another time. A local the block passes directly to
+returned only `watcher` would answer false. A local passed directly to
 `weakref.ref`, `weakref.proxy`, `weakref.WeakMethod` or `weakref.finalize` is
-therefore kept by the caller in the same way.
+kept by the same stable-name rule (for `WeakMethod`, the receiver of the
+bound method). A mapping passed directly to `weakref.WeakValueDictionary`
+is retained by this rule too, to hold its initial values strongly. Rebinding or an unrecognized ownership shape declines the
+block instead of returning a name that no longer owns the object.
 
-The guard reads syntax only and both lists are closed. A program that keeps
-some other resource alive only through a local it never reads again, or
-registers one in a `WeakSet` or a weak dictionary, needs `--strict`, or better
-a `with` statement or an explicit reference, which say what the program means
-in either mode.
+The guard is a list of known constructors, not a proof of resource ownership.
+It reads syntax only. A program that keeps some other resource alive only
+through a local it never reads again, obtains one through an unrecognized
+factory (including a constructor passed through a parameter default,
+`functools.partial`, or a tuple-unpacked copy), or registers one in a `WeakSet`, a `WeakKeyDictionary`, or a weak dictionary
+filled after construction needs
+`--strict`, or better a `with` statement or an explicit reference.
 
 **What this supersedes.** In the default mode this entry supersedes, and under
 `--strict` it leaves in force as written:

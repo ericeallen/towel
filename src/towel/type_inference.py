@@ -102,7 +102,7 @@ from .consumers import (
 )
 
 from .source_files import PROBE_PREFIX as PROBE_PREFIX, is_probe_file as is_probe_file
-from .source_files import TOOL_DIRECTORIES, is_environment
+from .source_files import TOOL_DIRECTORIES, is_environment, skipped_source_paths, source_is_skipped
 
 __all__ = [
     "CheckFailure",
@@ -806,6 +806,7 @@ class MypyInferrer:
                 # A complete build is a check of the project, any other a probe.
                 "complete": complete,
                 "excluded_paths": [os.path.realpath(path) for path in excluded_paths],
+                "skipped_paths": [str(path) for path in skipped_source_paths()],
                 "consumers": [os.path.realpath(path) for path in consumers],
                 # Which of the owned cache's group caches this build uses.
                 "group": group,
@@ -2179,11 +2180,16 @@ class _RelocatedOracle:
                         name
                         for name in directories
                         if name not in _NO_SOURCE_DIRECTORIES
+                        and not source_is_skipped(directory / name)
                         and not is_environment(directory / name)
                     ]
                     for name in files:
                         path = directory / name
-                        if path.suffix in {".py", ".pyi"} and not is_probe_file(path):
+                        if (
+                            path.suffix in {".py", ".pyi"}
+                            and not is_probe_file(path)
+                            and not source_is_skipped(path)
+                        ):
                             try:
                                 current[self._original(str(path))] = read_source(path)
                             except (ValueError, UnicodeError, SyntaxError):

@@ -103,10 +103,11 @@ class BlockSite(NamedTuple):
 
 
 class GuardKey(NamedTuple):
-    """What a block guard's verdict depends on: the guard and where the block stands."""
+    """What a block guard's verdict depends on: the guard, block site and chosen mode."""
 
     guard: Callable[..., bool]
     site: BlockSite
+    strict: Optional[bool] = None
 
 
 class PerBlockKey(NamedTuple):
@@ -261,6 +262,7 @@ class EngineState:
     """Whether a builtin that may differ between sites is passed as a parameter instead of declined."""
 
     strict: bool
+    include_ignored: bool
     """Whether 1.949's guarantees are kept in full: exact object lifetimes, and typed verification that
     gates even unannotated proposals on resolved imports. Relaxed mode, the default, assumes neither is needed."""
 

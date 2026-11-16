@@ -546,7 +546,7 @@ def plan_rename_batch(
         raise ValueError("Each rename specification requires a matching label")
     for old, new, _ in specifications:
         _validate_names((*old.split("."), new))
-    selected_paths = frozenset(path.resolve() for path in python_sources(target))
+    selected_paths = frozenset(path.resolve() for path in python_sources(target, analysis=False))
     root = find_project_root(target)
     modules = _load_rename_modules(root)
     definition_modules = [module for module in modules if module.path in selected_paths]
@@ -1171,7 +1171,7 @@ def _load_rename_modules(target: Path) -> list[_Module]:
     it could not see might hold one. Encodings are honoured the way the
     refactoring commands honour them (byte-order mark, coding cookie).
     """
-    paths = list(python_sources(target))
+    paths = list(python_sources(target, analysis=False))
     names = _module_names(target, paths)
     modules: list[_Module] = []
     for path in paths:

@@ -105,7 +105,8 @@ def test_audit_d1_concatenation_control_still_unifies() -> None:
     assert Unifier().unify_blocks(bodies, [{}, {}]) is not None
 
 
-def test_audit_d4_shared_customer_sort_does_not_capture_its_parameter() -> None:
+@pytest.mark.parametrize("strict", [False, True])
+def test_audit_d4_shared_customer_sort_does_not_capture_its_parameter(strict: bool) -> None:
     """Audit D4: a closed sort callback can move without changing its keyword interface."""
     tree = _module("08_attr", "customers")
     left = _function(tree, "group_by_city")
@@ -115,10 +116,11 @@ def test_audit_d4_shared_customer_sort_does_not_capture_its_parameter() -> None:
     assert Unifier().unify_blocks([left.body[2:], right.body[2:]], [{}, {}]) is not None
     analyzer = ScopeAnalyzer()
     analyzer.analyze(tree)
-    assert not created_object_escapes(analyzer, left, left.body[2:])
+    assert created_object_escapes(analyzer, left, left.body[2:], strict=strict) is strict
 
 
-def test_audit_d4_d5_ledger_prefix_has_no_captured_transaction_parameter() -> None:
+@pytest.mark.parametrize("strict", [False, True])
+def test_audit_d4_d5_ledger_prefix_has_no_captured_transaction_parameter(strict: bool) -> None:
     """Audit D4/D5: the sort lambda's tx is its own parameter, not the loop's tx."""
     tree = _module("10_block_begin", "ledger")
     left = _function(tree, "monthly_report")
@@ -129,7 +131,9 @@ def test_audit_d4_d5_ledger_prefix_has_no_captured_transaction_parameter() -> No
     analyzer.analyze(tree)
     for function in (left, right):
         assert not nested_scopes_cross_block_boundary(function, function.body[:3])
-        assert not created_object_escapes(analyzer, function, function.body[:3])
+        assert (
+            created_object_escapes(analyzer, function, function.body[:3], strict=strict) is strict
+        )
 
 
 def _run_driver(driver: Path, source: Path) -> str:
@@ -146,7 +150,10 @@ def _run_driver(driver: Path, source: Path) -> str:
 
 
 @pytest.mark.parametrize("case", CASES)
-def test_audit_cli_preserves_original_driver_observations(tmp_path: Path, case: str) -> None:
+@pytest.mark.parametrize("strict", [False, True])
+def test_audit_cli_preserves_original_driver_observations(
+    tmp_path: Path, case: str, strict: bool
+) -> None:
     """Audit D1/D3/D4/D5: each original scenario driver survives the complete CLI."""
     source = tmp_path / "src"
     source.mkdir()
@@ -172,6 +179,7 @@ def test_audit_cli_preserves_original_driver_observations(tmp_path: Path, case: 
             "--progress",
             "none",
             *options,
+            *(["--strict"] if strict else []),
         ],
         capture_output=True,
         text=True,
@@ -186,3 +194,6 @@ def test_audit_cli_preserves_original_driver_observations(tmp_path: Path, case: 
     assert transformed.returncode == 0, transformed.stdout + transformed.stderr
     assert output.is_dir(), transformed.stdout + transformed.stderr
     assert _run_driver(driver, output) == before
+
+    if case in {"02_literal_medium", "05_varname_medium", "43_typed_generic"}:
+        assert any("def __extracted_func_" in path.read_text() for path in output.glob("*.py"))

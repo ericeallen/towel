@@ -297,7 +297,7 @@ if TYPE_CHECKING:
 FunctionNode = Union[ast.FunctionDef, ast.AsyncFunctionDef]
 """A function definition of either kind."""
 
-TerminationReason = Literal["fixed_point", "iteration_cap"]
+TerminationReason = Literal["fixed_point", "iteration_cap", "time_limit"]
 """Why a fixed-point driver stopped: nothing left to apply, or the cap was reached."""
 
 ParameterKind = Literal["value", "thunk", "lifted", "receiver"]
@@ -317,6 +317,7 @@ class RejectReason(StrEnum):
     CONDITIONALLY_BOUND_RETURN = "conditionally_bound_return"
     CONDITIONALLY_IMPORTED_HOST = "conditionally_imported_host"
     CREATED_OBJECT_ESCAPES = "created_object_escapes"
+    RESOURCE_LIFETIME_UNPROVEN = "resource_lifetime_unproven"
     OWNED_BINDING_EXCEPTION_BOUNDARY = "owned_binding_exception_boundary"
     OWNERSHIP_PARAMETER_BUDGET = "ownership_parameter_budget"
     CROSS_MODULE_GLOBAL_DECLARATION = "cross_module_global_declaration"
