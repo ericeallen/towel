@@ -16,7 +16,8 @@
 
 This is a suitability hint, not a proof: recognise explicit uses of Python's
 lifetime APIs and writes to known module functions, without guessing about
-arbitrary dynamic calls. The caller supplies exactly the analysed sources.
+arbitrary dynamic calls. The caller supplies the whole program, including consumers
+left out of extraction.
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Literal, Mapping, Sequence, TypedDict
 
+from .project_layout import find_project_root
+from .program_files import program_files
 from .source_text import try_read_source
 
 FindingKind = Literal["finalizer", "weakref_callback", "gc_callback", "function_rebinding"]
@@ -78,7 +81,9 @@ def _string(node: ast.AST) -> str | None:
 
 
 class _Scanner(ast.NodeVisitor):
-    def __init__(self, path: str, module: str, functions: frozenset[str]) -> None:
+    def __init__(
+        self, path: str, module: str, functions: frozenset[str], classes: frozenset[str]
+    ) -> None:
         self.path = path
         self.module = module
         self.package = (
@@ -87,7 +92,16 @@ class _Scanner(ast.NodeVisitor):
             else module.rpartition(".")[0]
         )
         self.functions = functions
-        self.aliases: dict[str, str] = {}
+        self.classes = classes
+        self.aliases: dict[str, str] = {
+            name.removeprefix(f"{module}."): name
+            for name in classes
+            if name.rpartition(".")[0] == module
+        }
+        self.aliases.update({"globals": "builtins.globals", "setattr": "builtins.setattr"})
+        self.class_name: str | None = None
+        self.function_depth = 0
+        self.monkeypatch_names: frozenset[str] = frozenset()
         self.global_names: frozenset[str] | None = None
         self.findings: list[RelaxedFinding] = []
 
@@ -97,6 +111,10 @@ class _Scanner(ast.NodeVisitor):
         if isinstance(node, ast.Attribute):
             owner = self._name(node.value)
             return f"{owner}.{node.attr}" if owner else None
+        if isinstance(node, ast.Subscript) and self._name(node.value) == "sys.modules":
+            if isinstance(node.slice, ast.Name) and node.slice.id == "__name__":
+                return self.module
+            return _string(node.slice)
         return None
 
     def _add(self, kind: FindingKind, node: ast.stmt | ast.expr, detail: str) -> None:
@@ -121,6 +139,11 @@ class _Scanner(ast.NodeVisitor):
 
     def _nested_scope(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> None:
         old_aliases, old_globals = self.aliases, self.global_names
+        old_class, old_monkeypatch = self.class_name, self.monkeypatch_names
+        is_function = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        self.class_name = node.name if isinstance(node, ast.ClassDef) else None
+        if is_function:
+            self.function_depth += 1
         self.aliases = dict(self.aliases)
         nodes = _scope_nodes(node)
         self.global_names = frozenset(
@@ -131,12 +154,24 @@ class _Scanner(ast.NodeVisitor):
             for item in nodes
             if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Store)
         }
+        local.update(
+            item.name
+            for item in nodes
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        )
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            local.update(arg.arg for arg in ast.walk(node.args) if isinstance(arg, ast.arg))
+            arguments = {arg.arg for arg in ast.walk(node.args) if isinstance(arg, ast.arg)}
+            local.update(arguments)
+            self.monkeypatch_names = (self.monkeypatch_names - local) | (
+                arguments & {"monkeypatch"}
+            )
         for name in local - self.global_names:
             self.aliases.pop(name, None)
         self.generic_visit(node)
         self.aliases, self.global_names = old_aliases, old_globals
+        self.class_name, self.monkeypatch_names = old_class, old_monkeypatch
+        if is_function:
+            self.function_depth -= 1
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         for member in node.body:
@@ -146,11 +181,16 @@ class _Scanner(ast.NodeVisitor):
             ):
                 self._add("finalizer", member, f"{node.name}.__del__")
         self._nested_scope(node)
+        qualified = f"{self.module}.{node.name}"
+        self.classes = self.classes | {qualified}
+        self.aliases[node.name] = qualified
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self.aliases.pop(node.name, None)
         self._nested_scope(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self.aliases.pop(node.name, None)
         self._nested_scope(node)
 
     def _write(self, target: ast.expr, node: ast.stmt) -> None:
@@ -159,12 +199,30 @@ class _Scanner(ast.NodeVisitor):
                 self._write(item, node)
             return
         name = self._name(target)
-        if isinstance(target, ast.Name) and (
-            self.global_names is None or target.id in self.global_names
+        if isinstance(target, ast.Name):
+            # Definitions selected or decorated during import do not change lookups
+            # while extracted code runs. Only explicit global writes in functions do.
+            name = (
+                f"{self.module}.{target.id}"
+                if self.function_depth and target.id in (self.global_names or ())
+                else None
+            )
+            if target.id == "__del__" and self.class_name is not None:
+                self._add("finalizer", node, f"{self.class_name}.__del__")
+        elif isinstance(target, ast.Attribute) and target.attr == "__del__":
+            if self._name(target.value) in self.classes:
+                self._add("finalizer", node, f"{ast.unparse(target.value)}.__del__")
+        elif (
+            isinstance(target, ast.Subscript)
+            and isinstance(target.value, ast.Call)
+            and self._name(target.value.func) == "builtins.globals"
+            and not target.value.args
+            and (member := _string(target.slice)) is not None
         ):
-            name = f"{self.module}.{target.id}"
+            name = f"{self.module}.{member}"
         if isinstance(target, ast.Name):
             self.aliases.pop(target.id, None)
+            self.monkeypatch_names = self.monkeypatch_names - {target.id}
         if name in self.functions:
             self._add("function_rebinding", node, f"replacement of {name}")
         if name == "gc.callbacks" or (
@@ -211,10 +269,24 @@ class _Scanner(ast.NodeVisitor):
             owner, member = self._name(node.args[0]), _string(node.args[1])
             if owner and member:
                 replacement = f"{owner}.{member}"
-        elif isinstance(node.func, ast.Name) and node.func.id == "setattr" and len(node.args) >= 3:
+        elif (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "setattr"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in self.monkeypatch_names
+        ):
+            if len(node.args) >= 3:
+                owner, member = self._name(node.args[0]), _string(node.args[1])
+                if owner and member:
+                    replacement = f"{owner}.{member}"
+            elif len(node.args) == 2:
+                replacement = _string(node.args[0])
+        elif name == "builtins.setattr" and len(node.args) >= 3:
             owner, member = self._name(node.args[0]), _string(node.args[1])
             if owner and member:
                 replacement = f"{owner}.{member}"
+                if owner in self.classes and member == "__del__":
+                    self._add("finalizer", node, f"{owner}.__del__")
         if replacement in self.functions:
             self._add("function_rebinding", node, f"patch of {replacement}")
         self.generic_visit(node)
@@ -222,23 +294,32 @@ class _Scanner(ast.NodeVisitor):
 
 def relaxed_findings(sources: Mapping[Path, str], *, root: Path) -> tuple[RelaxedFinding, ...]:
     """Inspect the supplied analysed files once, returning stable source order."""
+    module_root = root
+    while (module_root / "__init__.py") in sources or (module_root / "__init__.py").is_file():
+        module_root = module_root.parent
     parsed: list[tuple[Path, str, ast.Module]] = []
     for path, source in sorted(sources.items()):
         try:
             tree = ast.parse(source, filename=str(path))
         except (SyntaxError, ValueError):
             continue
-        parsed.append((path, _module_name(path, root), tree))
+        parsed.append((path, _module_name(path, module_root), tree))
     functions = frozenset(
         f"{module}.{node.name}"
         for _, module, tree in parsed
         for node in _scope_nodes(tree)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     )
+    classes = frozenset(
+        f"{module}.{node.name}"
+        for _, module, tree in parsed
+        for node in _scope_nodes(tree)
+        if isinstance(node, ast.ClassDef)
+    )
     findings: list[RelaxedFinding] = []
     for path, module, tree in parsed:
         shown = str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
-        scanner = _Scanner(shown, module, functions)
+        scanner = _Scanner(shown, module, functions, classes)
         scanner.visit(tree)
         findings.extend(scanner.findings)
     return tuple(
@@ -252,13 +333,22 @@ def findings_for_paths(paths: Iterable[Path], *, root: Path) -> tuple[RelaxedFin
     return relaxed_findings(sources, root=root)
 
 
+def findings_for_target(target: Path) -> tuple[RelaxedFinding, ...]:
+    """Include consumers outside extraction, using the same root as other program scans."""
+    root = find_project_root(target)
+    paths = {path for path in program_files(root) if path.suffix == ".py"}
+    if target.is_file():
+        paths.add(target)
+    return findings_for_paths(paths, root=root)
+
+
 def relaxed_notice(findings: Sequence[RelaxedFinding]) -> str:
     """One notice containing the evidence and the remedy; empty without findings."""
     if not findings:
         return ""
     evidence = "; ".join(f"{item.path}:{item.line}: {item.detail}" for item in findings)
     return (
-        "Notice: relaxed mode assumes exact object lifetimes and function lookup timing "
+        "Note: relaxed mode assumes exact object lifetimes and function lookup timing "
         "are not observed; --strict (or strict = true under [tool.towel]) preserves them. "
         f"Found {evidence}."
     )

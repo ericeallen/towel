@@ -90,7 +90,7 @@ from towel.cli_reporting import (
     stopped_at_limit,
 )
 from towel.diagnostics import LOG, Settings, configure_stderr_logging
-from towel.relaxed_suitability import RelaxedFinding, findings_for_paths, relaxed_notice
+from towel.relaxed_suitability import RelaxedFinding, findings_for_target, relaxed_notice
 from towel.config import ConfigurationError, apply_project_defaults
 from towel.program_files import is_exclusion_name, refuse_unparsed_program
 from towel.unification.exceptions import TowelError
@@ -1637,12 +1637,7 @@ def _execute_dry_with_policy(options: DryOptions, *, preview: bool = False) -> "
 
         findings: Tuple[RelaxedFinding, ...] = ()
         if not options.strict:
-            paths = (
-                [source]
-                if is_file
-                else [Path(path) for path in engine._find_python_files(str(source))]
-            )
-            findings = findings_for_paths(paths, root=source.parent if is_file else source)
+            findings = findings_for_target(source)
             if findings:
                 write_note(relaxed_notice(findings))
 
@@ -2520,8 +2515,7 @@ def _run_quick_preview_with_policy(options: PreviewOptions) -> None:
 
     if not options.strict:
         source = Path(target).resolve()
-        paths = [source] if is_file else [Path(path) for path in engine._find_python_files(target)]
-        findings = findings_for_paths(paths, root=source.parent if is_file else source)
+        findings = findings_for_target(source)
         if findings:
             write_note(relaxed_notice(findings))
 
