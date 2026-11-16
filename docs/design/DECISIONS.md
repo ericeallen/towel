@@ -2371,3 +2371,26 @@ reflection; it is the case the 2026-10-02 entry was written for, and the
 reason this rule needs the owner's approval. Such a program needs `--strict`.
 
 *Status: implemented for 2.0, with `tests/test_cross_module_plain_case.py`.*
+
+## 2026-11-16: Relaxed mode moves equal literals into a shared helper
+
+*Like the builtin rule above, this is a single commit so that it can be
+dropped.*
+
+Separately compiled modules have separate pools of constants, so an equal
+string literal in two modules may be two objects, and a literal moved into a
+helper in another module is a different object from the one its site held.
+Through 1.949 a cross-module helper therefore received every literal its
+sites had in common as a tuple argument (`helper(("[^a-z0-9]+",), …)`), so that
+each literal stayed in its own module's pool.
+
+In relaxed mode the literals move into the helper with the code around them,
+as they do within one module, and the refusal of a helper that would hold
+them in another module (`literal_pool_boundary`) applies in strict mode only. Whether two equal immutable values are one
+object is the implementation's choice: the language reference says that for
+immutable types "operations that compute new values may actually return a
+reference to any existing object with the same type and value". A program
+that compares such literals with `is` across modules needs `--strict`, which
+keeps the tuple.
+
+*Status: implemented for 2.0, with `tests/test_cross_module_plain_case.py`.*

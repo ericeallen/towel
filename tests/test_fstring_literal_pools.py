@@ -133,6 +133,10 @@ def test_complete_cli_keeps_fstring_fragment_identity_and_format_effects(
             "--no-types",
             "--no-format",
             "--cross-module",
+            # The identity of an equal literal across modules is kept by strict
+            # mode only since 2.0 (docs/design/DECISIONS.md, "Relaxed mode moves
+            # equal literals into a shared helper").
+            *(["--strict"] if expression == "f'private literal!'" else []),
         ],
         env={**os.environ, "PYTHONPATH": str(Path(towel.__file__).resolve().parents[1])},
         capture_output=True,

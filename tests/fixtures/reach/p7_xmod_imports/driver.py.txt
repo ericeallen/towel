@@ -1,0 +1,10 @@
+import sys
+
+sys.path.insert(0, sys.argv[1])
+
+from pkg import contacts, labels
+
+EMAILS = [" Ada@Example.org", "", "bob@example.com ", "ada@example.org", "  "]
+print(contacts.unique_emails(EMAILS))
+print(labels.unique_tags(EMAILS))
+print("ok")

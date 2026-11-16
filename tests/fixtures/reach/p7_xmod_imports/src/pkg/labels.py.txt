@@ -1,0 +1,22 @@
+"""Labels."""
+
+from pkg.contacts import domain
+
+
+def unique_tags(emails):
+    seen = set()
+    result = []
+    for email in emails:
+        normalized = email.strip().lower()
+        if not normalized:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    result.sort()
+    return result
+
+
+def label_for(email):
+    return domain(email).split(".")[0]

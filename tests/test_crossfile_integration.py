@@ -448,8 +448,12 @@ class TestExampleThreeCrossFile:
         proposals = engine.analyze_files([file1, file2])
 
         if lifetime_order_certified():
-            assert [p.description for p in proposals] == [EXAMPLE3_HELPER]
-            assert _participating_files(proposals[0]) == {file1, file2}
+            # Since 2.0 relaxed mode also shares the two order functions'
+            # shorter common run, whose literals now move into the helper
+            # (docs/design/DECISIONS.md, "Relaxed mode moves equal literals
+            # into a shared helper").
+            assert proposals[0].description == EXAMPLE3_HELPER
+            assert all(_participating_files(proposal) == {file1, file2} for proposal in proposals)
         else:
             assert not proposals
             assert "lifetime_order_uncertified" in engine.declined_pairs

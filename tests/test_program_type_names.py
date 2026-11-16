@@ -1036,6 +1036,7 @@ class {name}(Exception):
 """
 
 
+@pytest.mark.strict_mode
 @requires_mypy
 def test_a_constraint_from_another_module_is_imported_for_the_checker_end_to_end(
     tmp_path: Path,

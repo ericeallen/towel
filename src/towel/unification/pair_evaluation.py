@@ -1214,8 +1214,11 @@ class PairEvaluation(
             blocks,
             hygienic_renames,
             (ModuleText(pair.file_path, pair.source1), ModuleText(pair.file_path2, pair.source2)),
-            thread_literal_pools=os.path.abspath(pair.file_path)
-            != os.path.abspath(pair.file_path2),
+            # Strict mode keeps each common literal in its own module's pool;
+            # relaxed mode moves it with the code (docs/design/DECISIONS.md,
+            # "Relaxed mode moves equal literals into a shared helper").
+            thread_literal_pools=self.strict
+            and os.path.abspath(pair.file_path) != os.path.abspath(pair.file_path2),
         )
         if not substitution:
             self._reject(
@@ -1974,10 +1977,16 @@ class PairEvaluation(
         projection = (
             None if literal_pool is None else (literal_pool.parameter, len(literal_pool.keys))
         )
-        if retained_literal_pool(helper.body, trusted_projection=projection) and any(
-            os.path.abspath(replacement.file_path or home.file_path)
-            != os.path.abspath(canonical_file)
-            for replacement in replacements
+        # Relaxed mode lets equal literals move into a helper in another
+        # module ("Relaxed mode moves equal literals into a shared helper").
+        if (
+            self.strict
+            and retained_literal_pool(helper.body, trusted_projection=projection)
+            and any(
+                os.path.abspath(replacement.file_path or home.file_path)
+                != os.path.abspath(canonical_file)
+                for replacement in replacements
+            )
         ):
             self._debug_reject(RejectReason.LITERAL_POOL_BOUNDARY, pair)
             return None

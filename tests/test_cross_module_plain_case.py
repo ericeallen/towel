@@ -44,7 +44,7 @@ from typing import Dict, List, Tuple
 import pytest
 
 from tests.test_cli_integration import invoke
-from tests.test_callback_parameters import FIXTURES, run_script
+from tests.test_callback_parameters import FIXTURES, helper_calls, run_script
 
 pytestmark = pytest.mark.relaxed_mode
 
@@ -317,3 +317,69 @@ def test_relaxed_mode_gives_up_a_builtin_rebound_by_code_outside_the_project(
     assert outputs["before"] == "10010 14707\n"
     assert outputs["strict"] == outputs["before"]
     assert outputs["relaxed"] == "10010 14014\n"
+
+
+# -- Scenario 37 and literals ------------------------------------------------------
+
+
+def test_a_function_copied_into_two_modules_becomes_one_function_and_plain_calls(
+    tmp_path: Path,
+) -> None:
+    """Audit scenario 37: ``_reference`` copied character for character into orders and invoices.
+
+    invoices imports orders at its top, so orders holds the helper; ``re`` is
+    imported alike by both, ``len`` is bound by neither, and the regular
+    expression moves with the code.
+    """
+    source, output = _scenario(tmp_path, "reach/37_cross_identical")
+    _, generated = _dry(source, output)
+    (helper,) = _helpers(generated)
+    assert sorted(_parameters(helper)) == ["customer", "number", "prefix"]
+    text = ast.unparse(helper)
+    assert "re.sub('[^a-z0-9]+'" in text and "len(slug)" in text
+    calls = helper_calls(generated)
+    assert len(calls) == 2
+    assert all(
+        all(isinstance(argument, ast.Name) for argument in ast.parse(call).body[0].value.args)  # type: ignore[attr-defined]
+        for call in calls
+    )
+    driver = source.parent / "driver.py"
+    assert run_script(driver, str(output)) == run_script(driver, str(source))
+
+
+def test_strict_mode_keeps_its_cross_module_refusals_on_scenario_37(tmp_path: Path) -> None:
+    source, output = _scenario(tmp_path, "reach/37_cross_identical")
+    printed, generated = _dry(source, output, "--strict")
+    # Strict mode declines it before the builtin is asked about: the order
+    # the function releases its objects in.
+    assert _helpers(generated) == []
+    assert "owned_binding_frame_boundary" in printed
+    driver = source.parent / "driver.py"
+    assert run_script(driver, str(output)) == run_script(driver, str(source))
+
+
+LITERALS = """
+
+def {name}(rows, text):
+    label = "total-" + text
+    words = text.split("-")
+    joined = ", ".join(words)
+    return [label, joined, rows]
+"""
+
+
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_equal_literals_move_into_a_helper_in_another_module_only_in_relaxed_mode(
+    tmp_path: Path, strict: bool
+) -> None:
+    source = _two_modules(tmp_path, "", "", LITERALS)
+    _, generated = _dry(source, tmp_path / "out", *(["--strict"] if strict else []))
+    calls = helper_calls(generated)
+    if strict:
+        # Each common literal stays in its own module's pool, in a tuple.
+        assert all("('total-'" in call or "lambda" in call for call in calls) or not calls
+    else:
+        (helper,) = _helpers(generated)
+        assert "'total-' + text" in ast.unparse(helper)
+        assert all("'" not in call for call in calls)
+    assert _same(tmp_path, source)

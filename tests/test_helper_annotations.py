@@ -429,6 +429,7 @@ def test_import_bound_compounds_keep_their_type_without_evaluation(
     exec(compile(result, "<imported>", "exec"), {})
 
 
+@pytest.mark.strict_mode
 def test_cross_file_helper_keeps_only_builtin_annotations(tmp_path: Path) -> None:
     package = tmp_path / "pkg"
     package.mkdir()
