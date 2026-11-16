@@ -24,7 +24,6 @@ from __future__ import annotations
 import ast
 import copy
 import dataclasses
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -593,9 +592,7 @@ class ExistingFunctionReuse(EngineState):
                 continue
             reason = rebinding_reason(self._rebinding_sources, target.file_path, target.node)
             if reason is not None:
-                if reason not in self._reported_rebindings:
-                    self._reported_rebindings.add(reason)
-                    logging.getLogger("towel").warning(reason)
+                self._pair_rebindings.add(reason)
                 continue
             redirected = self._redirected_through(proposal, index, target, helper_name, functions)
             if redirected is not None:

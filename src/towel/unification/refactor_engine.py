@@ -482,6 +482,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         self._declared_complete_scope = complete_scope
         self._rebinding_sources: Dict[str, Optional[str]] = {}
         self._reported_rebindings: set[str] = set()
+        self._pair_rebindings: set[str] = set()
         self.unifier = Unifier(
             max_parameters=max_parameters,
             parameterize_constants=parameterize_constants,
@@ -1028,6 +1029,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
         class_infos: List[ClassInfo],
     ) -> PairVerdict:
         """``pair`` judged, with its trace held back and nothing counted; see ``PairVerdict``."""
+        self._pair_rebindings = set()
         self._pair_rejection = None
         self._pair_rejection_subject = None
         self._pair_identity = None
@@ -1047,6 +1049,7 @@ class UnificationRefactorEngine(ParallelEvaluation):
             None if proposal is not None or duplicate else self._rejection_key(),
             lines[:mark],
             lines[mark:],
+            tuple(sorted(self._pair_rebindings)),
         )
 
     def _settle(self, pair: CodeBlockPair, verdict: PairVerdict) -> Optional[RefactoringProposal]:
@@ -1055,6 +1058,10 @@ class UnificationRefactorEngine(ParallelEvaluation):
         A pair whose proposal an earlier pair already settled is a duplicate,
         whatever its own judgement found beyond the duplicate check.
         """
+        for reason in verdict.rebindings:
+            if reason not in self._reported_rebindings:
+                self._reported_rebindings.add(reason)
+                LOG.warning(reason)
         duplicate = verdict.identity is not None and verdict.identity in self._settled_identities
         if verdict.identity is not None:
             self._settled_identities.add(verdict.identity)

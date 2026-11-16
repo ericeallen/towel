@@ -565,3 +565,5 @@ class PairVerdict:
     counted: Optional[str]
     before_identity: Tuple[str, ...] = ()
     after_identity: Tuple[str, ...] = ()
+    rebindings: Tuple[str, ...] = ()
+    """Redirect warnings, emitted and deduplicated only by the settling parent."""
