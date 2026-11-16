@@ -87,3 +87,42 @@ def report():
         assert after == before
     else:
         assert "built" in after and "after block" in after
+
+
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("indirect", [False, True])
+def test_forward_redirect_is_bound_before_import_time_calls(
+    tmp_path: Path, strict: bool, indirect: bool
+) -> None:
+    """Review 1: a caller may run before a later equivalent function is defined."""
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "pyproject.toml").write_text('[project]\nname="example"\nversion="0"\n')
+    boot = "BOOT = report([1, 2], [])"
+    if indirect:
+        boot = "def boot():\n    return report([1, 2], [])\nBOOT = boot()"
+    (source / "mod.py").write_text(
+        """def report(order, log):
+    log.append("report")
+    if not order:
+        raise ValueError("empty")
+    log.append(len(order))
+    log.append(sum(order) * 2)
+    return tuple(log)
+
+"""
+        + boot
+        + """
+
+def total(order, log):
+    if not order:
+        raise ValueError("empty")
+    log.append(len(order))
+    log.append(sum(order) * 2)
+"""
+    )
+    before = observe(source, "import mod; print(mod.BOOT)")
+    assert before == "('report', 2, 6)\n"
+    output = tmp_path / "out"
+    dry(source, output, strict)
+    assert observe(output, "import mod; print(mod.BOOT)") == before

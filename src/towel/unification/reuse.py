@@ -599,14 +599,10 @@ class ExistingFunctionReuse(EngineState):
                 continue
             redirected = self._redirected_through(proposal, index, target, helper_name, functions)
             if redirected is not None:
-                if any(
-                    (replacement.file_path or redirected.file_path) != redirected.file_path
-                    for replacement in redirected.replacements
-                ):
-                    try:
-                        self._require_early_reused_helper(redirected)
-                    except RefactoringError:
-                        continue
+                try:
+                    self._require_early_reused_helper(redirected)
+                except RefactoringError:
+                    continue
                 return redirected
         return None
 
