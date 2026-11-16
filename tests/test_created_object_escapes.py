@@ -130,11 +130,13 @@ def test_closed_callback_consumers_follow_mode(body: str, after: str, strict: bo
     assert _escapes(body, after=after, strict=strict) is strict
 
 
-def test_a_builtin_the_module_can_shadow_is_not_trusted() -> None:
-    body = "y = sorted(xs, key=lambda x: x * k)"
-    assert _escapes(body, module="def sorted(xs, key):\n    return [key]")
-    assert _escapes(body, module="from helpers import *")
-    assert not _escapes(body, module="import os")
+@pytest.mark.parametrize("strict", [False, True], ids=["relaxed", "strict"])
+def test_a_builtin_the_module_can_shadow_is_not_trusted(strict: bool) -> None:
+    """Unify review R2: closed callbacks may escape only under the relaxed policy."""
+    body = "y = sorted(xs, key=lambda x: x)"
+    assert _escapes(body, module="def sorted(xs, key):\n    return [key]", strict=strict) is strict
+    assert _escapes(body, module="from helpers import *", strict=strict) is strict
+    assert not _escapes(body, module="import os", strict=strict)
 
 
 def test_a_name_declared_nonlocal_or_global_is_a_store_elsewhere() -> None:
